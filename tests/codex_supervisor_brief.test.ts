@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 
+import { fetchDeepSeekChatCompletions } from "../src/deepseek.ts";
 import handler from "../src/handler.ts";
-import type { SupervisorSource } from "../src/codex_supervisor.ts";
+import type { SupervisorSource } from "../src/codex_supervisor_config.ts";
 import {
   appendRolloutTailTurn,
   assembleBriefContext,
@@ -59,6 +60,126 @@ Deno.test("redactBriefText removes credential-shaped text", () => {
   assert.equal(result.text.includes("b".repeat(32)), false);
   assert.match(result.text, /plain progress/);
   assert.match(result.text, /\[redacted\]/);
+});
+
+Deno.test("redactBriefText recognizes quoted JSON credential keys and real GitHub token prefixes", () => {
+  const canaries = [
+    "ghp_syntheticcanary0000000000000001",
+    "gho_syntheticcanary0000000000000002",
+    "ghu_syntheticcanary0000000000000003",
+    "ghs_syntheticcanary0000000000000004",
+    "github_pat_syntheticcanary0000000000000005",
+    "sk-syntheticcanary0000000000000006",
+    "dsk-syntheticcanary0000000000000007",
+  ];
+  // A JSON-shaped assignment whose value holds spaces, an escaped quote pair,
+  // and an escaped backslash, plus the single-quoted assignment style.
+  const quotedCredentials = {
+    access_token: "synthetic-access-token-canary-01",
+    password: "zqmars zqalpha zqbravo zqcharlie",
+    short_password: "a b",
+    secret: 'zqvenus zqdelta "zqecho" \\ zqfoxtrot',
+  };
+  const singleQuotedValue = "zqterra zqgolf zqhotel zqindia";
+  const singleQuotedLine = `client_secret: '${singleQuotedValue}'`;
+  const credentialValues = [...Object.values(quotedCredentials), singleQuotedValue];
+  const whitespaceCanaries = [quotedCredentials.password, quotedCredentials.secret, singleQuotedValue];
+  const secretFragments = whitespaceCanaries.flatMap((value) => value.split(/[^A-Za-z0-9]+/)).filter((fragment) => fragment.length > 0);
+  const result = redactBriefText(
+    [JSON.stringify(quotedCredentials, null, 1), singleQuotedLine, ...canaries, "progress: the panel renders again and deno task test passed"].join("\n")
+  );
+  for (const canary of [...canaries, ...credentialValues]) {
+    assert.equal(result.text.includes(canary), false, `${canary} must be redacted`);
+  }
+  for (const fragment of secretFragments) {
+    assert.equal(result.text.includes(fragment), false, `secret fragment ${fragment} must be redacted`);
+  }
+  assert.ok(
+    result.redactions >= canaries.length + credentialValues.length,
+    "every credential assignment and token canary is counted without pinning an incidental total"
+  );
+  assert.match(result.text, /progress: the panel renders again/);
+  assert.match(result.text, /deno task test passed/);
+  assert.match(result.text, /\[redacted\]/);
+});
+
+Deno.test("the brief's DeepSeek payload carries no quoted-JSON or GitHub credential canaries", async () => {
+  const classicTokens = [
+    "ghp_syntheticcanary0000000000000011",
+    "gho_syntheticcanary0000000000000012",
+    "ghu_syntheticcanary0000000000000013",
+    "ghs_syntheticcanary0000000000000014",
+  ];
+  const fineGrained = "github_pat_syntheticcanary0000000000000015";
+  const quotedCredentials = {
+    access_token: "synthetic-access-token-canary-11",
+    password: "zqmars zqalpha zqbravo zqcharlie",
+    token: "tk7",
+    secret: 'zqvenus zqdelta "zqecho" \\ zqfoxtrot',
+  };
+  const singleQuotedValue = "zqterra zqgolf zqhotel zqindia";
+  const credentialValues = [...Object.values(quotedCredentials), singleQuotedValue];
+  const whitespaceCanaries = [quotedCredentials.password, quotedCredentials.secret, singleQuotedValue];
+  const secretFragments = whitespaceCanaries.flatMap((value) => value.split(/[^A-Za-z0-9]+/)).filter((fragment) => fragment.length > 0);
+  const injectedSecretCount = classicTokens.length + 2 + credentialValues.length;
+  const quoted = `credentials:\n${JSON.stringify(quotedCredentials, null, 1)}\nclient_secret: '${singleQuotedValue}'`;
+  const straddling = `${"A".repeat(1_180)}ghp_syntheticcanary0000000000000016${"Z".repeat(200)}`;
+  const context = await collectWith({
+    read: threadRead,
+    first: [],
+    recent: [
+      {
+        id: "turn-credentials",
+        status: "completed",
+        items: [
+          { type: "userMessage", id: "u1", content: [{ type: "text", text: `${quoted}\nprogress: the panel renders again` }] },
+          { type: "agentMessage", id: "a1", text: `Rotated ${classicTokens.join(", ")} and ${fineGrained}; deno task test passed` },
+          { type: "agentMessage", id: "a2", text: straddling },
+        ],
+      },
+    ],
+  });
+  // generateBrief is module-private, so this drives the exact body it hands to
+  // fetchDeepSeekChatCompletions and captures the bytes that transport sends.
+  const body = buildSupervisorBriefRequestBody(context);
+  const outbound: string[] = [];
+  const response = await fetchDeepSeekChatCompletions(body, "deepseek-flash", {
+    apiKey: "synthetic-api-key",
+    fetcher: (_input, init) => {
+      const bodyText = init?.body;
+      outbound.push(typeof bodyText === "string" ? bodyText : "");
+      return Promise.resolve(
+        Response.json({
+          id: "chatcmpl-synthetic",
+          object: "chat.completion",
+          created: 1,
+          model: "deepseek-flash",
+          choices: [{ index: 0, message: { role: "assistant", content: '{"about":"Panel work","status":"Tests passed"}' }, finish_reason: "stop" }],
+        })
+      );
+    },
+  });
+  assert.equal(response.ok, true);
+  await response.json();
+  const wire = outbound.join("");
+  assert.ok(wire.length > 0, "the injected transport must capture the outbound request body");
+  for (const canary of [...classicTokens, fineGrained, ...credentialValues]) {
+    assert.equal(wire.includes(canary), false, `${canary} must not reach the external model`);
+  }
+  for (const fragment of secretFragments) {
+    assert.equal(wire.includes(fragment), false, `secret fragment ${fragment} must not reach the external model`);
+  }
+  assert.equal(wire.includes("ghp_syntheticcanar"), false, "no partial GitHub token may survive the item cap");
+  assert.equal(wire.includes("synthetic-access-token-canar"), false, "no partial quoted JSON credential may survive");
+  assert.equal(wire.includes("zq"), false, "no fragment of a whitespace-bearing quoted credential may survive");
+  assert.equal(wire.includes("Z".repeat(20)), false, "text past a redacted straddling secret may not leak before the cap");
+  assert.match(wire, /\[redacted\]/);
+  assert.match(wire, /progress: the panel renders again/);
+  assert.match(wire, /deno task test passed/);
+  const messages = body.messages as { role: string; content: string }[];
+  assert.ok(new TextEncoder().encode(messages[1].content).length <= 48 * 1024, "the outbound prompt keeps its 48 KiB bound");
+  assert.ok(context.contextBytes <= 32 * 1024, "the collected context keeps its 32 KiB bound");
+  assert.ok(context.redactions >= injectedSecretCount, "every injected canary is counted before the prompt is bounded");
 });
 
 const heavyTurn = (index: number) => ({

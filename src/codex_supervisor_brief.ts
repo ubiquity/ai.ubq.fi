@@ -1,15 +1,11 @@
 import { DEEPSEEK_FLASH_MODEL, DeepSeekError, fetchDeepSeekChatCompletions } from "./deepseek.ts";
+import { redactSupervisorSecrets } from "./codex_supervisor_secret.ts";
 import { json, openaiError } from "./http.ts";
 import { readSupervisorRolloutTail, type SupervisorLogEvent } from "./codex_supervisor_log.ts";
 import { openSupervisorConnection, type SupervisorConnection } from "./codex_supervisor_transport.ts";
-import {
-  ensureSupervisorSnapshot,
-  normalizeEpochMs,
-  resolveSupervisorConfig,
-  SOURCE_ID_PATTERN,
-  THREAD_ID_PATTERN,
-  type SupervisorSource,
-} from "./codex_supervisor.ts";
+import { normalizeEpochMs, resolveSupervisorConfig, SOURCE_ID_PATTERN, THREAD_ID_PATTERN } from "./codex_supervisor_config.ts";
+import type { SupervisorSource } from "./codex_supervisor_config.ts";
+import { ensureSupervisorSnapshot } from "./codex_supervisor_inventory.ts";
 
 /**
  * On-demand "catch me up" brief for one supervised session.
@@ -72,27 +68,8 @@ const byteLength = (value: string): number => encoder.encode(value).length;
 
 /* ---------------------------------------------------------------- redaction */
 
-const SECRET_PATTERNS: readonly RegExp[] = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /\b[Bb]earer\s+[A-Za-z0-9._~+/=-]{12,}/g,
-  /\b(?:sk|ghp|gho|ghu|ghs|dsk)-[A-Za-z0-9_-]{12,}/g,
-  /\bgithub_pat_\w{12,}/g,
-  /\bu_[0-9a-fA-F]{32,}\b/g,
-  /\b\w*(?:key|token|secret|password)\w*\s*[:=]\s*\S{8,}/gi,
-];
-
-/** Replaces credential-shaped text with a marker and reports how many matches were removed. */
-export const redactBriefText = (value: string): { text: string; redactions: number } => {
-  let redactions = 0;
-  let text = value;
-  for (const pattern of SECRET_PATTERNS) {
-    text = text.replace(pattern, () => {
-      redactions += 1;
-      return "[redacted]";
-    });
-  }
-  return { text, redactions };
-};
+/** Credential-shaped text is removed before any transcript reaches the model. */
+export const redactBriefText = redactSupervisorSecrets;
 
 /* -------------------------------------------------------------- transcript */
 

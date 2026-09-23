@@ -6,6 +6,56 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Oversized files are capped with a tightening-only baseline - 2026-09-23
+
+`scripts/file-size-ratchet.ts`, run by `sh scripts/verify.sh`, caps source files at 1000 lines and test files at 1500.
+The 31 files already above their caps are grandfathered by a recorded per-file ceiling in `file-size-baseline.json`,
+checked in at the repository root. Their ceilings were recorded with `--init` on 2026-09-23 at HEAD `411b3db04f`.
+
+The check fails whenever the tree and the baseline disagree: a file over its cap with no entry, a recorded file above
+its recorded ceiling, a recorded file that shrank below its recorded ceiling, a recorded file that fell back within its
+cap, or a recorded path with no file left. `deno task size:update` is the only writer; it lowers or drops ceilings and
+refuses to raise one or to record a file that is over its cap. That is stricter than the ESLint `max-lines` rule the
+flat config leaves off: a recorded ceiling tracks the file's real size, so shrinking a 14,296-line file to 12,000 must
+be committed with a 12,000 ceiling before the next change can grow past it. ESLint bulk suppressions are deliberately
+not used, because they count violations rather than lines and would let a file grow from 1,001 to 10,000 unchecked.
+
+Reversal risk: deleting an entry from the baseline re-authorizes unbounded growth for that file while a `verify` run
+would only start failing after the file passes the deleted ceiling, and disabling `size:update` in favor of hand edits
+removes the raise-refusal. The recorded ceilings are intentionally large numbers; do not read them as targets.
+
+## LithosAI advertises its full context window - 2026-09-23
+
+`LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT` in `src/lithos.ts` is 100, not the 95 percent reserve the other providers
+keep: the direct LithosAI route advertises its full 1,048,576-token window to `/v1/models` and the Codex catalog instead
+of a padded one. The 95 percent value would publish an effective window 52,428 tokens smaller than the one the provider
+advertises, and nothing in the panel or the catalog would show that the difference is a local choice. Reversal risk:
+lowering it again silently shrinks every consumer's view of this route, so change it only with a measurement showing the
+upstream refuses the advertised size.
+
+## Immutable releases are pruned after a verified deploy: the newest five plus the running one - 2026-09-23
+
+Both deploy paths unpack a full `git archive` of the released revision into `.data/releases/<sha>`, so a repeatedly
+deployed checkout carried one complete copy of `src`, `tests`, `docs` and `static` per revision: 47 directories and 391
+MB on the Mac, roughly 12,000 duplicate TypeScript files that every recursive search and editor walk pays for. Retention
+is now enforced by the deploy itself rather than left to an operator. `ops/release_retention.ts` keeps the five newest
+releases by mtime plus whatever `.data/current` resolves to, and `ops/deploy-mac.ts` and `ops/deploy.ts` call it only
+after the health check proves the new release is live, so a pruning fault is reported in the JSON receipt
+(`releases_pruned`) instead of failing a verified deployment.
+
+Guardrails: only a directory whose name is a full 40-character Git revision is a candidate; a candidate is skipped when
+it resolves outside the store, so a planted symlink cannot redirect the delete; `.staging-*` directories and plain files
+are never touched; the running release survives even when it is the oldest directory present. `deno task prune:releases`
+applies the same policy by hand for a checkout that predates retention, and `deno task test:vps` carries the retention
+tests inside the verify gate.
+
+Retention is a policy constant (`RELEASE_RETENTION_KEEP = 5`), not a per-invocation flag: rollback only needs recent
+releases, and an operator-facing knob would be tuned ad hoc. The Mac was pruned once under the new policy (47
+releases/391 MB to 5 releases/47 MB) with `.data/current` and the live `git sha` health identity unchanged; the VPS
+prunes on its next `deno task deploy:vps`. The separate duplication in `.codex-worktrees` (about 90,000 TypeScript
+files, mostly `tools/node_modules` materialized per worktree by `scripts/_bootstrap.sh`) is acknowledged and remains
+unaddressed by this decision.
+
 ## Gateway reliability program: finite admission, terminal parity, deadlines, optional analytics - 2026-09-22
 
 A finite process-resource guard now bounds terminal inference routes at 64 active requests and 128 waiting requests with
@@ -82,7 +132,7 @@ Residual obligation: the visible behaviour above was measured against a task-own
 served-release acceptance are distinct: the exact served identities, and the actual client outcomes against them, must
 be recorded in the release handoff, using the served-client probe beside this entry's evidence directory.
 
-### Follow-up: the reminder alone is insufficient, and the semantic recheck - 2026-09-22
+### Follow-up: the reminder alone is insufficient - 2026-09-22
 
 The PR #395 reminder was merged and deployed as `e04f67ff`. The VPS real 16-step run passed, but on the Mac the real
 client stopped at 10 of 16 with final text `step 11 of 16, reading nodes/7b/tally.sql`, exit 0, one completed turn, and
@@ -90,30 +140,50 @@ receipt `591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/cb7c10
 outcome establishes that the reminder alone is insufficient. The original paired reproduction stays recorded as
 historical evidence of the baseline stop, and it must not be recast as proof that the reminder never works.
 
-The replacement contract is one semantic recheck on a successful, text-only stop where mapped executable tools exist,
-`tool_choice` is automatic, the stop carries no refusal, usage is known, and positive output remains. It runs the same
-model with the same tools and effort, adds no wire fields or settings, buffers the recheck, keeps the first stream
-progressive and keeps the original response identity; accepted returned tools are delivered before the terminal event
-and no duplicate recheck text is emitted. The original answer is preserved on a legitimate final answer, on no tools,
-and on advisory failure. The guard skips the recheck for `none`, `required`, or named tool choice, truncation, empty
-output, a refusal, no tools, an unmeasured first-leg usage, a non-finite numeric allowance, and an exhausted known
-budget. A null allowance is neither a skip nor a zero budget: real Codex `high`/`max` traffic omits `max_output_tokens`,
-so no finite original cap was requested and no provider default for those tiers has been measured, which is why
-telemetry keeps that allowance unknown instead of back-filling a fabricated default while the one advisory call still
-proceeds, bounded at 8,192 tokens and reporting no aggregate remaining budget because none is known. When a numeric
-allowance does exist — an explicit caller cap or the measured `none`-tier default — the recheck keeps subtracting the
-first leg's use and takes `min(remaining, 8192)`. Cancellation aborts the extra call, and there is no second admission
-or reservation.
+For part of that day the gateway also carried one semantic recheck on a successful, text-only stop where mapped
+executable tools existed, `tool_choice` was automatic, the stop carried no refusal, usage was known, and positive output
+remained. It ran the same model with the same tools and effort, added no wire fields or settings, buffered the recheck,
+kept the first stream progressive and kept the original response identity; accepted returned tools were delivered before
+the terminal event and no duplicate recheck text was emitted. The original answer was preserved on a legitimate final
+answer, on no tools, and on advisory failure. The guard skipped the recheck for `none`, `required`, or named tool
+choice, truncation, empty output, a refusal, no tools, an unmeasured first-leg usage, a non-finite numeric allowance,
+and an exhausted known budget. A null allowance was neither a skip nor a zero budget: real Codex `high`/`max` traffic
+omits `max_output_tokens`, so no finite original cap was requested and no provider default for those tiers has been
+measured, which is why telemetry kept that allowance unknown instead of back-filling a fabricated default while the one
+advisory call still proceeded, bounded at 8,192 tokens and reporting no aggregate remaining budget because none is
+known. When a numeric allowance did exist, an explicit caller cap or the measured `none`-tier default, the recheck
+subtracted the first leg's use and took `min(remaining, 8192)`. Cancellation aborted the extra call, and there was no
+second admission or reservation. One extra provider request was the cost for an eligible text-only final: input cost and
+latency rose, and the output cap was `min(remaining original allowance, 8192)`. Actual usage from both requests was
+summed; missing fields stayed partial and no cache zeros were invented. Refusal metadata was preserved through provider
+normalization so the guard could observe it; on this route a refusal is also rendered as an answer-bearing content part,
+and the guard skipped the recheck for it.
 
-One extra provider request is the cost for an eligible text-only final: input cost and latency rise, and the output cap
-is `min(remaining original allowance, 8192)`. Actual usage from both requests is summed; missing fields stay partial and
-no cache zeros are invented. Refusal metadata is preserved through provider normalization so the guard can observe it;
-on this route a refusal is also rendered as an answer-bearing content part, and the guard skips the recheck for it.
+### Decision: invisible extra inference is forbidden, and the semantic recheck is retired - 2026-09-22
 
-This is a bounded mitigation, not a guarantee against the model's choice after both passes, and runtime acceptance of
-the new recheck is still pending, so it must not be described as deployed or passed. The regression tests cover
-protocol, usage, budget, and cancellation behaviour; the real 16-step checks are the model-behaviour evidence, not the
-reverse.
+The semantic recheck described above is retired. The user's rule is explicit: invisible inference, or an inference leak,
+is never allowed. A gateway that repeats a caller's task with a hidden appended user prompt is a second generation the
+requesting client never asked for, cannot see, and cannot audit, so it is not a permitted mitigation regardless of its
+effect on premature stops. The implementation was removed from `src/openai.ts` and `src/deepseek_responses.ts`: no
+hidden recheck prompt, no second upstream dispatch, no folding of a second generation's tools into the first response,
+and no combined two-request usage accounting remain. After a successful text-only first response the gateway completes
+with that provider output, and the streamed and buffered single-dispatch regression checks assert exactly one upstream
+provider invocation, the original text, the first call's own measured usage, and one terminal response.
+
+Output-budget availability is not authorization. A positive caller `max_output_tokens`, or a measured provider tier
+default, only bounded the extra request; neither made the extra inference visible or consented. Combined accounting is
+not authorization either: summing both requests' usage truthfully described a second generation that should not have
+happened, and truthful bookkeeping cannot retrofit consent. Extra model work, if it is ever explicitly opted into, must
+be exposed by the requesting client with an attributable, persisted visible record; the gateway must not invent that
+opt-in on the client's behalf.
+
+The previous semantic recheck's historic acceptance receipts do not prove a currently supported behavior: any receipt
+describing a second dispatch, a merged two-request total, or cancellation of a pending recheck records a retired
+operation. The historic failure evidence stays recorded, including the Mac run above, because the retained
+original-request reminder remains an imperfect mitigation. The premature-stop problem is not claimed to be universally
+fixed by this decision, and no client hook or other client-side continuation mechanism is installed by it. The
+deterministic gateway repair is the removal itself; a visible, officially supported client action would be a separate,
+authorized change.
 
 ## App-wide visual language follows the deno-universal-auth reference - 2026-09-22
 

@@ -3,7 +3,7 @@ import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api_k
 import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex.ts";
 import { config } from "../src/config.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { handleResponses } from "../src/openai.ts";
+import { handleResponses } from "../src/responses_handler.ts";
 import { resetProviderHealthThrottleForTest } from "../src/provider_health.ts";
 import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime_config.ts";
 import { METERED_BASE_URL } from "../src/metered.ts";

@@ -20,12 +20,40 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 TOOLS="$ROOT/tools/lint"
 cd "$ROOT" || exit 1
 
+deps_ready_at() {
+  [ -x "$1/node_modules/.bin/eslint" ] && [ -x "$1/node_modules/.bin/prettier" ] && [ -x "$1/node_modules/.bin/knip" ]
+}
+
 deps_ready() {
-  [ -x "$TOOLS/node_modules/.bin/eslint" ] && [ -x "$TOOLS/node_modules/.bin/prettier" ] && [ -x "$TOOLS/node_modules/.bin/knip" ]
+  deps_ready_at "$TOOLS"
+}
+
+# Worktrees share the tracked tooling files, but `node_modules` is gitignored, so
+# every new worktree ran its own ~94 MB install -- the largest single source of
+# duplicate files under `.codex-worktrees`. Reuse the main checkout's install
+# through a symlink when the tooling manifests match byte for byte, and fall
+# back to a local install when they do not (a worktree on a branch that changed
+# the toolchain still installs what its own lockfile pins).
+link_main_checkout_tools() {
+  main=$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2; exit}')
+  [ -n "$main" ] && [ "$main" != "$ROOT" ] || return 1
+  main_tools="$main/tools/lint"
+  deps_ready_at "$main_tools" || return 1
+  for manifest in bun.lock package.json; do
+    [ -f "$TOOLS/$manifest" ] || continue
+    cmp -s "$TOOLS/$manifest" "$main_tools/$manifest" || return 1
+  done
+  ln -s "$main_tools/node_modules" "$TOOLS/node_modules" 2>/dev/null || return 1
+  return 0
 }
 
 ensure_deps() {
   if deps_ready; then
+    return 0
+  fi
+
+  if link_main_checkout_tools && deps_ready; then
+    echo "==> reusing the main checkout's dev dependencies (tools/lint/node_modules is symlinked)"
     return 0
   fi
 
