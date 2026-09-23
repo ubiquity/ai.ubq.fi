@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
-import { extractFollowEntries, followEntryRevision, selectFollowUpdates, type SupervisorSource } from "../src/codex_supervisor.ts";
+import { extractFollowEntries, followEntryRevision, selectFollowUpdates } from "../src/codex_supervisor_follow.ts";
+import type { SupervisorSource } from "../src/codex_supervisor_config.ts";
 import { buildSupervisorBriefPrompt, collectBriefTranscript } from "../src/codex_supervisor_brief.ts";
 import { openSupervisorConnection, setSupervisorWebSocketConstructorForTest, type SupervisorConnection } from "../src/codex_supervisor_transport.ts";
 

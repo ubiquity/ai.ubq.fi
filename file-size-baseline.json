@@ -6,7 +6,6 @@
   "src/codex_account_routing.ts": 1597,
   "src/codex_banked_reset.ts": 2669,
   "src/codex_catalog.ts": 1296,
-  "src/codex_supervisor.ts": 1211,
   "src/codex.ts": 3499,
   "src/harmony/probes.ts": 1160,
   "src/kv_migration.ts": 2490,

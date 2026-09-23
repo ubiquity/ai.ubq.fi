@@ -1,16 +1,9 @@
 import assert from "node:assert/strict";
 
 import handler from "../src/handler.ts";
-import {
-  classifySupervisorState,
-  defaultSupervisorSource,
-  extractFollowEntries,
-  normalizeEpochMs,
-  parseFollowCursor,
-  parseSupervisorConfig,
-  quotaFromRateLimits,
-  sessionFromParts,
-} from "../src/codex_supervisor.ts";
+import { defaultSupervisorSource, normalizeEpochMs, parseSupervisorConfig } from "../src/codex_supervisor_config.ts";
+import { extractFollowEntries, parseFollowCursor } from "../src/codex_supervisor_follow.ts";
+import { classifySupervisorState, quotaFromRateLimits, sessionFromParts } from "../src/codex_supervisor_inventory.ts";
 
 Deno.test("parseSupervisorConfig accepts a valid source list", () => {
   const parsed = parseSupervisorConfig({

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { fetchDeepSeekChatCompletions } from "../src/deepseek.ts";
 import handler from "../src/handler.ts";
-import type { SupervisorSource } from "../src/codex_supervisor.ts";
+import type { SupervisorSource } from "../src/codex_supervisor_config.ts";
 import {
   appendRolloutTailTurn,
   assembleBriefContext,
