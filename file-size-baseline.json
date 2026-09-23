@@ -21,7 +21,6 @@
   "src/sentinel_replay_capture.ts": 2268,
   "tests/admin-auth.test.ts": 1823,
   "tests/codex-account-routing.test.ts": 3812,
-  "tests/codex-auth-cache.test.ts": 4573,
   "tests/codex-banked-reset.test.ts": 3090,
   "tests/embeddings.test.ts": 2812,
   "tests/kv-budget.test.ts": 3165,
