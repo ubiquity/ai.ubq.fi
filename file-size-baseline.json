@@ -3,6 +3,5 @@
   "src/codex_banked_reset.ts": 2669,
   "src/codex.ts": 3499,
   "src/kv_migration.ts": 2490,
-  "src/prompt_cache_scope_experiment.ts": 1721,
   "src/sentinel_replay_capture.ts": 2268
 }
