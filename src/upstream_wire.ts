@@ -830,3 +830,12 @@ export const toDeepSeekUpstreamErrorResponse = async (
     headers,
   });
 };
+
+export const apiKeyQuotaDispatchErrorResponse = (error: ApiKeyQuotaDispatchError): Response =>
+  openaiError(error.status, error.message, error.code, {
+    type: error.errorType,
+    param: null,
+    headers: error.headers,
+  });
+import {} from "./input_normalization.ts";
+import {} from "./chat_stream_translation.ts";

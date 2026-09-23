@@ -61,7 +61,9 @@ import {
   inferenceAdmissionSnapshot,
 } from "./inference_admission.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
-import { handleChatCompletions, handleEmbeddingsJobCreate, handleEmbeddingsJobGet, handleResponses, handleUosEmbeddings } from "./openai.ts";
+import { handleChatCompletions, handleResponses } from "./openai.ts";
+import { handleUosEmbeddings } from "./embeddings_handlers.ts";
+import { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } from "./embeddings_jobs.ts";
 import { getResponseAccountCohortId, getResponseTelemetry, type ResponseTelemetry } from "./openai_telemetry.ts";
 import { handleImages } from "./images.ts";
 import { handleModelCapabilities, handleModels, handlePublicModelCatalog } from "./model_catalog.ts";
@@ -106,12 +108,10 @@ import type { recordSentinelProviderDegradationFromEnvironment } from "./sentine
 
 type ClientAuthResult = Awaited<ReturnType<typeof authenticateClient>>;
 type AuthenticatedClientResult = Extract<ClientAuthResult, { ok: true }>;
-
 type RequestDeliveryInfo = Readonly<{
   completed: Promise<void>;
   downstreamSignal: AbortSignal;
 }>;
-
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
 type BodyOutcome = "drained" | "interrupted" | "failed";
 
