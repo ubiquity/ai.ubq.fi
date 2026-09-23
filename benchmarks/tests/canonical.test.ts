@@ -202,6 +202,35 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
   }
 });
 
+Deno.test("canonical: a stalled transport stops at the task timeout and is classified as timeout", async () => {
+  const { runsRoot } = freshOptions();
+  try {
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+    assert.ok(task, "nav-001 must exist in the benchmark manifest");
+    // A hung provider call that never settles and ignores the run signal: the
+    // configured deadline must still end the run and be reported as a timeout.
+    const stalled: HarmonyTransport = () => new Promise<Response>(() => {});
+    const adapter = createCanonicalAdapter({
+      transport: stalled,
+      configId: "C-fake",
+      name: "C-fake",
+      requiresExternalInference: false,
+    });
+    const { result } = await runOne({ ...task, timeout_ms: 300 }, adapter, {
+      configs: ["C-fake"],
+      taskSelectors: ["nav-001"],
+      runsRoot,
+      tasksDir: TASKS_DIR,
+      fixturesDir: FIXTURES_DIR,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.failure_class, "timeout");
+    assert.match(result.failure_detail ?? "", /timed out after 300ms/);
+  } finally {
+    Deno.removeSync(runsRoot, { recursive: true });
+  }
+});
+
 Deno.test("canonical: the compact surface never exposes experimental broad tools", async () => {
   const { runsRoot } = freshOptions();
   try {

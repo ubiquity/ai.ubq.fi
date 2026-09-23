@@ -380,6 +380,36 @@ Deno.test("harness: whole-run cancellation aborts a stalled injected transport",
   }
 });
 
+Deno.test("harness: a stalled transport that ignores cancellation stops at the run deadline", async () => {
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  // A hung provider socket that never honours the run signal: the harness owns
+  // the deadline, so the run must end without the transport's cooperation.
+  const transport: HarmonyTransport = (_body, options) => {
+    observedSignal = options?.signal;
+    return new Promise<Response>(() => {});
+  };
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const watchdog = new Promise<never>((_resolve, reject) => {
+    timers.push(setTimeout(() => reject(new Error("stalled transport ignored cancellation")), 1000));
+  });
+  timers.push(
+    setTimeout(() => {
+      controller.abort(new DOMException("task deadline", "TimeoutError"));
+    }, 20)
+  );
+  try {
+    const started = Date.now();
+    const outcome = await Promise.race([runReliabilityHarness(baseOptions([], { transport, signal: controller.signal })), watchdog]);
+    assert.equal(observedSignal, controller.signal);
+    assert.equal(outcome.phase, "aborted");
+    assert.equal(outcome.abortedReason, "signal");
+    assert.ok(Date.now() - started < 1000, "the run must stop at the task deadline");
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
+  }
+});
+
 Deno.test("harness: structured mode requests carry deterministically fewer tokens than full mode", async () => {
   const script: ScriptStep[] = [];
   const bigFiles: Record<string, string> = {};
