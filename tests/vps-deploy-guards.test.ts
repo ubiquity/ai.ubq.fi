@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 const OPS_DEPLOY_SOURCE = fileURLToPath(new URL("../ops/deploy.ts", import.meta.url));
+const OPS_RELEASE_RETENTION_SOURCE = fileURLToPath(new URL("../ops/release_retention.ts", import.meta.url));
 const CANONICAL_ROOT_LITERAL = '"/home/codex/repos/ubiquity/ai.ubq.fi"';
 const FIXTURE_PARENT = fileURLToPath(new URL("../.cleanup-evidence/vps-deploy-guards-fixtures", import.meta.url));
 const CHILD_TIMEOUT_MS = 30_000;
@@ -92,6 +93,19 @@ const relocateDeployScript = async (root: string): Promise<string> => {
   return script;
 };
 
+/**
+ * The relocated copy imports `./release_retention.ts` exactly as `ops/deploy.ts`
+ * does, and the deploy child may read only the fixture root, so the real module
+ * must sit beside it. It is copied from the repository source rather than
+ * stubbed, so the fixtures keep exercising the production import chain, and it
+ * needs no relocation of its own: every path it uses is relative to the working
+ * directory.
+ */
+const relocateRetentionModule = async (root: string): Promise<void> => {
+  const source = await Deno.readTextFile(OPS_RELEASE_RETENTION_SOURCE);
+  await Deno.writeTextFile(`${root}/release_retention.ts`, source);
+};
+
 const createFixture = async (options: { branch: string; tracking: "match" | "mismatch" | "missing"; relocate: boolean }): Promise<Fixture> => {
   const hostPath = fixtureHostPath;
   if (hostPath === undefined) throw new Error("fixture capabilities are unavailable");
@@ -107,9 +121,13 @@ const createFixture = async (options: { branch: string; tracking: "match" | "mis
   await runFixtureGit(root, env, ["config", "user.name", FIXTURE_IDENTITY.name]);
   await runFixtureGit(root, env, ["config", "user.email", FIXTURE_IDENTITY.email]);
   const script = options.relocate ? await relocateDeployScript(root) : OPS_DEPLOY_SOURCE;
+  if (options.relocate) await relocateRetentionModule(root);
   await Deno.writeTextFile(`${root}/release.txt`, "fixture release\n");
   await runFixtureGit(root, env, ["add", "--", "release.txt"]);
-  if (options.relocate) await runFixtureGit(root, env, ["add", "--", "deploy.fixture.ts"]);
+  // The relocated script and the module it imports are committed with the
+  // release so the fixture checkout stays tracked-clean for the guard's
+  // `git status --porcelain --untracked-files=no` check.
+  if (options.relocate) await runFixtureGit(root, env, ["add", "--", "deploy.fixture.ts", "release_retention.ts"]);
   await runFixtureGit(root, env, ["commit", "-q", "-m", "fixture release"]);
   const releaseSha = await runFixtureGit(root, env, ["rev-parse", "HEAD"]);
   if (options.tracking === "mismatch") {
