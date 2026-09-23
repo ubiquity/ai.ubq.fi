@@ -12,7 +12,12 @@
 import assert from "node:assert/strict";
 
 const REPO_ROOT = Deno.cwd();
-const SCRATCH_ROOT = await Deno.makeTempDir({ dir: REPO_ROOT, prefix: "m06-sentinel-replay-consumer-" });
+// Scratch lives under .data/, which git, Prettier and ESLint already ignore. A
+// snapshot abandoned by an interrupted run therefore can never be mistaken for
+// source by a repo-wide format, lint or dead-code gate.
+const SCRATCH_PARENT = `${REPO_ROOT}/.data`;
+await Deno.mkdir(SCRATCH_PARENT, { recursive: true });
+const SCRATCH_ROOT = await Deno.makeTempDir({ dir: SCRATCH_PARENT, prefix: "m06-sentinel-replay-consumer-" });
 const CACHE_ROOT = await Deno.makeTempDir({ dir: SCRATCH_ROOT, prefix: "deno-cache-" });
 const SOURCE_ROOT = `${SCRATCH_ROOT}/source`;
 

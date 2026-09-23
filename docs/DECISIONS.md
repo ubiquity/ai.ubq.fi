@@ -6,6 +6,46 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Capture storage is bounded per host with oldest-first eviction - 2026-09-22
+
+The owner authorized capturing private request contents and deleting the oldest capture-owned records when storage
+grows, around a 1 GiB per-host budget. Each host therefore keeps one fixed 1 GiB budget for capture-owned encoded KV
+payload (base64-expanded ciphertext chunks plus metadata/status/dedupe/index row overhead) plus in-flight charges, with
+a hard record-count bound. **Durable per-capture accounting rows are the source of truth** and the ledger is derived
+cached state: every mutation (admit, publish, revoke, release, evict, expire, status admit/prune) is one `kv.atomic()`
+commit that checks both the row's and the ledger's exact versionstamp and writes both, so no ledger delta can be applied
+apart from the row change it describes. Accounting rows are timestamp-first keyed (the oldest-first index), carry no KV
+TTL, and stop existing only through the atomic commit that deletes them and decrements the ledger.
+
+Admission reserves in durable KV before any chunk is written; chunks are staged in bounded batches with a fence-advance
+commit before each batch, and publish transitions `reserved -> stored` together with the manifest, dedupe, request
+status, incident evidence and ledger. A revoked or expired row cannot publish, and a refused admission is skipped with a
+visible `storage_full` status instead of storing unaccounted data. Eviction claims a victim by CAS before deleting
+anything, releases the charge only once its chunk prefix is provably empty, and CAS-deletes the dedupe row only when it
+still references that victim's manifest key. TTL expiry is a separate reclamation path reporting `expired`/
+`payload_expired` with no `evicted_*` increment. Capture-owned status and tombstone rows are bounded by a fixed 64 MiB
+reserve inside the 1 GiB (payload admissions may use at most `budget - 64 MiB`) and a 50,000-row bound, pruned
+oldest-first; a pruned lookup reports the distinct `status_not_retained` code rather than inventing a status.
+Pre-existing captures are counted by a resumable bootstrap that sweeps every capture-owned prefix, counts scanned
+entries and fails closed on a corrupt in-scope row or an unreadable ledger, never assuming zero.
+
+The budget deliberately does not bound the shared SQLite database, its WAL, reusable allocated pages, other namespaces,
+the incident index namespace in `src/sentinel_incident_outbox.ts` (separate incident bookkeeping whose capture reference
+rows are TTL-bound to evidence expiry), or auth/quota/usage state, and eviction never touches them. Host text logs are
+separate: the Mac gateway's launchd `mac.stdout.log`/`mac.stderr.log` sizes are reported stat-only as `null` when
+unmeasured, with an independent 1 GiB warning, and no rotation or truncation is performed by this feature. The 32 MiB
+request and 4 MiB/4,096-chunk/8-attempt trace ceilings are unchanged; one derived limit module now feeds serialization,
+encryption, export/decode and the offline reader so the previous mismatched 256 KiB metadata cap and reader bound cannot
+disagree. The admin error-history panel shows usage, cap, eviction and skip notices from the existing capture-retention
+status.
+
+Reversal risk: reverting to unbounded growth, counting raw ciphertext instead of the encoded payload, publishing a
+manifest before its budget transition, letting an expired lease free budget while an unfenced writer can still append
+chunks, making the ledger authoritative instead of the rows, applying a ledger delta in a commit separate from its row
+change, releasing a charge before the chunk prefix is provably empty, evicting without a claim CAS, or letting
+capture-owned status metadata grow without bound would each restore silent unbounded growth, double-charge capacity or
+lose accounting.
+
 ## Gateway reliability program: finite admission, terminal parity, deadlines, optional analytics - 2026-09-22
 
 A finite process-resource guard now bounds terminal inference routes at 64 active requests and 128 waiting requests with

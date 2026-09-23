@@ -1,5 +1,7 @@
 import { getKv } from "./kv.ts";
 import { json, openaiError } from "./http.ts";
+import { SENTINEL_REPLAY_BUDGET_BYTES } from "./sentinel_replay_limits.ts";
+import { runSentinelReplayRetentionMaintenance, type SentinelReplayRetentionStatus } from "./sentinel_replay_retention.ts";
 
 export const ADMIN_ERROR_LOG_PREFIX = ["uos_ai", "admin_error_log", "v1"] as const;
 export const ADMIN_ERROR_LOG_TTL_MS = 7 * 24 * 60 * 60_000;
@@ -115,12 +117,82 @@ const isLegacyInterruptedMissingSseTerminal = (record: AdminErrorLogRecord): boo
   record.git_sha !== null &&
   LEGACY_INTERRUPTED_MISSING_SSE_TERMINAL_GIT_SHAS.has(record.git_sha);
 
-export type AdminErrorHistory = Readonly<{
+/** Stat-only observability for host text logs; content is never read. */
+export type AdminLogFileSizes = Readonly<{
+  scope: "host_text_logs";
+  platform: string;
+  files: readonly { path: string; bytes: number | null }[];
+  total_bytes: number | null;
+  warning: boolean;
+}>;
+
+/** The bounded history scan: exactly one list over the error-log prefix. */
+export type AdminErrorHistoryScan = Readonly<{
   data: AdminErrorLogRecord[];
   five_xx_buckets: { bucket_start_at_ms: number; count: number }[];
 }>;
 
-export const listAdminErrorHistory = async (limit = DEFAULT_LIMIT, kvOverride?: Deno.Kv | null): Promise<AdminErrorHistory> => {
+/** The full admin payload: the bounded scan plus the independent retention and host-text-log scopes. */
+export type AdminErrorHistory = Readonly<
+  AdminErrorHistoryScan & {
+    retention: SentinelReplayRetentionStatus;
+    log_files: AdminLogFileSizes;
+  }
+>;
+
+const MAC_TEXT_LOG_PATHS = ["/Users/nv/repos/ubiquity/ai.ubq.fi/.data/mac.stdout.log", "/Users/nv/repos/ubiquity/ai.ubq.fi/.data/mac.stderr.log"] as const;
+
+const unavailableRetention = (): SentinelReplayRetentionStatus => ({
+  state: "unavailable",
+  scope: "capture_owned_kv_payload",
+  budget_bytes: null,
+  stored_bytes: null,
+  reserved_bytes: null,
+  records: null,
+  metadata_bytes: null,
+  status_records: null,
+  evicted_records: null,
+  evicted_bytes: null,
+  expired_records: null,
+  last_eviction_at_ms: null,
+  last_warning_at_ms: null,
+  over_budget: false,
+  near_capacity: false,
+  accounting_complete: false,
+  accounting_error: "unavailable",
+  skipped_reason: null,
+});
+
+const readAdminLogFileSizes = async (): Promise<AdminLogFileSizes> => {
+  const paths = Deno.build.os === "darwin" ? MAC_TEXT_LOG_PATHS : [];
+  const files: { path: string; bytes: number | null }[] = [];
+  // No measured paths (e.g. journald on Linux) stays unknown, never zero.
+  let total: number | null = paths.length === 0 ? null : 0;
+  for (const path of paths) {
+    try {
+      files.push({ path, bytes: (await Deno.stat(path)).size });
+      if (total !== null) total += files[files.length - 1].bytes ?? 0;
+    } catch {
+      files.push({ path, bytes: null });
+      total = null;
+    }
+  }
+  return {
+    scope: "host_text_logs",
+    platform: Deno.build.os,
+    files,
+    total_bytes: total,
+    warning: total !== null && total >= SENTINEL_REPLAY_BUDGET_BYTES,
+  };
+};
+
+/**
+ * Scan the bounded error history once. This intentionally performs exactly ONE
+ * `kv.list` so a page render cannot turn into an unbounded storage walk; the
+ * capture-retention status is composed by the HTTP handler instead of being
+ * collected here.
+ */
+export const listAdminErrorHistory = async (limit = DEFAULT_LIMIT, kvOverride?: Deno.Kv | null): Promise<AdminErrorHistoryScan> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return { data: [], five_xx_buckets: [] };
   const boundedLimit = Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit)));
@@ -157,5 +229,12 @@ export const handleAdminErrors = async (req: Request): Promise<Response> => {
   }
   const kv = await getKv();
   if (!kv) return openaiError(503, "Error history storage is unavailable", "server_error");
-  return json(200, { object: "list", ...(await listAdminErrorHistory(limit, kv)) });
+  const history = await listAdminErrorHistory(limit, kv);
+  // One bounded maintenance pass keeps the reported capture usage current and
+  // lets cleanup continue without a background daemon. It runs here, after the
+  // single bounded history scan, so it can never widen that scan.
+  const retention = await runSentinelReplayRetentionMaintenance(kv, { now_ms: Date.now() }).catch(() => unavailableRetention());
+  const logFiles = await readAdminLogFileSizes();
+  const payload: AdminErrorHistory & { object: "list" } = { object: "list", ...history, retention, log_files: logFiles };
+  return json(200, payload);
 };

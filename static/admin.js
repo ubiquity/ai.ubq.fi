@@ -214,6 +214,7 @@ const viewModels = mustGet("view-models");
 const viewSupervisor = mustGet("view-supervisor");
 const errorsBadge = mustGet("errors-badge");
 const errorsUpdated = mustGet("errors-updated");
+const errorsRetention = mustGet("errors-retention");
 const errorsList = mustGet("errors-list");
 
 const modelsWhitelistSave = mustGet("models-whitelist-save");
@@ -7043,12 +7044,69 @@ const setErrorsMessage = (message) => {
   errorsList.appendChild(element);
 };
 
+const formatRetentionBytes = (bytes) => {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "unknown";
+  const gib = bytes / 1024 ** 3;
+  if (gib >= 1) return `${Math.round(gib * 100) / 100} GiB`;
+  const mib = bytes / 1024 ** 2;
+  if (mib >= 1) return `${Math.round(mib)} MiB`;
+  return `${formatNumber(Math.round(bytes / 1024))} KiB`;
+};
+
+/**
+ * Plain, persistent capture-retention status. Two scopes are labelled separately:
+ * the capture-owned KV payload budget, and host text logs which are only sized.
+ * The log scope renders independently, so a capture-accounting failure never
+ * hides a text-log warning.
+ */
+const retentionSkipReasonText = (reason) => {
+  if (reason === "storage_full") return "not enough space after removing the oldest recordings";
+  if (reason === "storage_accounting_in_progress") return "storage accounting is still catching up";
+  return "storage is temporarily unavailable";
+};
+
+const renderErrorsRetention = (payload) => {
+  const parts = [];
+  const retention = payload?.retention;
+  if (retention && retention.state === "ok") {
+    const used = (retention.stored_bytes ?? 0) + (retention.reserved_bytes ?? 0);
+    parts.push(
+      `Capture storage ${formatRetentionBytes(used)} of ${formatRetentionBytes(retention.budget_bytes)} · ${
+        formatNumber(retention.records ?? 0)
+      } recordings`,
+    );
+    if (typeof retention.evicted_records === "number" && retention.evicted_records > 0) {
+      parts.push("Oldest recordings were removed to keep new ones within the 1 GiB limit");
+    } else if (retention.near_capacity) {
+      parts.push("Approaching the storage limit");
+    }
+    if (typeof retention.skipped_reason === "string" && retention.skipped_reason) {
+      parts.push(`Newest recording skipped: ${retentionSkipReasonText(retention.skipped_reason)}`);
+    }
+  } else {
+    parts.push("Capture storage usage unavailable");
+  }
+  const logs = payload?.log_files;
+  if (logs) {
+    if (typeof logs.total_bytes === "number") {
+      parts.push(`Gateway text logs ${formatRetentionBytes(logs.total_bytes)}`);
+    } else if (Array.isArray(logs.files) && logs.files.length === 0) {
+      parts.push("Gateway text-log sizing not applicable on this host (journald logs are separate)");
+    } else {
+      parts.push("Gateway text log sizes unavailable");
+    }
+    if (logs.warning) parts.push("Text logs reached 1 GiB; rotation is separate");
+  }
+  errorsRetention.textContent = `${parts.join(" · ")}.`;
+};
+
 const invalidateAdminErrors = (message) => {
   errorsLoadId += 1;
   errorsLoading = false;
   errorsLoadedAt = 0;
   setBadge(errorsBadge, "unknown", "Not loaded");
   errorsUpdated.textContent = "";
+  errorsRetention.textContent = "Capture storage status unavailable.";
   setErrorsMessage(message);
 };
 
@@ -7106,6 +7164,7 @@ const loadAdminErrors = async () => {
     if (!res.ok) throw new Error(data?.error?.message || "Error history is unavailable");
     const records = Array.isArray(data?.data) ? data.data : [];
     renderAdminErrors(records);
+    renderErrorsRetention(data);
     errorsLoadedAt = Date.now();
     setBadge(errorsBadge, records.length ? "bad" : "ok", `${records.length} errors`);
     errorsUpdated.textContent = `Updated ${formatDate(errorsLoadedAt)}`;

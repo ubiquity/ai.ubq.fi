@@ -254,6 +254,81 @@ v2 belong to this gateway source: an older external decoder does not automatical
 and the fixed consumer is part of the matching gateway source. Older version-2 plaintext and version-1 traces still
 decode here, and the default time-window and `incident_id` export contracts are unchanged.
 
+### Bounded growth and retention
+
+Each host keeps one fixed **1 GiB budget** for capture-owned retained data: the encoded KV payload this feature owns
+(base64-expanded ciphertext chunks plus metadata, status, dedupe and index row overhead) and in-progress reservations. A
+hard record-count bound also applies. The budget is not a bound on the shared SQLite database, its WAL, the reusable
+allocated pages, or any other namespace; the admin status labels its scope explicitly. The 32 MiB request and 4 MiB
+trace ceilings are unchanged and now share one derived set of constants across serialization, encryption, export/decode
+and the offline reader, so one allowed capture cannot be accepted by one layer and rejected by another.
+
+**Durable accounting rows are the source of truth, not the ledger.** Every capture writes one durable row under
+`["uos_ai","sentinel_replay","v1","accounting", captured_at_ms, capture_id]`; the timestamp-first key order _is_ the
+oldest-first index, so there is no second index namespace. Rows carry no KV TTL: a row stops existing only through one
+atomic commit that deletes it and decrements the ledger in the same operation. The ledger under
+`["uos_ai","sentinel_replay","v1","budget"]` is derived cached state. Every accounting mutation — admit, publish,
+revoke, release, evict, expire and status admit/prune — is one `kv.atomic()` commit that checks the exact versionstamp
+of both the row it mutates and the ledger, and writes both, so a ledger delta is never applied apart from the row change
+it describes. The state machine is `reserved -> stored -> (evicted | expired)` and `reserved -> revoked -> released`.
+
+Admission writes the row as `reserved` and increments `reserved_bytes` in the same commit, before any chunk is written.
+Chunks are staged in bounded batches of 32: **before each batch** one atomic commit re-checks the row's versionstamp and
+requires `state=reserved`, this writer's fence and an unexpired lease, incrementing `stage`. Publish then transitions
+`reserved -> stored` and commits the manifest, dedupe, request status, incident evidence, the actual charge and the
+ledger transition together, verifying in that commit that the row is still reserved at the writer's fence, unexpired,
+that the actual charge fits the reserved bound and that the payload budget holds. A reaper revoking the row increments
+the fence, so a paused writer that resumes can never advance again and can never publish.
+
+**Cleanup is fenced and release is conditional.** Revoke sets `state=revoked`, increments the fence and leaves the
+charge held; chunks are then deleted in bounded passes (512 per pass) and the charge is released only when a fresh
+listing over the chunk prefix returns zero entries — the release commit deletes the row and subtracts `reserved_bytes`
+together. A partial deletion leaves the row revoked and charged for a later pass. Eviction is exactly-once: a caller
+must win a CAS that moves `stored -> evicting` at the row's exact versionstamp before it may touch anything, so a loser
+cannot delete a victim another caller claimed. Only once the chunk prefix is empty does the winner commit row deletion
+with `stored_bytes-=`, `records-=` and `evicted_bytes`/`evicted_records`/`last_eviction_at_ms`. Dedupe deletion is a CAS
+against the exact dedupe row proven to still reference that victim's manifest key, so evicting old capture A can never
+delete a newer capture B that shares a fingerprint. A failed final commit leaves the victim `evicting` with its charge
+held, and a later pass resumes it.
+
+**TTL expiry is reclaimed, not evicted.** Because accounting rows outlive the payload TTL, a maintenance pass selects
+rows with `expires_at_ms <= now` and `state=stored`, claims them, deletes the payload and releases the charge with
+`records-=` and **no** `evicted_*` increment, writing `expired` with reason `payload_expired`. This is what lets a
+restart after TTL expiry reclaim capacity instead of facing a permanently full empty store; `evicted` and `expired`
+counters stay truthful and distinct. If safe bounded cleanup cannot admit the newest capture, it is skipped with a
+visible `storage_full` status instead of growing above budget.
+
+**Bootstrap is resumable, counts every in-scope row and fails closed.** It sweeps every capture-owned prefix that holds
+retained bytes or metadata — accounting rows, payload chunks, dedupe, request status, eviction tombstones and legacy
+reservation rows — counting scanned entries rather than only valid records, and advancing a durable cursor. A corrupt or
+unreadable in-scope row makes accounting incomplete: new admissions are refused with the existing
+`storage_accounting_in_progress` reason and the admin status reports `accounting_complete:false` until a later pass
+resolves it. An invalid row never causes a key to be deleted on a guess: a manifest's key shape and its
+`capture_id`/`fingerprint` are validated before anything derived from it is touched. A ledger whose counters are
+negative, non-integer or inconsistent with the row set is rejected and reported, never silently replaced with an empty
+ledger. Legacy reservation rows are read only to release their charge once, then deleted.
+
+**Status metadata is bounded by a 64 MiB reserve inside the 1 GiB.** Payload admissions may use at most
+`budget - 64 MiB`, so capture-owned request status and eviction/expiry tombstone rows can never starve payload
+retention. Status rows are admitted through a CAS on the ledger's `status_records`/`metadata_bytes` counters under a
+50,000-row bound and the reserve byte bound; when either bound is exceeded the oldest capture-owned status/tombstone
+rows are pruned first and the counters decremented in the same commits. Once pruning has removed any status row, a
+missing lookup reports the distinct `status_not_retained` code instead of inventing `evicted`, `expired` or `ready`.
+
+The Admin error-history panel shows the current capture usage and cap, the eviction notice ("Oldest recordings were
+removed to keep new ones within the 1 GiB limit"), a near-capacity warning and any skipped capture reason from the
+existing plain-text capture-retention line rendered with `role="status"` and `aria-live="polite"`; storage that cannot
+be accounted for is reported as unavailable rather than zero. Host text logs are separate: the Mac
+`.data/mac.stdout.log` and `.data/mac.stderr.log` sizes are reported stat-only, as `null` when unmeasured, with an
+independent warning at 1 GiB, and this feature does not rotate or truncate them.
+
+**Honest scope limits.** The 1 GiB budget bounds only the capture-owned encoded KV payload and its accounting rows. It
+is _not_ a bound on the shared SQLite database file, its WAL, reusable allocated pages, or any other namespace — those
+are outside the budget and are never evicted through it. The incident index rows in `src/sentinel_incident_outbox.ts`
+are separate incident bookkeeping: their capture reference rows are TTL-bound to the evidence expiry and the incident
+index namespace is likewise outside the recording-byte budget, and no unrelated incident history is ever deleted by
+retention.
+
 Export returns the encrypted manifest and chunks. After decryption, the plaintext `body` bytes are the request bytes and
 `upstream` is the recorded trace. The fixed consumer runs from a disposable checkout of `src/`, `scripts/replay.ts` and
 `tests/helpers/` with the trusted dispatch metadata in `.sentinel-replay-input.json`:
