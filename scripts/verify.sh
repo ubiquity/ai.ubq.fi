@@ -23,6 +23,7 @@ run "deno types" deno task types
 run "prettier (format check)" "$TOOLS/node_modules/.bin/prettier" --check .
 run "eslint (template ruleset)" "$TOOLS/node_modules/.bin/eslint" --config "$TOOLS/eslint.config.mjs" .
 run "knip (unused files/exports/deps)" "$TOOLS/node_modules/.bin/knip"
+run "file size ratchet" deno task size:check
 run "deno fmt" deno fmt --check
 run "deno lint" deno lint
 run "deno check" deno task build

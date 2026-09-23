@@ -6,6 +6,24 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Oversized files are capped with a tightening-only baseline - 2026-09-23
+
+`scripts/file-size-ratchet.ts`, run by `sh scripts/verify.sh`, caps source files at 1000 lines and test files at 1500.
+The 31 files already above their caps are grandfathered by a recorded per-file ceiling in `file-size-baseline.json`,
+checked in at the repository root. Their ceilings were recorded with `--init` on 2026-09-23 at HEAD `411b3db04f`.
+
+The check fails whenever the tree and the baseline disagree: a file over its cap with no entry, a recorded file above
+its recorded ceiling, a recorded file that shrank below its recorded ceiling, a recorded file that fell back within its
+cap, or a recorded path with no file left. `deno task size:update` is the only writer; it lowers or drops ceilings and
+refuses to raise one or to record a file that is over its cap. That is stricter than the ESLint `max-lines` rule the
+flat config leaves off: a recorded ceiling tracks the file's real size, so shrinking a 14,296-line file to 12,000 must
+be committed with a 12,000 ceiling before the next change can grow past it. ESLint bulk suppressions are deliberately
+not used, because they count violations rather than lines and would let a file grow from 1,001 to 10,000 unchecked.
+
+Reversal risk: deleting an entry from the baseline re-authorizes unbounded growth for that file while a `verify` run
+would only start failing after the file passes the deleted ceiling, and disabling `size:update` in favor of hand edits
+removes the raise-refusal. The recorded ceilings are intentionally large numbers; do not read them as targets.
+
 ## LithosAI advertises its full context window - 2026-09-23
 
 `LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT` in `src/lithos.ts` is 100, not the 95 percent reserve the other providers
