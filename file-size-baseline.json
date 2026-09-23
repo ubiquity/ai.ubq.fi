@@ -15,7 +15,7 @@
   "src/harmony/probes.ts": 1160,
   "src/kernel_quota_v2.ts": 1735,
   "src/kv_migration.ts": 2490,
-  "src/openai.ts": 12562,
+  "src/openai.ts": 11769,
   "src/paid_fallback_ledger.ts": 1982,
   "src/prompt_cache_analytics.ts": 1167,
   "src/prompt_cache_scope_experiment.ts": 1721,
@@ -27,7 +27,7 @@
   "tests/codex-banked-reset.test.ts": 3090,
   "tests/embeddings.test.ts": 2812,
   "tests/kv-budget.test.ts": 3165,
-  "tests/openai-compat.test.ts": 16755,
+  "tests/openai-compat.test.ts": 16749,
   "tests/passkeys.test.ts": 1691,
   "tests/prompt-cache-scope-experiment.test.ts": 1936
 }

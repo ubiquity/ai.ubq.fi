@@ -8,7 +8,7 @@ import {
   toDeepSeekResponsesPayload,
 } from "../src/deepseek_responses.ts";
 import { createPaidProviderAttemptDeadline, createStreamFirstEventDeadline, createStreamSemanticDeadline } from "../src/inference_deadline.ts";
-import { isAnswerBearingCompletion } from "../src/openai.ts";
+import { isAnswerBearingCompletion } from "../src/upstream_wire.ts";
 
 /**
  * Terminal and deadline parity for the DeepSeek Responses adapter (module
