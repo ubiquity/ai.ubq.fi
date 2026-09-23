@@ -2,6 +2,5 @@
   "src/admin.ts": 2859,
   "src/codex_banked_reset.ts": 2669,
   "src/codex.ts": 3499,
-  "src/kv_migration.ts": 2490,
   "src/sentinel_replay_capture.ts": 2268
 }
