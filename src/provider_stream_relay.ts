@@ -1,12 +1,9 @@
 // Provider stream relay, extracted from src/openai.ts.
 
 import { type DeepSeekStreamFrame } from "./deepseek_stream.ts";
-import {
-  createDeepSeekResponsesStreamTranslator,
-  type ChatOnlyResponsesProfile,
-  type DeepSeekResponsesEcho,
-  encodeResponsesEvent,
-} from "./deepseek_responses.ts";
+import { type ChatOnlyResponsesProfile } from "./deepseek_responses.ts";
+import { type DeepSeekResponsesEcho } from "./deepseek_responses_payload.ts";
+import { createDeepSeekResponsesStreamTranslator, encodeResponsesEvent } from "./deepseek_responses_stream.ts";
 import {
   ResponseStreamTerminalType,
   UsageContext,

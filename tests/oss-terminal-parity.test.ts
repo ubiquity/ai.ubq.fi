@@ -2,12 +2,9 @@ import assert from "node:assert/strict";
 
 import { normalizeDeepSeekChatCompletion } from "../src/deepseek.ts";
 import { iterateDeepSeekChatCompletionStream } from "../src/deepseek_stream.ts";
-import {
-  createDeepSeekResponsesStreamTranslator,
-  type DeepSeekResponsesEcho,
-  toDeepSeekResponsesChatBody,
-  toDeepSeekResponsesPayload,
-} from "../src/deepseek_responses.ts";
+import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../src/deepseek_responses_payload.ts";
+import { createDeepSeekResponsesStreamTranslator } from "../src/deepseek_responses_stream.ts";
+import { toDeepSeekResponsesChatBody } from "../src/deepseek_chat_projection.ts";
 import { createPaidProviderAttemptDeadline, createStreamFirstEventDeadline, createStreamSemanticDeadline } from "../src/inference_deadline.ts";
 import { isAnswerBearingCompletion } from "../src/upstream_wire.ts";
 
