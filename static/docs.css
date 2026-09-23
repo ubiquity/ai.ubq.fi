@@ -36,6 +36,18 @@ body[data-page="docs"] [data-docs-layout] > [data-card] {
   grid-column: auto;
 }
 
+body[data-page="docs"] [data-docs-status] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 body[data-page="docs"] a[data-button] svg {
   flex: 0 0 auto;
   width: 18px;

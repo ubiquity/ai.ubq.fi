@@ -2,6 +2,7 @@ import "./network.js";
 
 const contentEl = document.querySelector("[data-docs-content]");
 const tocEl = document.querySelector("[data-docs-toc]");
+const statusEl = document.querySelector("[data-docs-status]");
 const source = contentEl?.dataset.docsSource;
 
 const copyIcon =
@@ -248,11 +249,13 @@ const setDocsState = (state) => {
   if (state === "ready") {
     delete contentEl.dataset.docsState;
     contentEl.removeAttribute("aria-busy");
+    if (statusEl) statusEl.textContent = "";
     return;
   }
   contentEl.dataset.docsState = state;
   if (state === "loading") {
     contentEl.setAttribute("aria-busy", "true");
+    if (statusEl) statusEl.textContent = "Loading docs…";
   } else {
     contentEl.removeAttribute("aria-busy");
   }
@@ -261,6 +264,7 @@ const setDocsState = (state) => {
 const renderDocsError = (message) => {
   if (!contentEl) return;
   contentEl.innerHTML = `<p data-docs-error>${errorIcon}<span>${escapeHtml(message)}</span></p>`;
+  if (statusEl) statusEl.textContent = message;
   setDocsState("error");
 };
 
@@ -270,6 +274,7 @@ const loadDocs = async () => {
     renderDocsError("Missing docs source.");
     return;
   }
+  setDocsState("loading");
   try {
     const res = await fetch(source, { cache: "no-store" });
     if (!res.ok) {

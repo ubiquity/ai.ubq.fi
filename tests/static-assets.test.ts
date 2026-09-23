@@ -16,7 +16,9 @@ import chatScript from "../static/chat.js" with { type: "text" };
 import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
 import contactHtml from "../static/contact.html" with { type: "text" };
 import developersHtml from "../static/developers.html" with { type: "text" };
+import docsCss from "../static/docs.css" with { type: "text" };
 import docsHtml from "../static/docs.html" with { type: "text" };
+import docsScript from "../static/docs.js" with { type: "text" };
 import indexHtml from "../static/index.html" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
 import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
@@ -88,6 +90,15 @@ Deno.test("chat response stats use one conversation bar below the composer", () 
   assert.match(chatCss, /\[data-chat-stats\]\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
   assert.doesNotMatch(chatCss, /\[data-chat-stats\]\s*\{[^}]*(?:overflow:\s*hidden|white-space:\s*nowrap)/s);
   assert.doesNotMatch(chatCss, /\[data-message-stats\]/);
+});
+
+Deno.test("docs live status announcements are scoped to dedicated status region", () => {
+  assert.equal((docsHtml.match(/\bdata-docs-status\b/g) ?? []).length, 1);
+  assert.match(docsHtml, /<div data-docs-status role="status" aria-live="polite">Loading docs…<\/div>/);
+  assert.doesNotMatch(docsHtml, /data-docs-content[^>]*aria-live/);
+  assert.match(docsScript, /const statusEl = document\.querySelector\("\[data-docs-status\]"\);/);
+  assert.match(docsScript, /if \(statusEl\) statusEl\.textContent = "";/);
+  assert.match(docsCss, /body\[data-page="docs"\] \[data-docs-status\]\s*\{[^}]*position:\s*absolute;/s);
 });
 
 Deno.test("chat falls back to the loopback development principal without a token", () => {
