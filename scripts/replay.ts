@@ -45,7 +45,7 @@ import {
 } from "../src/deepseek.ts";
 import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/lithos.ts";
 import { fetchMeteredResponses, METERED_BASE_URL } from "../src/metered.ts";
-import { collectBufferedResponses } from "../src/openai.ts";
+import { collectBufferedResponses } from "../src/responses_buffered.ts";
 import { isAnswerBearingCompletion } from "../src/upstream_wire.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES } from "../src/request.ts";
 import {

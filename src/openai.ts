@@ -82,21 +82,16 @@ import { readJsonBody } from "./request.ts";
 import {
   type PreflightedResponsesStream,
   preflightResponsesStream,
-  readResponsesStream,
   ResponsesStreamError,
   type ResponsesStreamEvent,
-  type ResponsesStreamFailureKind,
   type ResponsesStreamIterator,
   withSseKeepalive,
 } from "./responses_stream.ts";
 import {
   deriveRemovedProviderSessionId,
-  fetchRemovedProviderResponses,
   isEligibleRemovedProviderModel,
   readRemovedProviderApiKey,
   removedProviderModelFromEvent,
-  removedProviderTaskTypeFromResponse,
-  stripRemovedProviderMetadata,
 } from "./removed_provider.ts";
 import {
   claimRemovedProviderEarlyRecoveryProbe,
@@ -109,15 +104,11 @@ import {
 } from "./removed_provider_circuit.ts";
 import {} from "./removed_provider_telemetry.ts";
 import {
-  appendResponsesPrecommitEvent,
   createOwnedResponsesStream,
   isGatewayFailoverWarningItem,
   isSyntheticResponsesFailureEvent,
-  type OwnedResponsesStreamFailureDetails,
   type PreparedResponsesStream,
   prepareResponsesStreamForCommit,
-  responseEventFromValue,
-  responseIdFromEvents,
 } from "./responses_failover_stream.ts";
 import {
   type PaidFallbackReservation,
@@ -144,38 +135,6 @@ import { fetchSurplusModels, fetchSurplusResponses, readSurplusApiKey, SURPLUS_M
 import { loadDebugRoutingConfig } from "./debug_routing.ts";
 import type {} from "./sentinel_upstream_capture.ts";
 
-const temporaryFreeSurplusCapabilityError = (model: string, body: Record<string, unknown>): Response | null =>
-  isTemporaryFreeSurplusModel(model) && Array.isArray(body.tools) && body.tools.length > 0
-    ? openaiError(400, `The model '${model}' does not support tools through this gateway.`, "unsupported_model_capability", { param: "tools" })
-    : null;
-
-export const getDefaultModel = async (): Promise<string | null> => {
-  const runtime = await loadRuntimeConfig();
-  return runtime?.default_model ?? getCodexModelsSnapshotDefaultModel(runtime?.codex_models ?? null);
-};
-
-export const downstreamSignalFor = (request: Request, context?: UsageContext): AbortSignal => context?.downstreamSignal ?? request.signal;
-
-const inferenceSignal = (request: Request, context?: UsageContext): AbortSignal => createInferenceSignal(downstreamSignalFor(request, context));
-
-/**
- * Internal test seam for exercising the public OpenAI handlers through the
- * same guarded banked-reset flow. It has no request-schema or runtime-config
- * surface, and remains unset in production.
- */
-type CodexBankedResetOptionsForTest = NonNullable<Parameters<typeof fetchCodexResponses>[1]>["bankedReset"];
-let codexBankedResetOptionsForTest: CodexBankedResetOptionsForTest | null = null;
-
-export const setCodexBankedResetOptionsForTest = (options: CodexBankedResetOptionsForTest | null): void => {
-  codexBankedResetOptionsForTest = options;
-};
-
-const defaultModelUnavailableError = (): Response =>
-  openaiError(503, "Default model is unavailable: no configured default model or Codex model snapshot.", "server_error");
-
-const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
-  return (await loadRuntimeConfig())?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
-};
 import {
   ActiveTransitionReason,
   InferenceFallbackReason,
@@ -252,842 +211,7 @@ import {
   recordResponsesTerminal,
   recordSuccessfulChatCompletion,
   translatedChatOutputObserved,
-  withAccumulatedResponseItems,
-  withAccumulatedResponseRefusal,
-  withAccumulatedResponseText,
 } from "./chat_stream_translation.ts";
-type ResponsesAttemptTrigger =
-  | "http_4xx"
-  | "http_5xx"
-  | "http_error"
-  | "missing_body"
-  | "malformed_event"
-  | "event_too_large"
-  | "premature_eof"
-  | "semantic_timeout"
-  | "terminal_failure"
-  | "empty_upstream_completion"
-  | "read_error"
-  | "invalid_model";
-
-type PreparedResponsesAttempt = Readonly<{
-  provider: UpstreamProvider;
-  response: Response;
-  prepared: PreparedResponsesStream;
-  responseId: string | null;
-  selectedModel: string | null;
-  taskType: string | null;
-  signal: AbortSignal;
-  abort: (reason?: unknown) => void;
-  clearDeadline: () => void;
-}>;
-
-type FailedResponsesAttempt = Readonly<{
-  provider: UpstreamProvider;
-  response: Response;
-  trigger: ResponsesAttemptTrigger;
-  terminal?: ResponsesStreamEvent | null;
-  signal: AbortSignal;
-  clearDeadline: () => void;
-}>;
-
-type ResponsesAttemptResult = { kind: "ready"; attempt: PreparedResponsesAttempt } | { kind: "failed"; attempt: FailedResponsesAttempt };
-
-const isEligibleResponsesAttemptStatus = (response: Response): boolean => response.status >= 500;
-
-/**
- * Classifies a non-2xx upstream response: a client 4xx is an HTTP failure, not
- * a stream read fault, and every other non-5xx status is a generic HTTP error.
- * `primaryResponsesAttemptTrigger` keeps the separate 504 semantic timeout.
- */
-const responsesHttpErrorTrigger = (status: number): "http_4xx" | "http_5xx" | "http_error" => {
-  if (status >= 500) return "http_5xx";
-  if (status >= 400) return "http_4xx";
-  return "http_error";
-};
-
-const triggerForResponsesError = (error: unknown, signal: AbortSignal): ResponsesAttemptTrigger => {
-  if (signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError") {
-    return "semantic_timeout";
-  }
-  if (error instanceof ResponsesStreamError) {
-    if (error.kind === "event_too_large") return "event_too_large";
-    if (error.kind === "malformed_event") return "malformed_event";
-    if (error.kind === "premature_eof") return "premature_eof";
-    if (error.kind === "inactivity_timeout") return "semantic_timeout";
-  }
-  return "read_error";
-};
-
-const failureKindForResponsesAttemptTrigger = (trigger: ResponsesAttemptTrigger): ResponsesStreamFailureKind | null => {
-  switch (trigger) {
-    case "http_4xx":
-      return "upstream_http_4xx";
-    case "http_5xx":
-      return "upstream_http_5xx";
-    case "http_error":
-      return "upstream_http_error";
-    case "premature_eof":
-      return "premature_eof";
-    case "malformed_event":
-      return "malformed_event";
-    case "event_too_large":
-      return "event_too_large";
-    case "semantic_timeout":
-      return "inactivity_timeout";
-    case "empty_upstream_completion":
-      return "empty_upstream_completion";
-    case "read_error":
-    case "missing_body":
-      return "read_error";
-    default:
-      return null;
-  }
-};
-
-const safeFailedAttemptResponse = (response: Response, provider: UpstreamProvider, trigger: ResponsesAttemptTrigger, warnings: readonly string[]): Response => {
-  if (!response.ok) return response;
-  if (trigger === "empty_upstream_completion") {
-    return streamErrorResponse(502, "The upstream completed without visible output.", "empty_upstream_completion", provider, warnings, "server_error", null);
-  }
-  if (trigger === "semantic_timeout") {
-    return streamErrorResponse(
-      504,
-      "Upstream stream exceeded the gateway deadline before semantic output.",
-      "gateway_timeout",
-      provider,
-      warnings,
-      "server_error"
-    );
-  }
-  if (trigger === "missing_body") {
-    return streamErrorResponse(502, "Upstream response missing body.", "server_error", provider, warnings);
-  }
-  return streamErrorResponse(502, "Upstream Responses stream ended unexpectedly.", "server_error", provider, warnings);
-};
-
-const responsesAttemptTriggerFor = (semantic: ResponsesStreamEvent | null, fallback: ResponsesAttemptTrigger): ResponsesAttemptTrigger =>
-  semantic ? "terminal_failure" : fallback;
-
-const responsesTerminalRejectionTrigger = (
-  presemanticRejection: boolean | undefined,
-  semantic: ResponsesStreamEvent | null,
-  terminal: ResponsesStreamEvent
-): ResponsesAttemptTrigger =>
-  presemanticRejection && semantic === null && (terminal.type === "response.failed" || terminal.type === "error") ? "terminal_failure" : "read_error";
-
-const applyResponsesEventIdentity = (
-  event: ResponsesStreamEvent,
-  selectedModel: string | null,
-  taskType: string | null
-): Readonly<{ selectedModel: string | null; taskType: string | null; modelConflict: boolean }> => {
-  let resolvedModel = selectedModel;
-  let resolvedTaskType = taskType;
-  const candidate = removedProviderModelFromEvent(event.value);
-  if (candidate) {
-    if (resolvedModel && resolvedModel !== candidate) return { selectedModel: resolvedModel, taskType: resolvedTaskType, modelConflict: true };
-    resolvedModel = candidate;
-  }
-  if (!resolvedTaskType && isRecord(event.value.response)) {
-    resolvedTaskType = removedProviderTaskTypeFromResponse(event.value.response);
-  }
-  return { selectedModel: resolvedModel, taskType: resolvedTaskType, modelConflict: false };
-};
-
-const resolveBufferedResponsesIdentity = async (
-  iterator: ResponsesStreamIterator,
-  prepared: PreparedResponsesStream
-): Promise<Readonly<{ selectedModel: string | null; taskType: string | null; trigger: ResponsesAttemptTrigger | null }>> => {
-  let selectedModel: string | null = null;
-  let taskType: string | null = null;
-  for (const event of prepared.buffered) {
-    const identity = applyResponsesEventIdentity(event, selectedModel, taskType);
-    if (identity.modelConflict) {
-      await iterator.return("inconsistent model identity").catch(() => {});
-      return { selectedModel, taskType, trigger: responsesAttemptTriggerFor(prepared.semantic, "invalid_model") };
-    }
-    selectedModel = identity.selectedModel;
-    taskType = identity.taskType;
-  }
-  return { selectedModel, taskType, trigger: null };
-};
-
-const extendResponsesIdentityFromStream = async (
-  iterator: ResponsesStreamIterator,
-  prepared: PreparedResponsesStream,
-  options: Readonly<{ usageContext?: UsageContext; requireEligibleModel?: boolean }>,
-  buffered: Readonly<{ selectedModel: string | null; taskType: string | null }>
-): Promise<
-  | Readonly<{ kind: "failed"; trigger: ResponsesAttemptTrigger }>
-  | Readonly<{
-      kind: "discovered";
-      responseId: string | null;
-      bufferedChars: number;
-      terminal: ResponsesStreamEvent | null;
-      selectedModel: string | null;
-      taskType: string | null;
-    }>
-> => {
-  let responseId = responseIdFromEvents(prepared.buffered);
-  let bufferedChars = prepared.bufferedChars;
-  let discoveredTerminal = prepared.terminal;
-  let selectedModel = buffered.selectedModel;
-  let taskType = buffered.taskType;
-  while (options.requireEligibleModel && (!selectedModel || !responseId) && !discoveredTerminal) {
-    const next = await iterator.next();
-    if (next.done) break;
-    recordResponsesEventTelemetry(options.usageContext, next.value);
-    bufferedChars = appendResponsesPrecommitEvent(prepared.buffered, next.value, bufferedChars);
-    const candidateResponseId = responseIdFromEvents([next.value]);
-    if (candidateResponseId && responseId && candidateResponseId !== responseId) {
-      await iterator.return("inconsistent response identity").catch(() => {});
-      return { kind: "failed", trigger: responsesAttemptTriggerFor(prepared.semantic, "malformed_event") };
-    }
-    responseId ??= candidateResponseId;
-    const identity = applyResponsesEventIdentity(next.value, selectedModel, taskType);
-    if (identity.modelConflict) {
-      await iterator.return("inconsistent model identity").catch(() => {});
-      return { kind: "failed", trigger: responsesAttemptTriggerFor(prepared.semantic, "invalid_model") };
-    }
-    selectedModel = identity.selectedModel;
-    taskType = identity.taskType;
-    if (next.value.terminal) discoveredTerminal = next.value;
-  }
-  return { kind: "discovered", responseId, bufferedChars, terminal: discoveredTerminal, selectedModel, taskType };
-};
-
-const rejectFailedResponsesDiscovery = async (
-  iterator: ResponsesStreamIterator,
-  prepared: PreparedResponsesStream,
-  deadline: StreamDeadline,
-  options: Readonly<{ requireEligibleModel?: boolean; rejectFailedTerminal?: boolean }>,
-  discovered: Readonly<{ responseId: string | null; selectedModel: string | null; terminal: ResponsesStreamEvent | null }>
-): Promise<ResponsesAttemptTrigger | null> => {
-  if (
-    options.rejectFailedTerminal &&
-    discovered.terminal &&
-    (discovered.terminal.type === "response.failed" || discovered.terminal.type === "error") &&
-    prepared.semantic === null
-  ) {
-    await iterator.return("failed terminal before release").catch(() => {});
-    return "read_error";
-  }
-  if (options.requireEligibleModel && !prepared.buffered.some((event) => event.type === "response.created")) {
-    await iterator.return("missing response.created").catch(() => {});
-    return responsesAttemptTriggerFor(prepared.semantic, "malformed_event");
-  }
-  if (options.requireEligibleModel && !discovered.responseId) {
-    await iterator.return("missing response id").catch(() => {});
-    return responsesAttemptTriggerFor(prepared.semantic, "malformed_event");
-  }
-  deadline.clear();
-  if (options.requireEligibleModel && (!discovered.selectedModel || !isEligibleRemovedProviderModel(discovered.selectedModel))) {
-    await iterator.return("invalid selected model").catch(() => {});
-    return responsesAttemptTriggerFor(prepared.semantic, "invalid_model");
-  }
-  return null;
-};
-
-const responsesStreamTerminalFailure = async (
-  iterator: ResponsesStreamIterator,
-  prepared: PreparedResponsesStream,
-  deadline: StreamDeadline,
-  options: Readonly<{ rejectFailedTerminal?: boolean; rejectPresemanticFailureTerminal?: boolean }>
-): Promise<Readonly<{ trigger: ResponsesAttemptTrigger; terminal: ResponsesStreamEvent | null }> | null> => {
-  if (prepared.terminal?.type === "response.completed" && prepared.semantic === null) {
-    await iterator.return("empty upstream completion").catch(() => {});
-    return { trigger: "empty_upstream_completion", terminal: prepared.terminal };
-  }
-  if (
-    prepared.terminal &&
-    ((options.rejectFailedTerminal && (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error") && prepared.semantic === null) ||
-      (options.rejectPresemanticFailureTerminal &&
-        prepared.semantic === null &&
-        (prepared.terminal.type === "response.failed" || prepared.terminal.type === "error")))
-  ) {
-    deadline.clear();
-    return {
-      trigger: responsesTerminalRejectionTrigger(options.rejectPresemanticFailureTerminal, prepared.semantic, prepared.terminal),
-      terminal: null,
-    };
-  }
-  return null;
-};
-
-const finalizePreparedResponsesAttempt = (
-  prepared: PreparedResponsesStream,
-  iterator: ResponsesStreamIterator,
-  discovered: Readonly<{
-    responseId: string | null;
-    bufferedChars: number;
-    terminal: ResponsesStreamEvent | null;
-    selectedModel: string | null;
-    taskType: string | null;
-  }>,
-  provider: UpstreamProvider,
-  response: Response,
-  deadline: StreamDeadline,
-  options: Readonly<{ requireEligibleModel?: boolean }>
-): ResponsesAttemptResult => {
-  const sanitizedBuffered = options.requireEligibleModel
-    ? prepared.buffered.map((event) => {
-        const value = stripRemovedProviderMetadata(event.value);
-        return value === event.value ? event : responseEventFromValue(value);
-      })
-    : prepared.buffered;
-  const sanitizedTerminal = discovered.terminal ? (sanitizedBuffered[prepared.buffered.indexOf(discovered.terminal)] ?? discovered.terminal) : null;
-  const sanitizedIterator = options.requireEligibleModel
-    ? (async function* (): ResponsesStreamIterator {
-        for await (const event of iterator) {
-          const value = stripRemovedProviderMetadata(event.value);
-          yield value === event.value ? event : responseEventFromValue(value);
-        }
-        return undefined;
-      })()
-    : iterator;
-  return {
-    kind: "ready",
-    attempt: {
-      provider,
-      response,
-      prepared: {
-        ...prepared,
-        iterator: sanitizedIterator,
-        buffered: sanitizedBuffered,
-        bufferedChars: discovered.bufferedChars,
-        terminal: sanitizedTerminal,
-      },
-      responseId: discovered.responseId,
-      selectedModel: discovered.selectedModel,
-      taskType: discovered.taskType,
-      signal: deadline.signal,
-      abort: deadline.abort,
-      clearDeadline: deadline.clear,
-    },
-  };
-};
-
-const prepareResponsesAttempt = async (
-  response: Response,
-  provider: UpstreamProvider,
-  deadline: StreamDeadline,
-  requestSignal: AbortSignal,
-  warnings: readonly string[],
-  options: Readonly<{
-    usageContext?: UsageContext;
-    requireEligibleModel?: boolean;
-    rejectFailedTerminal?: boolean;
-    rejectPresemanticFailureTerminal?: boolean;
-    releaseOnProgress?: boolean;
-  }> = {}
-): Promise<ResponsesAttemptResult> => {
-  const fail = (trigger: ResponsesAttemptTrigger, failedResponse = response, terminal: ResponsesStreamEvent | null = null): ResponsesAttemptResult => {
-    deadline.clear();
-    return {
-      kind: "failed",
-      attempt: {
-        provider,
-        response: safeFailedAttemptResponse(failedResponse, provider, trigger, warnings),
-        trigger,
-        terminal,
-        signal: deadline.signal,
-        clearDeadline: deadline.clear,
-      },
-    };
-  };
-  if (!response.ok) {
-    const trigger = responsesHttpErrorTrigger(response.status);
-    const normalized = await toOpenAiUpstreamErrorResponse(response, provider, deadline.signal);
-    deadline.clear();
-    return fail(trigger, normalized);
-  }
-  if (!response.body) {
-    deadline.clear();
-    return fail("missing_body");
-  }
-  const iterator = readResponsesStream(response.body, deadline.signal, {
-    firstEventTimeoutMs: Math.ceil(deadline.remainingMs()),
-  });
-  let preparedStream: PreparedResponsesStream | null = null;
-  try {
-    const prepared = await prepareResponsesStreamForCommit(iterator, {
-      onEvent: (event) => {
-        recordFirstUpstreamSseEvent(options.usageContext);
-        recordResponsesEventTelemetry(options.usageContext, event);
-      },
-      releaseOnProgress: options.releaseOnProgress,
-    });
-    preparedStream = prepared;
-    const terminalFailure = await responsesStreamTerminalFailure(iterator, prepared, deadline, options);
-    if (terminalFailure) return fail(terminalFailure.trigger, response, terminalFailure.terminal);
-    const buffered = await resolveBufferedResponsesIdentity(iterator, prepared);
-    if (buffered.trigger) return fail(buffered.trigger);
-    const discovered = await extendResponsesIdentityFromStream(iterator, prepared, options, buffered);
-    if (discovered.kind === "failed") return fail(discovered.trigger);
-    const rejectionTrigger = await rejectFailedResponsesDiscovery(iterator, prepared, deadline, options, discovered);
-    if (rejectionTrigger) return fail(rejectionTrigger);
-    return finalizePreparedResponsesAttempt(prepared, iterator, discovered, provider, response, deadline, options);
-  } catch (error) {
-    await preparedStream?.iterator.return(error).catch(() => {});
-    deadline.clear();
-    if (requestSignal.aborted) throw requestSignal.reason ?? error;
-    return fail(preparedStream?.semantic ? "terminal_failure" : triggerForResponsesError(error, deadline.signal));
-  }
-};
-
-type ResponsesRouteAttempt = Readonly<{
-  routed: RoutedResponsesUpstream;
-  prepared: PreparedResponsesAttempt;
-  lifecycle: MeteredTransportLifecycle;
-}>;
-
-type ResponsesRouteFailure = Readonly<{
-  routed: RoutedResponsesUpstream;
-  failed: FailedResponsesAttempt;
-  lifecycle: MeteredTransportLifecycle;
-}>;
-
-const responseFailureTerminalType = (trigger: ResponsesAttemptTrigger, signal: AbortSignal, downstreamSignal: AbortSignal): ResponseStreamTerminalType => {
-  if (trigger === "semantic_timeout" || isTimeoutFailure(signal.reason, downstreamSignal.reason)) return "deadline";
-  if (downstreamSignal.aborted) return "cancelled";
-  if (signal.aborted) return "deadline";
-  if (trigger === "premature_eof") return "eof";
-  if (trigger === "terminal_failure" || trigger === "empty_upstream_completion") return "response.failed";
-  return "error";
-};
-
-type PrimaryResponsesOptions = Readonly<{
-  model: string;
-  reasoning: string | null;
-  clientWantsStream: boolean;
-  usageContext?: UsageContext;
-  clientVersion?: string | null;
-  requestSignal: AbortSignal;
-  downstreamSignal: AbortSignal;
-  warnings: readonly string[];
-  attemptDeadline: StreamDeadline;
-  fallbackSignal?: AbortSignal;
-  createFallbackDeadline?: () => StreamDeadline;
-  rejectPresemanticFailureTerminal?: boolean;
-  releaseOnProgress?: boolean;
-}>;
-
-const isRetryablePrimaryFetchFailure = (error: unknown): error is CodexError =>
-  error instanceof CodexError && (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable");
-
-const primaryResponsesAttemptTrigger = (status: number): ResponsesAttemptTrigger => {
-  if (status === 504) return "semantic_timeout";
-  return responsesHttpErrorTrigger(status);
-};
-
-const failedPrimaryResponsesFetchOutcome = (error: CodexError, deadline: StreamDeadline): { kind: "failed"; value: ResponsesRouteFailure } => {
-  logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
-  const response = toCodexErrorResponse(error, "chatgpt_codex");
-  const trigger: ResponsesAttemptTrigger = error.code === "gateway_timeout" ? "semantic_timeout" : "read_error";
-  return {
-    kind: "failed",
-    value: {
-      routed: {
-        response,
-        provider: "chatgpt_codex",
-        paidFallback: null,
-        gatewayResponse: false,
-        fallbackReason: null,
-      },
-      lifecycle: createMeteredTransportLifecycle(null),
-      failed: {
-        provider: "chatgpt_codex",
-        response,
-        trigger,
-        signal: deadline.signal,
-        clearDeadline: deadline.clear,
-      },
-    },
-  };
-};
-
-const failedPrimaryResponsesGatewayOutcome = (
-  routed: RoutedResponsesUpstream,
-  lifecycle: MeteredTransportLifecycle,
-  preparationDeadline: StreamDeadline
-): { kind: "failed"; value: ResponsesRouteFailure } => ({
-  kind: "failed",
-  value: {
-    routed,
-    lifecycle,
-    failed: {
-      provider: routed.provider,
-      response: routed.response,
-      trigger: primaryResponsesAttemptTrigger(routed.response.status),
-      signal: preparationDeadline.signal,
-      clearDeadline: preparationDeadline.clear,
-    },
-  },
-});
-
-const preparePrimaryResponsesAttempt = async (
-  routed: RoutedResponsesUpstream,
-  preparationDeadline: StreamDeadline,
-  lifecycle: MeteredTransportLifecycle,
-  options: PrimaryResponsesOptions
-): Promise<ResponsesAttemptResult> => {
-  try {
-    return await prepareResponsesAttempt(
-      routed.response,
-      routed.provider,
-      preparationDeadline,
-      options.requestSignal,
-      [...options.warnings, ...responseWarnings(routed.response)],
-      {
-        usageContext: options.usageContext,
-        rejectPresemanticFailureTerminal: options.rejectPresemanticFailureTerminal,
-        releaseOnProgress: options.releaseOnProgress === true && supportsReasoningProgressRelease(routed.provider),
-      }
-    );
-  } catch (error) {
-    if (options.requestSignal.aborted) {
-      await finalizeAbandonedPrimaryAttempt(routed, lifecycle, {
-        cancelled: classifyPreHeaderFailure(error, options.requestSignal, options.downstreamSignal) === "cancelled",
-      });
-    }
-    throw error;
-  }
-};
-
-const fetchAndPreparePrimaryResponses = async (
-  body: Record<string, unknown>,
-  options: PrimaryResponsesOptions
-): Promise<{ kind: "ready"; value: ResponsesRouteAttempt } | { kind: "failed"; value: ResponsesRouteFailure }> => {
-  const deadline = options.attemptDeadline;
-  let routed: RoutedResponsesUpstream;
-  try {
-    routed = await fetchResponsesWithPaidFallback(body, {
-      model: options.model,
-      route: "responses",
-      stream: options.clientWantsStream,
-      reasoning: options.reasoning,
-      usageContext: options.usageContext,
-      clientVersion: options.clientVersion,
-      signal: deadline.signal,
-      fallbackSignal: options.fallbackSignal,
-    });
-  } catch (error) {
-    deadline.clear();
-    if (options.requestSignal.aborted || error instanceof ApiKeyQuotaDispatchError) throw error;
-    if (!isRetryablePrimaryFetchFailure(error)) throw error;
-    return failedPrimaryResponsesFetchOutcome(error, deadline);
-  }
-  let preparationDeadline = deadline;
-  if (routed.provider !== "chatgpt_codex" && options.createFallbackDeadline) {
-    deadline.clear();
-    preparationDeadline = options.createFallbackDeadline();
-  }
-  const lifecycle = createMeteredTransportLifecycle(
-    routed.paidFallback,
-    routed.provider,
-    routed.paidFallbackProviderRequestId ?? null,
-    routed.paidFallbackBilling ?? null,
-    options.model,
-    routed.providerHealthOnly === true,
-    routed.paidFallbackErrorHealth ?? null
-  );
-  if (routed.gatewayResponse) {
-    preparationDeadline.clear();
-    return failedPrimaryResponsesGatewayOutcome(routed, lifecycle, preparationDeadline);
-  }
-  const prepared = await preparePrimaryResponsesAttempt(routed, preparationDeadline, lifecycle, options);
-  if (prepared.kind === "ready") {
-    return { kind: "ready", value: { routed, prepared: prepared.attempt, lifecycle } };
-  }
-  return { kind: "failed", value: { routed, failed: prepared.attempt, lifecycle } };
-};
-
-const fetchAndPrepareRemovedProviderResponses = async (
-  body: Record<string, unknown>,
-  options: Readonly<{
-    usageContext?: UsageContext;
-    requestSignal: AbortSignal;
-    sessionId: string | null;
-    apiKey: string;
-    attemptDeadline: StreamDeadline;
-  }>
-): Promise<ResponsesAttemptResult> => {
-  const deadline = options.attemptDeadline;
-  recordAttemptedProvider(options.usageContext, "removed_provider");
-  selectRemovedProviderTelemetry(options.usageContext);
-  let response: Response;
-  try {
-    const result = await fetchRemovedProviderResponses(body, {
-      apiKey: options.apiKey,
-      sessionId: options.sessionId,
-      signal: deadline.signal,
-      timing: {
-        onDispatch: () => {
-          recordFirstProviderDispatch(options.usageContext);
-        },
-        onHeaders: () => {
-          recordFirstProviderHeaders(options.usageContext);
-        },
-      },
-      beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("removed_provider") ?? Promise.resolve(undefined),
-    });
-    response = result.response;
-  } catch (error) {
-    deadline.clear();
-    if (error instanceof ApiKeyQuotaDispatchError) throw error;
-    if (options.requestSignal.aborted) throw options.requestSignal.reason ?? error;
-    return {
-      kind: "failed",
-      attempt: {
-        provider: "removed_provider",
-        response: streamErrorResponse(502, "RemovedProvider request failed before response headers were received.", "server_error", "removed_provider", []),
-        trigger: triggerForResponsesError(error, deadline.signal),
-        signal: deadline.signal,
-        clearDeadline: deadline.clear,
-      },
-    };
-  }
-  return await prepareResponsesAttempt(response, "removed_provider", deadline, options.requestSignal, [], {
-    usageContext: options.usageContext,
-    requireEligibleModel: true,
-    rejectFailedTerminal: true,
-  });
-};
-
-const finalizeAbandonedPrimaryAttempt = async (
-  routed: RoutedResponsesUpstream,
-  lifecycle: MeteredTransportLifecycle,
-  options: Readonly<{
-    cancelled?: boolean;
-    failureTrigger?: ResponsesAttemptTrigger;
-  }> = {}
-): Promise<void> => {
-  if (routed.provider === "chatgpt_codex") {
-    const transition = routed.response.ok && !options.cancelled ? markCodexResponseUpstreamError(routed.response) : releaseCodexResponseProbe(routed.response);
-    await transition.catch(() => {});
-  } else if ((routed.provider === "metered" || routed.provider === "surplus") && !routed.gatewayResponse) {
-    if (options.cancelled) lifecycle.cancelled();
-    else if (options.failureTrigger === "http_5xx" || options.failureTrigger === "terminal_failure" || options.failureTrigger === "empty_upstream_completion") {
-      lifecycle.terminal("response.failed");
-    } else lifecycle.ambiguous();
-  }
-};
-
-const selectPrimarySemanticRecoveryTransition = (
-  routed: RoutedResponsesUpstream,
-  circuitProbe: RemovedProviderCircuitProbe,
-  terminalType?: string | null
-): Promise<"none"> => {
-  if (routed.provider !== "chatgpt_codex") return releaseGlobalRemovedProviderProbe(circuitProbe);
-  if (terminalType === "response.failed") return recordRemovedProviderEligibleFailure(circuitProbe);
-  return closeRemovedProviderCircuit(circuitProbe);
-};
-
-const markPrimarySemanticRecovery = (
-  routed: RoutedResponsesUpstream,
-  circuitProbe: RemovedProviderCircuitProbe | null,
-  usageContext?: UsageContext,
-  terminalType?: string | null
-): void => {
-  if (!circuitProbe) return;
-  const transition = selectPrimarySemanticRecoveryTransition(routed, circuitProbe, terminalType);
-  void transition
-    .then((value) => {
-      // The retired circuit module only ever yields "none" today, so the
-      // transition is recorded through the same string-typed helper the
-      // failover path uses. The guard still evaluates the real value.
-      recordRemovedProviderCircuitTransition(usageContext, value);
-    })
-    .catch(() => {});
-};
-
-type BufferedResponsesOptions = Readonly<{
-  warningModel?: string | null;
-  usageContext?: UsageContext;
-  onTerminal?: (event: ResponsesStreamEvent) => void;
-  onEvent?: (event: ResponsesStreamEvent) => void;
-  validateEvent?: (event: ResponsesStreamEvent) => void;
-  onFailure?: (error: unknown, details?: OwnedResponsesStreamFailureDetails) => Response | undefined;
-}>;
-
-type BufferedResponsesAccumulator = {
-  responseId: string | null;
-  refusalText: string;
-  readonly deltaTextParts: Map<string, string>;
-  readonly doneTextParts: Map<string, string>;
-  readonly textPartOrder: string[];
-  readonly outputItems: Record<string, unknown>[];
-};
-
-type BufferedResponsesTerminalOutcome = Readonly<{ kind: "error"; response: Response }> | Readonly<{ kind: "terminal"; response: Record<string, unknown> }>;
-
-// Parsed upstream JSON can put any shape on an index field. Stringify primitives
-// exactly as before, serialize objects explicitly, and otherwise fall back to the
-// same default the absent case uses instead of rendering "[object Object]".
-const formatTextPartIndex = (value: unknown): string => {
-  if (value === null || value === undefined) return "0";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint" || typeof value === "symbol") {
-    return String(value);
-  }
-  if (typeof value === "object") return JSON.stringify(value);
-  return "0";
-};
-
-const textPartKeyFromValue = (value: Record<string, unknown>): string => {
-  const itemId = getString(value.item_id)?.trim();
-  if (itemId) return `item:${itemId}:${formatTextPartIndex(value.content_index)}`;
-  return `output:${formatTextPartIndex(value.output_index)}:${formatTextPartIndex(value.content_index)}`;
-};
-
-const createBufferedResponsesAccumulator = (responseId: string | null): BufferedResponsesAccumulator => ({
-  responseId,
-  refusalText: "",
-  deltaTextParts: new Map<string, string>(),
-  doneTextParts: new Map<string, string>(),
-  textPartOrder: [],
-  outputItems: [],
-});
-
-const rememberBufferedTextPart = (accumulator: BufferedResponsesAccumulator, value: Record<string, unknown>, text: string, done: boolean): void => {
-  if (!text) return;
-  const key = textPartKeyFromValue(value);
-  if (!accumulator.textPartOrder.includes(key)) accumulator.textPartOrder.push(key);
-  if (done) {
-    const deltaText = accumulator.deltaTextParts.get(key) ?? "";
-    // A done event normally repeats the complete text accumulated by its
-    // deltas. Some upstreams instead send a conflicting fragment; retain
-    // the delta text in that case, matching the owned stream reconciler.
-    if (!deltaText || text.startsWith(deltaText)) accumulator.doneTextParts.set(key, text);
-    return;
-  }
-  accumulator.deltaTextParts.set(key, `${accumulator.deltaTextParts.get(key) ?? ""}${text}`);
-};
-
-const trackBufferedResponseId = (accumulator: BufferedResponsesAccumulator, event: ResponsesStreamEvent): void => {
-  const eventResponseId = responseIdFromEvents([event]);
-  if (eventResponseId && accumulator.responseId && eventResponseId !== accumulator.responseId) {
-    throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
-      kind: "malformed_event",
-    });
-  }
-  accumulator.responseId ??= eventResponseId;
-};
-
-const accumulateBufferedResponsesEvent = (
-  accumulator: BufferedResponsesAccumulator,
-  event: ResponsesStreamEvent,
-  warningModel: string | null | undefined
-): void => {
-  const value = event.value;
-  const suppressedWarningModelOutput = Boolean(warningModel) && value.output_index === 0;
-  if (event.type === "response.output_text.delta" && !suppressedWarningModelOutput) {
-    rememberBufferedTextPart(accumulator, value, getString(value.delta) ?? "", false);
-  }
-  if (event.type === "response.output_text.done" && !suppressedWarningModelOutput) {
-    rememberBufferedTextPart(accumulator, value, getString(value.text) ?? "", true);
-  }
-  if (event.type === "response.refusal.delta") accumulator.refusalText += getString(value.delta) ?? "";
-  if (event.type === "response.refusal.done" && !accumulator.refusalText) accumulator.refusalText = getString(value.refusal) ?? "";
-  if (event.type === "response.output_item.done" && isRecord(value.item)) accumulator.outputItems.push(value.item);
-  if (event.type === "response.output") {
-    const output = value.output ?? (isRecord(value.response) ? value.response.output : undefined);
-    if (Array.isArray(output)) accumulator.outputItems.push(...output.filter(isRecord));
-  }
-};
-
-const resolveBufferedResponsesTerminal = (
-  event: ResponsesStreamEvent,
-  provider: UpstreamProvider,
-  onTerminal?: (event: ResponsesStreamEvent) => void
-): BufferedResponsesTerminalOutcome | null => {
-  if (event.type === "error") {
-    onTerminal?.(event);
-    const code = getString(event.value.code) ?? "server_error";
-    const message = getString(event.value.message) ?? "Upstream Responses stream ended unexpectedly.";
-    return { kind: "error", response: streamErrorResponse(502, message, code, provider, []) };
-  }
-  if (
-    (event.type === "response.completed" || event.type === "response.failed" || event.type === "response.incomplete") &&
-    isRecord(event.value.response) &&
-    !Array.isArray(event.value.response)
-  ) {
-    onTerminal?.(event);
-    return { kind: "terminal", response: event.value.response };
-  }
-  return null;
-};
-
-const createBufferedResponsesInitial = (
-  attempt: Pick<PreparedResponsesAttempt, "responseId" | "prepared">,
-  options: BufferedResponsesOptions
-): AsyncIterable<ResponsesStreamEvent> => {
-  const warningModel = options.warningModel;
-  if (warningModel) {
-    const stream = createOwnedResponsesStream({
-      initial: attempt.prepared.buffered,
-      iterator: attempt.prepared.iterator,
-      responseId: attempt.responseId,
-      warning: { model: warningModel },
-      validateEvent: options.validateEvent,
-      onEvent: (event) => {
-        recordResponsesEventTelemetry(options.usageContext, event);
-        options.onEvent?.(event);
-      },
-      onFailure: (error, details) => {
-        options.onFailure?.(error, details);
-      },
-    });
-    return readResponsesStream(stream);
-  }
-  return (async function* (): AsyncGenerator<ResponsesStreamEvent> {
-    for (const event of attempt.prepared.buffered) {
-      options.validateEvent?.(event);
-      recordResponsesEventTelemetry(options.usageContext, event);
-      options.onEvent?.(event);
-      yield event;
-    }
-    for await (const event of attempt.prepared.iterator) {
-      options.validateEvent?.(event);
-      recordResponsesEventTelemetry(options.usageContext, event);
-      options.onEvent?.(event);
-      yield event;
-    }
-  })();
-};
-
-export const collectBufferedResponses = async (
-  attempt: Pick<PreparedResponsesAttempt, "provider" | "responseId" | "prepared">,
-  options: BufferedResponsesOptions = {}
-): Promise<Response> => {
-  const initial = createBufferedResponsesInitial(attempt, options);
-  const accumulator = createBufferedResponsesAccumulator(attempt.responseId);
-  let finalResponse: Record<string, unknown> | null = null;
-  try {
-    for await (const event of initial) {
-      trackBufferedResponseId(accumulator, event);
-      accumulateBufferedResponsesEvent(accumulator, event, options.warningModel);
-      const terminal = resolveBufferedResponsesTerminal(event, attempt.provider, options.onTerminal);
-      if (!terminal) continue;
-      if (terminal.kind === "error") return terminal.response;
-      finalResponse = terminal.response;
-      break;
-    }
-  } catch (error) {
-    const failureResponse = options.onFailure?.(error);
-    if (failureResponse) return failureResponse;
-    return streamErrorResponse(502, "Upstream Responses stream ended unexpectedly.", "server_error", attempt.provider, []);
-  }
-  if (!finalResponse) {
-    return streamErrorResponse(502, "Upstream Responses stream ended unexpectedly.", "server_error", attempt.provider, []);
-  }
-  const outputText = accumulator.textPartOrder.map((key) => accumulator.doneTextParts.get(key) ?? accumulator.deltaTextParts.get(key) ?? "").join("");
-  finalResponse = withAccumulatedResponseItems(finalResponse, accumulator.outputItems);
-  finalResponse = withAccumulatedResponseText(finalResponse, outputText, options.warningModel ? 1 : 0);
-  finalResponse = withAccumulatedResponseRefusal(finalResponse, accumulator.refusalText, options.warningModel ? 1 : 0);
-  // The terminal callback owns usage and terminal telemetry for buffered and
-  // streamed Responses alike. Do not record it a second time here.
-  return json(200, finalResponse, { "x-uos-upstream": attempt.provider });
-};
 import {
   GPT_OSS_STREAM_DOWNGRADED_WARNING,
   cancelResponseBody,
@@ -1104,7 +228,6 @@ import {
   streamCerebrasChatCompletion,
   toCerebrasErrorResponse,
   toCerebrasUpstreamErrorResponse,
-  toCodexErrorResponse,
   toDeepSeekErrorResponse,
   toDeepSeekUpstreamErrorResponse,
   toLithosErrorResponse,
@@ -1112,6 +235,77 @@ import {
   toOpenAiUpstreamErrorResponse,
   toPreHeaderErrorResponse,
 } from "./upstream_wire.ts";
+import {
+  isAdditionalTrustedCodexModel,
+  isTemporaryFreeSurplusModel,
+  CodexModelMetadata,
+  CodexModelReasoning,
+  PassthroughToolSchemaKey,
+  WARNING_KEY_MAP,
+  applyPassthroughToCodexRequest,
+  buildIgnoredWarnings,
+  getCodexModelMetadata,
+  normalizeReasoningParamForCodex,
+  parseChatStreamOptions,
+  parseMaxCompletionTokensField,
+  parseReasoningEffortField,
+  parseReasoningParam,
+  parseStreamField,
+  reasoningEffortForCodexRequest,
+  resolveDefaultReasoningLabel,
+  resolveReasoningLabelFromEffort,
+  resolveReasoningLabelFromParam,
+  responseWarnings,
+  validateCodexModelAvailable,
+  validateKnownUnsupportedPromptCacheUse,
+  withUosWarning,
+} from "./request_policy.ts";
+const temporaryFreeSurplusCapabilityError = (model: string, body: Record<string, unknown>): Response | null =>
+  isTemporaryFreeSurplusModel(model) && Array.isArray(body.tools) && body.tools.length > 0
+    ? openaiError(400, `The model '${model}' does not support tools through this gateway.`, "unsupported_model_capability", { param: "tools" })
+    : null;
+
+export const getDefaultModel = async (): Promise<string | null> => {
+  const runtime = await loadRuntimeConfig();
+  return runtime?.default_model ?? getCodexModelsSnapshotDefaultModel(runtime?.codex_models ?? null);
+};
+
+export const downstreamSignalFor = (request: Request, context?: UsageContext): AbortSignal => context?.downstreamSignal ?? request.signal;
+
+const inferenceSignal = (request: Request, context?: UsageContext): AbortSignal => createInferenceSignal(downstreamSignalFor(request, context));
+
+/**
+ * Internal test seam for exercising the public OpenAI handlers through the
+ * same guarded banked-reset flow. It has no request-schema or runtime-config
+ * surface, and remains unset in production.
+ */
+type CodexBankedResetOptionsForTest = NonNullable<Parameters<typeof fetchCodexResponses>[1]>["bankedReset"];
+let codexBankedResetOptionsForTest: CodexBankedResetOptionsForTest | null = null;
+
+export const setCodexBankedResetOptionsForTest = (options: CodexBankedResetOptionsForTest | null): void => {
+  codexBankedResetOptionsForTest = options;
+};
+
+const defaultModelUnavailableError = (): Response =>
+  openaiError(503, "Default model is unavailable: no configured default model or Codex model snapshot.", "server_error");
+
+const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
+  return (await loadRuntimeConfig())?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
+};
+import {
+  FailedResponsesAttempt,
+  PreparedResponsesAttempt,
+  ResponsesRouteAttempt,
+  ResponsesRouteFailure,
+  failureKindForResponsesAttemptTrigger,
+  fetchAndPreparePrimaryResponses,
+  fetchAndPrepareRemovedProviderResponses,
+  finalizeAbandonedPrimaryAttempt,
+  isEligibleResponsesAttemptStatus,
+  markPrimarySemanticRecovery,
+  responseFailureTerminalType,
+} from "./responses_attempts.ts";
+import { collectBufferedResponses } from "./responses_buffered.ts";
 const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): void => {
   console.warn(`[ai.ubq.fi] Paid fallback ${operation} failed; leaving the reservation pending:`, error instanceof Error ? error.message : String(error));
 };
@@ -1303,7 +497,7 @@ const recordMeteredTransportAmbiguity = async (
   ]);
 };
 
-const createMeteredTransportLifecycle = (
+export const createMeteredTransportLifecycle = (
   reservation: PaidFallbackReservation | null,
   provider: UpstreamProvider = "metered",
   providerRequestId: string | null = null,
@@ -2290,7 +1484,7 @@ const deliverPaidProviderResponse = async (
   };
 };
 
-const fetchResponsesWithPaidFallback = async (
+export const fetchResponsesWithPaidFallback = async (
   body: Record<string, unknown>,
   options: Readonly<{
     model: string;
@@ -2412,31 +1606,6 @@ const fetchResponsesWithPaidFallback = async (
   if (attempts.kind === "failed") return paidProviderFailureResponse(attempts, reservation, fallbackSignal, fallbackReason);
   return deliverPaidProviderResponse(attempts, reservation, telemetry, routing.surplusBilling, fallbackReason);
 };
-import {
-  isAdditionalTrustedCodexModel,
-  isTemporaryFreeSurplusModel,
-  CodexModelMetadata,
-  CodexModelReasoning,
-  PassthroughToolSchemaKey,
-  WARNING_KEY_MAP,
-  applyPassthroughToCodexRequest,
-  buildIgnoredWarnings,
-  getCodexModelMetadata,
-  normalizeReasoningParamForCodex,
-  parseChatStreamOptions,
-  parseMaxCompletionTokensField,
-  parseReasoningEffortField,
-  parseReasoningParam,
-  parseStreamField,
-  reasoningEffortForCodexRequest,
-  resolveDefaultReasoningLabel,
-  resolveReasoningLabelFromEffort,
-  resolveReasoningLabelFromParam,
-  responseWarnings,
-  validateCodexModelAvailable,
-  validateKnownUnsupportedPromptCacheUse,
-  withUosWarning,
-} from "./request_policy.ts";
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
 const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);
@@ -6256,7 +5425,7 @@ const buildResponsesUpstreamBodies = (
   return { codexBody, removedProviderBody };
 };
 
-const recordRemovedProviderCircuitTransition = (usageContext: UsageContext | undefined, transition: string): void => {
+export const recordRemovedProviderCircuitTransition = (usageContext: UsageContext | undefined, transition: string): void => {
   if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });
 };
 
