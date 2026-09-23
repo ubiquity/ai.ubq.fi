@@ -20,7 +20,8 @@
 
 import { readCerebrasApiKey } from "../../src/cerebras.ts";
 import { createCerebrasTransport } from "../../src/harmony/adapter.ts";
-import { createProbeContext, PROBE_SCENARIOS, type ProbeContext, type ProbeScenarioResult } from "../../src/harmony/probes.ts";
+import { createProbeContext, type ProbeContext, type ProbeScenarioResult } from "../../src/harmony/probes.ts";
+import { PROBE_SCENARIOS } from "../../src/harmony/probe_scenarios.ts";
 
 const OUTPUT_DIR = new URL("../../docs/probes/", import.meta.url);
 const API_KEY_MISSING_NOTICE = "CEREBRAS_API_KEY is not set; live Harmony protocol probes are skipped (no live calls made).";
