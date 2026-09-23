@@ -32,7 +32,14 @@ export type ProviderHealthView = Readonly<{
   last_refresh_succeeded: boolean | null;
 }>;
 
-type RecordProvider = "cerebras" | "codex" | "deepseek" | "metered" | "surplus";
+/**
+ * The providers the passive health view (`/health/providers`) publishes a
+ * top-level key for, named after the route each one reports on: OpenLux
+ * reports through `metered`.
+ */
+export const RECORD_PROVIDER_IDS = ["cerebras", "codex", "deepseek", "lithos", "metered", "surplus"] as const;
+
+export type RecordProvider = (typeof RECORD_PROVIDER_IDS)[number];
 
 const PROVIDER_RECORDS = ["current", "success", "reachable", "auth_invalid", "quota_exhausted", "upstream_error", "refresh"] as const;
 
@@ -234,6 +241,13 @@ export const recordDeepSeekProviderHealth = (
   providerRequestId: string | null = null
 ): Promise<void> => recordProviderHealth("deepseek", "default", event, status, now, providerRequestId);
 
+export const recordLithosProviderHealth = (
+  event: ProviderHealthEvent,
+  status: number | null = null,
+  now: () => number = Date.now,
+  providerRequestId: string | null = null
+): Promise<void> => recordProviderHealth("lithos", "default", event, status, now, providerRequestId);
+
 const unknownView = (): ProviderHealthView => ({
   state: "unknown",
   stale: null,
@@ -315,6 +329,8 @@ export const getSurplusProviderHealth = (now: () => number = Date.now): Promise<
 export const getCerebrasProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("cerebras", "default", now);
 
 export const getDeepSeekProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("deepseek", "default", now);
+
+export const getLithosProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("lithos", "default", now);
 
 export const resetProviderHealthThrottleForTest = (): void => {
   lastHeartbeatWriteAtMs.clear();

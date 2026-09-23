@@ -60,6 +60,11 @@ export const PASSKEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export const PASSKEY_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const PASSKEY_MAX_REQUEST_BODY_BYTES = 64 * 1024;
 export const PASSKEY_RELAY_COOKIE_NAME = "__Host-uos_ai_relay_session";
+// Anonymous login-start challenge issuance is bounded by a fixed, clock-aligned
+// window so the reset instant is deterministic and needs no new secret,
+// environment variable, or per-client identifier.
+export const PASSKEY_LOGIN_START_WINDOW_MS = 60_000;
+export const PASSKEY_LOGIN_START_LIMIT = 10;
 
 const AUTH_PREFIX = ["uos_ai", "auth"] as const;
 const PASSKEY_CANONICAL_ORIGIN = "https://ai.ubq.fi";
@@ -70,6 +75,7 @@ export const passkeyHandleKey = (handle: string): Deno.KvKey => [...AUTH_PREFIX,
 export const passkeyCredentialKey = (credentialId: string): Deno.KvKey => [...AUTH_PREFIX, "credentials", credentialId];
 export const passkeyChallengeKey = (challenge: string): Deno.KvKey => [...AUTH_PREFIX, "challenges", challenge];
 export const passkeySessionKey = (token: string): Deno.KvKey => [...AUTH_PREFIX, "sessions", token];
+export const passkeyLoginStartThrottleKey = (windowStartMs: number): Deno.KvKey => [...AUTH_PREFIX, "login-start-throttle", windowStartMs];
 
 const nowMs = () => Date.now();
 
@@ -545,6 +551,41 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
   }
 };
 
+type PasskeyLoginStartThrottleRecord = {
+  window_start_ms: number;
+  count: number;
+};
+
+const passkeyLoginStartWindowStartMs = (atMs: number): number => Math.floor(atMs / PASSKEY_LOGIN_START_WINDOW_MS) * PASSKEY_LOGIN_START_WINDOW_MS;
+
+/**
+ * Consumes one slot of the current anonymous login-start window. The window is
+ * aligned to the epoch so the reset instant depends only on the clock, and a
+ * rejected request writes nothing: callers must not issue a challenge.
+ */
+const consumePasskeyLoginStartBudget = async (kv: Deno.Kv, atMs: number): Promise<{ allowed: true } | { allowed: false; retry_after_seconds: number }> => {
+  const windowStartMs = passkeyLoginStartWindowStartMs(atMs);
+  const resetAtMs = windowStartMs + PASSKEY_LOGIN_START_WINDOW_MS;
+  const retryAfterSeconds = Math.max(1, Math.ceil((resetAtMs - atMs) / 1000));
+  const key = passkeyLoginStartThrottleKey(windowStartMs);
+  // A losing atomic commit means another request consumed a slot, so the count
+  // can rise at most to the limit before this request must fail closed. At most
+  // one attempt per slot is enough to let a full concurrent burst resolve
+  // exactly like a sequential one without ever exceeding the bound.
+  for (let attempt = 0; attempt < PASSKEY_LOGIN_START_LIMIT; attempt += 1) {
+    const entry = await kv.get<PasskeyLoginStartThrottleRecord>(key, { consistency: "strong" });
+    const count = entry.value?.count ?? 0;
+    if (count >= PASSKEY_LOGIN_START_LIMIT) return { allowed: false, retry_after_seconds: retryAfterSeconds };
+    const commit = await kv
+      .atomic()
+      .check(entry)
+      .set(key, { window_start_ms: windowStartMs, count: count + 1 }, { expireIn: PASSKEY_LOGIN_START_WINDOW_MS * 2 })
+      .commit();
+    if (commit.ok) return { allowed: true };
+  }
+  return { allowed: false, retry_after_seconds: retryAfterSeconds };
+};
+
 export const handlePasskeyLoginStart = async (req: Request): Promise<Response> => {
   const raw = await readPasskeyJson(req, { allowEmpty: true });
   if (raw instanceof Response) return raw;
@@ -559,16 +600,27 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
     return openaiError(400, "Invalid passkey relay origin", "invalid_request_error");
   }
 
+  const budget = await consumePasskeyLoginStartBudget(kv, nowMs());
+  if (!budget.allowed) {
+    return openaiError(429, "Too many passkey login attempts; retry after the current window", "rate_limit_exceeded", {
+      type: "rate_limit_error",
+      headers: { "Cache-Control": "no-store", "Retry-After": String(budget.retry_after_seconds) },
+    });
+  }
+
   let allowCredentials: { id: string; type: "public-key" }[] | undefined;
   // Discoverable credentials may belong to an admin; request the verification
   // that the finish handler will require once the account is identified.
   let userVerification: "preferred" | "required" = "required";
   if (handle) {
     const user = await getUserByHandle(kv, handle);
-    if (!user) return openaiError(404, "Passkey account not found", "not_found");
-    if (!user.credential_ids.length) return openaiError(404, "No passkeys registered", "not_found");
-    allowCredentials = user.credential_ids.map((id) => ({ id, type: "public-key" }));
-    userVerification = isPasskeyUserAdmin(user) ? "required" : "preferred";
+    // Unknown handles and handles without any registered passkey take the same
+    // discoverable path as an empty handle, so the response cannot reveal
+    // whether the account exists or has passkeys registered.
+    if (user?.credential_ids.length) {
+      allowCredentials = user.credential_ids.map((id) => ({ id, type: "public-key" }));
+      userVerification = isPasskeyUserAdmin(user) ? "required" : "preferred";
+    }
   }
 
   const { origin, rpId } = getPasskeyRequestMeta(req, raw.client_origin);

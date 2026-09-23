@@ -8,7 +8,7 @@ import {
   extractImagesFromResponses,
   handleImages,
   setImageBaseModelForTest,
-} from "../src/openai.ts";
+} from "../src/images.ts";
 
 /** Pin the tool host so the suite never depends on ambient deployment config. */
 const withBaseModel = async (model: string, run: () => Promise<void>): Promise<void> => {

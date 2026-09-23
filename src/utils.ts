@@ -46,3 +46,24 @@ export const sha256Hex = async (value: string): Promise<string> => {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return encodeHex(new Uint8Array(digest));
 };
+
+export const bytesToBase64 = (bytes: Uint8Array): string => {
+  const chunkSize = 0x8000;
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    chunks.push(String.fromCharCode(...chunk));
+  }
+  return btoa(chunks.join(""));
+};
+
+export const base64ToBytes = (value: string): Uint8Array<ArrayBuffer> | null => {
+  try {
+    const raw = atob(value);
+    const bytes = new Uint8Array(new ArrayBuffer(raw.length));
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
+};

@@ -1,4 +1,5 @@
 // Run from the canonical Mac checkout after committing the candidate.
+import { pruneReleases } from "./release_retention.ts";
 if (Deno.build.os !== "darwin") throw new Error("This deployment requires macOS");
 const root = await Deno.realPath(".");
 if (root !== "/Users/nv/repos/ubiquity/ai.ubq.fi") throw new Error("Run from the canonical Mac repository root");
@@ -105,7 +106,17 @@ try {
           repairAgent = "failed";
           console.error(`[deploy-mac] Codex auth repair agent was not registered: ${error instanceof Error ? error.message : String(error)}`);
         }
-        console.log(JSON.stringify({ git_sha: sha, deployment_id: `mac-${sha}`, health_verified: true, repair_agent: repairAgent }));
+        // Retention runs only after the release is proven live, and a pruning fault must not
+        // turn a verified deployment into a failed one: the next deployment retries it.
+        let releasesPruned: number | "failed" = "failed";
+        try {
+          releasesPruned = (await pruneReleases()).removed.length;
+        } catch (error) {
+          console.error(`[deploy-mac] Release retention was not applied: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        console.log(
+          JSON.stringify({ git_sha: sha, deployment_id: `mac-${sha}`, health_verified: true, repair_agent: repairAgent, releases_pruned: releasesPruned })
+        );
         Deno.exit(0);
       }
     } catch {

@@ -231,7 +231,7 @@ const modelsMetadataRefreshBtn = mustGet("models-metadata-refresh");
 const modelsSummary = mustGet("models-whitelist-summary");
 const modelsWarning = mustGet("models-whitelist-warning");
 const modelsList = mustGet("models-whitelist-list");
-const modelsProviderButtons = [...document.querySelectorAll("[data-model-provider]")];
+const modelsProviderFilters = document.querySelector("[data-model-filters]");
 
 const providersSelectionSave = mustGet("providers-selection-save");
 const providersSelectionBadge = mustGet("providers-selection-badge");
@@ -247,7 +247,7 @@ const providersReloadBtn = mustGet("providers-selection-reload");
 const providersSummary = mustGet("providers-selection-summary");
 const providersWarning = mustGet("providers-selection-warning");
 const providersList = mustGet("providers-selection-list");
-const providersTierButtons = [...document.querySelectorAll("[data-provider-tier]")];
+const providersTierFilters = document.querySelector("[data-provider-filters]");
 
 const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
@@ -8046,14 +8046,14 @@ const loadDefaults = async (options = {}) => {
 // The public Models page renders providers, reasoning tiers, and context sizes
 // for each catalog entry; this panel reuses that presentation with a checkbox
 // per model so an operator can switch visibility on and off.
-const MODEL_PROVIDER_LABELS = {
-  codex: "Codex",
-  openlux: "Metered 2",
-  surplus: "Metered 1",
-  deepseek: "DeepSeek",
-  cerebras: "Cerebras",
-};
-const MODEL_PROVIDER_IDS = ["codex", "openlux", "surplus", "deepseek", "cerebras"];
+//
+// Provider presentation — label, tier, detail, endpoints, and health key — is
+// returned by `/admin/providers/selection` and kept in one dictionary both tabs
+// render from, so a provider this panel has never heard of needs no edit here.
+let providerRoster = [];
+let providerTiers = [];
+const providerLabelFor = (id) => providerRosterEntry(id)?.label ?? id;
+const providerTierLabelFor = (tier) => providerTiers.find((entry) => entry.id === tier)?.label ?? tier;
 const MODEL_REASONING_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const MODEL_TOKEN_FORMAT = new Intl.NumberFormat("en-US");
 const MODEL_DATE_FORMAT = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit" });
@@ -8141,9 +8141,7 @@ const modelsEntryMatchesQuery = (entry, query) => {
     contextWindow ? "context compact compression" : "",
   ].filter(Boolean).join(" ").toLowerCase();
   return String(entry.id ?? "").toLowerCase().includes(query) ||
-    (entry.providers ?? []).some((provider) =>
-      (MODEL_PROVIDER_LABELS[provider.id] ?? provider.id).toLowerCase().includes(query)
-    ) ||
+    (entry.providers ?? []).some((provider) => providerLabelFor(provider.id).toLowerCase().includes(query)) ||
     reasoning?.levels?.some((level) => level.includes(query)) ||
     contextSearch.includes(query);
 };
@@ -8172,13 +8170,47 @@ const modelsVisibleEntries = () => {
 };
 
 const modelsProviderCounts = () => {
-  const counts = new Map([["all", modelsCatalog.length], ...MODEL_PROVIDER_IDS.map((id) => [id, 0])]);
+  const counts = new Map([["all", modelsCatalog.length], ...providerRoster.map((entry) => [entry.id, 0])]);
   for (const entry of modelsCatalog) {
     for (const provider of entry.providers ?? []) {
       if (counts.has(provider.id)) counts.set(provider.id, counts.get(provider.id) + 1);
     }
   }
   return counts;
+};
+
+const buildModelProviderFilterChip = (id, label) => {
+  const button = document.createElement("button");
+  button.id = `models-whitelist-provider-${id}`;
+  button.type = "button";
+  button.dataset.modelProvider = id;
+  button.setAttribute("aria-pressed", id === modelsProviderFilter ? "true" : "false");
+  const count = document.createElement("span");
+  count.dataset.modelFilterCount = "";
+  count.textContent = "0";
+  button.append(label, " ", count);
+  return button;
+};
+
+const updateModelProviderFilterChips = () => {
+  const counts = modelsProviderCounts();
+  for (const button of modelsProviderFilters.querySelectorAll("[data-model-provider]")) {
+    const id = button.dataset.modelProvider;
+    const count = counts.get(id) ?? 0;
+    button.setAttribute("aria-pressed", id === modelsProviderFilter ? "true" : "false");
+    button.disabled = id !== "all" && count === 0;
+    const countElement = button.querySelector("[data-model-filter-count]");
+    if (countElement) countElement.textContent = formatNumber(count);
+    button.title = modelsCatalogSources?.[id]?.configured === false ? `${providerLabelFor(id)} is not configured` : "";
+  }
+};
+
+/** One chip per roster provider, so a provider the panel has never heard of still gets a filter. */
+const renderModelProviderFilters = () => {
+  const chips = [buildModelProviderFilterChip("all", "All")];
+  for (const entry of providerRoster) chips.push(buildModelProviderFilterChip(entry.id, providerLabelFor(entry.id)));
+  modelsProviderFilters.replaceChildren(...chips);
+  updateModelProviderFilterChips();
 };
 
 const buildModelOption = (entry) => {
@@ -8206,7 +8238,7 @@ const buildModelOption = (entry) => {
   for (const provider of entry.providers ?? []) {
     const badge = document.createElement("span");
     badge.dataset.modelProviderBadge = "";
-    badge.textContent = MODEL_PROVIDER_LABELS[provider.id] ?? provider.id;
+    badge.textContent = providerLabelFor(provider.id);
     badge.title = (provider.supported_endpoints ?? []).join(", ");
     providers.append(badge);
   }
@@ -8254,7 +8286,8 @@ const invalidateAdminModels = (message) => {
 };
 
 const modelsCatalogWarning = () => {
-  const unavailable = MODEL_PROVIDER_IDS
+  const unavailable = providerRoster
+    .map((entry) => entry.id)
     .filter((id) => {
       const source = modelsCatalogSources?.[id];
       if (!source?.status || source.status === "available") return false;
@@ -8262,7 +8295,7 @@ const modelsCatalogWarning = () => {
       // on purpose; only a configured source that failed to read is a warning.
       return source.configured !== false;
     })
-    .map((id) => MODEL_PROVIDER_LABELS[id]);
+    .map((id) => providerLabelFor(id));
   if (!unavailable.length) return "";
   return `${
     unavailable.join(", ")
@@ -8367,18 +8400,7 @@ const updateModelsStatus = () => {
     setModelsWhitelistBadge("ok", selected === 0 ? "No filter" : `${formatNumber(selected)} checked`);
   } else setModelsWhitelistBadge("unknown", "Not loaded");
 
-  const counts = modelsProviderCounts();
-  for (const button of modelsProviderButtons) {
-    const id = button.dataset.modelProvider;
-    const count = counts.get(id) ?? 0;
-    button.setAttribute("aria-pressed", id === modelsProviderFilter ? "true" : "false");
-    button.disabled = id !== "all" && count === 0;
-    const countElement = button.querySelector("[data-model-filter-count]");
-    if (countElement) countElement.textContent = formatNumber(count);
-    button.title = modelsCatalogSources?.[id]?.configured === false
-      ? `${MODEL_PROVIDER_LABELS[id]} is not configured`
-      : "";
-  }
+  updateModelProviderFilterChips();
 
   modelsCheckAllBtn.disabled = saving || visibleCount === 0 || visibleChecked === visibleCount;
   modelsUncheckAllBtn.disabled = saving || visibleChecked === 0;
@@ -8447,6 +8469,10 @@ const loadModelsWhitelist = async (options = {}) => {
   }
   const loadId = ++modelsLoadId;
   setModelsWhitelistBadge("unknown", modelsLoadedAt ? "Cached · refreshing" : "Loading...");
+  // The provider chips and labels come from the roster, so this tab asks for it
+  // when the Providers prefetch has not already loaded the shared dictionary.
+  if (!providerRoster.length) void loadProviderSelection();
+  renderModelProviderFilters();
   try {
     const response = await fetch(apiUrl("/admin/models/catalog"), {
       headers: { Authorization: `Bearer ${token}` },
@@ -8548,17 +8574,22 @@ const readModelsFilterPreference = (key, fallback, allowed) => {
   return allowed.includes(stored) ? stored : fallback;
 };
 
-modelsProviderFilter = readModelsFilterPreference(MODEL_PROVIDER_STORAGE_KEY, "all", ["all", ...MODEL_PROVIDER_IDS]);
+const storedModelsProviderFilter = storage.get(MODEL_PROVIDER_STORAGE_KEY);
+modelsProviderFilter = typeof storedModelsProviderFilter === "string" && storedModelsProviderFilter
+  ? storedModelsProviderFilter
+  : "all";
 modelsSortSelect.value = readModelsFilterPreference(MODEL_SORT_STORAGE_KEY, "id", ["id", "created"]);
 modelsOnlySelectedInput.checked = storage.get(MODEL_ONLY_SELECTED_STORAGE_KEY) === "1";
 
-for (const button of modelsProviderButtons) {
-  button.addEventListener("click", () => {
-    modelsProviderFilter = button.dataset.modelProvider ?? "all";
-    storage.set(MODEL_PROVIDER_STORAGE_KEY, modelsProviderFilter);
-    renderModelsPicker();
-  });
-}
+// The chips are rendered from the loaded roster, so the click is delegated to
+// the container: a chip added by a later load works without re-binding.
+modelsProviderFilters.addEventListener("click", (event) => {
+  const button = event.target.closest?.("[data-model-provider]");
+  if (!button) return;
+  modelsProviderFilter = button.dataset.modelProvider ?? "all";
+  storage.set(MODEL_PROVIDER_STORAGE_KEY, modelsProviderFilter);
+  renderModelsPicker();
+});
 
 modelsSearchInput.addEventListener("input", renderModelsPicker);
 modelsSortSelect.addEventListener("change", () => {
@@ -8628,62 +8659,13 @@ modelsWhitelistSave.addEventListener("click", () => {
 // ── Provider selection picker ────────────────────────────────────────────────
 // The model picker chooses which models stay listed; this panel chooses which
 // upstream providers the gateway may dispatch to at all. The waterfall order is
-// fixed, so the ladder below is presentation only: checking a provider never
+// fixed, so the rendered ladder is presentation only: checking a provider never
 // promotes it, and unchecking one removes its tier.
-const PROVIDER_ROSTER = [
-  {
-    id: "codex",
-    label: "Codex",
-    tier: "subscription",
-    detail: "ChatGPT subscription capacity. The waterfall always tries it first.",
-    endpoints: "/v1/responses · /v1/chat/completions",
-  },
-  {
-    id: "surplus",
-    label: "Metered 1",
-    tier: "paid",
-    detail: "Surplus Intelligence. Second tier of the paid waterfall.",
-    endpoints: "/v1/responses · /v1/chat/completions",
-  },
-  {
-    id: "openlux",
-    label: "Metered 2",
-    tier: "paid",
-    detail: "OpenLux. Last tier of the paid waterfall.",
-    endpoints: "/v1/responses · /v1/chat/completions",
-  },
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    tier: "direct",
-    detail: "Official DeepSeek key, served on Chat Completions only.",
-    endpoints: "/v1/chat/completions",
-  },
-  {
-    id: "cerebras",
-    label: "Cerebras",
-    tier: "direct",
-    detail: "GPT-OSS 120B, served on Chat Completions only.",
-    endpoints: "/v1/chat/completions",
-  },
-];
-const PROVIDER_TIER_LABELS = { subscription: "Subscription", paid: "Paid fallback", direct: "Direct" };
-const PROVIDER_TIER_IDS = ["subscription", "paid", "direct"];
-/** The health snapshot reports the OpenLux tier under its upstream name. */
-const PROVIDER_HEALTH_KEYS = {
-  codex: "codex",
-  surplus: "surplus",
-  openlux: "metered",
-  deepseek: "deepseek",
-  cerebras: "cerebras",
-};
 const PROVIDER_SORT_STORAGE_KEY = "uos_ai.admin.providers_sort";
 const PROVIDER_TIER_STORAGE_KEY = "uos_ai.admin.providers_tier";
 const PROVIDER_ONLY_ACTIVE_STORAGE_KEY = "uos_ai.admin.providers_only_active";
-const PROVIDER_ALL_IDS = PROVIDER_ROSTER.map((provider) => provider.id);
 
-/** The roster the API last returned, the staged selection, and the saved one. */
-let providerRoster = [];
+/** The staged selection and the saved one; the roster itself comes from the API. */
 let providerSelection = new Set();
 let providersSavedSelection = new Set();
 let providerTierFilter = "all";
@@ -8698,7 +8680,40 @@ const setProvidersSelectionBadge = (state, text) => setBadge(providersSelectionB
 const providerRosterEntry = (id) => providerRoster.find((entry) => entry.id === id) ?? null;
 
 /** The loaded roster, so a retired provider never reaches the API again. */
-const providersRosterIds = () => (providerRoster.length ? providerRoster.map((entry) => entry.id) : PROVIDER_ALL_IDS);
+const providersRosterIds = () => providerRoster.map((entry) => entry.id);
+
+/** One tier chip per tier the payload lists, plus the unfiltered "all" chip. */
+const buildProviderTierFilterChip = (id, label) => {
+  const button = document.createElement("button");
+  button.id = `providers-selection-tier-${id}`;
+  button.type = "button";
+  button.dataset.providerTier = id;
+  button.setAttribute("aria-pressed", id === providerTierFilter ? "true" : "false");
+  const count = document.createElement("span");
+  count.dataset.providerFilterCount = "";
+  count.textContent = "0";
+  button.append(label, " ", count);
+  return button;
+};
+
+const updateProviderTierFilterChips = () => {
+  const counts = providersTierCounts();
+  for (const button of providersTierFilters.querySelectorAll("[data-provider-tier]")) {
+    const tier = button.dataset.providerTier;
+    const count = counts.get(tier) ?? 0;
+    button.setAttribute("aria-pressed", tier === providerTierFilter ? "true" : "false");
+    button.disabled = tier !== "all" && count === 0;
+    const countElement = button.querySelector("[data-provider-filter-count]");
+    if (countElement) countElement.textContent = formatNumber(count);
+  }
+};
+
+const renderProviderTierFilters = () => {
+  const chips = [buildProviderTierFilterChip("all", "All")];
+  for (const tier of providerTiers) chips.push(buildProviderTierFilterChip(tier.id, providerTierLabelFor(tier.id)));
+  providersTierFilters.replaceChildren(...chips);
+  updateProviderTierFilterChips();
+};
 
 /** One configured Codex subscription, as the API reports it. */
 const providersSubscriptionsFor = (entry) =>
@@ -8768,7 +8783,7 @@ const providersSelectedIds = () => {
 };
 
 const providersTierCounts = () => {
-  const counts = new Map([["all", providerRoster.length], ...PROVIDER_TIER_IDS.map((tier) => [tier, 0])]);
+  const counts = new Map([["all", providerRoster.length], ...providerTiers.map((tier) => [tier.id, 0])]);
   for (const entry of providerRoster) counts.set(entry.tier, (counts.get(entry.tier) ?? 0) + 1);
   return counts;
 };
@@ -8777,7 +8792,7 @@ const providersEntryMatchesQuery = (entry, query) => {
   if (!query) return true;
   return entry.id.toLowerCase().includes(query) ||
     entry.label.toLowerCase().includes(query) ||
-    (PROVIDER_TIER_LABELS[entry.tier] ?? entry.tier).toLowerCase().includes(query) ||
+    providerTierLabelFor(entry.tier).toLowerCase().includes(query) ||
     String(entry.model_count ?? 0).includes(query) ||
     entry.detail.toLowerCase().includes(query) ||
     providersSubscriptionsFor(entry).some((subscription) =>
@@ -8807,18 +8822,24 @@ const providersVisibleEntries = () => {
   if (providersSortSelect.value === "id") {
     return visible.sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
   }
-  return visible.sort((left, right) => PROVIDER_ALL_IDS.indexOf(left.id) - PROVIDER_ALL_IDS.indexOf(right.id));
+  const rosterIds = providersRosterIds();
+  return visible.sort((left, right) => rosterIds.indexOf(left.id) - rosterIds.indexOf(right.id));
 };
 
-const providerHealthFor = (id) => {
-  const key = PROVIDER_HEALTH_KEYS[id];
-  const entry = latestProviderHealth?.[key];
-  if (!entry || typeof entry !== "object") return null;
-  const state = typeof entry.state === "string" ? entry.state : entry.health?.state;
+/**
+ * Provider health for one roster row, read through the row's own `health_key`
+ * so the panel keeps no mapping of its own. The snapshot reports the OpenLux
+ * tier under its upstream name, and the row says so.
+ */
+const providerHealthFor = (entry) => {
+  const key = entry?.health_key;
+  const health = typeof key === "string" && key ? latestProviderHealth?.[key] : null;
+  if (!health || typeof health !== "object") return null;
+  const state = typeof health.state === "string" ? health.state : health.health?.state;
   return {
     state: typeof state === "string" ? state : null,
-    configured: entry.configured !== false,
-    accountCount: typeof entry.account_count === "number" ? entry.account_count : null,
+    configured: health.configured !== false,
+    accountCount: typeof health.account_count === "number" ? health.account_count : null,
   };
 };
 
@@ -8851,9 +8872,9 @@ const buildProviderOption = (entry) => {
   badges.dataset.providerBadges = "";
   const tier = document.createElement("span");
   tier.dataset.providerTierBadge = entry.tier;
-  tier.textContent = PROVIDER_TIER_LABELS[entry.tier] ?? entry.tier;
+  tier.textContent = entry.tier_label ?? providerTierLabelFor(entry.tier);
   badges.append(tier);
-  const health = providerHealthFor(id);
+  const health = providerHealthFor(entry);
   if (health) {
     const healthBadge = document.createElement("span");
     healthBadge.dataset.providerHealthBadge = health.state ?? "unknown";
@@ -8867,7 +8888,7 @@ const buildProviderOption = (entry) => {
   detail.textContent = entry.detail;
   body.append(detail);
 
-  const facts = [`${formatNumber(Number(entry.model_count ?? 0))} catalog models`, entry.endpoints];
+  const facts = [`${formatNumber(Number(entry.model_count ?? 0))} catalog models`, (entry.endpoints ?? []).join(" · ")];
   if (entry.status && entry.status !== "available") facts.push("Catalog unavailable");
   if (codex?.total) {
     facts.push(
@@ -8948,6 +8969,7 @@ const invalidateProviderSelection = (message) => {
   providerSelectionLoadId += 1;
   providerSelectionSaving = false;
   providerRoster = [];
+  providerTiers = [];
   providerSelection = new Set();
   providersSavedSelection = new Set();
   providersVisibleIds = new Set();
@@ -8955,6 +8977,8 @@ const invalidateProviderSelection = (message) => {
   providerSelectionSaveError = "";
   setProvidersSelectionBadge("unknown", "Not loaded");
   renderProvidersMessage(message);
+  renderModelProviderFilters();
+  renderProviderTierFilters();
   updateProvidersStatus();
 };
 
@@ -8994,12 +9018,11 @@ const providersRoutingWarnings = () => {
 };
 
 const providersHealthWarning = () => {
-  const missing = PROVIDER_ALL_IDS.filter((id) => {
-    const health = providerHealthFor(id);
-    return isProviderChecked(id) && health?.configured === false;
-  });
+  const missing = providerRoster.filter((entry) =>
+    isProviderChecked(entry.id) && providerHealthFor(entry)?.configured === false
+  );
   if (!missing.length) return "";
-  const labels = missing.map((id) => providerRosterEntry(id)?.label ?? id);
+  const labels = missing.map((entry) => entry.label ?? entry.id);
   return `${labels.join(", ")} ${
     labels.length === 1 ? "is" : "are"
   } active without a configured credential, so requests to ${
@@ -9051,15 +9074,7 @@ const updateProvidersStatus = () => {
     setProvidersSelectionBadge("ok", filterActive ? `${formatNumber(activeTiers)} active` : "No filter");
   } else setProvidersSelectionBadge("unknown", "Not loaded");
 
-  const counts = providersTierCounts();
-  for (const button of providersTierButtons) {
-    const tier = button.dataset.providerTier;
-    const count = counts.get(tier) ?? 0;
-    button.setAttribute("aria-pressed", tier === providerTierFilter ? "true" : "false");
-    button.disabled = tier !== "all" && count === 0;
-    const countElement = button.querySelector("[data-provider-filter-count]");
-    if (countElement) countElement.textContent = formatNumber(count);
-  }
+  updateProviderTierFilterChips();
 
   providersCheckAllBtn.disabled = saving || visibleCount === 0 || visibleChecked === visibleCount;
   providersUncheckAllBtn.disabled = saving || visibleChecked === 0;
@@ -9164,14 +9179,26 @@ const loadProviderSelection = async (options = {}) => {
       renderProvidersMessage(payload?.error?.message ?? "The provider roster could not be loaded.");
       return false;
     }
-    providerRoster = payload.data.providers
-      .filter((entry) => typeof entry?.id === "string" && entry.id)
-      .map((entry) => ({ ...(PROVIDER_ROSTER.find((known) => known.id === entry.id) ?? {}), ...entry }))
-      .filter((entry) => typeof entry.detail === "string");
+    providerRoster = payload.data.providers.filter((entry) => typeof entry?.id === "string" && entry.id);
+    providerTiers = Array.isArray(payload.data.tiers)
+      ? payload.data.tiers.filter((tier) => typeof tier?.id === "string" && tier.id)
+      : [];
+    // A filter the roster no longer lists would hide every row with no chip lit
+    // to explain it, so it falls back to the unfiltered state.
+    if (modelsProviderFilter !== "all" && !providerRosterEntry(modelsProviderFilter)) {
+      modelsProviderFilter = "all";
+      storage.set(MODEL_PROVIDER_STORAGE_KEY, "all");
+    }
+    if (providerTierFilter !== "all" && !providerTiers.some((tier) => tier.id === providerTierFilter)) {
+      providerTierFilter = "all";
+      storage.set(PROVIDER_TIER_STORAGE_KEY, "all");
+    }
     providersSavedSelection = providersSelectionFromIds(payload.data.selection?.provider_ids);
     providerSelection = new Set(providersSavedSelection);
     providerSelectionSaveError = "";
     providerSelectionLoadedAt = Date.now();
+    renderModelProviderFilters();
+    renderProviderTierFilters();
     renderProvidersPicker();
     return true;
   } catch (error) {
@@ -9249,17 +9276,22 @@ const reloadProviderSelection = () => {
   void loadProviderSelection({ force: true });
 };
 
-providerTierFilter = readModelsFilterPreference(PROVIDER_TIER_STORAGE_KEY, "all", ["all", ...PROVIDER_TIER_IDS]);
+const storedProviderTierFilter = storage.get(PROVIDER_TIER_STORAGE_KEY);
+providerTierFilter = typeof storedProviderTierFilter === "string" && storedProviderTierFilter
+  ? storedProviderTierFilter
+  : "all";
 providersSortSelect.value = readModelsFilterPreference(PROVIDER_SORT_STORAGE_KEY, "roster", ["roster", "models", "id"]);
 providersOnlyActiveInput.checked = storage.get(PROVIDER_ONLY_ACTIVE_STORAGE_KEY) === "1";
 
-for (const button of providersTierButtons) {
-  button.addEventListener("click", () => {
-    providerTierFilter = button.dataset.providerTier ?? "all";
-    storage.set(PROVIDER_TIER_STORAGE_KEY, providerTierFilter);
-    renderProvidersPicker();
-  });
-}
+// Tier chips are rendered from the payload, so the click is delegated to the
+// container and a chip from a later load needs no re-binding.
+providersTierFilters.addEventListener("click", (event) => {
+  const button = event.target.closest?.("[data-provider-tier]");
+  if (!button) return;
+  providerTierFilter = button.dataset.providerTier ?? "all";
+  storage.set(PROVIDER_TIER_STORAGE_KEY, providerTierFilter);
+  renderProvidersPicker();
+});
 
 providersSearchInput.addEventListener("input", renderProvidersPicker);
 providersSortSelect.addEventListener("change", () => {

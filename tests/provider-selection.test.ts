@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex.ts";
 import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek.ts";
+import { handleHealthProviders } from "../src/health.ts";
+import { LITHOS_MODEL_IDS } from "../src/lithos.ts";
 import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/codex_models_whitelist.ts";
 import handler from "../src/handler.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { handleModels } from "../src/openai.ts";
+import { handleModels } from "../src/model_catalog.ts";
+import { RECORD_PROVIDER_IDS } from "../src/provider_health.ts";
+import { PROVIDER_PRESENTATION, PROVIDER_TIERS, providerPresentation } from "../src/provider_presentation.ts";
 import {
   codexAccountEligibility,
   codexSubscriptionHash,
@@ -239,6 +243,9 @@ const catalogFixture = () => ({
     surplus: { status: "available" as const, count: 2, updated_at_ms: 2 },
     deepseek: { status: "available" as const, count: 1, updated_at_ms: null, configured: true },
     cerebras: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
+    // The catalog source id union gained the LithosAI provider; this fixture is
+    // typed as a whole snapshot, so it must name every source id.
+    lithos: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
     openrouter: { status: "available" as const, count: 2, updated_at_ms: 3 },
   },
 });
@@ -251,19 +258,93 @@ Deno.test("admin provider picker reports the roster, catalog counts, and the sav
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
     const body = await response.json();
+    const rows = [
+      { id: "codex", model_count: 1, status: "available", configured: true, subscriptions: [] },
+      { id: "surplus", model_count: 2, status: "available", configured: true },
+      { id: "openlux", model_count: 0, status: "unavailable", configured: false },
+      { id: "deepseek", model_count: 1, status: "available", configured: true },
+      { id: "cerebras", model_count: 0, status: "unavailable", configured: false },
+      { id: "lithos", model_count: 0, status: "unavailable", configured: false },
+    ];
     assert.deepEqual(
       body.data.providers,
-      [
-        { id: "codex", model_count: 1, status: "available", configured: true, subscriptions: [] },
-        { id: "surplus", model_count: 2, status: "available", configured: true },
-        { id: "openlux", model_count: 0, status: "unavailable", configured: false },
-        { id: "deepseek", model_count: 1, status: "available", configured: true },
-        { id: "cerebras", model_count: 0, status: "unavailable", configured: false },
-      ],
-      "the roster is fixed and every provider carries its catalog entry count"
+      rows.map((row) => {
+        const presentation = providerPresentation(row.id);
+        return {
+          ...presentation,
+          tier_label: PROVIDER_TIERS.find((tier) => tier.id === presentation.tier)?.label,
+          ...row,
+        };
+      }),
+      "the roster is fixed and every provider carries its catalog entry count and its presentation"
+    );
+    assert.deepEqual(
+      body.data.tiers,
+      PROVIDER_TIERS.map((tier) => ({ id: tier.id, label: tier.label })),
+      "the tier filter arrives in waterfall order"
     );
     assert.deepEqual(body.data.selection.provider_ids, ["surplus"]);
     assert.equal(body.data.filter_active, true);
+  });
+});
+
+Deno.test("every selectable provider carries a complete presentation and a health key the view reports", async () => {
+  await withKv(new SelectionKv(), async () => {
+    const response = await handleAdminProviderSelectionGet({ buildCatalog: () => Promise.resolve(catalogFixture()) });
+    const body = (await response.json()) as {
+      data: {
+        providers: {
+          id: string;
+          label?: string;
+          tier?: string;
+          tier_label?: string;
+          detail?: string;
+          endpoints?: string[];
+          health_key?: string;
+        }[];
+        tiers: { id: string; label: string }[];
+      };
+    };
+    assert.deepEqual(
+      body.data.providers.map((provider) => provider.id),
+      [...SELECTABLE_PROVIDER_IDS],
+      "the roster keeps the waterfall order"
+    );
+    assert.deepEqual(
+      body.data.tiers.map((tier) => tier.id),
+      PROVIDER_TIERS.map((tier) => tier.id),
+      "the tier filter is ordered"
+    );
+
+    // `/health/providers` is the provider-health view the panel reads, and it
+    // publishes exactly one key per provider it can report.
+    const healthKeys = new Set(Object.keys(await (await handleHealthProviders()).json()));
+    for (const provider of body.data.providers) {
+      const presentation = PROVIDER_PRESENTATION[provider.id as SelectableProviderId];
+      assert.ok(presentation, `${provider.id} must have a presentation entry`);
+      assert.equal(provider.label, presentation.label, `${provider.id} label`);
+      assert.equal(provider.tier, presentation.tier, `${provider.id} tier`);
+      assert.equal(provider.tier_label, PROVIDER_TIERS.find((tier) => tier.id === presentation.tier)?.label, `${provider.id} tier label`);
+      assert.equal(provider.detail, presentation.detail, `${provider.id} detail`);
+      assert.ok(typeof provider.detail === "string" && provider.detail.length > 0, `${provider.id} detail must be copy`);
+      assert.deepEqual(provider.endpoints, [...presentation.endpoints], `${provider.id} endpoints`);
+      assert.equal(provider.health_key, presentation.health_key, `${provider.id} health key`);
+      assert.equal(healthKeys.has(presentation.health_key), true, `${presentation.health_key} must be a published health key`);
+      assert.equal(RECORD_PROVIDER_IDS.includes(presentation.health_key), true, `${presentation.health_key} must be reportable provider health`);
+    }
+
+    const lithos = body.data.providers.find((provider) => provider.id === "lithos");
+    assert.ok(lithos, "the roster must list lithos");
+    assert.equal(lithos.label, "LithosAI");
+    assert.equal(lithos.health_key, "lithos");
+
+    // A roster id with no copy yet still renders completely instead of dropping out.
+    const fallback = providerPresentation("future-provider");
+    assert.equal(fallback.label, "future-provider");
+    assert.equal(fallback.tier, "direct");
+    assert.match(fallback.detail, /no presentation entry yet/);
+    assert.deepEqual([...fallback.endpoints], []);
+    assert.equal(fallback.health_key, "future-provider");
   });
 });
 
@@ -406,11 +487,19 @@ Deno.test("the provider picker routes are registered and stay behind admin auth"
 Deno.test("/v1/models hides the models of a switched-off provider", async () => {
   Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
   Deno.env.set("CEREBRAS_API_KEY", "fixture-cerebras-key");
+  // This test owns every credential-gated provider, so it configures the
+  // LithosAI key itself instead of leaving the row set to the ambient
+  // environment.
+  Deno.env.set("LITHOSAI_API_KEY", "fixture-lithos-key");
   const kv = new SelectionKv();
   seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
   try {
     await withKv(kv, async () => {
-      assert.deepEqual(await listModelIds(), ["gpt-5.6-sol", "gpt-oss-120b", ...DEEPSEEK_OFFICIAL_MODEL_IDS], "no filter lists every provider");
+      assert.deepEqual(
+        await listModelIds(),
+        ["gpt-5.6-sol", "gpt-oss-120b", ...DEEPSEEK_OFFICIAL_MODEL_IDS, ...LITHOS_MODEL_IDS],
+        "no filter lists every provider"
+      );
 
       kv.seedSelection(["deepseek", "cerebras"]);
       resetProviderSelectionCacheForTest();
@@ -423,6 +512,7 @@ Deno.test("/v1/models hides the models of a switched-off provider", async () => 
   } finally {
     Deno.env.delete("DEEPSEEK_API_KEY");
     Deno.env.delete("CEREBRAS_API_KEY");
+    Deno.env.delete("LITHOSAI_API_KEY");
     resetRuntimeConfigCacheForTest();
   }
 });

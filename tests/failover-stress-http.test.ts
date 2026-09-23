@@ -298,7 +298,8 @@ Deno.test({
       const { default: handler } = await import("../src/handler.ts");
       const { createServeHandler } = await import("../src/serve_handler.ts");
       (config as { isDeploy: boolean }).isDeploy = true;
-      const { paidFallbackWindowV3Key, reconcileDuePaidFallbacksV3 } = await import("../src/paid_fallback_ledger.ts");
+      const { reconcileDuePaidFallbacksV3 } = await import("../src/paid_fallback_ledger_backfill.ts");
+      const { paidFallbackWindowV3Key } = await import("../src/paid_fallback_ledger_state.ts");
       const requestPrefix = ["uos_ai", "paid_fallback", "v3", "request", keyId] as const;
       const pendingPrefix = ["uos_ai", "paid_fallback", "v3", "pending", keyId] as const;
       gatewayServer = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));

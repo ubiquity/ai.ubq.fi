@@ -156,14 +156,15 @@ export default tsEslint.config(
       "no-var": "error",
       "no-self-compare": "error",
       "no-useless-escape": "error",
-      // DIVERGENCE: OFF, measured. The template's 1000-line ceiling flagged 34
-      // files, and not marginally: src/openai.ts is 9597 lines,
-      // tests/openai-compat.test.ts is 13595, and 20 more are over 1200. This is
-      // a deliberate architecture decision in both the gateway core and its
-      // compatibility suite; satisfying the rule means splitting those modules,
-      // which is a refactor project rather than a lint fix. A warning nobody can
-      // ever clear only trains people to ignore lint output. Revisit as its own
-      // change if the modules are ever decomposed.
+      // DIVERGENCE: OFF, measured. The template's 1000-line ceiling flags 39
+      // files today, and not marginally: src/openai.ts is 14296 lines and
+      // tests/openai-compat.test.ts is 16756 (2026-09-23). This is a deliberate
+      // architecture decision in both the gateway core and its compatibility
+      // suite; satisfying the rule means splitting those modules, which is a
+      // refactor project rather than a lint fix. A warning nobody can ever clear
+      // only trains people to ignore lint output, so absolute size is ratcheted
+      // by scripts/file-size-ratchet.ts and file-size-baseline.json instead (see
+      // docs/DECISIONS.md); revisit decomposition as its own change.
       "max-lines": "off",
       // ---------------------------------------------------------------------
       // SONARJS/TS OVERLAP: the type-aware TS rule supersedes the sonarjs one,

@@ -112,8 +112,8 @@
 ## Lint, Format and Type Gates
 
 - Run `sh scripts/verify.sh` (or `deno task verify`) before declaring any change ready. It runs every gate and reports
-  all failures rather than stopping at the first: `deno types`, Prettier, ESLint, knip, `deno fmt --check`, `deno lint`,
-  `deno check` and the full test suite.
+  all failures rather than stopping at the first: `deno types`, Prettier, ESLint, knip, the file-size ratchet
+  (`deno task size:check`), `deno fmt --check`, `deno lint`, `deno check` and the full test suite.
 - Prettier owns `*.ts` and `*.mjs` (`printWidth: 160`); `deno fmt` owns JSON, Markdown, CSS, HTML and `static/*.js`.
   Never let both format a file; `deno.json`'s `fmt.exclude` and `.prettierignore` enforce the split.
 - Run `deno task build` and `deno task test` after any `--fix` run. This lint project's type environment is close to,
@@ -121,6 +121,10 @@
 - `deno check` and the test suite are the only gates that decide whether a lint fix is correct. Never add
   `eslint-disable`, `@ts-ignore` or `as any` to silence a finding: if a finding is deliberate-by-design, narrow it in
   `tools/lint/eslint.config.mjs` with the measurement recorded in a comment, the way the existing DIVERGENCE entries do.
+- File-size no-growth is enforced by `scripts/file-size-ratchet.ts`: source files cap at 1000 lines and tests at 1500,
+  and `file-size-baseline.json` records a per-file ceiling for every grandfathered oversized file. Never raise a
+  recorded ceiling or hand-add an entry; after shrinking a recorded file run `deno task size:update`, which only lowers
+  or drops ceilings and refuses to record new debt.
 - Do not add a `package.json` dependency to the repository root. Deno resolves its JSR/npm graph from the global cache
   only while the root manifest declares no dependencies; adding one breaks `deno task build` on a fresh checkout. Put
   dev tooling in `tools/lint/`. See `tools/lint/README.md` for the measurements.

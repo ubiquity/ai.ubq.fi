@@ -3,6 +3,7 @@ import { apiKeyHashKey, apiKeyIdKey } from "../src/api_keys.ts";
 import { ApiKeyQuotaDispatchError } from "../src/api_key_policy.ts";
 import { CEREBRAS_CHAT_COMPLETIONS_URL, fetchCerebrasChatCompletions } from "../src/cerebras.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL, fetchDeepSeekChatCompletions } from "../src/deepseek.ts";
+import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/lithos.ts";
 import {
   CODEX_AUTH_POOL_KV_KEY,
   fetchCodexResponses,
@@ -58,6 +59,7 @@ const REPLAY_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Object
   metered: `${METERED_BASE_URL}/v1/responses`,
   cerebras: CEREBRAS_CHAT_COMPLETIONS_URL,
   deepseek: DEEPSEEK_CHAT_COMPLETIONS_URL,
+  lithos: LITHOS_CHAT_COMPLETIONS_URL,
 });
 
 const decodeChunks = (trace: ReturnType<ReturnType<typeof createSentinelUpstreamRecorder>["snapshotAndSeal"]>): string =>
