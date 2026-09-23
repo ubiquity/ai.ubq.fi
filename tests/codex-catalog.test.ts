@@ -7,11 +7,13 @@ const { setPaidFallbackTerminalSweepForTest } = await import("../src/paid_fallba
 setProviderCapacitySampleTriggerForTest(() => {});
 setPaidFallbackTerminalSweepForTest(() => {});
 
-// The DeepSeek official route appends its models to the served catalog whenever
-// DEEPSEEK_API_KEY is configured. These tests assert exact catalog shapes from
-// stored snapshots and discovery sources only, so the ambient credential is
-// cleared to keep them independent of the machine that runs them.
+// The DeepSeek and LithosAI routes append their models to the served catalog
+// whenever their credential is configured. These tests assert exact catalog
+// shapes from stored snapshots and discovery sources only, so the ambient
+// credentials are cleared to keep them independent of the machine that runs
+// them.
 Deno.env.delete("DEEPSEEK_API_KEY");
+Deno.env.delete("LITHOSAI_API_KEY");
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const kvStore = new Map<string, { value: unknown; versionstamp: string }>();
