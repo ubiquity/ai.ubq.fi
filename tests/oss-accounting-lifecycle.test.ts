@@ -12,14 +12,9 @@ import {
   reserveApiKeyUsageV3,
 } from "../src/api_key_policy.ts";
 import { setKvForTest } from "../src/kv.ts";
-import {
-  admitPaidFallbackV3,
-  paidFallbackRequestV3Key,
-  paidFallbackWindowV3Key,
-  releaseUndispatchedPaidFallbackV3,
-  settlePaidFallbackUsageV3,
-  updatePaidFallbackRequestV3,
-} from "../src/paid_fallback_ledger.ts";
+import { admitPaidFallbackV3, releaseUndispatchedPaidFallbackV3, updatePaidFallbackRequestV3 } from "../src/paid_fallback_ledger_admission.ts";
+import { settlePaidFallbackUsageV3 } from "../src/paid_fallback_ledger_settlement.ts";
+import { paidFallbackRequestV3Key, paidFallbackWindowV3Key } from "../src/paid_fallback_ledger_state.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3, PaidFallbackRequestV3 } from "../src/types.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 

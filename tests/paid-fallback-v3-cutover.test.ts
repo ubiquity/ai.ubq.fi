@@ -109,7 +109,8 @@ const {
   recordSurplusUsage,
   reservePaidFallback,
 } = await import("../src/paid_fallback.ts");
-const { paidFallbackPendingV3Key, paidFallbackRequestV3Key, paidFallbackWindowV3Key, reconcilePaidFallbackV3 } = await import("../src/paid_fallback_ledger.ts");
+const { reconcilePaidFallbackV3 } = await import("../src/paid_fallback_ledger_backfill.ts");
+const { paidFallbackPendingV3Key, paidFallbackRequestV3Key, paidFallbackWindowV3Key } = await import("../src/paid_fallback_ledger_state.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;

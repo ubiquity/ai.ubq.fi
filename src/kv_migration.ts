@@ -52,7 +52,7 @@ import {
   PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   recomputePaidFallbackReconciliationGateV3,
   requestRowExpireIn,
-} from "./paid_fallback_ledger.ts";
+} from "./paid_fallback_ledger_state.ts";
 import { CODEX_RESET_USAGE_PREFIX } from "./codex_reset_settings.ts";
 import { isRecord } from "./utils.ts";
 
