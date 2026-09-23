@@ -1,6 +1,8 @@
 // Responses attempt preparation and buffered-response accumulation, extracted from src/openai.ts.
 
-import { createMeteredTransportLifecycle, fetchResponsesWithPaidFallback, recordRemovedProviderCircuitTransition } from "./openai.ts";
+import { recordRemovedProviderCircuitTransition } from "./openai.ts";
+import { createMeteredTransportLifecycle } from "./paid_fallback_health.ts";
+import { fetchResponsesWithPaidFallback } from "./paid_fallback_routing.ts";
 import { CodexError, markCodexResponseUpstreamError, releaseCodexResponseProbe } from "./codex.ts";
 import { ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { type StreamDeadline } from "./inference_deadline.ts";
