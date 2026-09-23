@@ -61,7 +61,8 @@ import {
   inferenceAdmissionSnapshot,
 } from "./inference_admission.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
-import { handleChatCompletions, handleResponses } from "./openai.ts";
+import { handleResponses } from "./openai.ts";
+import { handleChatCompletions } from "./chat_completions_envelope.ts";
 import { handleUosEmbeddings } from "./embeddings_handlers.ts";
 import { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } from "./embeddings_jobs.ts";
 import { getResponseAccountCohortId, getResponseTelemetry, type ResponseTelemetry } from "./openai_telemetry.ts";
@@ -114,7 +115,6 @@ type RequestDeliveryInfo = Readonly<{
 }>;
 type DeliveryOutcome = "delivered" | "interrupted" | "unobserved";
 type BodyOutcome = "drained" | "interrupted" | "failed";
-
 type SentinelBackgroundTaskRegistrar = (task: Promise<unknown>) => void;
 type SentinelBackgroundRuntime = Readonly<{
   waitUntil?: SentinelBackgroundTaskRegistrar;
