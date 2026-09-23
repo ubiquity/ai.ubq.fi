@@ -316,17 +316,14 @@ export const listKernelOrgUsageRecords = async (
 // Runtime callers import the V2 split policy/window implementation through this
 // module.
 export {
-  deleteKernelOrgUsageLimit,
-  deleteKernelUsageLimit,
   getKernelOrgUsageLimitSnapshot,
   getKernelUsageLimitSnapshot,
   kernelLimitKey,
   kernelOrgLimitKey,
   listKernelOrgUsageLimits,
   listKernelUsageLimits,
-  reserveEffectiveKernelUsageLimit,
-  resolveKernelQuotaPolicyState,
-  setKernelOrgUsageLimit,
-  setKernelUsageLimit,
 } from "./kernel_quota_v2.ts";
+export { deleteKernelOrgUsageLimit, deleteKernelUsageLimit, setKernelOrgUsageLimit, setKernelUsageLimit } from "./kernel_quota_write.ts";
+export { resolveKernelQuotaPolicyState } from "./kernel_quota_reservations.ts";
+export { reserveEffectiveKernelUsageLimit } from "./kernel_quota_reserve.ts";
 export type { KernelQuotaReservation } from "./kernel_quota_v2.ts";
