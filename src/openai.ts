@@ -16,27 +16,18 @@ import {
 } from "./cerebras.ts";
 import {
   DEEPSEEK_DEFAULT_REASONING_EFFORT,
-  DEEPSEEK_FLASH_MODEL,
   DeepSeekError,
-  type DeepSeekStreamFrame,
   DeepSeekStreamError,
-  deepSeekDefaultOutputAllowance,
   deepSeekThinkingModeActive,
-  deepSeekThinkingToolChoiceConflict,
-  deepSeekToolChoiceThinkingConflictMessage,
   deepSeekUpstreamModelFor,
   fetchDeepSeekChatCompletions,
   getDeepSeekProviderRequestId,
   iterateDeepSeekChatCompletionStream,
   normalizeDeepSeekChatCompletion,
-  normalizeDeepSeekProviderRequestId,
 } from "./deepseek.ts";
 import {
-  createDeepSeekResponsesStreamTranslator,
-  type ChatOnlyResponsesProfile,
   DEEPSEEK_RESPONSES_PROFILE,
   type DeepSeekResponsesEcho,
-  encodeResponsesEvent,
   LITHOS_RESPONSES_PROFILE,
   toDeepSeekResponsesChatBody,
   toDeepSeekResponsesPayload,
@@ -166,11 +157,9 @@ import {
 import {
   GPT_OSS_STREAM_DOWNGRADED_WARNING,
   cerebrasResponseHeaders,
-  chatChunkHasAnswerBearingOutput,
   chatCompletionHasAnswerBearingOutput,
   deepSeekChatBodyDiagnostic,
   deepseekResponseHeaders,
-  isAnswerBearingCompletion,
   lithosResponseHeaders,
   logRedactedUpstreamError,
   streamCerebrasChatCompletion,
@@ -274,7 +263,7 @@ export const findUnknownKey = (record: Record<string, unknown>, allowed: Readonl
   return null;
 };
 import { completeChatCompletions, streamChatCompletions } from "./chat_completions_primary.ts";
-const recordDeepSeekResponseHealth = (status: number, providerRequestId: string | null): void => {
+export const recordDeepSeekResponseHealth = (status: number, providerRequestId: string | null): void => {
   if (status === 401 || status === 403) {
     void recordDeepSeekProviderHealth("auth_invalid", status, Date.now, providerRequestId);
     return;
@@ -339,7 +328,7 @@ const recordLithosResponseHealth = (status: number, providerRequestId: string | 
  * ordinary `empty_upstream_completion` 502 the non-DeepSeek routes already
  * return rather than a synthetic terminal event.
  */
-const respondDeepSeekEmptyBufferedCompletion = (
+export const respondDeepSeekEmptyBufferedCompletion = (
   usageContext: UsageContext | undefined,
   usage: UsageTokens | null,
   upstreamStatus: number,
@@ -368,7 +357,7 @@ const respondDeepSeekEmptyBufferedCompletion = (
  * as a completion before reading the payload's status would persist a
  * truncated reply as a completed one.
  */
-const recordBufferedDeepSeekResponsesTerminal = (
+export const recordBufferedDeepSeekResponsesTerminal = (
   usageContext: UsageContext | undefined,
   payload: Record<string, unknown>,
   usage: UsageTokens | null,
@@ -388,7 +377,7 @@ const recordBufferedDeepSeekResponsesTerminal = (
 };
 
 /** The gateway terminal a buffered DeepSeek Responses payload's status implies. */
-const deepSeekTerminalTypeForPayload = (status: unknown): ResponseStreamTerminalType => {
+export const deepSeekTerminalTypeForPayload = (status: unknown): ResponseStreamTerminalType => {
   if (status === "incomplete") return "response.incomplete";
   if (status === "failed") return "response.failed";
   return "response.completed";
@@ -773,9 +762,9 @@ const handleCerebrasChatCompletions = async (
  * relays native SSE chunks as they arrive instead of buffering a streamed
  * reply, and never races or falls back to another provider.
  */
-const DEEPSEEK_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
+export const DEEPSEEK_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
 
-const validateDeepSeekChatRequestFields = (
+export const validateDeepSeekChatRequestFields = (
   rawRecord: Record<string, unknown>
 ): { ok: true; value: { reasoning: string; clientWantsStream: boolean } } | { ok: false; response: Response } => {
   const messages = rawRecord.messages;
@@ -825,7 +814,7 @@ const validateDeepSeekChatRequestFields = (
 };
 
 /** The output cap the client supplied on the DeepSeek Chat contract, if any. */
-const deepSeekChatClientOutputAllowance = (rawRecord: Record<string, unknown>): number | null => {
+export const deepSeekChatClientOutputAllowance = (rawRecord: Record<string, unknown>): number | null => {
   // `max_completion_tokens` is the documented OpenAI field and the one
   // `projectDeepSeekRequest` maps onto the provider's `max_tokens`; a literal
   // `max_tokens` in the record is forwarded unchanged, so both are real caps.
@@ -852,7 +841,7 @@ const respondDeepSeekChatInvalidCompletion = async (
   });
 };
 
-const readDeepSeekChatCompletion = async (
+export const readDeepSeekChatCompletion = async (
   bytes: Uint8Array,
   upstreamStatus: number,
   providerRequestId: string | null,
@@ -897,7 +886,7 @@ const respondDeepSeekChatUpstreamHttpFailure = async (
   return await toDeepSeekUpstreamErrorResponse(upstream, requestSignal, deepSeekChatBodyDiagnostic(body));
 };
 
-const respondDeepSeekChatIncompleteCapture = async (
+export const respondDeepSeekChatIncompleteCapture = async (
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
@@ -934,425 +923,10 @@ const respondDeepSeekChatIncompleteCapture = async (
  * iterator yields these frames directly; the LithosAI normalizer maps the
  * chunks its transport validates onto the same shape.
  */
-type ProviderStreamFrame = DeepSeekStreamFrame;
+import { ProviderStreamAdapter, ProviderStreamFrame, relayChatCompletionStream, relayResponsesStream } from "./provider_stream_relay.ts";
+import { handleDeepSeekChatCompletions, handleDeepSeekResponses } from "./deepseek_handlers.ts";
 
-/**
- * The provider-specific seams the shared stream writers need, one adapter per
- * provider. Every other part of both route shapes - framing, teardown,
- * telemetry, semantic-output detection, failure classification order - is
- * written once.
- */
-type ProviderStreamAdapter = Readonly<{
-  /** This provider's response headers, including its provider-request-id echo. */
-  responseHeaders: (providerRequestId: string | null) => Record<string, string>;
-  /** This provider's upstream SSE frames, normalized to the shared union. */
-  frames: (upstream: Response, upstreamModel: string, options: Readonly<{ signal: AbortSignal }>) => AsyncGenerator<ProviderStreamFrame, void, unknown>;
-  /** Records the upstream response against this provider's health counters. */
-  recordResponseHealth: (status: number, providerRequestId: string | null) => void;
-  /** Records a provider fault against this provider's health counters. */
-  recordProviderError: (status: number | null, providerRequestId: string | null) => void;
-  /** Records the cancellation failure kind in this provider's vocabulary. */
-  recordCancellation: (usageContext: UsageContext | undefined) => void;
-  /** Records an incomplete upstream response in this provider's vocabulary. */
-  recordIncompleteResponse: (usageContext: UsageContext | undefined) => void;
-  /** Records the failure kind for an unmapped upstream finish reason. */
-  recordFinishFailureKind: (usageContext: UsageContext | undefined, finishReason: string | null) => void;
-  /** Records a transport error's failure kind in this provider's vocabulary. */
-  recordTransportFailure: (usageContext: UsageContext | undefined, error: unknown, terminalType: ResponseStreamTerminalType) => void;
-  /** Maps a transport error onto the shared terminal vocabulary. */
-  terminalTypeForError: (error: unknown, downstreamSignal: AbortSignal) => ResponseStreamTerminalType;
-  /** The code this provider stamps on its streamed Chat error payloads. */
-  streamErrorCode: string;
-  /** The provider profile the shared Responses translator runs under. */
-  responsesProfile: ChatOnlyResponsesProfile;
-}>;
-
-/** The OpenAI-shaped SSE error body a relay emits when the upstream stream itself failed. */
-const chatStreamErrorValue = (code: string): Record<string, unknown> => ({
-  error: {
-    message: "Upstream Chat Completions stream failed.",
-    type: "server_error",
-    code,
-    param: null,
-  },
-});
-
-/** Closing is best effort: the client may already have cancelled the stream. */
-const closeController = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
-  try {
-    controller.close();
-  } catch {
-    // Already closed or errored by the consumer.
-  }
-};
-
-/**
- * Relays one provider's Chat Completions SSE stream as it arrives. Chunk frames
- * are validated by the provider transport before they reach this writer, so the
- * client sees the same incremental tokens the provider produced rather than a
- * buffered replay.
- */
-const relayChatCompletionStream = (
-  adapter: ProviderStreamAdapter,
-  upstream: Response,
-  providerRequestId: string | null,
-  usageContext: UsageContext | undefined,
-  downstreamSignal: AbortSignal,
-  requestSignal: AbortSignal,
-  upstreamModel: string
-): Response => {
-  const encoder = new TextEncoder();
-  const headers = new Headers(adapter.responseHeaders(providerRequestId));
-  headers.set("Content-Type", "text/event-stream");
-  headers.set("Cache-Control", "no-cache");
-
-  // One stream-owned interrupt composed with the caller's request signal. The
-  // external downstream signal is driven by Deno delivery completion, which
-  // itself waits on this teardown, so a queued `iterator.return()` alone can
-  // never interrupt a generator parked in an upstream read.
-  const cancellation = new AbortController();
-  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
-  let closed = false;
-  let terminalSettled = false;
-  let semantic = false;
-  let usage: UsageTokens | null = null;
-
-  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
-    if (terminalSettled) return;
-    terminalSettled = true;
-    recordStreamTerminalType(usageContext, terminalType);
-  };
-  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    await recordCompletionUsage(usageContext, usage);
-    settleTerminal("response.completed");
-    recordStreamTerminal(usageContext);
-    adapter.recordResponseHealth(upstream.status, providerRequestId);
-    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-    controller.close();
-  };
-  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
-    settleTerminal(terminalType);
-    adapter.recordTransportFailure(usageContext, error, terminalType);
-    if (terminalType !== "cancelled") {
-      adapter.recordProviderError(null, providerRequestId);
-      await recordErrorUsage(usageContext);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chatStreamErrorValue(adapter.streamErrorCode))}\n\n`));
-    }
-    controller.close();
-  };
-
-  // Pull-driven so the upstream stream is read only as fast as the client
-  // consumes it; an eager writer would buffer an unbounded reply in memory.
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (closed) return;
-      try {
-        const next = await iterator.next();
-        if (next.done) {
-          await finishStream(controller);
-          return;
-        }
-        const frame = next.value;
-        if (frame.kind === "comment") {
-          // DeepSeek's documented `: keep-alive` comment frame is what keeps a
-          // long thinking turn from looking idle to an edge proxy, and SSE
-          // comments are inert for clients, so it is relayed verbatim. A
-          // transport that carries no comment frames never yields this branch.
-          controller.enqueue(encoder.encode(`${frame.text}\n\n`));
-          return;
-        }
-        if (frame.kind === "done") {
-          await finishStream(controller);
-          return;
-        }
-        recordFirstUpstreamSseEvent(usageContext);
-        if (!semantic && chatChunkHasAnswerBearingOutput(frame.value)) {
-          semantic = true;
-          markChatSemanticOutput(usageContext);
-          recordFirstSemanticCommitment(usageContext);
-        }
-        usage = extractChatUsageTokens(frame.value.usage) ?? usage;
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame.value)}\n\n`));
-      } catch (error) {
-        await failStream(controller, error);
-      }
-    },
-    cancel(reason) {
-      if (closed) return;
-      closed = true;
-      settleTerminal("cancelled");
-      adapter.recordCancellation(usageContext);
-      // Usage observed before the disconnect is real evidence: record it with
-      // completed=false so the terminal reports the counters without claiming a
-      // completion. Missing usage stays unknown rather than invented.
-      if (usage) recordTerminalUsage(usageContext, usage, false);
-      // Abort the local read first: the pending upstream read then rejects, the
-      // iterator's own `finally` cancels the physical provider body, and no
-      // uninterruptible `return()` can block teardown. A consumer can cancel
-      // before the first read, so an untouched source is cancelled directly.
-      if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
-      // Cleanup is best effort and never surfaces as a provider error.
-      void iterator.return().catch(() => {});
-    },
-  });
-  return new Response(body, { status: 200, headers });
-};
-
-/**
- * Relays one provider's translated Responses event sequence as it arrives. The
- * Chat chunks are validated by the provider transport before they reach the
- * translator, so the client sees incremental `response.*` events rather than a
- * buffered replay.
- */
-const relayResponsesStream = (
-  adapter: ProviderStreamAdapter,
-  options: Readonly<{
-    upstream: Response;
-    requestedModel: string;
-    responseId: string;
-    createdAtSeconds: number;
-    echo: DeepSeekResponsesEcho;
-    toolNames: ReadonlyMap<string, string>;
-    customToolNames: ReadonlySet<string>;
-    providerRequestId: string | null;
-    usageContext: UsageContext | undefined;
-    downstreamSignal: AbortSignal;
-    requestSignal: AbortSignal;
-    upstreamModel: string;
-  }>
-): Response => {
-  const {
-    upstream,
-    requestedModel,
-    responseId,
-    createdAtSeconds,
-    echo,
-    toolNames,
-    customToolNames,
-    providerRequestId,
-    usageContext,
-    downstreamSignal,
-    requestSignal,
-    upstreamModel,
-  } = options;
-  const encoder = new TextEncoder();
-  const headers = new Headers(adapter.responseHeaders(providerRequestId));
-  headers.set("Content-Type", "text/event-stream");
-  headers.set("Cache-Control", "no-cache");
-
-  // One stream-owned interrupt for the parked original read. The external
-  // request signal alone is driven by Deno delivery completion, which itself
-  // waits on this teardown, so a queued `iterator.return()` could never reach
-  // the read.
-  const cancellation = new AbortController();
-  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
-  const translator = createDeepSeekResponsesStreamTranslator(
-    requestedModel,
-    responseId,
-    echo,
-    createdAtSeconds,
-    toolNames,
-    customToolNames,
-    adapter.responsesProfile
-  );
-  const state = {
-    settled: false,
-    cancelled: false,
-    semantic: false,
-    usage: null as UsageTokens | null,
-  };
-  /** The next `sequence_number` this response's SSE stream will emit. */
-  let sequenceNumber = 0;
-
-  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
-    if (state.settled) return;
-    state.settled = true;
-    recordStreamTerminalType(usageContext, terminalType);
-  };
-  const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
-    for (const event of events) {
-      // Official Responses events carry a monotonic per-response
-      // `sequence_number`. The translator's own `output_index`/`content_index`
-      // values are copied through untouched, so this is the only field the wire
-      // gains and every event - including refusals, item and terminal events -
-      // is stamped by this one encoder seam.
-      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
-      sequenceNumber += 1;
-    }
-  };
-  /**
-   * The client-visible shape of the gateway's existing degenerate-completion
-   * classification. Response headers were sent when the stream opened, so the
-   * truth travels on the terminal event instead of as a 502 status; the
-   * failure kind and message are the ones the ordinary routes already use.
-   */
-  const emptyCompletionFailure = (): Record<string, unknown> => ({
-    type: "response.failed",
-    response: {
-      id: responseId,
-      object: "response",
-      status: "failed",
-      error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
-    },
-  });
-  /**
-   * Emits the fail-closed terminal for a completion the provider reported as
-   * successful but that carries nothing a client can act on. Returns true when
-   * it handled the terminal.
-   */
-  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): boolean => {
-    if (translator.terminalKind() !== "completed" || isAnswerBearingCompletion(translator.answerBearingOutput())) return false;
-    if (usageContext?.responseTelemetry) {
-      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-      usageContext.responseTelemetry.semanticOutputObserved = false;
-    }
-    recordTerminalUsage(usageContext, state.usage, false);
-    settleTerminal("response.failed");
-    recordStreamTerminal(usageContext);
-    emit(controller, [...translator.open(), emptyCompletionFailure()]);
-    adapter.recordResponseHealth(upstream.status, providerRequestId);
-    return true;
-  };
-
-  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
-    if (state.settled) return;
-    try {
-      // The provider's own stop reason decides the terminal (Goal B's Delta 1
-      // vocabulary), and the provider-agnostic completion-validity predicate
-      // (Goal A's G3) decides whether a would-be completion carries anything a
-      // client can act on. An explicit non-completed signal wins over validity.
-      if (emitEmptyCompletionFailure(controller)) return;
-      const terminalKind = translator.terminalKind();
-      emit(controller, translator.finish());
-      if (terminalKind === "completed") {
-        await recordCompletionUsage(usageContext, state.usage);
-        settleTerminal("response.completed");
-      } else {
-        // A non-completed terminal is classified the same way on the streamed
-        // and buffered paths, so telemetry reads the same on both.
-        recordTerminalUsage(usageContext, state.usage, false);
-        if (terminalKind === "incomplete") {
-          adapter.recordIncompleteResponse(usageContext);
-        } else {
-          // The only remaining non-completed kind is "failed".
-          adapter.recordFinishFailureKind(usageContext, translator.upstreamFinishReason());
-          adapter.recordProviderError(upstream.status, providerRequestId);
-        }
-        settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
-      }
-      recordStreamTerminal(usageContext);
-      adapter.recordResponseHealth(upstream.status, providerRequestId);
-    } finally {
-      closeController(controller);
-    }
-  };
-  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
-    if (state.settled) {
-      closeController(controller);
-      return;
-    }
-    const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
-    settleTerminal(terminalType);
-    adapter.recordTransportFailure(usageContext, error, terminalType);
-    try {
-      if (terminalType !== "cancelled") {
-        adapter.recordProviderError(null, providerRequestId);
-        await recordErrorUsage(usageContext);
-        emit(controller, [
-          {
-            type: "response.failed",
-            response: {
-              id: responseId,
-              object: "response",
-              status: "failed",
-              error: { code: adapter.streamErrorCode, message: "Upstream Chat Completions stream failed." },
-            },
-          },
-        ]);
-      }
-    } finally {
-      closeController(controller);
-    }
-  };
-
-  /** Records the chunk's telemetry and returns the events it translates to. */
-  const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
-    const chunkUsage = extractChatUsageTokens(chunk.usage);
-    if (chunkUsage) state.usage = chunkUsage;
-    if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
-      state.semantic = true;
-      markChatSemanticOutput(usageContext);
-      recordFirstSemanticCommitment(usageContext);
-    }
-    recordFirstUpstreamSseEvent(usageContext);
-    return translator.push(chunk);
-  };
-
-  // Pull-driven so the upstream stream is read only as fast as the client
-  // consumes it. A pull that enqueues nothing does not reliably schedule the
-  // next pull, so this loop keeps reading until it has at least one event to
-  // hand over or the upstream ends. Keep-alive comments and usage-only chunks
-  // enqueue nothing by design, and returning early on either used to stall the
-  // stream.
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (state.settled) return;
-      try {
-        for (;;) {
-          const next = await iterator.next();
-          if (next.done) {
-            await finishStream(controller);
-            return;
-          }
-          const frame = next.value;
-          if (frame.kind === "done") {
-            await finishStream(controller);
-            return;
-          }
-          if (frame.kind === "comment") continue;
-          const events = handleChunk(frame.value);
-          if (!events.length) continue;
-          emit(controller, events);
-          return;
-        }
-      } catch (error) {
-        await failStream(controller, error);
-      }
-    },
-    cancel(reason) {
-      if (state.cancelled) return;
-      state.cancelled = true;
-      settleTerminal("cancelled");
-      adapter.recordCancellation(usageContext);
-      // Usage observed before the disconnect is real evidence: record it with
-      // completed=false so the terminal reports the counters without claiming a
-      // completion. Missing usage stays unknown rather than invented.
-      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
-      // Abort the local read first: the pending upstream read then rejects, the
-      // iterator's own `finally` cancels the physical provider body, and no
-      // uninterruptible `return()` can block teardown. A consumer can cancel
-      // before the first read, so an untouched source is cancelled directly.
-      if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
-      // Cleanup is best effort and never surfaces as a provider error.
-      void iterator.return().catch(() => {});
-    },
-  });
-  return new Response(body, { status: 200, headers });
-};
-
-/** The DeepSeek seams for the shared stream writers. */
-const deepseekStreamAdapter: ProviderStreamAdapter = {
+export const deepseekStreamAdapter: ProviderStreamAdapter = {
   responseHeaders: deepseekResponseHeaders,
   frames: iterateDeepSeekChatCompletionStream,
   recordResponseHealth: recordDeepSeekResponseHealth,
@@ -1378,7 +952,7 @@ const deepseekStreamAdapter: ProviderStreamAdapter = {
  * Relays the DeepSeek Chat Completions SSE stream through the shared writer,
  * keeping DeepSeek's documented `: keep-alive` comment frames relayed verbatim.
  */
-const streamDeepSeekChatCompletion = (
+export const streamDeepSeekChatCompletion = (
   upstream: Response,
   providerRequestId: string | null,
   usageContext: UsageContext | undefined,
@@ -1397,7 +971,7 @@ type DeepSeekDispatchResult =
  * responders, so the Chat and Responses adapters differ only in how they
  * translate the payload.
  */
-const dispatchDeepSeekUpstream = async (
+export const dispatchDeepSeekUpstream = async (
   req: Request,
   body: Record<string, unknown>,
   modelRaw: string,
@@ -1431,298 +1005,6 @@ const dispatchDeepSeekUpstream = async (
   return { ok: true, upstream, providerRequestId, requestSignal, downstreamSignal };
 };
 
-const handleDeepSeekChatCompletions = async (
-  req: Request,
-  rawRecord: Record<string, unknown>,
-  modelRaw: string,
-  usageContext?: UsageContext
-): Promise<Response> => {
-  const parsedRequest = validateDeepSeekChatRequestFields(rawRecord);
-  if (!parsedRequest.ok) return parsedRequest.response;
-  const { reasoning, clientWantsStream } = parsedRequest.value;
-  // DeepSeek refuses `tool_choice` `required` and the named-function form while
-  // thinking mode is active (upstream 400 "Thinking mode does not support this
-  // tool_choice"). Reject the combination at the boundary with a gateway-shaped
-  // error naming both fields rather than relaying the provider's message about
-  // a parameter this route otherwise advertises.
-  const toolChoiceConflict = deepSeekThinkingToolChoiceConflict(reasoning, rawRecord.thinking, rawRecord.tool_choice);
-  if (toolChoiceConflict) {
-    return openaiError(400, deepSeekToolChoiceThinkingConflictMessage(toolChoiceConflict, "reasoning_effort"), "invalid_request_error", {
-      param: "tool_choice",
-    });
-  }
-  // The canonical id the provider serves for this request; the buffered and
-  // streamed readers echo it, so an alias never reports a mismatched model.
-  const upstreamModel = deepSeekUpstreamModelFor(modelRaw) ?? DEEPSEEK_FLASH_MODEL;
-
-  // Preserve the official nested Chat tools/tool_choice contract. In
-  // particular, do not run the Codex-specific flattening that follows this
-  // early branch in handleChatCompletionsInternal.
-  const deepseekBody: Record<string, unknown> = {
-    ...rawRecord,
-    reasoning_effort: reasoning,
-    stream: clientWantsStream,
-  };
-  // `thinking` is an input to the effort resolution above, not a wire field for
-  // this route: the gateway sends one representation (`reasoning_effort`) so
-  // the two can never disagree on the wire.
-  delete deepseekBody.thinking;
-  if (clientWantsStream) {
-    // DeepSeek requires stream_options to be requested alongside a stream, and
-    // reports usage on the final content chunk rather than a separate frame.
-    if (!isRecord(deepseekBody.stream_options)) deepseekBody.stream_options = { include_usage: true };
-  } else {
-    // DeepSeek answers 400 when stream_options is present without stream:true.
-    delete deepseekBody.stream_options;
-  }
-  if (usageContext?.responseTelemetry) {
-    usageContext.responseTelemetry.provider = "deepseek";
-    usageContext.responseTelemetry.reasoning = reasoning;
-    // The client's cap when it sent one, else the provider's own default for
-    // the requested tier, else unknown. The gateway never supplies a cap here,
-    // so an omitted field stays omitted on the wire.
-    usageContext.responseTelemetry.outputTokenAllowance = deepSeekChatClientOutputAllowance(rawRecord) ?? deepSeekDefaultOutputAllowance(reasoning);
-  }
-  await recordRequestUsage(usageContext, {
-    model: modelRaw,
-    route: "chat.completions",
-    stream: clientWantsStream,
-    reasoning,
-  });
-
-  const dispatched = await dispatchDeepSeekUpstream(req, deepseekBody, modelRaw, usageContext);
-  if (!dispatched.ok) return dispatched.response;
-  const { upstream, requestSignal, downstreamSignal } = dispatched;
-  let providerRequestId = dispatched.providerRequestId;
-
-  if (clientWantsStream) {
-    return streamDeepSeekChatCompletion(upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
-  }
-
-  const captured = await readBoundedResponseBody(upstream, {
-    signal: requestSignal,
-    maxBytes: DEEPSEEK_BUFFERED_BODY_MAX_BYTES,
-    // Successful buffered inference uses the request-level edge deadline, not
-    // the one-second error-body default. `requestSignal` still caps the whole
-    // request from dispatch through body completion.
-    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
-    cancellationReason: "DeepSeek Chat Completions response was incomplete",
-  });
-  if (!captured.complete) {
-    return await respondDeepSeekChatIncompleteCapture(usageContext, downstreamSignal, requestSignal, providerRequestId);
-  }
-
-  const completion = await readDeepSeekChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext, upstreamModel);
-  if (!completion.ok) return completion.response;
-
-  if (chatCompletionHasAnswerBearingOutput(completion.value)) markChatSemanticOutput(usageContext);
-  providerRequestId ??= normalizeDeepSeekProviderRequestId(completion.value.id);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
-  const usage = extractChatUsageTokens(completion.value.usage);
-  await recordCompletionUsage(usageContext, usage);
-  recordStreamTerminalType(usageContext, "response.completed");
-  recordDeepSeekResponseHealth(upstream.status, providerRequestId);
-  return json(200, completion.value, deepseekResponseHeaders(providerRequestId));
-};
-
-/**
- * Finalizes the buffered DeepSeek Responses branch: reads the captured body,
- * applies the provider terminal's classification, and returns this request's
- * single response.
- *
- * Admission, the request record, the response identity and the echo all belong
- * to the caller; this helper only reuses the already-dispatched upstream, so no
- * second admission, request record or terminal is created.
- */
-const finalizeBufferedDeepSeekResponses = async (
-  options: Readonly<{
-    upstream: Response;
-    modelRaw: string;
-    responseId: string;
-    echo: DeepSeekResponsesEcho;
-    toolNames: ReadonlyMap<string, string>;
-    customToolNames: ReadonlySet<string>;
-    upstreamModel: string;
-    providerRequestId: string | null;
-    requestSignal: AbortSignal;
-    downstreamSignal: AbortSignal;
-    usageContext?: UsageContext;
-  }>
-): Promise<Response> => {
-  const captured = await readBoundedResponseBody(options.upstream, {
-    signal: options.requestSignal,
-    maxBytes: DEEPSEEK_BUFFERED_BODY_MAX_BYTES,
-    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
-    cancellationReason: "DeepSeek Responses adapter body was incomplete",
-  });
-  if (!captured.complete) {
-    return await respondDeepSeekChatIncompleteCapture(options.usageContext, options.downstreamSignal, options.requestSignal, options.providerRequestId);
-  }
-
-  const completion = await readDeepSeekChatCompletion(
-    captured.bytes,
-    options.upstream.status,
-    options.providerRequestId,
-    options.usageContext,
-    options.upstreamModel
-  );
-  if (!completion.ok) return completion.response;
-
-  let providerRequestId = options.providerRequestId;
-  providerRequestId ??= normalizeDeepSeekProviderRequestId(completion.value.id);
-  if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.providerRequestId = providerRequestId;
-  const firstCompletion = completion.value;
-  const payload = toDeepSeekResponsesPayload(firstCompletion, options.modelRaw, options.responseId, options.echo, options.toolNames, options.customToolNames);
-  const usage = extractChatUsageTokens(firstCompletion.usage);
-  // The provider's own reason decides the terminal first: an explicit
-  // truncation is `response.incomplete` and is reported as such. Only a
-  // would-be completion is then measured for answer-bearing output, which is
-  // the same order the streamed path applies.
-  if (deepSeekTerminalTypeForPayload(payload.status) === "response.completed" && !chatCompletionHasAnswerBearingOutput(firstCompletion)) {
-    return respondDeepSeekEmptyBufferedCompletion(options.usageContext, usage, options.upstream.status, providerRequestId);
-  }
-  recordBufferedDeepSeekResponsesTerminal(options.usageContext, payload, usage, options.upstream.status, providerRequestId);
-  return json(200, payload, deepseekResponseHeaders(providerRequestId));
-};
-
-/**
- * Responses adapter for the DeepSeek official route.
- *
- * The Codex client speaks only the Responses API, so this route translates the
- * request, the buffered payload and the stream through
- * `src/deepseek_responses.ts`. Every provider-level concern (dispatch
- * admission, deadlines, health, telemetry, error reflection) is shared with the
- * Chat route.
- *
- * The translation is no longer forced by a provider gap: DeepSeek now serves a
- * native Responses endpoint (`POST /responses` and `/v1/responses`, probed
- * 2026-09-21). Two reasons the translator is still the right seam, not a
- * legacy shim: the provider's native endpoint is documented as stateless with
- * several control parameters ignored, and this adapter's filler for
- * `reasoning_content` on the tool-bearing tail is a measured provider
- * requirement a native response would have to reproduce. Migrating would be a
- * separate, evidence-driven evaluation against representative histories, not
- * an assumed cure.
- */
-const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, unknown>, modelRaw: string, usageContext?: UsageContext): Promise<Response> => {
-  const parsedStream = parseStreamField(rawRecord.stream);
-  if (!parsedStream.ok) return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
-  const clientWantsStream = parsedStream.value;
-
-  const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, clientWantsStream);
-  const upstreamModel = deepSeekUpstreamModelFor(modelRaw) ?? DEEPSEEK_FLASH_MODEL;
-  if (!translated.ok) return openaiError(400, translated.message, "invalid_request_error", { param: translated.param });
-  const { body: chatBody, toolNames, customToolNames } = translated.value;
-
-  const echo: DeepSeekResponsesEcho = {
-    tools: rawRecord.tools,
-    tool_choice: rawRecord.tool_choice,
-    parallel_tool_calls: rawRecord.parallel_tool_calls,
-    instructions: typeof rawRecord.instructions === "string" && rawRecord.instructions.trim() ? rawRecord.instructions : null,
-  };
-  const reasoningLabel = typeof chatBody.reasoning_effort === "string" ? chatBody.reasoning_effort : DEEPSEEK_DEFAULT_REASONING_EFFORT;
-  // The client's cap when it sent one, else the provider's own measured default
-  // for the requested tier, else null. When it is unknown, telemetry stays null
-  // rather than inventing a default for the tier.
-  const outputAllowance = (typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null) ?? deepSeekDefaultOutputAllowance(reasoningLabel);
-  if (usageContext?.responseTelemetry) {
-    usageContext.responseTelemetry.provider = "deepseek";
-    usageContext.responseTelemetry.reasoning = reasoningLabel;
-    // `applyOutputLimit` put the client's `max_output_tokens` on the wire as
-    // `max_tokens`; when it was absent the provider's own tier default applies.
-    usageContext.responseTelemetry.outputTokenAllowance = outputAllowance;
-  }
-  await recordRequestUsage(usageContext, {
-    model: modelRaw,
-    route: "responses",
-    stream: clientWantsStream,
-    reasoning: reasoningLabel,
-  });
-
-  const dispatched = await dispatchDeepSeekUpstream(req, chatBody, modelRaw, usageContext);
-  if (!dispatched.ok) return dispatched.response;
-  const { upstream, requestSignal, downstreamSignal } = dispatched;
-  const providerRequestId = dispatched.providerRequestId;
-  const responseId = `resp_${(providerRequestId ?? crypto.randomUUID()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40)}`;
-  const createdAtSeconds = Math.floor(Date.now() / 1000);
-
-  if (clientWantsStream) {
-    return streamDeepSeekResponses(
-      upstream,
-      modelRaw,
-      responseId,
-      createdAtSeconds,
-      echo,
-      toolNames,
-      customToolNames,
-      providerRequestId,
-      usageContext,
-      downstreamSignal,
-      requestSignal,
-      upstreamModel
-    );
-  }
-
-  return finalizeBufferedDeepSeekResponses({
-    upstream,
-    modelRaw,
-    responseId,
-    echo,
-    toolNames,
-    customToolNames,
-    upstreamModel,
-    providerRequestId,
-    requestSignal,
-    downstreamSignal,
-    usageContext,
-  });
-};
-
-/**
- * Relays the DeepSeek translated Responses event sequence through the shared
- * writer; this shape skips comment frames and lets the translator decide the
- * terminal under DeepSeek's own profile.
- */
-const streamDeepSeekResponses = (
-  upstream: Response,
-  requestedModel: string,
-  responseId: string,
-  createdAtSeconds: number,
-  echo: DeepSeekResponsesEcho,
-  toolNames: ReadonlyMap<string, string>,
-  customToolNames: ReadonlySet<string>,
-  providerRequestId: string | null,
-  usageContext: UsageContext | undefined,
-  downstreamSignal: AbortSignal,
-  requestSignal: AbortSignal,
-  upstreamModel: string
-): Response =>
-  relayResponsesStream(deepseekStreamAdapter, {
-    upstream,
-    requestedModel,
-    responseId,
-    createdAtSeconds,
-    echo,
-    toolNames,
-    customToolNames,
-    providerRequestId,
-    usageContext,
-    downstreamSignal,
-    requestSignal,
-    upstreamModel,
-  });
-
-/**
- * LithosAI route support.
- *
- * The vendor serves OpenAI Chat Completions only — `POST /v1/responses` answers
- * 404 (probed 2026-09-23) — while the gateway's shared Responses adapter
- * (`src/deepseek_responses.ts`) translates a Responses request into a Chat
- * Completions body under a provider profile. Both gateway routes are therefore
- * served natively, and everything provider-level (dispatch admission,
- * deadlines, health, telemetry, error reflection) is shared between them here;
- * the two adapters differ only in how they translate the payload.
- */
 const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
 
 /** The seven tiers the provider accepted verbatim on 2026-09-23, as a membership set. */
@@ -2828,7 +2110,7 @@ const dispatchAndPreflightChatCompletions = async (
   return { ok: true, value: { preflight, provider, lifecycle, signal: requestInferenceSignal, resolveCodexProbe, combinedWarnings } };
 };
 
-const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
+export const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const envelope = await parseChatCompletionsEnvelope(req);
   if (!envelope.ok) return envelope.response;
   const { body, rawRecord, warnings, jsonObjectTextFormat } = envelope.value;
