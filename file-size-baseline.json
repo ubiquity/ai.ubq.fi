@@ -1,6 +1,5 @@
 {
   "src/admin.ts": 2859,
-  "src/codex_account_routing.ts": 1597,
   "src/codex_banked_reset.ts": 2669,
   "src/codex.ts": 3499,
   "src/kv_migration.ts": 2490,
