@@ -7,6 +7,7 @@ import {
   type RequestDeliveryInfo,
   resolveIdempotencyPrincipal,
   scheduleSentinelBackgroundTask,
+  type SentinelBackgroundTaskRegistrar,
   kernelQuotaRouteForRequest,
   terminalRouteForRequest,
   withProviderRequestId,
@@ -112,10 +113,22 @@ const reserveKernelAdmission = async (
 
 /**
  * Persists the Sentinel replay capture for a thrown inference exception.
- * Snapshotting happens before the try block, exactly as the inline capture did:
- * a snapshot failure propagates instead of being swallowed as a capture failure.
+ * Snapshotting happens before any scheduling, exactly as the inline capture
+ * did: a snapshot failure propagates instead of being swallowed as a capture
+ * failure. Where the runtime registers background work, the deferred
+ * persistence is handed to it so a slow or unavailable replay store cannot
+ * delay the original inference error; without a registrar the task is awaited.
  */
-const persistInferenceExceptionReplay = async (sentinelReplayInput: AcceptedSentinelReplayInput, runError: unknown): Promise<void> => {
+export const persistInferenceExceptionReplay = async (
+  sentinelReplayInput: AcceptedSentinelReplayInput,
+  runError: unknown,
+  options: Readonly<{
+    /** Test seam for proving a stalled replay write does not delay the error. */
+    persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
+    /** Test seam for the runtime background-task registrar. */
+    waitUntil?: SentinelBackgroundTaskRegistrar;
+  }> = {}
+): Promise<void> => {
   const observation: SentinelFailureObservation = {
     status: 500,
     stream: null,
@@ -129,15 +142,20 @@ const persistInferenceExceptionReplay = async (sentinelReplayInput: AcceptedSent
   // the recorder is sealed and disposed here, and the same immutable
   // trace feeds HMAC and encryption.
   const replaySnapshot = snapshotSentinelReplayInput(sentinelReplayInput);
-  try {
-    await persistSentinelReplayFromEnvironment(replaySnapshot, observation);
-  } catch {
-    // Replay persistence is best effort and cannot replace the original
-    // gateway exception or expose its request body in logs.
-  } finally {
-    zeroSentinelReplayInput(sentinelReplayInput);
-    zeroSentinelReplayInput(replaySnapshot);
-  }
+  // The snapshot owns the only remaining copy, so the request-owned original
+  // is released before any persistence await or background handoff.
+  zeroSentinelReplayInput(sentinelReplayInput);
+  const persistence = (options.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(replaySnapshot, observation)
+    .catch(() => {
+      // Replay persistence is best effort and cannot replace the original
+      // gateway exception or expose its request body in logs.
+    })
+    .then(() => {
+      zeroSentinelReplayInput(replaySnapshot);
+    });
+  // Deferred where the runtime supports it: the task above already owns its
+  // snapshot, so a stalled replay store never delays the propagated error.
+  if (!scheduleSentinelBackgroundTask(persistence, options.waitUntil)) await persistence;
 };
 
 /**
@@ -407,11 +425,16 @@ const handleTerminalRoute = async (
       await bestEffortSettleKernelQuota("incomplete", "inference_exception");
       const sentinelReplayInput = takeSentinelReplayInput();
       if (sentinelReplayInput) {
+        // Deferred where the runtime registers background work: the task owns
+        // its snapshot, so optional replay storage never delays this error.
         await persistInferenceExceptionReplay(sentinelReplayInput, runError);
       } else if (sentinelReplayOmission !== null) {
         // A thrown inference failure with no captured body still publishes its
         // explicit omission status instead of an empty replay history.
-        await recordSentinelReplayOmissionFromEnvironment(requestId, sentinelReplayOmission, Date.now());
+        const omissionTask = recordSentinelReplayOmissionFromEnvironment(requestId, sentinelReplayOmission, Date.now());
+        // Same deferral as the pre-capture rejection path: a diagnostic status
+        // write never extends the propagated inference error latency.
+        if (!scheduleSentinelBackgroundTask(omissionTask, undefined)) await omissionTask;
       }
       // `only-throw-error` requires an Error: an Error run failure is rethrown
       // unchanged, and any other value is preserved as the cause.

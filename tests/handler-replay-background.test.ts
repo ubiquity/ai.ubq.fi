@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
+import { persistInferenceExceptionReplay } from "../src/handler_terminal_route.ts";
 
 type TerminalLogInput = Parameters<typeof withTerminalRequestLog>[1];
 type ReplayInput = NonNullable<TerminalLogInput["sentinelReplayInput"]>;
 type ReplayPersistence = NonNullable<TerminalLogInput["persistSentinelReplay"]>;
+type ExceptionReplayOptions = NonNullable<Parameters<typeof persistInferenceExceptionReplay>[2]>;
+type ExceptionReplayPersistence = NonNullable<ExceptionReplayOptions["persistSentinelReplay"]>;
 type RecordTelemetry = NonNullable<TerminalLogInput["recordTelemetry"]>;
 type RecordAnalytics = NonNullable<TerminalLogInput["recordCacheAnalytics"]>;
 type RecordAdminError = NonNullable<TerminalLogInput["recordAdminError"]>;
@@ -134,6 +137,99 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
       persistence.resolve({ status: "disabled", reason: "kv_unavailable" });
     }
     await Promise.allSettled(registeredTasks);
+    if (previousEdgeRuntime === undefined) delete globals.EdgeRuntime;
+    else globals.EdgeRuntime = previousEdgeRuntime;
+  }
+});
+
+Deno.test("thrown inference errors propagate before deferred exception replay persistence settles", async () => {
+  const globals = globalThis as TestGlobals;
+  const previousEdgeRuntime = globals.EdgeRuntime;
+  const registeredTasks: Promise<unknown>[] = [];
+  const persistence = Promise.withResolvers<Awaited<ReturnType<ExceptionReplayPersistence>>>();
+  const persisted: ReplayInput[] = [];
+  let persistenceSettled = false;
+  const capture = acceptedInput();
+  const originalBytes = [...capture.body];
+  const runError = new Error("fixture inference failure");
+
+  globals.EdgeRuntime = {
+    waitUntil(task) {
+      registeredTasks.push(task);
+    },
+  };
+
+  try {
+    // Mirrors the handler's exception path: await the scheduling helper and
+    // then propagate the original error without waiting for replay storage.
+    const scheduling = persistInferenceExceptionReplay(capture, runError, {
+      persistSentinelReplay: (snapshot) => {
+        persisted.push(snapshot);
+        return persistence.promise;
+      },
+    });
+    const propagated = scheduling.then(() => {
+      throw runError;
+    });
+
+    await assert.rejects(propagated, (error: unknown) => {
+      assert.equal(error, runError);
+      return true;
+    });
+    assert.equal(persistenceSettled, false);
+    assert.equal(registeredTasks.length, 1);
+    // The request-owned original is released before the background handoff.
+    assert.ok(capture.body.every((byte) => byte === 0));
+    const snapshot = persisted[0];
+    if (!snapshot) throw new Error("exception replay persistence did not receive a snapshot");
+    assert.notEqual(snapshot.body, capture.body);
+    assert.deepEqual([...snapshot.body], originalBytes);
+
+    persistenceSettled = true;
+    persistence.reject(new Error("fixture persistence failure"));
+    await registeredTasks[0];
+    assert.ok(snapshot.body.every((byte) => byte === 0));
+  } finally {
+    if (!persistenceSettled) {
+      persistence.resolve({ status: "disabled", reason: "kv_unavailable" });
+    }
+    await Promise.allSettled(registeredTasks);
+    if (previousEdgeRuntime === undefined) delete globals.EdgeRuntime;
+    else globals.EdgeRuntime = previousEdgeRuntime;
+  }
+});
+
+Deno.test("exception replay persistence is awaited and cleaned up without a background registrar", async () => {
+  const globals = globalThis as TestGlobals;
+  const previousEdgeRuntime = globals.EdgeRuntime;
+  delete globals.EdgeRuntime;
+  const persisted: ReplayInput[] = [];
+  let persistenceSettled = false;
+  const capture = acceptedInput();
+  const originalBytes = [...capture.body];
+
+  try {
+    const scheduling = persistInferenceExceptionReplay(capture, new Error("fixture inference failure"), {
+      persistSentinelReplay: (snapshot) => {
+        persisted.push(snapshot);
+        return Promise.resolve({ status: "disabled" as const, reason: "kv_unavailable" as const }).finally(() => {
+          persistenceSettled = true;
+        });
+      },
+    });
+
+    // Nothing is registered and nothing has settled yet: the unscheduled path
+    // still carries the snapshot until the persistence settles.
+    assert.equal(persistenceSettled, false);
+    const snapshot = persisted[0];
+    if (!snapshot) throw new Error("exception replay persistence did not receive a snapshot");
+    assert.ok(capture.body.every((byte) => byte === 0));
+    assert.deepEqual([...snapshot.body], originalBytes);
+
+    await scheduling;
+    assert.equal(persistenceSettled, true);
+    assert.ok(snapshot.body.every((byte) => byte === 0));
+  } finally {
     if (previousEdgeRuntime === undefined) delete globals.EdgeRuntime;
     else globals.EdgeRuntime = previousEdgeRuntime;
   }
