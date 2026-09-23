@@ -36,6 +36,7 @@ import {
   DEEPSEEK_OFFICIAL_MODEL_IDS,
   DEEPSEEK_REASONING_LEVELS,
   DeepSeekError,
+  type DeepSeekStreamFrame,
   DeepSeekStreamError,
   deepSeekDefaultOutputAllowance,
   deepSeekThinkingModeActive,
@@ -51,6 +52,8 @@ import {
 } from "./deepseek.ts";
 import {
   createDeepSeekResponsesStreamTranslator,
+  type ChatOnlyResponsesProfile,
+  DEEPSEEK_RESPONSES_PROFILE,
   type DeepSeekResponsesEcho,
   encodeResponsesEvent,
   LITHOS_RESPONSES_PROFILE,
@@ -10275,7 +10278,46 @@ const respondDeepSeekChatIncompleteCapture = async (
   );
 };
 
-const deepseekStreamErrorValue = (code: string): Record<string, unknown> => ({
+/**
+ * The frame union both provider transports are normalized to. DeepSeek's
+ * iterator yields these frames directly; the LithosAI normalizer maps the
+ * chunks its transport validates onto the same shape.
+ */
+type ProviderStreamFrame = DeepSeekStreamFrame;
+
+/**
+ * The provider-specific seams the shared stream writers need, one adapter per
+ * provider. Every other part of both route shapes - framing, teardown,
+ * telemetry, semantic-output detection, failure classification order - is
+ * written once.
+ */
+type ProviderStreamAdapter = Readonly<{
+  /** This provider's response headers, including its provider-request-id echo. */
+  responseHeaders: (providerRequestId: string | null) => Record<string, string>;
+  /** This provider's upstream SSE frames, normalized to the shared union. */
+  frames: (upstream: Response, upstreamModel: string, options: Readonly<{ signal: AbortSignal }>) => AsyncGenerator<ProviderStreamFrame, void, unknown>;
+  /** Records the upstream response against this provider's health counters. */
+  recordResponseHealth: (status: number, providerRequestId: string | null) => void;
+  /** Records a provider fault against this provider's health counters. */
+  recordProviderError: (status: number | null, providerRequestId: string | null) => void;
+  /** Records the cancellation failure kind in this provider's vocabulary. */
+  recordCancellation: (usageContext: UsageContext | undefined) => void;
+  /** Records an incomplete upstream response in this provider's vocabulary. */
+  recordIncompleteResponse: (usageContext: UsageContext | undefined) => void;
+  /** Records the failure kind for an unmapped upstream finish reason. */
+  recordFinishFailureKind: (usageContext: UsageContext | undefined, finishReason: string | null) => void;
+  /** Records a transport error's failure kind in this provider's vocabulary. */
+  recordTransportFailure: (usageContext: UsageContext | undefined, error: unknown, terminalType: ResponseStreamTerminalType) => void;
+  /** Maps a transport error onto the shared terminal vocabulary. */
+  terminalTypeForError: (error: unknown, downstreamSignal: AbortSignal) => ResponseStreamTerminalType;
+  /** The code this provider stamps on its streamed Chat error payloads. */
+  streamErrorCode: string;
+  /** The provider profile the shared Responses translator runs under. */
+  responsesProfile: ChatOnlyResponsesProfile;
+}>;
+
+/** The OpenAI-shaped SSE error body a relay emits when the upstream stream itself failed. */
+const chatStreamErrorValue = (code: string): Record<string, unknown> => ({
   error: {
     message: "Upstream Chat Completions stream failed.",
     type: "server_error",
@@ -10294,12 +10336,13 @@ const closeController = (controller: ReadableStreamDefaultController<Uint8Array>
 };
 
 /**
- * Relays the upstream Chat Completions SSE stream as it arrives. Chunk frames
- * are validated by the transport before they reach this writer, so the client
- * sees the same incremental tokens DeepSeek produced rather than a buffered
- * replay.
+ * Relays one provider's Chat Completions SSE stream as it arrives. Chunk frames
+ * are validated by the provider transport before they reach this writer, so the
+ * client sees the same incremental tokens the provider produced rather than a
+ * buffered replay.
  */
-const streamDeepSeekChatCompletion = (
+const relayChatCompletionStream = (
+  adapter: ProviderStreamAdapter,
   upstream: Response,
   providerRequestId: string | null,
   usageContext: UsageContext | undefined,
@@ -10308,7 +10351,7 @@ const streamDeepSeekChatCompletion = (
   upstreamModel: string
 ): Response => {
   const encoder = new TextEncoder();
-  const headers = new Headers(deepseekResponseHeaders(providerRequestId));
+  const headers = new Headers(adapter.responseHeaders(providerRequestId));
   headers.set("Content-Type", "text/event-stream");
   headers.set("Cache-Control", "no-cache");
 
@@ -10318,7 +10361,7 @@ const streamDeepSeekChatCompletion = (
   // never interrupt a generator parked in an upstream read.
   const cancellation = new AbortController();
   const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
+  const iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
   let closed = false;
   let terminalSettled = false;
   let semantic = false;
@@ -10335,20 +10378,20 @@ const streamDeepSeekChatCompletion = (
     await recordCompletionUsage(usageContext, usage);
     settleTerminal("response.completed");
     recordStreamTerminal(usageContext);
-    recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+    adapter.recordResponseHealth(upstream.status, providerRequestId);
     controller.enqueue(encoder.encode("data: [DONE]\n\n"));
     controller.close();
   };
   const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
     if (closed) return;
     closed = true;
-    const terminalType = deepSeekTerminalTypeForError(error, downstreamSignal);
+    const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
     settleTerminal(terminalType);
-    recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
+    adapter.recordTransportFailure(usageContext, error, terminalType);
     if (terminalType !== "cancelled") {
-      void recordDeepSeekProviderHealth("upstream_error", null, Date.now, providerRequestId);
+      adapter.recordProviderError(null, providerRequestId);
       await recordErrorUsage(usageContext);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(deepseekStreamErrorValue("deepseek_upstream_stream_error"))}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chatStreamErrorValue(adapter.streamErrorCode))}\n\n`));
     }
     controller.close();
   };
@@ -10367,8 +10410,9 @@ const streamDeepSeekChatCompletion = (
         const frame = next.value;
         if (frame.kind === "comment") {
           // DeepSeek's documented `: keep-alive` comment frame is what keeps a
-          // long thinking turn from looking idle to an edge proxy. SSE comments
-          // are inert for clients, so relay it verbatim.
+          // long thinking turn from looking idle to an edge proxy, and SSE
+          // comments are inert for clients, so it is relayed verbatim. A
+          // transport that carries no comment frames never yields this branch.
           controller.enqueue(encoder.encode(`${frame.text}\n\n`));
           return;
         }
@@ -10392,7 +10436,7 @@ const streamDeepSeekChatCompletion = (
       if (closed) return;
       closed = true;
       settleTerminal("cancelled");
-      recordDeepSeekFailureKind(usageContext, "cancellation");
+      adapter.recordCancellation(usageContext);
       // Usage observed before the disconnect is real evidence: record it with
       // completed=false so the terminal reports the counters without claiming a
       // completion. Missing usage stays unknown rather than invented.
@@ -10410,6 +10454,287 @@ const streamDeepSeekChatCompletion = (
   });
   return new Response(body, { status: 200, headers });
 };
+
+/**
+ * Relays one provider's translated Responses event sequence as it arrives. The
+ * Chat chunks are validated by the provider transport before they reach the
+ * translator, so the client sees incremental `response.*` events rather than a
+ * buffered replay.
+ */
+const relayResponsesStream = (
+  adapter: ProviderStreamAdapter,
+  options: Readonly<{
+    upstream: Response;
+    requestedModel: string;
+    responseId: string;
+    createdAtSeconds: number;
+    echo: DeepSeekResponsesEcho;
+    toolNames: ReadonlyMap<string, string>;
+    customToolNames: ReadonlySet<string>;
+    providerRequestId: string | null;
+    usageContext: UsageContext | undefined;
+    downstreamSignal: AbortSignal;
+    requestSignal: AbortSignal;
+    upstreamModel: string;
+  }>
+): Response => {
+  const {
+    upstream,
+    requestedModel,
+    responseId,
+    createdAtSeconds,
+    echo,
+    toolNames,
+    customToolNames,
+    providerRequestId,
+    usageContext,
+    downstreamSignal,
+    requestSignal,
+    upstreamModel,
+  } = options;
+  const encoder = new TextEncoder();
+  const headers = new Headers(adapter.responseHeaders(providerRequestId));
+  headers.set("Content-Type", "text/event-stream");
+  headers.set("Cache-Control", "no-cache");
+
+  // One stream-owned interrupt for the parked original read. The external
+  // request signal alone is driven by Deno delivery completion, which itself
+  // waits on this teardown, so a queued `iterator.return()` could never reach
+  // the read.
+  const cancellation = new AbortController();
+  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
+  const iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
+  const translator = createDeepSeekResponsesStreamTranslator(
+    requestedModel,
+    responseId,
+    echo,
+    createdAtSeconds,
+    toolNames,
+    customToolNames,
+    adapter.responsesProfile
+  );
+  const state = {
+    settled: false,
+    cancelled: false,
+    semantic: false,
+    usage: null as UsageTokens | null,
+  };
+  /** The next `sequence_number` this response's SSE stream will emit. */
+  let sequenceNumber = 0;
+
+  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
+    if (state.settled) return;
+    state.settled = true;
+    recordStreamTerminalType(usageContext, terminalType);
+  };
+  const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
+    for (const event of events) {
+      // Official Responses events carry a monotonic per-response
+      // `sequence_number`. The translator's own `output_index`/`content_index`
+      // values are copied through untouched, so this is the only field the wire
+      // gains and every event - including refusals, item and terminal events -
+      // is stamped by this one encoder seam.
+      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
+      sequenceNumber += 1;
+    }
+  };
+  /**
+   * The client-visible shape of the gateway's existing degenerate-completion
+   * classification. Response headers were sent when the stream opened, so the
+   * truth travels on the terminal event instead of as a 502 status; the
+   * failure kind and message are the ones the ordinary routes already use.
+   */
+  const emptyCompletionFailure = (): Record<string, unknown> => ({
+    type: "response.failed",
+    response: {
+      id: responseId,
+      object: "response",
+      status: "failed",
+      error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
+    },
+  });
+  /**
+   * Emits the fail-closed terminal for a completion the provider reported as
+   * successful but that carries nothing a client can act on. Returns true when
+   * it handled the terminal.
+   */
+  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): boolean => {
+    if (translator.terminalKind() !== "completed" || isAnswerBearingCompletion(translator.answerBearingOutput())) return false;
+    if (usageContext?.responseTelemetry) {
+      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+      usageContext.responseTelemetry.semanticOutputObserved = false;
+    }
+    recordTerminalUsage(usageContext, state.usage, false);
+    settleTerminal("response.failed");
+    recordStreamTerminal(usageContext);
+    emit(controller, [...translator.open(), emptyCompletionFailure()]);
+    adapter.recordResponseHealth(upstream.status, providerRequestId);
+    return true;
+  };
+
+  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+    if (state.settled) return;
+    try {
+      // The provider's own stop reason decides the terminal (Goal B's Delta 1
+      // vocabulary), and the provider-agnostic completion-validity predicate
+      // (Goal A's G3) decides whether a would-be completion carries anything a
+      // client can act on. An explicit non-completed signal wins over validity.
+      if (emitEmptyCompletionFailure(controller)) return;
+      const terminalKind = translator.terminalKind();
+      emit(controller, translator.finish());
+      if (terminalKind === "completed") {
+        await recordCompletionUsage(usageContext, state.usage);
+        settleTerminal("response.completed");
+      } else {
+        // A non-completed terminal is classified the same way on the streamed
+        // and buffered paths, so telemetry reads the same on both.
+        recordTerminalUsage(usageContext, state.usage, false);
+        if (terminalKind === "incomplete") {
+          adapter.recordIncompleteResponse(usageContext);
+        } else {
+          // The only remaining non-completed kind is "failed".
+          adapter.recordFinishFailureKind(usageContext, translator.upstreamFinishReason());
+          adapter.recordProviderError(upstream.status, providerRequestId);
+        }
+        settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
+      }
+      recordStreamTerminal(usageContext);
+      adapter.recordResponseHealth(upstream.status, providerRequestId);
+    } finally {
+      closeController(controller);
+    }
+  };
+  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
+    if (state.settled) {
+      closeController(controller);
+      return;
+    }
+    const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
+    settleTerminal(terminalType);
+    adapter.recordTransportFailure(usageContext, error, terminalType);
+    try {
+      if (terminalType !== "cancelled") {
+        adapter.recordProviderError(null, providerRequestId);
+        await recordErrorUsage(usageContext);
+        emit(controller, [
+          {
+            type: "response.failed",
+            response: {
+              id: responseId,
+              object: "response",
+              status: "failed",
+              error: { code: adapter.streamErrorCode, message: "Upstream Chat Completions stream failed." },
+            },
+          },
+        ]);
+      }
+    } finally {
+      closeController(controller);
+    }
+  };
+
+  /** Records the chunk's telemetry and returns the events it translates to. */
+  const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
+    const chunkUsage = extractChatUsageTokens(chunk.usage);
+    if (chunkUsage) state.usage = chunkUsage;
+    if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
+      state.semantic = true;
+      markChatSemanticOutput(usageContext);
+      recordFirstSemanticCommitment(usageContext);
+    }
+    recordFirstUpstreamSseEvent(usageContext);
+    return translator.push(chunk);
+  };
+
+  // Pull-driven so the upstream stream is read only as fast as the client
+  // consumes it. A pull that enqueues nothing does not reliably schedule the
+  // next pull, so this loop keeps reading until it has at least one event to
+  // hand over or the upstream ends. Keep-alive comments and usage-only chunks
+  // enqueue nothing by design, and returning early on either used to stall the
+  // stream.
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (state.settled) return;
+      try {
+        for (;;) {
+          const next = await iterator.next();
+          if (next.done) {
+            await finishStream(controller);
+            return;
+          }
+          const frame = next.value;
+          if (frame.kind === "done") {
+            await finishStream(controller);
+            return;
+          }
+          if (frame.kind === "comment") continue;
+          const events = handleChunk(frame.value);
+          if (!events.length) continue;
+          emit(controller, events);
+          return;
+        }
+      } catch (error) {
+        await failStream(controller, error);
+      }
+    },
+    cancel(reason) {
+      if (state.cancelled) return;
+      state.cancelled = true;
+      settleTerminal("cancelled");
+      adapter.recordCancellation(usageContext);
+      // Usage observed before the disconnect is real evidence: record it with
+      // completed=false so the terminal reports the counters without claiming a
+      // completion. Missing usage stays unknown rather than invented.
+      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
+      // Abort the local read first: the pending upstream read then rejects, the
+      // iterator's own `finally` cancels the physical provider body, and no
+      // uninterruptible `return()` can block teardown. A consumer can cancel
+      // before the first read, so an untouched source is cancelled directly.
+      if (!cancellation.signal.aborted) cancellation.abort(reason);
+      const upstreamBody = upstream.body;
+      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      // Cleanup is best effort and never surfaces as a provider error.
+      void iterator.return().catch(() => {});
+    },
+  });
+  return new Response(body, { status: 200, headers });
+};
+
+/** The DeepSeek seams for the shared stream writers. */
+const deepseekStreamAdapter: ProviderStreamAdapter = {
+  responseHeaders: deepseekResponseHeaders,
+  frames: iterateDeepSeekChatCompletionStream,
+  recordResponseHealth: recordDeepSeekResponseHealth,
+  recordProviderError: (status, providerRequestId) => void recordDeepSeekProviderHealth("upstream_error", status, Date.now, providerRequestId),
+  recordCancellation: (usageContext) => {
+    recordDeepSeekFailureKind(usageContext, "cancellation");
+  },
+  recordIncompleteResponse: (usageContext) => {
+    recordDeepSeekFailureKind(usageContext, "incomplete_response");
+  },
+  recordFinishFailureKind: (usageContext, finishReason) => {
+    recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(finishReason));
+  },
+  recordTransportFailure: (usageContext, error, terminalType) => {
+    recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
+  },
+  terminalTypeForError: deepSeekTerminalTypeForError,
+  streamErrorCode: "deepseek_upstream_stream_error",
+  responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
+};
+
+/**
+ * Relays the DeepSeek Chat Completions SSE stream through the shared writer,
+ * keeping DeepSeek's documented `: keep-alive` comment frames relayed verbatim.
+ */
+const streamDeepSeekChatCompletion = (
+  upstream: Response,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined,
+  downstreamSignal: AbortSignal,
+  requestSignal: AbortSignal,
+  upstreamModel: string
+): Response => relayChatCompletionStream(deepseekStreamAdapter, upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
 
 type DeepSeekDispatchResult =
   | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
@@ -10703,10 +11028,9 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
 };
 
 /**
- * Relays the translated Responses event sequence as it arrives. The Chat
- * chunks are validated by the transport before they reach the translator, so
- * the client sees incremental `response.*` events rather than a buffered
- * replay.
+ * Relays the DeepSeek translated Responses event sequence through the shared
+ * writer; this shape skips comment frames and lets the translator decide the
+ * terminal under DeepSeek's own profile.
  */
 const streamDeepSeekResponses = (
   upstream: Response,
@@ -10721,208 +11045,21 @@ const streamDeepSeekResponses = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string
-): Response => {
-  const encoder = new TextEncoder();
-  const headers = new Headers(deepseekResponseHeaders(providerRequestId));
-  headers.set("Content-Type", "text/event-stream");
-  headers.set("Cache-Control", "no-cache");
-
-  // One stream-owned interrupt for the parked original read. The external
-  // request signal alone is driven by Deno delivery completion, which itself
-  // waits on this teardown, so a queued `iterator.return()` could never reach
-  // the read.
-  const cancellation = new AbortController();
-  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
-  const translator = createDeepSeekResponsesStreamTranslator(requestedModel, responseId, echo, createdAtSeconds, toolNames, customToolNames);
-  const state = {
-    settled: false,
-    cancelled: false,
-    semantic: false,
-    usage: null as UsageTokens | null,
-  };
-  /** The next `sequence_number` this response's SSE stream will emit. */
-  let sequenceNumber = 0;
-
-  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
-    if (state.settled) return;
-    state.settled = true;
-    recordStreamTerminalType(usageContext, terminalType);
-  };
-  const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
-    for (const event of events) {
-      // Official Responses events carry a monotonic per-response
-      // `sequence_number`. The translator's own `output_index`/`content_index`
-      // values are copied through untouched, so this is the only field the wire
-      // gains and every event - including refusals, item and terminal events -
-      // is stamped by this one encoder seam.
-      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
-      sequenceNumber += 1;
-    }
-  };
-  /**
-   * The client-visible shape of the gateway's existing degenerate-completion
-   * classification. Response headers were sent when the stream opened, so the
-   * truth travels on the terminal event instead of as a 502 status; the
-   * failure kind and message are the ones the ordinary routes already use.
-   */
-  const emptyCompletionFailure = (): Record<string, unknown> => ({
-    type: "response.failed",
-    response: {
-      id: responseId,
-      object: "response",
-      status: "failed",
-      error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
-    },
+): Response =>
+  relayResponsesStream(deepseekStreamAdapter, {
+    upstream,
+    requestedModel,
+    responseId,
+    createdAtSeconds,
+    echo,
+    toolNames,
+    customToolNames,
+    providerRequestId,
+    usageContext,
+    downstreamSignal,
+    requestSignal,
+    upstreamModel,
   });
-  // The controller closes in a `finally`: a throw while emitting the terminal
-  // events must still end the client-visible stream instead of hanging it.
-  /**
-   * Emits the fail-closed terminal for a completion the provider reported as
-   * successful but that carries nothing a client can act on. Returns true when
-   * it handled the terminal.
-   */
-  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): boolean => {
-    if (translator.terminalKind() !== "completed" || isAnswerBearingCompletion(translator.answerBearingOutput())) return false;
-    if (usageContext?.responseTelemetry) {
-      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-      usageContext.responseTelemetry.semanticOutputObserved = false;
-    }
-    recordTerminalUsage(usageContext, state.usage, false);
-    settleTerminal("response.failed");
-    recordStreamTerminal(usageContext);
-    emit(controller, [...translator.open(), emptyCompletionFailure()]);
-    recordDeepSeekResponseHealth(upstream.status, providerRequestId);
-    return true;
-  };
-
-  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
-    if (state.settled) return;
-    try {
-      // The provider's own stop reason decides the terminal (Goal B's Delta 1
-      // vocabulary), and the provider-agnostic completion-validity predicate
-      // (Goal A's G3) decides whether a would-be completion carries anything a
-      // client can act on. An explicit non-completed signal wins over validity.
-      if (emitEmptyCompletionFailure(controller)) return;
-      const terminalKind = translator.terminalKind();
-      emit(controller, translator.finish());
-      if (terminalKind === "completed") {
-        await recordCompletionUsage(usageContext, state.usage);
-        settleTerminal("response.completed");
-      } else {
-        // A non-completed terminal is classified the same way on the streamed
-        // and buffered paths, so telemetry reads the same on both.
-        recordTerminalUsage(usageContext, state.usage, false);
-        if (terminalKind === "incomplete") {
-          recordDeepSeekFailureKind(usageContext, "incomplete_response");
-        } else {
-          // The only remaining non-completed kind is "failed".
-          recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(translator.upstreamFinishReason()));
-          void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-        }
-        settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
-      }
-      recordStreamTerminal(usageContext);
-      recordDeepSeekResponseHealth(upstream.status, providerRequestId);
-    } finally {
-      closeController(controller);
-    }
-  };
-  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
-    if (state.settled) {
-      closeController(controller);
-      return;
-    }
-    const terminalType = deepSeekTerminalTypeForError(error, downstreamSignal);
-    settleTerminal(terminalType);
-    recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
-    try {
-      if (terminalType !== "cancelled") {
-        void recordDeepSeekProviderHealth("upstream_error", null, Date.now, providerRequestId);
-        await recordErrorUsage(usageContext);
-        emit(controller, [
-          {
-            type: "response.failed",
-            response: {
-              id: responseId,
-              object: "response",
-              status: "failed",
-              error: { code: "deepseek_upstream_stream_error", message: "Upstream Chat Completions stream failed." },
-            },
-          },
-        ]);
-      }
-    } finally {
-      closeController(controller);
-    }
-  };
-
-  // Pull-driven so the upstream stream is read only as fast as the client
-  // consumes it; an eager writer would buffer an unbounded reply in memory.
-  /** Records the chunk's telemetry and returns the events it translates to. */
-  const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
-    const chunkUsage = extractChatUsageTokens(chunk.usage);
-    if (chunkUsage) state.usage = chunkUsage;
-    if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
-      state.semantic = true;
-      markChatSemanticOutput(usageContext);
-      recordFirstSemanticCommitment(usageContext);
-    }
-    recordFirstUpstreamSseEvent(usageContext);
-    return translator.push(chunk);
-  };
-
-  const body = new ReadableStream<Uint8Array>({
-    // A pull that enqueues nothing does not reliably schedule the next pull, so
-    // this loop keeps reading until it has at least one event to hand over or
-    // the upstream ends. Keep-alive comments and usage-only chunks enqueue
-    // nothing by design, and returning early on either used to stall the stream.
-    async pull(controller) {
-      if (state.settled) return;
-      try {
-        for (;;) {
-          const next = await iterator.next();
-          if (next.done) {
-            await finishStream(controller);
-            return;
-          }
-          const frame = next.value;
-          if (frame.kind === "done") {
-            await finishStream(controller);
-            return;
-          }
-          if (frame.kind === "comment") continue;
-          const events = handleChunk(frame.value);
-          if (!events.length) continue;
-          emit(controller, events);
-          return;
-        }
-      } catch (error) {
-        await failStream(controller, error);
-      }
-    },
-    cancel(reason) {
-      if (state.cancelled) return;
-      state.cancelled = true;
-      settleTerminal("cancelled");
-      recordDeepSeekFailureKind(usageContext, "cancellation");
-      // Usage observed before the disconnect is real evidence: record it with
-      // completed=false so the terminal reports the counters without claiming a
-      // completion. Missing usage stays unknown rather than invented.
-      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
-      // Abort the local read first: the pending upstream read then rejects, the
-      // iterator's own `finally` cancels the physical provider body, and no
-      // uninterruptible `return()` can block teardown. A consumer can cancel
-      // before the first read, so an untouched source is cancelled directly.
-      if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
-      // Cleanup is best effort and never surfaces as a provider error.
-      void iterator.return().catch(() => {});
-    },
-  });
-  return new Response(body, { status: 200, headers });
-};
 
 /**
  * LithosAI route support.
@@ -11156,21 +11293,49 @@ const respondLithosChatIncompleteCapture = async (
   );
 };
 
-const lithosStreamErrorValue = (code: string): Record<string, unknown> => ({
-  error: {
-    message: "Upstream Chat Completions stream failed.",
-    type: "server_error",
-    code,
-    param: null,
+/**
+ * Maps the LithosAI transport's validated chunks onto the shared frame union.
+ * This vendor's wire carries no SSE comment frames and its iterator ends at
+ * `[DONE]`, which the shared loops read as an exhausted iterator; this provider
+ * therefore claims no keep-alive relay it does not have.
+ */
+async function* lithosChatStreamFrames(
+  upstream: Response,
+  upstreamModel: string,
+  options: Readonly<{ signal: AbortSignal }>
+): AsyncGenerator<ProviderStreamFrame, void, unknown> {
+  for await (const chunk of iterateLithosChatCompletionStream(upstream, upstreamModel, options)) {
+    yield { kind: "chunk", value: chunk };
+  }
+}
+
+/** The LithosAI seams for the shared stream writers. */
+const lithosStreamAdapter: ProviderStreamAdapter = {
+  responseHeaders: lithosResponseHeaders,
+  frames: lithosChatStreamFrames,
+  recordResponseHealth: recordLithosResponseHealth,
+  recordProviderError: (status, providerRequestId) => void recordLithosProviderHealth("upstream_error", status, Date.now, providerRequestId),
+  recordCancellation: (usageContext) => {
+    recordLithosFailureKind(usageContext, "cancellation");
   },
-});
+  recordIncompleteResponse: (usageContext) => {
+    recordLithosFailureKind(usageContext, "incomplete_response");
+  },
+  recordFinishFailureKind: (usageContext, finishReason) => {
+    recordLithosFailureKind(usageContext, lithosFinishReasonFailureKind(finishReason));
+  },
+  recordTransportFailure: (usageContext, error, terminalType) => {
+    recordLithosFailureKind(usageContext, lithosTransportFailureKind(error, terminalType));
+  },
+  terminalTypeForError: lithosTerminalTypeForError,
+  streamErrorCode: "lithos_upstream_stream_error",
+  responsesProfile: LITHOS_RESPONSES_PROFILE,
+};
 
 /**
- * Relays the upstream Chat Completions SSE stream as it arrives. Chunk frames
- * are validated by the transport before they reach this writer, so the client
- * sees the same incremental tokens LithosAI produced rather than a buffered
- * replay. The provider reports usage unconditionally — including on the
- * trailing frame whose `choices` is empty — so nothing here gates accounting on
+ * Relays the LithosAI Chat Completions SSE stream through the shared writer.
+ * The provider reports usage unconditionally - including on the trailing frame
+ * whose `choices` is empty - so nothing here gates accounting on
  * `stream_options.include_usage`.
  */
 const streamLithosChatCompletion = (
@@ -11180,95 +11345,7 @@ const streamLithosChatCompletion = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string
-): Response => {
-  const encoder = new TextEncoder();
-  const headers = new Headers(lithosResponseHeaders(providerRequestId));
-  headers.set("Content-Type", "text/event-stream");
-  headers.set("Cache-Control", "no-cache");
-
-  // One stream-owned interrupt composed with the caller's request signal, for
-  // the same reason as the DeepSeek route: a queued `iterator.return()` alone
-  // cannot interrupt a generator parked in an upstream read.
-  const cancellation = new AbortController();
-  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = iterateLithosChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
-  let closed = false;
-  let terminalSettled = false;
-  let semantic = false;
-  let usage: UsageTokens | null = null;
-
-  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
-    if (terminalSettled) return;
-    terminalSettled = true;
-    recordStreamTerminalType(usageContext, terminalType);
-  };
-  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    await recordCompletionUsage(usageContext, usage);
-    settleTerminal("response.completed");
-    recordStreamTerminal(usageContext);
-    recordLithosResponseHealth(upstream.status, providerRequestId);
-    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-    controller.close();
-  };
-  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    const terminalType = lithosTerminalTypeForError(error, downstreamSignal);
-    settleTerminal(terminalType);
-    recordLithosFailureKind(usageContext, lithosTransportFailureKind(error, terminalType));
-    if (terminalType !== "cancelled") {
-      void recordLithosProviderHealth("upstream_error", null, Date.now, providerRequestId);
-      await recordErrorUsage(usageContext);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(lithosStreamErrorValue("lithos_upstream_stream_error"))}\n\n`));
-    }
-    controller.close();
-  };
-
-  // Pull-driven so the upstream stream is read only as fast as the client
-  // consumes it; an eager writer would buffer an unbounded reply in memory.
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (closed) return;
-      try {
-        const next = await iterator.next();
-        if (next.done) {
-          await finishStream(controller);
-          return;
-        }
-        const chunk = next.value;
-        recordFirstUpstreamSseEvent(usageContext);
-        if (!semantic && chatChunkHasAnswerBearingOutput(chunk)) {
-          semantic = true;
-          markChatSemanticOutput(usageContext);
-          recordFirstSemanticCommitment(usageContext);
-        }
-        usage = extractChatUsageTokens(chunk.usage) ?? usage;
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-      } catch (error) {
-        await failStream(controller, error);
-      }
-    },
-    cancel(reason) {
-      if (closed) return;
-      closed = true;
-      settleTerminal("cancelled");
-      recordLithosFailureKind(usageContext, "cancellation");
-      // Usage observed before the disconnect is real evidence: record it with
-      // completed=false so the terminal reports the counters without claiming a
-      // completion. Missing usage stays unknown rather than invented.
-      if (usage) recordTerminalUsage(usageContext, usage, false);
-      // Abort the local read first, then the physical provider body, so no
-      // uninterruptible `return()` can block teardown.
-      if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
-      void iterator.return().catch(() => {});
-    },
-  });
-  return new Response(body, { status: 200, headers });
-};
+): Response => relayChatCompletionStream(lithosStreamAdapter, upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
 
 type LithosDispatchResult =
   | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
@@ -11515,10 +11592,9 @@ const finalizeBufferedLithosResponses = async (
 };
 
 /**
- * Relays the translated Responses event sequence for LithosAI as the Chat
- * chunks arrive. The chunks are validated by the transport before they reach
- * the translator, so the client sees incremental `response.*` events rather
- * than a buffered replay.
+ * Relays the LithosAI translated Responses event sequence through the shared
+ * writer under this provider's own profile; the shared shape skips comment
+ * frames and lets the translator decide the terminal.
  */
 const streamLithosResponses = (
   upstream: Response,
@@ -11533,199 +11609,21 @@ const streamLithosResponses = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string
-): Response => {
-  const encoder = new TextEncoder();
-  const headers = new Headers(lithosResponseHeaders(providerRequestId));
-  headers.set("Content-Type", "text/event-stream");
-  headers.set("Cache-Control", "no-cache");
-
-  // One stream-owned interrupt for the parked original read, for the same
-  // reason as the DeepSeek route: a queued `iterator.return()` could never
-  // reach the read.
-  const cancellation = new AbortController();
-  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = iterateLithosChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
-  const translator = createDeepSeekResponsesStreamTranslator(
+): Response =>
+  relayResponsesStream(lithosStreamAdapter, {
+    upstream,
     requestedModel,
     responseId,
-    echo,
     createdAtSeconds,
+    echo,
     toolNames,
     customToolNames,
-    LITHOS_RESPONSES_PROFILE
-  );
-  const state = {
-    settled: false,
-    cancelled: false,
-    semantic: false,
-    usage: null as UsageTokens | null,
-  };
-  /** The next `sequence_number` this response's SSE stream will emit. */
-  let sequenceNumber = 0;
-
-  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
-    if (state.settled) return;
-    state.settled = true;
-    recordStreamTerminalType(usageContext, terminalType);
-  };
-  const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
-    for (const event of events) {
-      // Official Responses events carry a monotonic per-response
-      // `sequence_number`. The translator's own `output_index`/`content_index`
-      // values are copied through untouched, so this is the only field the wire
-      // gains and every event is stamped by this one encoder seam.
-      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
-      sequenceNumber += 1;
-    }
-  };
-  /**
-   * The client-visible shape of the gateway's existing degenerate-completion
-   * classification. Response headers were sent when the stream opened, so the
-   * truth travels on the terminal event instead of as a 502 status; the
-   * failure kind and message are the ones the ordinary routes already use.
-   */
-  const emptyCompletionFailure = (): Record<string, unknown> => ({
-    type: "response.failed",
-    response: {
-      id: responseId,
-      object: "response",
-      status: "failed",
-      error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
-    },
+    providerRequestId,
+    usageContext,
+    downstreamSignal,
+    requestSignal,
+    upstreamModel,
   });
-  /**
-   * Emits the fail-closed terminal for a completion the provider reported as
-   * successful but that carries nothing a client can act on. Returns true when
-   * it handled the terminal.
-   */
-  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): boolean => {
-    if (translator.terminalKind() !== "completed" || isAnswerBearingCompletion(translator.answerBearingOutput())) return false;
-    if (usageContext?.responseTelemetry) {
-      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-      usageContext.responseTelemetry.semanticOutputObserved = false;
-    }
-    recordTerminalUsage(usageContext, state.usage, false);
-    settleTerminal("response.failed");
-    recordStreamTerminal(usageContext);
-    emit(controller, [...translator.open(), emptyCompletionFailure()]);
-    recordLithosResponseHealth(upstream.status, providerRequestId);
-    return true;
-  };
-
-  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
-    if (state.settled) return;
-    try {
-      // The provider's own stop reason decides the terminal, and the
-      // provider-agnostic completion-validity predicate decides whether a
-      // would-be completion carries anything a client can act on. An explicit
-      // non-completed signal wins over validity.
-      if (emitEmptyCompletionFailure(controller)) return;
-      const terminalKind = translator.terminalKind();
-      emit(controller, translator.finish());
-      if (terminalKind === "completed") {
-        await recordCompletionUsage(usageContext, state.usage);
-        settleTerminal("response.completed");
-      } else {
-        recordTerminalUsage(usageContext, state.usage, false);
-        if (terminalKind === "incomplete") {
-          recordLithosFailureKind(usageContext, "incomplete_response");
-        } else {
-          // The only remaining non-completed kind is "failed".
-          recordLithosFailureKind(usageContext, lithosFinishReasonFailureKind(translator.upstreamFinishReason()));
-          void recordLithosProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-        }
-        settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
-      }
-      recordStreamTerminal(usageContext);
-      recordLithosResponseHealth(upstream.status, providerRequestId);
-    } finally {
-      closeController(controller);
-    }
-  };
-  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
-    if (state.settled) {
-      closeController(controller);
-      return;
-    }
-    const terminalType = lithosTerminalTypeForError(error, downstreamSignal);
-    settleTerminal(terminalType);
-    recordLithosFailureKind(usageContext, lithosTransportFailureKind(error, terminalType));
-    try {
-      if (terminalType !== "cancelled") {
-        void recordLithosProviderHealth("upstream_error", null, Date.now, providerRequestId);
-        await recordErrorUsage(usageContext);
-        emit(controller, [
-          {
-            type: "response.failed",
-            response: {
-              id: responseId,
-              object: "response",
-              status: "failed",
-              error: { code: "lithos_upstream_stream_error", message: "Upstream Chat Completions stream failed." },
-            },
-          },
-        ]);
-      }
-    } finally {
-      closeController(controller);
-    }
-  };
-
-  /** Records the chunk's telemetry and returns the events it translates to. */
-  const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
-    const chunkUsage = extractChatUsageTokens(chunk.usage);
-    if (chunkUsage) state.usage = chunkUsage;
-    if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
-      state.semantic = true;
-      markChatSemanticOutput(usageContext);
-      recordFirstSemanticCommitment(usageContext);
-    }
-    recordFirstUpstreamSseEvent(usageContext);
-    return translator.push(chunk);
-  };
-
-  // Pull-driven so the upstream stream is read only as fast as the client
-  // consumes it. A pull that enqueues nothing does not reliably schedule the
-  // next pull, so this loop keeps reading until it has at least one event to
-  // hand over or the upstream ends; usage-only frames enqueue nothing by design.
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (state.settled) return;
-      try {
-        for (;;) {
-          const next = await iterator.next();
-          if (next.done) {
-            await finishStream(controller);
-            return;
-          }
-          const events = handleChunk(next.value);
-          if (!events.length) continue;
-          emit(controller, events);
-          return;
-        }
-      } catch (error) {
-        await failStream(controller, error);
-      }
-    },
-    cancel(reason) {
-      if (state.cancelled) return;
-      state.cancelled = true;
-      settleTerminal("cancelled");
-      recordLithosFailureKind(usageContext, "cancellation");
-      // Usage observed before the disconnect is real evidence: record it with
-      // completed=false so the terminal reports the counters without claiming a
-      // completion. Missing usage stays unknown rather than invented.
-      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
-      // Abort the local read first, then the physical provider body, so no
-      // uninterruptible `return()` can block teardown.
-      if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
-      void iterator.return().catch(() => {});
-    },
-  });
-  return new Response(body, { status: 200, headers });
-};
 
 /**
  * Responses adapter for the LithosAI route.

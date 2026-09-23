@@ -30,9 +30,11 @@ const chunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = 
   ...extra,
 });
 
+/** Encodes one recorded frame the way the wire carried it. */
+const sseFrame = (frame: unknown): string => `data: ${typeof frame === "string" ? frame : JSON.stringify(frame)}\n\n`;
+
 /** Encodes recorded frames the way the wire carried them, comments included. */
-const sse = (frames: readonly unknown[], prefix = ""): string =>
-  `${prefix}${frames.map((frame) => `data: ${typeof frame === "string" ? frame : JSON.stringify(frame)}\n\n`).join("")}`;
+const sse = (frames: readonly unknown[], prefix = ""): string => prefix + frames.map(sseFrame).join("");
 
 /** Drives one recorded SSE body through the transport the route consumes. */
 const readStream = async (body: string): Promise<Record<string, unknown>[]> => {
@@ -143,22 +145,23 @@ Deno.test("lithos transport: a buffered dispatch sends the projected body and re
   // recorder wrapper is what the caller receives.
   assert.deepEqual(events, ["beforeDispatch", "markTransportStarted", "onDispatch", "fetch", "onHeaders"]);
   assert.deepEqual(dispatchedBody, { model: REQUESTED_MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 64 });
-  const headers = new Headers(dispatchedInit?.headers);
+  assert.ok(dispatchedInit, "the fixture must have recorded the dispatched init");
+  const headers = new Headers(dispatchedInit.headers);
   assert.equal(headers.get("Authorization"), `Bearer ${API_KEY}`);
   assert.equal(headers.get("Content-Type"), "application/json");
   assert.equal(headers.get("Accept"), "application/json");
-  assert.equal(dispatchedInit?.method, "POST");
-  assert.equal(dispatchedInit?.redirect, "manual");
-  assert.ok(dispatchedInit?.signal, "the transport must own a header deadline signal");
+  assert.equal(dispatchedInit.method, "POST");
+  assert.equal(dispatchedInit.redirect, "manual");
+  assert.ok(dispatchedInit.signal, "the transport must own a header deadline signal");
   assert.equal(((await response.json()) as Record<string, unknown>).id, "chatcmpl-lithos-1");
   // No provider request-id header exists on this wire, so none is read even
   // when a middlebox injects one.
   assert.equal(getLithosProviderRequestId(response), null);
 
   const attempt = recorder.snapshotAndSeal().attempts[0];
-  assert.equal(attempt?.provider, "lithos");
-  assert.equal(attempt?.status, 200);
-  assert.equal(attempt?.terminal, "eof");
+  assert.equal(attempt.provider, "lithos");
+  assert.equal(attempt.status, 200);
+  assert.equal(attempt.terminal, "eof");
   recorder.dispose();
 
   // A body that cannot be serialized fails closed before any key or socket work.
@@ -335,8 +338,8 @@ Deno.test("lithos transport: fails closed on a malformed, truncated or oversized
   // abort is the only thing that can settle it.
   const stalled = new Response(new ReadableStream<Uint8Array>({ start: () => {} }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
   const reading = (async () => {
-    for await (const _frame of iterateLithosChatCompletionStream(stalled, REQUESTED_MODEL, { signal: controller.signal })) {
-      throw new Error("a stalled stream must not yield a frame");
+    for await (const frame of iterateLithosChatCompletionStream(stalled, REQUESTED_MODEL, { signal: controller.signal })) {
+      throw new Error(`a stalled stream must not yield a frame: ${JSON.stringify(frame)}`);
     }
   })();
   controller.abort(new DOMException("client disconnected", "AbortError"));

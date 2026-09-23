@@ -55,7 +55,10 @@ const kvStub = {
     kvStore.delete(keyOf(key));
     return Promise.resolve();
   },
-  list: function* () {},
+  list: function* () {
+    // Every path these handlers read uses single-key reads and writes; no
+    // fixture in this suite lists the store.
+  },
   atomic: () => {
     const ops: KvOp[] = [];
     const chain = {
@@ -86,6 +89,13 @@ setKvForTest(kvStub);
 type UpstreamCall = Readonly<{ url: string; body: Record<string, unknown>; headers: Headers }>;
 type UpstreamResult<T> = Readonly<{ result: T; calls: UpstreamCall[] }>;
 
+/** The URL a recorded fetch was addressed to, whichever form the caller used. */
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 /**
  * Runs `run` with a recorded fetch. Any URL this suite does not explicitly
  * answer (paid discovery, enrichment) gets a refusal, so no fixture can reach a
@@ -98,7 +108,7 @@ const withUpstream = async <T>(
   const calls: UpstreamCall[] = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     const call: UpstreamCall = {
       url,
       body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {},
@@ -127,6 +137,9 @@ const responsesRequest = (body: Record<string, unknown>): Request =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+
+/** Encodes recorded Chat chunks the way the vendor's SSE wire carries them. */
+const sseBody = (frames: readonly unknown[]): string => frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("");
 
 const usageContext = (requestId: string) => ({
   keyId: null,
@@ -236,9 +249,9 @@ Deno.test("lithos wiring: dispatches Chat Completions to the vendor with the bea
 
     const telemetry = getResponseTelemetry(response);
     assert.equal(telemetry?.provider, "lithos");
-    assert.equal(telemetry?.reasoning, "xhigh");
-    assert.deepEqual(telemetry?.attemptedProviders, ["lithos"]);
-    assert.equal(telemetry?.completed, true);
+    assert.equal(telemetry.reasoning, "xhigh");
+    assert.deepEqual(telemetry.attemptedProviders, ["lithos"]);
+    assert.equal(telemetry.completed, true);
   });
 });
 
@@ -273,7 +286,7 @@ Deno.test("lithos wiring: relays the vendor's Chat stream frames and its uncondi
         },
       },
     ];
-    const body = `${frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("")}data: [DONE]\n\n`;
+    const body = `${sseBody(frames)}data: [DONE]\n\n`;
     const { result: response, calls } = await withUpstream(
       () => new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
       () =>
@@ -305,11 +318,11 @@ Deno.test("lithos wiring: relays the vendor's Chat stream frames and its uncondi
 
     const telemetry = getResponseTelemetry(response);
     assert.equal(telemetry?.provider, "lithos");
-    assert.equal(telemetry?.stream, true);
-    assert.equal(telemetry?.streamTerminalType, "response.completed");
-    assert.equal(telemetry?.inputTokens, 11);
-    assert.equal(telemetry?.outputTokens, 7);
-    assert.equal(telemetry?.completed, true);
+    assert.equal(telemetry.stream, true);
+    assert.equal(telemetry.streamTerminalType, "response.completed");
+    assert.equal(telemetry.inputTokens, 11);
+    assert.equal(telemetry.outputTokens, 7);
+    assert.equal(telemetry.completed, true);
   });
 });
 
@@ -359,7 +372,7 @@ Deno.test("lithos wiring: streams the translated Responses event sequence", asyn
         },
       },
     ];
-    const body = `${frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("")}data: [DONE]\n\n`;
+    const body = `${sseBody(frames)}data: [DONE]\n\n`;
     const { result: response, calls } = await withUpstream(
       () => new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
       () => handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "Capital of France?", stream: true }), usageContext("lithos-responses-stream"))
@@ -403,8 +416,8 @@ Deno.test("lithos wiring: streams the translated Responses event sequence", asyn
 
     const telemetry = getResponseTelemetry(response);
     assert.equal(telemetry?.provider, "lithos");
-    assert.equal(telemetry?.streamTerminalType, "response.completed");
-    assert.equal(telemetry?.completed, true);
+    assert.equal(telemetry.streamTerminalType, "response.completed");
+    assert.equal(telemetry.completed, true);
   });
 });
 
@@ -457,8 +470,8 @@ Deno.test("lithos wiring: serves /v1/responses through the shared profile transl
 
     const telemetry = getResponseTelemetry(response);
     assert.equal(telemetry?.provider, "lithos");
-    assert.equal(telemetry?.reasoning, "high");
-    assert.equal(telemetry?.outputTokenAllowance, 256);
+    assert.equal(telemetry.reasoning, "high");
+    assert.equal(telemetry.outputTokenAllowance, 256);
 
     // A tier this vendor refuses fails closed at the boundary: the Codex `ultra`
     // preset has no mapping on this wire, so no upstream dispatch happens.
@@ -476,8 +489,8 @@ Deno.test("lithos wiring: serves /v1/responses through the shared profile transl
     assert.equal(rejected.result.status, 400);
     const rejectedBody = (await rejected.result.json()) as { error?: { message?: string; type?: string; param?: string } };
     assert.equal(rejectedBody.error?.type, "invalid_request_error");
-    assert.equal(rejectedBody.error?.param, "reasoning.effort");
-    assert.match(rejectedBody.error?.message ?? "", /not supported by LithosAI/);
+    assert.equal(rejectedBody.error.param, "reasoning.effort");
+    assert.match(rejectedBody.error.message ?? "", /not supported by LithosAI/);
   });
 });
 
@@ -500,8 +513,8 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
     assert.equal(insufficientQuota.result.headers.get("x-should-retry"), "false");
     const quotaBody = (await insufficientQuota.result.json()) as { error?: { message?: string; type?: string; code?: string } };
     assert.equal(quotaBody.error?.type, "insufficient_quota");
-    assert.equal(quotaBody.error?.code, "insufficient_quota");
-    assert.equal(quotaBody.error?.message, "Your organization has no credit remaining.");
+    assert.equal(quotaBody.error.code, "insufficient_quota");
+    assert.equal(quotaBody.error.message, "Your organization has no credit remaining.");
     assert.equal(getResponseTelemetry(insufficientQuota.result)?.failureKind, "upstream_http_error");
 
     // 429 budget refusal: a rate limit, with the provider's capacity headers and
@@ -536,7 +549,7 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
     assert.equal(budgetRefusal.result.headers.get("x-uos-provider-only"), null);
     const budgetBody = (await budgetRefusal.result.json()) as { error?: { type?: string; code?: string } };
     assert.equal(budgetBody.error?.type, "rate_limit_error");
-    assert.equal(budgetBody.error?.code, "rate_limit_exceeded");
+    assert.equal(budgetBody.error.code, "rate_limit_exceeded");
 
     // 429 model at capacity: still a 429, but its own code so the two causes are
     // never collapsed into one.
@@ -571,8 +584,8 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
     assert.equal(engineViolation.result.headers.get("x-should-retry"), "false");
     const engineBody = (await engineViolation.result.json()) as { error?: { message?: string; type?: string; code?: string } };
     assert.equal(engineBody.error?.message, "Invalid value for 'n': must be 1");
-    assert.equal(engineBody.error?.type, "invalid_request_error");
-    assert.equal(engineBody.error?.code, "400");
+    assert.equal(engineBody.error.type, "invalid_request_error");
+    assert.equal(engineBody.error.code, "400");
 
     // A non-JSON body is tolerated: the gateway answers with its own bounded
     // message instead of throwing while rendering the failure.
@@ -583,8 +596,8 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
     assert.equal(nonJson.result.status, 500);
     const nonJsonBody = (await nonJson.result.json()) as { error?: { message?: string; type?: string; code?: string } };
     assert.equal(nonJsonBody.error?.message, "LithosAI upstream returned an error.");
-    assert.equal(nonJsonBody.error?.type, "server_error");
-    assert.equal(nonJsonBody.error?.code, "lithos_upstream_error");
+    assert.equal(nonJsonBody.error.type, "server_error");
+    assert.equal(nonJsonBody.error.code, "lithos_upstream_error");
     assert.doesNotMatch(JSON.stringify(nonJsonBody), /provider-only-body/);
   });
 });
@@ -597,7 +610,10 @@ Deno.test("lithos wiring: the catalog advertises eight addressable ids only whil
     );
     const rows = snapshot.result.models.filter((model) => model.providers.some((provider) => provider.id === "lithos"));
     assert.equal(rows.length, LITHOS_MODEL_IDS.length);
-    assert.deepEqual(rows.map((model) => model.id).sort(), [...LITHOS_MODEL_IDS].sort());
+    assert.deepEqual(
+      rows.map((model) => model.id).sort((a, b) => a.localeCompare(b)),
+      [...LITHOS_MODEL_IDS].sort((a, b) => a.localeCompare(b))
+    );
     for (const row of rows) {
       // Every speed tier carries the same window and the route's endpoints:
       // `/v1/responses` is served by the gateway's translation.
