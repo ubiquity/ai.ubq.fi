@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import adminHtml from "../static/admin.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
 import modelsScript from "../static/models.js" with { type: "text" };
-import adminSource from "../src/admin.ts" with { type: "text" };
+import adminCodexSource from "../src/admin_codex.ts" with { type: "text" };
 import { handleAdminCodexModelsWhitelistGet, handleAdminCodexModelsWhitelistSet, handleAdminModelsCatalogGet, handleAdminModelsRefresh } from "../src/admin.ts";
 import {
   CODEX_MODELS_WHITELIST_KV_KEY,
@@ -308,7 +308,7 @@ Deno.test("the public and admin catalogs are built by one shared unfiltered snap
   assert.match(publicHandler, /filterWhitelistedModelMap\(filterCatalogEntriesByProviderSelection\(catalog\.models, selection\), catalogWhitelist\)/);
   assert.match(publicHandler, /sources: selectedCatalogSources\(catalog\.sources, selection\)/);
 
-  const adminHandler = /export const handleAdminModelsCatalogGet = async \(([\s\S]*?)\n\};/.exec(adminSource)?.[1] ?? "";
+  const adminHandler = /export const handleAdminModelsCatalogGet = async \(([\s\S]*?)\n\};/.exec(adminCodexSource)?.[1] ?? "";
   assert.notEqual(adminHandler, "", "handleAdminModelsCatalogGet must stay declared");
   assert.match(adminHandler, /const buildCatalog = dependencies\.buildCatalog \?\? buildModelCatalogSnapshot;/);
   assert.match(adminHandler, /models: catalog\.models/);
