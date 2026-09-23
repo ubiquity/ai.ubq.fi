@@ -51,6 +51,8 @@
     "lint:eslint": "sh scripts/lint.sh",
     "knip": "sh scripts/knip.sh",
     "types": "deno types > .deno-types.d.ts",
+    "size:check": "deno run --allow-read scripts/file-size-ratchet.ts",
+    "size:update": "deno run --allow-read --allow-write=file-size-baseline.json scripts/file-size-ratchet.ts --update",
     "verify": "sh scripts/verify.sh",
     "prune:releases": "deno run --allow-read --allow-write ops/prune-releases.ts",
     "deploy:vps": "deno run --allow-read --allow-write --allow-run=git,tar,sudo --allow-net=127.0.0.1:7999 ops/deploy.ts",
