@@ -8,7 +8,7 @@ import {
   refreshCodexCacheScopeExperimentSlot,
   releaseCodexResponseProbe,
 } from "./codex.ts";
-import { promoteCodexPromptCacheScope, type PromptCacheScopePromotionResult } from "./codex_catalog.ts";
+import { promoteCodexPromptCacheScope, type PromptCacheScopePromotionResult } from "./codex_catalog_promotion.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
   PROMPT_CACHE_SCOPE_PROBE_PROFILE,

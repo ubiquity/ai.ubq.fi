@@ -98,11 +98,9 @@ const {
   CODEX_CATALOG_MAX_VERSIONS,
   CODEX_CATALOG_PREFIX,
   CODEX_CATALOG_RETENTION_MS,
-  getCodexCatalogMemoVersionsForTest,
-  handleCodexCatalogModels,
-  resetCodexCatalogMemoForTest,
-  storeCodexCatalog,
-} = await import("../src/codex_catalog.ts");
+} = await import("../src/codex_catalog_types.ts");
+const { getCodexCatalogMemoVersionsForTest, resetCodexCatalogMemoForTest, storeCodexCatalog } = await import("../src/codex_catalog_store.ts");
+const { handleCodexCatalogModels } = await import("../src/codex_catalog.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const { handleModels } = await import("../src/model_catalog.ts");
 const { config } = await import("../src/config.ts");
