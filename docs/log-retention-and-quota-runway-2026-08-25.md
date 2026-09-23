@@ -46,6 +46,29 @@ rejections and `mixed` image-fanout aggregates, so every request is counted exac
 effort: one strong read plus one atomic merge, up to three attempts on a lost compare-and-set race, and a KV failure
 never changes an already-terminal response.
 
+### Measured KV cost of the terminal observation
+
+`tests/usage-optimization-measurement.test.ts` records the exact per-scenario KV budget, and it pins the added cost
+instead of absorbing it. One terminal response that reaches the writer costs exactly one strong read and one
+compare-and-set commit; only a lost race retries the merge, bounded at three attempts. Settled providers, `gateway` and
+`mixed` labels, and responses with no observed model never reach a KV call at all.
+
+| Fixture scenario                    | Reads before → after | Writes before → after | Commits before → after |
+| ----------------------------------- | -------------------: | --------------------: | ---------------------: |
+| `bounded_api_key:client_disconnect` |              18 → 19 |                 6 → 7 |                  3 → 4 |
+| `bounded_api_key:success`           |              19 → 20 |                 8 → 9 |                  4 → 5 |
+| `bounded_api_key:upstream_failure`  |              28 → 29 |               18 → 19 |                10 → 11 |
+| `unlimited_api_key:success`         |              18 → 19 |                 8 → 9 |                  4 → 5 |
+| `uos_allowlist:success`             |              12 → 13 |                 4 → 5 |                  2 → 3 |
+| `admin_allowlist:success`           |              12 → 13 |                 4 → 5 |                  2 → 3 |
+| `codex_auth_pool:retry`             |              13 → 13 |                 4 → 4 |                  2 → 2 |
+
+`codex_auth_pool:retry` calls the Codex transport directly, so it produces no terminal response and no observation.
+`bounded_api_key:concurrent_admission` also gains the winning response's single observation, but its totals vary with
+task scheduling. Against the audit profile of about 14.25 reads and 2.83 writes per request
+(`docs/deno-free-tier-audit-2026-08-09.md`), the added read and write are about +7% reads and +35% writes for the
+current Codex-subscription-dominated request mix; the fixture is the authoritative before/after record.
+
 ## Quota-runway projection
 
 `GET /admin/providers/quota-projection?window_days=7|30|90` (admin auth, default 30) returns:

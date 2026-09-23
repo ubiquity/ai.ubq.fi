@@ -384,10 +384,11 @@ const logTerminalRequest = async (
     fallbackReason: terminal.fallback_reason,
   };
   const cacheAnalyticsWrite = input.recordCacheAnalytics ? input.recordCacheAnalytics(cacheAnalyticsEvent) : enqueuePromptCacheAnalytics(cacheAnalyticsEvent);
-  // All-route model accounting fills the gap the paid ledger cannot see: a
-  // Codex-subscription response never reaches settlement, so its usage would
-  // be missing from the projection. Settled paid providers are skipped by the
-  // writer, and a KV failure never changes an already-terminal response.
+  // All-route model accounting fills the gap the paid ledger cannot see: a Codex-subscription response never reaches
+  // settlement, so its usage would be missing from the projection. It costs one bounded strong read plus one
+  // compare-and-set merge per terminal response on the routes the writer does not skip, and that deliberate cost is
+  // recorded in tests/usage-optimization-measurement.test.ts. Settled paid providers are skipped by the writer, and a
+  // KV failure never changes an already-terminal response.
   const usageRollupWrite = (input.recordUsageRollup ?? recordTerminalUsageRollup)({
     model: terminal.model,
     provider: terminal.provider,

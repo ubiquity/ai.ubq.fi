@@ -356,10 +356,30 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     assert.ok(uosSuccess.commands > 0, "UOS allowlist activity must remain measurable");
     assert.ok(adminSuccess.commands > 0, "admin allowlist activity must remain measurable");
     assert.equal(retry.serialized_request_bytes, bytes(JSON.stringify(retryBody)) * 2);
+    // The terminal usage rollup is deliberate per-response observability
+    // accounting for routes the paid ledger never sees (the Codex subscription
+    // path here): one bounded strong read plus one compare-and-set merge. It is
+    // recorded here instead of absorbed, and it is the only commit the
+    // disconnect adds beyond the admission and quota commits.
     assert.equal(
       disconnect.atomic_commits,
-      3,
-      "a post-dispatch disconnect retains the V3 reservation and dispatch commits plus the serial active-account admission CAS"
+      4,
+      "a post-dispatch disconnect retains the V3 reservation and dispatch commits, the serial active-account admission CAS, and the terminal usage-rollup merge"
+    );
+    const disconnectUsageRollupCommands = kv.commands.filter(
+      (record) =>
+        record.scenario === "bounded_api_key:client_disconnect" &&
+        record.keys.some((key) => key[0] === "uos_ai" && key[1] === "paid_fallback" && key[3] === "usage_rollup")
+    );
+    assert.equal(
+      disconnectUsageRollupCommands.filter((record) => record.command === "get").length,
+      1,
+      "the terminal usage rollup reads its shard once before the compare-and-set"
+    );
+    assert.equal(
+      disconnectUsageRollupCommands.filter((record) => record.command === "atomic.commit" && record.atomicResult === "committed").length,
+      1,
+      "the cancelled Codex response records exactly one terminal usage-rollup merge"
     );
     const disconnectV3Commits = kv.commands.filter(
       (record) =>
