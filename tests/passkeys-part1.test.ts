@@ -280,7 +280,7 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
   kvStore.clear();
   const originalFetch = globalThis.fetch;
   const requested: { url: string; authorization: string | null }[] = [];
-  const token = "ddo_test_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const token = "ddo_test_fixture_value";
 
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
@@ -333,7 +333,7 @@ Deno.test("Deno Deploy console tokens are verified against the app page", async 
   kvStore.clear();
   const originalFetch = globalThis.fetch;
   const requested: { url: string; authorization: string | null; cookie: string | null }[] = [];
-  const token = "ddo_console_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const token = "ddo_console_fixture_value";
 
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
@@ -687,7 +687,7 @@ Deno.test("passkey registration start rejects session claims for another user ha
 
 Deno.test("passkey registration start rejects token bootstrap claims for another user handle", async () => {
   kvStore.clear();
-  const token = "ddo_bootstrap_claim_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const token = "ddo_bootstrap_fixture_value";
   const now = Date.now();
   const otherUser = {
     id: "user-claimed",
@@ -719,7 +719,7 @@ Deno.test("passkey registration start rejects token bootstrap claims for another
 
 Deno.test("passkey registration start reuses an existing token-handle user", async () => {
   kvStore.clear();
-  const token = "ddo_register_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const token = "ddo_register_fixture_value";
   const handle = await buildPasskeyHandle(token);
   const now = Date.now();
   const user = {
@@ -1324,7 +1324,7 @@ Deno.test("relay passkey cookies survive an unattested GitHub bearer on /uos/aut
 Deno.test("relay passkey cookie fallback accepts raw forbidden Request methods", async () => {
   kvStore.clear();
   const { token: passkeyToken } = seedPasskeySession("uos_ai_session_raw_method_fallback");
-  const githubToken = "ghp_raw_method_fallback_1234567890abcdefghijklmnopqrstuvwxyz";
+  const githubToken = "ghp_raw_fallback_fixture";
   const abort = new AbortController();
   let port = 0;
   const server = Deno.serve(
