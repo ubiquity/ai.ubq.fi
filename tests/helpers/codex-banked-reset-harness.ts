@@ -2,7 +2,6 @@
 
 import assert from "node:assert/strict";
 import {
-  attemptCodexBankedReset,
   CODEX_BANKED_RESET_LEASE_MS,
   type CodexBankedResetCandidate,
   type CodexBankedResetConfig,
@@ -10,8 +9,8 @@ import {
   type CodexBankedResetFence,
   type CodexBankedResetTelemetry,
   parseCodexResetShadowDecisionRecord,
-  reconcileCodexBankedReset,
 } from "../../src/codex_banked_reset.ts";
+import { attemptCodexBankedReset, reconcileCodexBankedReset } from "../../src/codex_banked_reset_submission.ts";
 import {
   type CodexUsageResetProvider,
   type CodexUsageResetProviderContract,
@@ -603,16 +602,16 @@ export type { ResetInventory } from "../../src/codex_banked_reset_provider.ts";
 export { CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS } from "../../src/codex_banked_reset.ts";
 export { CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS } from "../../src/codex_banked_reset.ts";
 export { CODEX_BANKED_RESET_LEASE_MS } from "../../src/codex_banked_reset.ts";
-export { attemptCodexBankedReset } from "../../src/codex_banked_reset.ts";
 export { codexResetGlobalDailyKey } from "../../src/codex_banked_reset.ts";
 export { codexResetRedemptionKey } from "../../src/codex_banked_reset.ts";
 export { codexResetUsageKey } from "../../src/codex_reset_settings.ts";
-export { evaluateCodexBankedResetPool } from "../../src/codex_banked_reset.ts";
+export { attemptCodexBankedReset };
+export { evaluateCodexBankedResetPool } from "../../src/codex_banked_reset_pool.ts";
 export { parseCodexBankedResetConfig } from "../../src/codex_banked_reset.ts";
 export { parseCodexResetRedemptionRecord } from "../../src/codex_banked_reset.ts";
 export { providerSupportsLiveRedemption } from "../../src/codex_banked_reset_provider.ts";
 export { providerSupportsResetType } from "../../src/codex_banked_reset_provider.ts";
-export { reconcileCodexBankedReset } from "../../src/codex_banked_reset.ts";
+export { reconcileCodexBankedReset } from "../../src/codex_banked_reset_submission.ts";
 export { unavailableCodexUsageResetProvider } from "../../src/codex_banked_reset_provider.ts";
 export { parseCodexResetShadowDecisionRecord } from "../../src/codex_banked_reset.ts";
 export type { CodexBankedResetTelemetryFields } from "../../src/codex_banked_reset.ts";

@@ -162,7 +162,7 @@ export const { buildFailoverWarningEvents } = await import("../../src/responses_
 export const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../../src/debug_routing.ts");
 export const { setRemovedProviderApiKeyForTest, setRemovedProviderTestAdapterForTest } = await import("../../src/removed_provider.ts");
 export const { CODEX_AUTH_REAUTH_MESSAGE, CODEX_AUTH_REAUTH_WARNING, resetCodexAuthCacheForTest } = await import("../../src/codex.ts");
-export const { attemptCodexBankedReset } = await import("../../src/codex_banked_reset.ts");
+export const { attemptCodexBankedReset } = await import("../../src/codex_banked_reset_submission.ts");
 export const {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
