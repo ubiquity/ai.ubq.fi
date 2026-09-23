@@ -18,7 +18,7 @@ import {
   type PromptCacheTokenRefresh,
 } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
-import { extractUsageTokens } from "./openai.ts";
+import { extractUsageTokens } from "./openai_telemetry.ts";
 import { type PromptCacheTelemetryBaselineResult, type PromptCacheTelemetryProvider, readPromptCacheTelemetryBaseline } from "./prompt_cache_telemetry_gate.ts";
 import { loadPromptCacheScopeTargetInventory, type PromptCacheScopeTarget, type PromptCacheScopeTargetInventory } from "./prompt_cache_scope_targets.ts";
 import { readResponsesStream } from "./responses_stream.ts";
