@@ -221,7 +221,7 @@ type UsageContext = Readonly<{
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "removed_provider" | "metered" | "surplus";
+type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "lithos" | "removed_provider" | "metered" | "surplus";
 const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
@@ -8242,17 +8242,25 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
   };
 };
 
+/** `sources` carries exactly one key per catalog source id, so a key it owns is one of them. */
+const isModelCatalogSourceId = (sources: ModelCatalogSnapshot["sources"], id: string): id is ModelCatalogSourceId => Object.hasOwn(sources, id);
+
 /**
  * Public catalog sources for one provider selection. A switched-off provider
  * contributes nothing and is marked `disabled`, which the models page reads as
  * "not served at all" rather than as a failed discovery. The admin picker keeps
  * using the unfiltered snapshot so every provider stays visible and switchable.
+ *
+ * The selectable roster can name a provider this snapshot has no source for: a
+ * provider is wired into the routing vocabulary before its catalog source is
+ * published, so only ids this snapshot actually reports are marked disabled.
  */
 const selectedCatalogSources = (sources: ModelCatalogSnapshot["sources"], selection: ProviderSelection | null): ModelCatalogSnapshot["sources"] => {
   if (!selection || selection.provider_ids.length === 0) return sources;
   const adjusted = { ...sources };
   for (const id of SELECTABLE_PROVIDER_IDS) {
     if (isProviderEnabled(id, selection)) continue;
+    if (!isModelCatalogSourceId(adjusted, id)) continue;
     adjusted[id] = { status: "unavailable", count: 0, updated_at_ms: null, configured: false, disabled: true };
   }
   return adjusted;

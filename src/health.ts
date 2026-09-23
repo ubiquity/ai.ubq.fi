@@ -4,10 +4,12 @@ import { CODEX_AUTH_POOL_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFr
 import { readDeepSeekApiKey } from "./deepseek.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
+import { readLithosApiKey } from "./lithos.ts";
 import {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
   getDeepSeekProviderHealth,
+  getLithosProviderHealth,
   getMeteredProviderHealth,
   getSurplusProviderHealth,
   PROVIDER_HEALTH_STALE_AFTER_MS,
@@ -224,10 +226,11 @@ const quotaView = (snapshot: MeteredQuotaSnapshot | null) => {
 export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ includeQuota?: boolean }> = {}): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [cerebrasHealth, codexHealth, deepseekHealth, meteredHealth, surplusHealth, meteredQuota] = await Promise.all([
+  const [cerebrasHealth, codexHealth, deepseekHealth, lithosHealth, meteredHealth, surplusHealth, meteredQuota] = await Promise.all([
     getCerebrasProviderHealth(),
     Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
     getDeepSeekProviderHealth(),
+    getLithosProviderHealth(),
     getMeteredProviderHealth(),
     getSurplusProviderHealth(),
     getCachedConfiguredMeteredQuotaSnapshot(),
@@ -255,6 +258,10 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
     deepseek: {
       configured: readDeepSeekApiKey() !== null,
       health: deepseekHealth,
+    },
+    lithos: {
+      configured: readLithosApiKey() !== null,
+      health: lithosHealth,
     },
     metered: {
       configured: readMeteredApiKey() !== null,

@@ -104,7 +104,7 @@ import {
   SELECTABLE_PROVIDER_IDS,
   storeProviderSelection,
 } from "./provider_selection.ts";
-import { buildModelCatalogSnapshot } from "./openai.ts";
+import { buildModelCatalogSnapshot, type ModelCatalogSource } from "./openai.ts";
 import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,
@@ -776,20 +776,25 @@ export const handleAdminProviderSelectionGet = async (dependencies: Readonly<{ b
       if (count !== undefined) counts.set(provider.id, count + 1);
     }
   }
+  // A provider can be selectable before its catalog source is published: the
+  // roster is the routing vocabulary and the catalog is discovered separately,
+  // so an absent source is reported as unavailable and unconfigured instead of
+  // taking the picker down with it.
+  const sources = new Map<string, ModelCatalogSource>(Object.entries(catalog.sources));
   return json(
     200,
     {
       ok: true,
       data: {
         providers: SELECTABLE_PROVIDER_IDS.map((id) => {
-          const source = catalog.sources[id];
+          const source = sources.get(id);
           return {
             id,
             model_count: counts.get(id) ?? 0,
-            status: source.status,
+            status: source?.status ?? "unavailable",
             // Only credential-gated providers report this; for the discovered
             // sources the status already says whether they answered.
-            configured: source.configured ?? source.status === "available",
+            configured: source ? (source.configured ?? source.status === "available") : false,
             // Only the Codex tier can be narrowed to individual subscriptions.
             ...(id === "codex" ? { subscriptions } : {}),
           };

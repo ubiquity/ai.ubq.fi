@@ -259,6 +259,7 @@ Deno.test("admin provider picker reports the roster, catalog counts, and the sav
         { id: "openlux", model_count: 0, status: "unavailable", configured: false },
         { id: "deepseek", model_count: 1, status: "available", configured: true },
         { id: "cerebras", model_count: 0, status: "unavailable", configured: false },
+        { id: "lithos", model_count: 0, status: "unavailable", configured: false },
       ],
       "the roster is fixed and every provider carries its catalog entry count"
     );

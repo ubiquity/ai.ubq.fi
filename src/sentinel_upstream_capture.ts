@@ -51,7 +51,7 @@ export const SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES = [
 ] as const;
 const SAFE_RESPONSE_HEADER_NAME_SET = new Set<string>(SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES);
 
-export type SentinelUpstreamProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras" | "deepseek";
+export type SentinelUpstreamProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras" | "deepseek" | "lithos";
 
 export type SentinelUpstreamTerminal = "pending" | "fetch_error" | "eof" | "read_error" | "cancelled";
 
@@ -103,7 +103,7 @@ export type SentinelUpstreamRecorder = Readonly<{
   dispose: () => void;
 }>;
 
-const PROVIDER_SET = new Set<string>(["chatgpt_codex", "surplus", "metered", "cerebras", "deepseek"]);
+const PROVIDER_SET = new Set<string>(["chatgpt_codex", "surplus", "metered", "cerebras", "deepseek", "lithos"]);
 const TERMINAL_SET = new Set<string>(["pending", "fetch_error", "eof", "read_error", "cancelled"]);
 const CONTENT_TYPE_SET = new Set<string>(["text/event-stream", "application/json", "other"]);
 

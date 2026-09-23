@@ -14,9 +14,9 @@ export const PROVIDER_SELECTION_CACHE_TTL_MS = 5_000;
  * The provider vocabulary the model catalog already publishes, in the order the
  * inference waterfall tries it: the Codex subscription tier first, then the two
  * paid fallback tiers (`surplus` before `openlux`), then the credential-gated
- * direct routes.
+ * direct routes (`deepseek`, `cerebras`, `lithos`).
  */
-export const SELECTABLE_PROVIDER_IDS = ["codex", "surplus", "openlux", "deepseek", "cerebras"] as const;
+export const SELECTABLE_PROVIDER_IDS = ["codex", "surplus", "openlux", "deepseek", "cerebras", "lithos"] as const;
 
 export type SelectableProviderId = (typeof SELECTABLE_PROVIDER_IDS)[number];
 
