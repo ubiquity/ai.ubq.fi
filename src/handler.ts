@@ -61,7 +61,7 @@ import {
   inferenceAdmissionSnapshot,
 } from "./inference_admission.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
-import { handleResponses } from "./openai.ts";
+import { handleResponses } from "./responses_handler.ts";
 import { handleChatCompletions } from "./chat_completions_envelope.ts";
 import { handleUosEmbeddings } from "./embeddings_handlers.ts";
 import { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } from "./embeddings_jobs.ts";
