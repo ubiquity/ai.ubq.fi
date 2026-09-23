@@ -80,7 +80,11 @@ export const LITHOS_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 export const LITHOS_API_KEY_ENV = "LITHOSAI_API_KEY";
 export const LITHOS_CHAT_COMPLETIONS_URL = "https://api.lithosai.cloud/v1/chat/completions";
 export const LITHOS_CONTEXT_WINDOW_TOKENS = 1_048_576;
-export const LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
+/**
+ * The full advertised window, not the 95 percent margin other providers keep:
+ * this route is served at the size LithosAI publishes.
+ */
+export const LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 100;
 
 /**
  * The seven `reasoning_effort` values the API accepted on 2026-09-23, in the

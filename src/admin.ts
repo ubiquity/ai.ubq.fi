@@ -104,6 +104,7 @@ import {
   SELECTABLE_PROVIDER_IDS,
   storeProviderSelection,
 } from "./provider_selection.ts";
+import { PROVIDER_TIERS, providerPresentation } from "./provider_presentation.ts";
 import { buildModelCatalogSnapshot, type ModelCatalogSource } from "./openai.ts";
 import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
 import {
@@ -788,8 +789,15 @@ export const handleAdminProviderSelectionGet = async (dependencies: Readonly<{ b
       data: {
         providers: SELECTABLE_PROVIDER_IDS.map((id) => {
           const source = sources.get(id);
+          const presentation = providerPresentation(id);
           return {
             id,
+            label: presentation.label,
+            tier: presentation.tier,
+            tier_label: PROVIDER_TIERS.find((tier) => tier.id === presentation.tier)?.label ?? presentation.tier,
+            detail: presentation.detail,
+            endpoints: [...presentation.endpoints],
+            health_key: presentation.health_key,
             model_count: counts.get(id) ?? 0,
             status: source?.status ?? "unavailable",
             // Only credential-gated providers report this; for the discovered
@@ -799,6 +807,8 @@ export const handleAdminProviderSelectionGet = async (dependencies: Readonly<{ b
             ...(id === "codex" ? { subscriptions } : {}),
           };
         }),
+        // The picker renders its tier filter from this list, in this order.
+        tiers: PROVIDER_TIERS.map((tier) => ({ id: tier.id, label: tier.label })),
         selection: { provider_ids: selection ? [...selection.provider_ids] : [], updated_at_ms: selection?.updated_at_ms ?? 0 },
         // An empty (or absent) selection applies no filter at all, which is the
         // documented behaviour the picker has to explain to the operator.

@@ -6,6 +6,15 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## LithosAI advertises its full context window - 2026-09-23
+
+`LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT` in `src/lithos.ts` is 100, not the 95 percent reserve the other providers
+keep: the direct LithosAI route advertises its full 1,048,576-token window to `/v1/models` and the Codex catalog instead
+of a padded one. The 95 percent value would publish an effective window 52,428 tokens smaller than the one the provider
+advertises, and nothing in the panel or the catalog would show that the difference is a local choice. Reversal risk:
+lowering it again silently shrinks every consumer's view of this route, so change it only with a measurement showing the
+upstream refuses the advertised size.
+
 ## Immutable releases are pruned after a verified deploy: the newest five plus the running one - 2026-09-23
 
 Both deploy paths unpack a full `git archive` of the released revision into `.data/releases/<sha>`, so a repeatedly
