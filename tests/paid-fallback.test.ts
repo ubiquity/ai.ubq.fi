@@ -203,6 +203,19 @@ const { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy, reservePaid
 const {
   admitPaidFallbackV3,
   deletePaidFallbackStateV3,
+  releasePaidFallbackBeforeProviderFetchV3,
+  releaseUndispatchedPaidFallbackV3,
+  updatePaidFallbackRequestV3,
+} = await import("../src/paid_fallback_ledger_admission.ts");
+const {
+  markPaidFallbackTerminalV3,
+  reconcileDuePaidFallbacksV3,
+  reconcilePaidFallbackV3,
+  recordPaidFallbackTerminalV3,
+  enqueueDuePaidFallbackReconciliationJobsV3,
+  handlePaidFallbackReconciliationJobV3,
+} = await import("../src/paid_fallback_ledger_backfill.ts");
+const {
   getPaidFallbackOutstandingV3,
   getPaidFallbackWindowProjectionV3,
   listPaidFallbackRequestsV3,
@@ -212,16 +225,7 @@ const {
   paidFallbackPendingV3Key,
   paidFallbackReconciliationLeaseV3Key,
   paidFallbackWindowV3Key,
-  markPaidFallbackTerminalV3,
-  reconcileDuePaidFallbacksV3,
-  reconcilePaidFallbackV3,
-  recordPaidFallbackTerminalV3,
-  releasePaidFallbackBeforeProviderFetchV3,
-  releaseUndispatchedPaidFallbackV3,
-  enqueueDuePaidFallbackReconciliationJobsV3,
-  handlePaidFallbackReconciliationJobV3,
-  updatePaidFallbackRequestV3,
-} = await import("../src/paid_fallback_ledger.ts");
+} = await import("../src/paid_fallback_ledger_state.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 

@@ -174,15 +174,14 @@ denoWithKv.openKv = () => Promise.resolve(kv);
 
 const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
 const { recordMeteredTerminal, recordMeteredUpstreamResponse, recordSurplusUsage, reservePaidFallback } = await import("../src/paid_fallback.ts");
+const { backfillPaidFallbackUsageRollups, backfillPaidFallbackWindowTtls } = await import("../src/paid_fallback_ledger_backfill.ts");
 const {
-  backfillPaidFallbackUsageRollups,
-  backfillPaidFallbackWindowTtls,
   PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   paidFallbackBackfillCursorV3Key,
   paidFallbackBackfillWindowCursorV3Key,
   paidFallbackRequestV3Key,
   paidFallbackWindowV3Key,
-} = await import("../src/paid_fallback_ledger.ts");
+} = await import("../src/paid_fallback_ledger_state.ts");
 const { listPaidFallbackUsageRollups, mergePaidFallbackUsageRollup, paidFallbackUsageRollupKey } = await import("../src/paid_fallback_rollups.ts");
 const {
   METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,

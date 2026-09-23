@@ -10,7 +10,7 @@ import {
   migrateKvReadIncidentV2,
   validateKvMigrationTarget,
 } from "../src/kv_migration.ts";
-import { paidFallbackReconciliationGateV3Key } from "../src/paid_fallback_ledger.ts";
+import { paidFallbackReconciliationGateV3Key } from "../src/paid_fallback_ledger_state.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {

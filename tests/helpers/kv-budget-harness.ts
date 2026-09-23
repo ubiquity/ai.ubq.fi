@@ -333,7 +333,7 @@ const {
 } = await import("../../src/kernel_quota_v2.ts");
 const { handleAdminDefaults } = await import("../../src/admin.ts");
 const { DEFAULT_KERNEL_POLICY_LIMIT_KEY, DEFAULT_KERNEL_POLICY_WINDOW_KEY } = await import("../../src/defaults.ts");
-const { paidFallbackRequestV3Key } = await import("../../src/paid_fallback_ledger.ts");
+const { paidFallbackRequestV3Key } = await import("../../src/paid_fallback_ledger_state.ts");
 const { setStreamFirstEventDeadlineMsForTest } = await import("../../src/inference_deadline.ts");
 const { loadRuntimeConfig, RUNTIME_CONFIG_CACHE_TTL_MS, RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../../src/runtime_config.ts");
 const { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } = await import("../../src/codex.ts");
