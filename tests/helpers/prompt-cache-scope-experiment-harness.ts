@@ -155,7 +155,7 @@ const {
   readPromptCacheScopeExperimentCompletedUsage,
   runPromptCacheScopeExperiment,
 } = await import("../../src/prompt_cache_scope_experiment.ts");
-const { promoteCodexPromptCacheScope } = await import("../../src/codex_catalog.ts");
+const { promoteCodexPromptCacheScope } = await import("../../src/codex_catalog_promotion.ts");
 const { resolvePromptCacheTelemetryCounterKeys } = await import("../../src/prompt_cache_telemetry_gate.ts");
 const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../../src/provider_health.ts");
 const { loadPromptCacheScopeTargetInventory } = await import("../../src/prompt_cache_scope_targets.ts");

@@ -21,7 +21,7 @@ import {
 import { recheckCodexRoutingSlot } from "./codex_account_routing.ts";
 import { codexAccountLabel } from "./provider_capacity.ts";
 import { mergeCodexModelPromptCacheCapabilities, normalizeCodexModelsPayload } from "./codex_models.ts";
-import { CODEX_CATALOG_AUTH_GENERATION_KEY, storeCodexCatalog } from "./codex_catalog.ts";
+import { CODEX_CATALOG_AUTH_GENERATION_KEY, storeCodexCatalog } from "./codex_catalog_store.ts";
 import {
   DEFAULT_KERNEL_POLICY_LIMIT_KEY,
   DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
