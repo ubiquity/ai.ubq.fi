@@ -5,7 +5,8 @@ import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { json, openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";
 import { aggregateResponseTelemetry, responseTelemetry, type ResponseTelemetryState, type UsageContext, type UsageTokens } from "./openai_telemetry.ts";
-import { bytesToBase64, findUnknownKey, getDefaultModel, responseWarnings, runResponsesHandler, UOS_WARNING_HEADER } from "./openai.ts";
+import { bytesToBase64, findUnknownKey, getDefaultModel, runResponsesHandler } from "./openai.ts";
+import { responseWarnings, UOS_WARNING_HEADER } from "./request_policy.ts";
 import { captureRawBodyOnce, discardRawBodyObserverOnce, readJsonBody } from "./request.ts";
 
 /**
