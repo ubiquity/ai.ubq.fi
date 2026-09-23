@@ -9,7 +9,6 @@
   "src/codex_catalog.ts": 1296,
   "src/codex_supervisor.ts": 1211,
   "src/codex.ts": 3499,
-  "src/deepseek_responses.ts": 1441,
   "src/handler.ts": 1646,
   "src/harmony/probes.ts": 1160,
   "src/kv_migration.ts": 2490,

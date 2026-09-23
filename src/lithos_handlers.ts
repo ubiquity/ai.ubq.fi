@@ -1,6 +1,8 @@
 // LithosAI Chat and Responses handlers, extracted from src/openai.ts.
 
-import { type DeepSeekResponsesEcho, LITHOS_RESPONSES_PROFILE, toDeepSeekResponsesChatBody, toDeepSeekResponsesPayload } from "./deepseek_responses.ts";
+import { LITHOS_RESPONSES_PROFILE } from "./deepseek_responses.ts";
+import { toDeepSeekResponsesChatBody } from "./deepseek_chat_projection.ts";
+import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "./deepseek_responses_payload.ts";
 import {
   fetchLithosChatCompletions,
   getLithosProviderRequestId,

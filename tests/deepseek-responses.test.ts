@@ -1,15 +1,8 @@
 import assert from "node:assert/strict";
 
-import {
-  createDeepSeekResponsesStreamTranslator,
-  type DeepSeekResponsesEcho,
-  deepSeekResponsesTerminalKind,
-  encodeResponsesEvent,
-  toDeepSeekChatMessages,
-  toDeepSeekResponsesChatBody,
-  toDeepSeekResponsesPayload,
-  toResponsesUsage,
-} from "../src/deepseek_responses.ts";
+import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload, toResponsesUsage } from "../src/deepseek_responses_payload.ts";
+import { createDeepSeekResponsesStreamTranslator, deepSeekResponsesTerminalKind, encodeResponsesEvent } from "../src/deepseek_responses_stream.ts";
+import { toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek_chat_projection.ts";
 import { deepSeekFinishDisposition, deepSeekThinkingToolChoiceConflict } from "../src/deepseek.ts";
 
 const echo: DeepSeekResponsesEcho = { tools: undefined, tool_choice: undefined, parallel_tool_calls: true, instructions: null };

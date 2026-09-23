@@ -9,7 +9,8 @@ import {
   deepSeekUpstreamModelFor,
   normalizeDeepSeekProviderRequestId,
 } from "./deepseek.ts";
-import { type DeepSeekResponsesEcho, toDeepSeekResponsesChatBody, toDeepSeekResponsesPayload } from "./deepseek_responses.ts";
+import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "./deepseek_responses_payload.ts";
+import { toDeepSeekResponsesChatBody } from "./deepseek_chat_projection.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { json, openaiError } from "./http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";

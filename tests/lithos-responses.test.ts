@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 
-import {
-  createDeepSeekResponsesStreamTranslator,
-  DEEPSEEK_RESPONSES_PROFILE,
-  type DeepSeekResponsesEcho,
-  LITHOS_RESPONSES_PROFILE,
-  toDeepSeekResponsesChatBody,
-  toDeepSeekResponsesPayload,
-  toResponsesUsage,
-} from "../src/deepseek_responses.ts";
+import { DEEPSEEK_RESPONSES_PROFILE, LITHOS_RESPONSES_PROFILE } from "../src/deepseek_responses.ts";
+import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload, toResponsesUsage } from "../src/deepseek_responses_payload.ts";
+import { createDeepSeekResponsesStreamTranslator } from "../src/deepseek_responses_stream.ts";
+import { toDeepSeekResponsesChatBody } from "../src/deepseek_chat_projection.ts";
 import { normalizeLithosChatCompletion, normalizeLithosChatCompletionChunk } from "../src/lithos.ts";
 
 /**
