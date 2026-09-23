@@ -42,7 +42,8 @@ import {
 } from "./upstream_wire.ts";
 import { parseChatStreamOptions, parseReasoningEffortField, parseStreamField } from "./request_policy.ts";
 import { ProviderStreamAdapter, ProviderStreamFrame, relayChatCompletionStream, relayResponsesStream } from "./provider_stream_relay.ts";
-import { deepSeekChatClientOutputAllowance, deepSeekTerminalTypeForPayload, downstreamSignalFor, inferenceSignal } from "./openai.ts";
+import { downstreamSignalFor, inferenceSignal } from "./openai.ts";
+import { deepSeekChatClientOutputAllowance, deepSeekTerminalTypeForPayload } from "./deepseek_handlers.ts";
 
 const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
 
