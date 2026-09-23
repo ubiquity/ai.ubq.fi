@@ -46,6 +46,7 @@ import {
 import { fetchMeteredResponses, METERED_BASE_URL } from "../src/metered.ts";
 import { collectBufferedResponses, isAnswerBearingCompletion } from "../src/openai.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES } from "../src/request.ts";
+import { SENTINEL_REPLAY_REQUEST_FILE_MAX_BYTES, SENTINEL_REPLAY_UPSTREAM_FILE_MAX_BYTES } from "../src/sentinel_replay_limits.ts";
 import {
   createOwnedResponsesStream,
   type PreparedResponsesStream,
@@ -63,8 +64,6 @@ import {
 } from "../src/responses_stream.ts";
 import {
   parseSentinelUpstreamTrace,
-  SENTINEL_UPSTREAM_MAX_BYTES,
-  SENTINEL_UPSTREAM_MAX_CHUNKS,
   type SentinelUpstreamAttempt,
   type SentinelUpstreamProvider,
   type SentinelUpstreamTerminal,
@@ -77,10 +76,13 @@ import { createRecordedUpstreamReplay, type RecordedUpstreamReplay } from "../te
 const METADATA_FILE = ".sentinel-replay-input.json";
 const METADATA_MAX_BYTES = 16 * 1024;
 /**
- * Base64 of the parser's decoded byte bound plus JSON framing for up to
- * SENTINEL_UPSTREAM_MAX_CHUNKS chunk strings.
+ * Reader file bounds come from the same shared limit module the producer uses:
+ * the upstream envelope allows the full derived metadata allowance (base64
+ * chunks, timing, safe headers, framing); the request envelope allows the JSON
+ * escaping worst case while the decoded body stays capped at 32 MiB.
  */
-const UPSTREAM_FILE_MAX_BYTES = Math.ceil(SENTINEL_UPSTREAM_MAX_BYTES / 3) * 4 + Math.ceil(SENTINEL_UPSTREAM_MAX_CHUNKS / 8) + 16 * 1024;
+const UPSTREAM_FILE_MAX_BYTES = SENTINEL_REPLAY_UPSTREAM_FILE_MAX_BYTES;
+const REQUEST_FILE_MAX_BYTES = SENTINEL_REPLAY_REQUEST_FILE_MAX_BYTES;
 const MAX_TEST_IDS = 64;
 const TEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const SYNTHETIC_PAID_API_KEY = "sentinel-replay-synthetic-key";
@@ -268,7 +270,7 @@ const readDispatchInput = (cwd: string): DispatchInput => {
  * body itself, never by a provider guess.
  */
 const readRequestEnvelope = (cwd: string, requestPath: string): RequestEnvelope => {
-  const bytes = readBoundedFile(requireRegularFile(cwd, relativeSegments(requestPath)), MAX_ACCEPTED_JSON_BODY_BYTES);
+  const bytes = readBoundedFile(requireRegularFile(cwd, relativeSegments(requestPath)), REQUEST_FILE_MAX_BYTES);
   const parsed = parseJson(decodeUtf8(bytes));
   if (!isPlainRecord(parsed) || typeof parsed.body !== "string") unavailable();
   const bodyText = parsed.body;
