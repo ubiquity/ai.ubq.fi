@@ -34,15 +34,8 @@
  */
 
 import { config } from "../src/config.ts";
-import {
-  DEEPSEEK_CHAT_COMPLETIONS_URL,
-  DeepSeekError,
-  type DeepSeekStreamFrame,
-  DeepSeekStreamError,
-  fetchDeepSeekChatCompletions,
-  iterateDeepSeekChatCompletionStream,
-  normalizeDeepSeekChatCompletion,
-} from "../src/deepseek.ts";
+import { DEEPSEEK_CHAT_COMPLETIONS_URL, DeepSeekError, fetchDeepSeekChatCompletions, normalizeDeepSeekChatCompletion } from "../src/deepseek.ts";
+import { type DeepSeekStreamFrame, DeepSeekStreamError, iterateDeepSeekChatCompletionStream } from "../src/deepseek_stream.ts";
 import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/lithos.ts";
 import { fetchMeteredResponses, METERED_BASE_URL } from "../src/metered.ts";
 import { collectBufferedResponses } from "../src/responses_buffered.ts";

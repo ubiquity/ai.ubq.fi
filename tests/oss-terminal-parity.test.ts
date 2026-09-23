@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
-import { iterateDeepSeekChatCompletionStream, normalizeDeepSeekChatCompletion } from "../src/deepseek.ts";
+import { normalizeDeepSeekChatCompletion } from "../src/deepseek.ts";
+import { iterateDeepSeekChatCompletionStream } from "../src/deepseek_stream.ts";
 import {
   createDeepSeekResponsesStreamTranslator,
   type DeepSeekResponsesEcho,

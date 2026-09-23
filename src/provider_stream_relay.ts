@@ -1,6 +1,6 @@
 // Provider stream relay, extracted from src/openai.ts.
 
-import { type DeepSeekStreamFrame } from "./deepseek.ts";
+import { type DeepSeekStreamFrame } from "./deepseek_stream.ts";
 import {
   createDeepSeekResponsesStreamTranslator,
   type ChatOnlyResponsesProfile,
