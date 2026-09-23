@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { apiKeyHashKey, apiKeyIdKey } from "../src/api_keys.ts";
 import { config } from "../src/config.ts";
 import { DEBUG_ROUTING_KEY } from "../src/debug_routing.ts";
-import { withTerminalRequestLog } from "../src/handler.ts";
+import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
 import { setKvForTest } from "../src/kv.ts";
 import {
   type AcceptedSentinelReplayInput,

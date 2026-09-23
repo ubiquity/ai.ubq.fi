@@ -155,7 +155,8 @@ export const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredMode
 export const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../../src/surplus.ts");
 export const { ApiKeyQuotaDispatchError } = await import("../../src/api_key_policy.ts");
 export const { withCors } = await import("../../src/http.ts");
-export const { default: gatewayHandler, withTerminalRequestLog } = await import("../../src/handler.ts");
+export const { default: gatewayHandler } = await import("../../src/handler.ts");
+export const { withTerminalRequestLog } = await import("../../src/handler_terminal_log.ts");
 export const { resetRuntimeConfigCacheForTest } = await import("../../src/runtime_config.ts");
 export const { buildFailoverWarningEvents } = await import("../../src/responses_failover_stream.ts");
 export const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../../src/debug_routing.ts");

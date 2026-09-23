@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import serverSource from "../serve.ts" with { type: "text" };
 import handlerSource from "../src/handler.ts" with { type: "text" };
+import terminalRouteSource from "../src/handler_terminal_route.ts" with { type: "text" };
 import catalogSource from "../src/codex_catalog.ts" with { type: "text" };
 import deploymentWorkflow from "../.github/workflows/deno-deploy.yml" with { type: "text" };
 
@@ -18,6 +19,6 @@ Deno.test("gateway entry points start no Sentinel automation but keep the author
   assert.doesNotMatch(catalogSource, /\?\? recordSentinelProviderDegradationFromEnvironment/u);
   assert.match(deploymentWorkflow, /sentinel:test-local/u);
   assert.doesNotMatch(deploymentWorkflow, /provider-sentinel|sentinel-revision-control|scripts\/sentinel/u);
-  assert.match(handlerSource, /captureAcceptedSentinelReplayInput/u);
+  assert.match(terminalRouteSource, /captureAcceptedSentinelReplayInput/u);
   assert.match(handlerSource, /\/admin\/sentinel\/replay-captures/u);
 });

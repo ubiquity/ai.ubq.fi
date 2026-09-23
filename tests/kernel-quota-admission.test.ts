@@ -251,7 +251,8 @@ Deno.test({
     const { policy } = await seedApiKey(kv, token, nowMs);
     const kernelToken = await installKernelPublicKey(kv, token);
     Deno.env.set("DEEPSEEK_API_KEY", "kernel-quota-admission-dummy-key");
-    const { default: handler, setInferenceAdmissionControllerForTest } = await import("../src/handler.ts");
+    const { default: handler } = await import("../src/handler.ts");
+    const { setInferenceAdmissionControllerForTest } = await import("../src/handler_admission.ts");
     const { createInferenceAdmissionController } = await import("../src/inference_admission.ts");
     const controller = createInferenceAdmissionController({ maxActive: 4, maxWaiting: 2, maxQueueWaitMs: 500 });
     setInferenceAdmissionControllerForTest(controller);

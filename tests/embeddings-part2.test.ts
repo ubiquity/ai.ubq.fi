@@ -939,7 +939,7 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
 });
 
 Deno.test("handler: idempotency preserves account scopes", async () => {
-  const { resolveIdempotencyPrincipal } = await import("../src/handler.ts");
+  const { resolveIdempotencyPrincipal } = await import("../src/handler_http.ts");
 
   for (const kind of ["auth_tokens_allowlist", "admin_allowlist", "deno_deploy_token"] as const) {
     const first = await resolveIdempotencyPrincipal({
@@ -997,7 +997,8 @@ Deno.test("handler: idempotency preserves account scopes", async () => {
 
 Deno.test("handler: saturated admission refuses a queued embedding-job poll before Voyage", async () => {
   const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
-  const { default: handler, setInferenceAdmissionControllerForTest } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler.ts");
+  const { setInferenceAdmissionControllerForTest } = await import("../src/handler_admission.ts");
   const { createInferenceAdmissionController } = await import("../src/inference_admission.ts");
   const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "c")}`;
   const created = await handleAdminApiKeysCreate(
