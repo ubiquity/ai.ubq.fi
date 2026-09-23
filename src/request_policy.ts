@@ -1,5 +1,25 @@
 // Model metadata, prompt-cache, reasoning and warning policy for upstream requests, extracted from src/openai.ts.
 
+export const CEREBRAS_PROVIDER_HINT: ModelMetadataHint = {
+  supported_reasoning_levels: ["low", "medium", "high"],
+  default_reasoning_effort: "medium",
+};
+
+/**
+ * What the LithosAI route declares about its own models. All eight ids serve
+ * one 1,048,576-token window (verified 2026-09-23), and `reasoning_effort` is
+ * accepted verbatim for the seven tiers the route advertises, so the hint
+ * carries the window, the effective percentage and the tiers together rather
+ * than restating them at each call site.
+ */
+export const LITHOS_PROVIDER_HINT: ModelMetadataHint = {
+  context_window_tokens: LITHOS_CONTEXT_WINDOW_TOKENS,
+  max_context_window_tokens: LITHOS_CONTEXT_WINDOW_TOKENS,
+  effective_context_window_percent: LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  supported_reasoning_levels: [...LITHOS_REASONING_LEVELS],
+  default_reasoning_effort: LITHOS_DEFAULT_REASONING_EFFORT,
+};
+
 // Temporary hard cut while this exact gateway model has free Surplus inference.
 // Remove the cut when the free-inference window ends; do not generalize it to
 // other catalog models or paid-fallback routing.
@@ -21,6 +41,8 @@ export const isAdditionalTrustedCodexModel = (model: string): boolean => ADDITIO
 import { type CodexModelsSnapshot, loadCodexModelsSnapshot } from "./codex.ts";
 import { CODEX_CHATGPT_PROMPT_CACHE_PROVIDER, normalizePromptCacheCapabilities, type PromptCacheControls } from "./codex_models.ts";
 import { normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
+import { LITHOS_CONTEXT_WINDOW_TOKENS, LITHOS_DEFAULT_REASONING_EFFORT, LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT, LITHOS_REASONING_LEVELS } from "./lithos.ts";
+import type { ModelMetadataHint } from "./model_metadata.ts";
 import { openaiError } from "./http.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { ResponseInputItem } from "./types.ts";
