@@ -3,14 +3,9 @@ import { redactSupervisorSecrets } from "./codex_supervisor_secret.ts";
 import { json, openaiError } from "./http.ts";
 import { readSupervisorRolloutTail, type SupervisorLogEvent } from "./codex_supervisor_log.ts";
 import { openSupervisorConnection, type SupervisorConnection } from "./codex_supervisor_transport.ts";
-import {
-  ensureSupervisorSnapshot,
-  normalizeEpochMs,
-  resolveSupervisorConfig,
-  SOURCE_ID_PATTERN,
-  THREAD_ID_PATTERN,
-  type SupervisorSource,
-} from "./codex_supervisor.ts";
+import { normalizeEpochMs, resolveSupervisorConfig, SOURCE_ID_PATTERN, THREAD_ID_PATTERN } from "./codex_supervisor_config.ts";
+import type { SupervisorSource } from "./codex_supervisor_config.ts";
+import { ensureSupervisorSnapshot } from "./codex_supervisor_inventory.ts";
 
 /**
  * On-demand "catch me up" brief for one supervised session.
