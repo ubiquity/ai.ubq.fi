@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/provider/lithos.ts";
-import { lithosRateLimitWait } from "../src/provider/lithos-handlers.ts";
+import { lithosRateLimitWait, setLithosRateLimitTestOverride } from "../src/provider/lithos-handlers.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { handleResponses } from "../src/responses-handler.ts";
 import { handleChatCompletions } from "../src/chat/envelope.ts";
@@ -696,86 +696,109 @@ Deno.test("lithos rate-limit waits follow the vendor's own header precedence", (
 });
 
 Deno.test("lithos wiring: a 429 inside the wait budget is waited out and retried on the same model id", async () => {
-  await withLithosKey(async () => {
-    const message = [{ role: "user", content: "hi" }];
-    const refusal = () =>
-      Response.json(
-        { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+  // A streamed wait is held open by `: keepalive` frames; shortening the
+  // interval and the budgets keeps the fixture fast without changing behavior.
+  setLithosRateLimitTestOverride({ keepaliveIntervalMs: 5, streamTotalWaitCapMs: 5_000 });
+  try {
+    await withLithosKey(async () => {
+      const message = [{ role: "user", content: "hi" }];
+      const refusal = () =>
+        Response.json(
+          { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+          {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "x-ratelimit-limit-requests": "60",
+              "x-ratelimit-remaining-requests": "0",
+              "x-ratelimit-reset-requests": "1s",
+              "x-ratelimit-limit-tokens": "4000000",
+              "x-ratelimit-remaining-tokens": "0",
+              "x-ratelimit-reset-tokens": "0.02s",
+              "retry-after-ms": "5",
+            },
+          }
+        );
+
+      const chat = await withUpstream(
+        (_call, calls) => (calls.length === 1 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }))),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-chat"))
+      );
+      assert.equal(chat.calls.length, 2, "the refused dispatch is retried exactly once");
+      assert.equal(
+        chat.calls.every((call) => call.url === LITHOS_CHAT_COMPLETIONS_URL),
+        true
+      );
+      assert.equal(chat.result.status, 200);
+      const chatBody = (await chat.result.json()) as { choices?: { message?: { content?: string } }[] };
+      assert.equal(chatBody.choices?.[0]?.message?.content, "after-retry");
+      assert.equal(getResponseTelemetry(chat.result)?.streamTerminalType, "response.completed");
+
+      // The streamed Responses route retries the same way: the client's first
+      // frame is the completed translation, never the refusal.
+      const retryStreamBody = `${sseBody([
         {
-          status: 429,
-          headers: {
-            "Content-Type": "application/json",
-            "x-ratelimit-limit-requests": "60",
-            "x-ratelimit-remaining-requests": "0",
-            "x-ratelimit-reset-requests": "1s",
-            "x-ratelimit-limit-tokens": "4000000",
-            "x-ratelimit-remaining-tokens": "0",
-            "x-ratelimit-reset-tokens": "0.02s",
-            "retry-after-ms": "5",
-          },
+          id: "chatcmpl-lithos-retry",
+          object: "chat.completion.chunk",
+          created: 1_790_160_500,
+          model: LITHOS_MODEL,
+          choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+        },
+        {
+          id: "chatcmpl-lithos-retry",
+          object: "chat.completion.chunk",
+          created: 1_790_160_500,
+          model: LITHOS_MODEL,
+          choices: [{ index: 0, delta: { content: "after-retry" }, finish_reason: null }],
+        },
+        {
+          id: "chatcmpl-lithos-retry",
+          object: "chat.completion.chunk",
+          created: 1_790_160_500,
+          model: LITHOS_MODEL,
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        },
+        {
+          id: "chatcmpl-lithos-retry",
+          object: "chat.completion.chunk",
+          created: 1_790_160_501,
+          model: LITHOS_MODEL,
+          choices: [],
+          usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9, prompt_tokens_details: null, completion_tokens_details: { reasoning_tokens: 1 } },
+        },
+      ])}data: [DONE]\n\n`;
+
+      const streamed = await withUpstream(
+        (_call, calls) => (calls.length === 1 ? refusal() : new Response(retryStreamBody, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
+        async () => {
+          const response = await handleResponses(
+            responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
+            usageContext("lithos-429-wait-responses")
+          );
+          // The retry runs behind the open stream, so the body is read while the
+          // recorded fetch is still installed.
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
         }
       );
-
-    const chat = await withUpstream(
-      (_call, calls) => (calls.length === 1 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }))),
-      () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-chat"))
-    );
-    assert.equal(chat.calls.length, 2, "the refused dispatch is retried exactly once");
-    assert.equal(
-      chat.calls.every((call) => call.url === LITHOS_CHAT_COMPLETIONS_URL),
-      true
-    );
-    assert.equal(chat.result.status, 200);
-    const chatBody = (await chat.result.json()) as { choices?: { message?: { content?: string } }[] };
-    assert.equal(chatBody.choices?.[0]?.message?.content, "after-retry");
-    assert.equal(getResponseTelemetry(chat.result)?.streamTerminalType, "response.completed");
-
-    // The streamed Responses route retries the same way: the client's first
-    // frame is the completed translation, never the refusal.
-    const retryStreamBody = `${sseBody([
-      {
-        id: "chatcmpl-lithos-retry",
-        object: "chat.completion.chunk",
-        created: 1_790_160_500,
-        model: LITHOS_MODEL,
-        choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
-      },
-      {
-        id: "chatcmpl-lithos-retry",
-        object: "chat.completion.chunk",
-        created: 1_790_160_500,
-        model: LITHOS_MODEL,
-        choices: [{ index: 0, delta: { content: "after-retry" }, finish_reason: null }],
-      },
-      {
-        id: "chatcmpl-lithos-retry",
-        object: "chat.completion.chunk",
-        created: 1_790_160_500,
-        model: LITHOS_MODEL,
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-      },
-      {
-        id: "chatcmpl-lithos-retry",
-        object: "chat.completion.chunk",
-        created: 1_790_160_501,
-        model: LITHOS_MODEL,
-        choices: [],
-        usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9, prompt_tokens_details: null, completion_tokens_details: { reasoning_tokens: 1 } },
-      },
-    ])}data: [DONE]\n\n`;
-
-    const streamed = await withUpstream(
-      (_call, calls) => (calls.length === 1 ? refusal() : new Response(retryStreamBody, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
-      () => handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }), usageContext("lithos-429-wait-responses"))
-    );
-    assert.equal(streamed.calls.length, 2, "the streamed route retries the refused dispatch too");
-    assert.equal(streamed.result.status, 200);
-    const text = await streamed.result.text();
-    assert.match(text, /after-retry/);
-    assert.match(text, /event: response.completed/);
-    assert.doesNotMatch(text, /rate_limit_exceeded/);
-    assert.equal(getResponseTelemetry(streamed.result)?.streamTerminalType, "response.completed");
-  });
+      // A streamed refusal now opens the stream first and retries behind it, so
+      // the client sees `: keepalive` frames - never an error - while it waits.
+      assert.equal(streamed.result.status, 200);
+      const text = streamed.result.text;
+      assert.equal(streamed.calls.length, 2, `the streamed route retries the refused dispatch behind the open stream (saw ${streamed.calls.length})`);
+      assert.match(text, /: keepalive/);
+      assert.match(text, /after-retry/);
+      assert.match(text, /event: response.completed/);
+      assert.doesNotMatch(text, /rate_limit_exceeded/);
+      const streamedTelemetry = streamed.result.telemetry;
+      if (streamedTelemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(streamedTelemetry.streamTerminalType, "response.completed");
+      const waited = streamedTelemetry.rateLimitWaitMs;
+      assert.equal(typeof waited, "number", "an absorbed wait is reported on the terminal");
+      assert.ok((waited ?? 0) > 0, "the absorbed wait total is positive");
+    });
+  } finally {
+    setLithosRateLimitTestOverride(null);
+  }
 });
 
 Deno.test("lithos wiring: a cancelled request stops waiting for the provider window", async () => {
@@ -807,4 +830,78 @@ Deno.test("lithos wiring: a cancelled request stops waiting for the provider win
     const body = (await result.json()) as { error?: { code?: string } };
     assert.equal(body.error?.code, "request_cancelled");
   });
+});
+
+Deno.test("lithos wiring: a streamed refusal that outlasts the wait budget fails in-band, not as a status", async () => {
+  // A five-minute budget cannot be spent in a fixture, so the policy is
+  // shrunk: three dispatches of a five-millisecond window, ten milliseconds of
+  // total budget, and the fourth refusal ends the already-open stream.
+  setLithosRateLimitTestOverride({ perAttemptCapMs: 20, streamTotalWaitCapMs: 10, maxDispatches: 3, keepaliveIntervalMs: 5 });
+  try {
+    await withLithosKey(async () => {
+      const streamed = await withUpstream(
+        () =>
+          Response.json(
+            { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+            { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5" } }
+          ),
+        async () => {
+          const response = await handleResponses(
+            responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
+            usageContext("lithos-stream-budget-exhausted")
+          );
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+        }
+      );
+
+      // The stream opened before the wait, so the refusal travels as a terminal
+      // event carrying the provider's own code instead of an HTTP status.
+      assert.equal(streamed.result.status, 200);
+      const text = streamed.result.text;
+      assert.equal(streamed.calls.length, 3, `the attempt budget stops the retries (saw ${streamed.calls.length})`);
+      assert.match(text, /: keepalive/);
+      assert.match(text, /event: response.failed/);
+      assert.match(text, /rate_limit_exceeded/);
+      assert.doesNotMatch(text, /event: response.completed/);
+      const exhaustedTelemetry = streamed.result.telemetry;
+      if (exhaustedTelemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(exhaustedTelemetry.streamTerminalType, "response.failed");
+    });
+  } finally {
+    setLithosRateLimitTestOverride(null);
+  }
+});
+
+Deno.test("lithos wiring: a client that cancels during a streamed wait stops it without another dispatch", async () => {
+  setLithosRateLimitTestOverride({ keepaliveIntervalMs: 5, streamTotalWaitCapMs: 60_000 });
+  try {
+    await withLithosKey(async () => {
+      const controller = new AbortController();
+      const request = new Request("https://ai.ubq.fi/v1/responses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: LITHOS_MODEL, input: "hi", stream: true }),
+        signal: controller.signal,
+      });
+      setTimeout(() => {
+        controller.abort(new DOMException("The client cancelled.", "AbortError"));
+      }, 20);
+
+      const streamed = await withUpstream(
+        () =>
+          Response.json(
+            { error: { message: "rate limit exceeded", type: "input_tokens", code: "rate_limit_exceeded" } },
+            { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
+          ),
+        () => handleResponses(request, usageContext("lithos-stream-wait-cancel"))
+      );
+
+      assert.equal(streamed.result.status, 200);
+      const text = await streamed.result.text();
+      assert.equal(streamed.calls.length, 1, `an aborted wait dispatches nothing further (saw ${streamed.calls.length})`);
+      assert.doesNotMatch(text, /event: response\.(completed|failed)/);
+    });
+  } finally {
+    setLithosRateLimitTestOverride(null);
+  }
 });

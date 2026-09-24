@@ -309,6 +309,7 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       model: DEFAULT_TEST_MODEL,
       reasoning: "low",
       outputTokenAllowance: null,
+      rateLimitWaitMs: null,
       inputTokens: 2006,
       cachedInputTokens: 1920,
       cacheWriteInputTokens: 0,

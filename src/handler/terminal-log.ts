@@ -76,6 +76,7 @@ const logTerminalRequest = async (
     model: telemetry?.model ?? null,
     reasoning: telemetry?.reasoning ?? null,
     output_token_allowance: telemetry?.outputTokenAllowance ?? null,
+    rate_limit_wait_ms: telemetry?.rateLimitWaitMs ?? null,
     provider_request_id: telemetry?.providerRequestId ?? null,
     input_tokens: telemetry?.inputTokens ?? null,
     cached_input_tokens: telemetry?.cachedInputTokens ?? null,

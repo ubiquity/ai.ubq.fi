@@ -6,6 +6,38 @@ entries when a decision changes; add a new entry that supersedes the earlier one
 
 Each entry must distinguish the decision from its implementation, validation, deployment, and live acceptance state.
 
+## 2026-09-24 — A streamed LithosAI refusal is absorbed for up to five minutes behind the open stream
+
+### Decision
+
+A streamed request that meets a LithosAI 429 with a waitable window no longer waits silently before its response begins.
+The handler opens the SSE stream first, and the wait plus its retries run behind it while the gateway's standard
+`: keepalive` frames hold the client. The streamed wait policy is a five-minute total budget, the same 75-second
+per-attempt cap, and a 20-dispatch safety cap. Buffered requests keep the previous policy (75 s per attempt, 90 s total,
+three dispatches), because nothing can hold a silent buffered response through an edge proxy's read bound.
+
+If the streamed budget is spent, the refusal travels in-band with the vendor's own code (`rate_limit_exceeded`, or
+`provider_overloaded` at capacity) in the Responses `response.failed` terminal or the Chat error frame, since a status
+can no longer be returned. A cancellation or a gateway deadline that ends a wait keeps its own terminal and emits no
+error frame. Every absorbed wait is reported as `rate_limit_wait_ms` on the request terminal.
+
+### Why
+
+Production evidence from 2026-09-24 08:46-08:50Z: a VPS Codex session failed with
+`exceeded retry limit, last status: 429 Too Many Requests` while the same window logged 18 waits and 46 served Ultra
+requests. The organization-wide, per-model bucket was saturated for about three and a half minutes - longer than the
+previous 90-second budget - so one request relayed a 429 and the client's own four-retry limit then failed the turn.
+Client tolerance is about ten minutes, so absorbing the window is the difference between one slow request and one failed
+agent turn.
+
+### Status
+
+Implementation is local on the branch for this change: the streamed-route wait policy and pending dispatch in
+`src/provider/lithos-handlers.ts`, pending-source support and in-band refusal reporting in
+`src/provider/stream-relay.ts`, and `rate_limit_wait_ms` in the request telemetry and terminal log. Focused suites pass;
+full `sh scripts/verify.sh`, CI, deployment and live acceptance are pending. Not deployed, and no production behavior is
+claimed.
+
 ## 2026-09-24 — LithosAI rate-limit refusals are waited out and retried on the same model id
 
 ### Decision
