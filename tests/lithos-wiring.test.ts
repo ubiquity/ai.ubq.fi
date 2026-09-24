@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/provider/lithos.ts";
-import { LITHOS_RATE_LIMIT_WAIT_ENV, lithosRateLimitWait } from "../src/provider/lithos-rate-limits.ts";
+import { clearLithosFailoverWindows, LITHOS_RATE_LIMIT_WAIT_ENV, lithosRateLimitWait } from "../src/provider/lithos-rate-limits.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { handleResponses } from "../src/responses-handler.ts";
 import { handleChatCompletions } from "../src/chat/envelope.ts";
@@ -159,11 +159,11 @@ const lithosRateLimitRefusal = (retryAfterMs: string): Response =>
   );
 
 /** One recorded buffered Chat completion, shaped like the vendor's wire. */
-const lithosCompletion = (message: Record<string, unknown>): Record<string, unknown> => ({
+const lithosCompletion = (message: Record<string, unknown>, model: string = LITHOS_MODEL): Record<string, unknown> => ({
   id: "chatcmpl-lithos-1",
   object: "chat.completion",
   created: 1_790_160_326,
-  model: LITHOS_MODEL,
+  model,
   choices: [{ index: 0, message, finish_reason: "stop" }],
   usage: {
     prompt_tokens: 91,
@@ -265,6 +265,7 @@ Deno.test("lithos wiring: dispatches Chat Completions to the vendor with the bea
 
 Deno.test("lithos wiring: relays the vendor's Chat stream frames and its unconditional usage", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     const chunk = (delta: Record<string, unknown>, choices?: Record<string, unknown>[]) => ({
       id: "chatcmpl-lithos-stream",
       object: "chat.completion.chunk",
@@ -709,6 +710,7 @@ Deno.test("lithos rate-limit waits follow the vendor's own header precedence", (
 
 Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's own bucket", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
     const chat = await withUpstream(
       (_call, calls) =>
@@ -717,7 +719,7 @@ Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's
               { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
               { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
             )
-          : Response.json(lithosCompletion({ role: "assistant", content: "sibling-served" })),
+          : Response.json(lithosCompletion({ role: "assistant", content: "sibling-served" }, LITHOS_SIBLING_MODEL)),
       () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-failover-chat"))
     );
 
@@ -739,6 +741,7 @@ Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's
 
 Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
     const refusal = () =>
       Response.json(
@@ -767,6 +770,7 @@ Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", a
 
 Deno.test("lithos wiring: with the wait switch on, a refusal is waited out and retried on the sibling tier", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
     try {
       const message = [{ role: "user", content: "hi" }];
@@ -776,7 +780,8 @@ Deno.test("lithos wiring: with the wait switch on, a refusal is waited out and r
       // Both tiers refuse once: the sibling is tried first, and the window its
       // own headers name is then waited out. Only the third dispatch is served.
       const chat = await withUpstream(
-        (_call, calls) => (calls.length <= 2 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }))),
+        (_call, calls) =>
+          calls.length <= 2 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }, LITHOS_SIBLING_MODEL)),
         () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-chat"))
       );
       assert.equal(chat.calls.length, 3, "the requested tier, its sibling, then the sibling's retry");
@@ -805,6 +810,7 @@ Deno.test("lithos wiring: with the wait switch on, a refusal is waited out and r
 
 Deno.test("lithos wiring: the wait switch stops at its dispatch cap and relays the refusal", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
     try {
       const message = [{ role: "user", content: "hi" }];
@@ -827,6 +833,7 @@ Deno.test("lithos wiring: the wait switch stops at its dispatch cap and relays t
 
 Deno.test("lithos wiring: a refusal naming no waitable window is relayed even with the switch on", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
     try {
       const message = [{ role: "user", content: "hi" }];
@@ -861,6 +868,7 @@ Deno.test("lithos wiring: a refusal naming no waitable window is relayed even wi
 
 Deno.test("lithos wiring: a cancelled request stops waiting for the provider window", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
     try {
       const controller = new AbortController();
@@ -897,6 +905,7 @@ Deno.test("lithos wiring: a cancelled request stops waiting for the provider win
 
 Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a status instead of held open", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     const refusal = () =>
       Response.json(
         { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
@@ -919,6 +928,7 @@ Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a statu
 
 Deno.test("lithos wiring: with the wait switch on, a streamed retry runs before the stream opens", async () => {
   await withLithosKey(async () => {
+    clearLithosFailoverWindows();
     Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
     try {
       const refusal = () => lithosRateLimitRefusal("5");
@@ -927,28 +937,28 @@ Deno.test("lithos wiring: with the wait switch on, a streamed retry runs before 
           id: "chatcmpl-lithos-retry",
           object: "chat.completion.chunk",
           created: 1_790_160_500,
-          model: LITHOS_MODEL,
+          model: LITHOS_SIBLING_MODEL,
           choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
         },
         {
           id: "chatcmpl-lithos-retry",
           object: "chat.completion.chunk",
           created: 1_790_160_500,
-          model: LITHOS_MODEL,
+          model: LITHOS_SIBLING_MODEL,
           choices: [{ index: 0, delta: { content: "after-retry" }, finish_reason: null }],
         },
         {
           id: "chatcmpl-lithos-retry",
           object: "chat.completion.chunk",
           created: 1_790_160_500,
-          model: LITHOS_MODEL,
+          model: LITHOS_SIBLING_MODEL,
           choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
         },
         {
           id: "chatcmpl-lithos-retry",
           object: "chat.completion.chunk",
           created: 1_790_160_501,
-          model: LITHOS_MODEL,
+          model: LITHOS_SIBLING_MODEL,
           choices: [],
           usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9, prompt_tokens_details: null, completion_tokens_details: { reasoning_tokens: 1 } },
         },
@@ -980,5 +990,90 @@ Deno.test("lithos wiring: with the wait switch on, a streamed retry runs before 
     } finally {
       Deno.env.delete(LITHOS_RATE_LIMIT_WAIT_ENV);
     }
+  });
+});
+
+Deno.test("lithos wiring: only the mapped sibling may answer an Ultra request with a different model", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    const message = [{ role: "user", content: "hi" }];
+    // No refusal happened, so nothing may explain a response naming another tier.
+    const chat = await withUpstream(
+      () => Response.json(lithosCompletion({ role: "assistant", content: "impostor" }, LITHOS_SIBLING_MODEL)),
+      () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-echo-guard"))
+    );
+    assert.equal(chat.calls.length, 1, "no failover dispatched here");
+    assert.equal(chat.calls[0].body.model, LITHOS_MODEL);
+    assert.equal(chat.result.status, 502);
+    const body = (await chat.result.json()) as { error?: { code?: string } };
+    assert.equal(body.error?.code, "lithos_upstream_invalid_response");
+  });
+});
+
+Deno.test("lithos wiring: a refused Ultra tier serves from the sibling until the vendor's reset instant passes", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      const message = [{ role: "user", content: "hi" }];
+      const refusal = () =>
+        Response.json(
+          { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+          { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "400" } }
+        );
+
+      // The refusal opens the window and the sibling serves this request.
+      const first = await withUpstream(
+        (_call, calls) =>
+          calls.length === 1 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "sibling-served" }, LITHOS_SIBLING_MODEL)),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-first"))
+      );
+      assert.equal(first.calls.length, 2);
+      assert.equal(first.calls[0].body.model, LITHOS_MODEL);
+      assert.equal(first.calls[1].body.model, LITHOS_SIBLING_MODEL);
+
+      // While the window is open the sibling answers directly: ultra is not asked again.
+      const second = await withUpstream(
+        () => Response.json(lithosCompletion({ role: "assistant", content: "sibling-direct" }, LITHOS_SIBLING_MODEL)),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-second"))
+      );
+      assert.equal(second.calls.length, 1, "one dispatch, straight to the sibling");
+      assert.equal(second.calls[0].body.model, LITHOS_SIBLING_MODEL);
+      const secondTelemetry = getResponseTelemetry(second.result);
+      if (secondTelemetry === null) throw new Error("the chat terminal carries no telemetry");
+      assert.equal(secondTelemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+      assert.equal(secondTelemetry.rateLimitWaitMs, null, "the window never waits");
+      assert.equal(second.result.status, 200);
+
+      // After the vendor's own reset instant, ultra is asked first again.
+      await new Promise((resolve) => setTimeout(resolve, 420));
+      const third = await withUpstream(
+        () => Response.json(lithosCompletion({ role: "assistant", content: "ultra-again" })),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-third"))
+      );
+      assert.equal(third.calls.length, 1);
+      assert.equal(third.calls[0].body.model, LITHOS_MODEL, "the window closed and ultra is asked again");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
+Deno.test("lithos wiring: a refusal on a tier with no configured sibling opens no window", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    const message = [{ role: "user", content: "hi" }];
+    // The base tier has no sibling, so its refusal is relayed and nothing is remembered.
+    const base = await withUpstream(
+      () => lithosRateLimitRefusal("400"),
+      () => handleChatCompletions(chatRequest({ model: LITHOS_BASE_MODEL, messages: message, stream: false }), usageContext("lithos-scope-base"))
+    );
+    assert.equal(base.calls.length, 1);
+    assert.equal(base.result.status, 429);
+
+    const ultra = await withUpstream(
+      () => Response.json(lithosCompletion({ role: "assistant", content: "ultra-first" })),
+      () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-scope-ultra"))
+    );
+    assert.equal(ultra.calls[0].body.model, LITHOS_MODEL, "no window leaked onto the Ultra tier");
   });
 });

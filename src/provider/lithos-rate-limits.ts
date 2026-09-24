@@ -19,6 +19,37 @@ const LITHOS_SIBLING_MODELS: ReadonlyMap<string, string> = new Map([["deepseek-a
 /** The sibling tier for a requested model, or null when that tier has none. */
 export const lithosSiblingModelFor = (modelRaw: string): string | null => LITHOS_SIBLING_MODELS.get(modelRaw) ?? null;
 
+/**
+ * The in-process failover windows: a tier whose refusal named a reset instant
+ * keeps sending its requests to the sibling until that instant passes, and then
+ * returns to the requested tier. Scoped to the mapped pair, so a model without a
+ * configured sibling never accumulates state.
+ *
+ * The state is per process on purpose: it mirrors what this gateway instance has
+ * been told by the vendor, and a restart re-learns it from the first refusal.
+ */
+const lithosFailoverDeadlines = new Map<string, number>();
+
+/** The sibling this tier's requests must use right now, or null once the window has passed. */
+export const lithosFailoverSiblingAt = (modelRaw: string, nowMs: number): string | null => {
+  const deadline = lithosFailoverDeadlines.get(modelRaw);
+  if (deadline === undefined) return null;
+  if (nowMs >= deadline) {
+    lithosFailoverDeadlines.delete(modelRaw);
+    return null;
+  }
+  return lithosSiblingModelFor(modelRaw);
+};
+
+/** Opens (or extends) that window: the refusal's own reset instant, in milliseconds from now. */
+export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number): void => {
+  if (lithosSiblingModelFor(modelRaw) === null) return;
+  lithosFailoverDeadlines.set(modelRaw, nowMs + waitMs);
+};
+
+/** Test seam: drop every window so fixtures cannot leak into each other. */
+export const clearLithosFailoverWindows = (): void => lithosFailoverDeadlines.clear();
+
 /** Records the sibling that served a request whose own tier refused it. */
 export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;

@@ -53,7 +53,10 @@ const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
 
 import {
   type LithosRateLimitWait,
+  lithosFailoverSiblingAt,
+  lithosOpenFailoverWindow,
   lithosPlannedWait,
+  lithosRateLimitWait,
   lithosSiblingModelFor,
   logLithosRateLimitFailover,
   logLithosRateLimitWait,
@@ -207,7 +210,8 @@ const readLithosChatCompletion = async (
   upstreamStatus: number,
   providerRequestId: string | null,
   usageContext: UsageContext | undefined,
-  upstreamModel: string
+  upstreamModel: string,
+  servedModel: string
 ): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; response: Response }> => {
   let payload: unknown;
   try {
@@ -215,7 +219,7 @@ const readLithosChatCompletion = async (
   } catch {
     return { ok: false, response: await respondLithosChatInvalidCompletion("invalid_json", upstreamStatus, providerRequestId, usageContext) };
   }
-  const normalized = normalizeLithosChatCompletion(payload, upstreamModel);
+  const normalized = normalizeLithosChatCompletion(payload, upstreamModel, servedModel);
   if (!normalized.ok) {
     return { ok: false, response: await respondLithosChatInvalidCompletion("invalid_completion_schema", upstreamStatus, providerRequestId, usageContext) };
   }
@@ -290,7 +294,7 @@ const respondLithosChatIncompleteCapture = async (
 async function* lithosChatStreamFrames(
   upstream: Response,
   upstreamModel: string,
-  options: Readonly<{ signal: AbortSignal }>
+  options: Readonly<{ signal: AbortSignal; servedModel?: string }>
 ): AsyncGenerator<ProviderStreamFrame, void, unknown> {
   for await (const chunk of iterateLithosChatCompletionStream(upstream, upstreamModel, options)) {
     yield { kind: "chunk", value: chunk };
@@ -357,6 +361,16 @@ const lithosStreamAdapter: ProviderStreamAdapter = {
 };
 
 /**
+ * The same seams with this request's serving tier pinned, so a response the
+ * configured sibling produced is validated against the model that actually
+ * answered it instead of the one the client asked for.
+ */
+const lithosStreamAdapterServing = (servedModel: string): ProviderStreamAdapter => ({
+  ...lithosStreamAdapter,
+  frames: (upstream, upstreamModel, options) => lithosChatStreamFrames(upstream, upstreamModel, { ...options, servedModel }),
+});
+
+/**
  * Relays the served attempt as it arrives, wrapped with the gateway's standard
  * `: keepalive` comment frames so a quiet provider never looks like a dead
  * connection to a client or an edge proxy. The provider reports usage
@@ -371,14 +385,31 @@ const streamLithosChatCompletion = (
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
-  upstreamModel: string
+  upstreamModel: string,
+  servedModel: string
 ): Response =>
   withLithosSseKeepalive(
-    relayChatCompletionStream(lithosStreamAdapter, upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel)
+    relayChatCompletionStream(
+      lithosStreamAdapterServing(servedModel),
+      upstream,
+      providerRequestId,
+      usageContext,
+      downstreamSignal,
+      requestSignal,
+      upstreamModel
+    )
   );
 
 type LithosDispatchOutcome =
-  | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
+  | Readonly<{
+      ok: true;
+      upstream: Response;
+      providerRequestId: string | null;
+      requestSignal: AbortSignal;
+      downstreamSignal: AbortSignal;
+      /** The tier this attempt addressed; a mapped sibling after a failover. */
+      servedModel: string;
+    }>
   | Readonly<{ ok: false; response: Response }>;
 
 /** Everything one request's dispatch loop needs that never changes. */
@@ -444,7 +475,7 @@ const lithosTakeRateLimitWait = async (
 };
 
 /** The outcome of an attempt the loop decided not to retry. */
-const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Response): Promise<LithosDispatchOutcome> => {
+const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Response, servedModel: string): Promise<LithosDispatchOutcome> => {
   const providerRequestId = getLithosProviderRequestId(upstream);
   if (input.usageContext?.responseTelemetry) input.usageContext.responseTelemetry.providerRequestId = providerRequestId;
   if (!upstream.ok) {
@@ -453,7 +484,19 @@ const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Respon
       response: await respondLithosChatUpstreamHttpFailure(upstream, input.requestSignal, providerRequestId, input.usageContext, input.body),
     };
   }
-  return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal };
+  return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal, servedModel };
+};
+
+/**
+ * Opens the tier's failover window for as long as the refusal's own headers
+ * say, so later requests go straight to the sibling instead of asking a
+ * saturated tier again. A refusal that names no window (or carries
+ * `x-should-retry: false`) opens nothing and stays a per-request failover.
+ */
+const lithosOpenFailoverWindowFrom = (modelRaw: string, refusal: Response): void => {
+  const window = lithosRateLimitWait(refusal.headers, Date.now());
+  if (window === null) return;
+  lithosOpenFailoverWindow(modelRaw, Date.now(), window.waitMs);
 };
 
 /**
@@ -491,14 +534,15 @@ type LithosDispatchPass = Readonly<{ kind: "result"; result: LithosDispatchOutco
 const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispatchProgress): Promise<LithosDispatchPass> => {
   const attempt = await lithosDispatchAttempt(input.body, state.attemptModel, input.requestSignal, input.usageContext);
   const progressed: LithosDispatchProgress = { ...state, attempt: state.attempt + 1 };
-  if (attempt.status !== 429) return { kind: "result", result: await lithosAttemptOutcome(input, attempt) };
+  if (attempt.status !== 429) return { kind: "result", result: await lithosAttemptOutcome(input, attempt, progressed.attemptModel) };
+  if (progressed.attemptModel === input.modelRaw) lithosOpenFailoverWindowFrom(input.modelRaw, attempt);
   const failover = lithosFailoverProgress(input, progressed);
   if (failover !== null) {
     cancelResponseBody(attempt);
     return { kind: "retry", state: failover };
   }
   const planned = lithosPlannedWait(attempt, progressed.attempt, progressed.waitedMs);
-  if (planned === null) return { kind: "result", result: await lithosAttemptOutcome(input, attempt) };
+  if (planned === null) return { kind: "result", result: await lithosAttemptOutcome(input, attempt, progressed.attemptModel) };
   // The refused attempt's body is never read, so it is released here rather
   // than left for the runtime to drain.
   cancelResponseBody(attempt);
@@ -535,9 +579,22 @@ const dispatchLithosUpstream = async (
 ): Promise<LithosDispatchOutcome> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
+  // A tier whose window is open is served by its sibling without asking the
+  // saturated tier again, and that decision is announced exactly like a
+  // per-request failover.
+  const sibling = lithosFailoverSiblingAt(modelRaw, Date.now());
+  if (sibling !== null) {
+    logLithosRateLimitFailover({
+      request_id: usageContext?.requestId ?? null,
+      model: modelRaw,
+      sibling_model: sibling,
+      attempt: 1,
+    });
+    recordLithosFailoverModel(usageContext, sibling);
+  }
   return await runLithosDispatch(
     { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: modelRaw, waitedMs: 0, failoverAttempted: false }
+    { attempt: 0, attemptModel: sibling ?? modelRaw, waitedMs: 0, failoverAttempted: sibling !== null }
   );
 };
 
@@ -596,11 +653,11 @@ export const handleLithosChatCompletions = async (
 
   const dispatched = await dispatchLithosUpstream(req, lithosBody, modelRaw, usageContext);
   if (!dispatched.ok) return dispatched.response;
-  const { upstream, requestSignal, downstreamSignal } = dispatched;
+  const { upstream, requestSignal, downstreamSignal, servedModel } = dispatched;
   const providerRequestId = dispatched.providerRequestId;
 
   if (clientWantsStream) {
-    return streamLithosChatCompletion(upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
+    return streamLithosChatCompletion(upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel, servedModel);
   }
 
   const captured = await readBoundedResponseBody(upstream, {
@@ -616,7 +673,7 @@ export const handleLithosChatCompletions = async (
     return await respondLithosChatIncompleteCapture(usageContext, downstreamSignal, requestSignal, providerRequestId);
   }
 
-  const completion = await readLithosChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext, upstreamModel);
+  const completion = await readLithosChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext, upstreamModel, servedModel);
   if (!completion.ok) return completion.response;
 
   if (chatCompletionHasAnswerBearingOutput(completion.value)) markChatSemanticOutput(usageContext);
@@ -692,6 +749,7 @@ const finalizeBufferedLithosResponses = async (
     toolNames: ReadonlyMap<string, string>;
     customToolNames: ReadonlySet<string>;
     upstreamModel: string;
+    servedModel: string;
     providerRequestId: string | null;
     requestSignal: AbortSignal;
     downstreamSignal: AbortSignal;
@@ -713,7 +771,8 @@ const finalizeBufferedLithosResponses = async (
     options.upstream.status,
     options.providerRequestId,
     options.usageContext,
-    options.upstreamModel
+    options.upstreamModel,
+    options.servedModel
   );
   if (!completion.ok) return completion.response;
 
@@ -760,10 +819,11 @@ const streamLithosResponses = (
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
-  upstreamModel: string
+  upstreamModel: string,
+  servedModel: string
 ): Response =>
   withLithosSseKeepalive(
-    relayResponsesStream(lithosStreamAdapter, {
+    relayResponsesStream(lithosStreamAdapterServing(servedModel), {
       upstream,
       requestedModel,
       responseId,
@@ -834,7 +894,7 @@ export const handleLithosResponses = async (
 
   const dispatched = await dispatchLithosUpstream(req, chatBody, modelRaw, usageContext);
   if (!dispatched.ok) return dispatched.response;
-  const { upstream, requestSignal, downstreamSignal } = dispatched;
+  const { upstream, requestSignal, downstreamSignal, servedModel } = dispatched;
   const providerRequestId = dispatched.providerRequestId;
   const responseId = `resp_${(providerRequestId ?? crypto.randomUUID()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40)}`;
   const createdAtSeconds = Math.floor(Date.now() / 1000);
@@ -852,7 +912,8 @@ export const handleLithosResponses = async (
       usageContext,
       downstreamSignal,
       requestSignal,
-      upstreamModel
+      upstreamModel,
+      servedModel
     );
   }
 
@@ -864,6 +925,7 @@ export const handleLithosResponses = async (
     toolNames,
     customToolNames,
     upstreamModel,
+    servedModel,
     providerRequestId,
     requestSignal,
     downstreamSignal,
