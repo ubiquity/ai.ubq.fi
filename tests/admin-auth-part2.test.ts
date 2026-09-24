@@ -178,7 +178,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
   };
 
   try {
-    const { default: handler } = await import("../src/handler.ts");
+    const { default: handler } = await import("../src/handler/index.ts");
     const response = await handler(
       new Request("https://ai.ubq.fi/uos/embeddings", {
         method: "POST",

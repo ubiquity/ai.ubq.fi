@@ -5,12 +5,12 @@ import assert from "node:assert/strict";
 
 // This suite asserts exact fetch and KV budgets, so the event-driven maintenance
 // hooks must not run in the background while it measures them.
-export const { setProviderCapacitySampleTriggerForTest } = await import("../../src/provider_capacity_events.ts");
-export const { setPaidFallbackTerminalSweepForTest } = await import("../../src/paid_fallback.ts");
+export const { setProviderCapacitySampleTriggerForTest } = await import("../../src/provider/capacity-events.ts");
+export const { setPaidFallbackTerminalSweepForTest } = await import("../../src/paid-fallback/index.ts");
 setProviderCapacitySampleTriggerForTest(() => {});
 setPaidFallbackTerminalSweepForTest(() => {});
-import type { CodexBankedResetConfig } from "../../src/codex_banked_reset.ts";
-import type { CodexUsageResetProvider } from "../../src/codex_banked_reset_provider.ts";
+import type { CodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
+import type { CodexUsageResetProvider } from "../../src/codex/banked-reset-provider.ts";
 import type { CodexAuthPoolState } from "../../src/types.ts";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../../src/defaults.ts";
 import { setKvForTest } from "../../src/kv.ts";
@@ -144,25 +144,25 @@ export const kvStub = {
 
 setKvForTest(kvStub);
 
-export const { extractUsageTokens, getResponseTelemetry } = await import("../../src/openai_telemetry.ts");
-export const { isAnswerBearingCompletion } = await import("../../src/upstream_wire.ts");
+export const { extractUsageTokens, getResponseTelemetry } = await import("../../src/openai-telemetry.ts");
+export const { isAnswerBearingCompletion } = await import("../../src/upstream-wire.ts");
 export const { setCodexBankedResetOptionsForTest } = await import("../../src/openai.ts");
-export const { handleResponses } = await import("../../src/responses_handler.ts");
-export const { handleChatCompletions } = await import("../../src/chat_completions_envelope.ts");
-export const { handleModelCapabilities, handleModels, handlePublicModelCatalog } = await import("../../src/model_catalog.ts");
+export const { handleResponses } = await import("../../src/responses-handler.ts");
+export const { handleChatCompletions } = await import("../../src/chat/envelope.ts");
+export const { handleModelCapabilities, handleModels, handlePublicModelCatalog } = await import("../../src/models/catalog.ts");
 export const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } =
-  await import("../../src/metered.ts");
-export const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../../src/surplus.ts");
-export const { ApiKeyQuotaDispatchError } = await import("../../src/api_key_policy.ts");
+  await import("../../src/provider/metered.ts");
+export const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../../src/provider/surplus.ts");
+export const { ApiKeyQuotaDispatchError } = await import("../../src/api-key-policy.ts");
 export const { withCors } = await import("../../src/http.ts");
-export const { default: gatewayHandler } = await import("../../src/handler.ts");
-export const { withTerminalRequestLog } = await import("../../src/handler_terminal_log.ts");
-export const { resetRuntimeConfigCacheForTest } = await import("../../src/runtime_config.ts");
-export const { buildFailoverWarningEvents } = await import("../../src/responses_failover_stream.ts");
-export const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../../src/debug_routing.ts");
-export const { setRemovedProviderApiKeyForTest, setRemovedProviderTestAdapterForTest } = await import("../../src/removed_provider.ts");
-export const { CODEX_AUTH_REAUTH_MESSAGE, CODEX_AUTH_REAUTH_WARNING, resetCodexAuthCacheForTest } = await import("../../src/codex.ts");
-export const { attemptCodexBankedReset } = await import("../../src/codex_banked_reset_submission.ts");
+export const { default: gatewayHandler } = await import("../../src/handler/index.ts");
+export const { withTerminalRequestLog } = await import("../../src/handler/terminal-log.ts");
+export const { resetRuntimeConfigCacheForTest } = await import("../../src/runtime-config.ts");
+export const { buildFailoverWarningEvents } = await import("../../src/responses-failover-stream.ts");
+export const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../../src/debug-routing.ts");
+export const { setRemovedProviderApiKeyForTest, setRemovedProviderTestAdapterForTest } = await import("../../src/paid-fallback/removed-provider.ts");
+export const { CODEX_AUTH_REAUTH_MESSAGE, CODEX_AUTH_REAUTH_WARNING, resetCodexAuthCacheForTest } = await import("../../src/codex/index.ts");
+export const { attemptCodexBankedReset } = await import("../../src/codex/banked-reset-submission.ts");
 export const {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY,
@@ -172,12 +172,12 @@ export const {
   markCodexUpstreamTimeout,
   resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
-} = await import("../../src/codex_account_routing.ts");
-export const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../../src/cerebras.ts");
+} = await import("../../src/codex/account-routing.ts");
+export const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../../src/provider/cerebras.ts");
 export const { DEEPSEEK_CHAT_COMPLETIONS_URL, DEEPSEEK_FLASH_MODEL, DEEPSEEK_V4_FLASH_MODEL, projectDeepSeekRequest, setDeepSeekFetchTimeoutMsForTest } =
-  await import("../../src/deepseek.ts");
+  await import("../../src/deepseek/index.ts");
 export const { recordCodexProviderHealth, resetProviderHealthThrottleForTest, getMeteredProviderHealth, getSurplusProviderHealth } =
-  await import("../../src/provider_health.ts");
+  await import("../../src/provider/health.ts");
 
 export const TEXT_ENCODER = new TextEncoder();
 export const utf8ByteLength = (value: string): number => TEXT_ENCODER.encode(value).byteLength;
@@ -725,19 +725,19 @@ export const createUnknownBankedResetFixture = async (): Promise<readonly string
   return calls;
 };
 
-export type { CodexBankedResetConfig } from "../../src/codex_banked_reset.ts";
-export type { CodexUsageResetProvider } from "../../src/codex_banked_reset_provider.ts";
+export type { CodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
+export type { CodexUsageResetProvider } from "../../src/codex/banked-reset-provider.ts";
 export type { CodexAuthPoolState } from "../../src/types.ts";
 export { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../../src/defaults.ts";
-export { setStreamFirstEventDeadlineMsForTest } from "../../src/inference_deadline.ts";
-export { setPaidProviderFirstHeadersDeadlineMsForTest } from "../../src/inference_deadline.ts";
-export { readPromptCacheAnalytics } from "../../src/prompt_cache_analytics.ts";
+export { setStreamFirstEventDeadlineMsForTest } from "../../src/inference-deadline.ts";
+export { setPaidProviderFirstHeadersDeadlineMsForTest } from "../../src/inference-deadline.ts";
+export { readPromptCacheAnalytics } from "../../src/cache/prompt-analytics.ts";
 export { sha256Base64Url } from "../../src/utils.ts";
 export { RELEASE_GIT_SHA } from "../../src/release.ts";
-export { MAX_RESPONSES_SSE_EVENT_BYTES } from "../../src/responses_stream.ts";
+export { MAX_RESPONSES_SSE_EVENT_BYTES } from "../../src/responses-stream.ts";
 export { sha256Hex } from "../../src/utils.ts";
-export { recordPromptCacheAnalytics } from "../../src/prompt_cache_analytics.ts";
-export { CountingKv } from "./counting_kv.ts";
+export { recordPromptCacheAnalytics } from "../../src/cache/prompt-analytics.ts";
+export { CountingKv } from "./counting-kv.ts";
 export { setKvForTest } from "../../src/kv.ts";
 
 // Helpers that lived between tests in the original file.
@@ -1020,7 +1020,7 @@ export const runValidatedTerminalCancellationCase = async (testCase: {
 };
 
 export const withProviderSelection = async <T>(providerIds: readonly string[] | null, run: () => Promise<T>): Promise<T> => {
-  const { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } = await import("../../src/provider_selection.ts");
+  const { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } = await import("../../src/provider/selection.ts");
   const encoded = keyToString(PROVIDER_SELECTION_KV_KEY);
   const previous = kvStore.get(encoded);
   if (providerIds === null) kvStore.delete(encoded);

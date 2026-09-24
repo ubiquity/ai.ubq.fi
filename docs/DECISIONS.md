@@ -6,6 +6,36 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Filenames are kebab-case and enforced by ESLint, and `src/` is grouped by domain - 2026-09-24
+
+`check-file/filename-naming-convention` in `tools/lint/eslint.config.mjs` uses the built-in `KEBAB_CASE` naming
+convention with `{ ignoreMiddleExtensions: true }`, over `**/*.{js,ts}` at any depth. `ignoreMiddleExtensions` is
+required: without it the convention rejects the dot in `*.test.ts`, so every test file reported.
+
+The rule had been in this config since the ruleset was ported, but it did not enforce anything. Its naming pattern was
+the ts-template default `"+([-._a-z0-9])"`, a micromatch expression that admits `_` and `.`, so snake_case filenames
+satisfied it and the whole `src/` tree passed. That pattern was never intended as kebab-case enforcement: the canonical
+`ubiquity/ts-template` config carries the same string and uses camelCase filenames. Measured with the plugin's own
+`micromatch` dependency, `isMatch("admin_api_keys.ts", "+([-._a-z0-9])")` is `true`, so the file passed; the plugin
+strips the extension and tests the resulting basename against the `KEBAB_CASE` expression
+`+([a-z])*([a-z0-9])*(-+([a-z0-9]))`, which that basename does not match. Two further traps sat behind it:
+`eslint-plugin-check-file@3` bails out of the check when the glob key itself matches a predefined convention, and its
+`micromatch.capture` returns the _directory_ in capture group 0 for a nested path, so a nested file is validated against
+its parent directory name rather than its basename.
+
+The enforcement change is inseparable from the rename, because the rule is repo-wide and one unrenamed `*.ts` file fails
+the gate. `src/` is now grouped by domain - `admin/`, `auth/`, `cache/`, `catalog/`, `chat/`, `codex/`, `deepseek/`,
+`embeddings/`, `handler/`, `harmony/`, `kernel/`, `models/`, `paid-fallback/`, `provider/`, `sentinel/` - with genuinely
+shared singletons left at the `src/` root. `tests/` keeps one flat directory and is only kebab-renamed, so the
+`../src/...` depth in every test import is unchanged.
+
+Reversal risk: this config is also where three measured, file-scoped exemptions live, and each names its target by path.
+Renaming or moving a file silently orphans its exemption, and the gate then reports the suppressed rule as if the code
+had regressed - which is exactly what happened here to `sonarjs/function-return-type` on `src/models/codex-models.ts`
+(formerly `src/codex_models.ts`). When you move a file, grep this config for its path first. Widening the naming pattern
+back to a character-class expression would also silently stop enforcing the convention without failing anything, so
+prefer a predefined convention, or verify any custom pattern against a known-bad filename.
+
 ## Oversized files are capped with a tightening-only baseline - 2026-09-23
 
 `scripts/file-size-ratchet.ts`, run by `sh scripts/verify.sh`, caps source files at 1000 lines and test files at 1500.
@@ -26,12 +56,12 @@ removes the raise-refusal. The recorded ceilings are intentionally large numbers
 
 ## LithosAI advertises its full context window - 2026-09-23
 
-`LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT` in `src/lithos.ts` is 100, not the 95 percent reserve the other providers
-keep: the direct LithosAI route advertises its full 1,048,576-token window to `/v1/models` and the Codex catalog instead
-of a padded one. The 95 percent value would publish an effective window 52,428 tokens smaller than the one the provider
-advertises, and nothing in the panel or the catalog would show that the difference is a local choice. Reversal risk:
-lowering it again silently shrinks every consumer's view of this route, so change it only with a measurement showing the
-upstream refuses the advertised size.
+`LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT` in `src/provider/lithos.ts` is 100, not the 95 percent reserve the other
+providers keep: the direct LithosAI route advertises its full 1,048,576-token window to `/v1/models` and the Codex
+catalog instead of a padded one. The 95 percent value would publish an effective window 52,428 tokens smaller than the
+one the provider advertises, and nothing in the panel or the catalog would show that the difference is a local choice.
+Reversal risk: lowering it again silently shrinks every consumer's view of this route, so change it only with a
+measurement showing the upstream refuses the advertised size.
 
 ## Immutable releases are pruned after a verified deploy: the newest five plus the running one - 2026-09-23
 
@@ -164,7 +194,7 @@ and the guard skipped the recheck for it.
 The semantic recheck described above is retired. The user's rule is explicit: invisible inference, or an inference leak,
 is never allowed. A gateway that repeats a caller's task with a hidden appended user prompt is a second generation the
 requesting client never asked for, cannot see, and cannot audit, so it is not a permitted mitigation regardless of its
-effect on premature stops. The implementation was removed from `src/openai.ts` and `src/deepseek_responses.ts`: no
+effect on premature stops. The implementation was removed from `src/openai.ts` and `src/deepseek/responses.ts`: no
 hidden recheck prompt, no second upstream dispatch, no folding of a second generation's tools into the first response,
 and no combined two-request usage accounting remain. After a successful text-only first response the gateway completes
 with that provider output, and the streamed and buffered single-dispatch regression checks assert exactly one upstream
@@ -522,7 +552,7 @@ underpowered to exclude a small effort effect.
 The terminal-truthfulness work changes what a truncated generation reports. Whether that is safe per provider was
 checked provider by provider rather than assumed from one implementation, because the mapping lives inside a route.
 
-**Only one construction site exists.** `response.incomplete` is built at exactly one place, `src/deepseek_responses.ts`
+**Only one construction site exists.** `response.incomplete` is built at exactly one place, `src/deepseek/responses.ts`
 (the DeepSeek translator), and is reachable only from `handleDeepSeekChatCompletions` and `handleDeepSeekResponses`. No
 other provider route can emit it. A per-provider allow/deny filter would therefore be solving a leak that does not
 exist; a provider that should use the mapping needs its own deliberate implementation.
@@ -536,8 +566,8 @@ exist; a provider that should use the mapping needs its own deliberate implement
 
 **The Cerebras path was reproduced, not inferred.** A direct probe with `max_completion_tokens: 16` returned
 `finish_reason: "length"` with the `content` key absent entirely and only `reasoning` populated (53 characters), on two
-consecutive runs. That trips `choiceHasNoPayload` (`src/cerebras.ts:376`, applied at `:403`), which rejects a choice
-carrying neither content, nor a tool call, nor a refusal. Through the gateway the same request returns HTTP 502
+consecutive runs. That trips `choiceHasNoPayload` (`src/provider/cerebras.ts:376`, applied at `:403`), which rejects a
+choice carrying neither content, nor a tool call, nor a refusal. Through the gateway the same request returns HTTP 502
 `cerebras_upstream_invalid_response`, recorded in the error ledger as
 `chat.completions 502 cerebras_upstream_invalid_response model=gpt-oss-120b`. Note that reasoning alone is deliberately
 not sufficient payload: it is preserved for clients as `message.reasoning`, but it is not content.
@@ -735,7 +765,7 @@ the gateway accepted, and re-opens the gap on both seams.
 
 `gpt-reserve` is luna served under a second Codex model id the owner authorized on 2026-09-20 as a distinct model with
 its own quota limit, so it is not a gateway-only alias: the requested id is passed upstream verbatim and is never
-renamed to `gpt-5.6-luna`. It owns the `reserve` quota class in `src/codex_account_routing.ts`, so exhausting the
+renamed to `gpt-5.6-luna`. It owns the `reserve` quota class in `src/codex/account-routing.ts`, so exhausting the
 reserve class must not block the standard class on the same account, and standard-class exhaustion must not block
 reserve. The gateway accepts the id as a known Codex model while the upstream discovery catalog still omits it, without
 inventing a catalog entry.

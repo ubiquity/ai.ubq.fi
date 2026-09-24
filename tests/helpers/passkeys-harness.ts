@@ -153,10 +153,10 @@ const {
   passkeyUserKey,
   saveVerifiedPasskeyRegistration,
   updatePasskeyCredentialSignCount,
-} = await import("../../src/passkeys.ts");
-const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../../src/auth.ts");
+} = await import("../../src/auth/passkeys.ts");
+const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../../src/auth/index.ts");
 const { config } = await import("../../src/config.ts");
-const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../../src/metered_quota.ts");
+const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../../src/metered-quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
   const originalGet = Deno.env.get.bind(Deno.env);

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 
-import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/lithos.ts";
+import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/provider/lithos.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { handleResponses } from "../src/responses_handler.ts";
-import { handleChatCompletions } from "../src/chat_completions_envelope.ts";
-import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/model_catalog.ts";
-import { getResponseTelemetry } from "../src/openai_telemetry.ts";
+import { handleResponses } from "../src/responses-handler.ts";
+import { handleChatCompletions } from "../src/chat/envelope.ts";
+import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
+import { getResponseTelemetry } from "../src/openai-telemetry.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps this suite on the credential-gated providers it owns, and keeps the

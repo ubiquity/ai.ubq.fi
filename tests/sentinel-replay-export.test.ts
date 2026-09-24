@@ -7,13 +7,13 @@ import {
   type ExportedSentinelReplayCapture,
   persistEncryptedSentinelReplay,
   type SentinelFailureObservation,
-} from "../src/sentinel_replay_capture.ts";
-import { handleAdminSentinelReplayCaptures } from "../src/sentinel_replay_admin.ts";
-import { createSentinelUpstreamRecorder, SENTINEL_UPSTREAM_MAX_CHUNKS, type SentinelUpstreamTrace } from "../src/sentinel_upstream_capture.ts";
-import { PASSKEY_RELAY_COOKIE_NAME, passkeyHandleKey, passkeySessionKey, passkeyUserKey } from "../src/passkeys.ts";
-import { linkSentinelReplayToIncident } from "../src/sentinel_incident_outbox.ts";
+} from "../src/sentinel/replay-capture.ts";
+import { handleAdminSentinelReplayCaptures } from "../src/sentinel/replay-admin.ts";
+import { createSentinelUpstreamRecorder, SENTINEL_UPSTREAM_MAX_CHUNKS, type SentinelUpstreamTrace } from "../src/sentinel/upstream-capture.ts";
+import { PASSKEY_RELAY_COOKIE_NAME, passkeyHandleKey, passkeySessionKey, passkeyUserKey } from "../src/auth/passkeys.ts";
+import { linkSentinelReplayToIncident } from "../src/sentinel/incident-outbox.ts";
 
-const { default: handler } = await import("../src/handler.ts");
+const { default: handler } = await import("../src/handler/index.ts");
 
 const SUPER_ADMIN_TOKEN = "sentinel-replay-export-super-admin-token";
 const INCIDENT_ID = "provider-12345678-1234-4abc-8def-1234567890ab";

@@ -1,9 +1,9 @@
 // Shared harness for the codex-auth-cache suites, moved out of tests/codex-auth-cache.test.ts.
 
 import assert from "node:assert/strict";
-import type { CodexBankedResetConfig } from "../../src/codex_banked_reset.ts";
+import type { CodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
 import { setKvForTest } from "../../src/kv.ts";
-import type { CodexUsageResetProvider } from "../../src/codex_banked_reset_provider.ts";
+import type { CodexUsageResetProvider } from "../../src/codex/banked-reset-provider.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../../src/types.ts";
 
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
@@ -235,7 +235,7 @@ const {
   orderCodexAuthAccounts,
   releaseCodexResponseProbe,
   resetCodexAuthCacheForTest,
-} = await import("../../src/codex.ts");
+} = await import("../../src/codex/index.ts");
 const {
   claimCodexRoutingProbe,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
@@ -250,8 +250,8 @@ const {
   resetCodexAccountRoutingForTest,
   selectCodexRoutingAccounts,
   selectCodexRoutingAccountsStrong,
-} = await import("../../src/codex_account_routing.ts");
-const { resetProviderHealthThrottleForTest } = await import("../../src/provider_health.ts");
+} = await import("../../src/codex/account-routing.ts");
+const { resetProviderHealthThrottleForTest } = await import("../../src/provider/health.ts");
 
 // Helpers that lived between tests in the original file.
 
@@ -401,10 +401,10 @@ export {
   utf8ByteLength,
 };
 export type { FakeKvWrite, VoidDeferred };
-export type { CodexUsageResetProvider } from "../../src/codex_banked_reset_provider.ts";
+export type { CodexUsageResetProvider } from "../../src/codex/banked-reset-provider.ts";
 export type { CodexAuthPoolState } from "../../src/types.ts";
 export type { CodexAuthState } from "../../src/types.ts";
-export { CODEX_BANKED_RESET_LEASE_MS } from "../../src/codex_banked_reset.ts";
-export type { CodexBankedResetConfig } from "../../src/codex_banked_reset.ts";
+export { CODEX_BANKED_RESET_LEASE_MS } from "../../src/codex/banked-reset.ts";
+export type { CodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
 export { setKvForTest } from "../../src/kv.ts";
-export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../../src/provider_capacity_contract.ts";
+export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../../src/provider/capacity-contract.ts";

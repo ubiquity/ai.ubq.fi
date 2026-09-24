@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildCodexQuotaHeaders, METERED_CODEX_LIMIT_NAME } from "../src/codex_quota.ts";
+import { buildCodexQuotaHeaders, METERED_CODEX_LIMIT_NAME } from "../src/codex/quota.ts";
 import {
   fetchMeteredQuotaObservation,
   getCachedMeteredQuotaSnapshot,
@@ -15,7 +15,7 @@ import {
   type MeteredQuotaState,
   readMeteredAccountCredentials,
   updateMeteredQuotaState,
-} from "../src/metered_quota.ts";
+} from "../src/metered-quota.ts";
 
 const keyString = (key: Deno.KvKey): string => JSON.stringify(key);
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { fetchSurplusModels, fetchSurplusResponses, resetSurplusModelsCacheForTest, type SurplusFetch } from "../src/surplus.ts";
+import { fetchSurplusModels, fetchSurplusResponses, resetSurplusModelsCacheForTest, type SurplusFetch } from "../src/provider/surplus.ts";
 
 /**
  * `jsonResponse` only composes extra plain headers on top of the JSON

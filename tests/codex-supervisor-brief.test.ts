@@ -1,0 +1,484 @@
+import assert from "node:assert/strict";
+
+import { fetchDeepSeekChatCompletions } from "../src/deepseek/index.ts";
+import handler from "../src/handler/index.ts";
+import type { SupervisorSource } from "../src/codex/supervisor-config.ts";
+import {
+  appendRolloutTailTurn,
+  assembleBriefContext,
+  buildSupervisorBriefPrompt,
+  buildSupervisorBriefRequestBody,
+  collectBriefTranscript,
+  parseSupervisorBriefOutput,
+  redactBriefText,
+  type SupervisorBriefContext,
+} from "../src/codex/supervisor-brief.ts";
+import { parseSupervisorRolloutTail, resolveSupervisorRolloutPath } from "../src/codex/supervisor-log.ts";
+import type { SupervisorConnection } from "../src/codex/supervisor-transport.ts";
+
+const SOURCE: SupervisorSource = {
+  id: "local",
+  name: "m1.local",
+  socketPath: "/var/lib/uos-supervisor/local.sock",
+  codexHome: "/Users/example/.codex",
+};
+
+const turnPage = (turns: unknown[]) => ({ data: turns, nextCursor: null });
+
+const connectionFor = (pages: { read: unknown; first: unknown[]; recent: unknown[]; full?: unknown[] }): SupervisorConnection => ({
+  call: (method, params) => {
+    if (method === "thread/read") return Promise.resolve(pages.read);
+    if (method === "thread/turns/list") {
+      if (params?.itemsView === "full") return Promise.resolve(turnPage(pages.full ?? []));
+      return Promise.resolve(turnPage(params?.sortDirection === "asc" ? pages.first : pages.recent));
+    }
+    return Promise.resolve({});
+  },
+  close: () => Promise.resolve(),
+});
+
+const threadRead = {
+  thread: {
+    id: "thread-1",
+    name: "Fix the supervisor panel",
+    cwd: "/repo",
+    model: "gpt-6-astra",
+    modelProvider: "uos",
+    reasoningEffort: "max",
+    status: { type: "active", activeFlags: [] },
+    updatedAt: 1_790_000_500,
+  },
+};
+
+const collectWith = async (pages: { read: unknown; first: unknown[]; recent: unknown[]; full?: unknown[] }): Promise<SupervisorBriefContext> =>
+  await collectBriefTranscript(connectionFor(pages), SOURCE, "thread-1", new AbortController().signal);
+
+Deno.test("redactBriefText removes credential-shaped text", () => {
+  const result = redactBriefText(`Authorization: Bearer ${"a".repeat(40)}\nDEEPSEEK_API_KEY=${"b".repeat(32)}\nplain progress`);
+  assert.ok(result.redactions >= 2);
+  assert.equal(result.text.includes("a".repeat(40)), false);
+  assert.equal(result.text.includes("b".repeat(32)), false);
+  assert.match(result.text, /plain progress/);
+  assert.match(result.text, /\[redacted\]/);
+});
+
+Deno.test("redactBriefText recognizes quoted JSON credential keys and real GitHub token prefixes", () => {
+  const canaries = [
+    "ghp_syntheticcanary0000000000000001",
+    "gho_syntheticcanary0000000000000002",
+    "ghu_syntheticcanary0000000000000003",
+    "ghs_syntheticcanary0000000000000004",
+    "github_pat_syntheticcanary0000000000000005",
+    "sk-syntheticcanary0000000000000006",
+    "dsk-syntheticcanary0000000000000007",
+  ];
+  // A JSON-shaped assignment whose value holds spaces, an escaped quote pair,
+  // and an escaped backslash, plus the single-quoted assignment style.
+  const quotedCredentials = {
+    access_token: "synthetic-access-token-canary-01",
+    password: "zqmars zqalpha zqbravo zqcharlie",
+    short_password: "a b",
+    secret: 'zqvenus zqdelta "zqecho" \\ zqfoxtrot',
+  };
+  const singleQuotedValue = "zqterra zqgolf zqhotel zqindia";
+  const singleQuotedLine = `client_secret: '${singleQuotedValue}'`;
+  const credentialValues = [...Object.values(quotedCredentials), singleQuotedValue];
+  const whitespaceCanaries = [quotedCredentials.password, quotedCredentials.secret, singleQuotedValue];
+  const secretFragments = whitespaceCanaries.flatMap((value) => value.split(/[^A-Za-z0-9]+/)).filter((fragment) => fragment.length > 0);
+  const result = redactBriefText(
+    [JSON.stringify(quotedCredentials, null, 1), singleQuotedLine, ...canaries, "progress: the panel renders again and deno task test passed"].join("\n")
+  );
+  for (const canary of [...canaries, ...credentialValues]) {
+    assert.equal(result.text.includes(canary), false, `${canary} must be redacted`);
+  }
+  for (const fragment of secretFragments) {
+    assert.equal(result.text.includes(fragment), false, `secret fragment ${fragment} must be redacted`);
+  }
+  assert.ok(
+    result.redactions >= canaries.length + credentialValues.length,
+    "every credential assignment and token canary is counted without pinning an incidental total"
+  );
+  assert.match(result.text, /progress: the panel renders again/);
+  assert.match(result.text, /deno task test passed/);
+  assert.match(result.text, /\[redacted\]/);
+});
+
+Deno.test("the brief's DeepSeek payload carries no quoted-JSON or GitHub credential canaries", async () => {
+  const classicTokens = [
+    "ghp_syntheticcanary0000000000000011",
+    "gho_syntheticcanary0000000000000012",
+    "ghu_syntheticcanary0000000000000013",
+    "ghs_syntheticcanary0000000000000014",
+  ];
+  const fineGrained = "github_pat_syntheticcanary0000000000000015";
+  const quotedCredentials = {
+    access_token: "synthetic-access-token-canary-11",
+    password: "zqmars zqalpha zqbravo zqcharlie",
+    token: "tk7",
+    secret: 'zqvenus zqdelta "zqecho" \\ zqfoxtrot',
+  };
+  const singleQuotedValue = "zqterra zqgolf zqhotel zqindia";
+  const credentialValues = [...Object.values(quotedCredentials), singleQuotedValue];
+  const whitespaceCanaries = [quotedCredentials.password, quotedCredentials.secret, singleQuotedValue];
+  const secretFragments = whitespaceCanaries.flatMap((value) => value.split(/[^A-Za-z0-9]+/)).filter((fragment) => fragment.length > 0);
+  const injectedSecretCount = classicTokens.length + 2 + credentialValues.length;
+  const quoted = `credentials:\n${JSON.stringify(quotedCredentials, null, 1)}\nclient_secret: '${singleQuotedValue}'`;
+  const straddling = `${"A".repeat(1_180)}ghp_syntheticcanary0000000000000016${"Z".repeat(200)}`;
+  const context = await collectWith({
+    read: threadRead,
+    first: [],
+    recent: [
+      {
+        id: "turn-credentials",
+        status: "completed",
+        items: [
+          { type: "userMessage", id: "u1", content: [{ type: "text", text: `${quoted}\nprogress: the panel renders again` }] },
+          { type: "agentMessage", id: "a1", text: `Rotated ${classicTokens.join(", ")} and ${fineGrained}; deno task test passed` },
+          { type: "agentMessage", id: "a2", text: straddling },
+        ],
+      },
+    ],
+  });
+  // generateBrief is module-private, so this drives the exact body it hands to
+  // fetchDeepSeekChatCompletions and captures the bytes that transport sends.
+  const body = buildSupervisorBriefRequestBody(context);
+  const outbound: string[] = [];
+  const response = await fetchDeepSeekChatCompletions(body, "deepseek-flash", {
+    apiKey: "synthetic-api-key",
+    fetcher: (_input, init) => {
+      const bodyText = init?.body;
+      outbound.push(typeof bodyText === "string" ? bodyText : "");
+      return Promise.resolve(
+        Response.json({
+          id: "chatcmpl-synthetic",
+          object: "chat.completion",
+          created: 1,
+          model: "deepseek-flash",
+          choices: [{ index: 0, message: { role: "assistant", content: '{"about":"Panel work","status":"Tests passed"}' }, finish_reason: "stop" }],
+        })
+      );
+    },
+  });
+  assert.equal(response.ok, true);
+  await response.json();
+  const wire = outbound.join("");
+  assert.ok(wire.length > 0, "the injected transport must capture the outbound request body");
+  for (const canary of [...classicTokens, fineGrained, ...credentialValues]) {
+    assert.equal(wire.includes(canary), false, `${canary} must not reach the external model`);
+  }
+  for (const fragment of secretFragments) {
+    assert.equal(wire.includes(fragment), false, `secret fragment ${fragment} must not reach the external model`);
+  }
+  assert.equal(wire.includes("ghp_syntheticcanar"), false, "no partial GitHub token may survive the item cap");
+  assert.equal(wire.includes("synthetic-access-token-canar"), false, "no partial quoted JSON credential may survive");
+  assert.equal(wire.includes("zq"), false, "no fragment of a whitespace-bearing quoted credential may survive");
+  assert.equal(wire.includes("Z".repeat(20)), false, "text past a redacted straddling secret may not leak before the cap");
+  assert.match(wire, /\[redacted\]/);
+  assert.match(wire, /progress: the panel renders again/);
+  assert.match(wire, /deno task test passed/);
+  const messages = body.messages as { role: string; content: string }[];
+  assert.ok(new TextEncoder().encode(messages[1].content).length <= 48 * 1024, "the outbound prompt keeps its 48 KiB bound");
+  assert.ok(context.contextBytes <= 32 * 1024, "the collected context keeps its 32 KiB bound");
+  assert.ok(context.redactions >= injectedSecretCount, "every injected canary is counted before the prompt is bounded");
+});
+
+const heavyTurn = (index: number) => ({
+  id: `turn-${index}`,
+  status: "inProgress",
+  items: Array.from({ length: 12 }, (_value, item) => ({ type: "agentMessage", id: `a${index}-${item}`, text: "x".repeat(1_500) })),
+});
+
+Deno.test("brief transcript keeps visible progress, bounds the context, and omits private items", async () => {
+  const secretLine = `Authorization: Bearer ${"a".repeat(40)}`;
+  const context = await collectWith({
+    read: threadRead,
+    first: [],
+    recent: [
+      {
+        id: "turn-1",
+        status: "completed",
+        startedAt: 1_790_000_000,
+        completedAt: 1_790_000_100,
+        items: [
+          { type: "userMessage", id: "u1", content: [{ type: "text", text: secretLine }] },
+          { type: "reasoning", id: "r1", summary: ["private chain of thought"] },
+        ],
+      },
+      {
+        id: "turn-2",
+        status: "inProgress",
+        startedAt: 1_790_000_200,
+        items: [{ type: "commandExecution", id: "c1", command: "deno task test", status: "completed", exitCode: 0, aggregatedOutput: "ok" }],
+      },
+      heavyTurn(3),
+      heavyTurn(4),
+      heavyTurn(5),
+      heavyTurn(6),
+      heavyTurn(7),
+      heavyTurn(8),
+    ],
+  });
+  assert.equal(context.transcriptAvailable, true);
+  assert.equal(context.title, "Fix the supervisor panel");
+  assert.equal(context.state, "active");
+  assert.ok(context.redactions >= 1);
+  assert.ok(context.contextBytes <= 32 * 1024);
+  assert.equal(context.truncated, true);
+  const prompt = buildSupervisorBriefPrompt(context);
+  assert.equal(prompt.includes("private chain of thought"), false);
+  assert.equal(prompt.includes("a".repeat(40)), false);
+  assert.equal(prompt.includes("[redacted]"), true);
+  assert.match(prompt, /deno task test/);
+  assert.ok(new TextEncoder().encode(prompt).length <= 48 * 1024);
+});
+
+Deno.test("a long ongoing turn keeps its opening request and its latest progress", async () => {
+  const turnId = "turn-long";
+  const openingItems = [
+    { type: "userMessage", id: "u0", content: [{ type: "text", text: "Please implement the catch-me-up brief" }] },
+    ...Array.from({ length: 20 }, (_value, index) => ({ type: "agentMessage", id: `early-${index}`, text: `early progress ${index}` })),
+  ];
+  const tailItems = [
+    ...Array.from({ length: 20 }, (_value, index) => ({ type: "agentMessage", id: `late-${index}`, text: `late progress ${index}` })),
+    { type: "agentMessage", id: "latest", text: "latest progress: the panel renders again" },
+  ];
+  const context = await collectWith({
+    read: threadRead,
+    first: [{ id: turnId, status: "inProgress", items: openingItems }],
+    recent: [{ id: turnId, status: "inProgress", items: tailItems }],
+  });
+  const [turn] = context.turns;
+  assert.ok(turn, "the repeated turn must survive collection once");
+  assert.equal(context.turns.length, 1);
+  assert.equal(turn.items.length, 12);
+  const prompt = buildSupervisorBriefPrompt(context);
+  assert.match(prompt, /Please implement the catch-me-up brief/, "the opening request must survive for the About answer");
+  assert.match(prompt, /latest progress: the panel renders again/, "the most recent progress must survive for Current status");
+  assert.equal(context.truncated, true, "item limits that discard records must be reported as truncation");
+});
+
+Deno.test("a stale projected history is extended by the fresh local rollout tail", () => {
+  const threadId = "01a0c796-caac-7dc0-9446-bf13098203e7";
+  const stale = [
+    {
+      id: "turn-1",
+      status: "inProgress",
+      startedAtMs: 1_790_000_000_000,
+      completedAtMs: null,
+      items: [{ type: "assistant", text: "opening answer" }],
+      droppedItems: 0,
+    },
+  ];
+  const jsonl = [
+    JSON.stringify({
+      timestamp: "2026-09-22T07:49:40.465Z",
+      type: "response_item",
+      payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "developer reminder only" }] },
+    }),
+    JSON.stringify({ timestamp: "2026-09-22T07:51:28.925Z", type: "response_item", payload: { type: "reasoning", summary: ["private chain of thought"] } }),
+    JSON.stringify({
+      timestamp: "2026-09-22T08:03:40.435Z",
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `latest progress: Authorization: Bearer ${"a".repeat(40)}` }] },
+    }),
+    JSON.stringify({
+      timestamp: "2026-09-22T08:04:14.341Z",
+      type: "response_item",
+      payload: { type: "custom_tool_call", name: "exec", status: "completed", input: "deno task test" },
+    }),
+  ].join("\n");
+  const turns = appendRolloutTailTurn(stale, { threadId, state: "active", events: parseSupervisorRolloutTail(jsonl) });
+  const assembly = assembleBriefContext(turns);
+  const context: SupervisorBriefContext = {
+    sourceId: "local",
+    machine: "m1.local",
+    threadId,
+    title: "Add Codex supervisor panel",
+    cwd: null,
+    model: null,
+    provider: null,
+    effort: null,
+    state: "active",
+    activeFlags: [],
+    updatedAtMs: 1_790_064_256_550,
+    rolloutPath: null,
+    ...assembly,
+    rolloutTailEvents: 2,
+    projectedHistoryBehindMs: 1,
+  };
+  const prompt = buildSupervisorBriefPrompt(context);
+  assert.equal(context.turns.length, 2);
+  assert.equal(context.truncated, false);
+  assert.match(prompt, /latest progress:/, "the fresh tail must reach the model");
+  assert.match(prompt, /latest recorded activity from the local rollout tail/);
+  assert.match(prompt, /tool: exec completed/);
+  assert.match(prompt, /runtime_state=active/);
+  assert.equal(prompt.includes("a".repeat(40)), false, "the tail secret must be redacted");
+  assert.equal(prompt.includes("developer reminder only"), false, "developer payloads are never collected");
+  assert.equal(prompt.includes("private chain of thought"), false, "reasoning payloads are never collected");
+  assert.equal(prompt.includes("deno task test"), false, "tool call inputs are never collected");
+});
+
+Deno.test("rollout tail reads stay inside the Codex home and inside the event size bound", () => {
+  const home = "/Users/example/.codex";
+  const threadId = "01a0c796-caac-7dc0-9446-bf13098203e7";
+  assert.equal(
+    resolveSupervisorRolloutPath(home, threadId, `${home}/sessions/2026/09/22/rollout-x-${threadId}.jsonl`),
+    `${home}/sessions/2026/09/22/rollout-x-${threadId}.jsonl`
+  );
+  assert.equal(
+    resolveSupervisorRolloutPath(home, threadId, `${home}/archived_sessions/rollout-x-${threadId}.jsonl.zst`),
+    `${home}/archived_sessions/rollout-x-${threadId}.jsonl.zst`
+  );
+  assert.equal(resolveSupervisorRolloutPath(home, threadId, "/Users/example/other/sessions/x.jsonl"), null);
+  assert.equal(resolveSupervisorRolloutPath(home, threadId, `${home}/sessions/../secrets/x-${threadId}.jsonl`), null);
+  assert.equal(resolveSupervisorRolloutPath(home, threadId, `${home}/sessions/rollout-other-session.jsonl`), null);
+  const events = parseSupervisorRolloutTail(
+    JSON.stringify({
+      timestamp: "2026-09-22T08:03:40.435Z",
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "x".repeat(50_000) }] },
+    })
+  );
+  const [event] = events;
+  assert.ok(event);
+  assert.equal(events.length, 1, "the parser keeps raw events; redaction and the final field cap happen later");
+  const turns = appendRolloutTailTurn([], { threadId, state: "active", events });
+  const assembly = assembleBriefContext(turns);
+  const [turn] = assembly.turns;
+  assert.ok(turn);
+  const [item] = turn.items;
+  assert.ok(item);
+  assert.ok(item.text.length <= 1_200, "the final sanitized model field stays inside its 1,200-character cap");
+  assert.ok(assembly.contextBytes <= 32 * 1024, "the model context stays inside its 32 KiB bound");
+});
+
+Deno.test("private assistant analysis never becomes a transcript event", () => {
+  const message = (payload: Record<string, unknown>, text: string, second: number) =>
+    JSON.stringify({
+      timestamp: `2026-09-22T08:00:0${second}.000Z`,
+      type: "response_item",
+      payload: { ...payload, content: [{ type: "output_text", text }] },
+    });
+  const jsonl = [
+    message({ type: "message", role: "assistant", channel: "analysis" }, "private analysis text", 0),
+    message({ type: "message", role: "assistant", phase: "reasoning" }, "private reasoning text", 1),
+    message({ type: "message", role: "assistant", phase: "commentary" }, "visible commentary", 2),
+    message({ type: "message", role: "assistant", channel: "final" }, "visible final", 3),
+    message({ type: "message", role: "assistant" }, "legacy visible message", 4),
+    message({ type: "message", role: "user" }, "visible user request", 5),
+  ].join("\n");
+  const events = parseSupervisorRolloutTail(jsonl);
+  assert.deepEqual(
+    events.map((event) => event.text),
+    ["visible commentary", "visible final", "legacy visible message", "visible user request"]
+  );
+});
+
+Deno.test("rollout parsing and tail merging retain the newest bounded entries", () => {
+  const lines = Array.from({ length: 250 }, (_value, index) =>
+    JSON.stringify({
+      timestamp: new Date(1_790_000_000_000 + index * 1_000).toISOString(),
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `event ${index}` }] },
+    })
+  );
+  const events = parseSupervisorRolloutTail(lines.join("\n"));
+  assert.equal(events.length, 200);
+  assert.equal(events[0].text, "event 50");
+  assert.equal(events[199].text, "event 249");
+  const turns = appendRolloutTailTurn([], { threadId: "thread-newest", state: "active", events });
+  const [turn] = turns;
+  assert.ok(turn);
+  assert.equal(turn.items.length, 12);
+  assert.equal(turn.items[0].text, "event 238");
+  assert.equal(turn.items[11].text, "event 249");
+});
+
+Deno.test("a secret crossing the old 4,000-character clip never reaches the prompt", () => {
+  // The secret starts inside the old clip window: a premature clip left
+  // "Bearer " plus 10 token characters, short of the 12-character redaction
+  // pattern, so a partial secret could survive into the prompt.
+  const text = `${"A".repeat(3_968)}Authorization: Bearer ${"a".repeat(40)}${"Z".repeat(200)}`;
+  const jsonl = JSON.stringify({
+    timestamp: "2026-09-22T08:00:00.000Z",
+    type: "response_item",
+    payload: { type: "message", role: "assistant", channel: "final", content: [{ type: "output_text", text }] },
+  });
+  const turns = appendRolloutTailTurn([], { threadId: "thread-secret", state: "active", events: parseSupervisorRolloutTail(jsonl) });
+  const assembly = assembleBriefContext(turns);
+  const context: SupervisorBriefContext = {
+    sourceId: "local",
+    machine: "m1.local",
+    threadId: "thread-secret",
+    title: "secret boundary",
+    cwd: null,
+    model: null,
+    provider: null,
+    effort: null,
+    state: "active",
+    activeFlags: [],
+    updatedAtMs: null,
+    rolloutPath: null,
+    ...assembly,
+    rolloutTailEvents: 1,
+    projectedHistoryBehindMs: null,
+  };
+  const prompt = buildSupervisorBriefPrompt(context);
+  assert.equal(prompt.includes("a".repeat(10)), false, "no partial bearer token may survive the field cap");
+  assert.equal(prompt.includes("a".repeat(40)), false);
+  assert.equal(prompt.includes("Authorization: Bearer"), false);
+  assert.equal(prompt.includes("Z".repeat(50)), false);
+});
+
+Deno.test("brief transcript reports a missing transcript instead of inventing progress", async () => {
+  const context = await collectWith({ read: threadRead, first: [], recent: [] });
+  assert.equal(context.transcriptAvailable, false);
+  assert.equal(context.turns.length, 0);
+  assert.equal(context.contextBytes, 0);
+});
+
+Deno.test("the summarizer request is a no-tools JSON-mode deepseek call on untrusted data", async () => {
+  const context = await collectWith({
+    read: threadRead,
+    first: [{ id: "turn-0", status: "completed", items: [{ type: "userMessage", id: "u0", content: [{ type: "text", text: "Please fix the panel" }] }] }],
+    recent: [{ id: "turn-1", status: "inProgress", items: [{ type: "agentMessage", id: "a1", text: "Working on the refresh loop" }] }],
+  });
+  const body = buildSupervisorBriefRequestBody(context);
+  assert.equal("tools" in body, false);
+  assert.equal("tool_choice" in body, false);
+  assert.equal(body.stream, false);
+  assert.deepEqual(body.response_format, { type: "json_object" });
+  assert.equal(body.reasoning_effort, "max");
+  assert.equal(typeof body.max_completion_tokens, "number");
+  assert.ok(Array.isArray(body.messages));
+  const messages = body.messages as { role: string; content: string }[];
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].role, "system");
+  assert.match(messages[0].content, /untrusted data/);
+  assert.equal(messages[1].role, "user");
+  assert.match(messages[1].content, /<session_log>/);
+  assert.match(messages[1].content, /Please fix the panel/);
+});
+
+Deno.test("brief output parsing accepts only a grounded {about,status} object", () => {
+  assert.deepEqual(parseSupervisorBriefOutput('{"about":"Panel refresh work","status":"Tests are running"}'), {
+    about: "Panel refresh work",
+    status: "Tests are running",
+  });
+  assert.deepEqual(parseSupervisorBriefOutput('```json\n{"about":"a","status":"b"}\n```'), { about: "a", status: "b" });
+  assert.equal(parseSupervisorBriefOutput('{"about":"only one field"}'), null);
+  assert.equal(parseSupervisorBriefOutput("not json at all"), null);
+  assert.equal(parseSupervisorBriefOutput(null), null);
+});
+
+Deno.test("the brief route stays behind super-admin auth in the real router", async () => {
+  const response = await handler(
+    new Request("https://ai.ubq.fi/admin/codex/supervisor/brief", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "local", id: "thread-1" }),
+    })
+  );
+  assert.equal(response.status, 401, "an unauthenticated brief request reaches the super-admin gate instead of reading a transcript");
+});

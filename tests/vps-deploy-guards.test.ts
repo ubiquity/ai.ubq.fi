@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 const OPS_DEPLOY_SOURCE = fileURLToPath(new URL("../ops/deploy.ts", import.meta.url));
-const OPS_RELEASE_RETENTION_SOURCE = fileURLToPath(new URL("../ops/release_retention.ts", import.meta.url));
+const OPS_RELEASE_RETENTION_SOURCE = fileURLToPath(new URL("../ops/release-retention.ts", import.meta.url));
 const CANONICAL_ROOT_LITERAL = '"/home/codex/repos/ubiquity/ai.ubq.fi"';
 const FIXTURE_PARENT = fileURLToPath(new URL("../.cleanup-evidence/vps-deploy-guards-fixtures", import.meta.url));
 const CHILD_TIMEOUT_MS = 30_000;
@@ -94,7 +94,7 @@ const relocateDeployScript = async (root: string): Promise<string> => {
 };
 
 /**
- * The relocated copy imports `./release_retention.ts` exactly as `ops/deploy.ts`
+ * The relocated copy imports `./release-retention.ts` exactly as `ops/deploy.ts`
  * does, and the deploy child may read only the fixture root, so the real module
  * must sit beside it. It is copied from the repository source rather than
  * stubbed, so the fixtures keep exercising the production import chain, and it
@@ -103,7 +103,7 @@ const relocateDeployScript = async (root: string): Promise<string> => {
  */
 const relocateRetentionModule = async (root: string): Promise<void> => {
   const source = await Deno.readTextFile(OPS_RELEASE_RETENTION_SOURCE);
-  await Deno.writeTextFile(`${root}/release_retention.ts`, source);
+  await Deno.writeTextFile(`${root}/release-retention.ts`, source);
 };
 
 const createFixture = async (options: { branch: string; tracking: "match" | "mismatch" | "missing"; relocate: boolean }): Promise<Fixture> => {
@@ -127,7 +127,7 @@ const createFixture = async (options: { branch: string; tracking: "match" | "mis
   // The relocated script and the module it imports are committed with the
   // release so the fixture checkout stays tracked-clean for the guard's
   // `git status --porcelain --untracked-files=no` check.
-  if (options.relocate) await runFixtureGit(root, env, ["add", "--", "deploy.fixture.ts", "release_retention.ts"]);
+  if (options.relocate) await runFixtureGit(root, env, ["add", "--", "deploy.fixture.ts", "release-retention.ts"]);
   await runFixtureGit(root, env, ["commit", "-q", "-m", "fixture release"]);
   const releaseSha = await runFixtureGit(root, env, ["rev-parse", "HEAD"]);
   if (options.tracking === "mismatch") {

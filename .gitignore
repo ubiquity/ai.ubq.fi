@@ -13,7 +13,11 @@ benchmark-runs/
 .deno-types.d.ts
 
 # dev tooling (see tools/lint/README.md)
-node_modules/
+# No trailing slash: scripts/_bootstrap.sh symlinks tools/lint/node_modules to
+# the main checkout's install in a new worktree, and a trailing slash only
+# matches directories, so the symlink stayed stageable and `git add -A` picked it
+# up as a tracked file containing an absolute path.
+node_modules
 .npm-cache/
 .bun-cache/
 .tmp/

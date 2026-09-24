@@ -570,7 +570,7 @@ Deno.test("openai: the DeepSeek route accepts the provider's own `thinking` fiel
   const envKey = "DEEPSEEK_API_KEY";
   const original = Deno.env.get(envKey);
   Deno.env.set(envKey, "deepseek-test-key");
-  const { handleChatCompletions } = await import("../src/chat_completions_envelope.ts");
+  const { handleChatCompletions } = await import("../src/chat/envelope.ts");
   const seen: Record<string, unknown>[] = [];
   const withFetchMock = async <T>(handler: () => Response | Promise<Response>, fn: () => Promise<T>): Promise<T> => {
     const originalFetch = globalThis.fetch;
@@ -944,7 +944,7 @@ Deno.test("auth: kernel attestation tokens are reusable within TTL", async () =>
   const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, TEXT_ENCODER.encode(signingInput)));
   const kernelToken = `${signingInput}.${encodeBase64Url(signature)}`;
 
-  const { getKernelAttestationContext } = await import("../src/kernel_attestation.ts");
+  const { getKernelAttestationContext } = await import("../src/kernel/attestation.ts");
 
   const req = new Request("https://ai.ubq.fi/v1/responses", {
     method: "POST",

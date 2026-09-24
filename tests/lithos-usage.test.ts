@@ -7,7 +7,7 @@ import {
   normalizeLithosChatCompletion,
   normalizeLithosChatCompletionChunk,
   requireLithosApiKey,
-} from "../src/lithos.ts";
+} from "../src/provider/lithos.ts";
 
 const REQUESTED_MODEL = "moonshotai/Kimi-K3";
 

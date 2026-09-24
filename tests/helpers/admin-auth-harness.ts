@@ -129,7 +129,7 @@ const {
   handleAdminKernelUsageDelete,
   handleAdminKernelUsageSet,
   handleAdminKvMigrationImport,
-} = await import("../../src/admin.ts");
+} = await import("../../src/admin/index.ts");
 
 // Helpers that lived between tests in the original file.
 
@@ -231,10 +231,10 @@ export const setAtomicCommitsBeforeFailure = (value: number | null): void => {
   atomicCommitsBeforeFailure = value;
 };
 const { listApiKeyRequestLogs, recordApiKeyRequestLog } = await import("../../src/analytics.ts");
-const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import("../../src/runtime_config.ts");
-const { resetCodexAuthCacheForTest } = await import("../../src/codex.ts");
+const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import("../../src/runtime-config.ts");
+const { resetCodexAuthCacheForTest } = await import("../../src/codex/index.ts");
 resetAuthCache = resetCodexAuthCacheForTest;
 resetRuntimeCache = resetRuntimeConfigCacheForTest;
 export { resetRuntimeConfigCacheForTest, resetCodexAuthCacheForTest };
-const { getKernelUsageLimitSnapshot, kernelRepoPolicyKey, kernelRepoWindowKey } = await import("../../src/kernel_quota_v2.ts");
+const { getKernelUsageLimitSnapshot, kernelRepoPolicyKey, kernelRepoWindowKey } = await import("../../src/kernel/quota-v2.ts");
 export { getKernelUsageLimitSnapshot, kernelRepoPolicyKey, kernelRepoWindowKey };

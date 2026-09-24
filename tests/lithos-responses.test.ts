@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 
-import { DEEPSEEK_RESPONSES_PROFILE, LITHOS_RESPONSES_PROFILE } from "../src/deepseek_responses.ts";
-import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload, toResponsesUsage } from "../src/deepseek_responses_payload.ts";
-import { createDeepSeekResponsesStreamTranslator } from "../src/deepseek_responses_stream.ts";
-import { toDeepSeekResponsesChatBody } from "../src/deepseek_chat_projection.ts";
-import { normalizeLithosChatCompletion, normalizeLithosChatCompletionChunk } from "../src/lithos.ts";
+import { DEEPSEEK_RESPONSES_PROFILE, LITHOS_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
+import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload, toResponsesUsage } from "../src/deepseek/responses-payload.ts";
+import { createDeepSeekResponsesStreamTranslator } from "../src/deepseek/responses-stream.ts";
+import { toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
+import { normalizeLithosChatCompletion, normalizeLithosChatCompletionChunk } from "../src/provider/lithos.ts";
 
 /**
  * LithosAI profile of the shared Chat Completions -> Responses adapter (module

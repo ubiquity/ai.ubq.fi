@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { handlePasskeyLoginStart, keyToString, kvStore, passkeyHandleKey, passkeyUserKey } from "./helpers/passkeys-harness.ts";
-import { PASSKEY_LOGIN_START_LIMIT, PASSKEY_LOGIN_START_WINDOW_MS, passkeyLoginStartThrottleKey } from "../src/passkeys.ts";
+import { PASSKEY_LOGIN_START_LIMIT, PASSKEY_LOGIN_START_WINDOW_MS, passkeyLoginStartThrottleKey } from "../src/auth/passkeys.ts";
 
 const loginStartUrl = "https://ai.ubq.fi/api/auth/login/start";
 

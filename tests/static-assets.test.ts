@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import handler from "../src/handler.ts";
+import handler from "../src/handler/index.ts";
 import { corsHeaders } from "../src/http.ts";
 import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
 import readmeText from "../README.md" with { type: "text" };

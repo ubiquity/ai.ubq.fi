@@ -21,7 +21,7 @@
  */
 
 import { type AdapterRunContext, type BenchmarkAdapter } from "../adapter.ts";
-import { CEREBRAS_GPT_OSS_120B_MODEL, normalizeCerebrasChatCompletion } from "../../src/cerebras.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL, normalizeCerebrasChatCompletion } from "../../src/provider/cerebras.ts";
 import { type ChatMessage, type ParsedChatCompletion, runChatAgentLoop, type ToolCallWire } from "./chat-loop.ts";
 import { BaselineAdapterError } from "./errors.ts";
 import { type ChatTransport, gatewayChatTransport } from "./transport.ts";

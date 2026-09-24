@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
-import { handleAdminPromptCacheAnalytics } from "../src/admin.ts";
-import type { PromptCacheAnalyticsView } from "../src/prompt_cache_analytics.ts";
+import { handleAdminPromptCacheAnalytics } from "../src/admin/index.ts";
+import type { PromptCacheAnalyticsView } from "../src/cache/prompt-analytics.ts";
 import adminScript from "../static/admin.js" with { type: "text" };
 
 const readyView = (groupBy: readonly string[]): PromptCacheAnalyticsView => ({

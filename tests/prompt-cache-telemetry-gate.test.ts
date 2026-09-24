@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { warnQuotaAccountingFailure, withTerminalRequestLog } from "../src/handler_terminal_log.ts";
-import { recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
+import { warnQuotaAccountingFailure, withTerminalRequestLog } from "../src/handler/terminal-log.ts";
+import { recordPromptCacheAnalytics } from "../src/cache/prompt-analytics.ts";
 import {
   PROMPT_CACHE_TELEMETRY_MIN_COMPLETED,
   readPromptCacheTelemetryBaseline,
   recordPromptCacheTelemetry,
   resolvePromptCacheTelemetryCounterKeys,
-} from "../src/prompt_cache_telemetry_gate.ts";
+} from "../src/cache/telemetry-gate.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {

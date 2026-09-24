@@ -1,14 +1,14 @@
 // OpenAI-compatible image endpoints, extracted from src/openai.ts.
 
-import { type ApiKeyProviderDispatch } from "./api_key_policy.ts";
-import { readBoundedResponseBody } from "./bounded_response_body.ts";
+import { type ApiKeyProviderDispatch } from "./api-key-policy.ts";
+import { readBoundedResponseBody } from "./bounded-response-body.ts";
 import { json, openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
-import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";
-import { aggregateResponseTelemetry, responseTelemetry, type ResponseTelemetryState, type UsageContext, type UsageTokens } from "./openai_telemetry.ts";
+import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference-deadline.ts";
+import { aggregateResponseTelemetry, responseTelemetry, type ResponseTelemetryState, type UsageContext, type UsageTokens } from "./openai-telemetry.ts";
 import { bytesToBase64 } from "./utils.ts";
 import { findUnknownKey, getDefaultModel } from "./openai.ts";
-import { runResponsesHandler } from "./responses_handler.ts";
-import { responseWarnings, UOS_WARNING_HEADER } from "./request_policy.ts";
+import { runResponsesHandler } from "./responses-handler.ts";
+import { responseWarnings, UOS_WARNING_HEADER } from "./request-policy.ts";
 import { captureRawBodyOnce, discardRawBodyObserverOnce, readJsonBody } from "./request.ts";
 
 /**

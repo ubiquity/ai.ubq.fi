@@ -17,11 +17,11 @@ const kv = await Deno.openKv(new URL(".data/kv.sqlite3", root).pathname);
 const { initializeKv } = await import(new URL("src/kv.ts", release).href);
 initializeKv(kv);
 const { default: handler, shutdownOptionalTelemetry } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
-const { configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } = await import(new URL("src/local_admin_auth.ts", release).href);
+const { configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } = await import(new URL("src/auth/local-admin.ts", release).href);
 // The Mac service answers LAN clients, so it provisions the unlimited local
 // development key that loopback inference authenticates as; LAN clients keep
 // authenticating with their own credentials.
-const { ensureLocalDevelopmentApiKey } = await import(new URL("src/local_development_key.ts", release).href);
+const { ensureLocalDevelopmentApiKey } = await import(new URL("src/auth/local-development-key.ts", release).href);
 try {
   const status = await ensureLocalDevelopmentApiKey(kv);
   if (status === "created") console.log("[ai.ubq.fi] Provisioned the local development API key for loopback inference.");

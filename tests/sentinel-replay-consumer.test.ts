@@ -39,7 +39,7 @@ const copyTree = async (source: string, destination: string): Promise<void> => {
 await copyTree(`${REPO_ROOT}/src`, `${SOURCE_ROOT}/src`);
 await Deno.mkdir(`${SOURCE_ROOT}/scripts`, { recursive: true });
 await Deno.copyFile(`${REPO_ROOT}/scripts/replay.ts`, `${SOURCE_ROOT}/scripts/replay.ts`);
-await Deno.copyFile(`${REPO_ROOT}/scripts/replay_chat_stream.ts`, `${SOURCE_ROOT}/scripts/replay_chat_stream.ts`);
+await Deno.copyFile(`${REPO_ROOT}/scripts/replay-chat-stream.ts`, `${SOURCE_ROOT}/scripts/replay-chat-stream.ts`);
 await copyTree(`${REPO_ROOT}/tests/helpers`, `${SOURCE_ROOT}/tests/helpers`);
 
 const FIXED_ARGS = ["run", "--no-prompt", "--no-config", "--no-remote", "--allow-read=.", "scripts/replay.ts"];

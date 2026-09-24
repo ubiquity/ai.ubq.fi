@@ -13,8 +13,8 @@ import {
   responsesEventReportsProgress,
   responsesEventSemanticKind,
   rewriteResponsesEventForWarning,
-} from "../src/responses_failover_stream.ts";
-import type { ResponsesStreamEvent, ResponsesStreamIterator } from "../src/responses_stream.ts";
+} from "../src/responses-failover-stream.ts";
+import type { ResponsesStreamEvent, ResponsesStreamIterator } from "../src/responses-stream.ts";
 
 const event = (value: Record<string, unknown>): ResponsesStreamEvent => responseEventFromValue(value);
 

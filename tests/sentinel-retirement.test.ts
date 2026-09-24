@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import serverSource from "../serve.ts" with { type: "text" };
-import handlerSource from "../src/handler.ts" with { type: "text" };
-import terminalRouteSource from "../src/handler_terminal_route.ts" with { type: "text" };
-import catalogSource from "../src/codex_catalog.ts" with { type: "text" };
+import handlerSource from "../src/handler/index.ts" with { type: "text" };
+import terminalRouteSource from "../src/handler/terminal-route.ts" with { type: "text" };
+import catalogSource from "../src/catalog/index.ts" with { type: "text" };
 import deploymentWorkflow from "../.github/workflows/deno-deploy.yml" with { type: "text" };
 
 Deno.test("gateway entry points start no Sentinel automation but keep the authorized capture/export", () => {

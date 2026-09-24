@@ -63,8 +63,14 @@ export default tsEslint.config(
       "check-file/filename-naming-convention": [
         "error",
         {
-          "**/*.{js,ts}": "+([-._a-z0-9])",
+          // Any depth, not just the repository root: the rule's basename check
+          // covers the whole matched path.
+          "**/*.{js,ts}": "KEBAB_CASE",
         },
+        // Without this, every `*.test.ts` reports, because KEBAB_CASE rejects the
+        // dot in the middle extension. This option strips middle extensions before
+        // the check, so `static-auth.test.ts` validates as `static-auth`.
+        { ignoreMiddleExtensions: true },
       ],
       "prefer-arrow-callback": ["warn", { allowNamedFunctions: true }],
       // DIVERGENCE: the template forbids arrow functions entirely
@@ -309,15 +315,15 @@ export default tsEslint.config(
     // categories (false -> boolean, record -> object) and the returns mix them
     // too, which is unavoidable while that sentinel exists. Its only built-in
     // escape is a `@returns` JSDoc tag; collapsing the sentinel would mean
-    // changing the wire contract in src/openai.ts, src/codex_catalog.ts and
-    // src/admin.ts. Measured: 3 findings, all three of these functions.
-    files: ["**/src/codex_models.ts"],
+    // changing the wire contract in src/openai.ts, src/catalog/index.ts and
+    // src/admin/index.ts. Measured: 3 findings, all three of these functions.
+    files: ["**/src/models/codex-models.ts"],
     rules: { "sonarjs/function-return-type": "off" },
   },
   {
     // DELIBERATE: the clear-text URL is the SUBJECT UNDER TEST. This asserts
     // that the gateway rejects a non-HTTPS Codex base before any
-    // credential-bearing request, which src/codex_banked_reset_provider.ts
+    // credential-bearing request, which src/codex/banked-reset-provider.ts
     // enforces on the protocol check. The rule has no options and its only
     // exemptions are hard-coded localhost/example host regexes, so silencing it
     // here would mean either changing the fixture host or splitting the literal

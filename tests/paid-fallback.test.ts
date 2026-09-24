@@ -197,16 +197,16 @@ const kv = memoryKv as unknown as Deno.Kv;
 const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv;
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv);
 
-const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
+const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api-keys.ts");
 const { apiKeyRequestLogKey, recordApiKeyRequestLog, updateApiKeyRequestLog } = await import("../src/analytics.ts");
-const { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy, reservePaidFallback } = await import("../src/paid_fallback.ts");
+const { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy, reservePaidFallback } = await import("../src/paid-fallback/index.ts");
 const {
   admitPaidFallbackV3,
   deletePaidFallbackStateV3,
   releasePaidFallbackBeforeProviderFetchV3,
   releaseUndispatchedPaidFallbackV3,
   updatePaidFallbackRequestV3,
-} = await import("../src/paid_fallback_ledger_admission.ts");
+} = await import("../src/paid-fallback/ledger-admission.ts");
 const {
   markPaidFallbackTerminalV3,
   reconcileDuePaidFallbacksV3,
@@ -214,7 +214,7 @@ const {
   recordPaidFallbackTerminalV3,
   enqueueDuePaidFallbackReconciliationJobsV3,
   handlePaidFallbackReconciliationJobV3,
-} = await import("../src/paid_fallback_ledger_backfill.ts");
+} = await import("../src/paid-fallback/ledger-backfill.ts");
 const {
   getPaidFallbackOutstandingV3,
   getPaidFallbackWindowProjectionV3,
@@ -225,7 +225,7 @@ const {
   paidFallbackPendingV3Key,
   paidFallbackReconciliationLeaseV3Key,
   paidFallbackWindowV3Key,
-} = await import("../src/paid_fallback_ledger_state.ts");
+} = await import("../src/paid-fallback/ledger-state.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 

@@ -1,5 +1,5 @@
 // Run from the canonical Mac checkout after committing the candidate.
-import { pruneReleases } from "./release_retention.ts";
+import { pruneReleases } from "./release-retention.ts";
 if (Deno.build.os !== "darwin") throw new Error("This deployment requires macOS");
 const root = await Deno.realPath(".");
 if (root !== "/Users/nv/repos/ubiquity/ai.ubq.fi") throw new Error("Run from the canonical Mac repository root");

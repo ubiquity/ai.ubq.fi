@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { classifyKvKey, CountingKv, type KvMeasurementContext, type KvOperationBudget } from "./helpers/counting_kv.ts";
+import { classifyKvKey, CountingKv, type KvMeasurementContext, type KvOperationBudget } from "./helpers/counting-kv.ts";
 
 const textEncoder = new TextEncoder();
 const MODEL = "gpt-5-usage-measurement";
@@ -130,12 +130,12 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
   try {
     const { setKvForTest } = await import("../src/kv.ts");
     setKvForTest(kv as unknown as Deno.Kv);
-    const { default: handler } = await import("../src/handler.ts");
+    const { default: handler } = await import("../src/handler/index.ts");
     const { sha256Base64Url } = await import("../src/utils.ts");
-    const { RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
-    const { CODEX_AUTH_POOL_KV_KEY, fetchCodexResponses, resetCodexAuthCacheForTest } = await import("../src/codex.ts");
-    const { resetApiKeyPolicyCacheForTest } = await import("../src/api_key_policy.ts");
-    const { resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
+    const { RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../src/runtime-config.ts");
+    const { CODEX_AUTH_POOL_KV_KEY, fetchCodexResponses, resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
+    const { resetApiKeyPolicyCacheForTest } = await import("../src/api-key-policy.ts");
+    const { resetProviderHealthThrottleForTest } = await import("../src/provider/health.ts");
 
     globalThis.fetch = async (input, init): Promise<Response> => {
       let url: string;

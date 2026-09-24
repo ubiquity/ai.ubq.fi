@@ -21,7 +21,7 @@
  * m02-compatible views over the canonical schemas.
  */
 
-import { CEREBRAS_GPT_OSS_120B_MODEL } from "../src/cerebras.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL } from "../src/provider/cerebras.ts";
 import { type HarmonyTransport } from "../src/harmony/adapter.ts";
 import type { HarmonyReasoningEffort } from "../src/harmony/types.ts";
 import { type HarnessEvent, renderCanonicalPolicy, runReliabilityHarness } from "../src/harmony/reliability/harness.ts";

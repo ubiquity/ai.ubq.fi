@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import type { CodexModelsSnapshot } from "../src/codex_models.ts";
-import { loadFullCodexModelsSnapshot } from "../src/codex.ts";
-import { buildRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_MAX_BYTES, RuntimeConfigError } from "../src/runtime_config.ts";
+import type { CodexModelsSnapshot } from "../src/models/codex-models.ts";
+import { loadFullCodexModelsSnapshot } from "../src/codex/index.ts";
+import { buildRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_MAX_BYTES, RuntimeConfigError } from "../src/runtime-config.ts";
 
 const jsonBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length;
 

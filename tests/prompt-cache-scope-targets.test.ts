@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { derivePromptCacheScopeTargetInventory, loadPromptCacheScopeTargetInventory } from "../src/prompt_cache_scope_targets.ts";
-import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot } from "../src/codex.ts";
+import { derivePromptCacheScopeTargetInventory, loadPromptCacheScopeTargetInventory } from "../src/cache/scope-targets.ts";
+import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot } from "../src/codex/index.ts";
 
 const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
 

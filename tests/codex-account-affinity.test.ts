@@ -6,8 +6,8 @@ import {
   getCodexResponseSlot,
   markCodexResponseCompleted,
   resetCodexAuthCacheForTest,
-} from "../src/codex.ts";
-import { resetCodexAccountRoutingForTest } from "../src/codex_account_routing.ts";
+} from "../src/codex/index.ts";
+import { resetCodexAccountRoutingForTest } from "../src/codex/account-routing.ts";
 import { setKvForTest } from "../src/kv.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 import { sha256Hex } from "../src/utils.ts";

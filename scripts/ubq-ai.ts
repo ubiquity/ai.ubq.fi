@@ -1,4 +1,4 @@
-import type { UbqAiAdminContext, UbqAiCommandContext, UbqAiRuntime } from "./ubq-ai_core.ts";
+import type { UbqAiAdminContext, UbqAiCommandContext, UbqAiRuntime } from "./ubq-ai-core.ts";
 import {
   classifyToken,
   describeSecret,
@@ -14,9 +14,9 @@ import {
   writeErrText,
   writeOutText,
   writeUsageError,
-} from "./ubq-ai_core.ts";
-import { runChatCommand, runHealthCommand, runInfoCommand, runModelsCommand, runResponsesCommand, runWhoamiCommand } from "./ubq-ai_chat.ts";
-import { runAdminKeysCommand, runAdminKernelPubkeysCommand, runAdminKernelUsageCommand, runAdminUploadAuthCommand } from "./ubq-ai_admin.ts";
+} from "./ubq-ai-core.ts";
+import { runChatCommand, runHealthCommand, runInfoCommand, runModelsCommand, runResponsesCommand, runWhoamiCommand } from "./ubq-ai-chat.ts";
+import { runAdminKeysCommand, runAdminKernelPubkeysCommand, runAdminKernelUsageCommand, runAdminUploadAuthCommand } from "./ubq-ai-admin.ts";
 
 const runAdminCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
   const { runtime, flags } = ctx;

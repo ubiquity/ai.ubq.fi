@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 
-import { normalizeCodexModelsPayload } from "../src/codex_models.ts";
+import { normalizeCodexModelsPayload } from "../src/models/codex-models.ts";
 
-import { deriveAutoCompactTokenLimit, resolvedAutoCompactTokenLimit } from "../src/recent_model_context.ts";
+import { deriveAutoCompactTokenLimit, resolvedAutoCompactTokenLimit } from "../src/recent-model-context.ts";
 
 Deno.test("auto-compaction uses the earlier 85 percent or 50k-reserve boundary", () => {
   assert.equal(deriveAutoCompactTokenLimit(1_000_000), 850_000);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { proxyResponsesStream } from "../src/responses_stream.ts";
+import { proxyResponsesStream } from "../src/responses-stream.ts";
 
 // Timer callbacks are hoisted out of the stream's `start` method so the nested
 // closure depth stays within the lint ceiling: the stream controller, the timer

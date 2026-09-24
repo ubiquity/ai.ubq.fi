@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { apiKeyHashKey, apiKeyIdKey } from "../src/api_keys.ts";
+import { apiKeyHashKey, apiKeyIdKey } from "../src/api-keys.ts";
 import { config } from "../src/config.ts";
-import { DEBUG_ROUTING_KEY } from "../src/debug_routing.ts";
+import { DEBUG_ROUTING_KEY } from "../src/debug-routing.ts";
 import { setKvForTest } from "../src/kv.ts";
 import {
   type AcceptedSentinelReplayInput,
@@ -10,8 +10,8 @@ import {
   persistEncryptedSentinelReplay,
   SENTINEL_REPLAY_MANIFEST_PREFIX,
   type SentinelFailureObservation,
-} from "../src/sentinel_replay_capture.ts";
-import { PASSKEY_RELAY_COOKIE_NAME, passkeyHandleKey, passkeySessionKey, passkeyUserKey } from "../src/passkeys.ts";
+} from "../src/sentinel/replay-capture.ts";
+import { PASSKEY_RELAY_COOKIE_NAME, passkeyHandleKey, passkeySessionKey, passkeyUserKey } from "../src/auth/passkeys.ts";
 import {
   bindSentinelIncidentIndexEvidence,
   isSentinelIncidentId,
@@ -19,10 +19,10 @@ import {
   recordSentinelIncidentIndexObservation,
   SENTINEL_INCIDENT_CAPTURE_REF_PREFIX,
   SENTINEL_INCIDENT_INDEX_PREFIX,
-} from "../src/sentinel_incident_outbox.ts";
+} from "../src/sentinel/incident-outbox.ts";
 import { base64UrlDecode, base64UrlEncode, encodeHex, sha256Base64Url } from "../src/utils.ts";
 
-const { default: handler } = await import("../src/handler.ts");
+const { default: handler } = await import("../src/handler/index.ts");
 
 const kvAvailable = typeof Deno.openKv === "function";
 const SUPER_ADMIN_TOKEN = "sentinel-incident-index-super-admin";

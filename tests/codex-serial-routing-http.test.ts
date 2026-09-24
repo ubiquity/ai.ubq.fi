@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { CODEX_ACCOUNT_ROUTING_KV_KEY, type CodexAccountRoutingState, codexCredentialVersion, type CodexRoutingSlot } from "../src/codex_account_routing.ts";
+import { CODEX_ACCOUNT_ROUTING_KV_KEY, type CodexAccountRoutingState, codexCredentialVersion, type CodexRoutingSlot } from "../src/codex/account-routing.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, CodexAuthState } from "../src/types.ts";
 import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
 
@@ -106,11 +106,11 @@ Deno.test({
 
     try {
       const { setKvForTest } = await import("../src/kv.ts");
-      const { resetCodexAccountRoutingForTest } = await import("../src/codex_account_routing.ts");
-      const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+      const { resetCodexAccountRoutingForTest } = await import("../src/codex/account-routing.ts");
+      const { resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
       const { config } = await import("../src/config.ts");
-      const { default: handler } = await import("../src/handler.ts");
-      const { createServeHandler } = await import("../src/serve_handler.ts");
+      const { default: handler } = await import("../src/handler/index.ts");
+      const { createServeHandler } = await import("../src/handler/serve-handler.ts");
 
       setKvForTest(kv);
       resetCodexAccountRoutingForTest();
@@ -367,7 +367,7 @@ Deno.test({
       console.info = originalInfo;
       console.warn = originalWarn;
       const { setKvForTest } = await import("../src/kv.ts");
-      const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+      const { resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
       const configModule = await import("../src/config.ts");
       if (originalDeployFlag !== null) (configModule.config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
       setKvForTest(null);

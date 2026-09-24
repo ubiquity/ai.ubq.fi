@@ -18,10 +18,10 @@
  * Run with: deno run --allow-env=CEREBRAS_API_KEY --allow-net=api.cerebras.ai --allow-write=docs/probes scripts/probes/cerebras-harmony-probes.ts
  */
 
-import { readCerebrasApiKey } from "../../src/cerebras.ts";
+import { readCerebrasApiKey } from "../../src/provider/cerebras.ts";
 import { createCerebrasTransport } from "../../src/harmony/adapter.ts";
 import { createProbeContext, type ProbeContext, type ProbeScenarioResult } from "../../src/harmony/probes.ts";
-import { PROBE_SCENARIOS } from "../../src/harmony/probe_scenarios.ts";
+import { PROBE_SCENARIOS } from "../../src/harmony/probe-scenarios.ts";
 
 const OUTPUT_DIR = new URL("../../docs/probes/", import.meta.url);
 const API_KEY_MISSING_NOTICE = "CEREBRAS_API_KEY is not set; live Harmony protocol probes are skipped (no live calls made).";

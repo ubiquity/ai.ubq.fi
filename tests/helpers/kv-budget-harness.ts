@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 
 // This suite asserts exact fetch and KV budgets, so the event-driven maintenance
 // hooks must not run in the background while it measures them.
-const { setProviderCapacitySampleTriggerForTest } = await import("../../src/provider_capacity_events.ts");
-const { setPaidFallbackTerminalSweepForTest } = await import("../../src/paid_fallback.ts");
+const { setProviderCapacitySampleTriggerForTest } = await import("../../src/provider/capacity-events.ts");
+const { setPaidFallbackTerminalSweepForTest } = await import("../../src/paid-fallback/index.ts");
 setProviderCapacitySampleTriggerForTest(() => {});
 setPaidFallbackTerminalSweepForTest(() => {});
 import { sha256Base64Url } from "../../src/utils.ts";
@@ -303,11 +303,11 @@ Object.defineProperty(Deno, "openKv", {
   configurable: true,
 });
 
-const { default: handler } = await import("../../src/handler.ts");
-const { authenticateAdmin, authenticateClient } = await import("../../src/auth.ts");
-const { PASSKEY_RELAY_COOKIE_NAME, passkeySessionKey, passkeyUserKey } = await import("../../src/passkeys.ts");
-const { createRequestDeliveryLifecycle } = await import("../../src/serve_handler.ts");
-const { handleResponses } = await import("../../src/responses_handler.ts");
+const { default: handler } = await import("../../src/handler/index.ts");
+const { authenticateAdmin, authenticateClient } = await import("../../src/auth/index.ts");
+const { PASSKEY_RELAY_COOKIE_NAME, passkeySessionKey, passkeyUserKey } = await import("../../src/auth/passkeys.ts");
+const { createRequestDeliveryLifecycle } = await import("../../src/handler/serve-handler.ts");
+const { handleResponses } = await import("../../src/responses-handler.ts");
 const {
   API_KEY_USAGE_V3_REQUEST_PREFIX,
   ApiKeyQuotaDispatchError,
@@ -319,7 +319,7 @@ const {
   reserveApiKeyUsageV3,
   invalidateApiKeyPolicy,
   resetApiKeyPolicyCacheForTest,
-} = await import("../../src/api_key_policy.ts");
+} = await import("../../src/api-key-policy.ts");
 const {
   deleteKernelOrgUsageLimit,
   KERNEL_QUOTA_RESERVATION_LEASE_MS,
@@ -330,18 +330,18 @@ const {
   reserveKernelOrgUsageLimit,
   setKernelOrgUsageLimit,
   setKernelUsageLimit,
-} = await import("../../src/kernel_quota_v2.ts");
-const { handleAdminDefaults } = await import("../../src/admin.ts");
+} = await import("../../src/kernel/quota-v2.ts");
+const { handleAdminDefaults } = await import("../../src/admin/index.ts");
 const { DEFAULT_KERNEL_POLICY_LIMIT_KEY, DEFAULT_KERNEL_POLICY_WINDOW_KEY } = await import("../../src/defaults.ts");
-const { paidFallbackRequestV3Key } = await import("../../src/paid_fallback_ledger_state.ts");
-const { setStreamFirstEventDeadlineMsForTest } = await import("../../src/inference_deadline.ts");
-const { loadRuntimeConfig, RUNTIME_CONFIG_CACHE_TTL_MS, RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../../src/runtime_config.ts");
-const { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } = await import("../../src/codex.ts");
+const { paidFallbackRequestV3Key } = await import("../../src/paid-fallback/ledger-state.ts");
+const { setStreamFirstEventDeadlineMsForTest } = await import("../../src/inference-deadline.ts");
+const { loadRuntimeConfig, RUNTIME_CONFIG_CACHE_TTL_MS, RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../../src/runtime-config.ts");
+const { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } = await import("../../src/codex/index.ts");
 const { CODEX_ACCOUNT_ROUTING_KV_KEY, CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY } =
-  await import("../../src/codex_account_routing.ts");
-const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../../src/metered.ts");
-const { resetSurplusModelsCacheForTest } = await import("../../src/surplus.ts");
-const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../../src/provider_health.ts");
+  await import("../../src/codex/account-routing.ts");
+const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../../src/provider/metered.ts");
+const { resetSurplusModelsCacheForTest } = await import("../../src/provider/surplus.ts");
+const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../../src/provider/health.ts");
 
 const MODEL = "gpt-5-kv-budget";
 const now = Date.now();
