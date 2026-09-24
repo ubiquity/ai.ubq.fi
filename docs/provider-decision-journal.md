@@ -6,6 +6,35 @@ entries when a decision changes; add a new entry that supersedes the earlier one
 
 Each entry must distinguish the decision from its implementation, validation, deployment, and live acceptance state.
 
+## 2026-09-24 — A LithosAI refusal is load-balanced onto the sibling tier, and waiting is opt-in
+
+### Decision
+
+The direct LithosAI route no longer waits out a rate-limit window by default. A `429` on the requested tier immediately
+retries that single request against the tier's configured sibling - `deepseek-ai/DeepSeek-V4.1-Flash-ultra` to
+`deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat` - and, if the sibling refuses too, relays the refusal with the vendor's own
+status, code and rate-limit headers. No pause, no keepalive hold, no deferred stream, no jitter, no attempt budget, and
+no streamed five-minute window.
+
+Waiting is now a switch: with `LITHOSAI_RATE_LIMIT_WAIT` set to a truthy value on a host, a refusal whose own headers
+name a retry window (`retry-after-ms`, then `retry-after`, then the later `x-ratelimit-reset-*` refill delta) is waited
+out and the same model id retried, bounded at 75 s per attempt, 90 s in total and three dispatches per request. The
+window is waited inline on both routes, and `rate_limit_wait_ms` is reported only when the switch waits.
+
+### Why
+
+The two ids are the same 552B weights behind separate per-model rate-limit buckets, so one immediate load-balance
+attempt costs nothing and needs no clock; the owner asked for that simplification on 2026-09-24 and for the header-timed
+retry to stay available behind an explicit switch rather than as the default.
+
+### Status
+
+Implemented in `src/provider/lithos-rate-limits.ts` (sibling map, header parsing, caps, opt-in switch),
+`src/provider/lithos-handlers.ts` (failover-then-relay dispatch loop) and `src/provider/stream-relay.ts` (the
+pending-source contract the deferred wait needed is gone), with coverage in `tests/lithos-wiring.test.ts`. Supersedes
+the 2026-09-24 wait entries below for the default behavior; their sibling mapping, header precedence, telemetry names
+and safety caps are retained.
+
 ## 2026-09-24 — An Ultra refusal fails over once per request to the sibling tier's own bucket
 
 ### Decision

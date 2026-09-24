@@ -105,7 +105,7 @@ const closeController = (controller: ReadableStreamDefaultController<Uint8Array>
  */
 export const relayChatCompletionStream = (
   adapter: ProviderStreamAdapter,
-  upstreamSource: Response | Promise<Response>,
+  upstreamSource: Response,
   providerRequestId: string | null,
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
@@ -123,11 +123,7 @@ export const relayChatCompletionStream = (
   // never interrupt a generator parked in an upstream read.
   const cancellation = new AbortController();
   const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  // A caller that met a waitable provider refusal opens this stream before the
-  // retried attempt exists, so the source may still be pending; the caller's
-  // `: keepalive` wrapper holds the client while it is.
-  const [initialUpstream, pendingUpstream] = upstreamSource instanceof Response ? ([upstreamSource, null] as const) : ([null, upstreamSource] as const);
-  let upstream: Response | null = initialUpstream;
+  const upstream = upstreamSource;
   let iterator: AsyncGenerator<ProviderStreamFrame, void, unknown> | null = null;
   let closed = false;
   let terminalSettled = false;
@@ -145,7 +141,7 @@ export const relayChatCompletionStream = (
     await recordCompletionUsage(usageContext, usage);
     settleTerminal("response.completed");
     recordStreamTerminal(usageContext);
-    adapter.recordResponseHealth(upstream?.status ?? 200, providerRequestId);
+    adapter.recordResponseHealth(upstream.status, providerRequestId);
     controller.enqueue(encoder.encode("data: [DONE]\n\n"));
     controller.close();
   };
@@ -191,19 +187,17 @@ export const relayChatCompletionStream = (
     closeController(controller);
   };
 
-  /** Resolves the pending provider attempt once, or null when the stream ended. */
+  /** Resolves the provider attempt once, or null when the stream ended. */
   const ensureIterator = async (
     controller: ReadableStreamDefaultController<Uint8Array>
   ): Promise<AsyncGenerator<ProviderStreamFrame, void, unknown> | null> => {
     if (iterator !== null) return iterator;
-    const source = upstream ?? (pendingUpstream === null ? null : await pendingUpstream);
-    if (source === null || closed) return null;
-    upstream = source;
-    if (!source.ok) {
-      await refuseStream(controller, source);
+    if (closed) return null;
+    if (!upstream.ok) {
+      await refuseStream(controller, upstream);
       return null;
     }
-    iterator = adapter.frames(source, upstreamModel, { signal: readSignal });
+    iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
     return iterator;
   };
 
@@ -259,7 +253,7 @@ export const relayChatCompletionStream = (
       // uninterruptible `return()` can block teardown. A consumer can cancel
       // before the first read, so an untouched source is cancelled directly.
       if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream?.body;
+      const upstreamBody = upstream.body;
       if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
       // Cleanup is best effort and never surfaces as a provider error.
       if (iterator !== null) void iterator.return().catch(() => {});
@@ -277,7 +271,7 @@ export const relayChatCompletionStream = (
 export const relayResponsesStream = (
   adapter: ProviderStreamAdapter,
   options: Readonly<{
-    upstream: Response | Promise<Response>;
+    upstream: Response;
     requestedModel: string;
     responseId: string;
     createdAtSeconds: number;
@@ -316,10 +310,7 @@ export const relayResponsesStream = (
   // the read.
   const cancellation = new AbortController();
   const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  // Same pending-source contract as the Chat relay above: a caller that met a
-  // waitable refusal opens this stream first and hands over the retried attempt.
-  const [initialUpstream, pendingUpstream] = upstreamSource instanceof Response ? ([upstreamSource, null] as const) : ([null, upstreamSource] as const);
-  let upstream: Response | null = initialUpstream;
+  const upstream = upstreamSource;
   let iterator: AsyncGenerator<ProviderStreamFrame, void, unknown> | null = null;
   const translator = createDeepSeekResponsesStreamTranslator(
     requestedModel,
@@ -385,7 +376,7 @@ export const relayResponsesStream = (
     settleTerminal("response.failed");
     recordStreamTerminal(usageContext);
     emit(controller, [...translator.open(), emptyCompletionFailure()]);
-    adapter.recordResponseHealth(upstream?.status ?? 200, providerRequestId);
+    adapter.recordResponseHealth(upstream.status, providerRequestId);
     return true;
   };
 
@@ -411,12 +402,12 @@ export const relayResponsesStream = (
         } else {
           // The only remaining non-completed kind is "failed".
           adapter.recordFinishFailureKind(usageContext, translator.upstreamFinishReason());
-          adapter.recordProviderError(upstream?.status ?? 200, providerRequestId);
+          adapter.recordProviderError(upstream.status, providerRequestId);
         }
         settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
       }
       recordStreamTerminal(usageContext);
-      adapter.recordResponseHealth(upstream?.status ?? 200, providerRequestId);
+      adapter.recordResponseHealth(upstream.status, providerRequestId);
     } finally {
       closeController(controller);
     }
@@ -458,19 +449,17 @@ export const relayResponsesStream = (
     closeController(controller);
   };
 
-  /** Resolves the pending provider attempt once, or null when the stream ended. */
+  /** Resolves the provider attempt once, or null when the stream ended. */
   const ensureIterator = async (
     controller: ReadableStreamDefaultController<Uint8Array>
   ): Promise<AsyncGenerator<ProviderStreamFrame, void, unknown> | null> => {
     if (iterator !== null) return iterator;
-    const source = upstream ?? (pendingUpstream === null ? null : await pendingUpstream);
-    if (source === null || state.settled || state.cancelled) return null;
-    upstream = source;
-    if (!source.ok) {
-      await refuseStream(controller, source);
+    if (state.settled || state.cancelled) return null;
+    if (!upstream.ok) {
+      await refuseStream(controller, upstream);
       return null;
     }
-    iterator = adapter.frames(source, upstreamModel, { signal: readSignal });
+    iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
     return iterator;
   };
   const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
@@ -562,7 +551,7 @@ export const relayResponsesStream = (
       // uninterruptible `return()` can block teardown. A consumer can cancel
       // before the first read, so an untouched source is cancelled directly.
       if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream?.body;
+      const upstreamBody = upstream.body;
       if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
       // Cleanup is best effort and never surfaces as a provider error.
       if (iterator !== null) void iterator.return().catch(() => {});

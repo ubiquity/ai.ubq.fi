@@ -1,91 +1,66 @@
-// LithosAI rate-limit wait policy, split out of src/provider/lithos_handlers.ts.
+// LithosAI rate-limit handling, split out of src/provider/lithos-handlers.ts.
 
 import type { UsageContext } from "../openai-telemetry.ts";
 
 /**
- * Rate-limit wait policy for the direct LithosAI route.
+ * The sibling tier a refused model is load-balanced onto, for one request.
  *
- * The vendor's per-minute budgets refill continuously, so a 429 carries a short
- * deadline: `retry-after-ms`, `retry-after`, or the `x-ratelimit-reset-*`
- * deltas of the budget that refused (observed as sub-minute deltas, e.g.
- * `3.23s`). A refusal inside this budget is waited out and retried on the SAME
- * model id instead of failing the request. This route still never races or
- * falls back to another provider: no other provider serves these model ids,
- * and substituting one silently is exactly what this route refuses to do.
+ * Both ids are the same 552B weights behind separate per-model rate-limit
+ * buckets - probed 2026-09-24: independent `x-ratelimit-remaining-*` counters,
+ * and `-ultra-chat` returned the same `get_weather` tool call on the raw vendor
+ * wire and through this gateway's Chat and Responses routes with reasoning
+ * enabled - so a refusal on one tier says nothing about the other.
+ */
+const LITHOS_SIBLING_MODELS: ReadonlyMap<string, string> = new Map([["deepseek-ai/DeepSeek-V4.1-Flash-ultra", "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat"]]);
+
+/** The sibling tier for a requested model, or null when that tier has none. */
+export const lithosSiblingModelFor = (modelRaw: string): string | null => LITHOS_SIBLING_MODELS.get(modelRaw) ?? null;
+
+/** Records the sibling that served a request whose own tier refused it. */
+export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;
+};
+
+export const logLithosRateLimitFailover = (fields: Readonly<Record<string, string | number | null>>): void => {
+  try {
+    console.info("[ai.ubq.fi] lithos_rate_limit_failover", JSON.stringify(fields));
+  } catch {
+    // Telemetry must never change routing or delivery.
+  }
+};
+
+/**
+ * The opt-in switch for waiting out a refusal instead of relaying it.
  *
- * A refusal that names no window is relayed unchanged rather than guessed at:
- * the wait exists to honor the vendor's own retry time, not to invent one.
- *
+ * Off by default: a refused request is load-balanced once onto its sibling tier
+ * and, if that refuses too, the refusal is relayed immediately. With the switch
+ * on, a refusal whose own headers name a retry window is waited out and the
+ * SAME model id is retried, bounded by the caps below.
+ */
+export const LITHOS_RATE_LIMIT_WAIT_ENV = "LITHOSAI_RATE_LIMIT_WAIT";
+
+/** Reads that switch; an absent, unreadable or other value means no waiting. */
+const lithosRateLimitWaitEnabled = (): boolean => {
+  let raw: string | undefined;
+  try {
+    raw = Deno.env.get(LITHOS_RATE_LIMIT_WAIT_ENV);
+  } catch {
+    return false;
+  }
+  const value = raw?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+};
+
+/**
  * The per-attempt cap keeps one pause far below the client's 10-minute default
- * request timeout, the gateway's 30-minute first-event budget and the
- * ~100-second proxied-origin read bound, so a wait can never be mistaken for a
- * dead connection. The total bound keeps a second wait from making a single
- * request arbitrarily slow.
+ * request timeout, the gateway's first-event budget and the ~100-second
+ * proxied-origin read bound, so a wait can never be mistaken for a dead
+ * connection. The total bound keeps a second wait from making a single request
+ * arbitrarily slow, and the dispatch cap bounds how often a window is re-asked.
  */
 const LITHOS_RATE_LIMIT_WAIT_CAP_MS = 75_000;
 const LITHOS_RATE_LIMIT_TOTAL_WAIT_CAP_MS = 90_000;
-/**
- * A streamed request may absorb far more: a saturated organization window lasts
- * minutes, and an open stream holds the client with inert `: keepalive` frames
- * while it waits, which a buffered request cannot. Buffered requests keep the
- * smaller total so no silent hold sits behind an edge proxy's read limit.
- */
-const LITHOS_RATE_LIMIT_STREAM_TOTAL_WAIT_CAP_MS = 300_000;
-/** Total dispatches for one buffered request: the first attempt plus two waits. */
 const LITHOS_RATE_LIMIT_MAX_DISPATCHES = 3;
-/** Safety cap for streamed requests; the total wait budget is what ends them. */
-const LITHOS_RATE_LIMIT_STREAM_MAX_DISPATCHES = 20;
-/** Spreads retries from requests that were refused the same window. */
-const LITHOS_RATE_LIMIT_JITTER_MS = 750;
-
-/** One wait policy: how long a window may buy, and how many dispatches may ask. */
-export type LithosWaitPolicy = Readonly<{ perAttemptCapMs: number; totalWaitCapMs: number; maxDispatches: number }>;
-
-const LITHOS_BUFFERED_WAIT_POLICY: LithosWaitPolicy = {
-  perAttemptCapMs: LITHOS_RATE_LIMIT_WAIT_CAP_MS,
-  totalWaitCapMs: LITHOS_RATE_LIMIT_TOTAL_WAIT_CAP_MS,
-  maxDispatches: LITHOS_RATE_LIMIT_MAX_DISPATCHES,
-};
-
-const LITHOS_STREAM_WAIT_POLICY: LithosWaitPolicy = {
-  perAttemptCapMs: LITHOS_RATE_LIMIT_WAIT_CAP_MS,
-  totalWaitCapMs: LITHOS_RATE_LIMIT_STREAM_TOTAL_WAIT_CAP_MS,
-  maxDispatches: LITHOS_RATE_LIMIT_STREAM_MAX_DISPATCHES,
-};
-
-/** Internal test seam: shrink the wait policy and the keepalive interval. */
-type LithosRateLimitTestOverride = Readonly<{
-  perAttemptCapMs?: number;
-  bufferedTotalWaitCapMs?: number;
-  streamTotalWaitCapMs?: number;
-  maxDispatches?: number;
-  keepaliveIntervalMs?: number;
-}>;
-
-let lithosRateLimitTestOverride: LithosRateLimitTestOverride | null = null;
-
-/**
- * Internal test seam: a fixture exhausting a five-minute budget or waiting for
- * a fifteen-second heartbeat would cost minutes, so the policy and the
- * keepalive interval are overridable here. Null restores the shipped policy.
- * It is not a runtime configuration surface.
- */
-export const setLithosRateLimitTestOverride = (override: LithosRateLimitTestOverride | null): void => {
-  lithosRateLimitTestOverride = override;
-};
-
-export const lithosWaitPolicy = (streaming: boolean): LithosWaitPolicy => {
-  const base = streaming ? LITHOS_STREAM_WAIT_POLICY : LITHOS_BUFFERED_WAIT_POLICY;
-  const override = lithosRateLimitTestOverride;
-  if (override === null) return base;
-  return {
-    perAttemptCapMs: override.perAttemptCapMs ?? base.perAttemptCapMs,
-    totalWaitCapMs: (streaming ? override.streamTotalWaitCapMs : override.bufferedTotalWaitCapMs) ?? base.totalWaitCapMs,
-    maxDispatches: override.maxDispatches ?? base.maxDispatches,
-  };
-};
-
-export const lithosKeepaliveIntervalMs = (): number | undefined => lithosRateLimitTestOverride?.keepaliveIntervalMs;
 
 /** One retry hint, named so the wait is logged with the header it came from. */
 export type LithosRateLimitWait = Readonly<{ waitMs: number; source: string }>;
@@ -133,19 +108,6 @@ const lithosDurationMs = (raw: string | null): number | null => {
   return Number.isFinite(total) ? total : null;
 };
 
-/**
- * Uniform value in `[0, 1)` from the platform CSPRNG, so concurrent requests
- * refused the same window do not retry in lockstep. Predictability would cost
- * nothing here; matching the reconnect jitter in `src/kv.ts` keeps one pattern
- * for jitter across the gateway.
- */
-const randomUnitInterval = (): number => {
-  const [high = 0, low = 0] = crypto.getRandomValues(new Uint32Array(2));
-  return (high * 2 ** 21 + (low >>> 11)) / 2 ** 53;
-};
-
-export const lithosRetryJitterMs = (): number => Math.round(randomUnitInterval() * LITHOS_RATE_LIMIT_JITTER_MS);
-
 /** `retry-after` is either an integer number of seconds or an HTTP date. */
 const lithosRetryAfterMs = (raw: string | null, nowMs: number): number | null => {
   const seconds = lithosIntegerHeader(raw);
@@ -179,12 +141,17 @@ export const lithosRateLimitWait = (headers: Headers, nowMs: number): LithosRate
   return null;
 };
 
-/** The window this refusal names, or null when the wait policy forbids it. */
-export const lithosPlannedWait = (upstream: Response, attempt: number, waitedMs: number, policy: LithosWaitPolicy): LithosRateLimitWait | null => {
-  if (upstream.status !== 429 || attempt >= policy.maxDispatches) return null;
+/**
+ * The wait this refusal is owed, or null when it is relayed instead: the switch
+ * is off, the attempt has no budget left, the window exceeds the per-attempt
+ * cap, or the total budget cannot cover one more pause.
+ */
+export const lithosPlannedWait = (upstream: Response, attempt: number, waitedMs: number): LithosRateLimitWait | null => {
+  if (!lithosRateLimitWaitEnabled()) return null;
+  if (upstream.status !== 429 || attempt >= LITHOS_RATE_LIMIT_MAX_DISPATCHES) return null;
   const planned = lithosRateLimitWait(upstream.headers, Date.now());
-  if (planned === null || planned.waitMs > policy.perAttemptCapMs) return null;
-  if (waitedMs + planned.waitMs > policy.totalWaitCapMs) return null;
+  if (planned === null || planned.waitMs > LITHOS_RATE_LIMIT_WAIT_CAP_MS) return null;
+  if (waitedMs + planned.waitMs > LITHOS_RATE_LIMIT_TOTAL_WAIT_CAP_MS) return null;
   return planned;
 };
 
@@ -224,31 +191,4 @@ export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): P
     }, milliseconds);
     signal.addEventListener("abort", onAbort, { once: true });
   });
-};
-
-/**
- * The sibling tier a saturated model fails over to for one request.
- *
- * Both ids are the same 552B weights behind separate per-model rate-limit
- * buckets - probed 2026-09-24: independent `x-ratelimit-remaining-*` counters,
- * and `-ultra-chat` returned the same `get_weather` tool call on the raw vendor
- * wire and through this gateway's Chat and Responses routes with reasoning
- * enabled - so a refusal on one tier says nothing about the other.
- */
-const LITHOS_SIBLING_MODELS: ReadonlyMap<string, string> = new Map([["deepseek-ai/DeepSeek-V4.1-Flash-ultra", "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat"]]);
-
-/** The sibling tier for a requested model, or null when that tier has none. */
-export const lithosSiblingModelFor = (modelRaw: string): string | null => LITHOS_SIBLING_MODELS.get(modelRaw) ?? null;
-
-/** Records the sibling that served a request whose own tier refused it. */
-export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;
-};
-
-export const logLithosRateLimitFailover = (fields: Readonly<Record<string, string | number | null>>): void => {
-  try {
-    console.info("[ai.ubq.fi] lithos_rate_limit_failover", JSON.stringify(fields));
-  } catch {
-    // Telemetry must never change routing or delivery.
-  }
 };
