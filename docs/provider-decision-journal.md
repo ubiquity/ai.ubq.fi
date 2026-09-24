@@ -33,7 +33,16 @@ scoped to LithosAI and to the Ultra tier. The echo allowance is needed because `
 
 Implemented in `src/provider/lithos-rate-limits.ts` (the windows), `src/provider/lithos.ts` (the scoped echo acceptance,
 threaded through the buffered and streamed readers) and `src/provider/lithos-handlers.ts` (window-aware dispatch), with
-coverage in `tests/lithos-wiring.test.ts`. Deployment state is recorded separately once landed.
+coverage in `tests/lithos-wiring.test.ts`. Merged as PR #506 (`3df84b307`) and deployed to both surfaces -
+`mac-3df84b307a70906231262d80a0f608a8b9d97770` and `vps-3df84b307a70906231262d80a0f608a8b9d97770` - both
+health-verified, with the public `/health` carrying the full SHA in its body and identity headers.
+
+Live acceptance 2026-09-24 20:45-20:46Z on the Mac gateway: a 70-way concurrent Ultra burst saturated both tiers - every
+refused request was retried on `-fast` (failover lines recording `sibling_model` `-fast`, `rate_limit_failover_model` on
+the terminals, `rate_limit_wait_ms: null` throughout) and the 17 requests that outlived both buckets were relayed as the
+vendor's own 429 rather than waited for; the following 30-way burst was served 30/30, with 13 of them dispatched
+straight to `-fast` from the window this burst had opened; and the first probe after the vendor's reset instant was
+dispatched to Ultra again with no failover line.
 
 ## 2026-09-24 — The Ultra refusal target moves from `-ultra-chat` to `-fast`
 
@@ -54,7 +63,10 @@ needle prompt at 106,403 prompt tokens correctly.
 ### Status
 
 Implemented in `src/provider/lithos-rate-limits.ts` (the sibling map) with coverage in `tests/lithos-wiring.test.ts`;
-this supersedes the Ultra mapping in the entry below. Deployment state is recorded separately below once landed.
+this supersedes the Ultra mapping in the entry below. Merged as PR #505 (`4ef4a55ff`) and superseded within the hour by
+PR #506 (`3df84b307`), which added the sticky window and the scoped sibling-echo acceptance this mapping needs - without
+it a `-fast` failover failed closed as `lithos_upstream_invalid_response` (502) because the vendor self-echoes the
+`-fast` id. Both surfaces now run `3df84b307a70906231262d80a0f608a8b9d97770`.
 
 ## 2026-09-24 — A LithosAI refusal is load-balanced onto the sibling tier, and waiting is opt-in
 
