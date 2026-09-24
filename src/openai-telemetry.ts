@@ -54,6 +54,10 @@ export type ResponseTelemetry = Readonly<{
   model: string | null;
   reasoning: string | null;
   outputTokenAllowance: number | null;
+  /** Total time this request spent waiting for a provider's own retry window. */
+  rateLimitWaitMs: number | null;
+  /** The sibling tier that served this request after its own tier refused it. */
+  rateLimitFailoverModel: string | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -102,6 +106,10 @@ export type ResponseTelemetryState = {
   model: string | null;
   reasoning: string | null;
   outputTokenAllowance: number | null;
+  /** Total time this request spent waiting for a provider's own retry window. */
+  rateLimitWaitMs: number | null;
+  /** The sibling tier that served this request after its own tier refused it. */
+  rateLimitFailoverModel: string | null;
   inputTokens: number | null;
   cachedInputTokens: number | null;
   cacheWriteInputTokens: number | null;
@@ -151,6 +159,8 @@ export const createResponseTelemetryState = (): ResponseTelemetryState => ({
   model: null,
   reasoning: null,
   outputTokenAllowance: null,
+  rateLimitWaitMs: null,
+  rateLimitFailoverModel: null,
   inputTokens: null,
   cachedInputTokens: null,
   cacheWriteInputTokens: null,
@@ -281,6 +291,10 @@ export const aggregateResponseTelemetry = (sources: readonly Response[], target:
   aggregate.model = commonTelemetryValue(states.map((state) => state.model));
   aggregate.reasoning = commonTelemetryValue(states.map((state) => state.reasoning));
   aggregate.outputTokenAllowance = commonTelemetryValue(states.map((state) => state.outputTokenAllowance));
+  // Waits from several attempts of one request add up into the absorbed total.
+  const waits = states.map((state) => state.rateLimitWaitMs).filter((value): value is number => value !== null);
+  aggregate.rateLimitWaitMs = waits.length ? waits.reduce((total, value) => total + value, 0) : null;
+  aggregate.rateLimitFailoverModel = commonTelemetryValue(states.map((state) => state.rateLimitFailoverModel));
   aggregate.inputTokens = sumTelemetryCounts(states, "inputTokens", sources.length);
   aggregate.cachedInputTokens = sumTelemetryCounts(states, "cachedInputTokens", sources.length);
   aggregate.cacheWriteInputTokens = sumTelemetryCounts(states, "cacheWriteInputTokens", sources.length);
@@ -351,6 +365,8 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     model: state.model,
     reasoning: state.reasoning,
     outputTokenAllowance: state.outputTokenAllowance,
+    rateLimitWaitMs: state.rateLimitWaitMs,
+    rateLimitFailoverModel: state.rateLimitFailoverModel,
     inputTokens: state.inputTokens,
     cachedInputTokens: state.cachedInputTokens,
     cacheWriteInputTokens: state.cacheWriteInputTokens,

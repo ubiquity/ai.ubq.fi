@@ -320,6 +320,8 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       model: MODEL,
       reasoning: "medium",
       output_token_allowance: null,
+      rate_limit_wait_ms: null,
+      rate_limit_failover_model: null,
       input_tokens: 1,
       cached_input_tokens: 0,
       cache_write_input_tokens: 1,
