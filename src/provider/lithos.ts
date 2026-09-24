@@ -2,6 +2,7 @@ import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../api-ke
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "../inference-deadline.ts";
 import type { SentinelUpstreamRecorder } from "../sentinel/upstream-capture.ts";
 import { getString, isRecord } from "../utils.ts";
+import { lithosSiblingModelFor } from "./lithos-rate-limits.ts";
 
 /**
  * LithosAI API transport — a chat-completions-only upstream provider.
@@ -419,7 +420,15 @@ export const fetchLithosChatCompletions = async (
  *    advertised models. Do not tighten this back into equality; re-probe the
  *    `-ultra-chat` tier before narrowing it.
  */
-const acceptUpstreamModel = (value: unknown, requestedModel: string): boolean => {
+/** True when an echo names this canonical model under the derived rules 2 and 3. */
+const echoNamesModel = (echo: string, canonicalModel: string): boolean => {
+  const requested = canonicalModel.trim().toLowerCase();
+  if (echo === requested) return true;
+  const slug = requested.slice(requested.lastIndexOf("/") + 1);
+  return echo === slug || slug.startsWith(`${echo}-`);
+};
+
+const acceptUpstreamModel = (value: unknown, requestedModel: string, servedModel?: string): boolean => {
   // Rule 1: a missing or text-free echo carries no model claim to compare.
   if (value === undefined || value === null) return true;
   const echo =
@@ -432,10 +441,16 @@ const acceptUpstreamModel = (value: unknown, requestedModel: string): boolean =>
       : "";
   if (echo === "") return true;
   // The id the client asked for, in this provider's canonical spelling.
-  const requested = (lithosUpstreamModelFor(requestedModel) ?? requestedModel).trim().toLowerCase();
-  if (echo === requested) return true; // rule 2
-  const slug = requested.slice(requested.lastIndexOf("/") + 1);
-  return echo === slug || slug.startsWith(`${echo}-`); // rule 3
+  const requested = (lithosUpstreamModelFor(requestedModel) ?? requestedModel).trim();
+  if (echoNamesModel(echo, requested)) return true; // rules 2 and 3
+  if (servedModel === undefined) return false;
+  // A request the requested tier refused may be served by its configured
+  // sibling, and the vendor then names that sibling. Only that mapped pair is
+  // accepted, and only when this attempt actually addressed the sibling:
+  // nothing else may report a model other than the one requested.
+  const served = (lithosUpstreamModelFor(servedModel) ?? servedModel).trim();
+  if (served.toLowerCase() === requested.toLowerCase()) return false;
+  return lithosSiblingModelFor(requested) === served && echoNamesModel(echo, served);
 };
 
 const normalizeLithosToolCall = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {
@@ -666,7 +681,7 @@ const normalizeChoice = (value: unknown, index: number): NormalizationResult<Rec
  * shape the Assistant consumes. Unknown provider fields, including diagnostics,
  * are not relayed or logged.
  */
-export const normalizeLithosChatCompletion = (value: unknown, requestedModel: string): NormalizationResult<Record<string, unknown>> => {
+export const normalizeLithosChatCompletion = (value: unknown, requestedModel: string, servedModel?: string): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: "Upstream did not return a Chat Completions object." };
   }
@@ -677,7 +692,7 @@ export const normalizeLithosChatCompletion = (value: unknown, requestedModel: st
   if (value.object !== undefined && value.object !== "chat.completion") {
     return { ok: false, message: "Upstream did not return a Chat Completion." };
   }
-  if (!acceptUpstreamModel(value.model, requestedModel)) {
+  if (!acceptUpstreamModel(value.model, requestedModel, servedModel)) {
     return { ok: false, message: "Upstream returned a different model than requested." };
   }
   if (!Array.isArray(value.choices) || value.choices.length === 0) {
@@ -758,7 +773,11 @@ const normalizeChoiceDelta = (value: unknown, index: number): NormalizationResul
  * it — it is never gated on `stream_options.include_usage`, which this
  * provider's wire contract does not use.
  */
-export const normalizeLithosChatCompletionChunk = (value: unknown, requestedModel: string): NormalizationResult<Record<string, unknown>> => {
+export const normalizeLithosChatCompletionChunk = (
+  value: unknown,
+  requestedModel: string,
+  servedModel?: string
+): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: "Upstream did not return a Chat Completions chunk." };
   }
@@ -769,7 +788,7 @@ export const normalizeLithosChatCompletionChunk = (value: unknown, requestedMode
   if (value.object !== undefined && value.object !== "chat.completion.chunk") {
     return { ok: false, message: "Upstream did not return a Chat Completion chunk." };
   }
-  if (!acceptUpstreamModel(value.model, requestedModel)) {
+  if (!acceptUpstreamModel(value.model, requestedModel, servedModel)) {
     return { ok: false, message: "Upstream returned a different model than requested." };
   }
   if (!Array.isArray(value.choices)) {
@@ -815,7 +834,7 @@ type LithosStreamFrame = Readonly<{ kind: "chunk"; value: Record<string, unknown
  * fail-closed upstream fault: it is never skipped, because silently dropping a
  * frame would truncate the answer the client is assembling.
  */
-const parseLithosSseEventBlock = (raw: string, requestedModel: string): LithosStreamFrame | null => {
+const parseLithosSseEventBlock = (raw: string, requestedModel: string, servedModel?: string): LithosStreamFrame | null => {
   const data: string[] = [];
   for (const line of raw.split(LITHOS_SSE_LINE_BOUNDARY)) {
     if (!line) continue;
@@ -831,7 +850,7 @@ const parseLithosSseEventBlock = (raw: string, requestedModel: string): LithosSt
   } catch {
     throw invalidResponseError("Upstream emitted malformed Chat Completions SSE JSON.");
   }
-  const normalized = normalizeLithosChatCompletionChunk(parsed, requestedModel);
+  const normalized = normalizeLithosChatCompletionChunk(parsed, requestedModel, servedModel);
   if (!normalized.ok) {
     throw invalidResponseError(`Upstream emitted an invalid Chat Completions chunk: ${normalized.message}`);
   }
@@ -843,7 +862,10 @@ const parseLithosSseEventBlock = (raw: string, requestedModel: string): LithosSt
  * unterminated tail between reads. Frames that carry no `data:` payload are
  * skipped, and the byte bound is enforced on the retained tail.
  */
-const createLithosFrameReader = (requestedModel: string): Readonly<{ push: (incoming: Uint8Array | null) => void; shift: () => LithosStreamFrame | null }> => {
+const createLithosFrameReader = (
+  requestedModel: string,
+  servedModel?: string
+): Readonly<{ push: (incoming: Uint8Array | null) => void; shift: () => LithosStreamFrame | null }> => {
   const decoder = new TextDecoder();
   const buffered = { text: "" };
   const push = (incoming: Uint8Array | null): void => {
@@ -858,7 +880,7 @@ const createLithosFrameReader = (requestedModel: string): Readonly<{ push: (inco
       if (!match) return null;
       const raw = buffered.text.slice(0, match.index);
       buffered.text = buffered.text.slice(match.index + match[0].length);
-      const frame = parseLithosSseEventBlock(raw, requestedModel);
+      const frame = parseLithosSseEventBlock(raw, requestedModel, servedModel);
       if (frame) return frame;
     }
   };
@@ -894,9 +916,10 @@ const raceLithosReaderRead = async (
 const createLithosStreamSession = (
   reader: ReadableStreamDefaultReader<Uint8Array>,
   requestedModel: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  servedModel?: string
 ): Readonly<{ next: () => Promise<LithosStreamFrame | null>; finish: () => void }> => {
-  const frames = createLithosFrameReader(requestedModel);
+  const frames = createLithosFrameReader(requestedModel, servedModel);
   const state = { eof: false, released: false };
   const releaseReaderLock = (): void => {
     try {
@@ -942,12 +965,12 @@ const createLithosStreamSession = (
 export async function* iterateLithosChatCompletionStream(
   response: Response,
   requestedModel: string,
-  options: Readonly<{ signal?: AbortSignal }> = {}
+  options: Readonly<{ signal?: AbortSignal; servedModel?: string }> = {}
 ): AsyncGenerator<Record<string, unknown>, void, void> {
   const reader = response.body?.getReader();
   if (!reader) throw invalidResponseError("Upstream returned no Chat Completions stream body.");
 
-  const session = createLithosStreamSession(reader, requestedModel, options.signal);
+  const session = createLithosStreamSession(reader, requestedModel, options.signal, options.servedModel);
   try {
     for (;;) {
       let frame: LithosStreamFrame | null;

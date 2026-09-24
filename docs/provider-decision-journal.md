@@ -6,6 +6,35 @@ entries when a decision changes; add a new entry that supersedes the earlier one
 
 Each entry must distinguish the decision from its implementation, validation, deployment, and live acceptance state.
 
+## 2026-09-24 — A refused Ultra tier stays on `-fast` until the vendor's own reset instant
+
+### Decision
+
+A `429` from `deepseek-ai/DeepSeek-V4.1-Flash-ultra` still retries that one request on its sibling, and now also opens
+an in-process window: every later request for the Ultra tier is dispatched straight to
+`deepseek-ai/DeepSeek-V4.1-Flash-fast` until the reset instant the refusal's own headers named (`retry-after-ms`, then
+`retry-after`, then the later `x-ratelimit-reset-*` delta). Once that instant passes, Ultra is asked again, and a fresh
+refusal reopens the window. A refusal that names no window, or carries `x-should-retry: false`, opens nothing and stays
+a per-request failover. The window is per gateway process and only for the mapped pair, so a tier without a configured
+sibling never accumulates state.
+
+The sibling's own model id is likewise accepted as the answer to an Ultra request, and only for that pair: the vendor
+self-echoes `deepseek-ai/DeepSeek-V4.1-Flash-fast` when that tier serves, so without the allowance every `-fast`
+failover failed closed as `lithos_upstream_invalid_response` (502). A response naming the sibling with no failover
+behind it is still rejected, and the client-facing model id stays the one requested.
+
+### Why
+
+The owner asked for the routing to return to Ultra once the header's reset time passes, and for the change to stay
+scoped to LithosAI and to the Ultra tier. The echo allowance is needed because `-ultra-chat` folded onto
+`/models/DeepSeek-V4.1-Flash` and passed the unchanged guard, while `-fast` self-echoes (both probed 2026-09-24).
+
+### Status
+
+Implemented in `src/provider/lithos-rate-limits.ts` (the windows), `src/provider/lithos.ts` (the scoped echo acceptance,
+threaded through the buffered and streamed readers) and `src/provider/lithos-handlers.ts` (window-aware dispatch), with
+coverage in `tests/lithos-wiring.test.ts`. Deployment state is recorded separately once landed.
+
 ## 2026-09-24 — The Ultra refusal target moves from `-ultra-chat` to `-fast`
 
 ### Decision
