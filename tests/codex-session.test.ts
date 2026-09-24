@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { observeCodexSession } from "../src/codex_session.ts";
+import { observeCodexSession } from "../src/codex/session.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { CountingKv } from "./helpers/counting_kv.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 
 Deno.test("codex session observer classifies first, continuing, and hour-idle requests", async () => {
   const kv = new CountingKv();

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 
-import { normalizeDeepSeekChatCompletion } from "../src/deepseek.ts";
-import { iterateDeepSeekChatCompletionStream } from "../src/deepseek_stream.ts";
-import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../src/deepseek_responses_payload.ts";
-import { createDeepSeekResponsesStreamTranslator } from "../src/deepseek_responses_stream.ts";
-import { toDeepSeekResponsesChatBody } from "../src/deepseek_chat_projection.ts";
-import { createPaidProviderAttemptDeadline, createStreamFirstEventDeadline, createStreamSemanticDeadline } from "../src/inference_deadline.ts";
-import { isAnswerBearingCompletion } from "../src/upstream_wire.ts";
+import { normalizeDeepSeekChatCompletion } from "../src/deepseek/index.ts";
+import { iterateDeepSeekChatCompletionStream } from "../src/deepseek/stream.ts";
+import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../src/deepseek/responses-payload.ts";
+import { createDeepSeekResponsesStreamTranslator } from "../src/deepseek/responses-stream.ts";
+import { toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
+import { createPaidProviderAttemptDeadline, createStreamFirstEventDeadline, createStreamSemanticDeadline } from "../src/inference-deadline.ts";
+import { isAnswerBearingCompletion } from "../src/upstream-wire.ts";
 
 /**
  * Terminal and deadline parity for the DeepSeek Responses adapter (module

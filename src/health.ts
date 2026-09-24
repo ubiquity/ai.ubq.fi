@@ -1,10 +1,10 @@
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
-import { readCerebrasApiKey } from "./cerebras.ts";
-import { CODEX_AUTH_POOL_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson, parseCodexAuthPool } from "./codex.ts";
-import { readDeepSeekApiKey } from "./deepseek.ts";
+import { readCerebrasApiKey } from "./provider/cerebras.ts";
+import { CODEX_AUTH_POOL_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson, parseCodexAuthPool } from "./codex/index.ts";
+import { readDeepSeekApiKey } from "./deepseek/index.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
-import { readLithosApiKey } from "./lithos.ts";
+import { readLithosApiKey } from "./provider/lithos.ts";
 import {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
@@ -14,18 +14,18 @@ import {
   getSurplusProviderHealth,
   PROVIDER_HEALTH_STALE_AFTER_MS,
   type ProviderHealthState,
-} from "./provider_health.ts";
+} from "./provider/health.ts";
 import { decodeBase64ToString } from "./utils.ts";
 import type { CodexAuthPoolState } from "./types.ts";
-import { readMeteredApiKey } from "./metered.ts";
-import { readSurplusApiKey } from "./surplus.ts";
+import { readMeteredApiKey } from "./provider/metered.ts";
+import { readSurplusApiKey } from "./provider/surplus.ts";
 import {
   fetchMeteredQuotaObservation,
   getCachedConfiguredMeteredQuotaSnapshot,
   type MeteredAccountCredentials,
   type MeteredQuotaSnapshot,
   readMeteredAccountCredentials,
-} from "./metered_quota.ts";
+} from "./metered-quota.ts";
 
 const AUTH_REFRESH_WINDOW_MS = 2 * 60_000;
 const ACTIVE_UPSTREAM_HEALTH_TIMEOUT_MS = 3_000;

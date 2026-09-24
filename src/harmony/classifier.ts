@@ -16,7 +16,7 @@
  * produces evidence for the deterministic rules in m06.
  */
 
-import { CEREBRAS_GPT_OSS_120B_MODEL } from "../cerebras.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL } from "../provider/cerebras.ts";
 import type { NormalizedAssistantResponse } from "./types.ts";
 import { renderSystemMessage } from "./render.ts";
 

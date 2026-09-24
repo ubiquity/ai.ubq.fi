@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 
-import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin.ts";
-import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex.ts";
-import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek.ts";
+import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin/index.ts";
+import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
+import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek/index.ts";
 import { handleHealthProviders } from "../src/health.ts";
-import { LITHOS_MODEL_IDS } from "../src/lithos.ts";
-import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/codex_models_whitelist.ts";
-import handler from "../src/handler.ts";
+import { LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
+import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/models/codex-models-whitelist.ts";
+import handler from "../src/handler/index.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { handleModels } from "../src/model_catalog.ts";
-import { RECORD_PROVIDER_IDS } from "../src/provider_health.ts";
-import { PROVIDER_PRESENTATION, PROVIDER_TIERS, providerPresentation } from "../src/provider_presentation.ts";
+import { handleModels } from "../src/models/catalog.ts";
+import { RECORD_PROVIDER_IDS } from "../src/provider/health.ts";
+import { PROVIDER_PRESENTATION, PROVIDER_TIERS, providerPresentation } from "../src/provider/presentation.ts";
 import {
   codexAccountEligibility,
   codexSubscriptionHash,
@@ -30,8 +30,8 @@ import {
   SELECTABLE_PROVIDER_IDS,
   storeProviderSelection,
   type SelectableProviderId,
-} from "../src/provider_selection.ts";
-import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime_config.ts";
+} from "../src/provider/selection.ts";
+import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
 
 // The model-listing path reads discovery credentials from the environment.
 // Clearing them keeps these tests on the credential-gated providers they own,

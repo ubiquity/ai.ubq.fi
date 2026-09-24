@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { isTrustedAuthRelayClientOrigin, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "../static/auth-relay.js";
-import { parseTrustedAuthRelayOrigin as parseTrustedServerAuthRelayOrigin } from "../src/auth_relay.ts";
+import { parseTrustedAuthRelayOrigin as parseTrustedServerAuthRelayOrigin } from "../src/auth/relay.ts";
 
 /**
  * The same origin downgraded to clear text. Rejecting a clear-text scheme on an

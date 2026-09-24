@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createRequestDeliveryLifecycle } from "../src/serve_handler.ts";
+import { createRequestDeliveryLifecycle } from "../src/handler/serve-handler.ts";
 
 const deferred = () => {
   let resolve!: () => void;

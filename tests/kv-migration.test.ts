@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
-import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/api_key_policy.ts";
-import { codexResetUsageKey, readCodexResetUsage } from "../src/codex_reset_settings.ts";
+import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/api-key-policy.ts";
+import { codexResetUsageKey, readCodexResetUsage } from "../src/codex/reset-settings.ts";
 import {
   classifyKvMigrationKey,
   importKvMigrationLines,
   KV_READ_INCIDENT_V2_MIGRATION_KEY,
   migrateKvReadIncidentV2,
   validateKvMigrationTarget,
-} from "../src/kv_migration.ts";
-import { paidFallbackReconciliationGateV3Key } from "../src/paid_fallback_ledger_state.ts";
+} from "../src/cache/kv-migration.ts";
+import { paidFallbackReconciliationGateV3Key } from "../src/paid-fallback/ledger-state.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {

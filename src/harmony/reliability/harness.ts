@@ -263,9 +263,13 @@ const awaitWithRunCancellation = async <T>(promise: Promise<T>, signal: AbortSig
     return await Promise.race([
       promise,
       new Promise<typeof RUN_CANCELLED>((resolve) => {
-        const onAbort = (): void => resolve(RUN_CANCELLED);
+        const onAbort = (): void => {
+          resolve(RUN_CANCELLED);
+        };
         signal.addEventListener("abort", onAbort, { once: true });
-        removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+        removeAbortListener = () => {
+          signal.removeEventListener("abort", onAbort);
+        };
       }),
     ]);
   } finally {
@@ -369,7 +373,10 @@ const attemptModelTransport = async (run: HarnessRun, opts: HarnessOptions, buil
     await sleepMs(run.retryPolicy.backoffMs);
     return { kind: "retry" };
   }
-  const body = await awaitWithRunCancellation(response.json().catch(() => null), opts.signal);
+  const body = await awaitWithRunCancellation(
+    response.json().catch(() => null),
+    opts.signal
+  );
   if (body === RUN_CANCELLED) return { kind: "aborted" };
   if (body === null) {
     await sleepMs(run.retryPolicy.backoffMs);

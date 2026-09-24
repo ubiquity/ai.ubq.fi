@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
-import { persistInferenceExceptionReplay } from "../src/handler_terminal_route.ts";
+import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
+import { persistInferenceExceptionReplay } from "../src/handler/terminal-route.ts";
 
 type TerminalLogInput = Parameters<typeof withTerminalRequestLog>[1];
 type ReplayInput = NonNullable<TerminalLogInput["sentinelReplayInput"]>;
@@ -180,7 +180,7 @@ Deno.test("thrown inference errors propagate before deferred exception replay pe
     assert.equal(registeredTasks.length, 1);
     // The request-owned original is released before the background handoff.
     assert.ok(capture.body.every((byte) => byte === 0));
-    const snapshot = persisted[0];
+    const snapshot = persisted.at(0);
     if (!snapshot) throw new Error("exception replay persistence did not receive a snapshot");
     assert.notEqual(snapshot.body, capture.body);
     assert.deepEqual([...snapshot.body], originalBytes);
@@ -221,7 +221,7 @@ Deno.test("exception replay persistence is awaited and cleaned up without a back
     // Nothing is registered and nothing has settled yet: the unscheduled path
     // still carries the snapshot until the persistence settles.
     assert.equal(persistenceSettled, false);
-    const snapshot = persisted[0];
+    const snapshot = persisted.at(0);
     if (!snapshot) throw new Error("exception replay persistence did not receive a snapshot");
     assert.ok(capture.body.every((byte) => byte === 0));
     assert.deepEqual([...snapshot.body], originalBytes);

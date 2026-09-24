@@ -6,7 +6,7 @@ import {
   DEFAULT_INFERENCE_ADMISSION_LIMITS,
   inferenceAdmissionSnapshot,
   type InferenceAdmissionResult,
-} from "../src/inference_admission.ts";
+} from "../src/inference-admission.ts";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

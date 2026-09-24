@@ -37,6 +37,28 @@ import {
   singlePool,
 } from "./helpers/codex-account-routing-harness.ts";
 
+// Counts only upstream attempts that carry this test's own request body.
+//
+// The process-wide fetch stub otherwise also observes unrelated background
+// work: the paid-fallback quota refreshes schedule their own requests on timers
+// that outlive the test which armed them (src/provider/metered.ts,
+// src/provider/surplus.ts). A full-suite run intermittently counted two of
+// those inside a zero-dispatch window and failed the assertion below even
+// though the request under test never reached any upstream. Attributing the
+// count to this test's own body keeps the assertion about the routing decision
+// while ignoring bookkeeping traffic that no test owns.
+const countingUpstreamFetch =
+  (marker: string, onDispatch: () => void): typeof globalThis.fetch =>
+  async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const body = await request
+      .clone()
+      .text()
+      .catch(() => "");
+    if (body.includes(marker)) onDispatch();
+    return new Response(null, { status: 200 });
+  };
+
 Deno.test("clearing a class preserves an independent unknown quota fence", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
@@ -589,10 +611,9 @@ Deno.test("a mixed quota and invalid-credential cohort cannot open paid fallback
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = (): Promise<Response> => {
+    globalThis.fetch = countingUpstreamFetch("mixed-cohort", () => {
       dispatches += 1;
-      return Promise.resolve(new Response(null, { status: 200 }));
-    };
+    });
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
     await markCodexQuotaBlocked(initial.accounts[0], httpDateQuotaResponse(now + 60_000), now);
@@ -626,10 +647,9 @@ Deno.test("a genuinely all-exhausted relative cohort preserves paid fallback eli
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = (): Promise<Response> => {
+    globalThis.fetch = countingUpstreamFetch("relative-exhausted", () => {
       dispatches += 1;
-      return Promise.resolve(new Response(null, { status: 200 }));
-    };
+    });
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
     await markCodexQuotaBlocked(initial.accounts[0], relativeQuotaResponse(), now);
@@ -658,10 +678,9 @@ Deno.test("a held recovery lease alone cannot open paid fallback", async () => {
   resetCodexAuthCacheForTest();
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
-    globalThis.fetch = (): Promise<Response> => {
+    globalThis.fetch = countingUpstreamFetch("lease-only", () => {
       dispatches += 1;
-      return Promise.resolve(new Response(null, { status: 200 }));
-    };
+    });
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
     await markCodexQuotaBlocked(initial.accounts[0], httpDateQuotaResponse(now + 60_000), now);

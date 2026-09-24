@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 
 import { setKvForTest } from "../src/kv.ts";
-import { codexResetRedemptionKey, codexResetShadowDecisionKey } from "../src/codex_banked_reset.ts";
-import { CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, resetCodexAccountRoutingForTest } from "../src/codex_account_routing.ts";
-import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex.ts";
+import { codexResetRedemptionKey, codexResetShadowDecisionKey } from "../src/codex/banked-reset.ts";
+import { CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, resetCodexAccountRoutingForTest } from "../src/codex/account-routing.ts";
+import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
 import {
   getPersistedProviderCapacityView,
   handleProviderCapacity,
@@ -18,17 +18,17 @@ import {
   providerCapacityHistoryKey,
   refreshProviderCapacity,
   sampleProviderCapacityOnEvent,
-} from "../src/provider_capacity.ts";
-import { PROMPT_CACHE_ANALYTICS_BUCKET_MS, promptCacheAnalyticsCounterKey } from "../src/prompt_cache_analytics.ts";
+} from "../src/provider/capacity.ts";
+import { PROMPT_CACHE_ANALYTICS_BUCKET_MS, promptCacheAnalyticsCounterKey } from "../src/cache/prompt-analytics.ts";
 import {
   listProviderCapacityDowntimeEvents,
   PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX,
   PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX,
   PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX,
   recordProviderCapacityDowntimeEvent,
-} from "../src/provider_capacity_events.ts";
-import { METERED_QUOTA_STATE_KEY } from "../src/metered_quota.ts";
-import { CountingKv } from "./helpers/counting_kv.ts";
+} from "../src/provider/capacity-events.ts";
+import { METERED_QUOTA_STATE_KEY } from "../src/metered-quota.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 
 type StoredValue = {
   value: unknown;
@@ -1204,7 +1204,7 @@ Deno.test("persisted Codex data becomes stale after the missed-run allowance", a
 });
 
 Deno.test("capacity route requires admin authentication", async () => {
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(new Request("https://ai.ubq.fi/admin/providers/capacity"));
   assert.equal(response.status, 401);
 });

@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { handlePasskeyLoginStart, keyToString, kvStore, passkeyHandleKey, passkeyUserKey } from "./helpers/passkeys-harness.ts";
-import { PASSKEY_LOGIN_START_LIMIT, PASSKEY_LOGIN_START_WINDOW_MS, passkeyLoginStartThrottleKey } from "../src/passkeys.ts";
+import { PASSKEY_LOGIN_START_LIMIT, PASSKEY_LOGIN_START_WINDOW_MS, passkeyLoginStartThrottleKey } from "../src/auth/passkeys.ts";
 
 const loginStartUrl = "https://ai.ubq.fi/api/auth/login/start";
 
@@ -35,9 +35,10 @@ Deno.test("passkey login start bounds anonymous challenge creation and writes no
   const limited = await handlePasskeyLoginStart(loginStartRequest());
   assert.equal(limited.status, 429);
   const payload = (await limited.json()) as { error?: { code?: string; type?: string; message?: string } };
-  assert.equal(payload.error?.code, "rate_limit_exceeded");
-  assert.equal(payload.error?.type, "rate_limit_error");
-  assert.match(payload.error?.message ?? "", /too many/i);
+  assert.ok(payload.error, "rate-limited login start answers with an error body");
+  assert.equal(payload.error.code, "rate_limit_exceeded");
+  assert.equal(payload.error.type, "rate_limit_error");
+  assert.match(payload.error.message ?? "", /too many/i);
   const retryAfterSeconds = Number(limited.headers.get("Retry-After"));
   assert.equal(Number.isInteger(retryAfterSeconds), true);
   assert.equal(retryAfterSeconds > 0, true);

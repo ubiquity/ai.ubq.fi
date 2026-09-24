@@ -9,7 +9,7 @@ import {
   type RedeemResetInput,
   type ResetAccountContext,
   resolveCodexUsageResetCreditEndpoints,
-} from "../src/codex_banked_reset_provider.ts";
+} from "../src/codex/banked-reset-provider.ts";
 
 const context = (accountId = "account-one"): ResetAccountContext => ({
   accountId,

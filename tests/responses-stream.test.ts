@@ -6,7 +6,7 @@ import {
   readResponsesStream,
   ResponsesStreamError,
   withSseKeepalive,
-} from "../src/responses_stream.ts";
+} from "../src/responses-stream.ts";
 
 const bytes = (value: string): Uint8Array => new TextEncoder().encode(value);
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { PaidFallbackUsageRollup } from "../src/paid_fallback_rollups.ts";
+import type { PaidFallbackUsageRollup } from "../src/paid-fallback/rollups.ts";
 
 type StoredEntry = {
   key: Deno.KvKey;
@@ -172,26 +172,26 @@ const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
 const originalOpenKv = denoWithKv.openKv;
 denoWithKv.openKv = () => Promise.resolve(kv);
 
-const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
-const { recordMeteredTerminal, recordMeteredUpstreamResponse, recordSurplusUsage, reservePaidFallback } = await import("../src/paid_fallback.ts");
-const { backfillPaidFallbackUsageRollups, backfillPaidFallbackWindowTtls } = await import("../src/paid_fallback_ledger_backfill.ts");
+const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api-keys.ts");
+const { recordMeteredTerminal, recordMeteredUpstreamResponse, recordSurplusUsage, reservePaidFallback } = await import("../src/paid-fallback/index.ts");
+const { backfillPaidFallbackUsageRollups, backfillPaidFallbackWindowTtls } = await import("../src/paid-fallback/ledger-backfill.ts");
 const {
   PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   paidFallbackBackfillCursorV3Key,
   paidFallbackBackfillWindowCursorV3Key,
   paidFallbackRequestV3Key,
   paidFallbackWindowV3Key,
-} = await import("../src/paid_fallback_ledger_state.ts");
-const { listPaidFallbackUsageRollups, mergePaidFallbackUsageRollup, paidFallbackUsageRollupKey } = await import("../src/paid_fallback_rollups.ts");
+} = await import("../src/paid-fallback/ledger-state.ts");
+const { listPaidFallbackUsageRollups, mergePaidFallbackUsageRollup, paidFallbackUsageRollupKey } = await import("../src/paid-fallback/rollups.ts");
 const {
   METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
   METERED_QUOTA_BALANCE_HISTORY_PREFIX,
   normalizeMeteredQuotaBalanceWindowDays,
   readMeteredQuotaBalanceHistory,
   resampleMeteredQuotaBalanceHistory,
-} = await import("../src/metered_quota.ts");
+} = await import("../src/metered-quota.ts");
 const { groupPaidFallbackUsageRollups, meteredQuotaRunwayView, projectPaidFallbackRunway, summarizePaidFallbackUsage } =
-  await import("../src/quota_projection.ts");
+  await import("../src/quota-projection.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 
@@ -200,7 +200,7 @@ denoWithKv.openKv = originalOpenKv;
 type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
 type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
 type PaidFallbackWindowV3 = import("../src/types.ts").PaidFallbackWindowV3;
-type MeteredQuotaSnapshot = import("../src/metered_quota.ts").MeteredQuotaSnapshot;
+type MeteredQuotaSnapshot = import("../src/metered-quota.ts").MeteredQuotaSnapshot;
 
 const keyId = "quota-projection-key";
 const keyHash = "quota-projection-hash";

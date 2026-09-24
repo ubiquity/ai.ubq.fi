@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { createServeHandler } from "../src/serve_handler.ts";
-import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
+import { createServeHandler } from "../src/handler/serve-handler.ts";
+import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
 
 const loopbackPermission = await Deno.permissions.query({ name: "net", host: "127.0.0.1" });
 const encoder = new TextEncoder();

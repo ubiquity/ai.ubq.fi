@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
-import { ADMIN_ERROR_LOG_PREFIX } from "../src/admin_error_log.ts";
-import { PAID_FALLBACK_NO_LIMIT } from "../src/api_keys.ts";
+import { ADMIN_ERROR_LOG_PREFIX } from "../src/admin/error-log.ts";
+import { PAID_FALLBACK_NO_LIMIT } from "../src/api-keys.ts";
 import {
   type ApiKeyPolicy,
   apiKeyUsageV3RequestKey,
   apiKeyUsageV3WindowKey,
   apiKeyPolicyFromHashRecord,
   resetApiKeyPolicyCacheForTest,
-} from "../src/api_key_policy.ts";
-import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../src/deepseek.ts";
-import { setInferenceAdmissionControllerForTest } from "../src/handler_admission.ts";
-import { createInferenceAdmissionController } from "../src/inference_admission.ts";
+} from "../src/api-key-policy.ts";
+import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../src/deepseek/index.ts";
+import { setInferenceAdmissionControllerForTest } from "../src/handler/admission.ts";
+import { createInferenceAdmissionController } from "../src/inference-admission.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { enqueuePromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "../src/prompt_cache_analytics.ts";
+import { enqueuePromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "../src/cache/prompt-analytics.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 
@@ -309,8 +309,8 @@ const startHarness = async (): Promise<Harness> => {
   setKvForTest(kv);
   // A cached policy from an earlier test would outlive this test's fresh KV.
   resetApiKeyPolicyCacheForTest();
-  const { default: handler } = await import("../src/handler.ts");
-  const { createServeHandler } = await import("../src/serve_handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
+  const { createServeHandler } = await import("../src/handler/serve-handler.ts");
   const gateway = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));
 
   return {

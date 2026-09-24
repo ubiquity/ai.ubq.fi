@@ -723,7 +723,7 @@ Deno.test("embedding jobs: poll runs queued job to completion", async () => {
 });
 
 Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 guard", async () => {
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(
     new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "POST",
@@ -741,7 +741,7 @@ Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 gu
 });
 
 Deno.test("handler: embeddings preflight permits browser idempotency keys", async () => {
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(
     new Request("https://ai.ubq.fi/uos/embeddings", {
       method: "OPTIONS",
@@ -760,8 +760,8 @@ Deno.test("handler: embeddings preflight permits browser idempotency keys", asyn
 });
 
 Deno.test("handler: an exhausted key still serves local embeddings paths but blocks a dispatch", async () => {
-  const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
-  const { default: handler } = await import("../src/handler.ts");
+  const { handleAdminApiKeysCreate } = await import("../src/admin/index.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
   const created = await handleAdminApiKeysCreate(
     new Request("https://ai.ubq.fi/admin/api-keys", {
@@ -875,7 +875,7 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
 });
 
 Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without Voyage dispatch", async () => {
-  const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
+  const { handleAdminApiKeysCreate } = await import("../src/admin/index.ts");
   const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "a")}`;
   const created = await handleAdminApiKeysCreate(
     new Request("https://ai.ubq.fi/admin/api-keys", {
@@ -908,7 +908,7 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
   assert.equal(quotaBefore.committed_requests, 0);
   assert.equal(quotaBefore.reserved_requests, 0);
 
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   let voyageCalls = 0;
   const response = await withFetchMock(
     () => {
@@ -939,7 +939,7 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
 });
 
 Deno.test("handler: idempotency preserves account scopes", async () => {
-  const { resolveIdempotencyPrincipal } = await import("../src/handler_http.ts");
+  const { resolveIdempotencyPrincipal } = await import("../src/handler/http.ts");
 
   for (const kind of ["auth_tokens_allowlist", "admin_allowlist", "deno_deploy_token"] as const) {
     const first = await resolveIdempotencyPrincipal({
@@ -996,10 +996,10 @@ Deno.test("handler: idempotency preserves account scopes", async () => {
 /** Bounded wait for the admission guard's asynchronous bookkeeping. */
 
 Deno.test("handler: saturated admission refuses a queued embedding-job poll before Voyage", async () => {
-  const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
-  const { default: handler } = await import("../src/handler.ts");
-  const { setInferenceAdmissionControllerForTest } = await import("../src/handler_admission.ts");
-  const { createInferenceAdmissionController } = await import("../src/inference_admission.ts");
+  const { handleAdminApiKeysCreate } = await import("../src/admin/index.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
+  const { setInferenceAdmissionControllerForTest } = await import("../src/handler/admission.ts");
+  const { createInferenceAdmissionController } = await import("../src/inference-admission.ts");
   const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "c")}`;
   const created = await handleAdminApiKeysCreate(
     new Request("https://ai.ubq.fi/admin/api-keys", {

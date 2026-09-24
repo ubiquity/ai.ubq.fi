@@ -10,7 +10,7 @@ import {
   STREAM_FAILOVER_RESERVE_MS,
   STREAM_FIRST_EVENT_DEADLINE_MS,
   STREAM_INACTIVITY_DEADLINE_MS,
-} from "../src/inference_deadline.ts";
+} from "../src/inference-deadline.ts";
 
 /** The wall-clock budget one inference attempt owns, in milliseconds. */
 const INFERENCE_BUDGET_MS = 30 * 60_000;

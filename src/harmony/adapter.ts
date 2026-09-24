@@ -17,7 +17,7 @@
  * deterministic and offline.
  */
 
-import { CEREBRAS_GPT_OSS_120B_MODEL, type CerebrasFetch, fetchCerebrasChatCompletions } from "../cerebras.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL, type CerebrasFetch, fetchCerebrasChatCompletions } from "../provider/cerebras.ts";
 import { isRecord } from "../utils.ts";
 import { wireMessagesFromConversation } from "./conversation.ts";
 import { normalizeToolArguments, parseHarmonyOutput } from "./parse.ts";

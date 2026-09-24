@@ -6,7 +6,7 @@ import {
   METERED_FETCH_TIMEOUT_MS,
   MeteredError,
   type MeteredFetch,
-} from "../src/metered.ts";
+} from "../src/provider/metered.ts";
 
 const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): Response => {
   const responseHeaders = new Headers(headers);

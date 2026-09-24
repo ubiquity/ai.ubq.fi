@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../src/api_key_policy.ts";
+import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../src/api-key-policy.ts";
 import {
   fetchLithosChatCompletions,
   getLithosProviderRequestId,
@@ -14,8 +14,8 @@ import {
   normalizeLithosProviderRequestId,
   projectLithosRequest,
   setLithosFetchTimeoutMsForTest,
-} from "../src/lithos.ts";
-import { createSentinelUpstreamRecorder } from "../src/sentinel_upstream_capture.ts";
+} from "../src/provider/lithos.ts";
+import { createSentinelUpstreamRecorder } from "../src/sentinel/upstream-capture.ts";
 
 const REQUESTED_MODEL = "moonshotai/Kimi-K3";
 const API_KEY = "lith_sk_fixture";

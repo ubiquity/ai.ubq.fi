@@ -1,20 +1,20 @@
-import { fetchCodexResponses, getCodexModelsSnapshotDefaultModel } from "./codex.ts";
+import { fetchCodexResponses, getCodexModelsSnapshotDefaultModel } from "./codex/index.ts";
 
 import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from "./defaults.ts";
 import { openaiError } from "./http.ts";
-import { createInferenceSignal } from "./inference_deadline.ts";
-import { loadRuntimeConfig } from "./runtime_config.ts";
-import {} from "./model_metadata.ts";
-import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
-import {} from "./removed_provider.ts";
-import {} from "./removed_provider_circuit.ts";
-import {} from "./removed_provider_telemetry.ts";
-import {} from "./paid_fallback.ts";
-import type {} from "./sentinel_upstream_capture.ts";
+import { createInferenceSignal } from "./inference-deadline.ts";
+import { loadRuntimeConfig } from "./runtime-config.ts";
+import {} from "./models/metadata.ts";
+import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai-schema.ts";
+import {} from "./paid-fallback/removed-provider.ts";
+import {} from "./provider/removed-provider-circuit.ts";
+import {} from "./provider/removed-provider-telemetry.ts";
+import {} from "./paid-fallback/index.ts";
+import type {} from "./sentinel/upstream-capture.ts";
 
-import { UsageContext } from "./openai_telemetry.ts";
-import {} from "./input_normalization.ts";
-import { isTemporaryFreeSurplusModel } from "./request_policy.ts";
+import { UsageContext } from "./openai-telemetry.ts";
+import {} from "./input-normalization.ts";
+import { isTemporaryFreeSurplusModel } from "./request-policy.ts";
 export const temporaryFreeSurplusCapabilityError = (model: string, body: Record<string, unknown>): Response | null =>
   isTemporaryFreeSurplusModel(model) && Array.isArray(body.tools) && body.tools.length > 0
     ? openaiError(400, `The model '${model}' does not support tools through this gateway.`, "unsupported_model_capability", { param: "tools" })
@@ -47,7 +47,7 @@ export const defaultModelUnavailableError = (): Response =>
 export const getDefaultReasoningEffort = async (): Promise<ReasoningEffort> => {
   return (await loadRuntimeConfig())?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
 };
-import {} from "./responses_attempts.ts";
+import {} from "./responses-attempts.ts";
 export const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 export const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
 export const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);

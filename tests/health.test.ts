@@ -54,9 +54,9 @@ const kvStub = {
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
 const { handleHealth, handleHealthProviders, handleHealthUpstream, setActiveUpstreamHealthTimeoutMsForTest } = await import("../src/health.ts");
-const { default: handler } = await import("../src/handler.ts");
+const { default: handler } = await import("../src/handler/index.ts");
 const { config } = await import("../src/config.ts");
-const { getJwtExpMs, resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const { getJwtExpMs, resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
 const {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
@@ -67,7 +67,7 @@ const {
   recordMeteredProviderHealth,
   recordSurplusProviderHealth,
   resetProviderHealthThrottleForTest,
-} = await import("../src/provider_health.ts");
+} = await import("../src/provider/health.ts");
 resetAuthCache = resetCodexAuthCacheForTest;
 
 // Base64url strips the "=" padding. A regex such as /=+$/g is super-linear: an

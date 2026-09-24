@@ -100,7 +100,7 @@ const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
 const originalOpenKv = denoWithKv.openKv;
 denoWithKv.openKv = () => Promise.resolve(kv);
 
-const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
+const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api-keys.ts");
 const {
   recordMeteredAmbiguousFailure,
   recordMeteredTerminal,
@@ -108,9 +108,9 @@ const {
   recordMeteredUpstreamResponse,
   recordSurplusUsage,
   reservePaidFallback,
-} = await import("../src/paid_fallback.ts");
-const { reconcilePaidFallbackV3 } = await import("../src/paid_fallback_ledger_backfill.ts");
-const { paidFallbackPendingV3Key, paidFallbackRequestV3Key, paidFallbackWindowV3Key } = await import("../src/paid_fallback_ledger_state.ts");
+} = await import("../src/paid-fallback/index.ts");
+const { reconcilePaidFallbackV3 } = await import("../src/paid-fallback/ledger-backfill.ts");
+const { paidFallbackPendingV3Key, paidFallbackRequestV3Key, paidFallbackWindowV3Key } = await import("../src/paid-fallback/ledger-state.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;

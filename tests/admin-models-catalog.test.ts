@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import adminHtml from "../static/admin.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
 import modelsScript from "../static/models.js" with { type: "text" };
-import adminCodexSource from "../src/admin_codex.ts" with { type: "text" };
-import { handleAdminCodexModelsWhitelistGet, handleAdminCodexModelsWhitelistSet, handleAdminModelsCatalogGet, handleAdminModelsRefresh } from "../src/admin.ts";
+import adminCodexSource from "../src/admin/codex.ts" with { type: "text" };
+import {
+  handleAdminCodexModelsWhitelistGet,
+  handleAdminCodexModelsWhitelistSet,
+  handleAdminModelsCatalogGet,
+  handleAdminModelsRefresh,
+} from "../src/admin/index.ts";
 import {
   CODEX_MODELS_WHITELIST_KV_KEY,
   filterWhitelistedCatalogModels,
@@ -12,13 +17,13 @@ import {
   filterWhitelistedModelMap,
   normalizeWhitelistModelIds,
   type CodexModelsWhitelist,
-} from "../src/codex_models_whitelist.ts";
-import handler from "../src/handler.ts";
-import handlerSource from "../src/handler.ts" with { type: "text" };
-import type { OpenRouterModelsSnapshot } from "../src/openrouter_models.ts";
+} from "../src/models/codex-models-whitelist.ts";
+import handler from "../src/handler/index.ts";
+import handlerSource from "../src/handler/index.ts" with { type: "text" };
+import type { OpenRouterModelsSnapshot } from "../src/models/openrouter-models.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { buildModelCatalogSnapshot } from "../src/model_catalog.ts";
-import openaiSource from "../src/model_catalog.ts" with { type: "text" };
+import { buildModelCatalogSnapshot } from "../src/models/catalog.ts";
+import openaiSource from "../src/models/catalog.ts" with { type: "text" };
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps these tests on the credential-gated providers they own, and keeps

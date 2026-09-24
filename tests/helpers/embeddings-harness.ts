@@ -226,8 +226,8 @@ const kvStub = {
 } as unknown as Deno.Kv;
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
-const { handleUosEmbeddings } = await import("../../src/embeddings_handlers.ts");
-const { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } = await import("../../src/embeddings_jobs.ts");
+const { handleUosEmbeddings } = await import("../../src/embeddings/handlers.ts");
+const { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } = await import("../../src/embeddings/jobs.ts");
 const { getKv } = await import("../../src/kv.ts");
 await getKv();
 

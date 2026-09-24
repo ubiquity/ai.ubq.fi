@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { getCodexAccountEmail } from "../src/codex.ts";
+import { getCodexAccountEmail } from "../src/codex/index.ts";
 
 // Base64url drops the `=` padding. Trimming it with an unanchored `/=+$/` regex
 // is super-linear (measured ~1.6s per 20k-character run of `=`), so the

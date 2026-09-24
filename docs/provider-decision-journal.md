@@ -6,6 +6,40 @@ entries when a decision changes; add a new entry that supersedes the earlier one
 
 Each entry must distinguish the decision from its implementation, validation, deployment, and live acceptance state.
 
+## 2026-09-24 — LithosAI rate-limit refusals are waited out and retried on the same model id
+
+### Decision
+
+A `429` from the direct LithosAI route is no longer relayed immediately when the vendor's own retry hints name a window
+the gateway can wait out. The gateway waits for that window and retries the SAME model id on the same provider, bounded
+at 75 s per attempt, 90 s in total and at most three dispatches per request, with abort-aware sleeping and a small
+jitter so requests refused the same window do not retry in lockstep.
+
+The wait is derived in the vendor's own precedence: `retry-after-ms`, then `retry-after` (seconds or HTTP date), then
+the later of the two `x-ratelimit-reset-*` refill deltas. A refusal that names no window, a refusal carrying
+`x-should-retry: false`, a window beyond the caps, or an exhausted attempt budget is relayed unchanged with the vendor's
+status, its `rate_limit_exceeded` / `provider_overloaded` code and its rate-limit headers. No other provider or model is
+ever substituted, and a LithosAI 429 still never advances the Codex -> Surplus -> OpenLux waterfall: this is a retry of
+the pinned route, not a failover.
+
+Both LithosAI streamed routes now also carry the gateway's standard `: keepalive` SSE comment frames.
+
+### Why
+
+The vendor's limits are per-minute budgets per model shared by the whole organization (probed 2026-09-24: 60
+requests/min and 4,000,000 tokens/min on the ultra tier), while one Codex or DSH step sends roughly 150k input tokens,
+so ordinary fan-out trips the org input-token budget mid-step. The observed refusals carry a short refill delta
+(`x-ratelimit-reset-tokens: 3.23s`), so failing the request instead of waiting for the refill throws away a whole agent
+step for a pause measured in seconds. Before this entry a pinned direct provider had no retry seam at all, and the
+refusal reached the client as a terminal `response.failed`.
+
+### Status
+
+Implementation is local and uncommitted: `src/provider/lithos-handlers.ts` (wait policy, wait-aware dispatch loop, SSE
+keepalive wrap), `src/provider/lithos.ts` (route comment), tests in `tests/lithos-wiring.test.ts`. Focused suites pass;
+full `sh scripts/verify.sh` and any deployment acceptance are pending. Not deployed, and no production behavior is
+claimed.
+
 ## 2026-09-22 — Reinstate a finite process-resource guard, narrowly superseding the 2026-08-25 admission ban
 
 ### Decision

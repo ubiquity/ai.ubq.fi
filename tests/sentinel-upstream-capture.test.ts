@@ -12,7 +12,7 @@ import {
   SENTINEL_UPSTREAM_MAX_CHUNKS,
   type SentinelUpstreamAttempt,
   type SentinelUpstreamTrace,
-} from "../src/sentinel_upstream_capture.ts";
+} from "../src/sentinel/upstream-capture.ts";
 import {
   type AcceptedSentinelReplayInput,
   decryptExportedSentinelReplay,
@@ -20,7 +20,7 @@ import {
   persistEncryptedSentinelReplay,
   SENTINEL_REPLAY_CHUNK_PREFIX,
   type SentinelFailureObservation,
-} from "../src/sentinel_replay_capture.ts";
+} from "../src/sentinel/replay-capture.ts";
 import { base64UrlDecode, base64UrlEncode } from "../src/utils.ts";
 
 const kvAvailable = typeof Deno.openKv === "function";

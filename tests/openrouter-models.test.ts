@@ -8,7 +8,7 @@ import {
   resetOpenRouterModelsCacheForTest,
   setOpenRouterModelsFetchForTest,
   type OpenRouterFetch,
-} from "../src/openrouter_models.ts";
+} from "../src/models/openrouter-models.ts";
 
 const payload = (models: readonly unknown[]) => ({ data: models });
 

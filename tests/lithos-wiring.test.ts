@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 
-import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/lithos.ts";
+import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/provider/lithos.ts";
+import { lithosRateLimitWait } from "../src/provider/lithos-handlers.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { handleResponses } from "../src/responses_handler.ts";
-import { handleChatCompletions } from "../src/chat_completions_envelope.ts";
-import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/model_catalog.ts";
-import { getResponseTelemetry } from "../src/openai_telemetry.ts";
+import { handleResponses } from "../src/responses-handler.ts";
+import { handleChatCompletions } from "../src/chat/envelope.ts";
+import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
+import { getResponseTelemetry } from "../src/openai-telemetry.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps this suite on the credential-gated providers it owns, and keeps the
@@ -513,8 +514,10 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
     assert.equal(quotaBody.error.message, "Your organization has no credit remaining.");
     assert.equal(getResponseTelemetry(insufficientQuota.result)?.failureKind, "upstream_http_error");
 
-    // 429 budget refusal: a rate limit, with the provider's capacity headers and
-    // both retry hints forwarded.
+    // 429 budget refusal whose window is beyond the wait budget: a rate limit,
+    // with the provider's capacity headers and both retry hints forwarded
+    // unchanged and exactly one dispatch. A window the gateway could wait out
+    // would be retried instead; that path is covered by its own test below.
     const budgetRefusal = await withUpstream(
       () =>
         Response.json(
@@ -529,7 +532,7 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
               "x-ratelimit-limit-tokens": "200000",
               "x-ratelimit-remaining-tokens": "0",
               "x-ratelimit-reset-tokens": "45s",
-              "retry-after-ms": "900",
+              "retry-after-ms": "120000",
               "Retry-After": "17",
               "x-uos-provider-only": "must-not-be-relayed",
             },
@@ -538,10 +541,11 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
       () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-budget"))
     );
     assert.equal(budgetRefusal.result.status, 429);
+    assert.equal(budgetRefusal.calls.length, 1, "a window beyond the wait budget is never waited out");
     assert.equal(budgetRefusal.result.headers.get("x-should-retry"), null, "a per-minute budget refusal stays retryable");
     for (const header of LITHOS_RATE_LIMIT_HEADERS) assert.notEqual(budgetRefusal.result.headers.get(header), null, `${header} must be forwarded`);
     assert.equal(budgetRefusal.result.headers.get("Retry-After"), "17");
-    assert.equal(budgetRefusal.result.headers.get("retry-after-ms"), "900");
+    assert.equal(budgetRefusal.result.headers.get("retry-after-ms"), "120000");
     assert.equal(budgetRefusal.result.headers.get("x-uos-provider-only"), null);
     const budgetBody = (await budgetRefusal.result.json()) as { error?: { type?: string; code?: string } };
     assert.equal(budgetBody.error?.type, "rate_limit_error");
@@ -669,5 +673,138 @@ Deno.test("lithos wiring: the catalog advertises eight addressable ids only whil
         false,
         `${id} must not be advertised without a key`
       );
+  });
+});
+
+Deno.test("lithos rate-limit waits follow the vendor's own header precedence", () => {
+  const wait = (headers: Record<string, string>, nowMs = 1_000) => lithosRateLimitWait(new Headers(headers), nowMs);
+  // `retry-after-ms` wins over every other hint, then `retry-after`, then the
+  // later of the two per-minute refill deltas.
+  assert.deepEqual(wait({ "retry-after-ms": "250", "Retry-After": "9", "x-ratelimit-reset-tokens": "30s" }), { waitMs: 250, source: "retry-after-ms" });
+  assert.deepEqual(wait({ "Retry-After": "9" }), { waitMs: 9_000, source: "retry-after" });
+  assert.deepEqual(wait({ "Retry-After": new Date(5_000).toUTCString() }), { waitMs: 4_000, source: "retry-after" });
+  assert.deepEqual(wait({ "x-ratelimit-reset-tokens": "3.23s", "x-ratelimit-reset-requests": "12s" }), {
+    waitMs: 12_000,
+    source: "x-ratelimit-reset-requests",
+  });
+  assert.deepEqual(wait({ "x-ratelimit-reset-tokens": "1m30s" }), { waitMs: 90_000, source: "x-ratelimit-reset-tokens" });
+  assert.deepEqual(wait({ "x-ratelimit-reset-requests": "750ms" }), { waitMs: 750, source: "x-ratelimit-reset-requests" });
+  // The vendor's own instruction wins, and a refusal naming no window is never
+  // given an invented one.
+  assert.equal(wait({ "retry-after-ms": "5", "x-should-retry": "false" }), null);
+  assert.equal(wait({}), null);
+});
+
+Deno.test("lithos wiring: a 429 inside the wait budget is waited out and retried on the same model id", async () => {
+  await withLithosKey(async () => {
+    const message = [{ role: "user", content: "hi" }];
+    const refusal = () =>
+      Response.json(
+        { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "x-ratelimit-limit-requests": "60",
+            "x-ratelimit-remaining-requests": "0",
+            "x-ratelimit-reset-requests": "1s",
+            "x-ratelimit-limit-tokens": "4000000",
+            "x-ratelimit-remaining-tokens": "0",
+            "x-ratelimit-reset-tokens": "0.02s",
+            "retry-after-ms": "5",
+          },
+        }
+      );
+
+    const chat = await withUpstream(
+      (_call, calls) => (calls.length === 1 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }))),
+      () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-chat"))
+    );
+    assert.equal(chat.calls.length, 2, "the refused dispatch is retried exactly once");
+    assert.equal(
+      chat.calls.every((call) => call.url === LITHOS_CHAT_COMPLETIONS_URL),
+      true
+    );
+    assert.equal(chat.result.status, 200);
+    const chatBody = (await chat.result.json()) as { choices?: { message?: { content?: string } }[] };
+    assert.equal(chatBody.choices?.[0]?.message?.content, "after-retry");
+    assert.equal(getResponseTelemetry(chat.result)?.streamTerminalType, "response.completed");
+
+    // The streamed Responses route retries the same way: the client's first
+    // frame is the completed translation, never the refusal.
+    const retryStreamBody = `${sseBody([
+      {
+        id: "chatcmpl-lithos-retry",
+        object: "chat.completion.chunk",
+        created: 1_790_160_500,
+        model: LITHOS_MODEL,
+        choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+      },
+      {
+        id: "chatcmpl-lithos-retry",
+        object: "chat.completion.chunk",
+        created: 1_790_160_500,
+        model: LITHOS_MODEL,
+        choices: [{ index: 0, delta: { content: "after-retry" }, finish_reason: null }],
+      },
+      {
+        id: "chatcmpl-lithos-retry",
+        object: "chat.completion.chunk",
+        created: 1_790_160_500,
+        model: LITHOS_MODEL,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      },
+      {
+        id: "chatcmpl-lithos-retry",
+        object: "chat.completion.chunk",
+        created: 1_790_160_501,
+        model: LITHOS_MODEL,
+        choices: [],
+        usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9, prompt_tokens_details: null, completion_tokens_details: { reasoning_tokens: 1 } },
+      },
+    ])}data: [DONE]\n\n`;
+
+    const streamed = await withUpstream(
+      (_call, calls) => (calls.length === 1 ? refusal() : new Response(retryStreamBody, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
+      () => handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }), usageContext("lithos-429-wait-responses"))
+    );
+    assert.equal(streamed.calls.length, 2, "the streamed route retries the refused dispatch too");
+    assert.equal(streamed.result.status, 200);
+    const text = await streamed.result.text();
+    assert.match(text, /after-retry/);
+    assert.match(text, /event: response.completed/);
+    assert.doesNotMatch(text, /rate_limit_exceeded/);
+    assert.equal(getResponseTelemetry(streamed.result)?.streamTerminalType, "response.completed");
+  });
+});
+
+Deno.test("lithos wiring: a cancelled request stops waiting for the provider window", async () => {
+  await withLithosKey(async () => {
+    const controller = new AbortController();
+    const request = new Request("https://ai.ubq.fi/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: LITHOS_MODEL, messages: [{ role: "user", content: "hi" }], stream: false }),
+      signal: controller.signal,
+    });
+    setTimeout(() => {
+      controller.abort(new DOMException("The client cancelled.", "AbortError"));
+    }, 25);
+
+    const { result, calls } = await withUpstream(
+      () =>
+        Response.json(
+          { error: { message: "Rate limit exceeded for requests.", type: "requests", code: "rate_limit_exceeded" } },
+          { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
+        ),
+      () => handleChatCompletions(request, usageContext("lithos-429-wait-cancel"))
+    );
+
+    // The wait is abandoned at once: no second dispatch, and the caller's own
+    // cancellation identity is what comes back.
+    assert.equal(calls.length, 1, "an aborted wait dispatches nothing further");
+    assert.equal(result.status, 499);
+    const body = (await result.json()) as { error?: { code?: string } };
+    assert.equal(body.error?.code, "request_cancelled");
   });
 });

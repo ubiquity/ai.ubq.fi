@@ -1,5 +1,5 @@
 // Run from the VPS repository root after the candidate's required CI has passed.
-import { pruneReleases } from "./release_retention.ts";
+import { pruneReleases } from "./release-retention.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
 
 async function command(program: string, args: string[]): Promise<string> {

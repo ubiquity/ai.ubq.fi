@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { authenticateAdmin, authenticateClient, handleV1Auth, requireSuperAdminAuth } from "../src/auth.ts";
+import { authenticateAdmin, authenticateClient, handleV1Auth, requireSuperAdminAuth } from "../src/auth/index.ts";
 import {
   configureAdminAuthForListener,
   configureAdminAuthPeerForRequest,
@@ -10,7 +10,7 @@ import {
   parseServeRuntimeOptions,
   type ServeRuntimeOptions,
   shouldDisableAdminAuthForListener,
-} from "../src/local_admin_auth.ts";
+} from "../src/auth/local-admin.ts";
 
 const tcpAddress = (hostname: string): Deno.NetAddr => ({
   transport: "tcp",

@@ -391,7 +391,11 @@ Deno.test("harness: a stalled transport that ignores cancellation stops at the r
   };
   const timers: ReturnType<typeof setTimeout>[] = [];
   const watchdog = new Promise<never>((_resolve, reject) => {
-    timers.push(setTimeout(() => reject(new Error("stalled transport ignored cancellation")), 1000));
+    timers.push(
+      setTimeout(() => {
+        reject(new Error("stalled transport ignored cancellation"));
+      }, 1000)
+    );
   });
   timers.push(
     setTimeout(() => {

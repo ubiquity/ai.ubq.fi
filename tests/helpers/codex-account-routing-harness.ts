@@ -1,7 +1,7 @@
 // Shared harness for the codex-account-routing suites, moved out of tests/codex-account-routing.test.ts.
 
-import { codexSubscriptionHash, codexSubscriptionSelectionId } from "../../src/provider_selection.ts";
-import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../../src/provider_selection.ts";
+import { codexSubscriptionHash, codexSubscriptionSelectionId } from "../../src/provider/selection.ts";
+import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../../src/provider/selection.ts";
 import { CodexAuthPoolState } from "../../src/types.ts";
 
 const key = (value: Deno.KvKey): string => JSON.stringify(value);
@@ -151,8 +151,8 @@ export {
   syntheticLegacyBlock,
 };
 export { setKvForTest } from "../../src/kv.ts";
-export { resetCodexAccountRoutingForTest } from "../../src/codex_account_routing.ts";
-export { CODEX_AUTH_POOL_KV_KEY, CodexError, fetchCodexResponses, getCodexRoutingError, resetCodexAuthCacheForTest } from "../../src/codex.ts";
+export { resetCodexAccountRoutingForTest } from "../../src/codex/account-routing.ts";
+export { CODEX_AUTH_POOL_KV_KEY, CodexError, fetchCodexResponses, getCodexRoutingError, resetCodexAuthCacheForTest } from "../../src/codex/index.ts";
 export {
   claimCodexRoutingProbe,
   CODEX_ACCOUNT_ROUTING_KV_KEY,
@@ -179,7 +179,7 @@ export {
   refreshCodexActiveAccountAdmission,
   selectCodexRoutingAccounts,
   selectCodexRoutingAccountsStrong,
-} from "../../src/codex_account_routing.ts";
-export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../../src/provider_capacity_contract.ts";
-export { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../../src/provider_selection.ts";
+} from "../../src/codex/account-routing.ts";
+export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../../src/provider/capacity-contract.ts";
+export { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../../src/provider/selection.ts";
 export type { CodexAuthPoolState } from "../../src/types.ts";

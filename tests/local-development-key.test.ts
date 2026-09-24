@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 
 // Type-only: erased at runtime, so the dynamic imports below still see the KV stub.
-import type { LocalDevelopmentPricingInitializer } from "../src/local_development_key.ts";
-import type { ServeRuntimeOptions } from "../src/local_admin_auth.ts";
+import type { LocalDevelopmentPricingInitializer } from "../src/auth/local-development-key.ts";
+import type { ServeRuntimeOptions } from "../src/auth/local-admin.ts";
 
 /**
  * Minimal in-memory Deno.Kv for the local-development provisioning tests. The
@@ -78,13 +78,13 @@ const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
 const originalOpenKv = denoWithKv.openKv;
 denoWithKv.openKv = () => Promise.resolve(memoryKv as unknown as Deno.Kv);
 
-const { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, PAID_FALLBACK_NO_LIMIT, apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
-const { apiKeyUsageV3WindowKey } = await import("../src/api_key_policy.ts");
-const { hasStrictPaidFallbackKeyPolicy } = await import("../src/paid_fallback.ts");
-const { LOCAL_DEVELOPMENT_KEY_ID, ensureLocalDevelopmentApiKey, resolveLocalDevelopmentApiKeyPolicy } = await import("../src/local_development_key.ts");
+const { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, PAID_FALLBACK_NO_LIMIT, apiKeyHashKey, apiKeyIdKey } = await import("../src/api-keys.ts");
+const { apiKeyUsageV3WindowKey } = await import("../src/api-key-policy.ts");
+const { hasStrictPaidFallbackKeyPolicy } = await import("../src/paid-fallback/index.ts");
+const { LOCAL_DEVELOPMENT_KEY_ID, ensureLocalDevelopmentApiKey, resolveLocalDevelopmentApiKeyPolicy } = await import("../src/auth/local-development-key.ts");
 const { configureAdminAuthForListener, configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } =
-  await import("../src/local_admin_auth.ts");
-const { authenticateClient } = await import("../src/auth.ts");
+  await import("../src/auth/local-admin.ts");
+const { authenticateClient } = await import("../src/auth/index.ts");
 const { getKv } = await import("../src/kv.ts");
 const kvEntry = await getKv();
 assert.ok(kvEntry);

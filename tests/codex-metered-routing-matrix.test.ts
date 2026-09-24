@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api_keys.ts";
-import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex.ts";
+import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api-keys.ts";
+import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
 import { config } from "../src/config.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { handleResponses } from "../src/responses_handler.ts";
-import { resetProviderHealthThrottleForTest } from "../src/provider_health.ts";
-import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime_config.ts";
-import { METERED_BASE_URL } from "../src/metered.ts";
+import { handleResponses } from "../src/responses-handler.ts";
+import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
+import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
+import { METERED_BASE_URL } from "../src/provider/metered.ts";
 
 type StoredEntry = {
   key: Deno.KvKey;

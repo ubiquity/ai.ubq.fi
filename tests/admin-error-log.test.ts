@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ADMIN_ERROR_BUCKET_MS, ADMIN_ERROR_LOG_PREFIX, listAdminErrorHistory, recordAdminError } from "../src/admin_error_log.ts";
+import { ADMIN_ERROR_BUCKET_MS, ADMIN_ERROR_LOG_PREFIX, listAdminErrorHistory, recordAdminError } from "../src/admin/error-log.ts";
 
 class SetOnlyKv {
   readonly writes: { key: Deno.KvKey; value: unknown; options?: { expireIn?: number } }[] = [];

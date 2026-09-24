@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mergeCodexModelPromptCacheCapabilities, normalizeCodexModelsPayload, normalizePromptCacheCapabilities } from "../src/codex_models.ts";
+import { mergeCodexModelPromptCacheCapabilities, normalizeCodexModelsPayload, normalizePromptCacheCapabilities } from "../src/models/codex-models.ts";
 
 const promptCacheEvidence = {
   version: 1,
