@@ -6,6 +6,29 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Coverage is measured per src line and branch, and no threshold is enforced yet - 2026-09-24
+
+The first real coverage measurement of `src/` came from running all three segments of `deno task test` with `--coverage`
+and merging them with `deno coverage .data/cov-main .data/cov-oss .data/cov-meas --include='^file://<repo>/src/'`: 83.4%
+lines and 82.8% branches at tip `125185c5c`, with `src/types.ts` the only source file absent because it is type-only and
+erased at runtime. Measuring one segment under-reports: `tests/oss-gateway-http.test.ts` runs under stripped
+`SURPLUS_API_KEY`/`METERED_API_KEY` with `--unstable-kv`, and `tests/usage-optimization-measurement.test.ts` runs with
+only `UOS_AI_TOKEN`/`DENO_DEPLOY_TOKEN`.
+
+The program target is 90% for both lines and branches. No gate enforces it yet; this entry records the measurement and
+its command so a later decision can add a threshold without re-deriving either. The first coverage wave
+(`tests/*-coverage.test.ts`, including `tests/cache-scope-experiment-model-coverage.test.ts`, split out of the
+kv-migration file to stay under the 1500-line test cap) moved the tree to 86.19% lines and 84.30% branches, with
+`sentinel` at 58.0% and `codex` at 82.7% holding the largest remaining gaps.
+
+Two traps found while measuring. A process-wide `fetch` stub counts unrelated background traffic: the paid-fallback
+quota refreshes schedule their own requests on timers that outlive the test that armed them (`src/provider/metered.ts`,
+`src/provider/surplus.ts`), which intermittently failed `tests/codex-account-routing-part3.test.ts` with two dispatches
+inside a zero-dispatch window, so its counters now attribute dispatches by the test's own request body. Coverage is also
+not a review: the first wave needed manual repair of nine guessed expectations, for example a JSON byte length asserted
+as 20 where `{"model_ids":["gpt-5"]}` is 23 bytes, and `listKernelUsageLimits` projecting a malformed `acme/demo/extra`
+key onto a second `acme/demo` row because `kernelPolicyRow` reads only the first two key segments.
+
 ## Filenames are kebab-case and enforced by ESLint, and `src/` is grouped by domain - 2026-09-24
 
 `check-file/filename-naming-convention` in `tools/lint/eslint.config.mjs` uses the built-in `KEBAB_CASE` naming

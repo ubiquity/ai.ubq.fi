@@ -263,9 +263,13 @@ const awaitWithRunCancellation = async <T>(promise: Promise<T>, signal: AbortSig
     return await Promise.race([
       promise,
       new Promise<typeof RUN_CANCELLED>((resolve) => {
-        const onAbort = (): void => resolve(RUN_CANCELLED);
+        const onAbort = (): void => {
+          resolve(RUN_CANCELLED);
+        };
         signal.addEventListener("abort", onAbort, { once: true });
-        removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+        removeAbortListener = () => {
+          signal.removeEventListener("abort", onAbort);
+        };
       }),
     ]);
   } finally {

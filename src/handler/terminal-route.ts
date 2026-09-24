@@ -364,6 +364,26 @@ const handleTerminalRoute = async (
       warnQuotaAccountingFailure({ route: terminalRoute ?? "inference", requestId }, error);
     }
   };
+  // A provider dispatch settles this reservation as committed; every validation,
+  // cache, idempotency, queue, and synthetic-routing path is released. A release
+  // failure answers with the quota error instead of the run result, so it stays
+  // its own step beside the inference body.
+  const releaseUsageReservation = async (runError: unknown): Promise<Response | null> => {
+    try {
+      await usageReservation?.release();
+      return null;
+    } catch (error) {
+      await bestEffortSettleKernelQuota("incomplete", "api_key_quota_accounting_error");
+      if (runError) {
+        warnQuotaAccountingFailure({ route: terminalRoute ?? "inference", requestId }, runError);
+      }
+      const quotaError = error instanceof ApiKeyQuotaDispatchError ? error : new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
+      return openaiError(quotaError.status, quotaError.message, quotaError.code, {
+        type: quotaError.errorType,
+        headers: quotaError.headers,
+      });
+    }
+  };
   const finishTerminalResponse = async (response: Response, route: string, includeQuota = false, trackKernelTerminal = false): Promise<Response> => {
     const telemetry = getResponseTelemetry(response);
     const correlated = withProviderRequestId(response, telemetry?.providerRequestId ?? null);
@@ -399,21 +419,8 @@ const handleTerminalRoute = async (
     } catch (error) {
       runError = error;
     }
-    try {
-      // A provider dispatch settles this as committed; every validation,
-      // cache, idempotency, queue, and synthetic-routing path is released.
-      await usageReservation?.release();
-    } catch (error) {
-      await bestEffortSettleKernelQuota("incomplete", "api_key_quota_accounting_error");
-      if (runError) {
-        warnQuotaAccountingFailure({ route: terminalRoute ?? "inference", requestId }, runError);
-      }
-      const quotaError = error instanceof ApiKeyQuotaDispatchError ? error : new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
-      return openaiError(quotaError.status, quotaError.message, quotaError.code, {
-        type: quotaError.errorType,
-        headers: quotaError.headers,
-      });
-    }
+    const quotaAccountingFailure = await releaseUsageReservation(runError);
+    if (quotaAccountingFailure) return quotaAccountingFailure;
     if (runError instanceof ApiKeyQuotaDispatchError) {
       await bestEffortSettleKernelQuota("incomplete", "api_key_quota_dispatch_error");
       return openaiError(runError.status, runError.message, runError.code, {
