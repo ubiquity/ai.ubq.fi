@@ -51,18 +51,14 @@ import { deepSeekChatClientOutputAllowance, deepSeekTerminalTypeForPayload } fro
 
 const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
 
-export { lithosRateLimitWait, setLithosRateLimitTestOverride } from "./lithos-rate-limits.ts";
 import {
-  lithosKeepaliveIntervalMs,
+  type LithosRateLimitWait,
   lithosPlannedWait,
   lithosSiblingModelFor,
   logLithosRateLimitFailover,
-  recordLithosFailoverModel,
-  lithosRetryJitterMs,
-  lithosWaitPolicy,
   logLithosRateLimitWait,
+  recordLithosFailoverModel,
   recordLithosRateLimitWaitMs,
-  type LithosWaitPolicy,
   waitForLithosRetry,
 } from "./lithos-rate-limits.ts";
 
@@ -334,9 +330,7 @@ export const recordLithosResponseHealth = (status: number, providerRequestId: st
 const withLithosSseKeepalive = (response: Response): Response => {
   const body = response.body;
   if (!body) return response;
-  const intervalMs = lithosKeepaliveIntervalMs();
-  const frames = intervalMs === undefined ? withSseKeepalive(body) : withSseKeepalive(body, { intervalMs });
-  return new Response(frames, { status: response.status, headers: response.headers });
+  return new Response(withSseKeepalive(body), { status: response.status, headers: response.headers });
 };
 
 /** The LithosAI seams for the shared stream writers. */
@@ -363,23 +357,16 @@ const lithosStreamAdapter: ProviderStreamAdapter = {
 };
 
 /**
- * Relays the LithosAI Chat Completions SSE stream through the shared writer,
- * wrapped with the gateway's standard `: keepalive` comment frames so a quiet
- * provider never looks like a dead connection to a client or an edge proxy.
- * The provider reports usage unconditionally - including on the trailing frame
- * whose `choices` is empty - so nothing here gates accounting on
- * `stream_options.include_usage`.
+ * Relays the served attempt as it arrives, wrapped with the gateway's standard
+ * `: keepalive` comment frames so a quiet provider never looks like a dead
+ * connection to a client or an edge proxy. The provider reports usage
+ * unconditionally - including on the trailing frame whose `choices` is empty -
+ * so nothing here gates accounting on `stream_options.include_usage`. A refusal
+ * only reaches this relay after the load-balanced sibling attempt, so it is
+ * reported with the provider's own status and code rather than held open.
  */
-/**
- * The stream writers take either the attempt that already exists or the promise
- * a deferred wait resolves with: an OK attempt is relayed, and a refusal is
- * reported in-band with the provider's own code because the stream is open.
- */
-const lithosPendingUpstream = (completion: Promise<LithosDispatchOutcome>): Promise<Response> =>
-  completion.then((outcome) => (outcome.ok ? outcome.upstream : outcome.response));
-
 const streamLithosChatCompletion = (
-  upstream: Response | Promise<Response>,
+  upstream: Response,
   providerRequestId: string | null,
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
@@ -393,14 +380,6 @@ const streamLithosChatCompletion = (
 type LithosDispatchOutcome =
   | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
   | Readonly<{ ok: false; response: Response }>;
-
-/**
- * A refusal with a waitable window hands the caller a pending completion
- * instead of waiting inline, so a streamed route can open its stream first and
- * hold the client with `: keepalive` frames while the window passes.
- */
-type LithosDispatchResult =
-  LithosDispatchOutcome | Readonly<{ ok: "pending"; completion: Promise<LithosDispatchOutcome>; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>;
 
 /** Everything one request's dispatch loop needs that never changes. */
 type LithosDispatchInput = Readonly<{
@@ -416,14 +395,10 @@ type LithosDispatchProgress = Readonly<{
   attempt: number;
   /** The tier the next attempt addresses; the sibling after a failover. */
   attemptModel: string;
+  /** Waited time spent so far, reported when the loop retries on a window. */
   waitedMs: number;
-  upstream: Response | null;
-  nextWaitMs: number;
-  nextWaitSource: string | null;
   /** A sibling tier may be tried once per request, never twice. */
   failoverAttempted: boolean;
-  /** A deferred wait has been handed to the caller's stream already. */
-  deferred: boolean;
 }>;
 
 /** One provider attempt with the route's transport hooks. */
@@ -448,22 +423,27 @@ const lithosDispatchAttempt = async (
     sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
   });
 
-/** Takes one planned wait: logged with its source, jittered, abandoned with the request. */
-const lithosTakeRateLimitWait = async (input: LithosDispatchInput, state: LithosDispatchProgress): Promise<LithosDispatchProgress> => {
-  const jitterMs = lithosRetryJitterMs();
+/**
+ * Takes one planned wait: logged with the header it came from, and abandoned
+ * with the request. Only reachable while `LITHOSAI_RATE_LIMIT_WAIT` is on.
+ */
+const lithosTakeRateLimitWait = async (
+  input: LithosDispatchInput,
+  state: LithosDispatchProgress,
+  planned: LithosRateLimitWait
+): Promise<LithosDispatchProgress> => {
   logLithosRateLimitWait({
     request_id: input.usageContext?.requestId ?? null,
     model: state.attemptModel,
     attempt: state.attempt,
-    wait_ms: state.nextWaitMs,
-    jitter_ms: jitterMs,
-    wait_source: state.nextWaitSource,
+    wait_ms: planned.waitMs,
+    wait_source: planned.source,
   });
-  await waitForLithosRetry(state.nextWaitMs + jitterMs, input.requestSignal);
-  return { ...state, nextWaitMs: 0, nextWaitSource: null };
+  await waitForLithosRetry(planned.waitMs, input.requestSignal);
+  return { ...state, waitedMs: state.waitedMs + planned.waitMs };
 };
 
-/** The outcome of the attempt the wait policy declined to wait for. */
+/** The outcome of an attempt the loop decided not to retry. */
 const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Response): Promise<LithosDispatchOutcome> => {
   const providerRequestId = getLithosProviderRequestId(upstream);
   if (input.usageContext?.responseTelemetry) input.usageContext.responseTelemetry.providerRequestId = providerRequestId;
@@ -475,19 +455,6 @@ const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Respon
   }
   return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal };
 };
-
-/** Opens the caller's stream before the wait this dispatch is about to take. */
-const lithosDeferredDispatch = (input: LithosDispatchInput, policy: LithosWaitPolicy, next: LithosDispatchProgress): LithosDispatchResult => ({
-  ok: "pending",
-  requestSignal: input.requestSignal,
-  downstreamSignal: input.downstreamSignal,
-  completion: runLithosDispatch(input, policy, next, false).then((result) => {
-    // A resumed dispatch is never allowed to defer again, so this can only be
-    // reached if that invariant breaks: fail closed.
-    if (result.ok === "pending") throw new Error("A resumed LithosAI dispatch tried to defer again.");
-    return result;
-  }),
-});
 
 /**
  * The one-time sibling failover for a refusal on the requested tier: the loop
@@ -508,79 +475,49 @@ const lithosFailoverProgress = (
     attempt: state.attempt,
   });
   recordLithosFailoverModel(input.usageContext, sibling);
-  return { ...state, upstream: null, attemptModel: sibling, failoverAttempted: true };
+  return { ...state, attemptModel: sibling, failoverAttempted: true };
 };
 
-/** One pass of the dispatch loop: a terminal result, or the next attempt. */
-type LithosDispatchStep =
-  Readonly<{ kind: "result"; result: LithosDispatchResult }> | Readonly<{ kind: "continue"; state: LithosDispatchProgress; upstream: Response | null }>;
+/** One pass: a terminal outcome, or the state the next attempt runs from. */
+type LithosDispatchPass = Readonly<{ kind: "result"; result: LithosDispatchOutcome }> | Readonly<{ kind: "retry"; state: LithosDispatchProgress }>;
 
 /**
- * One pass: takes a planned wait, dispatches the current tier, tries the
- * sibling once when the tier refuses, and either returns the attempt's outcome
- * or sets up the next pass. A refusal on this tier tries its sibling
- * immediately - the two ids are the same weights behind separate per-model
- * rate-limit buckets - and only a sibling that also refuses is waited for.
+ * One pass: a refusal on the requested tier is load-balanced once onto its
+ * sibling tier, and - only with `LITHOSAI_RATE_LIMIT_WAIT` on and a refusal
+ * that names a window the caps allow - the same model id is waited for and
+ * retried. Anything else is this pass's terminal outcome, carrying the vendor's
+ * own status and code.
  */
-const lithosDispatchStep = async (
-  input: LithosDispatchInput,
-  policy: LithosWaitPolicy,
-  state: LithosDispatchProgress,
-  upstream: Response | null,
-  allowDefer: boolean
-): Promise<LithosDispatchStep> => {
-  let current = state;
-  let attempt = upstream;
-  if (current.nextWaitMs > 0) current = await lithosTakeRateLimitWait(input, current);
-  if (attempt === null) {
-    attempt = await lithosDispatchAttempt(input.body, current.attemptModel, input.requestSignal, input.usageContext);
-    current = { ...current, attempt: current.attempt + 1 };
+const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispatchProgress): Promise<LithosDispatchPass> => {
+  const attempt = await lithosDispatchAttempt(input.body, state.attemptModel, input.requestSignal, input.usageContext);
+  const progressed: LithosDispatchProgress = { ...state, attempt: state.attempt + 1 };
+  if (attempt.status !== 429) return { kind: "result", result: await lithosAttemptOutcome(input, attempt) };
+  const failover = lithosFailoverProgress(input, progressed);
+  if (failover !== null) {
+    cancelResponseBody(attempt);
+    return { kind: "retry", state: failover };
   }
-  if (attempt.status === 429) {
-    const failover = lithosFailoverProgress(input, current);
-    if (failover !== null) {
-      cancelResponseBody(attempt);
-      return { kind: "continue", state: failover, upstream: null };
-    }
-  }
-  const planned = lithosPlannedWait(attempt, current.attempt, current.waitedMs, policy);
+  const planned = lithosPlannedWait(attempt, progressed.attempt, progressed.waitedMs);
   if (planned === null) return { kind: "result", result: await lithosAttemptOutcome(input, attempt) };
   // The refused attempt's body is never read, so it is released here rather
   // than left for the runtime to drain.
   cancelResponseBody(attempt);
-  const waitedMs = current.waitedMs + planned.waitMs;
-  recordLithosRateLimitWaitMs(input.usageContext, waitedMs);
-  const waiting: LithosDispatchProgress = { ...current, waitedMs, upstream: null, nextWaitMs: planned.waitMs, nextWaitSource: planned.source, deferred: true };
-  // The caller opens its stream first, so the wait and its retries continue
-  // behind it while `: keepalive` frames hold the client.
-  if (allowDefer && !current.deferred) return { kind: "result", result: lithosDeferredDispatch(input, policy, waiting) };
-  return { kind: "continue", state: waiting, upstream: null };
+  recordLithosRateLimitWaitMs(input.usageContext, progressed.waitedMs + planned.waitMs);
+  return { kind: "retry", state: await lithosTakeRateLimitWait(input, progressed, planned) };
 };
 
-/**
- * Dispatches until one attempt is served or the wait policy is spent. A wait is
- * taken at the top of each pass, so a caller that deferred the first one still
- * sees the same policy: the vendor's own window, capped per attempt, bounded in
- * total, and abandoned the moment the request is aborted.
- */
-const runLithosDispatch = async (
-  input: LithosDispatchInput,
-  policy: LithosWaitPolicy,
-  start: LithosDispatchProgress,
-  allowDefer: boolean
-): Promise<LithosDispatchResult> => {
+/** Dispatches until one pass is terminal; a failed wait ends the request as its own failure. */
+const runLithosDispatch = async (input: LithosDispatchInput, start: LithosDispatchProgress): Promise<LithosDispatchOutcome> => {
   let state = start;
-  let upstream: Response | null = start.upstream;
   for (;;) {
-    let step: LithosDispatchStep;
+    let pass: LithosDispatchPass;
     try {
-      step = await lithosDispatchStep(input, policy, state, upstream, allowDefer);
+      pass = await lithosDispatchPass(input, state);
     } catch (error) {
       return { ok: false, response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext) };
     }
-    if (step.kind === "result") return step.result;
-    state = step.state;
-    upstream = step.upstream;
+    if (pass.kind === "result") return pass.result;
+    state = pass.state;
   }
 };
 
@@ -594,33 +531,13 @@ const dispatchLithosUpstream = async (
   req: Request,
   body: Record<string, unknown>,
   modelRaw: string,
-  usageContext: UsageContext | undefined,
-  options: Readonly<{ streaming?: boolean; deferFirstWait?: boolean }> = {}
-): Promise<LithosDispatchResult> => {
+  usageContext: UsageContext | undefined
+): Promise<LithosDispatchOutcome> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
-  const policy = lithosWaitPolicy(options.streaming === true);
-  const input = { body, modelRaw, requestSignal, downstreamSignal, usageContext };
-  let upstream: Response;
-  try {
-    upstream = await lithosDispatchAttempt(body, modelRaw, requestSignal, usageContext);
-  } catch (error) {
-    return { ok: false, response: await respondLithosChatDispatchFailure(error, downstreamSignal, usageContext) };
-  }
   return await runLithosDispatch(
-    input,
-    policy,
-    {
-      attempt: 1,
-      attemptModel: modelRaw,
-      waitedMs: 0,
-      upstream,
-      nextWaitMs: 0,
-      nextWaitSource: null,
-      failoverAttempted: false,
-      deferred: false,
-    },
-    options.deferFirstWait === true
+    { body, modelRaw, requestSignal, downstreamSignal, usageContext },
+    { attempt: 0, attemptModel: modelRaw, waitedMs: 0, failoverAttempted: false }
   );
 };
 
@@ -677,22 +594,7 @@ export const handleLithosChatCompletions = async (
     reasoning,
   });
 
-  const dispatched = await dispatchLithosUpstream(req, lithosBody, modelRaw, usageContext, {
-    streaming: clientWantsStream,
-    deferFirstWait: clientWantsStream,
-  });
-  if (dispatched.ok === "pending") {
-    // The stream opens before the retried attempt exists, so the client keeps
-    // its turn on `: keepalive` frames instead of receiving a refusal.
-    return streamLithosChatCompletion(
-      lithosPendingUpstream(dispatched.completion),
-      null,
-      usageContext,
-      dispatched.downstreamSignal,
-      dispatched.requestSignal,
-      upstreamModel
-    );
-  }
+  const dispatched = await dispatchLithosUpstream(req, lithosBody, modelRaw, usageContext);
   if (!dispatched.ok) return dispatched.response;
   const { upstream, requestSignal, downstreamSignal } = dispatched;
   const providerRequestId = dispatched.providerRequestId;
@@ -847,7 +749,7 @@ const finalizeBufferedLithosResponses = async (
  * frames every other gateway stream carries.
  */
 const streamLithosResponses = (
-  upstream: Response | Promise<Response>,
+  upstream: Response,
   requestedModel: string,
   responseId: string,
   createdAtSeconds: number,
@@ -930,31 +832,7 @@ export const handleLithosResponses = async (
     reasoning: reasoningLabel,
   });
 
-  const dispatched = await dispatchLithosUpstream(req, chatBody, modelRaw, usageContext, {
-    streaming: clientWantsStream,
-    deferFirstWait: clientWantsStream,
-  });
-  if (dispatched.ok === "pending") {
-    // Same contract as the Chat route: the translated sequence begins once the
-    // retried attempt exists, and `: keepalive` frames cover the wait.
-    return streamLithosResponses(
-      lithosPendingUpstream(dispatched.completion),
-      modelRaw,
-      `resp_${crypto
-        .randomUUID()
-        .replace(/[^A-Za-z0-9]/g, "")
-        .slice(0, 40)}`,
-      Math.floor(Date.now() / 1000),
-      echo,
-      toolNames,
-      customToolNames,
-      null,
-      usageContext,
-      dispatched.downstreamSignal,
-      dispatched.requestSignal,
-      upstreamModel
-    );
-  }
+  const dispatched = await dispatchLithosUpstream(req, chatBody, modelRaw, usageContext);
   if (!dispatched.ok) return dispatched.response;
   const { upstream, requestSignal, downstreamSignal } = dispatched;
   const providerRequestId = dispatched.providerRequestId;

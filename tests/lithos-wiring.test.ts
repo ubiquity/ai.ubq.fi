@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/provider/lithos.ts";
-import { lithosRateLimitWait, setLithosRateLimitTestOverride } from "../src/provider/lithos-handlers.ts";
+import { LITHOS_RATE_LIMIT_WAIT_ENV, lithosRateLimitWait } from "../src/provider/lithos-rate-limits.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { handleResponses } from "../src/responses-handler.ts";
 import { handleChatCompletions } from "../src/chat/envelope.ts";
@@ -150,6 +150,13 @@ const usageContext = (requestId: string) => ({
   startedAtMs: Date.now(),
   startedAtMonotonicMs: performance.now(),
 });
+
+/** The vendor's own refusal shape for a saturated budget, with its retry hint. */
+const lithosRateLimitRefusal = (retryAfterMs: string): Response =>
+  Response.json(
+    { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+    { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": retryAfterMs } }
+  );
 
 /** One recorded buffered Chat completion, shaped like the vendor's wire. */
 const lithosCompletion = (message: Record<string, unknown>): Record<string, unknown> => ({
@@ -730,33 +737,44 @@ Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's
   });
 });
 
-Deno.test("lithos wiring: a refusal that outlives the sibling failover is waited out on the sibling's own bucket", async () => {
-  // A streamed wait is held open by `: keepalive` frames; shortening the
-  // interval and the budgets keeps the fixture fast without changing behavior.
-  setLithosRateLimitTestOverride({ keepaliveIntervalMs: 5, streamTotalWaitCapMs: 5_000 });
-  try {
-    await withLithosKey(async () => {
-      const message = [{ role: "user", content: "hi" }];
-      const refusal = () =>
-        Response.json(
-          { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
-          {
-            status: 429,
-            headers: {
-              "Content-Type": "application/json",
-              "x-ratelimit-limit-requests": "60",
-              "x-ratelimit-remaining-requests": "0",
-              "x-ratelimit-reset-requests": "1s",
-              "x-ratelimit-limit-tokens": "4000000",
-              "x-ratelimit-remaining-tokens": "0",
-              "x-ratelimit-reset-tokens": "0.02s",
-              "retry-after-ms": "5",
-            },
-          }
-        );
+Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", async () => {
+  await withLithosKey(async () => {
+    const message = [{ role: "user", content: "hi" }];
+    const refusal = () =>
+      Response.json(
+        { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+        { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-ratelimit-reset-tokens": "0.02s" } }
+      );
+    const chat = await withUpstream(refusal, () =>
+      handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-relay"))
+    );
 
-      // Both tiers refuse once: the sibling is tried first, and its own window
-      // is then waited out. Only the third dispatch is served.
+    // The requested tier, then its sibling: two dispatches, no wait, and the
+    // vendor's own refusal reaches the client unchanged.
+    assert.equal(chat.calls.length, 2, "one load-balance attempt and no wait");
+    assert.equal(chat.calls[0].body.model, LITHOS_MODEL);
+    assert.equal(chat.calls[1].body.model, LITHOS_SIBLING_MODEL);
+    assert.equal(chat.result.status, 429);
+    const body = (await chat.result.json()) as { error?: { code?: string } };
+    assert.equal(body.error?.code, "rate_limit_exceeded");
+    const telemetry = getResponseTelemetry(chat.result);
+    if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
+    assert.equal(telemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+    assert.equal(telemetry.rateLimitWaitMs, null, "no wait is taken by default");
+    assert.equal(telemetry.streamTerminalType, "response.failed");
+  });
+});
+
+Deno.test("lithos wiring: with the wait switch on, a refusal is waited out and retried on the sibling tier", async () => {
+  await withLithosKey(async () => {
+    Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
+    try {
+      const message = [{ role: "user", content: "hi" }];
+
+      const refusal = () => lithosRateLimitRefusal("5");
+
+      // Both tiers refuse once: the sibling is tried first, and the window its
+      // own headers name is then waited out. Only the third dispatch is served.
       const chat = await withUpstream(
         (_call, calls) => (calls.length <= 2 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }))),
         () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-chat"))
@@ -776,9 +794,134 @@ Deno.test("lithos wiring: a refusal that outlives the sibling failover is waited
       if (chatTelemetry === null) throw new Error("the chat terminal carries no telemetry");
       assert.equal(chatTelemetry.streamTerminalType, "response.completed");
       assert.equal(chatTelemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+      const waited = chatTelemetry.rateLimitWaitMs;
+      assert.equal(typeof waited, "number", "the absorbed wait is reported on the terminal");
+      assert.ok((waited ?? 0) > 0, "the absorbed wait total is positive");
+    } finally {
+      Deno.env.delete(LITHOS_RATE_LIMIT_WAIT_ENV);
+    }
+  });
+});
 
-      // The streamed Responses route retries the same way: the client's first
-      // frame is the completed translation, never the refusal.
+Deno.test("lithos wiring: the wait switch stops at its dispatch cap and relays the refusal", async () => {
+  await withLithosKey(async () => {
+    Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
+    try {
+      const message = [{ role: "user", content: "hi" }];
+      const refusal = () => lithosRateLimitRefusal("4");
+      const chat = await withUpstream(refusal, () =>
+        handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-cap"))
+      );
+
+      // Three dispatches is the whole budget: the refusal is then relayed with
+      // the vendor's own status and code.
+      assert.equal(chat.calls.length, 3, `the dispatch cap ends the retries (saw ${chat.calls.length})`);
+      assert.equal(chat.result.status, 429);
+      const body = (await chat.result.json()) as { error?: { code?: string } };
+      assert.equal(body.error?.code, "rate_limit_exceeded");
+    } finally {
+      Deno.env.delete(LITHOS_RATE_LIMIT_WAIT_ENV);
+    }
+  });
+});
+
+Deno.test("lithos wiring: a refusal naming no waitable window is relayed even with the switch on", async () => {
+  await withLithosKey(async () => {
+    Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
+    try {
+      const message = [{ role: "user", content: "hi" }];
+      const beyondCap = await withUpstream(
+        () =>
+          Response.json(
+            { error: { message: "Rate limit exceeded for requests.", type: "requests", code: "rate_limit_exceeded" } },
+            { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "90000" } }
+          ),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_BASE_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-toolong"))
+      );
+      // A window beyond the per-attempt cap is never waited for: a silent hold
+      // that long would outlive the client's own request timeout.
+      assert.equal(beyondCap.calls.length, 1, "no dispatch is spent on a window the caps refuse");
+      assert.equal(beyondCap.result.status, 429);
+
+      const noHints = await withUpstream(
+        () =>
+          Response.json(
+            { error: { message: "Rate limit exceeded for requests.", type: "requests", code: "rate_limit_exceeded" } },
+            { status: 429, headers: { "Content-Type": "application/json" } }
+          ),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_BASE_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-nohints"))
+      );
+      assert.equal(noHints.calls.length, 1, "a refusal naming no window is relayed rather than guessed at");
+      assert.equal(noHints.result.status, 429);
+    } finally {
+      Deno.env.delete(LITHOS_RATE_LIMIT_WAIT_ENV);
+    }
+  });
+});
+
+Deno.test("lithos wiring: a cancelled request stops waiting for the provider window", async () => {
+  await withLithosKey(async () => {
+    Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
+    try {
+      const controller = new AbortController();
+      const request = new Request("https://ai.ubq.fi/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: LITHOS_BASE_MODEL, messages: [{ role: "user", content: "hi" }], stream: false }),
+        signal: controller.signal,
+      });
+      setTimeout(() => {
+        controller.abort(new DOMException("The client cancelled.", "AbortError"));
+      }, 25);
+
+      const { result, calls } = await withUpstream(
+        () =>
+          Response.json(
+            { error: { message: "Rate limit exceeded for requests.", type: "requests", code: "rate_limit_exceeded" } },
+            { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
+          ),
+        () => handleChatCompletions(request, usageContext("lithos-429-wait-cancel"))
+      );
+
+      // The wait is abandoned at once: no second dispatch, and the caller's own
+      // cancellation identity is what comes back.
+      assert.equal(calls.length, 1, "an aborted wait dispatches nothing further");
+      assert.equal(result.status, 499);
+      const body = (await result.json()) as { error?: { code?: string } };
+      assert.equal(body.error?.code, "request_cancelled");
+    } finally {
+      Deno.env.delete(LITHOS_RATE_LIMIT_WAIT_ENV);
+    }
+  });
+});
+
+Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a status instead of held open", async () => {
+  await withLithosKey(async () => {
+    const refusal = () =>
+      Response.json(
+        { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+        { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
+      );
+    const streamed = await withUpstream(refusal, async () => {
+      const response = await handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }), usageContext("lithos-429-stream-relay"));
+      return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+    });
+
+    // No wait, no opened stream: the refusal keeps the provider's own status
+    // and code, so the client can decide for itself.
+    assert.equal(streamed.calls.length, 2, "the requested tier, then its sibling");
+    assert.equal(streamed.result.status, 429);
+    assert.match(streamed.result.text, /rate_limit_exceeded/);
+    assert.doesNotMatch(streamed.result.text, /event: response\./);
+    assert.doesNotMatch(streamed.result.text, /keepalive/);
+  });
+});
+
+Deno.test("lithos wiring: with the wait switch on, a streamed retry runs before the stream opens", async () => {
+  await withLithosKey(async () => {
+    Deno.env.set(LITHOS_RATE_LIMIT_WAIT_ENV, "1");
+    try {
+      const refusal = () => lithosRateLimitRefusal("5");
       const retryStreamBody = `${sseBody([
         {
           id: "chatcmpl-lithos-retry",
@@ -818,134 +961,24 @@ Deno.test("lithos wiring: a refusal that outlives the sibling failover is waited
             responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
             usageContext("lithos-429-wait-responses")
           );
-          // The retry runs behind the open stream, so the body is read while the
-          // recorded fetch is still installed.
           return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
         }
       );
-      // A streamed refusal now opens the stream first and retries behind it, so
-      // the client sees `: keepalive` frames - never an error - while it waits.
+
       assert.equal(streamed.result.status, 200);
-      const text = streamed.result.text;
-      assert.equal(streamed.calls.length, 3, `the streamed route fails over, then waits, behind the open stream (saw ${streamed.calls.length})`);
+      assert.equal(streamed.calls.length, 3, `the streamed route fails over, then waits (saw ${streamed.calls.length})`);
       assert.equal(streamed.calls[1].body.model, LITHOS_SIBLING_MODEL);
-      assert.match(text, /: keepalive/);
-      assert.match(text, /after-retry/);
-      assert.match(text, /event: response.completed/);
-      assert.doesNotMatch(text, /rate_limit_exceeded/);
+      assert.match(streamed.result.text, /after-retry/);
+      assert.match(streamed.result.text, /event: response.completed/);
+      assert.doesNotMatch(streamed.result.text, /rate_limit_exceeded/);
       const streamedTelemetry = streamed.result.telemetry;
       if (streamedTelemetry === null) throw new Error("the streamed terminal carries no telemetry");
       assert.equal(streamedTelemetry.streamTerminalType, "response.completed");
       const waited = streamedTelemetry.rateLimitWaitMs;
-      assert.equal(typeof waited, "number", "an absorbed wait is reported on the terminal");
+      assert.equal(typeof waited, "number", "the absorbed wait is reported on the terminal");
       assert.ok((waited ?? 0) > 0, "the absorbed wait total is positive");
-    });
-  } finally {
-    setLithosRateLimitTestOverride(null);
-  }
-});
-
-Deno.test("lithos wiring: a cancelled request stops waiting for the provider window", async () => {
-  await withLithosKey(async () => {
-    const controller = new AbortController();
-    const request = new Request("https://ai.ubq.fi/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: LITHOS_BASE_MODEL, messages: [{ role: "user", content: "hi" }], stream: false }),
-      signal: controller.signal,
-    });
-    setTimeout(() => {
-      controller.abort(new DOMException("The client cancelled.", "AbortError"));
-    }, 25);
-
-    const { result, calls } = await withUpstream(
-      () =>
-        Response.json(
-          { error: { message: "Rate limit exceeded for requests.", type: "requests", code: "rate_limit_exceeded" } },
-          { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
-        ),
-      () => handleChatCompletions(request, usageContext("lithos-429-wait-cancel"))
-    );
-
-    // The wait is abandoned at once: no second dispatch, and the caller's own
-    // cancellation identity is what comes back.
-    assert.equal(calls.length, 1, "an aborted wait dispatches nothing further");
-    assert.equal(result.status, 499);
-    const body = (await result.json()) as { error?: { code?: string } };
-    assert.equal(body.error?.code, "request_cancelled");
+    } finally {
+      Deno.env.delete(LITHOS_RATE_LIMIT_WAIT_ENV);
+    }
   });
-});
-
-Deno.test("lithos wiring: a streamed refusal that outlasts the wait budget fails in-band, not as a status", async () => {
-  // A five-minute budget cannot be spent in a fixture, so the policy is
-  // shrunk: three dispatches of a five-millisecond window, ten milliseconds of
-  // total budget, and the fourth refusal ends the already-open stream.
-  setLithosRateLimitTestOverride({ perAttemptCapMs: 20, streamTotalWaitCapMs: 10, maxDispatches: 3, keepaliveIntervalMs: 5 });
-  try {
-    await withLithosKey(async () => {
-      const streamed = await withUpstream(
-        () =>
-          Response.json(
-            { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
-            { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5" } }
-          ),
-        async () => {
-          const response = await handleResponses(
-            responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
-            usageContext("lithos-stream-budget-exhausted")
-          );
-          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
-        }
-      );
-
-      // The stream opened before the wait, so the refusal travels as a terminal
-      // event carrying the provider's own code instead of an HTTP status.
-      assert.equal(streamed.result.status, 200);
-      const text = streamed.result.text;
-      assert.equal(streamed.calls.length, 3, `the attempt budget stops the retries (saw ${streamed.calls.length})`);
-      assert.match(text, /: keepalive/);
-      assert.match(text, /event: response.failed/);
-      assert.match(text, /rate_limit_exceeded/);
-      assert.doesNotMatch(text, /event: response.completed/);
-      const exhaustedTelemetry = streamed.result.telemetry;
-      if (exhaustedTelemetry === null) throw new Error("the streamed terminal carries no telemetry");
-      assert.equal(exhaustedTelemetry.streamTerminalType, "response.failed");
-    });
-  } finally {
-    setLithosRateLimitTestOverride(null);
-  }
-});
-
-Deno.test("lithos wiring: a client that cancels during a streamed wait stops it without another dispatch", async () => {
-  setLithosRateLimitTestOverride({ keepaliveIntervalMs: 5, streamTotalWaitCapMs: 60_000 });
-  try {
-    await withLithosKey(async () => {
-      const controller = new AbortController();
-      const request = new Request("https://ai.ubq.fi/v1/responses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: LITHOS_BASE_MODEL, input: "hi", stream: true }),
-        signal: controller.signal,
-      });
-      setTimeout(() => {
-        controller.abort(new DOMException("The client cancelled.", "AbortError"));
-      }, 20);
-
-      const streamed = await withUpstream(
-        () =>
-          Response.json(
-            { error: { message: "rate limit exceeded", type: "input_tokens", code: "rate_limit_exceeded" } },
-            { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
-          ),
-        () => handleResponses(request, usageContext("lithos-stream-wait-cancel"))
-      );
-
-      assert.equal(streamed.result.status, 200);
-      const text = await streamed.result.text();
-      assert.equal(streamed.calls.length, 1, `an aborted wait dispatches nothing further (saw ${streamed.calls.length})`);
-      assert.doesNotMatch(text, /event: response\.(completed|failed)/);
-    });
-  } finally {
-    setLithosRateLimitTestOverride(null);
-  }
 });
