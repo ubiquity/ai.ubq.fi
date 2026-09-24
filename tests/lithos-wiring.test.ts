@@ -20,8 +20,8 @@ const LITHOS_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-ultra";
 const KIMI_MODEL = "moonshotai/Kimi-K3";
 /** A tier with no configured sibling, so failover never changes its fixtures. */
 const LITHOS_BASE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
-/** The Ultra tier's sibling: same weights, its own rate-limit bucket. */
-const LITHOS_SIBLING_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat";
+/** The Ultra tier's sibling: same weights, its own rate-limit bucket, and the long-context-safe target. */
+const LITHOS_SIBLING_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-fast";
 
 const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
 
