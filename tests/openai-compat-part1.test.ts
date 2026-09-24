@@ -1099,7 +1099,7 @@ Deno.test("openai: the admin debug routing endpoint accepts the codex_503 scenar
   // The operator surface is the point of the feature: a scenario that the
   // endpoint rejects is not usable. setDebugRoutingConfig validates against the
   // SCENARIOS set, so this also proves the new member reached that set.
-  const { handleAdminDebugRouting } = await import("../src/admin.ts");
+  const { handleAdminDebugRouting } = await import("../src/admin/index.ts");
   const debugKey = keyToString(DEBUG_ROUTING_KEY);
   try {
     const response = await handleAdminDebugRouting(

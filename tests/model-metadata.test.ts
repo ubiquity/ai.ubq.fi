@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 
-import { CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT } from "../src/recent_model_context.ts";
+import { CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT } from "../src/recent-model-context.ts";
 import {
   CODEX_SUBSCRIPTION_CONTEXT_WINDOW_TOKENS,
   CODEX_SUBSCRIPTION_MAX_CONTEXT_WINDOW_TOKENS,
   codexSubscriptionMetadataHint,
-} from "../src/model_metadata.ts";
-import { codexSnapshotMetadataHint, resolveModelMetadata } from "../src/model_metadata.ts";
-import type { OpenRouterModelMetadata } from "../src/openrouter_models.ts";
+} from "../src/models/metadata.ts";
+import { codexSnapshotMetadataHint, resolveModelMetadata } from "../src/models/metadata.ts";
+import type { OpenRouterModelMetadata } from "../src/models/openrouter-models.ts";
 
 const enrichment = (overrides: Partial<OpenRouterModelMetadata> = {}): OpenRouterModelMetadata => ({
   id: "openai/gpt-5.6-sol",

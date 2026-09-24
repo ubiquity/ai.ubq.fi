@@ -63,7 +63,7 @@ Deno.test("inference handler omits synthetic quota headers for passkey sessions"
   });
 
   await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
-    const { default: handler } = await import("../src/handler.ts");
+    const { default: handler } = await import("../src/handler/index.ts");
     for (const path of ["/v1/responses", "/v1/chat/completions"]) {
       const response = await handler(
         new Request(`https://ai.ubq.fi${path}`, {
@@ -109,7 +109,7 @@ Deno.test("passkey inference does not read a retained Metered snapshot", async (
   });
 
   await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
-    const { default: handler } = await import("../src/handler.ts");
+    const { default: handler } = await import("../src/handler/index.ts");
     setKvGetDelayMs(10);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -161,7 +161,7 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
     });
   try {
     await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
-      const { default: handler } = await import("../src/handler.ts");
+      const { default: handler } = await import("../src/handler/index.ts");
       let cancelTimeout = (): void => {};
       try {
         const response = await Promise.race([
@@ -236,7 +236,7 @@ Deno.test("passkey session authenticates as client and admin", async () => {
 Deno.test("admin passkey sessions cannot read the super-admin Stage 0 diagnostic", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(
     new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", {
       headers: { Authorization: `Bearer ${token}` },
@@ -558,7 +558,7 @@ Deno.test("passkey RP ID ignores opaque origins", () => {
 
 Deno.test("passkey registration start requires admin proof", async () => {
   kvStore.clear();
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
 
   const response = await handler(
     new Request("https://ai.ubq.fi/api/auth/register/start", {
@@ -576,7 +576,7 @@ Deno.test("passkey registration start requires admin proof", async () => {
 Deno.test("passkey registration start can use an existing passkey session", async () => {
   kvStore.clear();
   const { token, user } = seedPasskeySession();
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
 
   const response = await handler(
     new Request("https://ai.ubq.fi/api/auth/register/start", {
@@ -667,7 +667,7 @@ Deno.test("passkey registration start rejects session claims for another user ha
   };
   kvStore.set(keyToString(passkeyUserKey(otherUser.id)), otherUser);
   kvStore.set(keyToString(passkeyHandleKey(otherUser.handle)), otherUser.id);
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
 
   const response = await handler(
     new Request("https://ai.ubq.fi/api/auth/register/start", {
@@ -907,7 +907,7 @@ Deno.test("audience-bound relay cookies authenticate auth checks and admin actio
     assert.equal(adminAuth.token, token);
   }
 
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const encodedAudience = encodeURIComponent(audienceOrigin);
   const authCheck = await handler(new Request(`https://ai.ubq.fi/uos/auth?cors_origin=${encodedAudience}`, { headers: { Cookie: cookie } }));
   assert.equal(authCheck.status, 200);
@@ -952,7 +952,7 @@ Deno.test("relay logout clears the audience cookie and bound server session", as
 });
 
 Deno.test("credentialed CORS reflects only exact trusted relay origins", async () => {
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   for (const audienceOrigin of [
     "https://ai-ubq-fi-cv5fc93pzb5a.deno.dev",
     "https://p-ai-ubq-fi.ubiquity-dao.deno.net",
@@ -1172,7 +1172,7 @@ Deno.test("passkey credential sign count update rejects concurrent writes", asyn
 Deno.test("passkey logout deletes the cached session", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession("uos_ai_session_logout");
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
 
   const response = await handler(
     new Request("https://ai.ubq.fi/api/auth/logout", {
@@ -1303,7 +1303,7 @@ Deno.test("relay passkey cookies survive an unattested GitHub bearer on /uos/aut
       assert.equal(adminResult.token, passkeyToken);
     }
 
-    const { default: handler } = await import("../src/handler.ts");
+    const { default: handler } = await import("../src/handler/index.ts");
     const response = await handler(request());
     assert.equal(response.status, 200);
     const body = await response.json();

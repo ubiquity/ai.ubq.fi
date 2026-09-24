@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { normalizeCerebrasChatCompletion } from "../src/cerebras.ts";
+import { normalizeCerebrasChatCompletion } from "../src/provider/cerebras.ts";
 
 const completion = (usage: unknown): Record<string, unknown> => ({
   id: "chatcmpl-cerebras-1",

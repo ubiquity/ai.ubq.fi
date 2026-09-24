@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { pruneReleases } from "../release_retention.ts";
+import { pruneReleases } from "../release-retention.ts";
 
 const FIXTURE_PARENT = fileURLToPath(new URL("../../.cleanup-evidence/release-retention-fixtures", import.meta.url));
 

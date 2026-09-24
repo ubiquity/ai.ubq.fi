@@ -15,7 +15,7 @@
  * reuses the gateway's own matcher for the "could enrichment close this gap?"
  * column, so the report cannot disagree with the resolver.
  */
-import { matchOpenRouterModel, openRouterModelsFromPayload, type OpenRouterModelMetadata } from "../src/openrouter_models.ts";
+import { matchOpenRouterModel, openRouterModelsFromPayload, type OpenRouterModelMetadata } from "../src/models/openrouter-models.ts";
 
 const DEFAULT_BASE_URL = "https://ai.ubq.fi";
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";

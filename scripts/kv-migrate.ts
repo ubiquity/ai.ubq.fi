@@ -9,7 +9,7 @@ import {
   parseKvMigrationEntryLine,
   safeKvMigrationValueType,
   validateKvMigrationTarget,
-} from "../src/kv_migration.ts";
+} from "../src/cache/kv-migration.ts";
 
 // Parsed CLI flags. Index access can miss -- the lint project does not enable
 // noUncheckedIndexedAccess -- so a value is possibly `undefined`; `hasFlag`

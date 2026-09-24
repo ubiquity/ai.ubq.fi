@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 
-import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
+import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { createOptionalTelemetryQueue } from "../src/optional_telemetry_queue.ts";
+import { createOptionalTelemetryQueue } from "../src/optional-telemetry-queue.ts";
 import {
   closeOptionalPromptCacheAnalytics,
   enqueuePromptCacheAnalytics,
@@ -13,8 +13,8 @@ import {
   recordPromptCacheAnalytics,
   resetOptionalPromptCacheAnalyticsForTest,
   writePromptCacheAnalyticsQueueEntry,
-} from "../src/prompt_cache_analytics.ts";
-import { CountingKv } from "./helpers/counting_kv.ts";
+} from "../src/cache/prompt-analytics.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 
 // The counting KV applies atomic `sum` mutations with `new Deno.KvU64(...)`,
 // and the runtime global is not guaranteed to exist. Every existing suite that

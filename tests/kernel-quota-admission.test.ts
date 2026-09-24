@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
-import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api_keys.ts";
+import { apiKeyHashKey, apiKeyIdKey, PAID_FALLBACK_NO_LIMIT } from "../src/api-keys.ts";
 import {
   type ApiKeyPolicy,
   apiKeyPolicyFromHashRecord,
   apiKeyUsageV3RequestKey,
   apiKeyUsageV3WindowKey,
   resetApiKeyPolicyCacheForTest,
-} from "../src/api_key_policy.ts";
-import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../src/deepseek.ts";
-import { KERNEL_ORG_RESERVATION_V2_PREFIX, type KernelQuotaReservationRowV2, type KernelQuotaWindowV2, kernelOrgWindowKey } from "../src/kernel_quota_v2.ts";
+} from "../src/api-key-policy.ts";
+import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../src/deepseek/index.ts";
+import { KERNEL_ORG_RESERVATION_V2_PREFIX, type KernelQuotaReservationRowV2, type KernelQuotaWindowV2, kernelOrgWindowKey } from "../src/kernel/quota-v2.ts";
 import { setKvForTest } from "../src/kv.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 import { sha256Base64Url } from "../src/utils.ts";
-import { CountingKv } from "./helpers/counting_kv.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 
 /**
  * Handler settlement for a caller that leaves during the awaited quota/setup
@@ -251,9 +251,9 @@ Deno.test({
     const { policy } = await seedApiKey(kv, token, nowMs);
     const kernelToken = await installKernelPublicKey(kv, token);
     Deno.env.set("DEEPSEEK_API_KEY", "kernel-quota-admission-dummy-key");
-    const { default: handler } = await import("../src/handler.ts");
-    const { setInferenceAdmissionControllerForTest } = await import("../src/handler_admission.ts");
-    const { createInferenceAdmissionController } = await import("../src/inference_admission.ts");
+    const { default: handler } = await import("../src/handler/index.ts");
+    const { setInferenceAdmissionControllerForTest } = await import("../src/handler/admission.ts");
+    const { createInferenceAdmissionController } = await import("../src/inference-admission.ts");
     const controller = createInferenceAdmissionController({ maxActive: 4, maxWaiting: 2, maxQueueWaitMs: 500 });
     setInferenceAdmissionControllerForTest(controller);
     setKvForTest(kv as unknown as Deno.Kv);

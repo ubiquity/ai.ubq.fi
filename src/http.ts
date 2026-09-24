@@ -1,6 +1,6 @@
-import { parseTrustedAuthRelayOrigin } from "./auth_relay.ts";
+import { parseTrustedAuthRelayOrigin } from "./auth/relay.ts";
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
-import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
+import { CEREBRAS_RATE_LIMIT_HEADERS } from "./provider/cerebras-rate-limits.ts";
 
 export const STANDARD_RATE_LIMIT_HEADERS = ["RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"] as const;
 

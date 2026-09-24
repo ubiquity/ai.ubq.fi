@@ -68,7 +68,7 @@ Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub 
   const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
   const { token, user } = seedPasskeySession("uos_ai_session_lifecycle_cookie", { audienceOrigin });
   const githubToken = "ghp_stale_lifecycle_fixture";
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const headers = {
     Authorization: `Bearer ${githubToken}`,
     Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
@@ -109,7 +109,7 @@ Deno.test("passkey lifecycle handlers preserve configured bearer precedence", as
     const configuredTokens = configuredKind === "client" ? (config.authTokens as Set<string>) : (config.adminTokens as Set<string>);
     configuredTokens.add(configuredToken);
     try {
-      const { default: handler } = await import("../src/handler.ts");
+      const { default: handler } = await import("../src/handler/index.ts");
       const headers = {
         Authorization: `Bearer ${configuredToken}`,
         Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
@@ -146,7 +146,7 @@ Deno.test("passkey logout preserves valid bearer precedence over a relay cookie"
   const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
   const { token: bearerToken } = seedPasskeySession("uos_ai_session_bearer_precedence");
   const { token: cookieToken } = seedPasskeySession("uos_ai_session_cookie_secondary", { audienceOrigin });
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   const response = await handler(
     new Request("https://ai.ubq.fi/api/auth/logout", {
       method: "POST",

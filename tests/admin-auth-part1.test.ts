@@ -30,7 +30,7 @@ import {
 } from "./helpers/admin-auth-harness.ts";
 
 Deno.test("subscription reset settings require admin authentication", async () => {
-  const { default: handler } = await import("../src/handler.ts");
+  const { default: handler } = await import("../src/handler/index.ts");
   for (const method of ["GET", "PATCH"]) {
     const response = await handler(new Request("http://localhost/admin/providers/codex/banked-resets", { method }));
     assert.equal(response.status, 401);

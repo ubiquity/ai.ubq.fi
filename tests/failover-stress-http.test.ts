@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { PAID_FALLBACK_NO_LIMIT } from "../src/api_keys.ts";
+import { PAID_FALLBACK_NO_LIMIT } from "../src/api-keys.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, PaidFallbackRequestV3 } from "../src/types.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 
@@ -68,7 +68,7 @@ Deno.test({
       Deno.env.set("METERED_API_KEY", "metered-real-http-stress-key");
       Deno.env.delete("SURPLUS_API_KEY");
       const { setKvForTest } = await import("../src/kv.ts");
-      const { fetchMeteredModels, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
+      const { fetchMeteredModels, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/provider/metered.ts");
       const { config } = await import("../src/config.ts");
       setKvForTest(kv);
       originalDeployFlag = config.isDeploy;
@@ -295,11 +295,11 @@ Deno.test({
         return originalFetch(input, init);
       };
 
-      const { default: handler } = await import("../src/handler.ts");
-      const { createServeHandler } = await import("../src/serve_handler.ts");
+      const { default: handler } = await import("../src/handler/index.ts");
+      const { createServeHandler } = await import("../src/handler/serve-handler.ts");
       (config as { isDeploy: boolean }).isDeploy = true;
-      const { reconcileDuePaidFallbacksV3 } = await import("../src/paid_fallback_ledger_backfill.ts");
-      const { paidFallbackWindowV3Key } = await import("../src/paid_fallback_ledger_state.ts");
+      const { reconcileDuePaidFallbacksV3 } = await import("../src/paid-fallback/ledger-backfill.ts");
+      const { paidFallbackWindowV3Key } = await import("../src/paid-fallback/ledger-state.ts");
       const requestPrefix = ["uos_ai", "paid_fallback", "v3", "request", keyId] as const;
       const pendingPrefix = ["uos_ai", "paid_fallback", "v3", "pending", keyId] as const;
       gatewayServer = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));
@@ -450,7 +450,7 @@ Deno.test({
       releaseMeteredResponses();
       globalThis.fetch = originalFetch;
       const { setKvForTest } = await import("../src/kv.ts");
-      const { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
+      const { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/provider/metered.ts");
       const { config } = await import("../src/config.ts");
       setKvForTest(null);
       setMeteredModelsFetchForTest(null);

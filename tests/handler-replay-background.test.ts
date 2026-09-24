@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
-import { persistInferenceExceptionReplay } from "../src/handler_terminal_route.ts";
+import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
+import { persistInferenceExceptionReplay } from "../src/handler/terminal-route.ts";
 
 type TerminalLogInput = Parameters<typeof withTerminalRequestLog>[1];
 type ReplayInput = NonNullable<TerminalLogInput["sentinelReplayInput"]>;

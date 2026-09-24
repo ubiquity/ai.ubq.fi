@@ -9,7 +9,7 @@ import {
   isCodexAuthCandidateUsable,
   planCodexAuthRepair,
   rankCodexAuthCandidates,
-} from "../src/codex_auth_repair.ts";
+} from "../src/codex/auth-repair.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const NOW_MS = Date.UTC(2026, 8, 16, 18, 0, 0);

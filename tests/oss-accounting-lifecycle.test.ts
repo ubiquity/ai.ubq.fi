@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { apiKeyHashKey } from "../src/api_keys.ts";
+import { apiKeyHashKey } from "../src/api-keys.ts";
 import {
   API_KEY_USAGE_V3_RESERVATION_LEASE_MS,
   type ApiKeyPolicy,
@@ -10,13 +10,13 @@ import {
   apiKeyUsageV3RequestKey,
   apiKeyUsageV3WindowKey,
   reserveApiKeyUsageV3,
-} from "../src/api_key_policy.ts";
+} from "../src/api-key-policy.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { admitPaidFallbackV3, releaseUndispatchedPaidFallbackV3, updatePaidFallbackRequestV3 } from "../src/paid_fallback_ledger_admission.ts";
-import { settlePaidFallbackUsageV3 } from "../src/paid_fallback_ledger_settlement.ts";
-import { paidFallbackRequestV3Key, paidFallbackWindowV3Key } from "../src/paid_fallback_ledger_state.ts";
+import { admitPaidFallbackV3, releaseUndispatchedPaidFallbackV3, updatePaidFallbackRequestV3 } from "../src/paid-fallback/ledger-admission.ts";
+import { settlePaidFallbackUsageV3 } from "../src/paid-fallback/ledger-settlement.ts";
+import { paidFallbackRequestV3Key, paidFallbackWindowV3Key } from "../src/paid-fallback/ledger-state.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3, PaidFallbackRequestV3 } from "../src/types.ts";
-import { CountingKv } from "./helpers/counting_kv.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 
 /**
  * Adversarial reservation-lifecycle fixtures for the V3 API-key ledger.

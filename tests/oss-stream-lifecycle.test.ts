@@ -6,7 +6,7 @@ import {
   MAX_RESPONSES_PRECOMMIT_EVENTS,
   prepareResponsesStreamForCommit,
   responseEventFromValue,
-} from "../src/responses_failover_stream.ts";
+} from "../src/responses-failover-stream.ts";
 import {
   preflightResponsesStream,
   proxyResponsesStream,
@@ -15,7 +15,7 @@ import {
   type ResponsesStreamEvent,
   type ResponsesStreamIterator,
   withSseKeepalive,
-} from "../src/responses_stream.ts";
+} from "../src/responses-stream.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

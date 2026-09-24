@@ -4,7 +4,7 @@
 // deploy; this exists for a checkout that accumulated releases before
 // retention existed, and for a launchd agent or systemd timer that enforces the
 // bound without deploying. Run it from the repository root.
-import { pruneReleases, RELEASE_RETENTION_KEEP } from "./release_retention.ts";
+import { pruneReleases, RELEASE_RETENTION_KEEP } from "./release-retention.ts";
 
 const report = await pruneReleases();
 console.log(

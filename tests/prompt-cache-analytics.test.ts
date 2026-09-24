@@ -14,8 +14,8 @@ import {
   prunePromptCacheAnalytics,
   readPromptCacheAnalytics,
   recordPromptCacheAnalytics,
-} from "../src/prompt_cache_analytics.ts";
-import { CountingKv } from "./helpers/counting_kv.ts";
+} from "../src/cache/prompt-analytics.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {

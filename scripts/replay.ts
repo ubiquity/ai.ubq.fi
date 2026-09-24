@@ -33,13 +33,13 @@
  * whose fields are enumerated classifications and counts, never captured bytes.
  */
 
-import { consumeDeepSeekBufferedChat, consumeDeepSeekChatStream } from "./replay_chat_stream.ts";
+import { consumeDeepSeekBufferedChat, consumeDeepSeekChatStream } from "./replay-chat-stream.ts";
 import { config } from "../src/config.ts";
-import { DEEPSEEK_CHAT_COMPLETIONS_URL, DeepSeekError, fetchDeepSeekChatCompletions } from "../src/deepseek.ts";
-import { DeepSeekStreamError } from "../src/deepseek_stream.ts";
-import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/lithos.ts";
-import { fetchMeteredResponses, METERED_BASE_URL } from "../src/metered.ts";
-import { collectBufferedResponses } from "../src/responses_buffered.ts";
+import { DEEPSEEK_CHAT_COMPLETIONS_URL, DeepSeekError, fetchDeepSeekChatCompletions } from "../src/deepseek/index.ts";
+import { DeepSeekStreamError } from "../src/deepseek/stream.ts";
+import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/provider/lithos.ts";
+import { fetchMeteredResponses, METERED_BASE_URL } from "../src/provider/metered.ts";
+import { collectBufferedResponses } from "../src/responses-buffered.ts";
 
 import { MAX_ACCEPTED_JSON_BODY_BYTES } from "../src/request.ts";
 import {
@@ -49,14 +49,14 @@ import {
   responseEventFromValue,
   responseIdFromEvents,
   responsesEventSemanticKind,
-} from "../src/responses_failover_stream.ts";
+} from "../src/responses-failover-stream.ts";
 import {
   preflightResponsesStream,
   readResponsesStream,
   ResponsesStreamError,
   type ResponsesStreamEvent,
   type ResponsesStreamIterator,
-} from "../src/responses_stream.ts";
+} from "../src/responses-stream.ts";
 import {
   parseSentinelUpstreamTrace,
   SENTINEL_UPSTREAM_MAX_BYTES,
@@ -65,8 +65,8 @@ import {
   type SentinelUpstreamProvider,
   type SentinelUpstreamTerminal,
   type SentinelUpstreamTrace,
-} from "../src/sentinel_upstream_capture.ts";
-import { fetchSurplusResponses, SURPLUS_BASE_URL } from "../src/surplus.ts";
+} from "../src/sentinel/upstream-capture.ts";
+import { fetchSurplusResponses, SURPLUS_BASE_URL } from "../src/provider/surplus.ts";
 import { getString, isRecord } from "../src/utils.ts";
 import { createRecordedUpstreamReplay, type RecordedUpstreamReplay } from "../tests/helpers/sentinel-recorded-upstream.ts";
 const METADATA_FILE = ".sentinel-replay-input.json";

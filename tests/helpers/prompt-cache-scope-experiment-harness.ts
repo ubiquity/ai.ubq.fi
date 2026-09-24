@@ -144,8 +144,8 @@ const kv = new ExperimentKv();
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
 
 const { setKvForTest } = await import("../../src/kv.ts");
-const { resetCodexAuthCacheForTest, CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, storeCodexModelsSnapshot } = await import("../../src/codex.ts");
-const { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } = await import("../../src/runtime_config.ts");
+const { resetCodexAuthCacheForTest, CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, storeCodexModelsSnapshot } = await import("../../src/codex/index.ts");
+const { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } = await import("../../src/runtime-config.ts");
 const {
   PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
   PromptCacheScopeExperimentBusyError,
@@ -154,12 +154,12 @@ const {
   readPromptCacheScopeExperimentTelemetryBaseline,
   readPromptCacheScopeExperimentCompletedUsage,
   runPromptCacheScopeExperiment,
-} = await import("../../src/prompt_cache_scope_experiment.ts");
-const { promoteCodexPromptCacheScope } = await import("../../src/codex_catalog_promotion.ts");
-const { resolvePromptCacheTelemetryCounterKeys } = await import("../../src/prompt_cache_telemetry_gate.ts");
-const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../../src/provider_health.ts");
-const { loadPromptCacheScopeTargetInventory } = await import("../../src/prompt_cache_scope_targets.ts");
-const { handleAdminCodexCacheScopeExperiment, handleAdminCodexCacheScopeExperimentTelemetryBaseline } = await import("../../src/admin.ts");
+} = await import("../../src/cache/scope-experiment.ts");
+const { promoteCodexPromptCacheScope } = await import("../../src/catalog/promotion.ts");
+const { resolvePromptCacheTelemetryCounterKeys } = await import("../../src/cache/telemetry-gate.ts");
+const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../../src/provider/health.ts");
+const { loadPromptCacheScopeTargetInventory } = await import("../../src/cache/scope-targets.ts");
+const { handleAdminCodexCacheScopeExperiment, handleAdminCodexCacheScopeExperimentTelemetryBaseline } = await import("../../src/admin/index.ts");
 
 const MODEL = "gpt-5.6-cache-scope-fixture";
 const TELEMETRY_RELEASE = "0123456789abcdef0123456789abcdef01234567";

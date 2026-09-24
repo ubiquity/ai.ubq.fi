@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { apiKeyHashKey, apiKeyIdKey } from "../src/api_keys.ts";
+import { apiKeyHashKey, apiKeyIdKey } from "../src/api-keys.ts";
 import { config } from "../src/config.ts";
-import { DEBUG_ROUTING_KEY } from "../src/debug_routing.ts";
-import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
+import { DEBUG_ROUTING_KEY } from "../src/debug-routing.ts";
+import { withTerminalRequestLog } from "../src/handler/terminal-log.ts";
 import { setKvForTest } from "../src/kv.ts";
 import {
   type AcceptedSentinelReplayInput,
@@ -10,10 +10,10 @@ import {
   type ExportedSentinelReplayCapture,
   SENTINEL_REPLAY_MANIFEST_PREFIX,
   type SentinelReplayCaptureOmissionReason,
-} from "../src/sentinel_replay_capture.ts";
+} from "../src/sentinel/replay-capture.ts";
 import { base64UrlDecode, base64UrlEncode, encodeHex, sha256Base64Url } from "../src/utils.ts";
 
-const { default: handler } = await import("../src/handler.ts");
+const { default: handler } = await import("../src/handler/index.ts");
 
 const kvAvailable = typeof Deno.openKv === "function";
 

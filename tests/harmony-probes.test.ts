@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import type { HarmonyTransport } from "../src/harmony/adapter.ts";
 import { createProbeContext } from "../src/harmony/probes.ts";
-import { PROBE_SCENARIOS } from "../src/harmony/probe_scenarios.ts";
+import { PROBE_SCENARIOS } from "../src/harmony/probe-scenarios.ts";
 
 type WireMessage = Record<string, unknown> & { role: string; content?: unknown };
 

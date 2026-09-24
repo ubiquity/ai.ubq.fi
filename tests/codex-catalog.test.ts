@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 
 // This suite asserts exact fetch and KV budgets, so the event-driven maintenance
 // hooks must not run in the background while it measures them.
-const { setProviderCapacitySampleTriggerForTest } = await import("../src/provider_capacity_events.ts");
-const { setPaidFallbackTerminalSweepForTest } = await import("../src/paid_fallback.ts");
+const { setProviderCapacitySampleTriggerForTest } = await import("../src/provider/capacity-events.ts");
+const { setPaidFallbackTerminalSweepForTest } = await import("../src/paid-fallback/index.ts");
 setProviderCapacitySampleTriggerForTest(() => {});
 setPaidFallbackTerminalSweepForTest(() => {});
 
@@ -98,16 +98,17 @@ const {
   CODEX_CATALOG_MAX_VERSIONS,
   CODEX_CATALOG_PREFIX,
   CODEX_CATALOG_RETENTION_MS,
-} = await import("../src/codex_catalog_types.ts");
-const { getCodexCatalogMemoVersionsForTest, resetCodexCatalogMemoForTest, storeCodexCatalog } = await import("../src/codex_catalog_store.ts");
-const { handleCodexCatalogModels } = await import("../src/codex_catalog.ts");
-const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
-const { handleModels } = await import("../src/model_catalog.ts");
+} = await import("../src/catalog/types.ts");
+const { getCodexCatalogMemoVersionsForTest, resetCodexCatalogMemoForTest, storeCodexCatalog } = await import("../src/catalog/store.ts");
+const { handleCodexCatalogModels } = await import("../src/catalog/index.ts");
+const { resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
+const { handleModels } = await import("../src/models/catalog.ts");
 const { config } = await import("../src/config.ts");
-const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
-const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../src/surplus.ts");
-const { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest } = await import("../src/openrouter_models.ts");
-const { loadRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } = await import("../src/runtime_config.ts");
+const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } =
+  await import("../src/provider/metered.ts");
+const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../src/provider/surplus.ts");
+const { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest } = await import("../src/models/openrouter-models.ts");
+const { loadRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } = await import("../src/runtime-config.ts");
 
 const AUTH_GENERATION = "auth-generation-test";
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;

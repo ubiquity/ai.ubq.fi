@@ -13,7 +13,7 @@
  * tests substitute plain objects.
  */
 
-import { fetchCerebrasChatCompletions } from "../../src/cerebras.ts";
+import { fetchCerebrasChatCompletions } from "../../src/provider/cerebras.ts";
 
 export type ChatTransportOptions = {
   signal?: AbortSignal;

@@ -1,5 +1,5 @@
 import { parse } from "@std/yaml";
-import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "../src/openai_schema.ts";
+import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "../src/openai-schema.ts";
 
 const DEFAULT_SPEC_URL = "https://app.stainless.com/api/spec/documented/openai/openapi.documented.yml";
 

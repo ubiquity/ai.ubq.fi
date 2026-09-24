@@ -256,7 +256,7 @@ Deno.test("uos embeddings idempotency: keyed requests fail before Voyage when du
 });
 
 Deno.test("embeddings: quota dispatch failures release idempotency and promptly requeue jobs", async () => {
-  const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
+  const { ApiKeyQuotaDispatchError } = await import("../src/api-key-policy.ts");
   const idempotencyKey = `embedding-quota-dispatch-${crypto.randomUUID()}`;
   const input = `quota-dispatch-${crypto.randomUUID()}`;
   const principal = "account-quota-dispatch";

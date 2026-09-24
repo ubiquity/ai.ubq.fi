@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { apiKeyHashKey } from "../src/api_keys.ts";
+import { apiKeyHashKey } from "../src/api-keys.ts";
 import {
   API_KEY_USAGE_V3_RESERVATION_LEASE_MS,
   type ApiKeyPolicy,
@@ -9,9 +9,9 @@ import {
   apiKeyUsageV3RequestKey,
   apiKeyUsageV3WindowKey,
   reserveApiKeyUsageV3,
-} from "../src/api_key_policy.ts";
+} from "../src/api-key-policy.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
-import { CountingKv } from "./helpers/counting_kv.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 
 const storedValue = (kv: CountingKv, key: Deno.KvKey): unknown => kv.entries.get(JSON.stringify(key))?.value ?? null;
 

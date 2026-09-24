@@ -9,7 +9,7 @@
  * Harmony agent-foundation work.
  */
 
-import { CEREBRAS_GPT_OSS_120B_MODEL } from "../cerebras.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL } from "../provider/cerebras.ts";
 
 /** Exact upstream model used by every Harmony protocol probe. */
 export const HARMONY_CEREBRAS_MODEL = CEREBRAS_GPT_OSS_120B_MODEL;

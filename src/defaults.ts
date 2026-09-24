@@ -1,4 +1,4 @@
-import { API_KEY_NO_USAGE_LIMIT, USAGE_RESET_PERIOD_MS } from "./api_keys.ts";
+import { API_KEY_NO_USAGE_LIMIT, USAGE_RESET_PERIOD_MS } from "./api-keys.ts";
 
 export type ReasoningEffort = string;
 

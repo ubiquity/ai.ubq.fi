@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { handleAgentMessagesList, handleAgentMessagesPost } from "../src/agent_messages.ts";
+import { handleAgentMessagesList, handleAgentMessagesPost } from "../src/agent-messages.ts";
 
 type AgentMessage = Readonly<{
   id: string;

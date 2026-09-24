@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { BOUNDED_RESPONSE_BODY_MAX_BYTES, readBoundedResponseBody } from "../src/bounded_response_body.ts";
+import { BOUNDED_RESPONSE_BODY_MAX_BYTES, readBoundedResponseBody } from "../src/bounded-response-body.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

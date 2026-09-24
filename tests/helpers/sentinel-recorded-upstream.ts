@@ -21,7 +21,7 @@ import {
   type SentinelUpstreamAttempt,
   type SentinelUpstreamProvider,
   type SentinelUpstreamTrace,
-} from "../../src/sentinel_upstream_capture.ts";
+} from "../../src/sentinel/upstream-capture.ts";
 
 export type RecordedUpstreamReplay = Readonly<{
   fetch: typeof fetch;

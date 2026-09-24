@@ -2,10 +2,10 @@
 
 import { config } from "./src/config.ts";
 import { getKv } from "./src/kv.ts";
-import { configureAdminAuthForListener, configureAdminAuthPeerForRequest, parseServeRuntimeOptions } from "./src/local_admin_auth.ts";
-import { ensureLocalDevelopmentApiKey } from "./src/local_development_key.ts";
-import { closeOptionalPromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "./src/prompt_cache_analytics.ts";
-import { createServeHandler } from "./src/serve_handler.ts";
+import { configureAdminAuthForListener, configureAdminAuthPeerForRequest, parseServeRuntimeOptions } from "./src/auth/local-admin.ts";
+import { ensureLocalDevelopmentApiKey } from "./src/auth/local-development-key.ts";
+import { closeOptionalPromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "./src/cache/prompt-analytics.ts";
+import { createServeHandler } from "./src/handler/serve-handler.ts";
 
 /**
  * Bounded optional-telemetry shutdown for both launchers.

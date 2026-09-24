@@ -34,8 +34,8 @@ import {
   codexAuthCandidateKey,
   codexAuthCandidatesFromPool,
   planCodexAuthRepair,
-} from "../src/codex_auth_repair.ts";
-import { getJwtExpMs, parseCodexAuthPool } from "../src/codex.ts";
+} from "../src/codex/auth-repair.ts";
+import { getJwtExpMs, parseCodexAuthPool } from "../src/codex/index.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const CODEX_AUTH_POOL_KEY = ["ubq_ai", "codex_auth"] as const;
