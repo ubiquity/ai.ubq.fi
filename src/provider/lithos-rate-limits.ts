@@ -225,3 +225,30 @@ export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): P
     signal.addEventListener("abort", onAbort, { once: true });
   });
 };
+
+/**
+ * The sibling tier a saturated model fails over to for one request.
+ *
+ * Both ids are the same 552B weights behind separate per-model rate-limit
+ * buckets - probed 2026-09-24: independent `x-ratelimit-remaining-*` counters,
+ * and `-ultra-chat` returned the same `get_weather` tool call on the raw vendor
+ * wire and through this gateway's Chat and Responses routes with reasoning
+ * enabled - so a refusal on one tier says nothing about the other.
+ */
+const LITHOS_SIBLING_MODELS: ReadonlyMap<string, string> = new Map([["deepseek-ai/DeepSeek-V4.1-Flash-ultra", "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat"]]);
+
+/** The sibling tier for a requested model, or null when that tier has none. */
+export const lithosSiblingModelFor = (modelRaw: string): string | null => LITHOS_SIBLING_MODELS.get(modelRaw) ?? null;
+
+/** Records the sibling that served a request whose own tier refused it. */
+export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;
+};
+
+export const logLithosRateLimitFailover = (fields: Readonly<Record<string, string | number | null>>): void => {
+  try {
+    console.info("[ai.ubq.fi] lithos_rate_limit_failover", JSON.stringify(fields));
+  } catch {
+    // Telemetry must never change routing or delivery.
+  }
+};

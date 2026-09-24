@@ -55,6 +55,9 @@ export { lithosRateLimitWait, setLithosRateLimitTestOverride } from "./lithos-ra
 import {
   lithosKeepaliveIntervalMs,
   lithosPlannedWait,
+  lithosSiblingModelFor,
+  logLithosRateLimitFailover,
+  recordLithosFailoverModel,
   lithosRetryJitterMs,
   lithosWaitPolicy,
   logLithosRateLimitWait,
@@ -399,13 +402,28 @@ type LithosDispatchOutcome =
 type LithosDispatchResult =
   LithosDispatchOutcome | Readonly<{ ok: "pending"; completion: Promise<LithosDispatchOutcome>; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>;
 
+/** Everything one request's dispatch loop needs that never changes. */
+type LithosDispatchInput = Readonly<{
+  body: Record<string, unknown>;
+  modelRaw: string;
+  requestSignal: AbortSignal;
+  downstreamSignal: AbortSignal;
+  usageContext: UsageContext | undefined;
+}>;
+
 /** Where one request's dispatch loop stands between attempts. */
 type LithosDispatchProgress = Readonly<{
   attempt: number;
+  /** The tier the next attempt addresses; the sibling after a failover. */
+  attemptModel: string;
   waitedMs: number;
   upstream: Response | null;
   nextWaitMs: number;
   nextWaitSource: string | null;
+  /** A sibling tier may be tried once per request, never twice. */
+  failoverAttempted: boolean;
+  /** A deferred wait has been handed to the caller's stream already. */
+  deferred: boolean;
 }>;
 
 /** One provider attempt with the route's transport hooks. */
@@ -430,6 +448,115 @@ const lithosDispatchAttempt = async (
     sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
   });
 
+/** Takes one planned wait: logged with its source, jittered, abandoned with the request. */
+const lithosTakeRateLimitWait = async (input: LithosDispatchInput, state: LithosDispatchProgress): Promise<LithosDispatchProgress> => {
+  const jitterMs = lithosRetryJitterMs();
+  logLithosRateLimitWait({
+    request_id: input.usageContext?.requestId ?? null,
+    model: state.attemptModel,
+    attempt: state.attempt,
+    wait_ms: state.nextWaitMs,
+    jitter_ms: jitterMs,
+    wait_source: state.nextWaitSource,
+  });
+  await waitForLithosRetry(state.nextWaitMs + jitterMs, input.requestSignal);
+  return { ...state, nextWaitMs: 0, nextWaitSource: null };
+};
+
+/** The outcome of the attempt the wait policy declined to wait for. */
+const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Response): Promise<LithosDispatchOutcome> => {
+  const providerRequestId = getLithosProviderRequestId(upstream);
+  if (input.usageContext?.responseTelemetry) input.usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  if (!upstream.ok) {
+    return {
+      ok: false,
+      response: await respondLithosChatUpstreamHttpFailure(upstream, input.requestSignal, providerRequestId, input.usageContext, input.body),
+    };
+  }
+  return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal };
+};
+
+/** Opens the caller's stream before the wait this dispatch is about to take. */
+const lithosDeferredDispatch = (input: LithosDispatchInput, policy: LithosWaitPolicy, next: LithosDispatchProgress): LithosDispatchResult => ({
+  ok: "pending",
+  requestSignal: input.requestSignal,
+  downstreamSignal: input.downstreamSignal,
+  completion: runLithosDispatch(input, policy, next, false).then((result) => {
+    // A resumed dispatch is never allowed to defer again, so this can only be
+    // reached if that invariant breaks: fail closed.
+    if (result.ok === "pending") throw new Error("A resumed LithosAI dispatch tried to defer again.");
+    return result;
+  }),
+});
+
+/**
+ * The one-time sibling failover for a refusal on the requested tier: the loop
+ * state that addresses the sibling, or null when this tier has no sibling or
+ * the sibling was already tried.
+ */
+const lithosFailoverProgress = (
+  input: Readonly<{ modelRaw: string; usageContext: UsageContext | undefined }>,
+  state: LithosDispatchProgress
+): LithosDispatchProgress | null => {
+  if (state.failoverAttempted) return null;
+  const sibling = lithosSiblingModelFor(input.modelRaw);
+  if (sibling === null) return null;
+  logLithosRateLimitFailover({
+    request_id: input.usageContext?.requestId ?? null,
+    model: input.modelRaw,
+    sibling_model: sibling,
+    attempt: state.attempt,
+  });
+  recordLithosFailoverModel(input.usageContext, sibling);
+  return { ...state, upstream: null, attemptModel: sibling, failoverAttempted: true };
+};
+
+/** One pass of the dispatch loop: a terminal result, or the next attempt. */
+type LithosDispatchStep =
+  Readonly<{ kind: "result"; result: LithosDispatchResult }> | Readonly<{ kind: "continue"; state: LithosDispatchProgress; upstream: Response | null }>;
+
+/**
+ * One pass: takes a planned wait, dispatches the current tier, tries the
+ * sibling once when the tier refuses, and either returns the attempt's outcome
+ * or sets up the next pass. A refusal on this tier tries its sibling
+ * immediately - the two ids are the same weights behind separate per-model
+ * rate-limit buckets - and only a sibling that also refuses is waited for.
+ */
+const lithosDispatchStep = async (
+  input: LithosDispatchInput,
+  policy: LithosWaitPolicy,
+  state: LithosDispatchProgress,
+  upstream: Response | null,
+  allowDefer: boolean
+): Promise<LithosDispatchStep> => {
+  let current = state;
+  let attempt = upstream;
+  if (current.nextWaitMs > 0) current = await lithosTakeRateLimitWait(input, current);
+  if (attempt === null) {
+    attempt = await lithosDispatchAttempt(input.body, current.attemptModel, input.requestSignal, input.usageContext);
+    current = { ...current, attempt: current.attempt + 1 };
+  }
+  if (attempt.status === 429) {
+    const failover = lithosFailoverProgress(input, current);
+    if (failover !== null) {
+      cancelResponseBody(attempt);
+      return { kind: "continue", state: failover, upstream: null };
+    }
+  }
+  const planned = lithosPlannedWait(attempt, current.attempt, current.waitedMs, policy);
+  if (planned === null) return { kind: "result", result: await lithosAttemptOutcome(input, attempt) };
+  // The refused attempt's body is never read, so it is released here rather
+  // than left for the runtime to drain.
+  cancelResponseBody(attempt);
+  const waitedMs = current.waitedMs + planned.waitMs;
+  recordLithosRateLimitWaitMs(input.usageContext, waitedMs);
+  const waiting: LithosDispatchProgress = { ...current, waitedMs, upstream: null, nextWaitMs: planned.waitMs, nextWaitSource: planned.source, deferred: true };
+  // The caller opens its stream first, so the wait and its retries continue
+  // behind it while `: keepalive` frames hold the client.
+  if (allowDefer && !current.deferred) return { kind: "result", result: lithosDeferredDispatch(input, policy, waiting) };
+  return { kind: "continue", state: waiting, upstream: null };
+};
+
 /**
  * Dispatches until one attempt is served or the wait policy is spent. A wait is
  * taken at the top of each pass, so a caller that deferred the first one still
@@ -437,59 +564,23 @@ const lithosDispatchAttempt = async (
  * total, and abandoned the moment the request is aborted.
  */
 const runLithosDispatch = async (
-  input: Readonly<{
-    body: Record<string, unknown>;
-    modelRaw: string;
-    requestSignal: AbortSignal;
-    downstreamSignal: AbortSignal;
-    usageContext: UsageContext | undefined;
-  }>,
+  input: LithosDispatchInput,
   policy: LithosWaitPolicy,
-  start: LithosDispatchProgress
-): Promise<LithosDispatchOutcome> => {
+  start: LithosDispatchProgress,
+  allowDefer: boolean
+): Promise<LithosDispatchResult> => {
   let state = start;
   let upstream: Response | null = start.upstream;
   for (;;) {
+    let step: LithosDispatchStep;
     try {
-      if (state.nextWaitMs > 0) {
-        const jitterMs = lithosRetryJitterMs();
-        logLithosRateLimitWait({
-          request_id: input.usageContext?.requestId ?? null,
-          model: input.modelRaw,
-          attempt: state.attempt,
-          wait_ms: state.nextWaitMs,
-          jitter_ms: jitterMs,
-          wait_source: state.nextWaitSource,
-        });
-        await waitForLithosRetry(state.nextWaitMs + jitterMs, input.requestSignal);
-        state = { ...state, nextWaitMs: 0, nextWaitSource: null };
-      }
-      if (upstream === null) {
-        upstream = await lithosDispatchAttempt(input.body, input.modelRaw, input.requestSignal, input.usageContext);
-        state = { ...state, attempt: state.attempt + 1 };
-      }
-      const planned = lithosPlannedWait(upstream, state.attempt, state.waitedMs, policy);
-      if (planned === null) {
-        const providerRequestId = getLithosProviderRequestId(upstream);
-        if (input.usageContext?.responseTelemetry) input.usageContext.responseTelemetry.providerRequestId = providerRequestId;
-        if (!upstream.ok) {
-          return {
-            ok: false,
-            response: await respondLithosChatUpstreamHttpFailure(upstream, input.requestSignal, providerRequestId, input.usageContext, input.body),
-          };
-        }
-        return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal };
-      }
-      // The refused attempt's body is never read, so it is released here rather
-      // than left for the runtime to drain.
-      cancelResponseBody(upstream);
-      upstream = null;
-      const waitedMs = state.waitedMs + planned.waitMs;
-      recordLithosRateLimitWaitMs(input.usageContext, waitedMs);
-      state = { attempt: state.attempt, waitedMs, upstream: null, nextWaitMs: planned.waitMs, nextWaitSource: planned.source };
+      step = await lithosDispatchStep(input, policy, state, upstream, allowDefer);
     } catch (error) {
       return { ok: false, response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext) };
     }
+    if (step.kind === "result") return step.result;
+    state = step.state;
+    upstream = step.upstream;
   }
 };
 
@@ -516,26 +607,21 @@ const dispatchLithosUpstream = async (
   } catch (error) {
     return { ok: false, response: await respondLithosChatDispatchFailure(error, downstreamSignal, usageContext) };
   }
-  if (options.deferFirstWait === true) {
-    const planned = lithosPlannedWait(upstream, 1, 0, policy);
-    if (planned !== null) {
-      cancelResponseBody(upstream);
-      recordLithosRateLimitWaitMs(usageContext, planned.waitMs);
-      return {
-        ok: "pending",
-        requestSignal,
-        downstreamSignal,
-        completion: runLithosDispatch(input, policy, {
-          attempt: 1,
-          waitedMs: planned.waitMs,
-          upstream: null,
-          nextWaitMs: planned.waitMs,
-          nextWaitSource: planned.source,
-        }),
-      };
-    }
-  }
-  return await runLithosDispatch(input, policy, { attempt: 1, waitedMs: 0, upstream, nextWaitMs: 0, nextWaitSource: null });
+  return await runLithosDispatch(
+    input,
+    policy,
+    {
+      attempt: 1,
+      attemptModel: modelRaw,
+      waitedMs: 0,
+      upstream,
+      nextWaitMs: 0,
+      nextWaitSource: null,
+      failoverAttempted: false,
+      deferred: false,
+    },
+    options.deferFirstWait === true
+  );
 };
 
 /**

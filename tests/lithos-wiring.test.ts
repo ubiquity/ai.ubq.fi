@@ -18,6 +18,10 @@ const LITHOS_API_KEY_ENV = "LITHOSAI_API_KEY";
 const LITHOS_API_KEY = "lith_sk_fixture";
 const LITHOS_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-ultra";
 const KIMI_MODEL = "moonshotai/Kimi-K3";
+/** A tier with no configured sibling, so failover never changes its fixtures. */
+const LITHOS_BASE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
+/** The Ultra tier's sibling: same weights, its own rate-limit bucket. */
+const LITHOS_SIBLING_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat";
 
 const keyOf = (key: Deno.KvKey): string => JSON.stringify(key);
 
@@ -516,8 +520,9 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
 
     // 429 budget refusal whose window is beyond the wait budget: a rate limit,
     // with the provider's capacity headers and both retry hints forwarded
-    // unchanged and exactly one dispatch. A window the gateway could wait out
-    // would be retried instead; that path is covered by its own test below.
+    // unchanged and exactly one dispatch. The base tier has no sibling, so this
+    // stays a pure relay case; the Ultra tier's sibling failover and its
+    // wait-retry path each have their own tests below.
     const budgetRefusal = await withUpstream(
       () =>
         Response.json(
@@ -538,7 +543,7 @@ Deno.test("lithos wiring: maps the vendor's refusal semantics distinctly", async
             },
           }
         ),
-      () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-budget"))
+      () => handleChatCompletions(chatRequest({ model: LITHOS_BASE_MODEL, messages: message, stream: false }), usageContext("lithos-429-budget"))
     );
     assert.equal(budgetRefusal.result.status, 429);
     assert.equal(budgetRefusal.calls.length, 1, "a window beyond the wait budget is never waited out");
@@ -695,7 +700,37 @@ Deno.test("lithos rate-limit waits follow the vendor's own header precedence", (
   assert.equal(wait({}), null);
 });
 
-Deno.test("lithos wiring: a 429 inside the wait budget is waited out and retried on the same model id", async () => {
+Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's own bucket", async () => {
+  await withLithosKey(async () => {
+    const message = [{ role: "user", content: "hi" }];
+    const chat = await withUpstream(
+      (_call, calls) =>
+        calls.length === 1
+          ? Response.json(
+              { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
+              { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
+            )
+          : Response.json(lithosCompletion({ role: "assistant", content: "sibling-served" })),
+      () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-failover-chat"))
+    );
+
+    // The sibling is tried immediately instead of waiting the refused window
+    // out, and the request it carries is otherwise unchanged.
+    assert.equal(chat.calls.length, 2, "one failover attempt, no wait");
+    assert.equal(chat.calls[0].body.model, LITHOS_MODEL);
+    assert.equal(chat.calls[1].body.model, LITHOS_SIBLING_MODEL);
+    assert.deepEqual(chat.calls[1].body.messages, message);
+    assert.equal(chat.result.status, 200);
+    const body = (await chat.result.json()) as { choices?: { message?: { content?: string } }[] };
+    assert.equal(body.choices?.[0]?.message?.content, "sibling-served");
+    const telemetry = getResponseTelemetry(chat.result);
+    if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
+    assert.equal(telemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+    assert.equal(telemetry.rateLimitWaitMs, null, "the failover itself needs no wait");
+  });
+});
+
+Deno.test("lithos wiring: a refusal that outlives the sibling failover is waited out on the sibling's own bucket", async () => {
   // A streamed wait is held open by `: keepalive` frames; shortening the
   // interval and the budgets keeps the fixture fast without changing behavior.
   setLithosRateLimitTestOverride({ keepaliveIntervalMs: 5, streamTotalWaitCapMs: 5_000 });
@@ -720,19 +755,27 @@ Deno.test("lithos wiring: a 429 inside the wait budget is waited out and retried
           }
         );
 
+      // Both tiers refuse once: the sibling is tried first, and its own window
+      // is then waited out. Only the third dispatch is served.
       const chat = await withUpstream(
-        (_call, calls) => (calls.length === 1 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }))),
+        (_call, calls) => (calls.length <= 2 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "after-retry" }))),
         () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-wait-chat"))
       );
-      assert.equal(chat.calls.length, 2, "the refused dispatch is retried exactly once");
+      assert.equal(chat.calls.length, 3, "the requested tier, its sibling, then the sibling's retry");
       assert.equal(
         chat.calls.every((call) => call.url === LITHOS_CHAT_COMPLETIONS_URL),
         true
       );
+      assert.equal(chat.calls[0].body.model, LITHOS_MODEL);
+      assert.equal(chat.calls[1].body.model, LITHOS_SIBLING_MODEL);
+      assert.equal(chat.calls[2].body.model, LITHOS_SIBLING_MODEL);
       assert.equal(chat.result.status, 200);
       const chatBody = (await chat.result.json()) as { choices?: { message?: { content?: string } }[] };
       assert.equal(chatBody.choices?.[0]?.message?.content, "after-retry");
-      assert.equal(getResponseTelemetry(chat.result)?.streamTerminalType, "response.completed");
+      const chatTelemetry = getResponseTelemetry(chat.result);
+      if (chatTelemetry === null) throw new Error("the chat terminal carries no telemetry");
+      assert.equal(chatTelemetry.streamTerminalType, "response.completed");
+      assert.equal(chatTelemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
 
       // The streamed Responses route retries the same way: the client's first
       // frame is the completed translation, never the refusal.
@@ -769,7 +812,7 @@ Deno.test("lithos wiring: a 429 inside the wait budget is waited out and retried
       ])}data: [DONE]\n\n`;
 
       const streamed = await withUpstream(
-        (_call, calls) => (calls.length === 1 ? refusal() : new Response(retryStreamBody, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
+        (_call, calls) => (calls.length <= 2 ? refusal() : new Response(retryStreamBody, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
         async () => {
           const response = await handleResponses(
             responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
@@ -784,7 +827,8 @@ Deno.test("lithos wiring: a 429 inside the wait budget is waited out and retried
       // the client sees `: keepalive` frames - never an error - while it waits.
       assert.equal(streamed.result.status, 200);
       const text = streamed.result.text;
-      assert.equal(streamed.calls.length, 2, `the streamed route retries the refused dispatch behind the open stream (saw ${streamed.calls.length})`);
+      assert.equal(streamed.calls.length, 3, `the streamed route fails over, then waits, behind the open stream (saw ${streamed.calls.length})`);
+      assert.equal(streamed.calls[1].body.model, LITHOS_SIBLING_MODEL);
       assert.match(text, /: keepalive/);
       assert.match(text, /after-retry/);
       assert.match(text, /event: response.completed/);
@@ -807,7 +851,7 @@ Deno.test("lithos wiring: a cancelled request stops waiting for the provider win
     const request = new Request("https://ai.ubq.fi/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: LITHOS_MODEL, messages: [{ role: "user", content: "hi" }], stream: false }),
+      body: JSON.stringify({ model: LITHOS_BASE_MODEL, messages: [{ role: "user", content: "hi" }], stream: false }),
       signal: controller.signal,
     });
     setTimeout(() => {
@@ -880,7 +924,7 @@ Deno.test("lithos wiring: a client that cancels during a streamed wait stops it 
       const request = new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: LITHOS_MODEL, input: "hi", stream: true }),
+        body: JSON.stringify({ model: LITHOS_BASE_MODEL, input: "hi", stream: true }),
         signal: controller.signal,
       });
       setTimeout(() => {
