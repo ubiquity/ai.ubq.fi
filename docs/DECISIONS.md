@@ -15,11 +15,21 @@ erased at runtime. Measuring one segment under-reports: `tests/oss-gateway-http.
 `SURPLUS_API_KEY`/`METERED_API_KEY` with `--unstable-kv`, and `tests/usage-optimization-measurement.test.ts` runs with
 only `UOS_AI_TOKEN`/`DENO_DEPLOY_TOKEN`.
 
-The program target is 90% for both lines and branches. No gate enforces it yet; this entry records the measurement and
-its command so a later decision can add a threshold without re-deriving either. The first coverage wave
-(`tests/*-coverage.test.ts`, including `tests/cache-scope-experiment-model-coverage.test.ts`, split out of the
-kv-migration file to stay under the 1500-line test cap) moved the tree to 86.19% lines and 84.30% branches, with
-`sentinel` at 58.0% and `codex` at 82.7% holding the largest remaining gaps.
+The program target is 90% for both lines and branches, and it is now met: four coverage waves took `src/` from 83.4%
+lines and 82.8% branches at `125185c5c` to 92.15% lines and 90.10% branches, with `sh scripts/verify.sh` green and 2101
+tests passing. That work added 21 test files plus `tests/helpers/sentinel-kv-stub.ts`. No gate enforces the threshold
+yet; this entry records the measurement and its command so a later decision can add one without re-deriving either.
+`sentinel` went from 58.0% to 96.3% of its replay cluster by driving those modules with an in-memory KV stub, which is
+required because `Deno.openKv` is undefined in the default test task (no `--unstable-kv`): a KV-backed path is reachable
+in that suite only when the test passes a stub.
+
+What is still uncovered is recorded per file in the lane handbacks and falls into four kinds, none reachable by a test
+without changing production code or widening the test command's permissions: permission-denied environment reads for
+keys the allowlist excludes (`SENTINEL_REPLAY_KEY`, the deploy-runtime slugs) plus the deny-listed
+`.data/codex-supervisor.json` and `--allow-read` state-DB paths in `supervisor-inventory.ts`; branches unreachable by
+construction, such as the deflate ciphertext ceiling, validation re-checks of values the same function just validated,
+and `typeof x !== "string"` guards after `JSON.stringify`; timer-driven reservation machinery whose pending ops would
+leak across tests; and fixtures that need a concurrent writer or a real WebAuthn attestation.
 
 Two traps found while measuring. A process-wide `fetch` stub counts unrelated background traffic: the paid-fallback
 quota refreshes schedule their own requests on timers that outlive the test that armed them (`src/provider/metered.ts`,
