@@ -6,12 +6,15 @@ import type { UsageContext } from "../openai-telemetry.ts";
  * The sibling tier a refused model is load-balanced onto, for one request.
  *
  * Both ids are the same 552B weights behind separate per-model rate-limit
- * buckets - probed 2026-09-24: independent `x-ratelimit-remaining-*` counters,
- * and `-ultra-chat` returned the same `get_weather` tool call on the raw vendor
- * wire and through this gateway's Chat and Responses routes with reasoning
- * enabled - so a refusal on one tier says nothing about the other.
+ * buckets, so a refusal on one tier says nothing about the other. The target is
+ * the `-fast` tier, NOT `-ultra-chat`: LithosAI told the owner on 2026-09-24
+ * that `-ultra-chat` is tuned for short context windows and loses accuracy on
+ * the large-context sessions this route serves. Probed against the live vendor
+ * the same day: `-fast` reports its own `x-ratelimit-remaining-*` counters
+ * (independent of ultra's), answers `reasoning_effort` none..max, returns
+ * `get_weather` tool calls, and answered a 106k-token needle prompt correctly.
  */
-const LITHOS_SIBLING_MODELS: ReadonlyMap<string, string> = new Map([["deepseek-ai/DeepSeek-V4.1-Flash-ultra", "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat"]]);
+const LITHOS_SIBLING_MODELS: ReadonlyMap<string, string> = new Map([["deepseek-ai/DeepSeek-V4.1-Flash-ultra", "deepseek-ai/DeepSeek-V4.1-Flash-fast"]]);
 
 /** The sibling tier for a requested model, or null when that tier has none. */
 export const lithosSiblingModelFor = (modelRaw: string): string | null => LITHOS_SIBLING_MODELS.get(modelRaw) ?? null;

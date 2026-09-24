@@ -6,6 +6,27 @@ entries when a decision changes; add a new entry that supersedes the earlier one
 
 Each entry must distinguish the decision from its implementation, validation, deployment, and live acceptance state.
 
+## 2026-09-24 — The Ultra refusal target moves from `-ultra-chat` to `-fast`
+
+### Decision
+
+A `429` on `deepseek-ai/DeepSeek-V4.1-Flash-ultra` now load-balances that single request onto
+`deepseek-ai/DeepSeek-V4.1-Flash-fast` instead of `-ultra-chat`. Nothing else changes: one immediate retry, the vendor's
+own refusal relayed when the target refuses too, and no waiting unless `LITHOSAI_RATE_LIMIT_WAIT` is set on the host.
+
+### Why
+
+LithosAI told the owner on 2026-09-24 that `-ultra-chat` is tuned for short context windows and loses accuracy on the
+large-context sessions this route serves, and recommended the `-fast` tier instead. Probed against the live vendor the
+same day, before wiring it: `-fast` reports its own `x-ratelimit-remaining-*` counters (independent of ultra's), accepts
+`reasoning_effort` none..max with `reasoning_content` on the wire, returns `get_weather` tool calls, and answered a
+needle prompt at 106,403 prompt tokens correctly.
+
+### Status
+
+Implemented in `src/provider/lithos-rate-limits.ts` (the sibling map) with coverage in `tests/lithos-wiring.test.ts`;
+this supersedes the Ultra mapping in the entry below. Deployment state is recorded separately below once landed.
+
 ## 2026-09-24 — A LithosAI refusal is load-balanced onto the sibling tier, and waiting is opt-in
 
 ### Decision
