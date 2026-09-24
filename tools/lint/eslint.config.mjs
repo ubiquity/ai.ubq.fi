@@ -274,7 +274,7 @@ export default tsEslint.config(
     // contortion. Narrower than turning the rule off: empty function
     // DECLARATIONS and empty methods in tests are still reported.
     // ---------------------------------------------------------------------
-    files: ["**/tests/**/*.ts", "**/benchmarks/**/*.ts"],
+    files: ["tests/**/*.ts", "benchmarks/**/*.ts"],
     rules: {
       "@typescript-eslint/no-empty-function": ["error", { allow: ["methods", "arrowFunctions"] }],
     },
@@ -289,7 +289,7 @@ export default tsEslint.config(
     // "DENO_DEPLOY_TOKEN" used as lookup keys. sonarjs flags them by identifier
     // name, so renaming them would only hide the intent.
     // ---------------------------------------------------------------------
-    files: ["**/tests/kv-budget.test.ts", "**/tests/passkeys.test.ts", "**/tests/ubq-ai.test.ts"],
+    files: ["tests/kv-budget.test.ts", "tests/passkeys.test.ts", "tests/ubq-ai.test.ts"],
     rules: { "sonarjs/no-hardcoded-secrets": "off" },
   },
   {
@@ -304,7 +304,7 @@ export default tsEslint.config(
     // (`string & {}`, `${string}`, NonNullable<string>) is a no-op type trick
     // whose only purpose is to evade the rule -- `string & {}` is itself
     // rejected by sonarjs/no-useless-intersection on the same line.
-    files: ["**/src/defaults.ts"],
+    files: ["src/defaults.ts"],
     rules: { "sonarjs/redundant-type-aliases": "off" },
   },
   {
@@ -317,7 +317,7 @@ export default tsEslint.config(
     // escape is a `@returns` JSDoc tag; collapsing the sentinel would mean
     // changing the wire contract in src/openai.ts, src/catalog/index.ts and
     // src/admin/index.ts. Measured: 3 findings, all three of these functions.
-    files: ["**/src/models/codex-models.ts"],
+    files: ["src/models/codex-models.ts"],
     rules: { "sonarjs/function-return-type": "off" },
   },
   {
@@ -328,7 +328,7 @@ export default tsEslint.config(
     // exemptions are hard-coded localhost/example host regexes, so silencing it
     // here would mean either changing the fixture host or splitting the literal
     // -- both would delete the case under test.
-    files: ["**/tests/codex-banked-reset-provider.test.ts"],
+    files: ["tests/codex-banked-reset-provider.test.ts"],
     rules: { "sonarjs/no-clear-text-protocols": "off" },
   }
 );
