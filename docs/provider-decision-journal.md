@@ -33,10 +33,18 @@ bucket.
 
 ### Status
 
-Implementation is local on the branch for this change: the sibling map, failover logging and telemetry in
-`src/provider/lithos-rate-limits.ts`, the failover step in the dispatch loop in `src/provider/lithos-handlers.ts`, and
-`rate_limit_failover_model` in the request telemetry and terminal log. Focused suites pass; full `sh scripts/verify.sh`,
-CI, deployment and live acceptance are pending. Not deployed, and no production behavior is claimed.
+Implemented in `src/provider/lithos-rate-limits.ts` (sibling map, failover logging, `rate_limit_failover_model`
+telemetry) and `src/provider/lithos-handlers.ts` (the failover step in the dispatch loop), with coverage in
+`tests/lithos-wiring.test.ts`. Merged as PR #501 (`3848c94ca`) and deployed to both surfaces -
+`vps-3848c94cabed64590d8bf462636defb2685f1429` and `mac-3848c94cabed64590d8bf462636defb2685f1429` - both
+health-verified.
+
+Live acceptance 2026-09-24 15:20Z on the VPS: a 96-way concurrent Ultra burst over the loopback produced 54
+`lithos_rate_limit_failover` events and 54 terminals served by `deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat` - every
+failover recovered - alongside 42 absorbed waits. The 30 requests that still ended 429 were that burst saturating both
+tiers (96 requests against two 60-request buckets) and exhausting the wait budget. A public authenticated streamed
+`/v1/responses` with tools and `reasoning.effort: max` returned a `get_weather` `function_call` and `response.completed`
+on the same release.
 
 ## 2026-09-24 — A streamed LithosAI refusal is absorbed for up to five minutes behind the open stream
 
@@ -64,11 +72,15 @@ agent turn.
 
 ### Status
 
-Implementation is local on the branch for this change: the streamed-route wait policy and pending dispatch in
-`src/provider/lithos-handlers.ts`, pending-source support and in-band refusal reporting in
-`src/provider/stream-relay.ts`, and `rate_limit_wait_ms` in the request telemetry and terminal log. Focused suites pass;
-full `sh scripts/verify.sh`, CI, deployment and live acceptance are pending. Not deployed, and no production behavior is
-claimed.
+Implemented in `src/provider/lithos-handlers.ts` (streamed wait policy and pending dispatch),
+`src/provider/lithos-rate-limits.ts` (the policy, header parsing and wait) and `src/provider/stream-relay.ts`
+(pending-source support and in-band refusal reporting), with `rate_limit_wait_ms` in the request telemetry and terminal
+log. Merged as PR #501 (`3848c94ca`) and deployed to both surfaces at `3848c94cabed64590d8bf462636defb2685f1429`,
+health-verified.
+
+Live acceptance 2026-09-24 15:20Z on the VPS: the same 96-way Ultra burst logged 42 absorbed waits while 66 requests
+were served. The same day's 08:46-08:50Z window - 18 waits and 46 served Ultra requests, then one request outliving the
+previous 90-second budget and failing a client turn - is the case this entry exists to remove.
 
 ## 2026-09-24 — LithosAI rate-limit refusals are waited out and retried on the same model id
 
@@ -99,10 +111,11 @@ refusal reached the client as a terminal `response.failed`.
 
 ### Status
 
-Implementation is local and uncommitted: `src/provider/lithos-handlers.ts` (wait policy, wait-aware dispatch loop, SSE
-keepalive wrap), `src/provider/lithos.ts` (route comment), tests in `tests/lithos-wiring.test.ts`. Focused suites pass;
-full `sh scripts/verify.sh` and any deployment acceptance are pending. Not deployed, and no production behavior is
-claimed.
+Implemented in `src/provider/lithos-handlers.ts` (wait policy and wait-aware dispatch loop), `src/provider/lithos.ts`
+(route comment) and later split with the policy moving to `src/provider/lithos-rate-limits.ts`, with coverage in
+`tests/lithos-wiring.test.ts`. Merged as PR #500 (`aac3b2c31`) and deployed from there; superseded on 2026-09-24 by PR
+#501 (`3848c94ca`), which raises the streamed budget and adds the sibling failover. Both surfaces currently run
+`3848c94cabed64590d8bf462636defb2685f1429`.
 
 ## 2026-09-22 — Reinstate a finite process-resource guard, narrowly superseding the 2026-08-25 admission ban
 
