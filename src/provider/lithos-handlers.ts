@@ -35,7 +35,9 @@ import {
   recordTerminalUsage,
 } from "../openai-telemetry.ts";
 import { EMPTY_UPSTREAM_COMPLETION_MESSAGE, markChatSemanticOutput } from "../chat/stream-translation.ts";
+import { withSseKeepalive } from "../responses-stream.ts";
 import {
+  cancelResponseBody,
   chatCompletionHasAnswerBearingOutput,
   deepSeekChatBodyDiagnostic,
   lithosResponseHeaders,
@@ -48,6 +50,158 @@ import { downstreamSignalFor, inferenceSignal } from "../openai.ts";
 import { deepSeekChatClientOutputAllowance, deepSeekTerminalTypeForPayload } from "../deepseek/handlers.ts";
 
 const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Rate-limit wait policy for the direct LithosAI route.
+ *
+ * The vendor's per-minute budgets refill continuously, so a 429 carries a short
+ * deadline: `retry-after-ms`, `retry-after`, or the `x-ratelimit-reset-*`
+ * deltas of the budget that refused (observed as sub-minute deltas, e.g.
+ * `3.23s`). A refusal inside this budget is waited out and retried on the SAME
+ * model id instead of failing the request. This route still never races or
+ * falls back to another provider: no other provider serves these model ids,
+ * and substituting one silently is exactly what this route refuses to do.
+ *
+ * A refusal that names no window is relayed unchanged rather than guessed at:
+ * the wait exists to honor the vendor's own retry time, not to invent one.
+ *
+ * The per-attempt cap keeps one pause far below the client's 10-minute default
+ * request timeout, the gateway's 30-minute first-event budget and the
+ * ~100-second proxied-origin read bound, so a wait can never be mistaken for a
+ * dead connection. The total bound keeps a second wait from making a single
+ * request arbitrarily slow.
+ */
+export const LITHOS_RATE_LIMIT_WAIT_CAP_MS = 75_000;
+export const LITHOS_RATE_LIMIT_TOTAL_WAIT_CAP_MS = 90_000;
+/** Total dispatches for one request: the first attempt plus two waits. */
+export const LITHOS_RATE_LIMIT_MAX_DISPATCHES = 3;
+/** Spreads retries from requests that were refused the same window. */
+const LITHOS_RATE_LIMIT_JITTER_MS = 750;
+
+/** One retry hint, named so the wait is logged with the header it came from. */
+export type LithosRateLimitWait = Readonly<{ waitMs: number; source: string }>;
+
+const lithosIntegerHeader = (raw: string | null): number | null => {
+  if (raw === null) return null;
+  const value = raw.trim();
+  return /^\d+$/.test(value) ? Number(value) : null;
+};
+
+/** The duration units the vendor's reset headers use, in milliseconds. */
+const LITHOS_DURATION_UNITS_MS: ReadonlyMap<string, number> = new Map([
+  ["ms", 1],
+  ["s", 1_000],
+  ["m", 60_000],
+  ["h", 3_600_000],
+]);
+
+/** Digits and the decimal point a duration magnitude may carry. */
+const isDurationDigit = (character: string): boolean => (character >= "0" && character <= "9") || character === ".";
+
+/**
+ * `x-ratelimit-reset-*` carry deltas like `3.23s`, `1s`, `250ms` or `1m30s`.
+ * Scanned rather than matched: the shapes are tiny and a linear scan keeps the
+ * parse free of the backtracking a repeated unit pattern invites.
+ */
+const lithosDurationMs = (raw: string | null): number | null => {
+  if (raw === null) return null;
+  const value = raw.trim().replace(/\s+/g, "");
+  if (!value) return null;
+  let total = 0;
+  let cursor = 0;
+  while (cursor < value.length) {
+    let digitsEnd = cursor;
+    while (digitsEnd < value.length && isDurationDigit(value.charAt(digitsEnd))) digitsEnd += 1;
+    if (digitsEnd === cursor) return null;
+    const magnitude = Number(value.slice(cursor, digitsEnd));
+    if (!Number.isFinite(magnitude)) return null;
+    const unitKey = value.startsWith("ms", digitsEnd) ? "ms" : value.charAt(digitsEnd);
+    const unitMs = LITHOS_DURATION_UNITS_MS.get(unitKey);
+    if (unitMs === undefined) return null;
+    total += magnitude * unitMs;
+    cursor = digitsEnd + unitKey.length;
+  }
+  return Number.isFinite(total) ? total : null;
+};
+
+/**
+ * Uniform value in `[0, 1)` from the platform CSPRNG, so concurrent requests
+ * refused the same window do not retry in lockstep. Predictability would cost
+ * nothing here; matching the reconnect jitter in `src/kv.ts` keeps one pattern
+ * for jitter across the gateway.
+ */
+const randomUnitInterval = (): number => {
+  const [high = 0, low = 0] = crypto.getRandomValues(new Uint32Array(2));
+  return (high * 2 ** 21 + (low >>> 11)) / 2 ** 53;
+};
+
+const lithosRetryJitterMs = (): number => Math.round(randomUnitInterval() * LITHOS_RATE_LIMIT_JITTER_MS);
+
+/** `retry-after` is either an integer number of seconds or an HTTP date. */
+const lithosRetryAfterMs = (raw: string | null, nowMs: number): number | null => {
+  const seconds = lithosIntegerHeader(raw);
+  if (seconds !== null) return seconds * 1_000;
+  if (raw === null) return null;
+  const parsed = Date.parse(raw.trim());
+  return Number.isFinite(parsed) && parsed > nowMs ? parsed - nowMs : null;
+};
+
+/**
+ * The wait one 429 asks for, in the vendor's own precedence: `retry-after-ms`
+ * first, then `retry-after`, then the later of the two `x-ratelimit-reset-*`
+ * deltas (the budget that refills last is the one that binds). A vendor
+ * instruction never to retry wins over every hint, and a refusal that names no
+ * window at all returns null so it is relayed instead of guessed at. Exported
+ * because it is the whole header contract in one pure function.
+ */
+export const lithosRateLimitWait = (headers: Headers, nowMs: number): LithosRateLimitWait | null => {
+  if (headers.get("x-should-retry")?.trim().toLowerCase() === "false") return null;
+  const retryAfterMs = lithosIntegerHeader(headers.get("retry-after-ms"));
+  if (retryAfterMs !== null) return { waitMs: retryAfterMs, source: "retry-after-ms" };
+  const retryAfter = lithosRetryAfterMs(headers.get("retry-after"), nowMs);
+  if (retryAfter !== null) return { waitMs: retryAfter, source: "retry-after" };
+  let latest: LithosRateLimitWait | null = null;
+  for (const header of ["x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"]) {
+    const waitMs = lithosDurationMs(headers.get(header));
+    if (waitMs === null) continue;
+    if (latest === null || waitMs > latest.waitMs) latest = { waitMs, source: header };
+  }
+  if (latest !== null) return latest;
+  return null;
+};
+
+const logLithosRateLimitWait = (fields: Readonly<Record<string, string | number | null>>): void => {
+  try {
+    console.info("[ai.ubq.fi] lithos_rate_limit_wait", JSON.stringify(fields));
+  } catch {
+    // Telemetry must never change routing or delivery.
+  }
+};
+
+const lithosWaitAbortReason = (signal: AbortSignal): Error => {
+  const reason = signal.reason;
+  return reason instanceof Error ? reason : new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError");
+};
+
+/** Abort-aware sleep: an abandoned request never keeps waiting for a provider window. */
+const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): Promise<void> => {
+  if (milliseconds <= 0) return Promise.resolve();
+  if (signal.aborted) return Promise.reject(lithosWaitAbortReason(signal));
+  return new Promise<void>((resolve, reject) => {
+    // The timer handle type is not portable across the lint project's type
+    // environment, so it is named through the global rather than as `number`.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = (): void => {
+      if (timer !== null) clearTimeout(timer);
+      reject(lithosWaitAbortReason(signal));
+    };
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+};
 
 /** The seven tiers the provider accepted verbatim on 2026-09-23, as a membership set. */
 export const LITHOS_REASONING_LEVEL_SET: ReadonlySet<string> = new Set(LITHOS_REASONING_LEVELS);
@@ -308,6 +462,18 @@ export const recordLithosResponseHealth = (status: number, providerRequestId: st
   void recordLithosProviderHealth("success", status, Date.now, providerRequestId);
 };
 
+/**
+ * Holds a client's SSE connection across provider quiet periods with the
+ * gateway's standard `: keepalive` comment frames - the same mechanism the
+ * ordinary routes use. Provider bytes are still forwarded as they arrive, and
+ * the frames are inert for OpenAI clients.
+ */
+const withLithosSseKeepalive = (response: Response): Response => {
+  const body = response.body;
+  if (!body) return response;
+  return new Response(withSseKeepalive(body), { status: response.status, headers: response.headers });
+};
+
 /** The LithosAI seams for the shared stream writers. */
 const lithosStreamAdapter: ProviderStreamAdapter = {
   responseHeaders: lithosResponseHeaders,
@@ -332,7 +498,9 @@ const lithosStreamAdapter: ProviderStreamAdapter = {
 };
 
 /**
- * Relays the LithosAI Chat Completions SSE stream through the shared writer.
+ * Relays the LithosAI Chat Completions SSE stream through the shared writer,
+ * wrapped with the gateway's standard `: keepalive` comment frames so a quiet
+ * provider never looks like a dead connection to a client or an edge proxy.
  * The provider reports usage unconditionally - including on the trailing frame
  * whose `choices` is empty - so nothing here gates accounting on
  * `stream_options.include_usage`.
@@ -344,7 +512,10 @@ const streamLithosChatCompletion = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string
-): Response => relayChatCompletionStream(lithosStreamAdapter, upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
+): Response =>
+  withLithosSseKeepalive(
+    relayChatCompletionStream(lithosStreamAdapter, upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel)
+  );
 
 type LithosDispatchResult =
   | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
@@ -364,30 +535,59 @@ const dispatchLithosUpstream = async (
 ): Promise<LithosDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
-  let upstream: Response;
-  try {
-    upstream = await fetchLithosChatCompletions(body, modelRaw, {
-      signal: requestSignal,
-      beforeDispatch: () => usageContext?.beforeProviderDispatch?.("lithos") ?? Promise.resolve(undefined),
-      onDispatch: () => {
-        recordAttemptedProvider(usageContext, "lithos");
-        recordFirstProviderDispatch(usageContext);
-      },
-      onHeaders: () => {
-        recordFirstProviderHeaders(usageContext);
-      },
-      sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
-    });
-  } catch (error) {
-    return { ok: false, response: await respondLithosChatDispatchFailure(error, downstreamSignal, usageContext) };
+  let waitedMs = 0;
+  for (let attempt = 1; ; attempt += 1) {
+    let upstream: Response;
+    try {
+      upstream = await fetchLithosChatCompletions(body, modelRaw, {
+        signal: requestSignal,
+        // Idempotent per request: a retry after a real dispatch is the same
+        // reservation, so the second call cannot double-count the attempt.
+        beforeDispatch: () => usageContext?.beforeProviderDispatch?.("lithos") ?? Promise.resolve(undefined),
+        onDispatch: () => {
+          recordAttemptedProvider(usageContext, "lithos");
+          recordFirstProviderDispatch(usageContext);
+        },
+        onHeaders: () => {
+          recordFirstProviderHeaders(usageContext);
+        },
+        sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
+      });
+      // A rate-limit refusal that names a window inside the wait budget is
+      // waited out and retried on the same model id. Every other refusal - a
+      // windowless one, a wait beyond the caps, a vendor instruction not to
+      // retry, or an exhausted attempt budget - is relayed unchanged, fail
+      // closed.
+      if (!upstream.ok && upstream.status === 429 && attempt < LITHOS_RATE_LIMIT_MAX_DISPATCHES) {
+        const planned = lithosRateLimitWait(upstream.headers, Date.now());
+        if (planned !== null && planned.waitMs <= LITHOS_RATE_LIMIT_WAIT_CAP_MS && waitedMs + planned.waitMs <= LITHOS_RATE_LIMIT_TOTAL_WAIT_CAP_MS) {
+          const jitterMs = lithosRetryJitterMs();
+          logLithosRateLimitWait({
+            request_id: usageContext?.requestId ?? null,
+            model: modelRaw,
+            attempt,
+            wait_ms: planned.waitMs,
+            jitter_ms: jitterMs,
+            wait_source: planned.source,
+          });
+          // The refused attempt's body is never read, so it is released here
+          // rather than left for the runtime to drain.
+          cancelResponseBody(upstream);
+          waitedMs += planned.waitMs;
+          await waitForLithosRetry(planned.waitMs + jitterMs, requestSignal);
+          continue;
+        }
+      }
+    } catch (error) {
+      return { ok: false, response: await respondLithosChatDispatchFailure(error, downstreamSignal, usageContext) };
+    }
+    const providerRequestId = getLithosProviderRequestId(upstream);
+    if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
+    if (!upstream.ok) {
+      return { ok: false, response: await respondLithosChatUpstreamHttpFailure(upstream, requestSignal, providerRequestId, usageContext, body) };
+    }
+    return { ok: true, upstream, providerRequestId, requestSignal, downstreamSignal };
   }
-
-  const providerRequestId = getLithosProviderRequestId(upstream);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
-  if (!upstream.ok) {
-    return { ok: false, response: await respondLithosChatUpstreamHttpFailure(upstream, requestSignal, providerRequestId, usageContext, body) };
-  }
-  return { ok: true, upstream, providerRequestId, requestSignal, downstreamSignal };
 };
 
 /**
@@ -593,7 +793,9 @@ const finalizeBufferedLithosResponses = async (
 /**
  * Relays the LithosAI translated Responses event sequence through the shared
  * writer under this provider's own profile; the shared shape skips comment
- * frames and lets the translator decide the terminal.
+ * frames and lets the translator decide the terminal. The `: keepalive`
+ * comment frames this stream gains are the same inert connection-preserving
+ * frames every other gateway stream carries.
  */
 const streamLithosResponses = (
   upstream: Response,
@@ -609,20 +811,22 @@ const streamLithosResponses = (
   requestSignal: AbortSignal,
   upstreamModel: string
 ): Response =>
-  relayResponsesStream(lithosStreamAdapter, {
-    upstream,
-    requestedModel,
-    responseId,
-    createdAtSeconds,
-    echo,
-    toolNames,
-    customToolNames,
-    providerRequestId,
-    usageContext,
-    downstreamSignal,
-    requestSignal,
-    upstreamModel,
-  });
+  withLithosSseKeepalive(
+    relayResponsesStream(lithosStreamAdapter, {
+      upstream,
+      requestedModel,
+      responseId,
+      createdAtSeconds,
+      echo,
+      toolNames,
+      customToolNames,
+      providerRequestId,
+      usageContext,
+      downstreamSignal,
+      requestSignal,
+      upstreamModel,
+    })
+  );
 
 /**
  * Responses adapter for the LithosAI route.
