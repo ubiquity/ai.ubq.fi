@@ -9,10 +9,13 @@ import { getString, isRecord } from "../utils.ts";
  * Like Cerebras and DeepSeek this is a "special upstream provider": a request
  * addressed to one of its model ids is dispatched straight to the provider's
  * documented OpenAI-compatible Chat Completions endpoint and never races or
- * falls back to another provider. A rate-limit refusal (429) is waited out and
- * retried on the SAME model id when the vendor's own retry hints name a window
- * inside a bounded budget (`src/provider/lithos-handlers.ts`); that retry is
- * not a failover, and no other provider or model is ever substituted.
+ * falls back to another provider. A rate-limit refusal (429) load-balances that
+ * single request once onto the tier's configured sibling - the same weights
+ * behind a separate per-model bucket - and otherwise relays the vendor's own
+ * refusal; where `LITHOSAI_RATE_LIMIT_WAIT` is set, a refusal that names a
+ * window inside a bounded budget is waited out and retried on the SAME model id
+ * instead (`src/provider/lithos-rate-limits.ts`). Neither path ever substitutes
+ * another provider or model.
  *
  * Provider facts (probed live against `https://api.lithosai.cloud/v1`,
  * 2026-09-23):
