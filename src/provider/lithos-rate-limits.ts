@@ -73,24 +73,51 @@ export type LithosRateLimitLogFields = Readonly<Record<string, string | number |
  * relayed instead.
  *
  * A refused request is not out of quota for long: on 2026-09-25 the vendor's own
- * headers named ~51 s windows on a 4,000,000-token/minute bucket, so one bounded
+ * headers named ~51 s windows on a 4,000,000-token/minute bucket, so a bounded
  * pause plus a retry absorbs the refusal that would otherwise reach the client
  * as "429 Too Many Requests" after its own retries run out. The caps keep the
  * pause far below the client's default request timeout; past them the vendor's
- * refusal is relayed unchanged.
+ * refusal is relayed unchanged. The streamed route spends the wider budget in
+ * `LITHOS_STREAMED_REFUSAL_WAIT_POLICY`, because its stream is already open and
+ * held by keepalives instead of sitting silently behind an edge proxy.
  */
 export const LITHOS_REFUSAL_WAIT_CAP_MS = 75_000;
 export const LITHOS_REFUSAL_WAIT_TOTAL_CAP_MS = 120_000;
 /** Absorbed pauses per request, so a stream of tiny windows cannot loop forever. */
 export const LITHOS_REFUSAL_WAIT_MAX_WAITS = 2;
 
+/**
+ * The absorb budget one route may spend on refusals that name their own reset
+ * window. The two routes genuinely differ: a buffered response is held silently
+ * behind whatever proxy sits in front of the gateway, so its budget stays under
+ * the edge read bound; a streamed response opens its SSE stream first and is
+ * held by `: keepalive` frames, so it can follow the client's own ~10-minute
+ * tolerance and cover the three-and-a-half-minute vendor saturations measured on
+ * 2026-09-24 and 2026-09-25. Both budgets keep the same 75-second per-wait cap,
+ * because the vendor's 4,000,000-token/minute bucket cannot name a longer
+ * window than its own ~60-second refill.
+ */
+export type LithosRefusalWaitPolicy = Readonly<{ maxWaits: number; totalCapMs: number }>;
+
+export const LITHOS_BUFFERED_REFUSAL_WAIT_POLICY: LithosRefusalWaitPolicy = {
+  maxWaits: LITHOS_REFUSAL_WAIT_MAX_WAITS,
+  totalCapMs: LITHOS_REFUSAL_WAIT_TOTAL_CAP_MS,
+};
+
+export const LITHOS_STREAMED_REFUSAL_WAIT_POLICY: LithosRefusalWaitPolicy = { maxWaits: 5, totalCapMs: 300_000 };
+
 /** The pause this refusal asks for, bounded by the per-wait, count and total caps. */
-export const lithosRefusalWait = (headers: Headers, waitedMs: number, waits: number): LithosRateLimitWait | null => {
-  if (waits >= LITHOS_REFUSAL_WAIT_MAX_WAITS) return null;
+export const lithosRefusalWait = (
+  headers: Headers,
+  waitedMs: number,
+  waits: number,
+  policy: LithosRefusalWaitPolicy = LITHOS_BUFFERED_REFUSAL_WAIT_POLICY
+): LithosRateLimitWait | null => {
+  if (waits >= policy.maxWaits) return null;
   const planned = lithosRateLimitWait(headers, Date.now());
   if (planned === null) return null;
   if (planned.waitMs > LITHOS_REFUSAL_WAIT_CAP_MS) return null;
-  if (waitedMs + planned.waitMs > LITHOS_REFUSAL_WAIT_TOTAL_CAP_MS) return null;
+  if (waitedMs + planned.waitMs > policy.totalCapMs) return null;
   return planned;
 };
 
