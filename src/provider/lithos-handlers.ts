@@ -61,12 +61,12 @@ import {
   LITHOS_STREAMED_REFUSAL_WAIT_POLICY,
   type LithosRateLimitWait,
   type LithosRefusalWaitPolicy,
-  lithosFailoverLadderFor,
-  lithosFailoverTargetAt,
+  lithosFailoverSiblingAt,
   lithosOpenFailoverWindow,
   lithosRateLimitWait,
   lithosRateLimitSnapshot,
   lithosRefusalWait,
+  lithosSiblingModelFor,
   logLithosRateLimitFailover,
   logLithosRateLimitRefusal,
   logLithosRateLimitWait,
@@ -248,13 +248,7 @@ type LithosDispatchOutcome =
       /** The tier this attempt addressed; a mapped sibling after a failover. */
       servedModel: string;
     }>
-  | Readonly<{
-      ok: false;
-      response: Response;
-      /** Carried so a streamed handler can open its stream and report the refusal in-band. */
-      requestSignal: AbortSignal;
-      downstreamSignal: AbortSignal;
-    }>;
+  | Readonly<{ ok: false; response: Response }>;
 
 /** Everything one request's dispatch loop needs that never changes. */
 type LithosDispatchInput = Readonly<{
@@ -270,8 +264,8 @@ type LithosDispatchProgress = Readonly<{
   attempt: number;
   /** The tier the next attempt addresses; the sibling after a failover. */
   attemptModel: string;
-  /** How many ladder tiers this cycle has already tried; 0 means only the requested tier. */
-  ladderIndex: number;
+  /** A sibling tier may be tried once per request, never twice per failover round. */
+  failoverAttempted: boolean;
   /** Waited time spent so far, so the total pause stays bounded. */
   waitedMs: number;
   /** Absorbed pauses so far, so a stream of tiny windows cannot loop forever. */
@@ -308,8 +302,6 @@ const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Respon
     return {
       ok: false,
       response: await respondLithosChatUpstreamHttpFailure(upstream, input.requestSignal, providerRequestId, input.usageContext, input.body),
-      requestSignal: input.requestSignal,
-      downstreamSignal: input.downstreamSignal,
     };
   }
   return { ok: true, upstream, providerRequestId, requestSignal: input.requestSignal, downstreamSignal: input.downstreamSignal, servedModel };
@@ -321,31 +313,32 @@ const lithosAttemptOutcome = async (input: LithosDispatchInput, upstream: Respon
  * saturated tier again. A refusal that names no window (or carries
  * `x-should-retry: false`) opens nothing and stays a per-request failover.
  */
-const lithosOpenFailoverWindowFrom = (modelRaw: string, refusal: Response, target: string): void => {
+const lithosOpenFailoverWindowFrom = (modelRaw: string, refusal: Response): void => {
   const window = lithosRateLimitWait(refusal.headers, Date.now());
   if (window === null) return;
-  lithosOpenFailoverWindow(modelRaw, Date.now(), window.waitMs, target);
+  lithosOpenFailoverWindow(modelRaw, Date.now(), window.waitMs);
 };
 
 /**
- * The next rung of the failover ladder for a refusal, or null once the ladder is
- * exhausted (the whole stack refused) and the request must wait out the vendor's
- * own window before retrying the requested tier.
+ * The one-time sibling failover for a refusal on the requested tier: the loop
+ * state that addresses the sibling, or null when this tier has no sibling or
+ * the sibling was already tried.
  */
 const lithosFailoverProgress = (
   input: Readonly<{ modelRaw: string; usageContext: UsageContext | undefined }>,
   state: LithosDispatchProgress
 ): LithosDispatchProgress | null => {
-  const next = lithosFailoverLadderFor(input.modelRaw).at(state.ladderIndex);
-  if (next === undefined) return null;
+  if (state.failoverAttempted) return null;
+  const sibling = lithosSiblingModelFor(input.modelRaw);
+  if (sibling === null) return null;
   logLithosRateLimitFailover({
     request_id: input.usageContext?.requestId ?? null,
     model: input.modelRaw,
-    sibling_model: next,
+    sibling_model: sibling,
     attempt: state.attempt,
   });
-  recordLithosFailoverModel(input.usageContext, next);
-  return { ...state, attemptModel: next, ladderIndex: state.ladderIndex + 1 };
+  recordLithosFailoverModel(input.usageContext, sibling);
+  return { ...state, attemptModel: sibling, failoverAttempted: true };
 };
 
 /** One pass: a terminal outcome, the state the next attempt runs from, or a deferral the streamed route opens its stream behind. */
@@ -388,11 +381,7 @@ const lithosDispatchPass = async (
     attempt: progressed.attempt,
     ...lithosRateLimitSnapshot(attempt.headers),
   });
-  // A refusal with a window deepens later requests to the next ladder tier; the
-  // window's target is re-derived per refusal, so fast refusing deepens it to
-  // the family's normal tier instead of bouncing back to saturated ultra.
-  const nextTier = lithosFailoverLadderFor(input.modelRaw).at(progressed.ladderIndex);
-  if (nextTier !== undefined) lithosOpenFailoverWindowFrom(input.modelRaw, attempt, nextTier);
+  if (progressed.attemptModel === input.modelRaw) lithosOpenFailoverWindowFrom(input.modelRaw, attempt);
   const failover = lithosFailoverProgress(input, progressed);
   if (failover !== null) {
     cancelResponseBody(attempt);
@@ -408,7 +397,7 @@ const lithosDispatchPass = async (
     const nextState: LithosDispatchProgress = {
       attempt: progressed.attempt,
       attemptModel: input.modelRaw,
-      ladderIndex: 0,
+      failoverAttempted: false,
       waitedMs,
       waits: progressed.waits + 1,
     };
@@ -456,12 +445,7 @@ const runLithosDispatch = async (
     try {
       pass = await lithosDispatchPass(input, state, policy, allowDefer);
     } catch (error) {
-      return {
-        ok: false,
-        response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext),
-        requestSignal: input.requestSignal,
-        downstreamSignal: input.downstreamSignal,
-      };
+      return { ok: false, response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext) };
     }
     if (pass.kind === "result") return pass.result;
     if (pass.kind === "defer") {
@@ -483,12 +467,7 @@ const runLithosDispatch = async (
             if ("pending" in continued) throw new Error("A resumed LithosAI dispatch cannot defer again.");
             return continued;
           } catch (error) {
-            return {
-              ok: false,
-              response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext),
-              requestSignal: input.requestSignal,
-              downstreamSignal: input.downstreamSignal,
-            };
+            return { ok: false, response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext) };
           }
         })(),
         requestSignal: input.requestSignal,
@@ -516,25 +495,22 @@ const dispatchLithosUpstreamResult = async (
 ): Promise<LithosDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
-  // A tier whose window is open is served by the ladder target it points at
-  // without asking the saturated tier again, and that decision is announced
-  // exactly like a per-request failover. A deeper target resumes mid-ladder, so
-  // its own refusal advances further down rather than restarting at the top.
-  const ladder = lithosFailoverLadderFor(modelRaw);
-  const stickyTarget = lithosFailoverTargetAt(modelRaw, Date.now());
-  const stickyIndex = stickyTarget === null ? -1 : ladder.indexOf(stickyTarget);
-  if (stickyTarget !== null) {
+  // A tier whose window is open is served by its sibling without asking the
+  // saturated tier again, and that decision is announced exactly like a
+  // per-request failover.
+  const sibling = lithosFailoverSiblingAt(modelRaw, Date.now());
+  if (sibling !== null) {
     logLithosRateLimitFailover({
       request_id: usageContext?.requestId ?? null,
       model: modelRaw,
-      sibling_model: stickyTarget,
+      sibling_model: sibling,
       attempt: 1,
     });
-    recordLithosFailoverModel(usageContext, stickyTarget);
+    recordLithosFailoverModel(usageContext, sibling);
   }
   return await runLithosDispatch(
     { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, waitedMs: 0, waits: 0 },
+    { attempt: 0, attemptModel: sibling ?? modelRaw, failoverAttempted: sibling !== null, waitedMs: 0, waits: 0 },
     streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
     streamed
   );
@@ -612,22 +588,7 @@ export const handleLithosChatCompletions = async (
       () => servedModel.current
     );
   }
-  if (!dispatched.ok) {
-    // Same guarantee as the Responses route: a streamed refusal is reported
-    // in-band so no client can surface it as a retryable 429.
-    if (clientWantsStream) {
-      return streamLithosChatCompletion(
-        dispatched.response,
-        null,
-        usageContext,
-        dispatched.downstreamSignal,
-        dispatched.requestSignal,
-        upstreamModel,
-        modelRaw
-      );
-    }
-    return dispatched.response;
-  }
+  if (!dispatched.ok) return dispatched.response;
   const { upstream, requestSignal, downstreamSignal, servedModel } = dispatched;
   const providerRequestId = dispatched.providerRequestId;
 
@@ -863,36 +824,7 @@ export const handleLithosResponses = async (
       () => servedModel.current
     );
   }
-  if (!dispatched.ok) {
-    // A streamed request never receives an HTTP 429 from this route: the
-    // gateway's Codex clients interpret that status as "retry", and when their
-    // own retry limit runs out the user sees `exceeded retry limit, last status:
-    // 429`. Opening the stream and reporting the refusal in-band makes the
-    // vendor's own code (and its reset instant) the thing the client reads, and
-    // makes that banner unreachable on this wire. Buffered requests keep the
-    // status, because no stream exists to carry the terminal.
-    if (clientWantsStream) {
-      return streamLithosResponses(
-        dispatched.response,
-        modelRaw,
-        `resp_${crypto
-          .randomUUID()
-          .replace(/[^A-Za-z0-9]/g, "")
-          .slice(0, 40)}`,
-        createdAtSeconds,
-        echo,
-        toolNames,
-        customToolNames,
-        null,
-        usageContext,
-        dispatched.downstreamSignal,
-        dispatched.requestSignal,
-        upstreamModel,
-        modelRaw
-      );
-    }
-    return dispatched.response;
-  }
+  if (!dispatched.ok) return dispatched.response;
   const { upstream, requestSignal, downstreamSignal, servedModel } = dispatched;
   const providerRequestId = dispatched.providerRequestId;
   const responseId = `resp_${(providerRequestId ?? crypto.randomUUID()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40)}`;

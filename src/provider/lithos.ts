@@ -2,7 +2,7 @@ import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../api-ke
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "../inference-deadline.ts";
 import type { SentinelUpstreamRecorder } from "../sentinel/upstream-capture.ts";
 import { getString, isRecord } from "../utils.ts";
-import { lithosIsLadderTarget } from "./lithos-rate-limits.ts";
+import { lithosSiblingModelFor } from "./lithos-rate-limits.ts";
 
 /**
  * LithosAI API transport — a chat-completions-only upstream provider.
@@ -11,14 +11,12 @@ import { lithosIsLadderTarget } from "./lithos-rate-limits.ts";
  * addressed to one of its model ids is dispatched straight to the provider's
  * documented OpenAI-compatible Chat Completions endpoint and never races or
  * falls back to another provider. A rate-limit refusal (429) load-balances that
- * single request down the tier's configured ladder (ultra -> fast -> normal):
- * each rung is the same weights behind its own per-model bucket (probed
- * 2026-09-25), and a refusal whose own headers name a reset instant keeps later
- * requests on the next rung until the instant passes, after which the requested
- * tier is tried again (`src/provider/lithos-rate-limits.ts`). A streamed refusal
- * that survives the whole ladder is reported in-band on the open stream, never
- * as an HTTP 429; only buffered requests keep a status. Another provider is
- * never substituted.
+ * single request once onto the tier's configured sibling - the same weights
+ * behind a separate per-model bucket - and a refusal whose own headers name a
+ * reset instant keeps later requests on that sibling until the instant passes,
+ * after which the requested tier is tried again (`src/provider/lithos-rate-limits.ts`).
+ * A refusal that names no window is relayed once both tiers have refused, and
+ * another provider or model is never substituted.
  *
  * Provider facts (probed live against `https://api.lithosai.cloud/v1`,
  * 2026-09-23):
@@ -446,14 +444,13 @@ const acceptUpstreamModel = (value: unknown, requestedModel: string, servedModel
   const requested = (lithosUpstreamModelFor(requestedModel) ?? requestedModel).trim();
   if (echoNamesModel(echo, requested)) return true; // rules 2 and 3
   if (servedModel === undefined) return false;
-  // A request the requested tier refused may be served further down its
-  // configured failover ladder (ultra -> fast -> normal), and the vendor then
-  // names that tier. Any ladder tier is accepted, and only when this attempt
-  // actually addressed it: nothing else may report a model other than the one
-  // requested.
+  // A request the requested tier refused may be served by its configured
+  // sibling, and the vendor then names that sibling. Only that mapped pair is
+  // accepted, and only when this attempt actually addressed the sibling:
+  // nothing else may report a model other than the one requested.
   const served = (lithosUpstreamModelFor(servedModel) ?? servedModel).trim();
   if (served.toLowerCase() === requested.toLowerCase()) return false;
-  return lithosIsLadderTarget(requested, served) && echoNamesModel(echo, served);
+  return lithosSiblingModelFor(requested) === served && echoNamesModel(echo, served);
 };
 
 const normalizeLithosToolCall = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {

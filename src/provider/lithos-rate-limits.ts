@@ -3,68 +3,53 @@
 import type { UsageContext } from "../openai-telemetry.ts";
 
 /**
- * The failover ladder behind a requested tier, deepest capability first:
- * `-ultra` refuses -> `-fast` answers -> the family's normal tier answers.
+ * The sibling tier a refused model is load-balanced onto, for one request.
  *
- * Every tier owns its own rate-limit bucket, probed live 2026-09-25: consuming
- * 250,006 tokens on `-fast` left `-ultra` reporting `x-ratelimit-remaining-tokens:
- * 4000000`, and each tier refills at 4,000,000 tokens/minute. A hop therefore
- * moves real capacity alongside capability, and the ladder is no longer a single
- * sibling pair. The next tier below a refusal is tried immediately (no wait),
- * because its bucket is independent; only when the WHOLE ladder refuses does the
- * request wait on the vendor's own reset window.
- *
- * `-ultra-chat` is deliberately absent: LithosAI told the owner on 2026-09-24
- * that it is tuned for short context windows and loses accuracy on the
- * large-context sessions this route serves.
+ * Both ids are the same 552B weights behind separate per-model rate-limit
+ * buckets, so a refusal on one tier says nothing about the other. The target is
+ * the `-fast` tier, NOT `-ultra-chat`: LithosAI told the owner on 2026-09-24
+ * that `-ultra-chat` is tuned for short context windows and loses accuracy on
+ * the large-context sessions this route serves. Probed against the live vendor
+ * the same day: `-fast` reports its own `x-ratelimit-remaining-*` counters
+ * (independent of ultra's), answers `reasoning_effort` none..max, returns
+ * `get_weather` tool calls, and answered a 106k-token needle prompt correctly.
  */
-const LITHOS_FAILOVER_LADDERS: ReadonlyMap<string, readonly string[]> = new Map([
-  ["deepseek-ai/DeepSeek-V4.1-Flash-ultra", ["deepseek-ai/DeepSeek-V4.1-Flash-fast", "deepseek-ai/DeepSeek-V4.1-Flash"]],
-  ["deepseek-ai/DeepSeek-V4.1-Flash-fast", ["deepseek-ai/DeepSeek-V4.1-Flash"]],
-  ["moonshotai/Kimi-K3-ultra", ["moonshotai/Kimi-K3-fast", "moonshotai/Kimi-K3"]],
-  ["moonshotai/Kimi-K3-fast", ["moonshotai/Kimi-K3"]],
-]);
+const LITHOS_SIBLING_MODELS: ReadonlyMap<string, string> = new Map([["deepseek-ai/DeepSeek-V4.1-Flash-ultra", "deepseek-ai/DeepSeek-V4.1-Flash-fast"]]);
 
-/** The ordered tiers to try after a request model refuses, or an empty list at the bottom. */
-export const lithosFailoverLadderFor = (modelRaw: string): readonly string[] => LITHOS_FAILOVER_LADDERS.get(modelRaw) ?? [];
-
-/** True when `target` is a legal failover destination for `modelRaw`. */
-export const lithosIsLadderTarget = (modelRaw: string, target: string): boolean => lithosFailoverLadderFor(modelRaw).includes(target);
+/** The sibling tier for a requested model, or null when that tier has none. */
+export const lithosSiblingModelFor = (modelRaw: string): string | null => LITHOS_SIBLING_MODELS.get(modelRaw) ?? null;
 
 /**
  * The in-process failover windows: a tier whose refusal named a reset instant
- * keeps sending its requests to the next ladder tier until that instant passes,
- * and then returns to the requested tier. The window carries its target, so a
- * fast refusal deepens a later request to the normal tier instead of bouncing
- * back to a saturated one. Scoped to models with a ladder, so a bottom tier
- * never accumulates state.
+ * keeps sending its requests to the sibling until that instant passes, and then
+ * returns to the requested tier. Scoped to the mapped pair, so a model without a
+ * configured sibling never accumulates state.
  *
  * The state is per process on purpose: it mirrors what this gateway instance has
  * been told by the vendor, and a restart re-learns it from the first refusal.
  */
-type LithosFailoverWindow = Readonly<{ deadlineMs: number; target: string }>;
-const lithosFailoverWindows = new Map<string, LithosFailoverWindow>();
+const lithosFailoverDeadlines = new Map<string, number>();
 
-/** The ladder tier this request model must start on right now, or null once the window has passed. */
-export const lithosFailoverTargetAt = (modelRaw: string, nowMs: number): string | null => {
-  const window = lithosFailoverWindows.get(modelRaw);
-  if (window === undefined) return null;
-  if (nowMs >= window.deadlineMs || !lithosIsLadderTarget(modelRaw, window.target)) {
-    lithosFailoverWindows.delete(modelRaw);
+/** The sibling this tier's requests must use right now, or null once the window has passed. */
+export const lithosFailoverSiblingAt = (modelRaw: string, nowMs: number): string | null => {
+  const deadline = lithosFailoverDeadlines.get(modelRaw);
+  if (deadline === undefined) return null;
+  if (nowMs >= deadline) {
+    lithosFailoverDeadlines.delete(modelRaw);
     return null;
   }
-  return window.target;
+  return lithosSiblingModelFor(modelRaw);
 };
 
-/** Opens (or extends) that window: the refusal's own reset instant plus the tier it points at. */
-export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number, target: string): void => {
-  if (!lithosIsLadderTarget(modelRaw, target)) return;
-  lithosFailoverWindows.set(modelRaw, { deadlineMs: nowMs + waitMs, target });
+/** Opens (or extends) that window: the refusal's own reset instant, in milliseconds from now. */
+export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs: number): void => {
+  if (lithosSiblingModelFor(modelRaw) === null) return;
+  lithosFailoverDeadlines.set(modelRaw, nowMs + waitMs);
 };
 
 /** Test seam: drop every window so fixtures cannot leak into each other. */
 export const clearLithosFailoverWindows = (): void => {
-  lithosFailoverWindows.clear();
+  lithosFailoverDeadlines.clear();
 };
 
 /** Records the sibling that served a request whose own tier refused it. */
