@@ -874,6 +874,73 @@ Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a statu
   });
 });
 
+Deno.test("lithos wiring: a streamed refusal on both tiers is absorbed by the vendor's own window, then the requested tier streams", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      // The live incident shape: the client streams, both tiers refuse with the
+      // vendor's own short window, and the retry after that window must be the
+      // requested tier answering on the opened stream - never a 429 surfaced to
+      // the client. The wait is the vendor's own 60 ms hint so the test stays
+      // instantaneous.
+      const frames = [
+        {
+          id: "chatcmpl-lithos-absorb",
+          object: "chat.completion.chunk",
+          created: 1_790_160_331,
+          model: LITHOS_MODEL,
+          choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+        },
+        {
+          id: "chatcmpl-lithos-absorb",
+          object: "chat.completion.chunk",
+          created: 1_790_160_331,
+          model: LITHOS_MODEL,
+          choices: [{ index: 0, delta: { content: "after-window" }, finish_reason: null }],
+        },
+        {
+          id: "chatcmpl-lithos-absorb",
+          object: "chat.completion.chunk",
+          created: 1_790_160_331,
+          model: LITHOS_MODEL,
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        },
+        {
+          id: "chatcmpl-lithos-absorb",
+          object: "chat.completion.chunk",
+          created: 1_790_160_332,
+          model: LITHOS_MODEL,
+          choices: [],
+          usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_tokens_details: null, completion_tokens_details: { reasoning_tokens: 5 } },
+        },
+      ];
+      const success = () => new Response(`${sseBody(frames)}data: [DONE]\n\n`, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      const streamed = await withUpstream(
+        (_call, calls) => (calls.length <= 2 ? lithosRateLimitRefusal("60") : success()),
+        async () => {
+          const response = await handleResponses(
+            responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
+            usageContext("lithos-429-stream-absorb")
+          );
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+        }
+      );
+
+      assert.equal(streamed.calls.length, 3, "requested tier, sibling, then the requested tier again after the window");
+      assert.equal(streamed.calls[0].body.model, LITHOS_MODEL);
+      assert.equal(streamed.calls[1].body.model, LITHOS_SIBLING_MODEL);
+      assert.equal(streamed.calls[2].body.model, LITHOS_MODEL, "the requested tier is retried, not the sibling");
+      assert.equal(streamed.result.status, 200);
+      assert.match(streamed.result.text, /event: response\.completed/);
+      assert.equal(streamed.result.telemetry?.rateLimitWaitMs, 60, "the absorbed window is reported on the streamed terminal");
+      assert.equal(streamed.result.telemetry?.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+      assert.equal(streamed.result.telemetry?.streamTerminalType, "response.completed");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
 Deno.test("lithos wiring: only the mapped sibling may answer an Ultra request with a different model", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
