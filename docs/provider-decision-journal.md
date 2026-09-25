@@ -470,3 +470,18 @@ Reversal risk: relaying a waitable refusal because a silent hold looks simpler r
 streamed budget exists to remove; letting a buffered request hold silently that long reintroduces the edge read bound
 the split budget exists to avoid. Coverage: `tests/lithos-wiring.test.ts` asserts the streamed budget persists past the
 buffered caps, that exhaustion reports in-band, and that an unwaitable refusal still relays unchanged.
+
+## 2026-09-25 — The streamed absorb covers the Chat Completions route too
+
+The Mac companion gateway's own log reframed the case: of its 137 client-visible LithosAI 429s, 128 were on
+`/v1/chat/completions` (106 on `deepseek-ai/DeepSeek-V4.1-Flash`), the wire the agent harness workers use, against 9 on
+the Responses wire. The deferred streamed absorb therefore applies to the Chat route as well: the stream opens first,
+`: keepalive` frames hold the client, the vendor's own windows are spent behind it under the same five-wait / 300-second
+budget and 75-second per-wait cap, and an exhausted budget reports the refusal in-band as the Chat error frame.
+`relayChatCompletionStream` accepts a pending upstream like `relayResponsesStream`, and the served tier is read after
+the deferred attempt lands.
+
+Reversal risk: leaving the Chat route on the buffered-only budget restores the client-visible 429s its own surface
+logged most often; opening the stream without the in-band refusal terminal would turn a spent budget into a silent hang.
+Coverage: `tests/lithos-wiring.test.ts` asserts the Chat budget past the buffered caps and the in-band exhaustion
+terminal.

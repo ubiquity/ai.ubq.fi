@@ -482,7 +482,9 @@ const runLithosDispatch = async (
  * Shared LithosAI dispatch for both gateway routes. It owns the provider
  * request-id capture, the dispatch/headers telemetry, and the failure
  * responders, so the Chat and Responses adapters differ only in how they
- * translate the payload.
+ * translate the payload. A streaming caller (`streamed`) gets the wider
+ * keepalive-backed absorb as a pending completion; a buffered caller spends its
+ * smaller budget inline.
  */
 const dispatchLithosUpstreamResult = async (
   req: Request,
@@ -512,18 +514,6 @@ const dispatchLithosUpstreamResult = async (
     streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
     streamed
   );
-};
-
-/** The buffered dispatch: no stream exists to hold open, so a wait is spent inline. */
-const dispatchLithosUpstream = async (
-  req: Request,
-  body: Record<string, unknown>,
-  modelRaw: string,
-  usageContext: UsageContext | undefined
-): Promise<LithosDispatchOutcome> => {
-  const result = await dispatchLithosUpstreamResult(req, body, modelRaw, usageContext, false);
-  if ("pending" in result) throw new Error("A buffered LithosAI dispatch cannot defer a rate-limit wait.");
-  return result;
 };
 
 /**
@@ -579,7 +569,25 @@ export const handleLithosChatCompletions = async (
     reasoning,
   });
 
-  const dispatched = await dispatchLithosUpstream(req, lithosBody, modelRaw, usageContext);
+  const dispatched = await dispatchLithosUpstreamResult(req, lithosBody, modelRaw, usageContext, clientWantsStream);
+  if ("pending" in dispatched) {
+    // Same deferred absorb as the Responses route: the Chat stream opens now,
+    // keepalives hold the client, and the vendor's window is spent behind it.
+    const servedModel = { current: modelRaw };
+    const upstream = dispatched.pending.then((outcome) => {
+      if (outcome.ok) servedModel.current = outcome.servedModel;
+      return outcome.ok ? outcome.upstream : outcome.response;
+    });
+    return streamLithosChatCompletion(
+      upstream,
+      null,
+      usageContext,
+      dispatched.downstreamSignal,
+      dispatched.requestSignal,
+      upstreamModel,
+      () => servedModel.current
+    );
+  }
   if (!dispatched.ok) return dispatched.response;
   const { upstream, requestSignal, downstreamSignal, servedModel } = dispatched;
   const providerRequestId = dispatched.providerRequestId;

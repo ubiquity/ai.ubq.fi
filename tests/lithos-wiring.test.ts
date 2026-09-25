@@ -959,6 +959,73 @@ Deno.test("lithos wiring: a streamed absorb that outlives the stream budget repo
   });
 });
 
+Deno.test("lithos wiring: a streamed Chat absorb spends the wider stream budget beyond two waits", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      // The Chat Completions wire carries the agent workers; the same deferred
+      // absorb must cover it, or their streamed requests keep surfacing 429s
+      // after the buffered cap (the Mac log held 128 such client-visible 429s).
+      const streamed = await withUpstream(
+        (_call, calls) =>
+          calls.length <= 6
+            ? lithosRateLimitRefusal("60")
+            : new Response(lithosStreamBody("after-many-windows"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+        async () => {
+          const response = await handleChatCompletions(
+            chatRequest({ model: LITHOS_MODEL, messages: [{ role: "user", content: "hi" }], stream: true }),
+            usageContext("lithos-429-chat-stream-budget")
+          );
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+        }
+      );
+
+      assert.equal(streamed.calls.length, 7, "the sibling failover plus three absorbed windows");
+      assert.deepEqual(
+        streamed.calls.map((call) => call.body.model),
+        [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL]
+      );
+      assert.equal(streamed.result.status, 200);
+      assert.match(streamed.result.text, /\[DONE\]/);
+      const telemetry = streamed.result.telemetry;
+      if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(telemetry.rateLimitWaitMs, 180, "three vendor windows are absorbed behind the open stream");
+      assert.equal(telemetry.streamTerminalType, "response.completed");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
+Deno.test("lithos wiring: a streamed Chat absorb that outlives the stream budget reports the refusal in-band", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      const streamed = await withUpstream(
+        () => lithosRateLimitRefusal("60"),
+        async () => {
+          const response = await handleChatCompletions(
+            chatRequest({ model: LITHOS_MODEL, messages: [{ role: "user", content: "hi" }], stream: true }),
+            usageContext("lithos-429-chat-stream-exhausted")
+          );
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+        }
+      );
+
+      assert.equal(streamed.calls.length, 12, "the requested tier and sibling per cycle, plus the terminal pass");
+      assert.equal(streamed.result.status, 200);
+      assert.match(streamed.result.text, /rate_limit_exceeded/);
+      assert.doesNotMatch(streamed.result.text, /\[DONE\]/);
+      const telemetry = streamed.result.telemetry;
+      if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(telemetry.rateLimitWaitMs, 300, "the full streamed budget is reported");
+      assert.equal(telemetry.streamTerminalType, "response.failed");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
 Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a status instead of held open", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
