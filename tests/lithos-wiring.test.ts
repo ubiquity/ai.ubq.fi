@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { LITHOS_CHAT_COMPLETIONS_URL, LITHOS_MODEL_IDS, LITHOS_RATE_LIMIT_HEADERS } from "../src/provider/lithos.ts";
-import { clearLithosFailoverWindows, lithosRateLimitWait } from "../src/provider/lithos-rate-limits.ts";
+import { clearLithosFailoverWindows, lithosRateLimitSnapshot, lithosRateLimitWait } from "../src/provider/lithos-rate-limits.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { handleResponses } from "../src/responses-handler.ts";
 import { handleChatCompletions } from "../src/chat/envelope.ts";
@@ -706,6 +706,32 @@ Deno.test("lithos rate-limit waits follow the vendor's own header precedence", (
   // given an invented one.
   assert.equal(wait({ "retry-after-ms": "5", "x-should-retry": "false" }), null);
   assert.equal(wait({}), null);
+});
+
+Deno.test("lithos rate-limit snapshots capture the vendor's own budgets, bounded", () => {
+  const snapshot = lithosRateLimitSnapshot(
+    new Headers({
+      "x-ratelimit-limit-tokens": "4000000",
+      "x-ratelimit-remaining-tokens": "607980",
+      "x-ratelimit-reset-tokens": "50.88s",
+      "retry-after": "51",
+      "x-ratelimit-remaining-requests": "299",
+      "x-should-retry": "false",
+    })
+  );
+  assert.equal(snapshot.limit_tokens, 4_000_000);
+  assert.equal(snapshot.remaining_tokens, 607_980);
+  assert.equal(snapshot.reset_tokens, "50.88s");
+  assert.equal(snapshot.retry_after, "51");
+  assert.equal(snapshot.remaining_requests, 299);
+  assert.equal(snapshot.should_retry, "false");
+  // `x-should-retry: false` means no wait window is derived, and the snapshot stays bounded.
+  assert.equal(snapshot.window_ms, null);
+  assert.equal(snapshot.window_source, null);
+  const bare = lithosRateLimitSnapshot(new Headers());
+  assert.equal(bare.window_ms, null);
+  assert.equal(bare.limit_tokens, null);
+  assert.equal(bare.retry_after, null);
 });
 
 Deno.test("lithos wiring: an Ultra refusal fails over once to the sibling tier's own bucket", async () => {

@@ -55,8 +55,10 @@ import {
   lithosFailoverSiblingAt,
   lithosOpenFailoverWindow,
   lithosRateLimitWait,
+  lithosRateLimitSnapshot,
   lithosSiblingModelFor,
   logLithosRateLimitFailover,
+  logLithosRateLimitRefusal,
   recordLithosFailoverModel,
 } from "./lithos-rate-limits.ts";
 
@@ -506,6 +508,13 @@ const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispa
   const attempt = await lithosDispatchAttempt(input.body, state.attemptModel, input.requestSignal, input.usageContext);
   const progressed: LithosDispatchProgress = { ...state, attempt: state.attempt + 1 };
   if (attempt.status !== 429) return { kind: "result", result: await lithosAttemptOutcome(input, attempt, progressed.attemptModel) };
+  // Header capture: record what the vendor said at the refusal, not after the fact.
+  logLithosRateLimitRefusal({
+    request_id: input.usageContext?.requestId ?? null,
+    model: progressed.attemptModel,
+    attempt: progressed.attempt,
+    ...lithosRateLimitSnapshot(attempt.headers),
+  });
   if (progressed.attemptModel === input.modelRaw) lithosOpenFailoverWindowFrom(input.modelRaw, attempt);
   const failover = lithosFailoverProgress(input, progressed);
   if (failover !== null) {
