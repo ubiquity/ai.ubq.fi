@@ -48,7 +48,9 @@ export const lithosOpenFailoverWindow = (modelRaw: string, nowMs: number, waitMs
 };
 
 /** Test seam: drop every window so fixtures cannot leak into each other. */
-export const clearLithosFailoverWindows = (): void => lithosFailoverDeadlines.clear();
+export const clearLithosFailoverWindows = (): void => {
+  lithosFailoverDeadlines.clear();
+};
 
 /** Records the sibling that served a request whose own tier refused it. */
 export const recordLithosFailoverModel = (usageContext: UsageContext | undefined, model: string): void => {

@@ -29,6 +29,15 @@ const chatContentPart = (part: unknown, role: string): DeepSeekResponsesResult<R
   const url = getString(part.image_url) ?? getString(part.file_url);
   if (!url) return failure("input.content.image_url", "input_image requires image_url");
   const detail = getString(part.detail);
+  const imageBytes = forwardedByteLength(url);
+  if (imageBytes > DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES) {
+    // An oversized data URL is dropped rather than cut: half a base64 payload is
+    // not an image, and the provider tokenizes the whole string as text anyway.
+    return {
+      ok: true,
+      value: { text: `[gateway: image omitted; ${imageBytes} bytes exceeds the ${DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES}-byte per-message forwarding limit]` },
+    };
+  }
   return { ok: true, value: { image: { type: "image_url", image_url: { url, ...(detail ? { detail } : {}) } } } };
 };
 
@@ -58,11 +67,42 @@ const chatToolCallItem = (item: Record<string, unknown>): DeepSeekResponsesResul
   return { ok: true, value: { id: callId, type: "function", function: { name, arguments: args } } };
 };
 
+/**
+ * The largest payload this adapter forwards inside one message, in UTF-8 bytes.
+ *
+ * The provider counts what is forwarded - base64 image data URLs and raw tool
+ * results alike - as text tokens, so a single oversized tool result can cross
+ * the model's 1,048,576-token window on its own. On 2026-09-24 a 744,586-byte
+ * `view_image` result took one session from 736,213 tokens to 1,250,713; the
+ * provider rejected it, and every following request - including compaction -
+ * re-sent the same blob and was rejected too, so the thread could never be
+ * resumed. This cap keeps one message's contribution far below the window while
+ * staying above the 10,000-token truncation the catalog already advertises.
+ */
+export const DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES = 65_536;
+
+const forwardedByteLength = (value: string): number => new TextEncoder().encode(value).byteLength;
+
+/** The notice a cut payload carries, so the model knows history was trimmed. */
+const omittedForwardedPayload = (omittedBytes: number): string =>
+  `\n[gateway: ${omittedBytes} bytes omitted; this route forwards at most ${DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES} bytes per message because the provider counts forwarded payloads as text tokens]`;
+
+/** Truncates one forwarded payload so a single message can never carry the window with it. */
+const boundForwardedPayload = (value: string): string => {
+  const bytes = forwardedByteLength(value);
+  if (bytes <= DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES) return value;
+  let head = value.slice(0, DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES);
+  while (head.length > 0 && forwardedByteLength(head) > DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES) {
+    head = head.slice(0, Math.floor(head.length * 0.9));
+  }
+  return head + omittedForwardedPayload(bytes - forwardedByteLength(head));
+};
+
 const chatToolResultItem = (item: Record<string, unknown>): DeepSeekResponsesResult<Record<string, unknown>> => {
   const callId = getString(item.call_id);
   if (!callId) return failure("input", "function_call_output items require call_id");
-  const content = typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
-  return { ok: true, value: { role: "tool", tool_call_id: callId, content } };
+  const raw = typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
+  return { ok: true, value: { role: "tool", tool_call_id: callId, content: boundForwardedPayload(raw) } };
 };
 
 /**
