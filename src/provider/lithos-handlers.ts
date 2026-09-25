@@ -52,13 +52,18 @@ import { deepSeekChatClientOutputAllowance, deepSeekTerminalTypeForPayload } fro
 const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
 
 import {
+  LITHOS_REFUSAL_WAIT_CAP_MS,
   lithosFailoverSiblingAt,
   lithosOpenFailoverWindow,
   lithosRateLimitWait,
   lithosRateLimitSnapshot,
+  lithosRefusalWait,
   lithosSiblingModelFor,
   logLithosRateLimitFailover,
   logLithosRateLimitRefusal,
+  logLithosRateLimitWait,
+  recordLithosRateLimitWaitMs,
+  waitForLithosRetry,
   recordLithosFailoverModel,
 } from "./lithos-rate-limits.ts";
 
@@ -423,8 +428,12 @@ type LithosDispatchProgress = Readonly<{
   attempt: number;
   /** The tier the next attempt addresses; the sibling after a failover. */
   attemptModel: string;
-  /** A sibling tier may be tried once per request, never twice. */
+  /** A sibling tier may be tried once per request, never twice per failover round. */
   failoverAttempted: boolean;
+  /** Waited time spent so far, so the total pause stays bounded. */
+  waitedMs: number;
+  /** Absorbed pauses so far, so a stream of tiny windows cannot loop forever. */
+  waits: number;
 }>;
 
 /** One provider attempt with the route's transport hooks. */
@@ -521,8 +530,30 @@ const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispa
     cancelResponseBody(attempt);
     return { kind: "retry", state: failover };
   }
+  // Both tiers refused (or this tier has no sibling). The vendor names its own
+  // reset instant on these refusals, so one bounded pause followed by a retry of
+  // the requested tier absorbs the refusal instead of surfacing it. Past the
+  // caps the refusal is relayed unchanged.
+  const planned = lithosRefusalWait(attempt.headers, progressed.waitedMs, progressed.waits);
+  if (planned !== null) {
+    const waitedMs = progressed.waitedMs + planned.waitMs;
+    logLithosRateLimitWait({
+      request_id: input.usageContext?.requestId ?? null,
+      model: input.modelRaw,
+      attempt: progressed.attempt,
+      wait_ms: planned.waitMs,
+      wait_source: planned.source,
+      waited_ms: waitedMs,
+      cap_ms: LITHOS_REFUSAL_WAIT_CAP_MS,
+    });
+    recordLithosRateLimitWaitMs(input.usageContext, waitedMs);
+    // The refused body is never read, so it is released here.
+    cancelResponseBody(attempt);
+    await waitForLithosRetry(planned.waitMs, input.requestSignal);
+    return { kind: "retry", state: { attempt: progressed.attempt, attemptModel: input.modelRaw, failoverAttempted: false, waitedMs, waits: progressed.waits + 1 } };
+  }
   // This pass is terminal: its refusal body is read by the responders below, so
-  // it must not be cancelled here (only the discarded attempt above is).
+  // it must not be cancelled here (only the discarded attempts above are).
   return { kind: "result", result: await lithosAttemptOutcome(input, attempt, progressed.attemptModel) };
 };
 
@@ -570,7 +601,7 @@ const dispatchLithosUpstream = async (
   }
   return await runLithosDispatch(
     { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: sibling ?? modelRaw, failoverAttempted: sibling !== null }
+    { attempt: 0, attemptModel: sibling ?? modelRaw, failoverAttempted: sibling !== null, waitedMs: 0, waits: 0 }
   );
 };
 

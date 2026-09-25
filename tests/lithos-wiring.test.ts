@@ -772,7 +772,8 @@ Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", a
     const refusal = () =>
       Response.json(
         { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
-        { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-ratelimit-reset-tokens": "0.02s" } }
+        // The vendor's own "do not retry" instruction: nothing may be waited out.
+        { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-ratelimit-reset-tokens": "0.02s", "x-should-retry": "false" } }
       );
     const chat = await withUpstream(refusal, () =>
       handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-relay"))
@@ -794,13 +795,66 @@ Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", a
   });
 });
 
+Deno.test("lithos wiring: a refusal on both tiers is absorbed by the vendor's own window, then the requested tier answers", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      const message = [{ role: "user", content: "hi" }];
+      const refusal = (waitMs: number) =>
+        Response.json(
+          { error: { message: "rate limit exceeded", type: "input_tokens", code: "rate_limit_exceeded" } },
+          { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": String(waitMs) } }
+        );
+      const chat = await withUpstream(
+        (_call, calls) => (calls.length <= 2 ? refusal(120) : Response.json(lithosCompletion({ role: "assistant", content: "after-window" }))),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-absorb-chat"))
+      );
+      assert.equal(chat.calls.length, 3, "requested tier, sibling, then the requested tier again after the window");
+      assert.equal(chat.calls[0].body.model, LITHOS_MODEL);
+      assert.equal(chat.calls[1].body.model, LITHOS_SIBLING_MODEL);
+      assert.equal(chat.calls[2].body.model, LITHOS_MODEL, "the requested tier is retried, not the sibling");
+      assert.equal(chat.result.status, 200);
+      const telemetry = getResponseTelemetry(chat.result);
+      if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
+      assert.equal(telemetry.rateLimitWaitMs, 120, "the absorbed window is reported");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
+Deno.test("lithos wiring: a window beyond the wait cap is relayed instead of absorbed", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      const message = [{ role: "user", content: "hi" }];
+      const refusal = () =>
+        Response.json(
+          { error: { message: "rate limit exceeded", type: "input_tokens", code: "rate_limit_exceeded" } },
+          { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "120000" } }
+        );
+      const chat = await withUpstream(
+        () => refusal(),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-cap-chat"))
+      );
+      assert.equal(chat.calls.length, 2, "requested tier, sibling, then the refusal is relayed");
+      assert.equal(chat.result.status, 429);
+      const body = (await chat.result.json()) as { error?: { code?: string } };
+      assert.equal(body.error?.code, "rate_limit_exceeded");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
 Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a status instead of held open", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const refusal = () =>
       Response.json(
         { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
-        { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000" } }
+        // Unwaitable by the vendor's own instruction, so it stays a streamed relay.
+        { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-should-retry": "false" } }
       );
     const streamed = await withUpstream(refusal, async () => {
       const response = await handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }), usageContext("lithos-429-stream-relay"));
@@ -886,9 +940,10 @@ Deno.test("lithos wiring: a refusal on a tier with no configured sibling opens n
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const message = [{ role: "user", content: "hi" }];
-    // The base tier has no sibling, so its refusal is relayed and nothing is remembered.
+    // The base tier has no sibling, and a window beyond the cap is never absorbed,
+    // so its refusal is relayed and nothing is remembered.
     const base = await withUpstream(
-      () => lithosRateLimitRefusal("400"),
+      () => lithosRateLimitRefusal("120000"),
       () => handleChatCompletions(chatRequest({ model: LITHOS_BASE_MODEL, messages: message, stream: false }), usageContext("lithos-scope-base"))
     );
     assert.equal(base.calls.length, 1);
