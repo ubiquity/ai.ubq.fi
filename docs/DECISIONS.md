@@ -6,6 +6,28 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Forwarded payloads are bounded by a declared, versioned policy, and `truncation: "disabled"` fails closed - 2026-09-25
+
+The DeepSeek/Lithos translation counts every forwarded byte as text tokens. On 2026-09-24 a single 744,586-byte
+`view_image` tool result took one session from 736,213 to 1,250,713 requested tokens against the 1,048,576-token window;
+the provider rejected every later replay, including compaction, and the thread could not be resumed. The first repair
+cut each payload at an undeclared 64 KiB constant. That stopgap is replaced by `FORWARDED_PAYLOAD_POLICY`
+(`deepseek-forwarded-payload/v1`, one source of truth in `src/deepseek/forwarded-payload-policy.ts`): a versioned
+per-message byte limit, advertised to Codex clients as a `forwarding_policy` extension on the gateway-served catalog
+records, carried in the visible elision marker and the `forwarding_elision` operator log line, and enforced
+deterministically (byte prefix plus marker inside the declared limit).
+
+Behavior: an absent `truncation` field or `"auto"` keeps the bounded reduction, because the clients this route serves
+omit the field and cannot repair a rejected history; an explicit `truncation: "disabled"` fails closed with HTTP 400
+`context_length_exceeded` naming the item path, byte counts, and declared limit instead of mutating the input; any other
+value is rejected with `param: "truncation"`. This is a deliberate gateway policy, not an OpenAI guarantee: the
+documented default for an absent field would reject rather than reduce.
+
+Reversal risk: reverting to silent cutting restores unreported evidence loss; removing the bound restores the 2026-09-24
+poisoning; treating an absent field as `"disabled"` wedges Codex clients that cannot alter their history. Residual gap:
+aggregate admission (the whole rendered prompt against the model window minus the output reserve) is not implemented;
+this policy bounds one message, not the sum.
+
 ## Coverage is measured per src line and branch, and no threshold is enforced yet - 2026-09-24
 
 The first real coverage measurement of `src/` came from running all three segments of `deno task test` with `--coverage`

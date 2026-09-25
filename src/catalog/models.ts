@@ -5,6 +5,7 @@ import { compareCodexClientVersions, mergeCodexModelPromptCacheCapabilities, nor
 import { buildRuntimeConfig, cacheRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY, type RuntimeConfigV2 } from "../runtime-config.ts";
 import { getString, isRecord } from "../utils.ts";
 import { DEEPSEEK_CONTEXT_WINDOW_TOKENS, DEEPSEEK_DISPLAY_NAMES, DEEPSEEK_OFFICIAL_MODEL_IDS, readDeepSeekApiKey } from "../deepseek/index.ts";
+import { FORWARDED_PAYLOAD_POLICY } from "../deepseek/forwarded-payload-policy.ts";
 import {
   LITHOS_CONTEXT_WINDOW_TOKENS,
   LITHOS_DEFAULT_REASONING_EFFORT,
@@ -209,6 +210,11 @@ const deepSeekOfficialCodexModels = (): Record<string, unknown>[] => {
       apply_patch_tool_type: null,
       web_search_tool_type: "text",
       truncation_policy: { mode: "tokens", limit: 10000 },
+      // Gateway extension (not an OpenAI or Codex field): the declared limit this
+      // gateway enforces on one forwarded message. The matching code lives in
+      // src/deepseek/forwarded-payload-policy.ts; Codex clients that ignore the
+      // key are unaffected.
+      forwarding_policy: { version: FORWARDED_PAYLOAD_POLICY.version, mode: FORWARDED_PAYLOAD_POLICY.mode, per_message_limit: FORWARDED_PAYLOAD_POLICY.perMessageLimit },
       supports_parallel_tool_calls: false,
       experimental_supported_tools: [],
     };
@@ -277,6 +283,11 @@ const lithosCodexModels = (): Record<string, unknown>[] => {
       apply_patch_tool_type: null,
       web_search_tool_type: "text",
       truncation_policy: { mode: "tokens", limit: 10000 },
+      // Gateway extension (not an OpenAI or Codex field): the declared limit this
+      // gateway enforces on one forwarded message. The matching code lives in
+      // src/deepseek/forwarded-payload-policy.ts; Codex clients that ignore the
+      // key are unaffected.
+      forwarding_policy: { version: FORWARDED_PAYLOAD_POLICY.version, mode: FORWARDED_PAYLOAD_POLICY.mode, per_message_limit: FORWARDED_PAYLOAD_POLICY.perMessageLimit },
       supports_parallel_tool_calls: false,
       experimental_supported_tools: [],
     };

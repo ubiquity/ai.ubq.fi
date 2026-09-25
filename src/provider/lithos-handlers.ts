@@ -1,7 +1,7 @@
 // LithosAI Chat and Responses handlers, extracted from src/openai.ts.
 
 import { LITHOS_RESPONSES_PROFILE } from "../deepseek/responses.ts";
-import { toDeepSeekResponsesChatBody } from "../deepseek/chat-projection.ts";
+import { logForwardedPayloadElisions, toDeepSeekResponsesChatBody } from "../deepseek/chat-projection.ts";
 import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../deepseek/responses-payload.ts";
 import {
   fetchLithosChatCompletions,
@@ -875,8 +875,9 @@ export const handleLithosResponses = async (
   if (!upstreamModel) return openaiError(400, `model '${modelRaw}' is not a LithosAI official model`, "invalid_request_error", { param: "model" });
 
   const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, clientWantsStream, LITHOS_RESPONSES_PROFILE);
-  if (!translated.ok) return openaiError(400, translated.message, "invalid_request_error", { param: translated.param });
+  if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
   const { body: chatBody, toolNames, customToolNames } = translated.value;
+  if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
 
   const echo: DeepSeekResponsesEcho = {
     tools: rawRecord.tools,
