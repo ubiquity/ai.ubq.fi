@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload, toResponsesUsage } from "../src/deepseek/responses-payload.ts";
 import { createDeepSeekResponsesStreamTranslator, deepSeekResponsesTerminalKind, encodeResponsesEvent } from "../src/deepseek/responses-stream.ts";
-import { toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
+import { DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES, toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
 import { deepSeekFinishDisposition, deepSeekThinkingToolChoiceConflict } from "../src/deepseek/index.ts";
 
 const echo: DeepSeekResponsesEcho = { tools: undefined, tool_choice: undefined, parallel_tool_calls: true, instructions: null };
@@ -1047,4 +1047,46 @@ Deno.test("deepseek responses: a normal stream is still reported as completed", 
   assert.equal(terminal.response.status, "completed");
   assert.equal(terminal.response.incomplete_details, null);
   assert.equal(terminal.response.error, null);
+});
+
+Deno.test("deepseek responses: bounds oversized forwarded payloads", () => {
+  const limit = DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES;
+  const messages = (result: ReturnType<typeof toDeepSeekChatMessages>): Record<string, unknown>[] => {
+    if (!result.ok) throw new Error(`unexpected projection failure: ${result.message}`);
+    return result.value;
+  };
+
+  // A single tool result larger than the per-message bound is cut, not forwarded
+  // whole: the provider counts it as text tokens and one such result took a live
+  // session past the 1,048,576-token window on 2026-09-24.
+  const oversized = "x".repeat(limit + 1_024);
+  const bounded = messages(
+    toDeepSeekChatMessages(
+      [
+        { type: "function_call", name: "read_file", arguments: "{}", call_id: "call_big" },
+        { type: "function_call_output", call_id: "call_big", output: oversized },
+      ],
+      null
+    )
+  );
+  const toolContent = (bounded.at(-1) as { content: string }).content;
+  assert.equal(toolContent.length < oversized.length, true);
+  assert.equal(toolContent.includes("bytes omitted"), true);
+  assert.equal(new TextEncoder().encode(toolContent).byteLength <= limit + 400, true);
+
+  // Payloads inside the bound are untouched, so ordinary tool results replay verbatim.
+  const verbatim = messages(toDeepSeekChatMessages([{ type: "function_call_output", call_id: "call_small", output: "2026-09-16" }], null));
+  assert.deepEqual(verbatim.at(-1), { role: "tool", tool_call_id: "call_small", content: "2026-09-16" });
+
+  // An oversized image data URL is dropped with a marker (half a base64 payload is
+  // not an image), while an ordinary data URL still forwards as an image part.
+  const hugeImage = `data:image/png;base64,${"A".repeat(limit + 10)}`;
+  const dropped = messages(toDeepSeekChatMessages([{ type: "message", role: "user", content: [{ type: "input_image", image_url: hugeImage }] }], null));
+  const droppedContent = (dropped.at(-1) as { content: unknown }).content;
+  assert.equal(typeof droppedContent, "string");
+  assert.equal(String(droppedContent).includes("image omitted"), true);
+
+  const smallImage = "data:image/png;base64,AQID";
+  const kept = messages(toDeepSeekChatMessages([{ type: "message", role: "user", content: [{ type: "input_image", image_url: smallImage }] }], null));
+  assert.deepEqual((kept.at(-1) as { content: unknown }).content, [{ type: "image_url", image_url: { url: smallImage } }]);
 });
