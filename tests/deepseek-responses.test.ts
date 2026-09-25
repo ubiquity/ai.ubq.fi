@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 
 import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload, toResponsesUsage } from "../src/deepseek/responses-payload.ts";
 import { createDeepSeekResponsesStreamTranslator, deepSeekResponsesTerminalKind, encodeResponsesEvent } from "../src/deepseek/responses-stream.ts";
-import { DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES, toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
+import { toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
+import { FORWARDED_PAYLOAD_POLICY } from "../src/deepseek/forwarded-payload-policy.ts";
 import { deepSeekFinishDisposition, deepSeekThinkingToolChoiceConflict } from "../src/deepseek/index.ts";
 
 const echo: DeepSeekResponsesEcho = { tools: undefined, tool_choice: undefined, parallel_tool_calls: true, instructions: null };
@@ -1049,8 +1050,8 @@ Deno.test("deepseek responses: a normal stream is still reported as completed", 
   assert.equal(terminal.response.error, null);
 });
 
-Deno.test("deepseek responses: bounds oversized forwarded payloads", () => {
-  const limit = DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES;
+Deno.test("deepseek responses: bounds oversized forwarded payloads under the declared policy", () => {
+  const limit = FORWARDED_PAYLOAD_POLICY.perMessageLimit;
   const messages = (result: ReturnType<typeof toDeepSeekChatMessages>): Record<string, unknown>[] => {
     if (!result.ok) throw new Error(`unexpected projection failure: ${result.message}`);
     return result.value;
@@ -1058,7 +1059,10 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads", () => {
 
   // A single tool result larger than the per-message bound is cut, not forwarded
   // whole: the provider counts it as text tokens and one such result took a live
-  // session past the 1,048,576-token window on 2026-09-24.
+  // session past the 1,048,576-token window on 2026-09-24. The reduction is
+  // visible - the marker names the declared policy version and says the model
+  // did not receive the elided bytes - and the forwarded content stays inside
+  // the declared limit.
   const oversized = "x".repeat(limit + 1_024);
   const bounded = messages(
     toDeepSeekChatMessages(
@@ -1072,21 +1076,90 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads", () => {
   const toolContent = (bounded.at(-1) as { content: string }).content;
   assert.equal(toolContent.length < oversized.length, true);
   assert.equal(toolContent.includes("bytes omitted"), true);
-  assert.equal(new TextEncoder().encode(toolContent).byteLength <= limit + 400, true);
+  assert.equal(toolContent.includes(FORWARDED_PAYLOAD_POLICY.version), true);
+  assert.equal(toolContent.includes("the model did not receive the elided bytes"), true);
+  assert.equal(new TextEncoder().encode(toolContent).byteLength <= limit, true);
 
   // Payloads inside the bound are untouched, so ordinary tool results replay verbatim.
   const verbatim = messages(toDeepSeekChatMessages([{ type: "function_call_output", call_id: "call_small", output: "2026-09-16" }], null));
   assert.deepEqual(verbatim.at(-1), { role: "tool", tool_call_id: "call_small", content: "2026-09-16" });
 
-  // An oversized image data URL is dropped with a marker (half a base64 payload is
-  // not an image), while an ordinary data URL still forwards as an image part.
+  // An oversized image data URL is dropped rather than cut (half a base64
+  // payload is not an image) and the omission marker says the model did not
+  // receive the image, while an ordinary data URL still forwards as an image.
   const hugeImage = `data:image/png;base64,${"A".repeat(limit + 10)}`;
   const dropped = messages(toDeepSeekChatMessages([{ type: "message", role: "user", content: [{ type: "input_image", image_url: hugeImage }] }], null));
   const droppedContent = (dropped.at(-1) as { content: unknown }).content;
   assert.equal(typeof droppedContent, "string");
   assert.equal(String(droppedContent).includes("image omitted"), true);
+  assert.equal(String(droppedContent).includes(FORWARDED_PAYLOAD_POLICY.version), true);
+  assert.equal(String(droppedContent).includes("the model did not receive this image"), true);
 
   const smallImage = "data:image/png;base64,AQID";
   const kept = messages(toDeepSeekChatMessages([{ type: "message", role: "user", content: [{ type: "input_image", image_url: smallImage }] }], null));
   assert.deepEqual((kept.at(-1) as { content: unknown }).content, [{ type: "image_url", image_url: { url: smallImage } }]);
+
+  // An explicit `truncation: "disabled"` fails closed instead of reducing: the
+  // error names the input path, the byte counts and the declared limit, and it
+  // is recoverable without re-deriving which item was too large.
+  const refused = toDeepSeekResponsesChatBody(
+    {
+      input: [
+        { type: "function_call", name: "read_file", arguments: "{}", call_id: "call_big" },
+        { type: "function_call_output", call_id: "call_big", output: oversized },
+      ],
+      truncation: "disabled",
+    },
+    "deepseek-flash",
+    false
+  );
+  if (refused.ok) throw new Error("expected a fail-closed projection");
+  assert.equal(refused.code, "context_length_exceeded");
+  assert.equal(refused.param, "input[1].output");
+  assert.equal(refused.message.includes(`carries ${oversized.length} bytes`), true);
+  assert.equal(refused.message.includes(`at most ${limit} bytes per message under ${FORWARDED_PAYLOAD_POLICY.version}`), true);
+  assert.equal(refused.message.includes("truncation 'disabled'"), true);
+
+  // The request path records every reduction for the operator log, and the
+  // absent field or an explicit `"auto"` keep the declared bounded policy.
+  const elisionBody = (truncation: unknown) =>
+    toDeepSeekResponsesChatBody(
+      {
+        input: [
+          { type: "function_call", name: "read_file", arguments: "{}", call_id: "call_big" },
+          { type: "function_call_output", call_id: "call_big", output: oversized },
+          { type: "message", role: "user", content: [{ type: "input_image", image_url: hugeImage }] },
+        ],
+        ...(truncation === undefined ? {} : { truncation }),
+      },
+      "deepseek-flash",
+      false
+    );
+  for (const truncation of [undefined, "auto"]) {
+    const translated = elisionBody(truncation);
+    if (!translated.ok) throw new Error("expected a bounded projection");
+    assert.equal(translated.value.elisions.length, 2);
+    const [toolElision, imageElision] = translated.value.elisions;
+    assert.deepEqual(
+      Object.keys(toolElision).sort((a, b) => a.localeCompare(b)),
+      ["callId", "forwardedBytes", "kind", "omittedBytes", "originalBytes", "path"]
+    );
+    assert.equal(toolElision.path, "input[1].output");
+    assert.equal(toolElision.callId, "call_big");
+    assert.equal(toolElision.kind, "tool_output");
+    assert.equal(toolElision.originalBytes, new TextEncoder().encode(oversized).byteLength);
+    assert.equal(toolElision.forwardedBytes <= limit, true);
+    assert.equal(toolElision.omittedBytes > 0, true);
+    assert.equal(imageElision.path, "input[2].content[0]");
+    assert.equal(imageElision.callId, null);
+    assert.equal(imageElision.kind, "image");
+    assert.equal(imageElision.originalBytes, new TextEncoder().encode(hugeImage).byteLength);
+    assert.equal(imageElision.omittedBytes, new TextEncoder().encode(hugeImage).byteLength);
+  }
+
+  // Any other truncation value is rejected rather than guessed at.
+  const bogus = toDeepSeekResponsesChatBody({ input: "hi", truncation: "sometimes" }, "deepseek-flash", false);
+  if (bogus.ok) throw new Error("expected an unsupported-value failure");
+  assert.equal(bogus.param, "truncation");
+  assert.equal(bogus.code, undefined);
 });

@@ -1,12 +1,26 @@
 // Responses-to-Chat-Completions projection, split out of src/deepseek_responses.ts.
 
-import { type ChatOnlyResponsesProfile, DEEPSEEK_RESPONSES_PROFILE, type DeepSeekResponsesResult, failure, originalToolName } from "./responses.ts";
+import {
+  type ChatOnlyResponsesProfile,
+  DEEPSEEK_RESPONSES_PROFILE,
+  type DeepSeekResponsesFailure,
+  type DeepSeekResponsesResult,
+  failure,
+  originalToolName,
+} from "./responses.ts";
+import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
 import { getString, isRecord } from "../utils.ts";
 
 type ChatContentPart = Record<string, unknown>;
 
 /** One Responses content part mapped onto the Chat content union for one message role. */
-const chatContentPart = (part: unknown, role: string): DeepSeekResponsesResult<Readonly<{ text?: string; image?: ChatContentPart }>> => {
+const chatContentPart = (
+  part: unknown,
+  role: string,
+  reduction: ForwardedPayloadReduction,
+  path: string,
+  elisions: ForwardedPayloadElision[]
+): DeepSeekResponsesResult<Readonly<{ text?: string; image?: ChatContentPart }>> => {
   if (!isRecord(part) || Array.isArray(part)) return failure("input.content", "input.content items must be objects");
   const type = getString(part.type);
   if (type === "input_text" || type === "output_text" || type === "text") {
@@ -30,25 +44,39 @@ const chatContentPart = (part: unknown, role: string): DeepSeekResponsesResult<R
   if (!url) return failure("input.content.image_url", "input_image requires image_url");
   const detail = getString(part.detail);
   const imageBytes = forwardedByteLength(url);
-  if (imageBytes > DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES) {
-    // An oversized data URL is dropped rather than cut: half a base64 payload is
-    // not an image, and the provider tokenizes the whole string as text anyway.
-    return {
-      ok: true,
-      value: { text: `[gateway: image omitted; ${imageBytes} bytes exceeds the ${DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES}-byte per-message forwarding limit]` },
-    };
+  if (imageBytes > FORWARDED_PAYLOAD_POLICY.perMessageLimit) {
+    // An oversized data URL is never cut - half a base64 payload is not an
+    // image - so the model receives a marker that says the image was not
+    // delivered, unless the request forbade reduction and the gateway refuses.
+    if (reduction === "reject") return oversizedPayloadFailure(path, imageBytes, null);
+    const marker = omittedImageMarker(imageBytes);
+    elisions.push({
+      path,
+      callId: null,
+      kind: "image",
+      originalBytes: imageBytes,
+      forwardedBytes: forwardedByteLength(marker),
+      omittedBytes: imageBytes,
+    });
+    return { ok: true, value: { text: marker } };
   }
   return { ok: true, value: { image: { type: "image_url", image_url: { url, ...(detail ? { detail } : {}) } } } };
 };
 
 /** Chat Completions content parts are strings or image parts; Responses nests text. */
-const chatContentFromResponseParts = (value: unknown, role: string): DeepSeekResponsesResult<string | ChatContentPart[]> => {
+const chatContentFromResponseParts = (
+  value: unknown,
+  role: string,
+  reduction: ForwardedPayloadReduction,
+  path: string,
+  elisions: ForwardedPayloadElision[]
+): DeepSeekResponsesResult<string | ChatContentPart[]> => {
   if (typeof value === "string") return { ok: true, value };
   if (!Array.isArray(value)) return failure("input.content", "input.content must be a string or an array");
   const images: ChatContentPart[] = [];
   const texts: string[] = [];
-  for (const raw of value) {
-    const part = chatContentPart(raw, role);
+  for (let index = 0; index < value.length; index += 1) {
+    const part = chatContentPart(value[index], role, reduction, `${path}.content[${index}]`, elisions);
     if (!part.ok) return part;
     if (part.value.text !== undefined) texts.push(part.value.text);
     if (part.value.image) images.push(part.value.image);
@@ -67,42 +95,91 @@ const chatToolCallItem = (item: Record<string, unknown>): DeepSeekResponsesResul
   return { ok: true, value: { id: callId, type: "function", function: { name, arguments: args } } };
 };
 
-/**
- * The largest payload this adapter forwards inside one message, in UTF-8 bytes.
- *
- * The provider counts what is forwarded - base64 image data URLs and raw tool
- * results alike - as text tokens, so a single oversized tool result can cross
- * the model's 1,048,576-token window on its own. On 2026-09-24 a 744,586-byte
- * `view_image` result took one session from 736,213 tokens to 1,250,713; the
- * provider rejected it, and every following request - including compaction -
- * re-sent the same blob and was rejected too, so the thread could never be
- * resumed. This cap keeps one message's contribution far below the window while
- * staying above the 10,000-token truncation the catalog already advertises.
- */
-export const DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES = 65_536;
-
 const forwardedByteLength = (value: string): number => new TextEncoder().encode(value).byteLength;
 
-/** The notice a cut payload carries, so the model knows history was trimmed. */
-const omittedForwardedPayload = (omittedBytes: number): string =>
-  `\n[gateway: ${omittedBytes} bytes omitted; this route forwards at most ${DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES} bytes per message because the provider counts forwarded payloads as text tokens]`;
+/**
+ * The visible notice an elided payload carries. It names the declared policy
+ * version and the byte counts, and it says outright that the model did not
+ * receive the elided bytes, so no transcript can mistake a reduced payload for
+ * the original.
+ */
+const forwardedPayloadMarker = (omittedBytes: number): string =>
+  `\n[gateway: ${FORWARDED_PAYLOAD_POLICY.version} elided ${omittedBytes} bytes omitted; the model did not receive the elided bytes; this route forwards at most ${FORWARDED_PAYLOAD_POLICY.perMessageLimit} bytes per message because the provider counts forwarded payloads as text tokens]`;
 
-/** Truncates one forwarded payload so a single message can never carry the window with it. */
-const boundForwardedPayload = (value: string): string => {
-  const bytes = forwardedByteLength(value);
-  if (bytes <= DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES) return value;
-  let head = value.slice(0, DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES);
-  while (head.length > 0 && forwardedByteLength(head) > DEEPSEEK_FORWARDED_PAYLOAD_LIMIT_BYTES) {
-    head = head.slice(0, Math.floor(head.length * 0.9));
+/** The same declaration for an image that cannot be forwarded as an image. */
+const omittedImageMarker = (bytes: number): string =>
+  `[gateway: ${FORWARDED_PAYLOAD_POLICY.version} image omitted (${bytes} bytes); the model did not receive this image; this route forwards at most ${FORWARDED_PAYLOAD_POLICY.perMessageLimit} bytes per message because the provider counts forwarded payloads as text tokens]`;
+
+/** Cuts a string to a UTF-8 byte budget without splitting a surrogate pair. */
+const utf8Head = (value: string, byteBudget: number): string => {
+  let head = value.slice(0, byteBudget);
+  if (head.length < value.length) {
+    const last = head.charCodeAt(head.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
   }
-  return head + omittedForwardedPayload(bytes - forwardedByteLength(head));
+  while (head.length > 0 && forwardedByteLength(head) > byteBudget) head = head.slice(0, Math.floor(head.length * 0.9));
+  return head;
 };
 
-const chatToolResultItem = (item: Record<string, unknown>): DeepSeekResponsesResult<Record<string, unknown>> => {
+/**
+ * The fail-closed answer when the request forbade reduction: the gateway
+ * refuses with the item path, the byte counts, the declared limit and the
+ * supported recovery, instead of mutating the input.
+ */
+const oversizedPayloadFailure = (path: string, bytes: number, callId: string | null): DeepSeekResponsesFailure => {
+  const callNote = callId === null ? "" : ` (tool call ${callId})`;
+  return failure(
+    path,
+    `input item ${path}${callNote} carries ${bytes} bytes; this route forwards at most ${FORWARDED_PAYLOAD_POLICY.perMessageLimit} bytes per message under ${FORWARDED_PAYLOAD_POLICY.version}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.`,
+    "context_length_exceeded"
+  );
+};
+
+/**
+ * Deterministic reduction: keep a byte prefix, append the marker, and stay at
+ * or below the declared limit. The same input always produces the same output.
+ */
+const reduceForwardedPayload = (value: string, path: string, callId: string | null): Readonly<{ content: string; elision: ForwardedPayloadElision }> => {
+  const originalBytes = forwardedByteLength(value);
+  let head = utf8Head(value, FORWARDED_PAYLOAD_POLICY.perMessageLimit);
+  for (;;) {
+    const headBytes = forwardedByteLength(head);
+    const notice = forwardedPayloadMarker(originalBytes - headBytes);
+    if (head.length === 0 || headBytes + forwardedByteLength(notice) <= FORWARDED_PAYLOAD_POLICY.perMessageLimit) {
+      const content = head + notice;
+      return {
+        content,
+        elision: {
+          path,
+          callId,
+          kind: "tool_output",
+          originalBytes,
+          forwardedBytes: forwardedByteLength(content),
+          omittedBytes: originalBytes - headBytes,
+        },
+      };
+    }
+    head = head.slice(0, Math.floor(head.length * 0.9));
+  }
+};
+
+const chatToolResultItem = (
+  item: Record<string, unknown>,
+  reduction: ForwardedPayloadReduction,
+  path: string,
+  elisions: ForwardedPayloadElision[]
+): DeepSeekResponsesResult<Record<string, unknown>> => {
   const callId = getString(item.call_id);
   if (!callId) return failure("input", "function_call_output items require call_id");
   const raw = typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
-  return { ok: true, value: { role: "tool", tool_call_id: callId, content: boundForwardedPayload(raw) } };
+  const bytes = forwardedByteLength(raw);
+  if (bytes <= FORWARDED_PAYLOAD_POLICY.perMessageLimit) {
+    return { ok: true, value: { role: "tool", tool_call_id: callId, content: raw } };
+  }
+  if (reduction === "reject") return oversizedPayloadFailure(path, bytes, callId);
+  const reduced = reduceForwardedPayload(raw, path, callId);
+  elisions.push(reduced.elision);
+  return { ok: true, value: { role: "tool", tool_call_id: callId, content: reduced.content } };
 };
 
 /**
@@ -151,11 +228,14 @@ const appendToolCall = (messages: Record<string, unknown>[], call: Record<string
 const appendMessageItem = (
   messages: Record<string, unknown>[],
   item: Record<string, unknown>,
-  pending: { reasoning: string }
+  pending: { reasoning: string },
+  path: string,
+  reduction: ForwardedPayloadReduction,
+  elisions: ForwardedPayloadElision[]
 ): DeepSeekResponsesResult<void> => {
   const role = getString(item.role) ?? "user";
   if (role !== "user" && role !== "assistant" && role !== "developer") return failure("input.role", `input role '${role}' is not supported`);
-  const content = chatContentFromResponseParts(item.content, role);
+  const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
   if (role === "assistant" && pending.reasoning) {
@@ -174,7 +254,14 @@ const appendMessageItem = (
  * the only shape the Chat contract accepts. A `reasoning` item is carried onto
  * the assistant turn that follows it as `reasoning_content`.
  */
-const appendInputItem = (messages: Record<string, unknown>[], rawItem: unknown, pending: { reasoning: string }): DeepSeekResponsesResult<void> => {
+const appendInputItem = (
+  messages: Record<string, unknown>[],
+  rawItem: unknown,
+  pending: { reasoning: string },
+  path: string,
+  reduction: ForwardedPayloadReduction,
+  elisions: ForwardedPayloadElision[]
+): DeepSeekResponsesResult<void> => {
   if (typeof rawItem === "string") {
     messages.push({ role: "user", content: rawItem });
     return { ok: true, value: undefined };
@@ -195,16 +282,21 @@ const appendInputItem = (messages: Record<string, unknown>[], rawItem: unknown, 
     return { ok: true, value: undefined };
   }
   if (type === "function_call_output" || type === "custom_tool_call_output") {
-    const result = chatToolResultItem(rawItem);
+    const result = chatToolResultItem(rawItem, reduction, `${path}.output`, elisions);
     if (!result.ok) return result;
     messages.push(result.value);
     return { ok: true, value: undefined };
   }
   if (type !== "message") return failure("input.type", `input item type '${type}' is not supported`);
-  return appendMessageItem(messages, rawItem, pending);
+  return appendMessageItem(messages, rawItem, pending, path, reduction, elisions);
 };
 
-export const toDeepSeekChatMessages = (input: unknown, instructions: string | null): DeepSeekResponsesResult<Record<string, unknown>[]> => {
+export const toDeepSeekChatMessages = (
+  input: unknown,
+  instructions: string | null,
+  reduction: ForwardedPayloadReduction = "reduce",
+  elisions: ForwardedPayloadElision[] = []
+): DeepSeekResponsesResult<Record<string, unknown>[]> => {
   const messages: Record<string, unknown>[] = [];
   if (instructions) messages.push({ role: "system", content: instructions });
   if (typeof input === "string") {
@@ -215,8 +307,8 @@ export const toDeepSeekChatMessages = (input: unknown, instructions: string | nu
   if (!Array.isArray(input)) return failure("input", "input must be a string or an array");
 
   const pending = { reasoning: "" };
-  for (const rawItem of input) {
-    const appended = appendInputItem(messages, rawItem, pending);
+  for (let index = 0; index < input.length; index += 1) {
+    const appended = appendInputItem(messages, input[index], pending, `input[${index}]`, reduction, elisions);
     if (!appended.ok) return appended;
   }
   return { ok: true, value: messages };
@@ -468,6 +560,21 @@ const appendContinuationInstruction = (messages: Record<string, unknown>[]): voi
 };
 
 /**
+ * The reduction decision the request authorizes. Only an explicit
+ * `truncation: "disabled"` forbids reduction, and it fails closed on an
+ * oversized payload instead of letting the gateway mutate the input. An absent
+ * field or `"auto"` keeps the declared bounded policy: the clients this route
+ * serves omit the field, cannot repair a rejected history, and the 2026-09-24
+ * incident showed that forwarding the oversized payload whole poisons the
+ * thread. Any other value is rejected rather than guessed at.
+ */
+const reductionForTruncation = (value: unknown): DeepSeekResponsesResult<ForwardedPayloadReduction> => {
+  if (value === undefined || value === null || value === "auto") return { ok: true, value: "reduce" };
+  if (value === "disabled") return { ok: true, value: "reject" };
+  return failure("truncation", `truncation '${typeof value === "string" ? value : typeof value}' is not supported; expected 'auto' or 'disabled'`);
+};
+
+/**
  * Builds the Chat Completions body for a Responses request under one provider
  * profile. Translation failures are returned so the caller can answer with a
  * precise `invalid_request_error` instead of dispatching an approximation.
@@ -477,11 +584,21 @@ export const toDeepSeekResponsesChatBody = (
   requestedModel: string,
   clientWantsStream: boolean,
   profile: ChatOnlyResponsesProfile = DEEPSEEK_RESPONSES_PROFILE
-): DeepSeekResponsesResult<Readonly<{ body: Record<string, unknown>; toolNames: ReadonlyMap<string, string>; customToolNames: ReadonlySet<string> }>> => {
+): DeepSeekResponsesResult<
+  Readonly<{
+    body: Record<string, unknown>;
+    toolNames: ReadonlyMap<string, string>;
+    customToolNames: ReadonlySet<string>;
+    elisions: readonly ForwardedPayloadElision[];
+  }>
+> => {
   const canonical = profile.upstreamModelFor(requestedModel);
   if (!canonical) return failure("model", `model '${requestedModel}' is not a ${profile.label} official model`);
+  const reduction = reductionForTruncation(rawRecord.truncation);
+  if (!reduction.ok) return reduction;
   const instructions = typeof rawRecord.instructions === "string" && rawRecord.instructions.trim() ? rawRecord.instructions : null;
-  const messages = toDeepSeekChatMessages(rawRecord.input, instructions);
+  const elisions: ForwardedPayloadElision[] = [];
+  const messages = toDeepSeekChatMessages(rawRecord.input, instructions, reduction.value, elisions);
   if (!messages.ok) return messages;
   if (!messages.value.length) return failure("input", "input must contain at least one message");
 
@@ -502,7 +619,18 @@ export const toDeepSeekResponsesChatBody = (
     if (rawRecord.tool_choice !== "none") appendContinuationInstruction(messages.value);
     ensureTrailingAssistantReasoning(messages.value);
   }
-  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames } };
+  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions } };
+};
+
+/**
+ * The operator-visible record of every payload this gateway reduced: one JSON
+ * line per elision, including the declared policy version, the input path, the
+ * tool call when there is one, and the before/after byte counts.
+ */
+export const logForwardedPayloadElisions = (elisions: readonly ForwardedPayloadElision[]): void => {
+  for (const elision of elisions) {
+    console.info("[ai.ubq.fi] forwarding_elision", JSON.stringify({ policy: FORWARDED_PAYLOAD_POLICY.version, ...elision }));
+  }
 };
 
 /**

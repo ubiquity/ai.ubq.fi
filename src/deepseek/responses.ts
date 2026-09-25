@@ -40,11 +40,16 @@ import { LITHOS_REASONING_LEVELS, lithosCachedPromptTokens, lithosReasoningToken
  * against this module is unchanged.
  */
 
-export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string }>;
+export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string; code?: string }>;
 
 export type DeepSeekResponsesResult<T> = Readonly<{ ok: true; value: T }> | DeepSeekResponsesFailure;
 
-export const failure = (param: string, message: string): DeepSeekResponsesFailure => ({ ok: false, message, param });
+export const failure = (param: string, message: string, code?: string): DeepSeekResponsesFailure => ({
+  ok: false,
+  message,
+  param,
+  ...(code === undefined ? {} : { code }),
+});
 
 /**
  * One provider's answers to the questions this translation asks. A provider
