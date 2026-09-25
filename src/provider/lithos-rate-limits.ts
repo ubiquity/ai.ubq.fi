@@ -65,40 +65,7 @@ export const logLithosRateLimitFailover = (fields: Readonly<Record<string, strin
   }
 };
 
-/**
- * The opt-in switch for waiting out a refusal instead of relaying it.
- *
- * Off by default: a refused request is load-balanced once onto its sibling tier
- * and, if that refuses too, the refusal is relayed immediately. With the switch
- * on, a refusal whose own headers name a retry window is waited out and the
- * SAME model id is retried, bounded by the caps below.
- */
-export const LITHOS_RATE_LIMIT_WAIT_ENV = "LITHOSAI_RATE_LIMIT_WAIT";
-
-/** Reads that switch; an absent, unreadable or other value means no waiting. */
-const lithosRateLimitWaitEnabled = (): boolean => {
-  let raw: string | undefined;
-  try {
-    raw = Deno.env.get(LITHOS_RATE_LIMIT_WAIT_ENV);
-  } catch {
-    return false;
-  }
-  const value = raw?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-};
-
-/**
- * The per-attempt cap keeps one pause far below the client's 10-minute default
- * request timeout, the gateway's first-event budget and the ~100-second
- * proxied-origin read bound, so a wait can never be mistaken for a dead
- * connection. The total bound keeps a second wait from making a single request
- * arbitrarily slow, and the dispatch cap bounds how often a window is re-asked.
- */
-const LITHOS_RATE_LIMIT_WAIT_CAP_MS = 75_000;
-const LITHOS_RATE_LIMIT_TOTAL_WAIT_CAP_MS = 90_000;
-const LITHOS_RATE_LIMIT_MAX_DISPATCHES = 3;
-
-/** One retry hint, named so the wait is logged with the header it came from. */
+/** One refusal hint parsed from the vendor's own headers. */
 export type LithosRateLimitWait = Readonly<{ waitMs: number; source: string }>;
 
 const lithosIntegerHeader = (raw: string | null): number | null => {
@@ -175,56 +142,4 @@ export const lithosRateLimitWait = (headers: Headers, nowMs: number): LithosRate
   }
   if (latest !== null) return latest;
   return null;
-};
-
-/**
- * The wait this refusal is owed, or null when it is relayed instead: the switch
- * is off, the attempt has no budget left, the window exceeds the per-attempt
- * cap, or the total budget cannot cover one more pause.
- */
-export const lithosPlannedWait = (upstream: Response, attempt: number, waitedMs: number): LithosRateLimitWait | null => {
-  if (!lithosRateLimitWaitEnabled()) return null;
-  if (upstream.status !== 429 || attempt >= LITHOS_RATE_LIMIT_MAX_DISPATCHES) return null;
-  const planned = lithosRateLimitWait(upstream.headers, Date.now());
-  if (planned === null || planned.waitMs > LITHOS_RATE_LIMIT_WAIT_CAP_MS) return null;
-  if (waitedMs + planned.waitMs > LITHOS_RATE_LIMIT_TOTAL_WAIT_CAP_MS) return null;
-  return planned;
-};
-
-/** Records the absorbed wait total so a terminal can report it. */
-export const recordLithosRateLimitWaitMs = (usageContext: UsageContext | undefined, waitedMs: number): void => {
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitWaitMs = waitedMs;
-};
-
-export const logLithosRateLimitWait = (fields: Readonly<Record<string, string | number | null>>): void => {
-  try {
-    console.info("[ai.ubq.fi] lithos_rate_limit_wait", JSON.stringify(fields));
-  } catch {
-    // Telemetry must never change routing or delivery.
-  }
-};
-
-const lithosWaitAbortReason = (signal: AbortSignal): Error => {
-  const reason = signal.reason;
-  return reason instanceof Error ? reason : new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError");
-};
-
-/** Abort-aware sleep: an abandoned request never keeps waiting for a provider window. */
-export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): Promise<void> => {
-  if (milliseconds <= 0) return Promise.resolve();
-  if (signal.aborted) return Promise.reject(lithosWaitAbortReason(signal));
-  return new Promise<void>((resolve, reject) => {
-    // The timer handle type is not portable across the lint project's type
-    // environment, so it is named through the global rather than as `number`.
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onAbort = (): void => {
-      if (timer !== null) clearTimeout(timer);
-      reject(lithosWaitAbortReason(signal));
-    };
-    timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 };

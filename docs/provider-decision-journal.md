@@ -433,3 +433,17 @@ subscriptions keeps neither cache warm and obscures which subscription is degrad
 Restoring a retired per-key affinity override, load-balancing across subscriptions while the active one still has
 capacity, or reordering the provider chain all reintroduce the cache and account-health problem this decision removed.
 Do not make the order dynamic without a new dated entry.
+
+## 2026-09-25 — LithosAI refusals have one behaviour (owner decision)
+
+A refusal on the LithosAI route now has exactly one shape: the refused request is retried once on the tier's configured
+sibling (`deepseek-ai/DeepSeek-V4.1-Flash-ultra` → `deepseek-ai/DeepSeek-V4.1-Flash-fast`), and a refusal whose own
+headers name a reset instant keeps later requests on that sibling until the instant passes, after which the requested
+tier is tried again. A refusal that names no window is relayed once both tiers have refused.
+
+Removed in the same change: the `LITHOSAI_RATE_LIMIT_WAIT` opt-in that waited out a window and retried the same model
+id, together with its caps and telemetry hooks. The owner asked for the simplest possible policy and confirmed the Codex
+iOS client cannot read response headers, so substitution is not signalled on the response.
+
+Reversal risk: restoring the wait switch, capping the sibling window with an invented duration, or adding a header-based
+signal all reintroduce behaviour the owner's client cannot see or act on. Change this only with a new dated entry.
