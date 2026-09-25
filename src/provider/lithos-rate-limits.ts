@@ -57,7 +57,52 @@ export const recordLithosFailoverModel = (usageContext: UsageContext | undefined
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitFailoverModel = model;
 };
 
-export const logLithosRateLimitFailover = (fields: Readonly<Record<string, string | number | null>>): void => {
+/** One sanitized rate-limit telemetry field: a bounded string, a number, or nothing. */
+export type LithosRateLimitLogFields = Readonly<Record<string, string | number | null>>;
+
+/**
+ * The vendor's own budget headers for one refusal, captured verbatim but bounded.
+ *
+ * A refusal is only diagnosable if its numbers are recorded at the moment it is
+ * seen: the per-minute token bucket, the remaining counters and the reset
+ * window it named. Long values are truncated and only allow-listed header names
+ * are read, so no request or response body can reach the log through this path.
+ */
+export const lithosRateLimitSnapshot = (headers: Headers): LithosRateLimitLogFields => {
+  const count = (name: string): number | null => {
+    const raw = headers.get(name)?.trim();
+    return raw && /^\d+$/.test(raw) ? Number(raw) : null;
+  };
+  const text = (name: string): string | null => {
+    const raw = headers.get(name)?.trim();
+    return raw ? raw.slice(0, 40) : null;
+  };
+  const window = lithosRateLimitWait(headers, Date.now());
+  return {
+    window_ms: window?.waitMs ?? null,
+    window_source: window?.source ?? null,
+    retry_after: text("retry-after"),
+    retry_after_ms: count("retry-after-ms"),
+    remaining_tokens: count("x-ratelimit-remaining-tokens"),
+    limit_tokens: count("x-ratelimit-limit-tokens"),
+    reset_tokens: text("x-ratelimit-reset-tokens"),
+    remaining_requests: count("x-ratelimit-remaining-requests"),
+    limit_requests: count("x-ratelimit-limit-requests"),
+    reset_requests: text("x-ratelimit-reset-requests"),
+    should_retry: text("x-should-retry"),
+  };
+};
+
+/** One refusal, with the vendor's budgets as it reported them. */
+export const logLithosRateLimitRefusal = (fields: LithosRateLimitLogFields): void => {
+  try {
+    console.info("[ai.ubq.fi] lithos_rate_limit_refusal", JSON.stringify(fields));
+  } catch {
+    // Telemetry must never change routing or delivery.
+  }
+};
+
+export const logLithosRateLimitFailover = (fields: LithosRateLimitLogFields): void => {
   try {
     console.info("[ai.ubq.fi] lithos_rate_limit_failover", JSON.stringify(fields));
   } catch {
