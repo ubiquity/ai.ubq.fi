@@ -932,9 +932,11 @@ Deno.test("lithos wiring: a streamed refusal on both tiers is absorbed by the ve
       assert.equal(streamed.calls[2].body.model, LITHOS_MODEL, "the requested tier is retried, not the sibling");
       assert.equal(streamed.result.status, 200);
       assert.match(streamed.result.text, /event: response\.completed/);
-      assert.equal(streamed.result.telemetry?.rateLimitWaitMs, 60, "the absorbed window is reported on the streamed terminal");
-      assert.equal(streamed.result.telemetry?.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
-      assert.equal(streamed.result.telemetry?.streamTerminalType, "response.completed");
+      const telemetry = streamed.result.telemetry;
+      if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(telemetry.rateLimitWaitMs, 60, "the absorbed window is reported on the streamed terminal");
+      assert.equal(telemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+      assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
       clearLithosFailoverWindows();
     }
