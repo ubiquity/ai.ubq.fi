@@ -126,22 +126,20 @@ const utf8Head = (value: string, byteBudget: number): string => {
  * refuses with the item path, the byte counts, the declared limit and the
  * supported recovery, instead of mutating the input.
  */
-const oversizedPayloadFailure = (path: string, bytes: number, callId: string | null): DeepSeekResponsesFailure =>
-  failure(
+const oversizedPayloadFailure = (path: string, bytes: number, callId: string | null): DeepSeekResponsesFailure => {
+  const callNote = callId === null ? "" : ` (tool call ${callId})`;
+  return failure(
     path,
-    `input item ${path}${callId === null ? "" : ` (tool call ${callId})`} carries ${bytes} bytes; this route forwards at most ${FORWARDED_PAYLOAD_POLICY.perMessageLimit} bytes per message under ${FORWARDED_PAYLOAD_POLICY.version}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.`,
+    `input item ${path}${callNote} carries ${bytes} bytes; this route forwards at most ${FORWARDED_PAYLOAD_POLICY.perMessageLimit} bytes per message under ${FORWARDED_PAYLOAD_POLICY.version}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction.`,
     "context_length_exceeded"
   );
+};
 
 /**
  * Deterministic reduction: keep a byte prefix, append the marker, and stay at
  * or below the declared limit. The same input always produces the same output.
  */
-const reduceForwardedPayload = (
-  value: string,
-  path: string,
-  callId: string | null
-): Readonly<{ content: string; elision: ForwardedPayloadElision }> => {
+const reduceForwardedPayload = (value: string, path: string, callId: string | null): Readonly<{ content: string; elision: ForwardedPayloadElision }> => {
   const originalBytes = forwardedByteLength(value);
   let head = utf8Head(value, FORWARDED_PAYLOAD_POLICY.perMessageLimit);
   for (;;) {

@@ -1113,7 +1113,6 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
     "deepseek-flash",
     false
   );
-  assert.equal(refused.ok, false);
   if (refused.ok) throw new Error("expected a fail-closed projection");
   assert.equal(refused.code, "context_length_exceeded");
   assert.equal(refused.param, "input[1].output");
@@ -1138,11 +1137,13 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
     );
   for (const truncation of [undefined, "auto"]) {
     const translated = elisionBody(truncation);
-    assert.equal(translated.ok, true);
     if (!translated.ok) throw new Error("expected a bounded projection");
     assert.equal(translated.value.elisions.length, 2);
     const [toolElision, imageElision] = translated.value.elisions;
-    assert.deepEqual(Object.keys(toolElision).sort(), ["callId", "forwardedBytes", "kind", "omittedBytes", "originalBytes", "path"]);
+    assert.deepEqual(
+      Object.keys(toolElision).sort((a, b) => a.localeCompare(b)),
+      ["callId", "forwardedBytes", "kind", "omittedBytes", "originalBytes", "path"]
+    );
     assert.equal(toolElision.path, "input[1].output");
     assert.equal(toolElision.callId, "call_big");
     assert.equal(toolElision.kind, "tool_output");
@@ -1158,7 +1159,6 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
 
   // Any other truncation value is rejected rather than guessed at.
   const bogus = toDeepSeekResponsesChatBody({ input: "hi", truncation: "sometimes" }, "deepseek-flash", false);
-  assert.equal(bogus.ok, false);
   if (bogus.ok) throw new Error("expected an unsupported-value failure");
   assert.equal(bogus.param, "truncation");
   assert.equal(bogus.code, undefined);

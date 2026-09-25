@@ -214,7 +214,11 @@ const deepSeekOfficialCodexModels = (): Record<string, unknown>[] => {
       // gateway enforces on one forwarded message. The matching code lives in
       // src/deepseek/forwarded-payload-policy.ts; Codex clients that ignore the
       // key are unaffected.
-      forwarding_policy: { version: FORWARDED_PAYLOAD_POLICY.version, mode: FORWARDED_PAYLOAD_POLICY.mode, per_message_limit: FORWARDED_PAYLOAD_POLICY.perMessageLimit },
+      forwarding_policy: {
+        version: FORWARDED_PAYLOAD_POLICY.version,
+        mode: FORWARDED_PAYLOAD_POLICY.mode,
+        per_message_limit: FORWARDED_PAYLOAD_POLICY.perMessageLimit,
+      },
       supports_parallel_tool_calls: false,
       experimental_supported_tools: [],
     };
@@ -287,7 +291,11 @@ const lithosCodexModels = (): Record<string, unknown>[] => {
       // gateway enforces on one forwarded message. The matching code lives in
       // src/deepseek/forwarded-payload-policy.ts; Codex clients that ignore the
       // key are unaffected.
-      forwarding_policy: { version: FORWARDED_PAYLOAD_POLICY.version, mode: FORWARDED_PAYLOAD_POLICY.mode, per_message_limit: FORWARDED_PAYLOAD_POLICY.perMessageLimit },
+      forwarding_policy: {
+        version: FORWARDED_PAYLOAD_POLICY.version,
+        mode: FORWARDED_PAYLOAD_POLICY.mode,
+        per_message_limit: FORWARDED_PAYLOAD_POLICY.perMessageLimit,
+      },
       supports_parallel_tool_calls: false,
       experimental_supported_tools: [],
     };
