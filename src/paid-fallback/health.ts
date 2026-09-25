@@ -534,6 +534,7 @@ export const rejectPaidAdmission = (
     provider,
     paidFallback: null,
     gatewayResponse: true,
+    locallyGenerated: true,
     fallbackReason: "dynamic_paid_model",
     allowRemovedProviderRecovery: false,
   };
@@ -561,6 +562,7 @@ export const rejectDisabledCodexProvider = (
     provider: "chatgpt_codex",
     paidFallback: null,
     gatewayResponse: true,
+    locallyGenerated: true,
     fallbackReason: null,
     allowRemovedProviderRecovery: false,
   };
@@ -599,6 +601,7 @@ const rejectToolUnverifiedSurplusModel = (
     provider: "surplus",
     paidFallback: null,
     gatewayResponse: true,
+    locallyGenerated: true,
     fallbackReason: "dynamic_paid_model",
     allowRemovedProviderRecovery: false,
   };

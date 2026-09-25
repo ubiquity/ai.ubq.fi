@@ -1173,6 +1173,8 @@ Deno.test("openai: unknown paid-model routing honors catalog refresh backoff", a
           assert.equal(response.status, 403);
           const payload = (await response.json()) as { error?: { code?: string } };
           assert.equal(payload.error?.code, "paid_fallback_disabled");
+          // A local admission rejection is not an upstream provider failure.
+          assert.equal(getResponseTelemetry(response)?.failureKind, null);
         }
       }
     );
@@ -1267,6 +1269,8 @@ Deno.test("openai: dynamic tool requests reject unverified Surplus capability be
     assert.equal(payload.error.param, "tools");
     assert.equal(upstreamCalls, 0);
     assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
+    // Rejected before any dispatch, so there is no upstream failure to report.
+    assert.equal(getResponseTelemetry(response)?.failureKind, null);
     assert.equal(getResponseTelemetry(response)?.fallbackReason, "dynamic_paid_model");
     assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
   } finally {

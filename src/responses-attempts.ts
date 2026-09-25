@@ -67,7 +67,9 @@ type ResponsesAttemptTrigger =
   | "terminal_failure"
   | "empty_upstream_completion"
   | "read_error"
-  | "invalid_model";
+  | "invalid_model"
+  /** A gateway policy rejection decided before any provider dispatch. */
+  | "gateway_rejected";
 
 export type PreparedResponsesAttempt = Readonly<{
   provider: UpstreamProvider;
@@ -139,6 +141,9 @@ export const failureKindForResponsesAttemptTrigger = (trigger: ResponsesAttemptT
     case "read_error":
     case "missing_body":
       return "read_error";
+    // A locally decided rejection has no upstream to attribute the failure to.
+    case "gateway_rejected":
+      return null;
     default:
       return null;
   }
@@ -509,6 +514,15 @@ const failedPrimaryResponsesFetchOutcome = (error: CodexError, deadline: StreamD
   };
 };
 
+/**
+ * Classifies a gateway-authored failure response. A rejection the gateway decided
+ * locally never reached a provider, so it must not be published as an upstream
+ * HTTP failure; a gateway-authored envelope for a failure that happened after
+ * dispatch keeps the status-derived upstream classification.
+ */
+export const primaryResponsesGatewayTrigger = (routed: RoutedResponsesUpstream): ResponsesAttemptTrigger =>
+  routed.locallyGenerated === true ? "gateway_rejected" : primaryResponsesAttemptTrigger(routed.response.status);
+
 const failedPrimaryResponsesGatewayOutcome = (
   routed: RoutedResponsesUpstream,
   lifecycle: MeteredTransportLifecycle,
@@ -521,7 +535,7 @@ const failedPrimaryResponsesGatewayOutcome = (
     failed: {
       provider: routed.provider,
       response: routed.response,
-      trigger: primaryResponsesAttemptTrigger(routed.response.status),
+      trigger: primaryResponsesGatewayTrigger(routed),
       signal: preparationDeadline.signal,
       clearDeadline: preparationDeadline.clear,
     },

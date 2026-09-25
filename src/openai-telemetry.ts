@@ -607,6 +607,14 @@ export type RoutedResponsesUpstream = Readonly<{
    */
   paidFallbackErrorHealth?: PaidProviderHealthClassification;
   gatewayResponse: boolean;
+  /**
+   * The gateway produced this response itself, before any provider dispatch, so
+   * its status records a local policy decision rather than an upstream outcome.
+   * `gatewayResponse` alone does not imply this: a dispatched response can be
+   * re-enveloped by the gateway, or tagged with a routing error, and still carry
+   * a genuine upstream failure.
+   */
+  locallyGenerated?: true;
   fallbackReason: InferenceFallbackReason | null;
   /** Local admission decisions are terminal and must not enter legacy recovery. */
   allowRemovedProviderRecovery?: false;

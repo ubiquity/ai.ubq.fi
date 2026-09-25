@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 
 import { createStreamFirstEventDeadline } from "../src/inference-deadline.ts";
+import type { RoutedResponsesUpstream } from "../src/openai-telemetry.ts";
 import type { ResponsesStreamEvent } from "../src/responses-stream.ts";
 import {
   failureKindForResponsesAttemptTrigger,
   isEligibleResponsesAttemptStatus,
   prepareResponsesAttempt,
+  primaryResponsesGatewayTrigger,
   responseFailureTerminalType,
 } from "../src/responses-attempts.ts";
 
@@ -56,6 +58,7 @@ Deno.test("responses attempts: eligibility and trigger classification cover the 
   assert.equal(failureKindForResponsesAttemptTrigger("empty_upstream_completion"), "empty_upstream_completion");
   assert.equal(failureKindForResponsesAttemptTrigger("read_error"), "read_error");
   assert.equal(failureKindForResponsesAttemptTrigger("missing_body"), "read_error");
+  assert.equal(failureKindForResponsesAttemptTrigger("gateway_rejected"), null);
   assert.equal(failureKindForResponsesAttemptTrigger("not_a_trigger" as never), null);
 });
 
@@ -66,6 +69,7 @@ Deno.test("responses attempts: failure terminal types follow the trigger and bot
   assert.equal(responseFailureTerminalType("premature_eof", open.signal, open.signal), "eof");
   assert.equal(responseFailureTerminalType("terminal_failure", open.signal, open.signal), "response.failed");
   assert.equal(responseFailureTerminalType("empty_upstream_completion", open.signal, open.signal), "response.failed");
+  assert.equal(responseFailureTerminalType("gateway_rejected", open.signal, open.signal), "error");
 
   const aborted = new AbortController();
   aborted.abort(new Error("cancelled"));
@@ -201,4 +205,41 @@ Deno.test("responses attempts: an aborted request signal rethrows the caller's r
     () => prepareResponsesAttempt(sseResponse(sse([completedFrame("resp_abort")])), "chatgpt_codex", deadline, controller.signal, [], {}),
     (error: unknown) => error === reason
   );
+});
+
+/**
+ * A gateway policy rejection is decided before any provider dispatch, so it must
+ * not be published as an upstream provider failure. The distinguishing signal is
+ * `locallyGenerated`, not `gatewayResponse`: the gateway also authors envelopes
+ * for failures that happen after a dispatch, and those keep their upstream
+ * classification.
+ */
+Deno.test("responses attempts: locally decided rejections are never upstream HTTP failures", () => {
+  const locallyRejected = (status: number): RoutedResponsesUpstream => ({
+    response: new Response(null, { status }),
+    provider: "surplus",
+    paidFallback: null,
+    gatewayResponse: true,
+    locallyGenerated: true,
+    fallbackReason: "dynamic_paid_model",
+    allowRemovedProviderRecovery: false,
+  });
+
+  // 400 tool-capability rejection, 403 disabled/not-admitted, 429 exhausted limit.
+  for (const status of [400, 403, 429]) {
+    const trigger = primaryResponsesGatewayTrigger(locallyRejected(status));
+    assert.equal(trigger, "gateway_rejected");
+    assert.equal(failureKindForResponsesAttemptTrigger(trigger), null);
+  }
+
+  const afterDispatch: RoutedResponsesUpstream = {
+    response: new Response(null, { status: 400 }),
+    provider: "surplus",
+    paidFallback: null,
+    gatewayResponse: true,
+    fallbackReason: null,
+  };
+  const dispatchedTrigger = primaryResponsesGatewayTrigger(afterDispatch);
+  assert.equal(dispatchedTrigger, "http_4xx");
+  assert.equal(failureKindForResponsesAttemptTrigger(dispatchedTrigger), "upstream_http_4xx");
 });
