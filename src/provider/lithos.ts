@@ -12,11 +12,11 @@ import { lithosSiblingModelFor } from "./lithos-rate-limits.ts";
  * documented OpenAI-compatible Chat Completions endpoint and never races or
  * falls back to another provider. A rate-limit refusal (429) load-balances that
  * single request once onto the tier's configured sibling - the same weights
- * behind a separate per-model bucket - and otherwise relays the vendor's own
- * refusal; where `LITHOSAI_RATE_LIMIT_WAIT` is set, a refusal that names a
- * window inside a bounded budget is waited out and retried on the SAME model id
- * instead (`src/provider/lithos-rate-limits.ts`). Neither path ever substitutes
- * another provider or model.
+ * behind a separate per-model bucket - and a refusal whose own headers name a
+ * reset instant keeps later requests on that sibling until the instant passes,
+ * after which the requested tier is tried again (`src/provider/lithos-rate-limits.ts`).
+ * A refusal that names no window is relayed once both tiers have refused, and
+ * another provider or model is never substituted.
  *
  * Provider facts (probed live against `https://api.lithosai.cloud/v1`,
  * 2026-09-23):

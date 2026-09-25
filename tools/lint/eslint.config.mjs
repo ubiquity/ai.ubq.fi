@@ -33,6 +33,9 @@ export default tsEslint.config(
       ".kv-migration/**",
       ".sentinel/**",
       ".diagnostics/**",
+      // Test-run fixtures (see scripts/file-size-ratchet.ts): a second verify pass
+      // must lint the same files as the first, not the previous run's evidence.
+      ".cleanup-evidence/**",
       "logs/**",
       "benchmark-runs/**",
     ],

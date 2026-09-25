@@ -21,3 +21,6 @@ node_modules
 .npm-cache/
 .bun-cache/
 .tmp/
+
+# test-run evidence fixtures (scripts/file-size-ratchet.ts excludes these too)
+.cleanup-evidence/
