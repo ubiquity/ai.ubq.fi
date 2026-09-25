@@ -485,3 +485,26 @@ Reversal risk: leaving the Chat route on the buffered-only budget restores the c
 logged most often; opening the stream without the in-band refusal terminal would turn a spent budget into a silent hang.
 Coverage: `tests/lithos-wiring.test.ts` asserts the Chat budget past the buffered caps and the in-band exhaustion
 terminal.
+
+## 2026-09-25 — LithosAI failover walks the whole ladder, and a streamed refusal never returns an HTTP 429
+
+Two changes close the client-visible 429 class on this route. First, the single sibling hop becomes an ordered ladder:
+`-ultra` refuses -> `-fast` is tried -> the family's normal tier is tried, and each rung carries its own
+4,000,000-token/minute bucket (probed live 2026-09-25: consuming 250,006 tokens on `-fast` left `-ultra` reporting
+`remaining-tokens: 4000000`), so every hop moves real capacity, not just a label. The sticky window now carries its
+target and deepens on each refusal, so a later request resumes at the rung the vendor last refused past instead of
+bouncing back to a saturated tier. Kimi K3 gets the same ladder; `-ultra-chat` stays out for the recorded accuracy
+reason.
+
+Second, a streamed request can no longer receive an HTTP 429 from this route at all. When the ladder is exhausted (or
+the vendor says do not retry), the handler opens the stream and reports the refusal in-band as `response.failed` with
+the vendor's own code and message. Codex's `exceeded retry limit, last status: 429` banner requires an HTTP 429, so on
+the streamed wires this route cannot produce it any more; buffered requests keep the status because no stream exists to
+carry the terminal.
+
+Why: the 2026-09-25 incidents showed the banner arriving on both the Responses wire (9 events) and the Chat wire (128
+events) while the absorb was bounded or absent, and the earlier single-hop ladder assumed a shared bucket that the live
+probe refutes. Reversal risk: collapsing the ladder back to one hop re-shares the saturation across tiers; returning a
+status for a streamed refusal restores the banner and the client's pointless retry loop. Coverage:
+`tests/lithos-wiring.test.ts` asserts the full descent, the deepening sticky window, in-band refusals on both wires, and
+the buffered status path.
