@@ -68,6 +68,63 @@ export type LithosRateLimitLogFields = Readonly<Record<string, string | number |
  * window it named. Long values are truncated and only allow-listed header names
  * are read, so no request or response body can reach the log through this path.
  */
+/**
+ * The pause one refusal is owed once both tiers have refused, or null when it is
+ * relayed instead.
+ *
+ * A refused request is not out of quota for long: on 2026-09-25 the vendor's own
+ * headers named ~51 s windows on a 4,000,000-token/minute bucket, so one bounded
+ * pause plus a retry absorbs the refusal that would otherwise reach the client
+ * as "429 Too Many Requests" after its own retries run out. The caps keep the
+ * pause far below the client's default request timeout; past them the vendor's
+ * refusal is relayed unchanged.
+ */
+export const LITHOS_REFUSAL_WAIT_CAP_MS = 75_000;
+export const LITHOS_REFUSAL_WAIT_TOTAL_CAP_MS = 120_000;
+/** Absorbed pauses per request, so a stream of tiny windows cannot loop forever. */
+export const LITHOS_REFUSAL_WAIT_MAX_WAITS = 2;
+
+/** The pause this refusal asks for, bounded by the per-wait, count and total caps. */
+export const lithosRefusalWait = (headers: Headers, waitedMs: number, waits: number): LithosRateLimitWait | null => {
+  if (waits >= LITHOS_REFUSAL_WAIT_MAX_WAITS) return null;
+  const planned = lithosRateLimitWait(headers, Date.now());
+  if (planned === null) return null;
+  if (planned.waitMs > LITHOS_REFUSAL_WAIT_CAP_MS) return null;
+  if (waitedMs + planned.waitMs > LITHOS_REFUSAL_WAIT_TOTAL_CAP_MS) return null;
+  return planned;
+};
+
+/** Records the absorbed wait total so a terminal can report it. */
+export const recordLithosRateLimitWaitMs = (usageContext: UsageContext | undefined, waitedMs: number): void => {
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.rateLimitWaitMs = waitedMs;
+};
+
+/** One absorbed pause, logged with the header it came from. */
+export const logLithosRateLimitWait = (fields: LithosRateLimitLogFields): void => {
+  try {
+    console.info("[ai.ubq.fi] lithos_rate_limit_wait", JSON.stringify(fields));
+  } catch {
+    // Telemetry must never change routing or delivery.
+  }
+};
+
+/** Abort-aware sleep: an abandoned request never keeps waiting for a provider window. */
+export const waitForLithosRetry = (milliseconds: number, signal: AbortSignal): Promise<void> => {
+  if (milliseconds <= 0) return Promise.resolve();
+  if (signal.aborted) return Promise.reject(new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError"));
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    function onAbort(): void {
+      clearTimeout(timer);
+      reject(new DOMException("The request was aborted while waiting for the LithosAI rate limit to reset.", "AbortError"));
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
 export const lithosRateLimitSnapshot = (headers: Headers): LithosRateLimitLogFields => {
   const count = (name: string): number | null => {
     const raw = headers.get(name)?.trim();
