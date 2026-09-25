@@ -818,17 +818,19 @@ Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", a
       handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-relay"))
     );
 
-    // The requested tier, then its sibling: two dispatches, no wait, and the
-    // vendor's own refusal reaches the client unchanged.
-    assert.equal(chat.calls.length, 2, "one load-balance attempt and no wait");
+    // The whole ladder - requested tier, fast, then the family's normal tier -
+    // is tried with no wait, and the vendor's own refusal reaches the buffered
+    // client unchanged once the bottom refuses too.
+    assert.equal(chat.calls.length, 3, "every ladder tier is tried and no wait is taken");
     assert.equal(chat.calls[0].body.model, LITHOS_MODEL);
     assert.equal(chat.calls[1].body.model, LITHOS_SIBLING_MODEL);
+    assert.equal(chat.calls[2].body.model, LITHOS_BASE_MODEL);
     assert.equal(chat.result.status, 429);
     const body = (await chat.result.json()) as { error?: { code?: string } };
     assert.equal(body.error?.code, "rate_limit_exceeded");
     const telemetry = getResponseTelemetry(chat.result);
     if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
-    assert.equal(telemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+    assert.equal(telemetry.rateLimitFailoverModel, LITHOS_BASE_MODEL);
     assert.equal(telemetry.rateLimitWaitMs, null, "no wait is taken by default");
     assert.equal(telemetry.streamTerminalType, "response.failed");
   });
@@ -845,13 +847,14 @@ Deno.test("lithos wiring: a refusal on both tiers is absorbed by the vendor's ow
           { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": String(waitMs) } }
         );
       const chat = await withUpstream(
-        (_call, calls) => (calls.length <= 2 ? refusal(120) : Response.json(lithosCompletion({ role: "assistant", content: "after-window" }))),
+        (_call, calls) => (calls.length <= 3 ? refusal(120) : Response.json(lithosCompletion({ role: "assistant", content: "after-window" }))),
         () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-absorb-chat"))
       );
-      assert.equal(chat.calls.length, 3, "requested tier, sibling, then the requested tier again after the window");
+      assert.equal(chat.calls.length, 4, "the whole ladder, then the requested tier again after the window");
       assert.equal(chat.calls[0].body.model, LITHOS_MODEL);
       assert.equal(chat.calls[1].body.model, LITHOS_SIBLING_MODEL);
-      assert.equal(chat.calls[2].body.model, LITHOS_MODEL, "the requested tier is retried, not the sibling");
+      assert.equal(chat.calls[2].body.model, LITHOS_BASE_MODEL);
+      assert.equal(chat.calls[3].body.model, LITHOS_MODEL, "the requested tier is retried after the window");
       assert.equal(chat.result.status, 200);
       const telemetry = getResponseTelemetry(chat.result);
       if (telemetry === null) throw new Error("the chat terminal carries no telemetry");
@@ -876,7 +879,7 @@ Deno.test("lithos wiring: a window beyond the wait cap is relayed instead of abs
         () => refusal(),
         () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-cap-chat"))
       );
-      assert.equal(chat.calls.length, 2, "requested tier, sibling, then the refusal is relayed");
+      assert.equal(chat.calls.length, 3, "every ladder tier is tried, then the refusal is relayed");
       assert.equal(chat.result.status, 429);
       const body = (await chat.result.json()) as { error?: { code?: string } };
       assert.equal(body.error?.code, "rate_limit_exceeded");
@@ -893,11 +896,12 @@ Deno.test("lithos wiring: a streamed absorb spends the wider stream budget beyon
       // The vendor's window keeps naming a fresh 60 ms instant (the live shape
       // is ~51 s), and the streamed route spends THREE of them - past the
       // buffered route's two-wait / 120 s cap - because its stream is already
-      // open and held by keepalives. The requested tier answers on the seventh
-      // dispatch.
+      // open and held by keepalives. Each window is preceded by a full ladder
+      // descent (requested tier -> fast -> normal); the requested tier answers
+      // on the tenth dispatch.
       const streamed = await withUpstream(
         (_call, calls) =>
-          calls.length <= 6
+          calls.length <= 9
             ? lithosRateLimitRefusal("60")
             : new Response(lithosStreamBody("after-many-windows"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
         async () => {
@@ -909,10 +913,21 @@ Deno.test("lithos wiring: a streamed absorb spends the wider stream budget beyon
         }
       );
 
-      assert.equal(streamed.calls.length, 7, "the sibling failover plus three absorbed windows");
+      assert.equal(streamed.calls.length, 10, "three full ladder descents, then the requested tier after the third window");
       assert.deepEqual(
         streamed.calls.map((call) => call.body.model),
-        [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL]
+        [
+          LITHOS_MODEL,
+          LITHOS_SIBLING_MODEL,
+          LITHOS_BASE_MODEL,
+          LITHOS_MODEL,
+          LITHOS_SIBLING_MODEL,
+          LITHOS_BASE_MODEL,
+          LITHOS_MODEL,
+          LITHOS_SIBLING_MODEL,
+          LITHOS_BASE_MODEL,
+          LITHOS_MODEL,
+        ]
       );
       assert.equal(streamed.result.status, 200);
       assert.match(streamed.result.text, /event: response\.completed/);
@@ -944,7 +959,7 @@ Deno.test("lithos wiring: a streamed absorb that outlives the stream budget repo
         }
       );
 
-      assert.equal(streamed.calls.length, 12, "the requested tier and sibling per cycle, plus the terminal pass");
+      assert.equal(streamed.calls.length, 18, "three ladder tiers per cycle for five windows, plus the terminal pass");
       assert.equal(streamed.result.status, 200);
       assert.match(streamed.result.text, /"type":"response\.failed"/);
       assert.match(streamed.result.text, /rate_limit_exceeded/);
@@ -968,7 +983,7 @@ Deno.test("lithos wiring: a streamed Chat absorb spends the wider stream budget 
       // after the buffered cap (the Mac log held 128 such client-visible 429s).
       const streamed = await withUpstream(
         (_call, calls) =>
-          calls.length <= 6
+          calls.length <= 9
             ? lithosRateLimitRefusal("60")
             : new Response(lithosStreamBody("after-many-windows"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
         async () => {
@@ -980,10 +995,21 @@ Deno.test("lithos wiring: a streamed Chat absorb spends the wider stream budget 
         }
       );
 
-      assert.equal(streamed.calls.length, 7, "the sibling failover plus three absorbed windows");
+      assert.equal(streamed.calls.length, 10, "three full ladder descents, then the requested tier after the third window");
       assert.deepEqual(
         streamed.calls.map((call) => call.body.model),
-        [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL]
+        [
+          LITHOS_MODEL,
+          LITHOS_SIBLING_MODEL,
+          LITHOS_BASE_MODEL,
+          LITHOS_MODEL,
+          LITHOS_SIBLING_MODEL,
+          LITHOS_BASE_MODEL,
+          LITHOS_MODEL,
+          LITHOS_SIBLING_MODEL,
+          LITHOS_BASE_MODEL,
+          LITHOS_MODEL,
+        ]
       );
       assert.equal(streamed.result.status, 200);
       assert.match(streamed.result.text, /\[DONE\]/);
@@ -1012,7 +1038,7 @@ Deno.test("lithos wiring: a streamed Chat absorb that outlives the stream budget
         }
       );
 
-      assert.equal(streamed.calls.length, 12, "the requested tier and sibling per cycle, plus the terminal pass");
+      assert.equal(streamed.calls.length, 18, "three ladder tiers per cycle for five windows, plus the terminal pass");
       assert.equal(streamed.result.status, 200);
       assert.match(streamed.result.text, /rate_limit_exceeded/);
       assert.doesNotMatch(streamed.result.text, /\[DONE\]/);
@@ -1026,13 +1052,82 @@ Deno.test("lithos wiring: a streamed Chat absorb that outlives the stream budget
   });
 });
 
-Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a status instead of held open", async () => {
+Deno.test("lithos wiring: an Ultra refusal walks the whole ladder to the family's normal tier", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      const streamed = await withUpstream(
+        (_call, calls) =>
+          calls.length <= 2
+            ? lithosRateLimitRefusal("60")
+            : new Response(lithosStreamBody("base-served", LITHOS_BASE_MODEL), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+        async () => {
+          const response = await handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }), usageContext("lithos-ladder"));
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+        }
+      );
+
+      // ultra refused -> fast refused -> the family's normal tier answered, all
+      // inside one request and without a wait: every rung is its own bucket.
+      assert.deepEqual(
+        streamed.calls.map((call) => call.body.model),
+        [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_BASE_MODEL]
+      );
+      assert.equal(streamed.result.status, 200);
+      assert.match(streamed.result.text, /event: response\.completed/);
+      const telemetry = streamed.result.telemetry;
+      if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(telemetry.rateLimitFailoverModel, LITHOS_BASE_MODEL);
+      assert.equal(telemetry.streamTerminalType, "response.completed");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
+Deno.test("lithos wiring: a fast refusal deepens the open window to the normal tier for later requests", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      const message = [{ role: "user", content: "hi" }];
+      const first = await withUpstream(
+        (_call, calls) =>
+          calls.length <= 2
+            ? lithosRateLimitRefusal("60000")
+            : Response.json(lithosCompletion({ role: "assistant", content: "base-served" }, LITHOS_BASE_MODEL)),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-ladder-sticky-1"))
+      );
+      assert.deepEqual(
+        first.calls.map((call) => call.body.model),
+        [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_BASE_MODEL]
+      );
+
+      // The fast refusal re-pointed the (still open) window at the normal tier,
+      // so the next request goes straight there instead of back to a saturated
+      // ultra or fast.
+      const second = await withUpstream(
+        () => Response.json(lithosCompletion({ role: "assistant", content: "base-again" }, LITHOS_BASE_MODEL)),
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-ladder-sticky-2"))
+      );
+      assert.equal(second.calls.length, 1, "the sticky window serves without asking ultra or fast again");
+      assert.equal(second.calls[0].body.model, LITHOS_BASE_MODEL);
+      assert.equal(second.result.status, 200);
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
+Deno.test("lithos wiring: a streamed refusal reports in-band instead of an HTTP 429 status", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     const refusal = () =>
       Response.json(
         { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
-        // Unwaitable by the vendor's own instruction, so it stays a streamed relay.
+        // Unwaitable by the vendor's own instruction: no window is invented, and
+        // the refusal still travels in-band - a streamed request never receives
+        // an HTTP 429 from this route, which is what makes the client's
+        // "retry-exhausted 429" banner unreachable here.
         { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-should-retry": "false" } }
       );
     const streamed = await withUpstream(refusal, async () => {
@@ -1040,13 +1135,13 @@ Deno.test("lithos wiring: a streamed refusal on both tiers is relayed as a statu
       return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
     });
 
-    // No wait, no opened stream: the refusal keeps the provider's own status
-    // and code, so the client can decide for itself.
-    assert.equal(streamed.calls.length, 2, "the requested tier, then its sibling");
-    assert.equal(streamed.result.status, 429);
+    assert.equal(streamed.calls.length, 3, "every ladder tier is tried before the terminal replaces the status");
+    assert.equal(streamed.result.status, 200);
+    assert.match(streamed.result.text, /"type":"response\.failed"/);
     assert.match(streamed.result.text, /rate_limit_exceeded/);
-    assert.doesNotMatch(streamed.result.text, /event: response\./);
-    assert.doesNotMatch(streamed.result.text, /keepalive/);
+    const telemetry = streamed.result.telemetry;
+    if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
+    assert.equal(telemetry.streamTerminalType, "response.failed");
   });
 });
 
@@ -1092,7 +1187,7 @@ Deno.test("lithos wiring: a streamed refusal on both tiers is absorbed by the ve
       ];
       const success = () => new Response(`${sseBody(frames)}data: [DONE]\n\n`, { status: 200, headers: { "Content-Type": "text/event-stream" } });
       const streamed = await withUpstream(
-        (_call, calls) => (calls.length <= 2 ? lithosRateLimitRefusal("60") : success()),
+        (_call, calls) => (calls.length <= 3 ? lithosRateLimitRefusal("60") : success()),
         async () => {
           const response = await handleResponses(
             responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
@@ -1102,16 +1197,17 @@ Deno.test("lithos wiring: a streamed refusal on both tiers is absorbed by the ve
         }
       );
 
-      assert.equal(streamed.calls.length, 3, "requested tier, sibling, then the requested tier again after the window");
+      assert.equal(streamed.calls.length, 4, "the whole ladder, then the requested tier again after the window");
       assert.equal(streamed.calls[0].body.model, LITHOS_MODEL);
       assert.equal(streamed.calls[1].body.model, LITHOS_SIBLING_MODEL);
-      assert.equal(streamed.calls[2].body.model, LITHOS_MODEL, "the requested tier is retried, not the sibling");
+      assert.equal(streamed.calls[2].body.model, LITHOS_BASE_MODEL);
+      assert.equal(streamed.calls[3].body.model, LITHOS_MODEL, "the requested tier is retried after the window");
       assert.equal(streamed.result.status, 200);
       assert.match(streamed.result.text, /event: response\.completed/);
       const telemetry = streamed.result.telemetry;
       if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
       assert.equal(telemetry.rateLimitWaitMs, 60, "the absorbed window is reported on the streamed terminal");
-      assert.equal(telemetry.rateLimitFailoverModel, LITHOS_SIBLING_MODEL);
+      assert.equal(telemetry.rateLimitFailoverModel, LITHOS_BASE_MODEL);
       assert.equal(telemetry.streamTerminalType, "response.completed");
     } finally {
       clearLithosFailoverWindows();
