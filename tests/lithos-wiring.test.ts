@@ -158,6 +158,42 @@ const lithosRateLimitRefusal = (retryAfterMs: string): Response =>
     { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": retryAfterMs } }
   );
 
+/** One recorded streamed Chat completion body, shaped like the vendor's wire. */
+const lithosStreamBody = (content: string, model: string = LITHOS_MODEL): string => {
+  const frames = [
+    {
+      id: "chatcmpl-lithos-absorb",
+      object: "chat.completion.chunk",
+      created: 1_790_160_331,
+      model,
+      choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+    },
+    {
+      id: "chatcmpl-lithos-absorb",
+      object: "chat.completion.chunk",
+      created: 1_790_160_331,
+      model,
+      choices: [{ index: 0, delta: { content }, finish_reason: null }],
+    },
+    {
+      id: "chatcmpl-lithos-absorb",
+      object: "chat.completion.chunk",
+      created: 1_790_160_331,
+      model,
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    },
+    {
+      id: "chatcmpl-lithos-absorb",
+      object: "chat.completion.chunk",
+      created: 1_790_160_332,
+      model,
+      choices: [],
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_tokens_details: null, completion_tokens_details: { reasoning_tokens: 5 } },
+    },
+  ];
+  return `${sseBody(frames)}data: [DONE]\n\n`;
+};
+
 /** One recorded buffered Chat completion, shaped like the vendor's wire. */
 const lithosCompletion = (message: Record<string, unknown>, model: string = LITHOS_MODEL): Record<string, unknown> => ({
   id: "chatcmpl-lithos-1",
@@ -844,6 +880,79 @@ Deno.test("lithos wiring: a window beyond the wait cap is relayed instead of abs
       assert.equal(chat.result.status, 429);
       const body = (await chat.result.json()) as { error?: { code?: string } };
       assert.equal(body.error?.code, "rate_limit_exceeded");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
+Deno.test("lithos wiring: a streamed absorb spends the wider stream budget beyond two waits", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      // The vendor's window keeps naming a fresh 60 ms instant (the live shape
+      // is ~51 s), and the streamed route spends THREE of them - past the
+      // buffered route's two-wait / 120 s cap - because its stream is already
+      // open and held by keepalives. The requested tier answers on the seventh
+      // dispatch.
+      const streamed = await withUpstream(
+        (_call, calls) =>
+          calls.length <= 6
+            ? lithosRateLimitRefusal("60")
+            : new Response(lithosStreamBody("after-many-windows"), { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+        async () => {
+          const response = await handleResponses(
+            responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
+            usageContext("lithos-429-stream-budget")
+          );
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+        }
+      );
+
+      assert.equal(streamed.calls.length, 7, "the sibling failover plus three absorbed windows");
+      assert.deepEqual(
+        streamed.calls.map((call) => call.body.model),
+        [LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL, LITHOS_SIBLING_MODEL, LITHOS_MODEL]
+      );
+      assert.equal(streamed.result.status, 200);
+      assert.match(streamed.result.text, /event: response\.completed/);
+      const telemetry = streamed.result.telemetry;
+      if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(telemetry.rateLimitWaitMs, 180, "three vendor windows are absorbed behind the open stream");
+      assert.equal(telemetry.streamTerminalType, "response.completed");
+    } finally {
+      clearLithosFailoverWindows();
+    }
+  });
+});
+
+Deno.test("lithos wiring: a streamed absorb that outlives the stream budget reports the refusal in-band", async () => {
+  await withLithosKey(async () => {
+    clearLithosFailoverWindows();
+    try {
+      // Five windows (the streamed cap) are spent, then the vendor's refusal
+      // travels as the stream's own terminal: response headers were long since
+      // sent, so a 429 status can no longer be returned.
+      const streamed = await withUpstream(
+        () => lithosRateLimitRefusal("60"),
+        async () => {
+          const response = await handleResponses(
+            responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: true }),
+            usageContext("lithos-429-stream-exhausted")
+          );
+          return { status: response.status, text: await response.text(), telemetry: getResponseTelemetry(response) };
+        }
+      );
+
+      assert.equal(streamed.calls.length, 12, "the requested tier and sibling per cycle, plus the terminal pass");
+      assert.equal(streamed.result.status, 200);
+      assert.match(streamed.result.text, /"type":"response\.failed"/);
+      assert.match(streamed.result.text, /rate_limit_exceeded/);
+      assert.doesNotMatch(streamed.result.text, /event: response\.completed/);
+      const telemetry = streamed.result.telemetry;
+      if (telemetry === null) throw new Error("the streamed terminal carries no telemetry");
+      assert.equal(telemetry.rateLimitWaitMs, 300, "the full streamed budget is reported");
+      assert.equal(telemetry.streamTerminalType, "response.failed");
     } finally {
       clearLithosFailoverWindows();
     }

@@ -52,7 +52,11 @@ import { deepSeekChatClientOutputAllowance, deepSeekTerminalTypeForPayload } fro
 const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
 
 import {
+  LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
   LITHOS_REFUSAL_WAIT_CAP_MS,
+  LITHOS_STREAMED_REFUSAL_WAIT_POLICY,
+  type LithosRateLimitWait,
+  type LithosRefusalWaitPolicy,
   lithosFailoverSiblingAt,
   lithosOpenFailoverWindow,
   lithosRateLimitWait,
@@ -365,12 +369,18 @@ const lithosStreamAdapter: ProviderStreamAdapter = {
 /**
  * The same seams with this request's serving tier pinned, so a response the
  * configured sibling produced is validated against the model that actually
- * answered it instead of the one the client asked for.
+ * answered it instead of the one the client asked for. A deferred (streamed
+ * absorb) dispatch does not know the serving tier until its attempt lands, so a
+ * live getter is accepted as well as a fixed id; the frames read it after the
+ * attempt resolves.
  */
-const lithosStreamAdapterServing = (servedModel: string): ProviderStreamAdapter => ({
-  ...lithosStreamAdapter,
-  frames: (upstream, upstreamModel, options) => lithosChatStreamFrames(upstream, upstreamModel, { ...options, servedModel }),
-});
+const lithosStreamAdapterServing = (servedModel: string | (() => string)): ProviderStreamAdapter => {
+  const servedModelAtFrames = typeof servedModel === "function" ? servedModel : () => servedModel;
+  return {
+    ...lithosStreamAdapter,
+    frames: (upstream, upstreamModel, options) => lithosChatStreamFrames(upstream, upstreamModel, { ...options, servedModel: servedModelAtFrames() }),
+  };
+};
 
 /**
  * Relays the served attempt as it arrives, wrapped with the gateway's standard
@@ -505,15 +515,36 @@ const lithosFailoverProgress = (
   return { ...state, attemptModel: sibling, failoverAttempted: true };
 };
 
-/** One pass: a terminal outcome, or the state the next attempt runs from. */
-type LithosDispatchPass = Readonly<{ kind: "result"; result: LithosDispatchOutcome }> | Readonly<{ kind: "retry"; state: LithosDispatchProgress }>;
+/** One pass: a terminal outcome, the state the next attempt runs from, or a deferral the streamed route opens its stream behind. */
+type LithosDispatchPass =
+  | Readonly<{ kind: "result"; result: LithosDispatchOutcome }>
+  | Readonly<{ kind: "retry"; state: LithosDispatchProgress }>
+  | Readonly<{ kind: "defer"; planned: LithosRateLimitWait; state: LithosDispatchProgress }>;
+
+/**
+ * A refusal whose window is absorbed behind an already-open stream. The caller
+ * returns the SSE response first and awaits this completion while its keepalive
+ * frames hold the client.
+ */
+type LithosPendingDispatch = Readonly<{
+  pending: Promise<LithosDispatchOutcome>;
+  requestSignal: AbortSignal;
+  downstreamSignal: AbortSignal;
+}>;
+
+type LithosDispatchResult = LithosDispatchOutcome | LithosPendingDispatch;
 
 /**
  * One pass: a refusal on the requested tier is load-balanced once onto its
  * sibling tier so the request still completes. Anything else is this pass's
  * terminal outcome, carrying the vendor's own status and code.
  */
-const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispatchProgress): Promise<LithosDispatchPass> => {
+const lithosDispatchPass = async (
+  input: LithosDispatchInput,
+  state: LithosDispatchProgress,
+  policy: LithosRefusalWaitPolicy,
+  defer: boolean
+): Promise<LithosDispatchPass> => {
   const attempt = await lithosDispatchAttempt(input.body, state.attemptModel, input.requestSignal, input.usageContext);
   const progressed: LithosDispatchProgress = { ...state, attempt: state.attempt + 1 };
   if (attempt.status !== 429) return { kind: "result", result: await lithosAttemptOutcome(input, attempt, progressed.attemptModel) };
@@ -534,9 +565,22 @@ const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispa
   // reset instant on these refusals, so one bounded pause followed by a retry of
   // the requested tier absorbs the refusal instead of surfacing it. Past the
   // caps the refusal is relayed unchanged.
-  const planned = lithosRefusalWait(attempt.headers, progressed.waitedMs, progressed.waits);
+  const planned = lithosRefusalWait(attempt.headers, progressed.waitedMs, progressed.waits, policy);
   if (planned !== null) {
     const waitedMs = progressed.waitedMs + planned.waitMs;
+    const nextState: LithosDispatchProgress = {
+      attempt: progressed.attempt,
+      attemptModel: input.modelRaw,
+      failoverAttempted: false,
+      waitedMs,
+      waits: progressed.waits + 1,
+    };
+    if (defer) {
+      // The route opens its SSE response now and spends this window behind it;
+      // the runner logs the pause and owns the retry once it elapses.
+      cancelResponseBody(attempt);
+      return { kind: "defer", planned, state: nextState };
+    }
     logLithosRateLimitWait({
       request_id: input.usageContext?.requestId ?? null,
       model: input.modelRaw,
@@ -550,27 +594,60 @@ const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispa
     // The refused body is never read, so it is released here.
     cancelResponseBody(attempt);
     await waitForLithosRetry(planned.waitMs, input.requestSignal);
-    return {
-      kind: "retry",
-      state: { attempt: progressed.attempt, attemptModel: input.modelRaw, failoverAttempted: false, waitedMs, waits: progressed.waits + 1 },
-    };
+    return { kind: "retry", state: nextState };
   }
   // This pass is terminal: its refusal body is read by the responders below, so
   // it must not be cancelled here (only the discarded attempts above are).
   return { kind: "result", result: await lithosAttemptOutcome(input, attempt, progressed.attemptModel) };
 };
 
-/** Dispatches until one pass is terminal. */
-const runLithosDispatch = async (input: LithosDispatchInput, start: LithosDispatchProgress): Promise<LithosDispatchOutcome> => {
+/**
+ * Dispatches until one pass is terminal. With `allowDefer`, a streamed caller
+ * gets the absorb as a pending completion instead of an inline pause, so its
+ * SSE stream can open first and keepalives can hold the client; the completion
+ * then continues this loop inline with the wider streamed budget.
+ */
+const runLithosDispatch = async (
+  input: LithosDispatchInput,
+  start: LithosDispatchProgress,
+  policy: LithosRefusalWaitPolicy,
+  allowDefer: boolean
+): Promise<LithosDispatchResult> => {
   let state = start;
   for (;;) {
     let pass: LithosDispatchPass;
     try {
-      pass = await lithosDispatchPass(input, state);
+      pass = await lithosDispatchPass(input, state, policy, allowDefer);
     } catch (error) {
       return { ok: false, response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext) };
     }
     if (pass.kind === "result") return pass.result;
+    if (pass.kind === "defer") {
+      logLithosRateLimitWait({
+        request_id: input.usageContext?.requestId ?? null,
+        model: input.modelRaw,
+        attempt: pass.state.attempt,
+        wait_ms: pass.planned.waitMs,
+        wait_source: pass.planned.source,
+        waited_ms: pass.state.waitedMs,
+        cap_ms: LITHOS_REFUSAL_WAIT_CAP_MS,
+      });
+      recordLithosRateLimitWaitMs(input.usageContext, pass.state.waitedMs);
+      return {
+        pending: (async (): Promise<LithosDispatchOutcome> => {
+          try {
+            await waitForLithosRetry(pass.planned.waitMs, input.requestSignal);
+            const continued = await runLithosDispatch(input, pass.state, policy, false);
+            if ("pending" in continued) throw new Error("A resumed LithosAI dispatch cannot defer again.");
+            return continued;
+          } catch (error) {
+            return { ok: false, response: await respondLithosChatDispatchFailure(error, input.downstreamSignal, input.usageContext) };
+          }
+        })(),
+        requestSignal: input.requestSignal,
+        downstreamSignal: input.downstreamSignal,
+      };
+    }
     state = pass.state;
   }
 };
@@ -581,12 +658,13 @@ const runLithosDispatch = async (input: LithosDispatchInput, start: LithosDispat
  * responders, so the Chat and Responses adapters differ only in how they
  * translate the payload.
  */
-const dispatchLithosUpstream = async (
+const dispatchLithosUpstreamResult = async (
   req: Request,
   body: Record<string, unknown>,
   modelRaw: string,
-  usageContext: UsageContext | undefined
-): Promise<LithosDispatchOutcome> => {
+  usageContext: UsageContext | undefined,
+  streamed: boolean
+): Promise<LithosDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
   // A tier whose window is open is served by its sibling without asking the
@@ -604,8 +682,22 @@ const dispatchLithosUpstream = async (
   }
   return await runLithosDispatch(
     { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: sibling ?? modelRaw, failoverAttempted: sibling !== null, waitedMs: 0, waits: 0 }
+    { attempt: 0, attemptModel: sibling ?? modelRaw, failoverAttempted: sibling !== null, waitedMs: 0, waits: 0 },
+    streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
+    streamed
   );
+};
+
+/** The buffered dispatch: no stream exists to hold open, so a wait is spent inline. */
+const dispatchLithosUpstream = async (
+  req: Request,
+  body: Record<string, unknown>,
+  modelRaw: string,
+  usageContext: UsageContext | undefined
+): Promise<LithosDispatchOutcome> => {
+  const result = await dispatchLithosUpstreamResult(req, body, modelRaw, usageContext, false);
+  if ("pending" in result) throw new Error("A buffered LithosAI dispatch cannot defer a rate-limit wait.");
+  return result;
 };
 
 /**
@@ -818,7 +910,7 @@ const finalizeBufferedLithosResponses = async (
  * frames every other gateway stream carries.
  */
 const streamLithosResponses = (
-  upstream: Response,
+  upstream: Response | Promise<Response>,
   requestedModel: string,
   responseId: string,
   createdAtSeconds: number,
@@ -830,7 +922,7 @@ const streamLithosResponses = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string,
-  servedModel: string
+  servedModel: string | (() => string)
 ): Response =>
   withLithosSseKeepalive(
     relayResponsesStream(lithosStreamAdapterServing(servedModel), {
@@ -903,12 +995,44 @@ export const handleLithosResponses = async (
     reasoning: reasoningLabel,
   });
 
-  const dispatched = await dispatchLithosUpstream(req, chatBody, modelRaw, usageContext);
+  const createdAtSeconds = Math.floor(Date.now() / 1000);
+  const dispatched = await dispatchLithosUpstreamResult(req, chatBody, modelRaw, usageContext, clientWantsStream);
+  if ("pending" in dispatched) {
+    // The streamed route opens its SSE response now and its keepalive frames
+    // hold the client while the vendor's own window passes behind it. The
+    // pending completion resolves either to the attempt that answers - possibly
+    // the sibling, so the serving tier is read after it lands - or to the
+    // refusal, which the relay reports in-band because a status can no longer
+    // be returned.
+    const servedModel = { current: modelRaw };
+    const upstream = dispatched.pending.then((outcome) => {
+      if (outcome.ok) servedModel.current = outcome.servedModel;
+      return outcome.ok ? outcome.upstream : outcome.response;
+    });
+    const responseId = `resp_${crypto
+      .randomUUID()
+      .replace(/[^A-Za-z0-9]/g, "")
+      .slice(0, 40)}`;
+    return streamLithosResponses(
+      upstream,
+      modelRaw,
+      responseId,
+      createdAtSeconds,
+      echo,
+      toolNames,
+      customToolNames,
+      null,
+      usageContext,
+      dispatched.downstreamSignal,
+      dispatched.requestSignal,
+      upstreamModel,
+      () => servedModel.current
+    );
+  }
   if (!dispatched.ok) return dispatched.response;
   const { upstream, requestSignal, downstreamSignal, servedModel } = dispatched;
   const providerRequestId = dispatched.providerRequestId;
   const responseId = `resp_${(providerRequestId ?? crypto.randomUUID()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40)}`;
-  const createdAtSeconds = Math.floor(Date.now() / 1000);
 
   if (clientWantsStream) {
     return streamLithosResponses(

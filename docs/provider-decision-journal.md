@@ -447,3 +447,26 @@ iOS client cannot read response headers, so substitution is not signalled on the
 
 Reversal risk: restoring the wait switch, capping the sibling window with an invented duration, or adding a header-based
 signal all reintroduce behaviour the owner's client cannot see or act on. Change this only with a new dated entry.
+
+## 2026-09-25 — A streamed LithosAI refusal is absorbed behind the open stream again (five-minute budget)
+
+A streamed Responses request that meets a refusal on both tiers no longer waits silently up to the buffered cap and then
+relays. It opens its SSE response immediately, holds the client with the gateway's standard `: keepalive` frames, and
+spends the vendor's own windows behind it: up to five waits totalling 300 seconds, the same 75-second per-wait cap, and
+one sibling failover per round. If the budget is exhausted the vendor's refusal travels in-band as the stream's
+`response.failed` terminal; a cancellation or gateway deadline keeps its own terminal and emits no error frame. Buffered
+requests keep the smaller silent budget (two waits, 120 seconds), because nothing can hold a silent buffered response
+through an edge proxy's read bound.
+
+Why this returns: on 2026-09-25 the iOS client's `exceeded retry limit, last status: 429` was traced to the Mac
+companion gateway, which had never been updated past `mac-3df84b307` while the VPS carried the fixes; its log held 152
+relayed 429 terminals. The vendor's saturation windows measured three and a half minutes (2026-09-24 08:46-08:50Z and
+2026-09-25 04:04-04:07Z), which the buffered 120-second budget cannot cover. The 2026-09-24 decision (PR #501,
+`mac-`/`vps-3848c94ca`) absorbed five minutes behind the open stream; #509 removed it together with the wait switch.
+This entry restores the streamed half of that policy on top of #509's sibling-first behaviour and #511's header-driven,
+abort-aware waits, so both surfaces now share it unconditionally.
+
+Reversal risk: relaying a waitable refusal because a silent hold looks simpler reintroduces the client-visible 429 the
+streamed budget exists to remove; letting a buffered request hold silently that long reintroduces the edge read bound
+the split budget exists to avoid. Coverage: `tests/lithos-wiring.test.ts` asserts the streamed budget persists past the
+buffered caps, that exhaustion reports in-band, and that an unwaitable refusal still relays unchanged.
