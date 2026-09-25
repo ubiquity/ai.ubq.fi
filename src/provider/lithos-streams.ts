@@ -168,13 +168,13 @@ const lithosStreamAdapterServing = (servedModel: string | (() => string)): Provi
  * reported with the provider's own status and code rather than held open.
  */
 export const streamLithosChatCompletion = (
-  upstream: Response,
+  upstream: Response | Promise<Response>,
   providerRequestId: string | null,
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string,
-  servedModel: string
+  servedModel: string | (() => string)
 ): Response =>
   withLithosSseKeepalive(
     relayChatCompletionStream(
