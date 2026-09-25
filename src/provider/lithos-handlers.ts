@@ -550,7 +550,10 @@ const lithosDispatchPass = async (input: LithosDispatchInput, state: LithosDispa
     // The refused body is never read, so it is released here.
     cancelResponseBody(attempt);
     await waitForLithosRetry(planned.waitMs, input.requestSignal);
-    return { kind: "retry", state: { attempt: progressed.attempt, attemptModel: input.modelRaw, failoverAttempted: false, waitedMs, waits: progressed.waits + 1 } };
+    return {
+      kind: "retry",
+      state: { attempt: progressed.attempt, attemptModel: input.modelRaw, failoverAttempted: false, waitedMs, waits: progressed.waits + 1 },
+    };
   }
   // This pass is terminal: its refusal body is read by the responders below, so
   // it must not be cancelled here (only the discarded attempts above are).

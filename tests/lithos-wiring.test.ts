@@ -773,7 +773,10 @@ Deno.test("lithos wiring: a refusal on both tiers is relayed without waiting", a
       Response.json(
         { error: { message: "Rate limit exceeded for input_tokens.", type: "input_tokens", code: "rate_limit_exceeded" } },
         // The vendor's own "do not retry" instruction: nothing may be waited out.
-        { status: 429, headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-ratelimit-reset-tokens": "0.02s", "x-should-retry": "false" } }
+        {
+          status: 429,
+          headers: { "Content-Type": "application/json", "retry-after-ms": "5000", "x-ratelimit-reset-tokens": "0.02s", "x-should-retry": "false" },
+        }
       );
     const chat = await withUpstream(refusal, () =>
       handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-429-relay"))
