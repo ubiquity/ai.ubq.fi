@@ -1,6 +1,7 @@
 import "./network.js";
 
 const contentEl = document.querySelector("[data-docs-content]");
+const statusEl = document.querySelector("[data-docs-status]");
 const tocEl = document.querySelector("[data-docs-toc]");
 const source = contentEl?.dataset.docsSource;
 
@@ -248,11 +249,13 @@ const setDocsState = (state) => {
   if (state === "ready") {
     delete contentEl.dataset.docsState;
     contentEl.removeAttribute("aria-busy");
+    if (statusEl) statusEl.textContent = "";
     return;
   }
   contentEl.dataset.docsState = state;
   if (state === "loading") {
     contentEl.setAttribute("aria-busy", "true");
+    if (statusEl) statusEl.textContent = "Loading docs…";
   } else {
     contentEl.removeAttribute("aria-busy");
   }
@@ -261,6 +264,7 @@ const setDocsState = (state) => {
 const renderDocsError = (message) => {
   if (!contentEl) return;
   contentEl.innerHTML = `<p data-docs-error>${errorIcon}<span>${escapeHtml(message)}</span></p>`;
+  if (statusEl) statusEl.textContent = message;
   setDocsState("error");
 };
 
