@@ -315,7 +315,14 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           upstreamCalls.map((call) => call.url),
           ["https://api.cerebras.ai/v1/chat/completions"]
         );
-        assert.deepEqual(upstreamCalls[0]?.body, canonicalBody);
+        // The body reaches Cerebras verbatim except for the role projection:
+        // `developer` is not a role Cerebras' chat template accepts, so it is
+        // mapped onto `system` rather than forwarded (see the dedicated step
+        // below for the mapping and the no-mutation guarantee).
+        assert.deepEqual(upstreamCalls[0]?.body, {
+          ...canonicalBody,
+          messages: canonicalBody.messages.map((message) => (message.role === "developer" ? { ...message, role: "system" } : message)),
+        });
         assert.equal(upstreamCalls[0]?.headers.get("Authorization"), `Bearer ${fakeApiKey}`);
         assert.equal(upstreamCalls[0]?.headers.get("Content-Type"), "application/json");
         const payload = (await response.json()) as {
@@ -473,6 +480,45 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(response.status, 200);
       assert.equal(seen[0]?.logprobs, true);
       assert.equal(seen[0]?.top_logprobs, 3);
+    });
+
+    // Cerebras fails the whole turn on a role its chat template does not know,
+    // so the harness' `developer` system message must be mapped, not forwarded.
+    await t.step("maps the developer role onto system without mutating the caller record", async () => {
+      const seen: Record<string, unknown>[] = [];
+      const requestBody = {
+        ...canonicalBody,
+        model: "qwen-3.8-27b",
+        messages: [
+          { role: "developer", content: "You are terse." },
+          { role: "user", content: "go" },
+        ],
+      };
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          if (bodyText) seen.push(JSON.parse(bodyText) as Record<string, unknown>);
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_developer_role",
+              object: "chat.completion",
+              created: 1_728_000_022,
+              model: "qwen-3.8-27b",
+              choices: [{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        },
+        () => handleChatCompletions(request(requestBody))
+      );
+
+      assert.equal(response.status, 200);
+      const messages = seen[0]?.messages as { role: string; content: string }[];
+      assert.equal(messages[0]?.role, "system", "developer must reach Cerebras as system");
+      assert.equal(messages[0]?.content, "You are terse.", "content must be preserved");
+      assert.equal(messages[1]?.role, "user", "unrelated roles must not be rewritten");
+      // The caller's own record must survive the projection untouched.
+      assert.equal(requestBody.messages[0].role, "developer");
     });
 
     await t.step("preserves upstream reasoning 1:1 in buffered Chat responses", async () => {
