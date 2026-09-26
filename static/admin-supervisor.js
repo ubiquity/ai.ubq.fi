@@ -12,6 +12,16 @@ const STATE_LABELS = {
 };
 const text = (value) => (typeof value === "string" && value.length > 0 ? value : null);
 
+/**
+ * Ownership rule for every exit of a follow request. Switching sessions aborts
+ * the previous request and installs the next controller before the previous
+ * rejection handler runs, so an `aborted` signal is not evidence that this
+ * handler still owns the shared slot: a live B controller also satisfies
+ * `!signal.aborted`. Only controller identity is, so an aborted A can never
+ * report against, clear, or cancel the B that replaced it.
+ */
+export const stillOwnsFollow = (current, request) => current === request;
+
 const repoOf = (cwd) => {
   const path = text(cwd);
   if (!path) return null;
@@ -499,7 +509,11 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
     if (followLog) followLog.textContent = "";
     if (followTitle) followTitle.textContent = `${session.machine} · ${text(session.title) ?? session.id}`;
     setFollowStatus("Connecting to recorded output…", "ok");
-    followController = new AbortController();
+    // Session switches abort the previous controller and install this one
+    // before the previous fetch's rejection handler runs, so every exit below
+    // is gated on `stillOwnsFollow` rather than on the abort signal.
+    const request = new AbortController();
+    followController = request;
     const params = new URLSearchParams({ source: session.sourceId, id: session.id });
     const token = typeof getToken === "function" ? getToken() : "";
     try {
@@ -507,8 +521,9 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: "include",
         cache: "no-store",
-        signal: followController.signal,
+        signal: request.signal,
       });
+      if (!stillOwnsFollow(followController, request)) return;
       if (!response.ok || !response.body) {
         setFollowStatus(`Follow unavailable: HTTP ${response.status}.`, "warning");
         return;
@@ -518,6 +533,7 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
       let buffer = "";
       while (true) {
         const { done, value } = await reader.read();
+        if (!stillOwnsFollow(followController, request)) return;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split("\n\n");
@@ -529,7 +545,8 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
       render();
       setFollowStatus("Follow stream closed. Select the session again to resume recorded output.", "warning");
     } catch (error) {
-      if (followController && !followController.signal.aborted) {
+      if (!stillOwnsFollow(followController, request)) return;
+      if (!request.signal.aborted) {
         setFollowStatus(`Follow stopped: ${error instanceof Error ? error.message : "connection failed"}`, "warning");
       }
       followController = null;

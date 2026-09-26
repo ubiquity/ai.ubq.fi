@@ -9,6 +9,7 @@ import adminCacheScript from "../static/admin-cache.js" with { type: "text" };
 import adminHtml from "../static/admin.html" with { type: "text" };
 import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
+import adminSupervisorScript from "../static/admin-supervisor.js" with { type: "text" };
 import authScript from "../static/auth.js" with { type: "text" };
 import chatCss from "../static/chat.css" with { type: "text" };
 import chatHtml from "../static/chat.html" with { type: "text" };
@@ -820,4 +821,20 @@ Deno.test("admin paid-provider wallet display never claims a balance the token e
   // The real, event-derived provider signal and its timestamp survive.
   assert.match(adminScript, /appendProviderFact\(facts, "Inference", status\.health \? providerStateLabel\(status\.health\) : "Not observed"\)/);
   assert.match(adminScript, /appendProviderFact\(facts, "Last response", formatDate\(status\.health\?\.last_observed_at_ms\)\)/);
+});
+
+Deno.test("supervisor follow gates every exit on controller identity, never on the abort signal", () => {
+  // A session switch aborts A and installs B's controller before A's rejection
+  // handler runs, so `followController.signal.aborted` is false for that live B
+  // and the old signal test let A report against and clear B.
+  assert.doesNotMatch(adminSupervisorScript, /followController\.signal\.aborted/);
+  assert.doesNotMatch(adminSupervisorScript, /if \(followController && !/);
+
+  // The fetch response, every reader read, and the rejection handler are the
+  // three exits where a replaced request must bail out before touching state.
+  assert.equal(adminSupervisorScript.match(/stillOwnsFollow\(followController, request\)/g)?.length, 3);
+  assert.match(
+    adminSupervisorScript,
+    /const request = new AbortController\(\);\s+followController = request;/
+  );
 });

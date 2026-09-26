@@ -365,13 +365,17 @@ Deno.test("private assistant analysis never becomes a transcript event", () => {
     message({ type: "message", role: "assistant", phase: "reasoning" }, "private reasoning text", 1),
     message({ type: "message", role: "assistant", phase: "commentary" }, "visible commentary", 2),
     message({ type: "message", role: "assistant", channel: "final" }, "visible final", 3),
-    message({ type: "message", role: "assistant" }, "legacy visible message", 4),
-    message({ type: "message", role: "user" }, "visible user request", 5),
+    // The follow UI labels the terminal assistant message `final_answer`, so a
+    // lagging projected history must keep it: dropping it leaves the briefing
+    // with only commentary and no final result or blocker.
+    message({ type: "message", role: "assistant", phase: "final_answer" }, "visible final answer", 4),
+    message({ type: "message", role: "assistant" }, "legacy visible message", 5),
+    message({ type: "message", role: "user" }, "visible user request", 6),
   ].join("\n");
   const events = parseSupervisorRolloutTail(jsonl);
   assert.deepEqual(
     events.map((event) => event.text),
-    ["visible commentary", "visible final", "legacy visible message", "visible user request"]
+    ["visible commentary", "visible final", "visible final answer", "legacy visible message", "visible user request"]
   );
 });
 

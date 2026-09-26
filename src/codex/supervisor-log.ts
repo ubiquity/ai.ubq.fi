@@ -33,8 +33,13 @@ const textOrNull = (value: unknown): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
-/** Legacy assistant messages have no channel/phase; only visible phases are accepted. */
-const VISIBLE_MESSAGE_PHASES: ReadonlySet<string> = new Set(["commentary", "final"]);
+/**
+ * Legacy assistant messages have no channel/phase; only visible phases are
+ * accepted. The follow UI emits `final_answer` for the terminal assistant
+ * message, so that phase is visible too: dropping it would make a lagging
+ * projected history lose the final result or blocker and keep only commentary.
+ */
+const VISIBLE_MESSAGE_PHASES: ReadonlySet<string> = new Set(["commentary", "final", "final_answer"]);
 
 /** Rejects private analysis/reasoning channels and phases; absent values are legacy visible. */
 const isVisibleMessage = (payload: JsonRecord): boolean => {
