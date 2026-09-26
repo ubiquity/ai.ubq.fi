@@ -246,10 +246,28 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
 
 export const projectCerebrasToolSchema = (value: unknown): unknown => collapseCerebrasRootObjectUnion(projectCerebrasSchemaValue(value));
 
+/**
+ * Cerebras applies the model's chat template strictly: a role it does not know
+ * fails the ENTIRE turn with "Failed to apply chat template to messages due to
+ * error: Unexpected message role" instead of being ignored. OpenAI's newer
+ * `developer` role is not one Cerebras accepts, and DeepSeek Harness uses it
+ * for system instructions, so an unprojected harness turn can never succeed on
+ * this route (verified live 2026-09-26: `system` 200, `developer` 400).
+ *
+ * The role is mapped onto the `system` role Cerebras does accept, preserving
+ * message order and content. Messages are copied rather than mutated so the
+ * caller's own request record is never rewritten in place.
+ */
+const projectCerebrasMessages = (messages: unknown): unknown => {
+  if (!Array.isArray(messages)) return messages;
+  return messages.map((message) => (isRecord(message) && !Array.isArray(message) && message.role === "developer" ? { ...message, role: "system" } : message));
+};
+
 const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
-  if (!Array.isArray(body.tools)) return body;
+  const projected: Record<string, unknown> = { ...body, messages: projectCerebrasMessages(body.messages) };
+  if (!Array.isArray(body.tools)) return projected;
   return {
-    ...body,
+    ...projected,
     tools: body.tools.map((tool) => {
       if (!isRecord(tool) || Array.isArray(tool) || !isRecord(tool.function) || Array.isArray(tool.function)) {
         return tool;
