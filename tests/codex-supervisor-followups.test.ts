@@ -558,3 +558,224 @@ Deno.test("a failed full read degrades to the recorded summary instead of failin
   );
   assert.match(buildSupervisorBriefPrompt(context), /recorded summary request/);
 });
+
+/* ------------------------------------------------------------------ issue 419 */
+
+Deno.test("switching follow from session A to B fences cleanup to the request-local controller", async () => {
+  const listeners = new Map<string, Function[]>();
+  const addListener = (event: string, fn: Function) => {
+    const list = listeners.get(event) ?? [];
+    list.push(fn);
+    listeners.set(event, list);
+  };
+
+  class MockElement {
+    tagName = "DIV";
+    dataset: Record<string, string> = {};
+    style: Record<string, string> = {};
+    hidden = false;
+    disabled = false;
+    textContent = "";
+    value = "";
+    options: any[] = [];
+    children: any[] = [];
+    parent: MockElement | null = null;
+    append(...nodes: any[]) {
+      for (const node of nodes) {
+        if (node instanceof MockElement) {
+          node.parent = this;
+          this.children.push(node);
+          if (node.tagName === "OPTION") this.options.push(node);
+        }
+      }
+    }
+    remove() {
+      if (this.parent) {
+        this.parent.children = this.parent.children.filter((child) => child !== this);
+        this.parent.options = this.parent.options.filter((opt) => opt !== this);
+      }
+    }
+    removeAttribute(_name: string) {}
+    setAttribute(_name: string, _value: string) {}
+    querySelector(_selector: string) {
+      return new MockElement();
+    }
+    querySelectorAll(_selector: string) {
+      return [];
+    }
+    closest(selector: string): any {
+      if (selector === "button[data-action]" && this.dataset.action) return this;
+      if (selector === "[data-session-key]" && this.dataset.sessionKey) return this;
+      if (this.parent) return this.parent.closest(selector);
+      return null;
+    }
+    addEventListener(event: string, handler: Function) {
+      addListener(event, handler);
+    }
+  }
+
+  const originalDocument = (globalThis as any).document;
+  const originalElement = (globalThis as any).Element;
+  const originalFetch = globalThis.fetch;
+
+  (globalThis as any).Element = MockElement;
+  (globalThis as any).document = {
+    createElement: (tag: string) => {
+      const el = new MockElement();
+      el.tagName = tag.toUpperCase();
+      return el;
+    },
+    addEventListener: () => {},
+    hidden: false,
+  };
+
+  const makeEl = (tag = "div") => {
+    const el = new MockElement();
+    el.tagName = tag.toUpperCase();
+    return el;
+  };
+
+  const pickIds = [
+    "supervisor-badge",
+    "supervisor-updated",
+    "supervisor-summary",
+    "supervisor-quota",
+    "supervisor-quota-list",
+    "supervisor-notice",
+    "supervisor-empty",
+    "supervisor-search",
+    "supervisor-machine",
+    "supervisor-state",
+    "supervisor-list",
+    "supervisor-follow",
+    "supervisor-follow-title",
+    "supervisor-follow-status",
+    "supervisor-follow-log",
+    "supervisor-follow-stop",
+    "supervisor-brief",
+    "supervisor-brief-title",
+    "supervisor-brief-status",
+    "supervisor-brief-body",
+    "supervisor-brief-about",
+    "supervisor-brief-state",
+    "supervisor-brief-close",
+  ];
+  const elements: Record<string, any> = {};
+  for (const id of pickIds) {
+    elements[id] = makeEl("div");
+  }
+  elements["supervisor-machine"].options = [{ value: "all", remove: () => {} }];
+  elements["supervisor-state"].options = [{ value: "active", remove: () => {} }];
+
+  const section = {
+    querySelector: (selector: string) => {
+      const id = selector.startsWith("#") ? selector.slice(1) : selector;
+      return elements[id] ?? makeEl("div");
+    },
+  };
+
+  let sessionAReject: ((err: Error) => void) | null = null;
+  let sessionBFetchCalled = false;
+  let sessionASignal: AbortSignal | null = null;
+  let sessionBSignal: AbortSignal | null = null;
+
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("id=session-a")) {
+      sessionASignal = (init?.signal ?? null) as unknown as AbortSignal;
+      return new Promise<Response>((_, reject) => {
+        sessionAReject = reject;
+      });
+    }
+    if (url.includes("id=session-b")) {
+      sessionBFetchCalled = true;
+      sessionBSignal = (init?.signal ?? null) as unknown as AbortSignal;
+      return new Promise<Response>(() => {
+        // Stays pending to observe session B's active controller
+      });
+    }
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          sampledAtMs: Date.now(),
+          counts: { total: 2, active: 2 },
+          sources: [{ id: "local", name: "local" }],
+          sessions: [
+            { sourceId: "local", id: "session-a", machine: "local", title: "Session A", state: "active" },
+            { sourceId: "local", id: "session-b", machine: "local", title: "Session B", state: "active" },
+          ],
+        }),
+        { status: 200 }
+      )
+    );
+  };
+
+  try {
+    const { createSupervisorView } = await import("../static/admin-supervisor.js");
+    const view = createSupervisorView({
+      section: section as any,
+      isSuperAdmin: () => true,
+      getToken: () => "test-token",
+      apiUrl: (path: string) => `https://ai.ubq.fi${path}`,
+    });
+
+    view.setActive(true);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const listClick = listeners.get("click");
+    assert.ok(listClick && listClick.length > 0, "list click listener must be registered");
+    const onListClick = listClick[0];
+
+    const makeRow = (sourceId: string, id: string) => {
+      const row = makeEl("article");
+      row.dataset.sessionKey = `${sourceId}:${id}`;
+      row.dataset.sessionId = id;
+      row.dataset.source = sourceId;
+      const button = makeEl("button");
+      button.dataset.action = "follow";
+      row.append(button);
+      return { row, button };
+    };
+
+    const sessionA = makeRow("local", "session-a");
+    const sessionB = makeRow("local", "session-b");
+
+    // Start following Session A
+    onListClick({ target: sessionA.button });
+    assert.equal(elements["supervisor-follow-status"].textContent, "Connecting to recorded output…");
+    const signalA = sessionASignal as unknown as AbortSignal;
+    assert.ok(signalA);
+    assert.equal(signalA.aborted, false);
+
+    // Switch to Session B before Session A completes
+    onListClick({ target: sessionB.button });
+    assert.equal(sessionBFetchCalled, true);
+    const signalB = sessionBSignal as unknown as AbortSignal;
+    assert.ok(signalB);
+    assert.equal(signalB.aborted, false, "Session B controller must be active");
+    assert.equal(signalA.aborted, true, "Session A controller must have been aborted on switch");
+
+    // Session A now encounters late abort rejection
+    const rejectA = sessionAReject as unknown as (err: Error) => void;
+    assert.ok(rejectA);
+    rejectA(new DOMException("The user aborted a request.", "AbortError"));
+
+    // Yield microtasks to allow session A's catch handler to run
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Assert that session A's late rejection did NOT abort session B's controller or overwrite its status
+    assert.equal(signalB.aborted, false, "Session B's controller must NOT be aborted");
+    assert.equal(elements["supervisor-follow-status"].textContent, "Connecting to recorded output…");
+    assert.notEqual(
+      elements["supervisor-follow-status"].textContent,
+      "Follow stopped: The user aborted a request.",
+      "Session A's abort error must not overwrite Session B's status"
+    );
+  } finally {
+    if (originalDocument === undefined) delete (globalThis as any).document;
+    else (globalThis as any).document = originalDocument;
+    if (originalElement === undefined) delete (globalThis as any).Element;
+    else (globalThis as any).Element = originalElement;
+    globalThis.fetch = originalFetch;
+  }
+});

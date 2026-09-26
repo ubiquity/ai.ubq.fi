@@ -34,7 +34,7 @@ const textOrNull = (value: unknown): string | null => {
 };
 
 /** Legacy assistant messages have no channel/phase; only visible phases are accepted. */
-const VISIBLE_MESSAGE_PHASES: ReadonlySet<string> = new Set(["commentary", "final"]);
+const VISIBLE_MESSAGE_PHASES: ReadonlySet<string> = new Set(["commentary", "final", "final_answer"]);
 
 /** Rejects private analysis/reasoning channels and phases; absent values are legacy visible. */
 const isVisibleMessage = (payload: JsonRecord): boolean => {

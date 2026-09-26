@@ -499,7 +499,8 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
     if (followLog) followLog.textContent = "";
     if (followTitle) followTitle.textContent = `${session.machine} · ${text(session.title) ?? session.id}`;
     setFollowStatus("Connecting to recorded output…", "ok");
-    followController = new AbortController();
+    const controller = new AbortController();
+    followController = controller;
     const params = new URLSearchParams({ source: session.sourceId, id: session.id });
     const token = typeof getToken === "function" ? getToken() : "";
     try {
@@ -507,8 +508,9 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: "include",
         cache: "no-store",
-        signal: followController.signal,
+        signal: controller.signal,
       });
+      if (followController !== controller) return;
       if (!response.ok || !response.body) {
         setFollowStatus(`Follow unavailable: HTTP ${response.status}.`, "warning");
         return;
@@ -519,20 +521,28 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (followController !== controller) return;
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split("\n\n");
         buffer = frames.pop() ?? "";
-        for (const frame of frames) handleFrame(frame);
+        for (const frame of frames) {
+          if (followController !== controller) return;
+          handleFrame(frame);
+        }
       }
-      followKey = null;
-      followController = null;
-      render();
-      setFollowStatus("Follow stream closed. Select the session again to resume recorded output.", "warning");
+      if (followController === controller) {
+        followKey = null;
+        followController = null;
+        render();
+        setFollowStatus("Follow stream closed. Select the session again to resume recorded output.", "warning");
+      }
     } catch (error) {
-      if (followController && !followController.signal.aborted) {
-        setFollowStatus(`Follow stopped: ${error instanceof Error ? error.message : "connection failed"}`, "warning");
+      if (followController === controller) {
+        if (!controller.signal.aborted) {
+          setFollowStatus(`Follow stopped: ${error instanceof Error ? error.message : "connection failed"}`, "warning");
+        }
+        followController = null;
       }
-      followController = null;
     }
   };
 

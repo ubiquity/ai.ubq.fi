@@ -365,14 +365,31 @@ Deno.test("private assistant analysis never becomes a transcript event", () => {
     message({ type: "message", role: "assistant", phase: "reasoning" }, "private reasoning text", 1),
     message({ type: "message", role: "assistant", phase: "commentary" }, "visible commentary", 2),
     message({ type: "message", role: "assistant", channel: "final" }, "visible final", 3),
-    message({ type: "message", role: "assistant" }, "legacy visible message", 4),
-    message({ type: "message", role: "user" }, "visible user request", 5),
+    message({ type: "message", role: "assistant", phase: "final_answer" }, "visible final answer", 4),
+    message({ type: "message", role: "assistant" }, "legacy visible message", 5),
+    message({ type: "message", role: "user" }, "visible user request", 6),
   ].join("\n");
   const events = parseSupervisorRolloutTail(jsonl);
   assert.deepEqual(
     events.map((event) => event.text),
-    ["visible commentary", "visible final", "legacy visible message", "visible user request"]
+    ["visible commentary", "visible final", "visible final answer", "legacy visible message", "visible user request"]
   );
+});
+
+Deno.test("rollout parsing includes final_answer assistant messages in the brief tail", () => {
+  const text = "Completed task: final result delivered.";
+  const jsonl = JSON.stringify({
+    timestamp: "2026-09-22T08:00:00.000Z",
+    type: "response_item",
+    payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text }] },
+  });
+  const events = parseSupervisorRolloutTail(jsonl);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].text, text);
+  const turns = appendRolloutTailTurn([], { threadId: "thread-final-answer", state: "active", events });
+  const assembly = assembleBriefContext(turns);
+  assert.equal(assembly.turns.length, 1);
+  assert.equal(assembly.turns[0].items[0].text, text);
 });
 
 Deno.test("rollout parsing and tail merging retain the newest bounded entries", () => {
