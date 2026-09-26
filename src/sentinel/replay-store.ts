@@ -140,6 +140,31 @@ const resolveIndexFingerprint = async (input: AcceptedSentinelReplayInput, clien
 };
 
 /**
+ * The capture window a duplicate actually resolves to. The status row names the
+ * winning manifest, so it must carry that manifest's own `captured_at_ms` and
+ * `expires_at_ms`: a fresh `now + TTL` advertises a ready capture with an expiry
+ * almost 48 hours after the referenced evidence, which then flips to expired the
+ * moment that older manifest disappears. When the winning manifest is already
+ * gone the evidence is unavailable, so an elapsed window reports the request
+ * expired instead of claiming a lifetime nothing backs.
+ */
+const winningCaptureWindow = async (
+  kv: Deno.Kv,
+  duplicate: Readonly<{ fingerprint: string; manifestKey: Deno.KvKey }>,
+  now: number
+): Promise<Readonly<{ capturedAtMs: number; expiresAtMs: number }>> => {
+  const winner = await kv.get<SentinelReplayManifest>(duplicate.manifestKey);
+  if (
+    winner.value === null ||
+    !isSentinelReplayManifest(winner.value) ||
+    winner.value.fingerprint !== duplicate.fingerprint ||
+    !manifestMatchesKey(duplicate.manifestKey, winner.value)
+  )
+    return { capturedAtMs: now, expiresAtMs: now };
+  return { capturedAtMs: winner.value.captured_at_ms, expiresAtMs: winner.value.expires_at_ms };
+};
+
+/**
  * Settles a capture that already exists (or lost the CAS race): the durable
  * index row, when present, is bound to the winning capture, and the incident
  * outbox event is completed. Nothing pretends the duplicate created evidence.
@@ -153,8 +178,6 @@ const completeDuplicateCapture = async (
     indexFingerprint: string | null;
     requestId: string;
     captureStatus: "ready" | "incomplete";
-    capturedAtMs: number;
-    expiresAtMs: number;
   }>,
   now: number
 ): Promise<SentinelReplayPersistResult> => {
@@ -174,16 +197,17 @@ const completeDuplicateCapture = async (
   });
   // The request still resolves to real evidence: keep its status row pointing
   // at the winning capture rather than leaving the request unaccounted for.
+  const window = await winningCaptureWindow(dependencies.kv, duplicate, now);
   await writeSentinelReplayCaptureStatus(
     dependencies.kv,
     captureStatusRow({
       requestId: duplicate.requestId,
       status: duplicate.captureStatus,
       reason: null,
-      capturedAtMs: duplicate.capturedAtMs,
+      capturedAtMs: window.capturedAtMs,
       manifestKey: duplicate.manifestKey,
       fingerprint: duplicate.fingerprint,
-      expiresAtMs: duplicate.expiresAtMs,
+      expiresAtMs: window.expiresAtMs,
     })
   ).catch(() => {});
   return { status: "duplicate", fingerprint: duplicate.fingerprint, manifest_key: duplicate.manifestKey };
@@ -433,8 +457,6 @@ const storeReplayEnvelope = async (
         indexFingerprint,
         requestId: context.requestId,
         captureStatus: context.captureStatus,
-        capturedAtMs: manifest.captured_at_ms,
-        expiresAtMs,
       },
       now
     );
@@ -488,8 +510,6 @@ export const persistEncryptedSentinelReplay = async (
           indexFingerprint,
           requestId: input.request_id,
           captureStatus: unavailable.length === 0 ? "ready" : "incomplete",
-          capturedAtMs: now,
-          expiresAtMs: now + SENTINEL_REPLAY_TTL_MS,
         },
         now
       );

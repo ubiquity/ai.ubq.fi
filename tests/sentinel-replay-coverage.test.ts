@@ -715,6 +715,69 @@ Deno.test({
 });
 
 Deno.test({
+  name: "a duplicate reports the winning manifest expiry, never a fresh one of its own",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await openSentinelTestKv();
+    try {
+      const failure = internalObservation();
+      const client = clientObservation({ terminal_body_base64: btoa("upstream failed") });
+      const trace = await recordedTrace('{"error":"upstream failed"}');
+      const body = '{"model":"gpt-5"}';
+      const first = await persistEncryptedSentinelReplay(
+        { ...replayInput(body, "expiry-first-request"), upstream: trace },
+        failure,
+        storeDependencies(kv, { randomUuid: () => "capture-winner" }),
+        client
+      );
+      assert.equal(first.status, "stored");
+      const winnerExpiry = first.manifest.expires_at_ms;
+      assert.equal(winnerExpiry, NOW + SENTINEL_REPLAY_TTL_MS, "the winner expires 48 hours after its own capture");
+
+      // The duplicate lands an hour before the winner's own 48-hour expiry: a
+      // fresh now + TTL would advertise evidence for almost 48 more hours.
+      const lateNow = winnerExpiry - 60 * 60 * 1_000;
+      const duplicate = await persistEncryptedSentinelReplay(
+        { ...replayInput(body, "expiry-second-request"), upstream: trace },
+        failure,
+        storeDependencies(kv, { now: () => lateNow, randomUuid: () => "capture-late-loser" }),
+        client
+      );
+      assert.equal(duplicate.status, "duplicate");
+      assert.deepEqual(duplicate.manifest_key, [...(first.manifest_key ?? [])]);
+
+      const status = await readSentinelReplayCaptureStatus(kv, "expiry-second-request", lateNow);
+      assert.equal(status.status, "ready", "the duplicate still resolves to the winner's evidence");
+      assert.equal(status.captured_at_ms, NOW, "the duplicate reports when the referenced capture was taken");
+      assert.equal(status.expires_at_ms, winnerExpiry, "the duplicate must never outlive the capture it references");
+      assert.notEqual(status.expires_at_ms, lateNow + SENTINEL_REPLAY_TTL_MS, "a fresh now + TTL must never be reported");
+
+      // Once the winner's own expiry passes, the duplicate reports expired
+      // instead of staying ready on a lifetime nothing backs.
+      const afterExpiry = await readSentinelReplayCaptureStatus(kv, "expiry-second-request", winnerExpiry);
+      assert.equal(afterExpiry.status, "expired", "expiry is reported consistently with the referenced evidence");
+      assert.equal(afterExpiry.expires_at_ms, winnerExpiry);
+
+      // The referenced manifest is gone: a duplicate still resolves to no
+      // evidence, so it must not claim a 48-hour lifetime either.
+      await kv.delete([...(first.manifest_key ?? [])]);
+      const afterLoss = await persistEncryptedSentinelReplay(
+        { ...replayInput(body, "expiry-third-request"), upstream: trace },
+        failure,
+        storeDependencies(kv, { now: () => lateNow, randomUuid: () => "capture-orphaned-loser" }),
+        client
+      );
+      assert.equal(afterLoss.status, "duplicate");
+      const orphaned = await readSentinelReplayCaptureStatus(kv, "expiry-third-request", lateNow);
+      assert.equal(orphaned.status, "expired", "a duplicate of lost evidence is expired, never a fresh ready window");
+    } finally {
+      closeKv(kv);
+    }
+  },
+});
+
+Deno.test({
   name: "a duplicate against a corrupt index row fails closed on the first read",
   sanitizeResources: false,
   sanitizeOps: false,
