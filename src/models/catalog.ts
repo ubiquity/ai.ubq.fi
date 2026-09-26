@@ -1,7 +1,7 @@
 // Model catalog assembly and the public model endpoints, extracted from src/openai.ts.
 
 import { type CodexModelsSnapshot, loadCodexModelsSnapshot, loadFullCodexModelsSnapshot } from "../codex/index.ts";
-import { CEREBRAS_GPT_OSS_120B_MODEL, readCerebrasApiKey } from "../provider/cerebras.ts";
+import { CEREBRAS_MODELS, readCerebrasApiKey } from "../provider/cerebras.ts";
 import {
   DEEPSEEK_CONTEXT_WINDOW_TOKENS,
   DEEPSEEK_DEFAULT_REASONING_EFFORT,
@@ -33,7 +33,7 @@ import { warmOpenRouterModels, openRouterModelsSnapshot } from "./openrouter-mod
 import { getString, isRecord } from "../utils.ts";
 import { fetchMeteredModels } from "../provider/metered.ts";
 import { fetchSurplusModels } from "../provider/surplus.ts";
-import { CEREBRAS_PROVIDER_HINT, LITHOS_PROVIDER_HINT, modelIdFromSnapshotRecord } from "../request-policy.ts";
+import { cerebrasProviderHint, LITHOS_PROVIDER_HINT, modelIdFromSnapshotRecord } from "../request-policy.ts";
 import {
   configuredCerebrasModelCapabilities,
   normalizeModelCapabilitiesEntry,
@@ -241,14 +241,11 @@ const addCredentialGatedCatalogProviders = (models: Map<string, PublicModelCatal
   }
   let cerebras = 0;
   if (readCerebrasApiKey()) {
-    addPublicModelCatalogEntry(
-      models,
-      CEREBRAS_GPT_OSS_120B_MODEL,
-      { id: "cerebras", owned_by: "cerebras", supported_endpoints: ["/v1/chat/completions"] },
-      null,
-      { provider: CEREBRAS_PROVIDER_HINT }
-    );
-    cerebras = 1;
+    const provider: PublicModelProvider = { id: "cerebras", owned_by: "cerebras", supported_endpoints: ["/v1/chat/completions"] };
+    for (const id of CEREBRAS_MODELS) {
+      addPublicModelCatalogEntry(models, id, provider, null, { provider: cerebrasProviderHint(id) });
+      cerebras += 1;
+    }
   }
   let lithos = 0;
   if (readLithosApiKey()) {
@@ -438,6 +435,19 @@ const discoveredModelCapabilitiesEntry = (
   };
 };
 
+/**
+ * Appends one credential-gated row per configured id, skipping any id another
+ * source already owns. Kept out of `handleModelCapabilities` so the handler's
+ * own branch count stays inside the linted complexity budget.
+ */
+const appendConfiguredCerebrasRows = (data: Record<string, unknown>[], enabled: boolean): void => {
+  if (!enabled) return;
+  for (const id of CEREBRAS_MODELS) {
+    const entry = configuredCerebrasModelCapabilities(id);
+    if (entry && !data.some((model) => model.id === id)) data.push(entry);
+  }
+};
+
 export const handleModelCapabilities = async (): Promise<Response> => {
   warmOpenRouterModels();
   // Capabilities describe the routes the gateway can still dispatch to, so a
@@ -448,10 +458,8 @@ export const handleModelCapabilities = async (): Promise<Response> => {
     snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0 && isProviderEnabled("codex", selection)
       ? (snapshot.models.map(normalizeModelCapabilitiesEntry).filter(Boolean) as Record<string, unknown>[])
       : [];
-  const cerebras = isProviderEnabled("cerebras", selection) ? configuredCerebrasModelCapabilities() : null;
-  if (cerebras && !data.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
-    data.push(cerebras);
-  }
+  // One entry per configured id, skipping any id the Codex snapshot already owns.
+  appendConfiguredCerebrasRows(data, isProviderEnabled("cerebras", selection));
   const [metered, surplus] = await Promise.all([
     isProviderEnabled("openlux", selection) ? fetchMeteredModels() : Promise.resolve(null),
     isProviderEnabled("surplus", selection) ? fetchSurplusModels() : Promise.resolve(null),

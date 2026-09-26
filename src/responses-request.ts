@@ -1,7 +1,7 @@
 // Responses request parsing, validation and upstream body assembly, extracted from src/openai.ts.
 
 import { buildCodexRequest } from "./codex/index.ts";
-import { CEREBRAS_GPT_OSS_120B_MODEL } from "./provider/cerebras.ts";
+import { cerebrasUpstreamModelFor } from "./provider/cerebras.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "./provider/selection.ts";
 import { type ReasoningEffort } from "./defaults.ts";
 import { openaiError } from "./http.ts";
@@ -218,10 +218,11 @@ export const resolveResponsesModel = async (
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
   // A switched-off Cerebras provider no longer owns this id, so the ordinary
   // availability check below decides whether anything else can serve it.
-  if (model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL && isProviderEnabled("cerebras", await loadProviderSelectionCached())) {
+  const cerebrasModel = cerebrasUpstreamModelFor(model);
+  if (cerebrasModel && isProviderEnabled("cerebras", await loadProviderSelectionCached())) {
     return {
       ok: false,
-      response: openaiError(400, "gpt-oss-120b is available only on /v1/chat/completions.", "unsupported_model", { param: "model" }),
+      response: openaiError(400, `${cerebrasModel} is available only on /v1/chat/completions.`, "unsupported_model", { param: "model" }),
     };
   }
   // The DeepSeek official route is deliberately scoped to /v1/chat/completions.
