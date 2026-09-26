@@ -103,6 +103,34 @@ Deno.test("redactBriefText recognizes quoted JSON credential keys and real GitHu
   assert.match(result.text, /\[redacted\]/);
 });
 
+Deno.test("redactBriefText redacts credential JSON values that are arrays or nested objects", () => {
+  const arrayCredentials = {
+    api_keys: ["opaqueSecretValueXYZ"],
+    jwt_tokens: ["eyJhbGciOiJIUzI1NiJ9", "eyJhbGciOiJIUzI1NiJ9"],
+  };
+  const nestedObjectCredentials = {
+    tokens: { value: "opaqueSecretValueXYZ" },
+    service_secret: { api_key: "nestedSecret789", host: "internal.local" },
+  };
+  const secretCanaries = ["opaqueSecretValueXYZ", "eyJhbGciOiJIUzI1NiJ9", "nestedSecret789"];
+  const payload = [
+    JSON.stringify(arrayCredentials),
+    JSON.stringify(nestedObjectCredentials, null, 2),
+    '{"normal_field": "visible value", "safe_array": [1, 2, 3]}',
+    "progress: tests pass after credential sanitization",
+  ].join("\n");
+
+  const result = redactBriefText(payload);
+
+  for (const canary of secretCanaries) {
+    assert.equal(result.text.includes(canary), false, `${canary} must be redacted`);
+  }
+  assert.equal(result.text.includes("visible value"), true, "non-credential fields must be preserved");
+  assert.equal(result.text.includes("safe_array"), true, "non-credential arrays must be preserved");
+  assert.match(result.text, /progress: tests pass after credential sanitization/);
+  assert.ok(result.redactions >= 4, "all array and nested-object credential entries are redacted");
+});
+
 Deno.test("the brief's DeepSeek payload carries no quoted-JSON or GitHub credential canaries", async () => {
   const classicTokens = [
     "ghp_syntheticcanary0000000000000011",

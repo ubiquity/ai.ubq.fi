@@ -15,7 +15,9 @@ export const SUPERVISOR_SECRET_PATTERNS: readonly RegExp[] = [
   /\bu_[0-9a-fA-F]{32,}\b/g,
   /\b\w*(?:key|token|secret|password)\w*["']?\s*[:=]\s*"(?:\\.|[^"\\])*"/gi,
   /\b\w*(?:key|token|secret|password)\w*["']?\s*[:=]\s*'(?:\\.|[^'\\])*'/gi,
-  /\b\w*(?:key|token|secret|password)\w*\s*[:=]\s*\S{8,}/gi,
+  /\b\w*(?:key|token|secret|password)\w*["']?\s*[:=]\s*\[[\s\S]*?\]/gi,
+  /\b\w*(?:key|token|secret|password)\w*["']?\s*[:=]\s*\{[\s\S]*?\}/gi,
+  /\b\w*(?:key|token|secret|password)\w*["']?\s*[:=]\s*\S{8,}/gi,
 ];
 
 /** Replace credential-shaped spans with a marker and report how many were removed. */
