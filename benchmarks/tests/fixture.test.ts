@@ -347,6 +347,69 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "fixture: snapshot and rollback recover a file the command made unreadable",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    // The command strips the read bits from a protected file. Enforcement must
+    // keep the entry (as present-but-unreadable) instead of aborting the
+    // snapshot, then restore the saved bytes and mode so later reads work.
+    const task = requiredTask("fail-002");
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "unreadable-file",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const violation = await expectWriteScopeViolation(() => workspace.execShell("chmod 000 protected/keep.txt", 20_000));
+      if (violation.path !== "protected/keep.txt") throw new Error(`expected the violation to name protected/keep.txt, got ${violation.path}`);
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("unauthorized chmod 000 was not restored to the saved bytes");
+      if (Deno.lstatSync(`${workspace.root}/protected/keep.txt`).mode === 0) throw new Error("the saved mode was not restored after chmod 000");
+      // A follow-up command still works: the rollback left the workspace readable.
+      const after = await workspace.execShell("printf 'changed\\n' > data/target.txt", 20_000);
+      if (after.code !== 0 || workspace.read("data/target.txt") !== "changed\n") {
+        throw new Error(`follow-up in-scope write failed after the chmod rollback: ${after.stderr}`);
+      }
+    } finally {
+      await removeAll(tmpParent);
+    }
+  },
+});
+
+Deno.test({
+  name: "fixture: rollback restores entries below a directory the command made read-only",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    // protected/ is matched by `**` alone, so changing its mode is an allowed
+    // directory change; the file inside it is excluded by `!protected/**` and
+    // must still be restored, which requires temporary write access to the
+    // now read-only parent directory.
+    const task = requiredTask("fail-002");
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "read-only-parent",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const violation = await expectWriteScopeViolation(() =>
+        workspace.execShell("printf 'TAMPERED\\n' > protected/keep.txt && chmod 500 protected", 20_000)
+      );
+      if (violation.path !== "protected/keep.txt") throw new Error(`expected the violation to name protected/keep.txt, got ${violation.path}`);
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("unauthorized write inside a read-only directory was not restored");
+      const mode = Deno.lstatSync(`${workspace.root}/protected`).mode;
+      if (mode !== 0o500) throw new Error(`expected the allowed directory mode to be preserved (0o500), got ${mode ? mode.toString(8) : "null"}`);
+    } finally {
+      await removeAll(tmpParent);
+    }
+  },
+});
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.lstat(path);

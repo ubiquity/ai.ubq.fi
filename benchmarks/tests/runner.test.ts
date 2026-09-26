@@ -153,6 +153,36 @@ Deno.test("runner: refuses unused configs and external-inference adapters", asyn
   }
 });
 
+Deno.test("runner: verification command violating the write scope classifies and cleans up", async () => {
+  const opts = freshOptions();
+  try {
+    // fail-002 declares allowed_write_scope ["**", "!protected/**"], so a
+    // verify command that edits protected/keep.txt is a write-scope violation.
+    // It must surface as verification_failed (plus recorded trajectory/result
+    // files and a rolled-back workspace), never as an internal error.
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "fail-002");
+    if (!task) throw new Error(`benchmark task fail-002 is missing from ${TASKS_DIR}`);
+    const { result } = await runOne(
+      { ...task, verify: { command: "printf 'TAMPERED\\n' > protected/keep.txt" } },
+      referenceAdapter,
+      opts
+    );
+    if (result.success || result.failure_class !== "verification_failed") {
+      throw new Error(`expected verification_failed, got ${result.failure_class}: ${result.failure_detail}`);
+    }
+    if (!result.verification.ran || result.verification.passed) throw new Error("verify evidence missing");
+    if (result.verification.output === null || !result.verification.output.includes("failed to run")) {
+      throw new Error(`expected a descriptive verification failure, got ${JSON.stringify(result.verification.output)}`);
+    }
+    const traj = Deno.readTextFileSync(`${opts.runsRoot}/${result.trajectory}`);
+    if (!traj.includes("verify")) throw new Error("trajectory.jsonl missing the verify record");
+    const summary = Deno.readTextFileSync(`${opts.runsRoot}/runs/${result.run_id}/result.jsonl`);
+    if (summary.trimEnd().split("\n").length !== 1) throw new Error("result.jsonl must be one record");
+  } finally {
+    Deno.removeSync(opts.runsRoot, { recursive: true });
+  }
+});
+
 Deno.test("runner: selection and limit flags compose", async () => {
   const opts = freshOptions();
   try {

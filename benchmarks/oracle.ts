@@ -21,7 +21,23 @@ export async function runVerification(task: TaskManifest, workspace: FixtureWork
   if (!task.verify) {
     return { ran: false, passed: true, command: null, exit_code: null, timed_out: false, output: null };
   }
-  const res = await workspace.execShell(task.verify.command, task.verify.timeout_ms ?? 20_000);
+  let res: { code: number; stdout: string; stderr: string; timedOut: boolean };
+  try {
+    res = await workspace.execShell(task.verify.command, task.verify.timeout_ms ?? 20_000);
+  } catch (err) {
+    // A verification command that violates the write scope (or fails to run at
+    // all) must surface as a failed outcome, never as an internal error. The
+    // sandbox has already rolled the workspace back, so the run can keep going
+    // and the batch records `verification_failed` for this candidate.
+    return {
+      ran: true,
+      passed: false,
+      command: task.verify.command,
+      exit_code: null,
+      timed_out: false,
+      output: truncate(`verification command failed to run: ${(err as Error).message}`),
+    };
+  }
   const output = [res.stdout, res.stderr].filter((s) => s.trim() !== "").join("\n");
   return {
     ran: true,

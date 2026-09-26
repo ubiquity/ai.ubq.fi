@@ -63,6 +63,27 @@ Deno.test("oracle: verification passes, fails, and times out", async () => {
   });
 });
 
+Deno.test("oracle: a verification command that violates the write scope fails the outcome, never the run", async () => {
+  // fail-002 excludes protected/**, so a verify command editing keep.txt inside
+  // it must surface as a failed outcome (the sandbox rolls back the workspace)
+  // instead of throwing and aborting the batch.
+  const fail = requiredTask("fail-002");
+  await withWorkspace(fail, async (ws) => {
+    const out = await runVerification(
+      { ...fail, verify: { command: "printf 'TAMPERED\\n' > protected/keep.txt" } },
+      ws
+    );
+    if (out.ran !== true) throw new Error("expected the verification to run");
+    if (out.passed) throw new Error("expected the scope-violating verification to fail");
+    if (out.output === null || !out.output.includes("failed to run")) {
+      throw new Error(`expected a descriptive failure output, got ${JSON.stringify(out.output)}`);
+    }
+    if (ws.read("protected/keep.txt") !== "ORIGINAL\n") {
+      throw new Error("the write scope violation during verification was not rolled back");
+    }
+  });
+});
+
 Deno.test("oracle: git checks on a disposable repository", async () => {
   const seq004 = requiredTask("seq-004");
   await withWorkspace(seq004, async (ws) => {

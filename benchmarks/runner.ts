@@ -26,10 +26,12 @@ import {
   BenchmarkResult,
   DEFAULT_RUNS_ROOT,
   FailureClass,
+  OracleOutcome,
   TaskManifest,
   TrajectoryEvent,
   validateBenchmarkResult,
   validateTrajectoryEvent,
+  VerificationOutcome,
 } from "./schemas.ts";
 
 // ---------------------------------------------------------------------------
@@ -257,9 +259,29 @@ export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts
   }
 
   // Verification and oracle evaluation against the final workspace state.
-  const verification = prepared
-    ? await runVerification(task, workspace)
-    : { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  // A thrown verification/oracle error (for example a write-scope violation
+  // that surfaced outside `runVerification`'s own guard) is recorded as a
+  // failed outcome, never as an internal error that aborts the whole batch.
+  let verification: VerificationOutcome = {
+    ran: false,
+    passed: false,
+    command: null,
+    exit_code: null,
+    timed_out: false,
+    output: null,
+  };
+  try {
+    if (prepared) verification = await runVerification(task, workspace);
+  } catch (err) {
+    verification = {
+      ran: true,
+      passed: false,
+      command: task.verify?.command ?? null,
+      exit_code: null,
+      timed_out: false,
+      output: `verification evaluation threw: ${(err as Error).message}`,
+    };
+  }
   record({
     type: "verify",
     at: isoNow(),
@@ -270,9 +292,20 @@ export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts
     output: verification.output ?? undefined,
   });
 
-  const oracle = prepared
-    ? await evaluateOracle(task, workspace)
-    : { passed: false, checks: [{ kind: "file" as const, detail: "fixture workspace not prepared", passed: false }] };
+  let oracle: OracleOutcome = { passed: false, checks: [] };
+  if (prepared) {
+    try {
+      oracle = await evaluateOracle(task, workspace);
+    } catch (err) {
+      oracle = {
+        passed: false,
+        checks: [{ kind: "file" as const, detail: `oracle evaluation threw: ${(err as Error).message}`, passed: false }],
+      };
+    }
+  }
+  if (!prepared) {
+    oracle = { passed: false, checks: [{ kind: "file" as const, detail: "fixture workspace not prepared", passed: false }] };
+  }
 
   const metrics = deriveMetrics(events);
   const reliability = deriveReliability(events, { verificationCommand: task.verify?.command ?? null });

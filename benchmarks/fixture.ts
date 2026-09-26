@@ -359,6 +359,12 @@ export class FixtureWorkspace {
    * workspace, then throw {@link WriteScopeViolationError}. Paths are walked
    * with `lstat` semantics, so a symlink is recorded (never followed) and a
    * symlinked ancestor is rebuilt as a real directory before any write.
+   *
+   * Before each entry is restored, every real directory ancestor is granted
+   * temporary owner write/traverse access (`_recoverAncestorAccess`); a
+   * directory the command made read-only therefore cannot block restoration of
+   * the entries inside it. Directory modes are applied last, deepest first, so
+   * the temporary grant never survives onto a path the task excludes.
    */
   private _enforceWriteScope(before: WorkspaceSnapshot): void {
     const after = snapshotWorkspace(this.root);
@@ -366,17 +372,61 @@ export class FixtureWorkspace {
     const unauthorized = changed.filter((rel) => !this._isAllowedShellChange(rel, changed, before, after));
     if (unauthorized.length === 0) return;
 
-    const directoryModes: { abs: string; mode: number | null }[] = [];
-    for (const rel of unauthorized) this._restoreWorkspaceEntry(rel, before, directoryModes);
+    const unauthorizedSet = new Set(unauthorized);
+    const directoryModes = new Map<string, number | null>();
+    for (const rel of unauthorized) {
+      this._recoverAncestorAccess(rel, before, after, unauthorizedSet, directoryModes);
+      this._restoreWorkspaceEntry(rel, before, directoryModes);
+    }
     // Directory modes are applied last, deepest first, so a read-only restored
     // directory cannot block the restoration of the entries inside it. A null
     // mode means the platform does not report permission bits for the entry.
-    for (const entry of [...directoryModes].reverse()) {
-      if (entry.mode !== null) Deno.chmodSync(entry.abs, entry.mode);
+    for (const abs of [...directoryModes.keys()].sort((a, b) => b.split("/").length - a.split("/").length)) {
+      const mode = directoryModes.get(abs);
+      if (mode !== null && mode !== undefined) Deno.chmodSync(abs, mode);
     }
 
     const reported = unauthorized.find((rel) => after.get(rel)?.kind !== "directory") ?? unauthorized[0];
     throw new WriteScopeViolationError(reported, this.task.allowed_write_scope);
+  }
+
+  /**
+   * Grant temporary owner write and traverse access on every real directory
+   * ancestor of `rel`, recording the mode each ancestor must keep so the final
+   * directory-mode pass reapplies it exactly. The kept mode is the saved one
+   * when the ancestor itself is unauthorized (its change is reverted);
+   * otherwise it is the observed mode, because an allowed directory may keep
+   * the mode the command chose. The grant is only `final | 0o700`, so a
+   * directory the task excludes is never left owner-writable after enforcement.
+   */
+  private _recoverAncestorAccess(
+    rel: string,
+    before: WorkspaceSnapshot,
+    after: WorkspaceSnapshot,
+    unauthorized: ReadonlySet<string>,
+    directoryModes: Map<string, number | null>
+  ): void {
+    const parts = rel.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = parts.slice(0, i).join("/");
+      const abs = this._assertPath(ancestor);
+      const beforeDir = before.get(ancestor);
+      const afterDir = after.get(ancestor);
+      const savedMode = beforeDir?.kind === "directory" ? beforeDir.mode : null;
+      const observedMode = afterDir?.kind === "directory" ? afterDir.mode : savedMode;
+      const finalMode = unauthorized.has(ancestor) ? savedMode : observedMode;
+      directoryModes.set(abs, finalMode);
+      if (finalMode !== null) {
+        // Grant before inspecting the directory below: chmod on a directory
+        // the command stripped of its own bits still succeeds for its owner,
+        // and an absent ancestor is recreated by the restore step afterwards.
+        try {
+          Deno.chmodSync(abs, finalMode | 0o700);
+        } catch (err) {
+          if (!(err instanceof Deno.errors.NotFound)) throw err;
+        }
+      }
+    }
   }
 
   /**
@@ -400,7 +450,7 @@ export class FixtureWorkspace {
     return descendants.length > 0 && descendants.every((path) => this._isAllowedShellChange(path, changed, before, after));
   }
 
-  private _restoreWorkspaceEntry(rel: string, before: WorkspaceSnapshot, directoryModes: { abs: string; mode: number | null }[]): void {
+  private _restoreWorkspaceEntry(rel: string, before: WorkspaceSnapshot, directoryModes: Map<string, number | null>): void {
     const abs = this._assertPath(rel);
     const expected = before.get(rel);
     if (expected === undefined) {
@@ -419,13 +469,17 @@ export class FixtureWorkspace {
         removeWorkspaceEntry(abs);
         Deno.mkdirSync(abs, { recursive: true });
       }
-      directoryModes.push({ abs, mode: expected.mode });
+      directoryModes.set(abs, expected.mode);
       return;
     }
     removeWorkspaceEntry(abs);
     Deno.mkdirSync(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
     if (expected.kind === "file") {
-      Deno.writeFileSync(abs, expected.content);
+      // `null` means the saved snapshot could not read the bytes (the command
+      // had already stripped the read permission); the write restores the
+      // bytes the task's own read could not capture, so an empty file is only
+      // a last resort - the important part is the executable mode below.
+      Deno.writeFileSync(abs, expected.content ?? new Uint8Array(0));
       if (expected.mode !== null) Deno.chmodSync(abs, expected.mode);
     } else if (expected.kind === "symlink") {
       Deno.symlinkSync(expected.target, abs);
@@ -450,7 +504,7 @@ export class FixtureWorkspace {
    * the workspace and mutate the link's target, so the snapshot's real
    * directory is recreated first.
    */
-  private _restoreRealAncestors(rel: string, before: WorkspaceSnapshot, directoryModes: { abs: string; mode: number | null }[]): void {
+  private _restoreRealAncestors(rel: string, before: WorkspaceSnapshot, directoryModes: Map<string, number | null>): void {
     const parts = rel.split("/");
     for (let i = 1; i < parts.length; i++) {
       const ancestor = parts.slice(0, i).join("/");
@@ -459,7 +513,7 @@ export class FixtureWorkspace {
       removeWorkspaceEntry(abs);
       Deno.mkdirSync(abs, { recursive: true });
       const expected = before.get(ancestor);
-      if (expected?.kind === "directory") directoryModes.push({ abs, mode: expected.mode });
+      if (expected?.kind === "directory") directoryModes.set(abs, expected.mode);
     }
   }
 
@@ -553,10 +607,13 @@ export class FixtureWorkspace {
 /**
  * Snapshot entry recorded with `lstat` semantics; symlinks are never followed.
  * A null `mode` means the platform reports no permission bits for the entry,
- * so mode changes are neither compared nor restored there.
+ * so mode changes are neither compared nor restored there. A file entry keeps
+ * a null `content` when the snapshot could not read it because the command
+ * removed the read permission; the entry is still recorded (so the rollback
+ * restores it from the saved metadata) instead of aborting the snapshot.
  */
 type WorkspaceSnapshotEntry =
-  | { kind: "file"; content: Uint8Array; mode: number | null }
+  | { kind: "file"; content: Uint8Array | null; mode: number | null }
   | { kind: "directory"; mode: number | null }
   | { kind: "symlink"; target: string }
   | { kind: "other"; mode: number | null };
@@ -571,7 +628,18 @@ type WorkspaceSnapshot = Map<string, WorkspaceSnapshotEntry>;
 function snapshotWorkspace(root: string): WorkspaceSnapshot {
   const snapshot: WorkspaceSnapshot = new Map();
   const walk = (dir: string, prefix: string): void => {
-    for (const entry of [...Deno.readDirSync(dir)].sort((a, b) => a.name.localeCompare(b.name))) {
+    let entries: Deno.DirEntry[];
+    try {
+      entries = [...Deno.readDirSync(dir)].sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err) {
+      // A command can remove the execute (traverse) permission from a
+      // directory before the snapshot runs. The directory itself was already
+      // recorded by `recordSnapshotEntry`, but we cannot walk below it here;
+      // skip the subtree instead of aborting the whole enforcement.
+      if (err instanceof Deno.errors.PermissionDenied) return;
+      throw err;
+    }
+    for (const entry of entries) {
       const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       const abs = `${dir}/${entry.name}`;
       recordSnapshotEntry(snapshot, rel, abs, () => {
@@ -586,7 +654,9 @@ function snapshotWorkspace(root: string): WorkspaceSnapshot {
 /**
  * Records one entry, walking below it when it is a directory. An entry that
  * disappeared between `readDir` and its own read is skipped rather than
- * reported as a change.
+ * reported as a change. An entry whose read permission the command removed is
+ * recorded as present-but-unreadable (`content: null`) so the rollback can
+ * restore it from the saved metadata instead of aborting the snapshot.
  */
 function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: string, walkBelow: () => void): void {
   const info = lstatIfExists(abs);
@@ -603,7 +673,8 @@ function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: stri
   }
   if (info.isFile) {
     const content = snapshotFileContent(abs);
-    if (content !== null) snapshot.set(rel, { kind: "file", content, mode: snapshotMode(info) });
+    if (content === null) return; // the file vanished while the snapshot was taken
+    snapshot.set(rel, { kind: "file", content: content ?? null, mode: snapshotMode(info) });
     return;
   }
   snapshot.set(rel, { kind: "other", mode: snapshotMode(info) });
@@ -618,7 +689,15 @@ function snapshotEntriesEqual(before: WorkspaceSnapshotEntry | undefined, after:
   if (before === undefined || after === undefined) return before === after;
   if (before.kind !== after.kind) return false;
   if (before.kind === "symlink") return after.kind === "symlink" && before.target === after.target;
-  if (before.kind === "file") return after.kind === "file" && before.mode === after.mode && bytesEqual(before.content, after.content);
+  if (before.kind === "file") {
+    if (after.kind !== "file") return false;
+    if (before.mode !== after.mode) return false;
+    // A file the command made unreadable is indistinguishable from a change:
+    // restored when either side was unreadable (unless both were), so the
+    // saved mode and bytes win over the now-illegible entry.
+    if (before.content === null || after.content === null) return before.content === after.content;
+    return bytesEqual(before.content, after.content);
+  }
   if (before.kind === "directory") return after.kind === "directory" && before.mode === after.mode;
   // Opaque entries (sockets, fifos) compare equal unless created, deleted or
   // replaced by a different kind, which the checks above already handled.
@@ -641,12 +720,17 @@ function snapshotMode(info: Deno.FileInfo): number | null {
   return info.mode === null ? null : info.mode & 0o7777;
 }
 
-/** File bytes, or `null` only when the file genuinely vanished mid-walk. */
-function snapshotFileContent(p: string): Uint8Array | null {
+/**
+ * File bytes; `null` when the file genuinely vanished mid-walk, `undefined`
+ * when it exists but the command removed the read permission (so the rollback
+ * restores it from the saved metadata instead of aborting the snapshot).
+ */
+function snapshotFileContent(p: string): Uint8Array | null | undefined {
   try {
     return Deno.readFileSync(p);
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return null;
+    if (err instanceof Deno.errors.PermissionDenied) return undefined;
     throw err;
   }
 }
