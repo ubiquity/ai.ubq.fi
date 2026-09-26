@@ -676,6 +676,49 @@ Deno.test({
       assert.equal(status.status, "ready");
       assert.deepEqual(status.manifest_key, [...(first.manifest_key ?? [])]);
       assert.equal(status.fingerprint, first.manifest.fingerprint);
+      assert.equal(status.expires_at_ms, first.manifest.expires_at_ms);
+    } finally {
+      closeKv(kv);
+    }
+  },
+});
+
+Deno.test({
+  name: "a duplicate late in the winner lifetime uses the winning manifest expiry rather than now + TTL",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await openSentinelTestKv();
+    try {
+      const trace = await recordedTrace('{"error":"upstream failed"}');
+      const failure = internalObservation();
+      const client = clientObservation({ terminal_body_base64: btoa("upstream failed") });
+      const first = await persistEncryptedSentinelReplay(
+        { ...replayInput('{"model":"gpt-5"}', "winner-boundary-request"), upstream: trace },
+        failure,
+        storeDependencies(kv, { now: () => NOW, randomUuid: () => "capture-winner-boundary" }),
+        client
+      );
+      assert.equal(first.status, "stored");
+
+      // 47 hours later, duplicate request arrives
+      const lateNow = NOW + 47 * 60 * 60 * 1_000;
+      const duplicate = await persistEncryptedSentinelReplay(
+        { ...replayInput('{"model":"gpt-5"}', "duplicate-late-request"), upstream: trace },
+        failure,
+        storeDependencies(kv, { now: () => lateNow, randomUuid: () => "capture-late-loser" }),
+        client
+      );
+      assert.equal(duplicate.status, "duplicate");
+
+      // Status must reflect the winning manifest's actual expiry (NOW + 48h), NOT lateNow + 48h
+      const status = await readSentinelReplayCaptureStatus(kv, "duplicate-late-request", lateNow);
+      assert.equal(status.status, "ready");
+      assert.equal(status.expires_at_ms, first.manifest.expires_at_ms);
+
+      // Once past the winning manifest's expiry, the duplicate status reports expired
+      const expiredStatus = await readSentinelReplayCaptureStatus(kv, "duplicate-late-request", first.manifest.expires_at_ms + 1);
+      assert.equal(expiredStatus.status, "expired");
     } finally {
       closeKv(kv);
     }
@@ -708,6 +751,7 @@ Deno.test({
       const status = await readSentinelReplayCaptureStatus(kv, "unindexed-second-request");
       assert.equal(status.status, "incomplete");
       assert.equal(status.fingerprint, first.manifest.fingerprint);
+      assert.equal(status.expires_at_ms, first.manifest.expires_at_ms);
     } finally {
       closeKv(kv);
     }

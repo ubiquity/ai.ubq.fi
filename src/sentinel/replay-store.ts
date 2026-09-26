@@ -424,6 +424,11 @@ const storeReplayEnvelope = async (
     const winningDedupe = await dependencies.kv.get(dedupeKey);
     const winningManifestKey = dedupeManifestKey(winningDedupe.value);
     if (!winningManifestKey) throw new Error("Sentinel replay dedupe winner is unavailable");
+    const winningManifestEntry = await dependencies.kv.get<SentinelReplayManifest>(winningManifestKey);
+    const winningExpiresAtMs =
+      winningManifestEntry.value && typeof winningManifestEntry.value.expires_at_ms === "number"
+        ? winningManifestEntry.value.expires_at_ms
+        : expiresAtMs;
     return await completeDuplicateCapture(
       dependencies,
       {
@@ -434,7 +439,7 @@ const storeReplayEnvelope = async (
         requestId: context.requestId,
         captureStatus: context.captureStatus,
         capturedAtMs: manifest.captured_at_ms,
-        expiresAtMs,
+        expiresAtMs: winningExpiresAtMs,
       },
       now
     );
@@ -479,6 +484,11 @@ export const persistEncryptedSentinelReplay = async (
     if (existingDedupe.value !== null) {
       const manifestKey = dedupeManifestKey(existingDedupe.value);
       if (!manifestKey) throw new Error("Sentinel replay dedupe record is invalid");
+      const winningManifestEntry = await dependencies.kv.get<SentinelReplayManifest>(manifestKey);
+      const winningExpiresAtMs =
+        winningManifestEntry.value && typeof winningManifestEntry.value.expires_at_ms === "number"
+          ? winningManifestEntry.value.expires_at_ms
+          : now + SENTINEL_REPLAY_TTL_MS;
       return await completeDuplicateCapture(
         dependencies,
         {
@@ -489,7 +499,7 @@ export const persistEncryptedSentinelReplay = async (
           requestId: input.request_id,
           captureStatus: unavailable.length === 0 ? "ready" : "incomplete",
           capturedAtMs: now,
-          expiresAtMs: now + SENTINEL_REPLAY_TTL_MS,
+          expiresAtMs: winningExpiresAtMs,
         },
         now
       );
