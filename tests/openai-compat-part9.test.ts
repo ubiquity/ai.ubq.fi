@@ -404,6 +404,77 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(getResponseTelemetry(response)?.provider, "cerebras");
     });
 
+    // Cerebras validates the whole body and refuses ordinary OpenAI fields it
+    // does not implement, even as explicit nulls, so a passthrough client used
+    // to fail the entire turn with a 400 before the model was reached.
+    await t.step("omits the OpenAI fields Cerebras refuses instead of forwarding them", async () => {
+      const seen: Record<string, unknown>[] = [];
+      const qwenCompletion = (id: string): string =>
+        JSON.stringify({
+          id,
+          object: "chat.completion",
+          created: 1_728_000_020,
+          model: "qwen-3.8-27b",
+          choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        });
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          if (bodyText) seen.push(JSON.parse(bodyText) as Record<string, unknown>);
+          return new Response(qwenCompletion("chatcmpl_cerebras_unsupported_fields"), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        },
+        () =>
+          handleChatCompletions(
+            request({
+              ...canonicalBody,
+              model: "qwen-3.8-27b",
+              store: false,
+              metadata: { trace: "must-not-be-forwarded" },
+              top_logprobs: 3,
+            })
+          )
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(seen.length, 1);
+      const body = seen[0] ?? {};
+      // The keys must be absent, not blanked: Cerebras rejects `store: null` too.
+      assert.equal("store" in body, false, "store must be omitted, not nulled");
+      assert.equal("metadata" in body, false, "metadata must be omitted, not nulled");
+      // `top_logprobs` alone is invalid upstream; it is only dropped when the
+      // request did not also ask for logprobs.
+      assert.equal("top_logprobs" in body, false);
+      assert.equal(body.model, "qwen-3.8-27b");
+    });
+
+    await t.step("keeps top_logprobs when the request also asks for logprobs", async () => {
+      const seen: Record<string, unknown>[] = [];
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          if (bodyText) seen.push(JSON.parse(bodyText) as Record<string, unknown>);
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_logprobs",
+              object: "chat.completion",
+              created: 1_728_000_021,
+              model: "qwen-3.8-27b",
+              choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        },
+        () => handleChatCompletions(request({ ...canonicalBody, model: "qwen-3.8-27b", logprobs: true, top_logprobs: 3 }))
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(seen[0]?.logprobs, true);
+      assert.equal(seen[0]?.top_logprobs, 3);
+    });
+
     await t.step("preserves upstream reasoning 1:1 in buffered Chat responses", async () => {
       const response = await withFetchMock(
         () =>
