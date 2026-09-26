@@ -288,6 +288,16 @@ export const handleCerebrasChatCompletions = async (
     stream: false,
   };
   delete cerebrasBody.stream_options;
+  // Cerebras validates the whole body instead of ignoring what it does not
+  // implement, so an ordinary OpenAI field this route cannot serve fails the
+  // entire turn with a 400 `wrong_api_format` before the model is reached
+  // (verified live 2026-09-26). `store` and `metadata` are refused even as
+  // explicit nulls, so the keys must be absent rather than blanked.
+  delete cerebrasBody.store;
+  delete cerebrasBody.metadata;
+  // `top_logprobs` is rejected only on its own, so it survives a request that
+  // also asked for `logprobs`.
+  if (!cerebrasBody.logprobs) delete cerebrasBody.top_logprobs;
   if (usageContext?.responseTelemetry) {
     usageContext.responseTelemetry.provider = "cerebras";
     usageContext.responseTelemetry.reasoning = reasoning;
