@@ -59,6 +59,7 @@ type ResponsesAttemptTrigger =
   | "http_4xx"
   | "http_5xx"
   | "http_error"
+  | "gateway_rejection"
   | "missing_body"
   | "malformed_event"
   | "event_too_large"
@@ -97,7 +98,7 @@ export const isEligibleResponsesAttemptStatus = (response: Response): boolean =>
 /**
  * Classifies a non-2xx upstream response: a client 4xx is an HTTP failure, not
  * a stream read fault, and every other non-5xx status is a generic HTTP error.
- * `primaryResponsesAttemptTrigger` keeps the separate 504 semantic timeout.
+ * The 504 status is classified separately as a semantic timeout by callers.
  */
 const responsesHttpErrorTrigger = (status: number): "http_4xx" | "http_5xx" | "http_error" => {
   if (status >= 500) return "http_5xx";
@@ -126,6 +127,13 @@ export const failureKindForResponsesAttemptTrigger = (trigger: ResponsesAttemptT
       return "upstream_http_5xx";
     case "http_error":
       return "upstream_http_error";
+    case "gateway_rejection":
+      // A locally generated gateway rejection (e.g. admission policy or
+      // unverified surplus tool capability) never reached an upstream provider,
+      // so it keeps its own outcome instead of being misattributed as an
+      // upstream HTTP failure. The gateway response itself already carries the
+      // rejection outcome; the telemetry provider is set to "gateway".
+      return null;
     case "premature_eof":
       return "premature_eof";
     case "malformed_event":
@@ -478,11 +486,6 @@ type PrimaryResponsesOptions = Readonly<{
 const isRetryablePrimaryFetchFailure = (error: unknown): error is CodexError =>
   error instanceof CodexError && (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable");
 
-const primaryResponsesAttemptTrigger = (status: number): ResponsesAttemptTrigger => {
-  if (status === 504) return "semantic_timeout";
-  return responsesHttpErrorTrigger(status);
-};
-
 const failedPrimaryResponsesFetchOutcome = (error: CodexError, deadline: StreamDeadline): { kind: "failed"; value: ResponsesRouteFailure } => {
   logRedactedUpstreamError("[ai.ubq.fi] Upstream fetch failed:", error);
   const response = toCodexErrorResponse(error, "chatgpt_codex");
@@ -521,7 +524,11 @@ const failedPrimaryResponsesGatewayOutcome = (
     failed: {
       provider: routed.provider,
       response: routed.response,
-      trigger: primaryResponsesAttemptTrigger(routed.response.status),
+      // The response was generated locally by the gateway policy (admission
+      // rejection, unverified surplus tool capability, disabled provider). It
+      // never reached an upstream provider, so it must not be classified as an
+      // upstream HTTP failure; the gateway rejection keeps its own outcome.
+      trigger: "gateway_rejection",
       signal: preparationDeadline.signal,
       clearDeadline: preparationDeadline.clear,
     },

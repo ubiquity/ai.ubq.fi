@@ -59,6 +59,22 @@ Deno.test("responses attempts: eligibility and trigger classification cover the 
   assert.equal(failureKindForResponsesAttemptTrigger("not_a_trigger" as never), null);
 });
 
+Deno.test("responses attempts: locally generated gateway rejections keep their own outcome instead of upstream HTTP classification", () => {
+  // rejectToolUnverifiedSurplusModel (400), rejectPaidAdmission (403/429) and
+  // the unwrapped gateway rejection outcome all never reach an upstream
+  // provider, so they must not be reported as upstream_http_4xx in terminal
+  // telemetry or the admin error ledger. The gateway response itself carries
+  // the rejection outcome and the telemetry provider is set to "gateway".
+  assert.equal(failureKindForResponsesAttemptTrigger("gateway_rejection"), null);
+
+  const open = new AbortController();
+  assert.equal(responseFailureTerminalType("gateway_rejection", open.signal, open.signal), "error");
+
+  const aborted = new AbortController();
+  aborted.abort(new Error("cancelled"));
+  assert.equal(responseFailureTerminalType("gateway_rejection", open.signal, aborted.signal), "cancelled");
+});
+
 Deno.test("responses attempts: failure terminal types follow the trigger and both signals", () => {
   const open = new AbortController();
   assert.equal(responseFailureTerminalType("semantic_timeout", open.signal, open.signal), "deadline");
