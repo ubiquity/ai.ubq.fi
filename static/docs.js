@@ -122,6 +122,7 @@ const parseMarkdown = (markdown) => {
   let codeLines = [];
   let paragraph = [];
   let listType = null;
+  let listItemLines = [];
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -130,8 +131,16 @@ const parseMarkdown = (markdown) => {
     paragraph = [];
   };
 
+  const flushListItem = () => {
+    if (!listItemLines.length) return;
+    const text = listItemLines.join(" ").trim();
+    if (text) html.push(`<li>${renderInline(text)}</li>`);
+    listItemLines = [];
+  };
+
   const closeList = () => {
     if (!listType) return;
+    flushListItem();
     html.push(`</${listType}>`);
     listType = null;
   };
@@ -190,9 +199,10 @@ const parseMarkdown = (markdown) => {
       if (!listType) {
         listType = type;
         html.push(`<${listType}>`);
+      } else {
+        flushListItem();
       }
-      const itemText = listMatch[3] ?? "";
-      html.push(`<li>${renderInline(itemText.trim())}</li>`);
+      listItemLines.push(listMatch[3] ?? "");
       continue;
     }
 
@@ -211,9 +221,11 @@ const parseMarkdown = (markdown) => {
       continue;
     }
 
-    // A list item ends at the first line that is not an item, so close the open list before this
-    // paragraph accumulates; otherwise the emitted `<p>` lands inside the `<ul>`/`<ol>`.
-    closeList();
+    if (listType) {
+      listItemLines.push(line.trim());
+      continue;
+    }
+
     paragraph.push(line.trim());
   }
 
