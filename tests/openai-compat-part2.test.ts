@@ -680,6 +680,13 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
       created: 0,
       owned_by: "cerebras",
     });
+    const qwenModel = modelList.data?.find((entry) => entry.id === "qwen-3.8-27b");
+    assert.deepEqual(qwenModel, {
+      id: "qwen-3.8-27b",
+      object: "model",
+      created: 0,
+      owned_by: "cerebras",
+    });
 
     const capabilities = await handleModelCapabilities();
     assert.equal(capabilities.status, 200);
@@ -696,10 +703,32 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
         supported_reasoning_levels: ["low", "medium", "high"],
         default_reasoning_effort: "medium",
         reasoning_effort_wire_map: {},
-        context_window_tokens: null,
-        max_context_window_tokens: null,
-        auto_compact_token_limit_tokens: null,
-        context_source: "unknown",
+        context_window_tokens: 131_072,
+        max_context_window_tokens: 131_072,
+        auto_compact_token_limit_tokens: 81_072,
+        effective_context_window_percent: 95,
+        context_source: "provider_discovery",
+      }
+    );
+    // The two Cerebras ids do not share a reasoning contract: qwen also accepts
+    // `none` and defaults to `high`, so its row must not repeat the GPT-OSS tiers.
+    assert.deepEqual(
+      capabilityList.data.find((entry) => entry.id === "qwen-3.8-27b"),
+      {
+        id: "qwen-3.8-27b",
+        object: "uos.model_capabilities",
+        owned_by: "cerebras",
+        display_name: "Qwen 3.8 27B",
+        upstream_provider: "cerebras",
+        supported_endpoints: ["/v1/chat/completions"],
+        supported_reasoning_levels: ["none", "low", "medium", "high"],
+        default_reasoning_effort: "high",
+        reasoning_effort_wire_map: {},
+        context_window_tokens: 131_072,
+        max_context_window_tokens: 131_072,
+        auto_compact_token_limit_tokens: 81_072,
+        effective_context_window_percent: 95,
+        context_source: "provider_discovery",
       }
     );
   } finally {

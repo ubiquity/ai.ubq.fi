@@ -11,6 +11,7 @@ import {
 } from "./cerebras.ts";
 import { ApiKeyQuotaDispatchError } from "../api-key-policy.ts";
 import { DEFAULT_REASONING_EFFORT } from "../defaults.ts";
+import { cerebrasProviderHint } from "../request-policy.ts";
 import { readBoundedResponseBody } from "../bounded-response-body.ts";
 import { json, openaiError } from "../http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
@@ -112,7 +113,8 @@ const cerebrasTransportFailureKind = (error: unknown, terminalType: ResponseStre
  * back to another provider.
  */
 const validateCerebrasChatRequestFields = (
-  rawRecord: Record<string, unknown>
+  rawRecord: Record<string, unknown>,
+  upstreamModel: string
 ): { ok: true; value: { reasoning: string; clientWantsStream: boolean; includeUsage: boolean } } | { ok: false; response: Response } => {
   const messages = rawRecord.messages;
   if (!Array.isArray(messages)) return { ok: false, response: openaiError(400, "messages must be an array", "invalid_request_error") };
@@ -127,14 +129,30 @@ const validateCerebrasChatRequestFields = (
   if (!reasoningEffort.ok) {
     return { ok: false, response: openaiError(400, reasoningEffort.message, "invalid_request_error", { param: "reasoning_effort" }) };
   }
-  if (reasoningEffort.value === "none") {
+  // Tiers are per model, not per route: gpt-oss-120b cannot disable reasoning,
+  // while qwen-3.8-27b accepts `none` and defaults to `high`. Reject only the
+  // combination this model actually refuses.
+  const hint = cerebrasProviderHint(upstreamModel);
+  const levels = hint.supported_reasoning_levels ?? [];
+  // An omitted field (`undefined`) is the model's own default, so only an
+  // explicitly supplied tier is validated against this model's list.
+  if (typeof reasoningEffort.value === "string" && levels.length > 0 && !levels.includes(reasoningEffort.value)) {
     return {
       ok: false,
-      response: openaiError(400, "reasoning_effort 'none' is not supported for gpt-oss-120b. Use low, medium, or high.", "invalid_request_error", {
-        param: "reasoning_effort",
-      }),
+      response: openaiError(
+        400,
+        `reasoning_effort '${reasoningEffort.value}' is not supported for ${upstreamModel}. Use ${levels.join(", ")}.`,
+        "invalid_request_error",
+        {
+          param: "reasoning_effort",
+        }
+      ),
     };
   }
+  // The hint owns each model's default (gpt-oss-120b is `medium`, qwen is
+  // `high`); the gateway-wide default only covers a hint that states none.
+  const declaredDefault = hint.default_reasoning_effort;
+  const defaultReasoning = typeof declaredDefault === "string" && declaredDefault !== "" ? declaredDefault : DEFAULT_REASONING_EFFORT;
   const parsedStream = parseStreamField(rawRecord.stream);
   if (!parsedStream.ok) {
     return { ok: false, response: openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" }) };
@@ -146,7 +164,7 @@ const validateCerebrasChatRequestFields = (
   return {
     ok: true,
     value: {
-      reasoning: reasoningEffort.value ?? DEFAULT_REASONING_EFFORT,
+      reasoning: reasoningEffort.value ?? defaultReasoning,
       clientWantsStream: parsedStream.value,
       includeUsage: streamOptions.includeUsage,
     },
@@ -173,7 +191,8 @@ const readCerebrasChatCompletion = async (
   bytes: Uint8Array,
   upstreamStatus: number,
   providerRequestId: string | null,
-  usageContext: UsageContext | undefined
+  usageContext: UsageContext | undefined,
+  model: string
 ): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; response: Response }> => {
   let payload: unknown;
   try {
@@ -181,7 +200,7 @@ const readCerebrasChatCompletion = async (
   } catch {
     return { ok: false, response: await respondCerebrasChatInvalidCompletion("invalid_json", upstreamStatus, providerRequestId, usageContext) };
   }
-  const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_MODEL);
+  const normalized = normalizeCerebrasChatCompletion(payload, model);
   if (!normalized.ok) {
     return {
       ok: false,
@@ -251,9 +270,11 @@ export const handleCerebrasChatCompletions = async (
   req: Request,
   rawRecord: Record<string, unknown>,
   modelRaw: string,
-  usageContext?: UsageContext
+  usageContext?: UsageContext,
+  /** The exact Cerebras wire id this request resolved to; never the client spelling. */
+  upstreamModel: string = CEREBRAS_GPT_OSS_120B_MODEL
 ): Promise<Response> => {
-  const parsedRequest = validateCerebrasChatRequestFields(rawRecord);
+  const parsedRequest = validateCerebrasChatRequestFields(rawRecord, upstreamModel);
   if (!parsedRequest.ok) return parsedRequest.response;
   const { reasoning, clientWantsStream, includeUsage } = parsedRequest.value;
 
@@ -262,7 +283,7 @@ export const handleCerebrasChatCompletions = async (
   // early branch in handleChatCompletionsInternal.
   const cerebrasBody: Record<string, unknown> = {
     ...rawRecord,
-    model: CEREBRAS_GPT_OSS_120B_MODEL,
+    model: upstreamModel,
     reasoning_effort: reasoning,
     stream: false,
   };
@@ -318,7 +339,7 @@ export const handleCerebrasChatCompletions = async (
     return await respondCerebrasChatIncompleteCapture(usageContext, downstreamSignal, requestSignal, providerRequestId);
   }
 
-  const completion = await readCerebrasChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext);
+  const completion = await readCerebrasChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext, upstreamModel);
   if (!completion.ok) return completion.response;
 
   if (chatCompletionHasAnswerBearingOutput(completion.value)) markChatSemanticOutput(usageContext);

@@ -497,13 +497,17 @@ Deno.test("/v1/models hides the models of a switched-off provider", async () => 
     await withKv(kv, async () => {
       assert.deepEqual(
         await listModelIds(),
-        ["gpt-5.6-sol", "gpt-oss-120b", ...DEEPSEEK_OFFICIAL_MODEL_IDS, ...LITHOS_MODEL_IDS],
+        ["gpt-5.6-sol", "gpt-oss-120b", "qwen-3.8-27b", ...DEEPSEEK_OFFICIAL_MODEL_IDS, ...LITHOS_MODEL_IDS],
         "no filter lists every provider"
       );
 
       kv.seedSelection(["deepseek", "cerebras"]);
       resetProviderSelectionCacheForTest();
-      assert.deepEqual(await listModelIds(), ["gpt-oss-120b", ...DEEPSEEK_OFFICIAL_MODEL_IDS], "a switched-off Codex provider contributes no rows");
+      assert.deepEqual(
+        await listModelIds(),
+        ["gpt-oss-120b", "qwen-3.8-27b", ...DEEPSEEK_OFFICIAL_MODEL_IDS],
+        "a switched-off Codex provider contributes no rows"
+      );
 
       kv.seedSelection(["codex"]);
       resetProviderSelectionCacheForTest();

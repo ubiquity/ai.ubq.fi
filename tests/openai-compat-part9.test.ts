@@ -355,6 +355,55 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       }
     });
 
+    // The second Cerebras id must be owned by the same route and reach upstream
+    // under the provider's exact spelling, not the client's casing.
+    await t.step("routes qwen-3.8-27b to Cerebras with the canonical wire id", async () => {
+      const upstreamCalls: { url: string; body: Record<string, unknown> }[] = [];
+      const response = await withFetchMock(
+        (url, bodyText) => {
+          upstreamCalls.push({
+            url,
+            body: bodyText ? (JSON.parse(bodyText) as Record<string, unknown>) : {},
+          });
+          return new Response(
+            JSON.stringify({
+              id: "chatcmpl_cerebras_qwen",
+              object: "chat.completion",
+              created: 1_728_000_010,
+              model: "qwen-3.8-27b",
+              choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        },
+        () =>
+          handleChatCompletions(request({ ...canonicalBody, model: "QWEN-3.8-27B", reasoning_effort: "none" }), {
+            keyId: null,
+            kernelRepo: null,
+            kernelOrg: null,
+            requestId: "cerebras-qwen-success",
+            startedAtMs: Date.now(),
+            startedAtMonotonicMs: performance.now(),
+          })
+      );
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(
+        upstreamCalls.map((call) => call.url),
+        ["https://api.cerebras.ai/v1/chat/completions"]
+      );
+      assert.equal(upstreamCalls[0]?.body.model, "qwen-3.8-27b");
+      // `none` is a tier qwen accepts and gpt-oss does not, so it must survive
+      // the boundary verbatim rather than being dropped or rewritten.
+      assert.equal(upstreamCalls[0]?.body.reasoning_effort, "none");
+      assert.equal(upstreamCalls[0]?.body.stream, false);
+      assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+      const payload = (await response.json()) as { model?: string };
+      assert.equal(payload.model, "qwen-3.8-27b");
+      assert.equal(getResponseTelemetry(response)?.provider, "cerebras");
+    });
+
     await t.step("preserves upstream reasoning 1:1 in buffered Chat responses", async () => {
       const response = await withFetchMock(
         () =>

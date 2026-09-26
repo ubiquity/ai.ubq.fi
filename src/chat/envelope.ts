@@ -4,7 +4,7 @@ import { handleDeepSeekChatCompletions } from "../deepseek/handlers.ts";
 import { handleLithosChatCompletions } from "../provider/lithos-handlers.ts";
 import { handleCerebrasChatCompletions } from "../provider/cerebras-handlers.ts";
 import { buildCodexRequest, markCodexResponseCompleted, markCodexResponseUpstreamError, releaseCodexResponseProbe } from "../codex/index.ts";
-import { CEREBRAS_GPT_OSS_120B_MODEL } from "../provider/cerebras.ts";
+import { cerebrasUpstreamModelFor } from "../provider/cerebras.ts";
 import { deepSeekUpstreamModelFor } from "../deepseek/index.ts";
 import { lithosUpstreamModelFor } from "../provider/lithos.ts";
 import { isProviderEnabled, loadProviderSelectionCached } from "../provider/selection.ts";
@@ -563,8 +563,9 @@ export const handleChatCompletionsInternal = async (req: Request, usageContext?:
   // A switched-off direct provider is not dispatched to; those ids then follow
   // the ordinary Codex/paid waterfall like any other catalog model.
   const selection = await loadProviderSelectionCached();
-  if (isProviderEnabled("cerebras", selection) && model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL) {
-    return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext);
+  const cerebrasModel = cerebrasUpstreamModelFor(model);
+  if (isProviderEnabled("cerebras", selection) && cerebrasModel) {
+    return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext, cerebrasModel);
   }
   if (isProviderEnabled("deepseek", selection) && deepSeekUpstreamModelFor(model)) {
     return await handleDeepSeekChatCompletions(req, rawRecord, modelRaw, usageContext);

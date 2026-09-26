@@ -1,7 +1,13 @@
 // Chat Completions and Responses input normalization, extracted from src/openai.ts.
 
-import { CEREBRAS_PROVIDER_HINT, LITHOS_PROVIDER_HINT } from "./request-policy.ts";
-import { CEREBRAS_GPT_OSS_120B_MODEL, readCerebrasApiKey } from "./provider/cerebras.ts";
+import { cerebrasProviderHint, LITHOS_PROVIDER_HINT } from "./request-policy.ts";
+import {
+  CEREBRAS_GPT_OSS_120B_MODEL,
+  CEREBRAS_MODELS,
+  CEREBRAS_QWEN_3_8_27B_MODEL,
+  cerebrasUpstreamModelFor,
+  readCerebrasApiKey,
+} from "./provider/cerebras.ts";
 import {
   DEEPSEEK_CONTEXT_WINDOW_TOKENS,
   DEEPSEEK_DEFAULT_REASONING_EFFORT,
@@ -317,30 +323,41 @@ export const normalizeModelList = (payload: unknown): { object: "list"; data: Re
   return null;
 };
 
-const configuredCerebrasModel = (): Record<string, unknown> | null =>
+const CEREBRAS_MODEL_DISPLAY_NAMES: Record<string, string> = {
+  [CEREBRAS_GPT_OSS_120B_MODEL]: "GPT-OSS 120B",
+  [CEREBRAS_QWEN_3_8_27B_MODEL]: "Qwen 3.8 27B",
+};
+
+const configuredCerebrasModels = (): Record<string, unknown>[] =>
   readCerebrasApiKey()
-    ? {
-        id: CEREBRAS_GPT_OSS_120B_MODEL,
+    ? CEREBRAS_MODELS.map((id) => ({
+        id,
         object: "model",
         created: 0,
         owned_by: "cerebras",
-      }
-    : null;
+      }))
+    : [];
 
-export const configuredCerebrasModelCapabilities = (): Record<string, unknown> | null => {
+export const configuredCerebrasModelCapabilities = (model: string = CEREBRAS_GPT_OSS_120B_MODEL): Record<string, unknown> | null => {
   if (!readCerebrasApiKey()) return null;
+  // Resolve to the provider's exact id first: the route matches ids
+  // case-insensitively, so a differently-cased request must still get this
+  // model's platform contract rather than the fallback default's.
+  const id = cerebrasUpstreamModelFor(model);
+  if (id === null) return null;
+  const hint = cerebrasProviderHint(id);
   // Cerebras publishes no context window of its own, so the window on this row
   // comes from enrichment or stays null; the tiers are the route's declaration.
-  const resolved = resolveModelMetadata(CEREBRAS_GPT_OSS_120B_MODEL, { provider: CEREBRAS_PROVIDER_HINT });
+  const resolved = resolveModelMetadata(id, { provider: hint });
   return {
-    id: CEREBRAS_GPT_OSS_120B_MODEL,
+    id,
     object: "uos.model_capabilities",
     owned_by: "cerebras",
-    display_name: "GPT-OSS 120B",
+    display_name: CEREBRAS_MODEL_DISPLAY_NAMES[id] ?? id,
     upstream_provider: "cerebras",
     supported_endpoints: ["/v1/chat/completions"],
-    supported_reasoning_levels: [...(CEREBRAS_PROVIDER_HINT.supported_reasoning_levels ?? [])],
-    default_reasoning_effort: CEREBRAS_PROVIDER_HINT.default_reasoning_effort ?? "medium",
+    supported_reasoning_levels: [...(hint.supported_reasoning_levels ?? [])],
+    default_reasoning_effort: hint.default_reasoning_effort ?? "medium",
     reasoning_effort_wire_map: {},
     context_window_tokens: resolved.context_window_tokens,
     max_context_window_tokens: resolved.max_context_window_tokens,
@@ -351,11 +368,8 @@ export const configuredCerebrasModelCapabilities = (): Record<string, unknown> |
 };
 
 export const withConfiguredCerebrasModel = (models: readonly Record<string, unknown>[], enabled: boolean): Record<string, unknown>[] => {
-  const cerebras = enabled ? configuredCerebrasModel() : null;
-  if (!cerebras || models.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
-    return [...models];
-  }
-  return [...models, cerebras];
+  const configured = enabled ? configuredCerebrasModels() : [];
+  return [...models, ...configured.filter((candidate) => !models.some((model) => model.id === candidate.id))];
 };
 
 /**

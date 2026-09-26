@@ -4,7 +4,30 @@ import { getString, isRecord } from "../utils.ts";
 import type { SentinelUpstreamRecorder } from "../sentinel/upstream-capture.ts";
 
 export const CEREBRAS_GPT_OSS_120B_MODEL = "gpt-oss-120b";
+export const CEREBRAS_QWEN_3_8_27B_MODEL = "qwen-3.8-27b";
 export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/completions";
+
+/**
+ * Every Cerebras id this route serves, in advertised order. The provider used
+ * to expose exactly one model, so the routing predicates compared against a
+ * single constant; keep the ids in one list so a catalog row and its dispatch
+ * rule cannot drift apart again.
+ *
+ * Per-model capability facts (context window, reasoning tiers and defaults)
+ * live with the hints in `src/request-policy.ts`, which is their only consumer.
+ */
+export const CEREBRAS_MODELS = [CEREBRAS_GPT_OSS_120B_MODEL, CEREBRAS_QWEN_3_8_27B_MODEL] as const;
+
+/**
+ * Resolves a client-supplied id to the Cerebras wire id it names, or null when
+ * this route does not own it. Matching is case-insensitive because model ids
+ * are opaque and clients normalize case inconsistently; the returned value is
+ * always the provider's exact spelling so the upstream sees a known id.
+ */
+export const cerebrasUpstreamModelFor = (model: string): string | null => {
+  const requested = model.trim().toLowerCase();
+  return CEREBRAS_MODELS.find((candidate) => candidate === requested) ?? null;
+};
 
 const CEREBRAS_API_KEY_ENV = "CEREBRAS_API_KEY";
 const MAX_CEREBRAS_PROVIDER_REQUEST_ID_LENGTH = 256;

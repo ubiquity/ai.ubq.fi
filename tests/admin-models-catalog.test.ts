@@ -197,7 +197,13 @@ Deno.test("Cerebras claims its id unless the Codex snapshot already owns it", as
       ["cerebras"]
     );
     assert.deepEqual(row.providers[0].supported_endpoints, ["/v1/chat/completions"]);
-    assert.deepEqual(catalog.sources.cerebras, { status: "available", count: 1, updated_at_ms: null, configured: true });
+    const qwenRow = catalog.models.find((model) => model.id === "qwen-3.8-27b");
+    assert.ok(qwenRow, "the second configured Cerebras model is cataloged");
+    assert.deepEqual(
+      qwenRow.providers.map((provider) => provider.id),
+      ["cerebras"]
+    );
+    assert.deepEqual(catalog.sources.cerebras, { status: "available", count: 2, updated_at_ms: null, configured: true });
   } finally {
     Deno.env.delete("CEREBRAS_API_KEY");
   }

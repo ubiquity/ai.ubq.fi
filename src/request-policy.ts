@@ -1,9 +1,45 @@
 // Model metadata, prompt-cache, reasoning and warning policy for upstream requests, extracted from src/openai.ts.
 
-export const CEREBRAS_PROVIDER_HINT: ModelMetadataHint = {
-  supported_reasoning_levels: ["low", "medium", "high"],
-  default_reasoning_effort: "medium",
+/**
+ * What the Cerebras route declares about its own models, per id. The two ids
+ * differ in both context window and reasoning contract, so a single shared
+ * hint cannot describe them.
+ *
+ * Facts below are from Cerebras' own catalog and reasoning pages (verified
+ * 2026-09-26):
+ * - Context window: 65,536 free-trial / 131,072 paid, for BOTH ids. Shared
+ *   Inference bills these ids at paid tiers, so 131,072 is the window a request
+ *   can actually use. Cerebras reports no context length over `/v1/models`.
+ * - `gpt-oss-120b` accepts low/medium/high, defaults to `medium`, and cannot
+ *   disable reasoning.
+ * - `qwen-3.8-27b` additionally accepts `none` and defaults to `high`.
+ *
+ * One shared list would advertise a tier a model rejects (a promise the gateway
+ * cannot keep) or hide `none` from a client that needs it.
+ */
+const CEREBRAS_CONTEXT_WINDOW_TOKENS = 131_072;
+
+const CEREBRAS_PROVIDER_HINTS: Record<string, ModelMetadataHint> = {
+  [CEREBRAS_GPT_OSS_120B_MODEL]: {
+    context_window_tokens: CEREBRAS_CONTEXT_WINDOW_TOKENS,
+    max_context_window_tokens: CEREBRAS_CONTEXT_WINDOW_TOKENS,
+    supported_reasoning_levels: ["low", "medium", "high"],
+    default_reasoning_effort: "medium",
+  },
+  [CEREBRAS_QWEN_3_8_27B_MODEL]: {
+    context_window_tokens: CEREBRAS_CONTEXT_WINDOW_TOKENS,
+    max_context_window_tokens: CEREBRAS_CONTEXT_WINDOW_TOKENS,
+    supported_reasoning_levels: ["none", "low", "medium", "high"],
+    default_reasoning_effort: "high",
+  },
 };
+
+/**
+ * The hint for a Cerebras id. An unrecognized id falls back to the gpt-oss
+ * contract, which is the route's original single-model declaration.
+ */
+export const cerebrasProviderHint = (model: string): ModelMetadataHint =>
+  CEREBRAS_PROVIDER_HINTS[model] ?? CEREBRAS_PROVIDER_HINTS[CEREBRAS_GPT_OSS_120B_MODEL];
 
 /**
  * What the LithosAI route declares about its own models. All eight ids serve
@@ -48,6 +84,7 @@ import {
   LITHOS_REASONING_LEVELS,
 } from "./provider/lithos.ts";
 import type { ModelMetadataHint } from "./models/metadata.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL, CEREBRAS_QWEN_3_8_27B_MODEL } from "./provider/cerebras.ts";
 import { openaiError } from "./http.ts";
 import { getString, isRecord } from "./utils.ts";
 import type { ResponseInputItem } from "./types.ts";
