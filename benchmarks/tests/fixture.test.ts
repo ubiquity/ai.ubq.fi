@@ -347,6 +347,56 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "fixture: snapshot and rollback recover access permissions from chmod 000 file",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    const task = requiredTask("fail-002");
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "chmod-000-file",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const violation = await expectWriteScopeViolation(() => workspace.execShell("chmod 000 protected/keep.txt", 20_000));
+      if (violation.path !== "protected/keep.txt") throw new Error(`expected violation on protected/keep.txt, got ${violation.path}`);
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("the unreadable file was not restored");
+    } finally {
+      await removeAll(tmpParent);
+    }
+  },
+});
+
+Deno.test({
+  name: "fixture: rollback recovers write permission on chmod 500 ancestor directory",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    const task = requiredTask("fail-002");
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "chmod-500-dir",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const violation = await expectWriteScopeViolation(() =>
+        workspace.execShell("echo 'MUTATED' > protected/keep.txt && chmod 500 protected", 20_000)
+      );
+      if (violation.path !== "protected/keep.txt" && violation.path !== "protected") {
+        throw new Error(`expected violation on protected or protected/keep.txt, got ${violation.path}`);
+      }
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("file inside chmod 500 directory was not restored");
+    } finally {
+      await removeAll(tmpParent);
+    }
+  },
+});
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.lstat(path);

@@ -361,7 +361,7 @@ export class FixtureWorkspace {
    * symlinked ancestor is rebuilt as a real directory before any write.
    */
   private _enforceWriteScope(before: WorkspaceSnapshot): void {
-    const after = snapshotWorkspace(this.root);
+    const after = snapshotWorkspace(this.root, before);
     const changed = changedWorkspacePaths(before, after);
     const unauthorized = changed.filter((rel) => !this._isAllowedShellChange(rel, changed, before, after));
     if (unauthorized.length === 0) return;
@@ -372,7 +372,13 @@ export class FixtureWorkspace {
     // directory cannot block the restoration of the entries inside it. A null
     // mode means the platform does not report permission bits for the entry.
     for (const entry of [...directoryModes].reverse()) {
-      if (entry.mode !== null) Deno.chmodSync(entry.abs, entry.mode);
+      if (entry.mode !== null) {
+        try {
+          Deno.chmodSync(entry.abs, entry.mode);
+        } catch {
+          // ignore if chmod not supported on platform
+        }
+      }
     }
 
     const reported = unauthorized.find((rel) => after.get(rel)?.kind !== "directory") ?? unauthorized[0];
@@ -409,7 +415,10 @@ export class FixtureWorkspace {
       // would leave an empty directory shell behind, and a symlinked ancestor
       // (for example one a previous restore put back) would redirect the
       // removal outside the workspace.
-      if (this._hasRealDirectoryAncestors(rel)) removeWorkspaceEntry(abs);
+      if (this._hasRealDirectoryAncestors(rel)) {
+        this._ensureWritableAncestors(rel, before, directoryModes);
+        removeWorkspaceEntry(abs);
+      }
       return;
     }
     this._restoreRealAncestors(rel, before, directoryModes);
@@ -426,7 +435,11 @@ export class FixtureWorkspace {
     Deno.mkdirSync(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
     if (expected.kind === "file") {
       Deno.writeFileSync(abs, expected.content);
-      if (expected.mode !== null) Deno.chmodSync(abs, expected.mode);
+      if (expected.mode !== null) {
+        try {
+          Deno.chmodSync(abs, expected.mode);
+        } catch {}
+      }
     } else if (expected.kind === "symlink") {
       Deno.symlinkSync(expected.target, abs);
     }
@@ -445,21 +458,49 @@ export class FixtureWorkspace {
   }
 
   /**
+   * Ensures every ancestor directory has write/execute permissions so entries
+   * inside can be modified or removed during rollback.
+   */
+  private _ensureWritableAncestors(rel: string, before: WorkspaceSnapshot, directoryModes: { abs: string; mode: number | null }[]): void {
+    const parts = rel.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = parts.slice(0, i).join("/");
+      const abs = this._assertPath(ancestor);
+      const expected = before.get(ancestor);
+      try {
+        Deno.chmodSync(abs, 0o700);
+      } catch {}
+      if (expected?.kind === "directory" && !directoryModes.some((e) => e.abs === abs)) {
+        directoryModes.push({ abs, mode: expected.mode });
+      }
+    }
+  }
+
+  /**
    * Rebuild any ancestor that is no longer a real directory before restoring a
-   * path below it. Writing through a symlinked (or file) ancestor would leave
-   * the workspace and mutate the link's target, so the snapshot's real
-   * directory is recreated first.
+   * path below it, and ensure ancestor directories are writable so descendant
+   * entries can be written or removed.
    */
   private _restoreRealAncestors(rel: string, before: WorkspaceSnapshot, directoryModes: { abs: string; mode: number | null }[]): void {
     const parts = rel.split("/");
     for (let i = 1; i < parts.length; i++) {
       const ancestor = parts.slice(0, i).join("/");
       const abs = this._assertPath(ancestor);
-      if (lstatIfExists(abs)?.isDirectory === true) continue;
+      const expected = before.get(ancestor);
+      if (lstatIfExists(abs)?.isDirectory === true) {
+        try {
+          Deno.chmodSync(abs, 0o700);
+        } catch {}
+        if (expected?.kind === "directory" && !directoryModes.some((e) => e.abs === abs)) {
+          directoryModes.push({ abs, mode: expected.mode });
+        }
+        continue;
+      }
       removeWorkspaceEntry(abs);
       Deno.mkdirSync(abs, { recursive: true });
-      const expected = before.get(ancestor);
-      if (expected?.kind === "directory") directoryModes.push({ abs, mode: expected.mode });
+      if (expected?.kind === "directory" && !directoryModes.some((e) => e.abs === abs)) {
+        directoryModes.push({ abs, mode: expected.mode });
+      }
     }
   }
 
@@ -568,13 +609,31 @@ type WorkspaceSnapshot = Map<string, WorkspaceSnapshotEntry>;
  * stored as links and the walk never descends through them, so the snapshot
  * only ever describes objects physically inside the disposable workspace.
  */
-function snapshotWorkspace(root: string): WorkspaceSnapshot {
+function snapshotWorkspace(root: string, before?: WorkspaceSnapshot): WorkspaceSnapshot {
   const snapshot: WorkspaceSnapshot = new Map();
   const walk = (dir: string, prefix: string): void => {
-    for (const entry of [...Deno.readDirSync(dir)].sort((a, b) => a.name.localeCompare(b.name))) {
+    let dirEntries: Deno.DirEntry[];
+    try {
+      dirEntries = [...Deno.readDirSync(dir)];
+    } catch (err) {
+      if (err instanceof Deno.errors.PermissionDenied) {
+        try {
+          const saved = prefix === "" ? undefined : before?.get(prefix);
+          const savedMode = saved && "mode" in saved ? saved.mode : null;
+          const recoverMode = savedMode !== null ? savedMode | 0o700 : 0o755;
+          Deno.chmodSync(dir, recoverMode);
+          dirEntries = [...Deno.readDirSync(dir)];
+        } catch {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
+    for (const entry of dirEntries.sort((a, b) => a.name.localeCompare(b.name))) {
       const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       const abs = `${dir}/${entry.name}`;
-      recordSnapshotEntry(snapshot, rel, abs, () => {
+      recordSnapshotEntry(snapshot, rel, abs, before?.get(rel), () => {
         walk(abs, rel);
       });
     }
@@ -588,7 +647,13 @@ function snapshotWorkspace(root: string): WorkspaceSnapshot {
  * disappeared between `readDir` and its own read is skipped rather than
  * reported as a change.
  */
-function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: string, walkBelow: () => void): void {
+function recordSnapshotEntry(
+  snapshot: WorkspaceSnapshot,
+  rel: string,
+  abs: string,
+  expectedEntry: WorkspaceSnapshotEntry | undefined,
+  walkBelow: () => void
+): void {
   const info = lstatIfExists(abs);
   if (info === null) return; // the entry vanished while the snapshot was taken
   if (info.isSymlink) {
@@ -602,8 +667,10 @@ function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: stri
     return;
   }
   if (info.isFile) {
-    const content = snapshotFileContent(abs);
-    if (content !== null) snapshot.set(rel, { kind: "file", content, mode: snapshotMode(info) });
+    const recordedMode = snapshotMode(info);
+    const expectedMode = expectedEntry && "mode" in expectedEntry ? expectedEntry.mode : null;
+    const content = snapshotFileContent(abs, expectedMode);
+    if (content !== null) snapshot.set(rel, { kind: "file", content, mode: recordedMode });
     return;
   }
   snapshot.set(rel, { kind: "other", mode: snapshotMode(info) });
@@ -641,12 +708,21 @@ function snapshotMode(info: Deno.FileInfo): number | null {
   return info.mode === null ? null : info.mode & 0o7777;
 }
 
-/** File bytes, or `null` only when the file genuinely vanished mid-walk. */
-function snapshotFileContent(p: string): Uint8Array | null {
+/** File bytes, recovering read permission from saved metadata if access was denied. */
+function snapshotFileContent(p: string, expectedMode?: number | null): Uint8Array | null {
   try {
     return Deno.readFileSync(p);
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return null;
+    if (err instanceof Deno.errors.PermissionDenied) {
+      try {
+        const mode = expectedMode !== undefined && expectedMode !== null ? expectedMode | 0o600 : 0o644;
+        Deno.chmodSync(p, mode);
+        return Deno.readFileSync(p);
+      } catch {
+        // fall through
+      }
+    }
     throw err;
   }
 }
@@ -680,6 +756,15 @@ function removeWorkspaceEntry(abs: string): void {
   try {
     Deno.removeSync(abs, { recursive: true });
   } catch (err) {
+    if (err instanceof Deno.errors.PermissionDenied) {
+      try {
+        Deno.chmodSync(abs, 0o700);
+        Deno.removeSync(abs, { recursive: true });
+        return;
+      } catch {
+        // fall through
+      }
+    }
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
 }

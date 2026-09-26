@@ -15,7 +15,7 @@
  */
 
 import { AdapterRunContext, BenchmarkAdapter, defaultAdapters, TaskTimeoutError, ToolCallLimitExceededError } from "./adapter.ts";
-import { computeFixtureRevision, FixtureRevisionMismatchError, FixtureWorkspace } from "./fixture.ts";
+import { computeFixtureRevision, FixtureRevisionMismatchError, FixtureWorkspace, WriteScopeViolationError } from "./fixture.ts";
 import { loadTasks, selectTasks } from "./manifest.ts";
 import { aggregateResults, deriveMetrics, formatSummary } from "./metrics.ts";
 import { evaluateOracle, runVerification } from "./oracle.ts";
@@ -257,9 +257,29 @@ export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts
   }
 
   // Verification and oracle evaluation against the final workspace state.
-  const verification = prepared
-    ? await runVerification(task, workspace)
-    : { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  let verification: Awaited<ReturnType<typeof runVerification>>;
+  if (prepared) {
+    try {
+      verification = await runVerification(task, workspace);
+    } catch (err) {
+      const message = (err as Error).message;
+      const truncated = message.length > 4000 ? `${message.slice(0, 4000)}…[truncated ${message.length} bytes]` : message;
+      verification = {
+        ran: true,
+        passed: false,
+        command: task.verify?.command ?? null,
+        exit_code: null,
+        timed_out: false,
+        output: truncated,
+      };
+      if (failureClass === null) {
+        failureClass = "verification_failed";
+        failureDetail = message;
+      }
+    }
+  } else {
+    verification = { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  }
   record({
     type: "verify",
     at: isoNow(),

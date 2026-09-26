@@ -186,3 +186,24 @@ Deno.test("runner: parseRunArgs accepts the deno-task '--' separator", async () 
   }
   if (!threw) throw new Error("expected unknown argument rejection");
 });
+
+Deno.test("runner: verification error is caught, recorded, and cleans workspace", async () => {
+  const opts = freshOptions();
+  try {
+    const task: TaskManifest = {
+      ...nav001(),
+      verify: { command: "exit 127" },
+    };
+    const { result } = await runOne(task, referenceAdapter, opts);
+    if (result.success || result.failure_class !== "verification_failed") {
+      throw new Error(`expected verification_failed, got ${result.failure_class}`);
+    }
+    const resultFile = Deno.readTextFileSync(`${opts.runsRoot}/runs/${result.run_id}/result.jsonl`);
+    if (!resultFile.includes(result.run_id)) throw new Error("result.jsonl was not written");
+    const trajectoryFile = Deno.readTextFileSync(`${opts.runsRoot}/${result.trajectory}`);
+    if (trajectoryFile.trim().length === 0) throw new Error("trajectory.jsonl was not written");
+  } finally {
+    Deno.removeSync(opts.runsRoot, { recursive: true });
+  }
+});
+
