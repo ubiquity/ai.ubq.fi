@@ -736,3 +736,4 @@ async function gitCommand(cwd: string, args: string[]): Promise<void> {
     throw new Error(`git ${args.join(" ")} failed (exit ${out.code}): ${new TextDecoder().decode(out.stderr).trim()}`);
   }
 }
+
