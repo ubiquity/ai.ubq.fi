@@ -209,6 +209,50 @@ Deno.test({
 });
 
 Deno.test({
+  name: "fixture: permission changes do not prevent scope snapshots or rollback",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    const task = requiredTask("fail-002");
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "permission-recovery",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const protectedDir = `${workspace.root}/protected`;
+      const protectedFile = `${protectedDir}/keep.txt`;
+      const originalDirMode = Deno.lstatSync(protectedDir).mode;
+      const originalFileMode = Deno.lstatSync(protectedFile).mode;
+
+      const dirViolation = await expectWriteScopeViolation(() =>
+        workspace.execShell("printf 'TAMPERED\\n' > protected/keep.txt && chmod 000 protected", 20_000)
+      );
+      if (!dirViolation.message.includes("write scope violation")) throw new Error(`unexpected scope error: ${dirViolation.message}`);
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("unreadable-directory mutation was not restored");
+      if (Deno.lstatSync(protectedDir).mode !== originalDirMode) throw new Error("unreadable directory mode was not restored");
+
+      const fileViolation = await expectWriteScopeViolation(() =>
+        workspace.execShell("printf 'TAMPERED\\n' > protected/keep.txt && chmod 000 protected/keep.txt", 20_000)
+      );
+      if (fileViolation.path !== "protected/keep.txt") throw new Error(`expected file violation, got ${fileViolation.path}`);
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("unreadable-file mutation was not restored");
+      if (Deno.lstatSync(protectedFile).mode !== originalFileMode) throw new Error("unreadable file mode was not restored");
+
+      const originalRootMode = Deno.lstatSync(workspace.root).mode;
+      const rootViolation = await expectWriteScopeViolation(() => workspace.execShell("printf 'TAMPERED\\n' > protected/keep.txt && chmod 000 .", 20_000));
+      if (!rootViolation.message.includes("write scope violation")) throw new Error(`unexpected root scope error: ${rootViolation.message}`);
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("workspace-root permission mutation was not restored");
+      if (Deno.lstatSync(workspace.root).mode !== originalRootMode) throw new Error("workspace-root mode was not restored");
+    } finally {
+      await removeAll(tmpParent);
+    }
+  },
+});
+
+Deno.test({
   name: "fixture: a pre-existing directory change is not excused by allowed descendants",
   ignore: !SANDBOX_OS,
   async fn() {

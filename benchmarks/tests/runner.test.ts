@@ -18,6 +18,16 @@ function freshOptions(): RunOptions & { runsRoot: string } {
   };
 }
 
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return false;
+    throw err;
+  }
+}
+
 function nav001(): TaskManifest {
   const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
   if (!task) throw new Error(`benchmark task nav-001 is missing from ${TASKS_DIR}`);
@@ -59,6 +69,60 @@ Deno.test("runner: verification failure is classified", async () => {
   } finally {
     Deno.removeSync(opts.runsRoot, { recursive: true });
   }
+});
+
+Deno.test({
+  name: "runner: a verification write-scope violation is recorded and the next task still runs",
+  ignore: Deno.build.os !== "darwin" && Deno.build.os !== "linux",
+  async fn() {
+    const opts = freshOptions();
+    const tasksDir = `${opts.runsRoot}/tasks`;
+    Deno.mkdirSync(tasksDir, { recursive: true });
+    try {
+      const base = loadTasks(TASKS_DIR).find((task) => task.id === "fail-002");
+      if (!base) throw new Error("benchmark task fail-002 is missing");
+      const violating = {
+        ...base,
+        id: "permission-verify",
+        title: "Permission-driven verification failure",
+        min_tool_calls: 0,
+        verify: { command: "chmod 000 protected/keep.txt" },
+        scripted_trail: [],
+      };
+      const following = {
+        ...violating,
+        id: "after-permission-verify",
+        title: "Continue after verification failure",
+        verify: { command: "true" },
+        oracle: {},
+      };
+      Deno.writeTextFileSync(`${tasksDir}/01-permission.json`, JSON.stringify(violating));
+      Deno.writeTextFileSync(`${tasksDir}/02-following.json`, JSON.stringify(following));
+
+      const results = await runBenchmarks({
+        ...opts,
+        taskSelectors: ["*"],
+        tasksDir,
+        adapters: [referenceAdapter],
+      });
+      if (results.length !== 2) throw new Error(`expected both tasks to run, got ${results.length}`);
+      const first = results[0];
+      if (first.failure_class !== "verification_failed") {
+        throw new Error(`expected verification_failed, got ${first.failure_class}: ${first.failure_detail}`);
+      }
+      if (!first.verification.ran || first.verification.passed || !first.verification.output?.includes("write scope violation")) {
+        throw new Error("write-scope verification failure was not recorded in verification evidence");
+      }
+      const trajectory = Deno.readTextFileSync(`${opts.runsRoot}/${first.trajectory}`);
+      if (!trajectory.includes('"type":"verify"') || !trajectory.includes("write scope violation")) {
+        throw new Error("verification failure was not persisted to the trajectory");
+      }
+      if (await exists(`${opts.runsRoot}/tmp/${first.run_id}`)) throw new Error("failed verification workspace was not removed");
+      if (!results[1].success) throw new Error(`batch did not continue: ${results[1].failure_detail}`);
+    } finally {
+      Deno.removeSync(opts.runsRoot, { recursive: true });
+    }
+  },
 });
 
 Deno.test("runner: min_tool_calls not met is classified", async () => {

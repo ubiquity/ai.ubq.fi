@@ -158,11 +158,17 @@ function classifyRunFailure(
     };
   }
   if (!verification.passed) {
+    let failureDetail: string;
+    if (verification.timed_out) {
+      failureDetail = `verification command timed out: ${verification.command}`;
+    } else if (verification.exit_code === null) {
+      failureDetail = `verification could not complete: ${verification.output ?? verification.command}`;
+    } else {
+      failureDetail = `verification command exited ${verification.exit_code}: ${verification.command}`;
+    }
     return {
       failureClass: "verification_failed",
-      failureDetail: verification.timed_out
-        ? `verification command timed out: ${verification.command}`
-        : `verification command exited ${verification.exit_code}: ${verification.command}`,
+      failureDetail,
     };
   }
   if (!oracle.passed) {

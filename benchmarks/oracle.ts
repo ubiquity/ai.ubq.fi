@@ -21,16 +21,27 @@ export async function runVerification(task: TaskManifest, workspace: FixtureWork
   if (!task.verify) {
     return { ran: false, passed: true, command: null, exit_code: null, timed_out: false, output: null };
   }
-  const res = await workspace.execShell(task.verify.command, task.verify.timeout_ms ?? 20_000);
-  const output = [res.stdout, res.stderr].filter((s) => s.trim() !== "").join("\n");
-  return {
-    ran: true,
-    passed: !res.timedOut && res.code === 0,
-    command: task.verify.command,
-    exit_code: res.timedOut ? null : res.code,
-    timed_out: res.timedOut,
-    output: truncate(output),
-  };
+  try {
+    const res = await workspace.execShell(task.verify.command, task.verify.timeout_ms ?? 20_000);
+    const output = [res.stdout, res.stderr].filter((s) => s.trim() !== "").join("\n");
+    return {
+      ran: true,
+      passed: !res.timedOut && res.code === 0,
+      command: task.verify.command,
+      exit_code: res.timedOut ? null : res.code,
+      timed_out: res.timedOut,
+      output: truncate(output),
+    };
+  } catch (err) {
+    return {
+      ran: true,
+      passed: false,
+      command: task.verify.command,
+      exit_code: null,
+      timed_out: false,
+      output: truncate((err as Error).message),
+    };
+  }
 }
 
 function checkFile(check: FileCheck, workspace: FixtureWorkspace): OracleCheckOutcome {
