@@ -347,6 +347,91 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "fixture: a locked directory does not break the write-scope restore",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    // fail-002 declares allowed_write_scope ["**", "!protected/**"].
+    const task = requiredTask("fail-002");
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "locked-directory-restore",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+
+      // The candidate edits the protected file and then locks the directory it
+      // lives in to mode 500. The snapshot succeeds, but a restore that only
+      // re-tightens directory modes afterwards cannot write the file back,
+      // leaving the unauthorized change on disk.
+      const violation = await expectWriteScopeViolation(() =>
+        workspace.execShell("printf 'TAMPERED\\n' > protected/keep.txt && chmod 500 protected", 20_000)
+      );
+      if (violation.path !== "protected/keep.txt") {
+        throw new Error(`expected the violation to name protected/keep.txt, got ${violation.path}`);
+      }
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") {
+        throw new Error("the unauthorized change survived a locked-directory restore");
+      }
+      // The recorded directory mode is put back once its contents are restored.
+      const restoredMode = (await Deno.lstat(`${workspace.root}/protected`)).mode;
+      if (restoredMode === null || (restoredMode & 0o7777) === 0o500) {
+        throw new Error(`expected the protected directory mode to be restored, got ${restoredMode}`);
+      }
+    } finally {
+      // The restored mode may leave the tree read-only for the cleanup path.
+      try {
+        Deno.chmodSync(`${workspace.root}/protected`, 0o700);
+      } catch {
+        // Already writable; nothing to relax for cleanup.
+      }
+      await removeAll(tmpParent);
+    }
+  },
+});
+
+Deno.test({
+  name: "fixture: an unreadable file is a write-scope violation, not an internal error",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    const task = requiredTask("fail-002");
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "unreadable-file-restore",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+
+      // Mode 000 on a protected file blocks the post-command snapshot from
+      // reading it. The outcome must be the write-scope violation the task
+      // already documents, and it must still restore what it can — never an
+      // opaque internal error that escapes the scope check.
+      const violation = await expectWriteScopeViolation(() => workspace.execShell("chmod 000 protected/keep.txt", 20_000));
+      if (!violation.message.includes("write scope violation")) {
+        throw new Error(`unexpected violation message: ${violation.message}`);
+      }
+      const mode = (await Deno.lstat(`${workspace.root}/protected/keep.txt`)).mode;
+      if (mode === null || (mode & 0o7777) === 0) {
+        throw new Error(`expected the recorded file mode to be recovered, got ${mode}`);
+      }
+      if (workspace.read("protected/keep.txt") !== "ORIGINAL\n") throw new Error("the protected file was not restored");
+    } finally {
+      try {
+        Deno.chmodSync(`${workspace.root}/protected/keep.txt`, 0o600);
+      } catch {
+        // Already writable; nothing to relax for cleanup.
+      }
+      await removeAll(tmpParent);
+    }
+  },
+});
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.lstat(path);
