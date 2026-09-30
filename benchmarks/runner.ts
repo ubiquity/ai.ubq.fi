@@ -257,9 +257,37 @@ export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts
   }
 
   // Verification and oracle evaluation against the final workspace state.
-  const verification = prepared
-    ? await runVerification(task, workspace)
-    : { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  //
+  // A candidate can leave the workspace in a state where the verification
+  // command itself throws (a script it edited to write an unreadable path, for
+  // example). That is a failed verification, not a reason to abandon the run:
+  // an uncaught throw here used to escape `runOne` and abort the whole batch
+  // before this candidate's trajectory, result and workspace cleanup were
+  // written. The throw is caught, recorded as a failed verification with the
+  // error text, and the run continues to the oracle and the normal recording
+  // path below.
+  let verification: Awaited<ReturnType<typeof runVerification>>;
+  if (!prepared) {
+    verification = { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  } else {
+    try {
+      verification = await runVerification(task, workspace);
+    } catch (err) {
+      const detail = (err as Error)?.message ?? String(err);
+      verification = {
+        ran: true,
+        passed: false,
+        command: task.verify?.command ?? null,
+        exit_code: null,
+        timed_out: false,
+        output: `verification command failed to run: ${detail}`,
+      };
+      if (failureClass === null) {
+        failureClass = "verification_failed";
+        failureDetail = `verification command threw: ${detail}`;
+      }
+    }
+  }
   record({
     type: "verify",
     at: isoNow(),
