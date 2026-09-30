@@ -127,9 +127,14 @@ function normalizeLexically(p: string): string {
 export class WriteScopeViolationError extends Error {
   constructor(
     readonly path: string,
-    readonly scope: string[]
+    readonly scope: string[],
+    /** Extra detail, e.g. the permission recovery that failed behind the violation. */
+    readonly detail?: string
   ) {
-    super(`write scope violation: ${path} is not writable (scope: ${scope.join(", ")})`);
+    super(
+      `write scope violation: ${path} is not writable (scope: ${scope.join(", ")})` +
+        (detail === undefined ? "" : ` — ${detail}`)
+    );
     this.name = "WriteScopeViolationError";
   }
 }
@@ -366,6 +371,14 @@ export class FixtureWorkspace {
     const unauthorized = changed.filter((rel) => !this._isAllowedShellChange(rel, changed, before, after));
     if (unauthorized.length === 0) return;
 
+    // A candidate that locked a directory down (or locked a file to mode 000)
+    // must not be able to make the restore itself throw: the restore needs to
+    // read a file whose parent is read-only, and write into a directory whose
+    // own mode blocks the write. Recorded modes are recovered first, so the
+    // restoration always runs with the access the snapshot captured, and only
+    // then re-tightened once the entries below are back in place.
+    this._relaxSnapshotPermissions(before);
+
     const directoryModes: { abs: string; mode: number | null }[] = [];
     for (const rel of unauthorized) this._restoreWorkspaceEntry(rel, before, directoryModes);
     // Directory modes are applied last, deepest first, so a read-only restored
@@ -375,8 +388,72 @@ export class FixtureWorkspace {
       if (entry.mode !== null) Deno.chmodSync(entry.abs, entry.mode);
     }
 
+    // A permission that could not be recovered means the restore is
+    // incomplete, so the unauthorized change is still on disk. That is a
+    // write-scope violation with a permission detail, never an opaque internal
+    // error from a chmod deep inside the restore.
+    const unrecovered = unauthorized.filter((rel) => !this._snapshotEntryRestored(rel, before));
     const reported = unauthorized.find((rel) => after.get(rel)?.kind !== "directory") ?? unauthorized[0];
+    if (unrecovered.length > 0) {
+      const detail = unrecovered.join(", ");
+      throw new WriteScopeViolationError(
+        reported,
+        this.task.allowed_write_scope,
+        `restore could not recover access permissions for: ${detail}`,
+      );
+    }
     throw new WriteScopeViolationError(reported, this.task.allowed_write_scope);
+  }
+
+  /**
+   * Widen recorded modes back to owner read+write+execute for every directory
+   * and file the snapshot captured, so a later restore can read and rewrite
+   * them. `chmod 500 protected` by the candidate must not stop the restore from
+   * writing `protected/keep.txt` back.
+   *
+   * Failures are deliberately ignored here: an entry the process cannot open at
+   * all is reported by {@link _snapshotEntryRestored} as an unrecovered restore
+   * rather than thrown as an internal error.
+   */
+  private _relaxSnapshotPermissions(before: WorkspaceSnapshot): void {
+    // Shallow entries first so a directory is opened before the entries it
+    // contains; `before` is already in walk order, so a second pass handles any
+    // entry whose parent was skipped on the first try.
+    for (const [rel, entry] of before) this._relaxEntryPermissions(rel, entry);
+    for (const [rel, entry] of before) this._relaxEntryPermissions(rel, entry);
+  }
+
+  private _relaxEntryPermissions(rel: string, entry: WorkspaceSnapshotEntry): void {
+    if (entry.kind === "symlink" || entry.mode === null) return;
+    const abs = this._assertPath(rel);
+    try {
+      Deno.chmodSync(abs, RELAXED_MODE);
+    } catch {
+      // Left as-is; the restore check below turns this into a write_scope
+      // violation instead of an internal error.
+    }
+  }
+
+  /**
+   * True when the entry on disk matches what the snapshot recorded, which
+   * includes the recorded permission bits. A path the snapshot did not record
+   * (an unauthorized creation) counts as restored when it is gone.
+   */
+  private _snapshotEntryRestored(rel: string, before: WorkspaceSnapshot): boolean {
+    const abs = this._assertPath(rel);
+    const expected = before.get(rel);
+    const current = lstatIfExists(abs);
+    if (expected === undefined) return current === null;
+    if (current === null) return false;
+    if (expected.kind === "directory" || expected.kind === "other") {
+      return current.mode !== null && expected.mode !== null && current.mode === expected.mode;
+    }
+    if (expected.kind === "symlink") return current.isSymlink;
+    if (!current.isFile) return false;
+    if (expected.mode !== null && current.mode !== null && current.mode !== expected.mode) return false;
+    const content = safeReadFile(abs);
+    if (content === null) return false;
+    return bytesEqual(content, expected.content ?? new Uint8Array());
   }
 
   /**
@@ -634,12 +711,20 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
+/**
  * Permission bits when the platform reports them; `null` means the host has no
  * POSIX mode for this entry, so mode changes are neither compared nor restored.
  */
 function snapshotMode(info: Deno.FileInfo): number | null {
   return info.mode === null ? null : info.mode & 0o7777;
 }
+
+/**
+ * Mode applied to recorded entries before a restore runs, so the restore can
+ * read and rewrite them whatever the candidate left behind. Re-tightening to
+ * the recorded mode happens after the entries are back in place.
+ */
+const RELAXED_MODE = 0o700;
 
 /** File bytes, or `null` only when the file genuinely vanished mid-walk. */
 function snapshotFileContent(p: string): Uint8Array | null {
@@ -648,6 +733,19 @@ function snapshotFileContent(p: string): Uint8Array | null {
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return null;
     throw err;
+  }
+}
+
+/**
+ * File bytes, or `null` when the file cannot be read at all. Used by the
+ * post-restore check, which must classify an unreadable file as an
+ * unrecovered restore rather than propagate a permission error.
+ */
+function safeReadFile(p: string): Uint8Array | null {
+  try {
+    return Deno.readFileSync(p);
+  } catch {
+    return null;
   }
 }
 
