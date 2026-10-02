@@ -7,6 +7,7 @@ import { handleResponses } from "../src/responses-handler.ts";
 import { handleChatCompletions } from "../src/chat/envelope.ts";
 import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
+import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps this suite on the credential-gated providers it owns, and keeps the
@@ -464,6 +465,29 @@ Deno.test("lithos wiring: streams the translated Responses event sequence", asyn
     assert.equal(telemetry.streamTerminalType, "response.completed");
     assert.equal(telemetry.completed, true);
   });
+});
+
+Deno.test("lithos wiring: a disabled provider leaves Responses ids to the ordinary availability check", async () => {
+  kvStore.clear();
+  kvStore.set(keyOf(PROVIDER_SELECTION_KV_KEY), { provider_ids: ["codex"], updated_at_ms: Date.now() });
+  resetProviderSelectionCacheForTest();
+  try {
+    await withLithosKey(async () => {
+      const { result, calls } = await withUpstream(
+        () => new Response("unexpected upstream", { status: 503 }),
+        () => handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: false }), usageContext("lithos-disabled-responses"))
+      );
+      assert.equal(
+        calls.some((call) => call.url === LITHOS_CHAT_COMPLETIONS_URL),
+        false,
+        "disabled Lithos must not reach its paid upstream"
+      );
+      assert.notEqual(result.headers.get("x-uos-upstream"), "lithos");
+    });
+  } finally {
+    kvStore.delete(keyOf(PROVIDER_SELECTION_KV_KEY));
+    resetProviderSelectionCacheForTest();
+  }
 });
 
 Deno.test("lithos wiring: serves /v1/responses through the shared profile translation", async () => {
