@@ -110,14 +110,19 @@ const forwardedPayloadMarker = (omittedBytes: number): string =>
 const omittedImageMarker = (bytes: number): string =>
   `[gateway: ${FORWARDED_PAYLOAD_POLICY.version} image omitted (${bytes} bytes); the model did not receive this image; this route forwards at most ${FORWARDED_PAYLOAD_POLICY.perMessageLimit} bytes per message because the provider counts forwarded payloads as text tokens]`;
 
+/** Drops a trailing high surrogate left behind by a UTF-16 code-unit cut. */
+const dropTrailingHighSurrogate = (value: string): string => {
+  if (value.length === 0) return value;
+  const last = value.charCodeAt(value.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? value.slice(0, -1) : value;
+};
+
 /** Cuts a string to a UTF-8 byte budget without splitting a surrogate pair. */
 const utf8Head = (value: string, byteBudget: number): string => {
-  let head = value.slice(0, byteBudget);
-  if (head.length < value.length) {
-    const last = head.charCodeAt(head.length - 1);
-    if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
+  let head = dropTrailingHighSurrogate(value.slice(0, byteBudget));
+  while (head.length > 0 && forwardedByteLength(head) > byteBudget) {
+    head = dropTrailingHighSurrogate(head.slice(0, Math.floor(head.length * 0.9)));
   }
-  while (head.length > 0 && forwardedByteLength(head) > byteBudget) head = head.slice(0, Math.floor(head.length * 0.9));
   return head;
 };
 
@@ -159,7 +164,7 @@ const reduceForwardedPayload = (value: string, path: string, callId: string | nu
         },
       };
     }
-    head = head.slice(0, Math.floor(head.length * 0.9));
+    head = dropTrailingHighSurrogate(head.slice(0, Math.floor(head.length * 0.9)));
   }
 };
 

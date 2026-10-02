@@ -1136,6 +1136,20 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
   assert.equal(toolContent.includes("the model did not receive the elided bytes"), true);
   assert.equal(new TextEncoder().encode(toolContent).byteLength <= limit, true);
 
+  // Every reduction cut stays on a UTF-16 code-point boundary. Place an emoji
+  // exactly across the first 90% cut so the old marker-reservation path would
+  // retain only its high surrogate and TextEncoder would silently replace it.
+  const firstReductionCut = Math.floor(limit * 0.9);
+  const surrogateBoundary = `${"x".repeat(firstReductionCut - 1)}😀${"y".repeat(limit)}`;
+  const surrogateBounded = messages(toDeepSeekChatMessages([{ type: "function_call_output", call_id: "call_surrogate", output: surrogateBoundary }], null));
+  const surrogateContent = (surrogateBounded.at(-1) as { content: string }).content;
+  for (let index = 0; index < surrogateContent.length; index += 1) {
+    const codeUnit = surrogateContent.charCodeAt(index);
+    if (codeUnit < 0xd800 || codeUnit > 0xdbff) continue;
+    const next = surrogateContent.charCodeAt(index + 1);
+    assert.equal(next >= 0xdc00 && next <= 0xdfff, true, `unpaired high surrogate at index ${index}`);
+  }
+
   // Payloads inside the bound are untouched, so ordinary tool results replay verbatim.
   const verbatim = messages(toDeepSeekChatMessages([{ type: "function_call_output", call_id: "call_small", output: "2026-09-16" }], null));
   assert.deepEqual(verbatim.at(-1), { role: "tool", tool_call_id: "call_small", content: "2026-09-16" });
