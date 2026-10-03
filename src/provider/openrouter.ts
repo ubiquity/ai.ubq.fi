@@ -48,6 +48,17 @@ export type OpenRouterFetch = (input: RequestInfo | URL, init?: RequestInit) => 
  */
 export const openRouterServableModelIds = (): readonly string[] => (openRouterModelsSnapshot()?.models ?? []).map((model) => model.id);
 
+/**
+ * An OpenRouter catalogue model id has the canonical `author/slug` shape.
+ * Requests for ids that cannot be served by OpenRouter must not trigger
+ * a cold catalogue refresh.
+ */
+export const isOpenRouterModelIdShape = (model: string): boolean => {
+  const trimmed = model.trim();
+  const slash = trimmed.indexOf("/");
+  return slash > 0 && slash < trimmed.length - 1 && slash === trimmed.lastIndexOf("/") && !trimmed.includes(" ");
+};
+
 /** The upstream id for a requested model, or null when OpenRouter does not serve it. */
 export const openRouterUpstreamModelFor = (model: string): string | null => {
   const trimmed = model.trim();
@@ -66,7 +77,7 @@ export const openRouterUpstreamModelFor = (model: string): string | null => {
 export const resolveOpenRouterUpstreamModel = async (model: string): Promise<string | null> => {
   const resolved = openRouterUpstreamModelFor(model);
   if (resolved !== null || openRouterModelsSnapshot() !== null) return resolved;
-  if (readOpenRouterApiKey() === null) return null;
+  if (!isOpenRouterModelIdShape(model) || readOpenRouterApiKey() === null) return null;
   await fetchOpenRouterModels().catch(() => null);
   return openRouterUpstreamModelFor(model);
 };

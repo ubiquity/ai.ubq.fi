@@ -7,9 +7,10 @@ import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/models/codex-models-whitel
 import { handleModelCapabilities, handleModels, handlePublicModelCatalog } from "../src/models/catalog.ts";
 import { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } from "../src/models/openrouter-models.ts";
 import { createResponseTelemetryState, type ResponseTelemetryState } from "../src/openai-telemetry.ts";
-import { openRouterUpstreamModelFor, resolveOpenRouterUpstreamModel } from "../src/provider/openrouter.ts";
+import { handleResponses } from "../src/responses-handler.ts";
+import { isOpenRouterModelIdShape, openRouterUpstreamModelFor, resolveOpenRouterUpstreamModel } from "../src/provider/openrouter.ts";
 import { handleOpenRouterChatCompletions, handleOpenRouterResponses } from "../src/provider/openrouter-handlers.ts";
-import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
+import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
 
 const catalogue = {
@@ -361,3 +362,84 @@ Deno.test("openrouter resolves a served id from a cold catalogue and stays cache
     Deno.env.delete("OPENROUTER_API_KEY");
   }
 });
+
+Deno.test("isOpenRouterModelIdShape validates canonical author/slug structure", () => {
+  assert.equal(isOpenRouterModelIdShape("vendor/alpha"), true);
+  assert.equal(isOpenRouterModelIdShape("openai/gpt-4o"), true);
+  assert.equal(isOpenRouterModelIdShape("anthropic/claude-3.5-sonnet"), true);
+  assert.equal(isOpenRouterModelIdShape("meta-llama/llama-3.1-70b-instruct"), true);
+  assert.equal(isOpenRouterModelIdShape("mistralai/mixtral-8x7b"), true);
+
+  assert.equal(isOpenRouterModelIdShape("gpt-4o"), false);
+  assert.equal(isOpenRouterModelIdShape("o3-mini"), false);
+  assert.equal(isOpenRouterModelIdShape("claude-3-5-sonnet"), false);
+  assert.equal(isOpenRouterModelIdShape("text-embedding-3-small"), false);
+  assert.equal(isOpenRouterModelIdShape(""), false);
+  assert.equal(isOpenRouterModelIdShape("   "), false);
+  assert.equal(isOpenRouterModelIdShape("/vendor/alpha"), false);
+  assert.equal(isOpenRouterModelIdShape("vendor/alpha/"), false);
+  assert.equal(isOpenRouterModelIdShape("vendor/alpha/beta"), false);
+  assert.equal(isOpenRouterModelIdShape("vendor/ alpha"), false);
+  assert.equal(isOpenRouterModelIdShape("vendor /alpha"), false);
+  assert.equal(isOpenRouterModelIdShape("vendor/alpha beta"), false);
+});
+
+Deno.test("cold openrouter catalogue refresh is skipped for non-namespaced model ids", async () => {
+  resetOpenRouterModelsCacheForTest();
+  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+  let fetches = 0;
+  setOpenRouterModelsFetchForTest((() => {
+    fetches += 1;
+    return Promise.resolve(jsonResponse(catalogue));
+  }) as typeof fetch);
+  try {
+    assert.equal(await resolveOpenRouterUpstreamModel("gpt-4o"), null);
+    assert.equal(await resolveOpenRouterUpstreamModel("o3-mini"), null);
+    assert.equal(await resolveOpenRouterUpstreamModel("chatgpt-4o-latest"), null);
+    assert.equal(fetches, 0, "non-namespaced models must not trigger an OpenRouter catalogue fetch");
+    assert.equal(await resolveOpenRouterUpstreamModel("vendor/alpha"), "vendor/alpha");
+    assert.equal(fetches, 1, "namespaced model triggers catalogue fetch on cold cache");
+  } finally {
+    setOpenRouterModelsFetchForTest(null);
+    resetOpenRouterModelsCacheForTest();
+    Deno.env.delete("OPENROUTER_API_KEY");
+  }
+});
+
+Deno.test("responses wire does not trigger cold openrouter catalogue fetch when openrouter is disabled", async () => {
+  const kv = new CatalogKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetOpenRouterModelsCacheForTest();
+  resetProviderSelectionCacheForTest();
+  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+
+  // Disable openrouter by explicitly selecting only codex
+  await kv.set(PROVIDER_SELECTION_KV_KEY, {
+    provider_ids: ["codex"],
+    updated_at_ms: Date.now(),
+  });
+
+  let fetches = 0;
+  setOpenRouterModelsFetchForTest((() => {
+    fetches += 1;
+    return Promise.resolve(jsonResponse(catalogue));
+  }) as typeof fetch);
+
+  try {
+    const req = new Request("https://ai.ubq.fi/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "vendor/alpha", input: "test" }),
+    });
+
+    await handleResponses(req);
+    assert.equal(fetches, 0, "disabled openrouter provider must not trigger catalogue fetch");
+  } finally {
+    setOpenRouterModelsFetchForTest(null);
+    resetOpenRouterModelsCacheForTest();
+    resetProviderSelectionCacheForTest();
+    Deno.env.delete("OPENROUTER_API_KEY");
+    setKvForTest(null);
+  }
+});
+
