@@ -64,7 +64,11 @@ const showToast = (options = {}) => {
   const type = options.type === "success" || options.type === "error" ? options.type : "info";
   const title = typeof options.title === "string" ? options.title : "";
   const description = typeof options.description === "string" ? options.description : "";
-  const duration = Number.isFinite(options.duration) ? Math.max(0, options.duration) : DURATION_BY_TYPE[type];
+  const duration = options.duration === Infinity
+    ? Infinity
+    : Number.isFinite(options.duration)
+    ? Math.max(0, options.duration)
+    : DURATION_BY_TYPE[type];
 
   const host = ensureToaster();
   const toastEl = document.createElement("div");
