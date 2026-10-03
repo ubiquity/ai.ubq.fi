@@ -77,17 +77,17 @@ against that account:
 
 ## Configuration
 
-The admin console has a **Use banked resets** switch on each API key's create form and editor under **API keys**. The
-authenticated `GET /admin/api-keys` response includes `banked_resets_enabled`; `POST` accepts that boolean when creating
-a key, and `PATCH` accepts it alongside the key's `id`. Edits save automatically to that key's record in KV and survive
-restarts. New and existing keys default to enabled until explicitly changed. The former gateway-wide admin control is
-removed.
+The API-key-level reset switch is retired. `GET /admin/api-keys` no longer returns `banked_resets_enabled`, and `POST`
+and `PATCH /admin/api-keys` reject that field with `400 invalid_request_error` instead of silently ignoring it. Do not
+use the old API-key disable procedure; configure reset usage on the **Providers** view, per Codex subscription, through
+`GET`/`PATCH /admin/providers/codex/banked-resets`. The PATCH body is
+`{ "account_id_hash": "…", "enabled": true|false }`.
 
-This is permission for a key's requests to redeem a reset, not separate provider quota: restored Codex capacity remains
-shared. Disabling one key does not change another key. The key record is read strongly at selection and atomically
-checked before recording an inventory decision or authorizing submission. Existing environment mode and caps below still
-apply, including for non-key authentication. Changing a switch never calls the reset provider. A reset already
-authorized for submission cannot be cancelled or undone. Existing redemption and daily-cap records are retained.
+Subscription choices remain independent, while restored Codex capacity remains shared. The per-subscription setting is
+read strongly at selection and atomically checked before recording an inventory decision or authorizing submission.
+Existing environment mode and caps below still apply, including for non-key authentication. Changing a switch never
+calls the reset provider. A reset already authorized for submission cannot be cancelled or undone. Existing redemption
+and daily-cap records are retained.
 
 Settings are re-read on each gateway request and immediately before the consume boundary.
 

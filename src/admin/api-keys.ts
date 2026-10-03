@@ -97,6 +97,15 @@ const normalizeKernelWindowMsInput = normalizeWindowMsInput;
 
 const paidFallbackInputError = (message: string): Response => openaiError(400, message, "invalid_request_error");
 
+const rejectRetiredApiKeyResetSetting = (raw: Record<string, unknown>): Response | null => {
+  if (!Object.prototype.hasOwnProperty.call(raw, "banked_resets_enabled")) return null;
+  return openaiError(
+    400,
+    "banked_resets_enabled is retired; configure banked resets per Codex subscription",
+    "invalid_request_error"
+  );
+};
+
 const paidFallbackInitializationError = (error: unknown): Response => {
   if (error instanceof MeteredError) {
     return openaiError(error.status, error.message, error.code, { type: "server_error" });
@@ -338,6 +347,8 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
 
   const raw = await readJsonBody(req);
   if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const retiredResetSettingError = rejectRetiredApiKeyResetSetting(raw);
+  if (retiredResetSettingError) return retiredResetSettingError;
 
   const name = normalizeApiKeyName(raw.name);
   if (!name) return openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error");
@@ -558,5 +569,6 @@ export {
   paidFallbackInitializationError,
   paidFallbackInputError,
   paidFallbackPublicFields,
+  rejectRetiredApiKeyResetSetting,
   shouldIncludeUsage,
 };

@@ -468,6 +468,22 @@ Deno.test("admin API key create validates its fields and reports persistence fai
   assert.equal((await payloadOf(failed)).error?.message, "Failed to persist API key");
 });
 
+Deno.test("retired API-key banked reset settings are rejected without mutation", async () => {
+  kvStore.clear();
+
+  const created = await handleAdminApiKeysCreate(adminRequest("/admin/api-keys", { name: "Retired setting", banked_resets_enabled: false }));
+  assert.equal(created.status, 400);
+  assert.equal((await payloadOf(created)).error?.message, "banked_resets_enabled is retired; configure banked resets per Codex subscription");
+  assert.equal(kvStore.size, 0);
+
+  const key = seedApiKey();
+  const before = structuredClone(storedRecord(key));
+  const updated = await handleAdminApiKeysUpdate(adminRequest("/admin/api-keys", { id: key.id, banked_resets_enabled: false }, "PATCH"));
+  assert.equal(updated.status, 400);
+  assert.equal((await payloadOf(updated)).error?.message, "banked_resets_enabled is retired; configure banked resets per Codex subscription");
+  assert.deepEqual(storedRecord(key), before);
+});
+
 Deno.test("admin API key create reports an unusable Metered pricing response", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;

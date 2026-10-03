@@ -32,6 +32,7 @@ import {
   paidFallbackInitializationError,
   paidFallbackInputError,
   paidFallbackPublicFields,
+  rejectRetiredApiKeyResetSetting,
 } from "./api-keys.ts";
 
 type ApiKeyUpdateTarget = Readonly<{
@@ -470,6 +471,8 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
 
   const raw = await readJsonBody(req);
   if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const retiredResetSettingError = rejectRetiredApiKeyResetSetting(raw);
+  if (retiredResetSettingError) return retiredResetSettingError;
 
   const target = await resolveApiKeyUpdateTarget(kv, raw);
   if (!target.ok) return target.response;
