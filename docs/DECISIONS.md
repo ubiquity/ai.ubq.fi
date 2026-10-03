@@ -31,6 +31,21 @@ handoff file, and the parent read `pong` back from disk; separately a parent rec
 without any file handoff. Measured overhead: 884 ms from tool call to spawn result and 192 ms more until the child's
 first turn.
 
+Cross-backend delegation does not carry a payload (measured 2026-10-03). A parent whose model is served by the Codex
+backend (`gpt-6-astra`, `gpt-6.1-sol`) emits the spawn message as a sealed Fernet token (`gAAAAA...`), because that
+backend seals every `encrypted: true` tool argument and only it can open the seal. A gateway-served child therefore
+receives an empty task: two `deepseek-ai/DeepSeek-V4.1-Flash-ultra` children of a `gpt-6-astra` parent reported the
+assignment arrived as an unreadable blob, and neither edited a file (`agent_message` items carried the plaintext
+envelope and a sealed `encrypted_content` part that this gateway correctly marks omitted). Delegation payloads survive
+only when both ends are served by the same backend: gateway parent to gateway child (deepseek or qwen) works, Codex
+parent to Codex child works, and a cross-backend assignment needs an out-of-band handoff. Gateway-side unsealing is not
+available: forwarding the same tool schemas with the `encrypted` annotation removed is rejected by the Codex backend
+("Invalid Value: 'tools'. Function 'collaboration.followup_task' is reserved for use by this model and must match the
+configured schema."), so the annotation is enforced server-side and only a client-side change could carry a
+cross-backend payload another way. The recorded convention is a file at `/tmp/codex-agent-tasks/<task_name>.md` written
+by the parent before the spawn and read by the child first, which works because the plaintext envelope still carries the
+task name and sender.
+
 Limits recorded with the same evidence: a sealed payload from a ChatGPT-backed thread stays opaque to this gateway
 because the opening key lives in that backend and the client implements no such crypto, so it is declared rather than
 invented; a sub-agent receives no collaboration tools in this client build, so fan-out depth is 1; `qwen-3.8-27b`
