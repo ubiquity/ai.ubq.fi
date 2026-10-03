@@ -30,7 +30,7 @@ if [ -n "$prettier_files" ]; then
     tools/lint/node_modules/.bin/prettier --write $prettier_files
     git add -- $prettier_files
   else
-    echo "pre-commit: Prettier is not installed; run 'bun install' in tools/lint then 'sh scripts/format.sh'." >&2
+    echo "pre-commit: Prettier is not installed; run 'cd tools/lint && bun install' (or 'npm install'), then 'sh scripts/format.sh'." >&2
     # Fail instead of falling through: without the formatter the staged TypeScript
     # cannot be repaired, so continuing would commit unformatted source while the
     # hook still reported success.
