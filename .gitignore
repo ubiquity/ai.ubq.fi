@@ -19,6 +19,7 @@ benchmark-runs/
 # up as a tracked file containing an absolute path.
 node_modules
 .npm-cache/
+.npm/
 .bun-cache/
 .tmp/
 
