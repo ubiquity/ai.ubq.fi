@@ -148,7 +148,14 @@ const recordCerebrasResponsesTerminal = (
     recordCerebrasResponseHealth(upstreamStatus, providerRequestId);
   } else {
     recordCerebrasFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
-    void recordCerebrasProviderHealth("upstream_error", upstreamStatus, Date.now, providerRequestId);
+    // A `response.incomplete` terminal from the client's own output budget is
+    // normal truncation, not a provider fault, so it is not attributed to
+    // provider health. Neither is it recorded as success: the unconditional
+    // success overwrite removed for #585 must stay removed. Only genuinely
+    // failed terminals degrade provider health.
+    if (terminalType !== "response.incomplete") {
+      void recordCerebrasProviderHealth("upstream_error", upstreamStatus, Date.now, providerRequestId);
+    }
   }
 };
 
