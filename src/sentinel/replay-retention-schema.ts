@@ -47,6 +47,7 @@ const TEXT_ENCODER = new TextEncoder();
 const HEX_DIGEST = /^[0-9a-f]{64}$/;
 
 export type SentinelReplayAccountingState = "reserved" | "stored" | "evicting" | "revoked";
+export type SentinelReplayClaimKind = "evicted" | "expired";
 
 /** The durable per-capture accounting row. Never written with `expireIn`. */
 export type SentinelReplayAccountingRow = Readonly<{
@@ -65,6 +66,8 @@ export type SentinelReplayAccountingRow = Readonly<{
   status_expires_at_ms: number;
   /** Count of completed fence-guarded staging batches. */
   stage: number;
+  /** Cause recorded when this row moves to `evicting`. */
+  claim_kind?: SentinelReplayClaimKind;
 }>;
 
 /** A pre-accounting-row reservation; only ever read to release its charge once. */
@@ -281,7 +284,8 @@ export const isAccountingRow = (value: unknown): value is SentinelReplayAccounti
     counter(row.created_at_ms) &&
     counter(row.expires_at_ms) &&
     counter(row.status_expires_at_ms) &&
-    counter(row.stage)
+    counter(row.stage) &&
+    (row.claim_kind === undefined || row.claim_kind === "evicted" || row.claim_kind === "expired")
   );
 };
 

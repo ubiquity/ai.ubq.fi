@@ -85,6 +85,7 @@ import {
   type SentinelReplayAccountingRow,
   type SentinelReplayAdmission,
   type SentinelReplayBudgetLedger,
+  type SentinelReplayClaimKind,
   type SentinelReplayPublication,
   type SentinelReplayRetentionStatus,
   withBudget,
@@ -573,11 +574,12 @@ const finalizeClaimedVictim = async (
   kv: Deno.Kv,
   key: Deno.KvKey,
   row: SentinelReplayAccountingRow,
-  kind: "evicted" | "expired",
   nowMs: number,
   budgetBytes: number,
   maxChunkDeletes = EVICTION_MAX_CHUNK_DELETES
 ): Promise<Readonly<{ finalized: boolean; chunks: number }>> => {
+  const kind = row.claim_kind;
+  if (kind === undefined) return { finalized: false, chunks: 0 };
   const cleanup = await deleteChunkBatch(kv, row.capture_id, maxChunkDeletes);
   const remaining = cleanup.remaining > 0 ? cleanup.remaining : await countChunks(kv, row.capture_id);
   if (remaining > 0) return { finalized: false, chunks: cleanup.deleted };
@@ -669,7 +671,13 @@ const finalizeClaimedVictim = async (
  * stored -> evicting at this row versionstamp, and a loser must move on without
  * touching the victim.
  */
-const claimVictim = async (kv: Deno.Kv, key: Deno.KvKey, row: SentinelReplayAccountingRow, budgetBytes: number): Promise<boolean> => {
+const claimVictim = async (
+  kv: Deno.Kv,
+  key: Deno.KvKey,
+  row: SentinelReplayAccountingRow,
+  kind: SentinelReplayClaimKind,
+  budgetBytes: number
+): Promise<SentinelReplayAccountingRow | null> => {
   // Re-read before claiming: a stale victim whose row was already deleted or
   // already claimed must never be resurrected by a `versionstamp: null` check.
   const current = await kv.get<SentinelReplayAccountingRow>(key);
@@ -680,33 +688,38 @@ const claimVictim = async (kv: Deno.Kv, key: Deno.KvKey, row: SentinelReplayAcco
     current.value.fence !== row.fence ||
     current.value.bytes !== row.bytes
   ) {
-    return false;
+    return null;
   }
   // Bind the narrowed row: TypeScript does not carry a property narrowing into
   // the mutation closure, and no assertion should be needed for that.
   const claimed: SentinelReplayAccountingRow = current.value;
-  return await commitAccountingMutation(
+  const claimedRow: SentinelReplayAccountingRow = {
+    ...claimed,
+    state: "evicting",
+    fence: row.fence + 1,
+    claim_kind: kind,
+  };
+  const committed = await commitAccountingMutation(
     kv,
     key,
     current.versionstamp,
     (ledger) => ledger,
-    (operation) => operation.set(key, { ...claimed, state: "evicting", fence: row.fence + 1 }),
+    (operation) => operation.set(key, claimedRow),
     budgetBytes
   );
+  return committed ? claimedRow : null;
 };
 
 /**
  * Resume an `evicting` victim whose final commit failed after its bytes were
- * removed. The claim kind is unambiguous because eviction only ever claims
- * unexpired rows: an evicting row past its payload TTL was claimed by the TTL
- * reclamation pass and stays `expired`, never `evicted`.
+ * removed. The claim kind is persisted on the row because the current clock
+ * may have passed the payload TTL before this continuation runs.
  */
 const resumeEvictingRows = async (kv: Deno.Kv, nowMs: number, budgetBytes: number, limit: number): Promise<number> => {
   const victims = await selectVictims(kv, limit, (row) => row.state === "evicting", nowMs);
   let resumed = 0;
   for (const victim of victims) {
-    const kind = victim.row.expires_at_ms <= nowMs ? "expired" : "evicted";
-    const result = await finalizeClaimedVictim(kv, victim.key, victim.row, kind, nowMs, budgetBytes);
+    const result = await finalizeClaimedVictim(kv, victim.key, victim.row, nowMs, budgetBytes);
     if (result.finalized) resumed += 1;
   }
   return resumed;
@@ -742,8 +755,8 @@ export const evictSentinelReplays = async (
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(options.budget_bytes ?? sentinelReplayBudgetBytes()));
   const maxRecords = Math.max(1, Math.min(EVICTION_BATCH_RECORDS, options.max_records ?? EVICTION_BATCH_RECORDS));
   // Expired payloads belong to the TTL reclamation pass, which reports them as
-  // `expired`; eviction only claims rows whose payload TTL has not passed, so a
-  // resumed `evicting` row's claim kind is unambiguous.
+  // `expired`; each claim records its cause so a resumed row keeps that cause
+  // even when its payload TTL has since passed.
   const victims = await selectVictims(kv, maxRecords, (row, nowMs) => row.state === "stored" && row.expires_at_ms > nowMs, options.now_ms);
   let records = 0;
   let bytes = 0;
@@ -755,8 +768,9 @@ export const evictSentinelReplays = async (
     if (state.kind === "corrupt") break;
     const ledger = withBudget(state.ledger, budgetBytes);
     if (ledger.stored_bytes <= options.target_bytes) break;
-    if (!(await claimVictim(kv, victim.key, victim.row, budgetBytes))) continue;
-    const result = await finalizeClaimedVictim(kv, victim.key, victim.row, "evicted", options.now_ms, budgetBytes, remainingDeletes);
+    const claimed = await claimVictim(kv, victim.key, victim.row, "evicted", budgetBytes);
+    if (claimed === null) continue;
+    const result = await finalizeClaimedVictim(kv, victim.key, claimed, options.now_ms, budgetBytes, remainingDeletes);
     chunks += result.chunks;
     if (!result.finalized) continue;
     records += 1;
@@ -780,8 +794,9 @@ export const reclaimExpiredSentinelReplays = async (
   let records = 0;
   let bytes = 0;
   for (const victim of victims) {
-    if (!(await claimVictim(kv, victim.key, victim.row, budgetBytes))) continue;
-    const result = await finalizeClaimedVictim(kv, victim.key, victim.row, "expired", options.now_ms, budgetBytes);
+    const claimed = await claimVictim(kv, victim.key, victim.row, "expired", budgetBytes);
+    if (claimed === null) continue;
+    const result = await finalizeClaimedVictim(kv, victim.key, claimed, options.now_ms, budgetBytes);
     if (!result.finalized) continue;
     records += 1;
     bytes += victim.row.bytes;

@@ -192,9 +192,10 @@ Deno.test({
       const accounting = await kv.get<SentinelReplayAccountingRow>(victims[1].key);
       assert.equal(accounting.value?.state, "evicting");
       assert.equal(accounting.value.bytes, victims[1].accounting.bytes);
+      assert.equal(accounting.value.claim_kind, "evicted");
 
-      // Maintenance, rather than another direct eviction call, resumes already-claimed rows.
-      await runSentinelReplayRetentionMaintenance(kv, { now_ms: NOW + 11, budget_bytes: BUDGET_BYTES });
+      // Maintenance resumes the budget claim after its payload TTL has passed.
+      await runSentinelReplayRetentionMaintenance(kv, { now_ms: NOW + SENTINEL_REPLAY_TTL_MS + 11, budget_bytes: BUDGET_BYTES });
       assert.deepEqual(await countsFor(kv, victims), [0, 0], "the bounded continuation deletes only the two remaining chunks");
       assert.equal((await kv.get(victims[1].key)).value, null);
       const finished = await ledgerFor(kv);
