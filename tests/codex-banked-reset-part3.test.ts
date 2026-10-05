@@ -24,25 +24,29 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
     {
       enabled: defaults.enabled,
       mode: defaults.mode,
-      maxGlobalPerDay: defaults.maxGlobalPerDay,
+      maxPerAccountPerDay: defaults.maxPerAccountPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: true, mode: "shadow", maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 }
+    { enabled: true, mode: "shadow", maxPerAccountPerDay: 1, maxPerAccountPerWindow: 1 }
   );
 
   const environment = new Map<string, string>([
     ["CODEX_BANKED_RESET_ENABLED", " true "],
     ["CODEX_BANKED_RESET_MODE", " LIVE "],
-    ["CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY", "2"],
+    ["CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY", "2"],
     ["CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW", "1"],
   ]);
   const parsedConfig = parseCodexBankedResetConfig((key) => environment.get(key));
   assert.equal(parsedConfig.enabled, true);
   assert.equal(parsedConfig.mode, "live");
-  assert.equal(parsedConfig.maxGlobalPerDay, 2);
+  assert.equal(parsedConfig.maxPerAccountPerDay, 2);
   assert.equal(parsedConfig.maxPerAccountPerWindow, 1);
+  assert.equal("maxGlobalPerDay" in parsedConfig, false, "the retired global cap field is gone");
   assert.equal(parseCodexBankedResetConfig(() => "1").enabled, false);
-  assert.equal(parseCodexBankedResetConfig(() => "1.5").maxGlobalPerDay, 0);
+  assert.equal(parseCodexBankedResetConfig(() => "1.5").maxPerAccountPerDay, 0);
+  // The retired global environment variable is no longer read at all.
+  const retiredEnvironment = parseCodexBankedResetConfig((key) => (key === "CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY" ? "0" : undefined));
+  assert.equal(retiredEnvironment.maxPerAccountPerDay, 1);
 
   const submittedAtMs = 1_700_000_000_001;
   const validRecord: CodexResetRedemptionRecord = {

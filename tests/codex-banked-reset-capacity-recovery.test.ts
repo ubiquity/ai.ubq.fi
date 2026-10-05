@@ -81,7 +81,7 @@ const seedAuthPool = async (kv: RoutingKv, auth: RoutingAuth, now: number): Prom
 };
 
 /** Persist one capacity sample exactly as the dashboard sampler would. */
-const seedCapacityObservation = async (fixture: { snapshotAtMs: number; resetAtMs: number; usedPercent: number }): Promise<void> =>
+const seedCapacityObservation = async (fixture: { snapshotAtMs: number; resetAtMs: number | null; usedPercent: number }): Promise<void> =>
   await recordCodexCapacityRoutingObservations(
     [
       {
@@ -114,7 +114,9 @@ const seedCapacityExhaustedProbe = async (kv: RoutingKv, now: number): Promise<v
     observed_reset_at_is_stable: true,
     banked_reset_generation_ambiguous: true,
   });
-  await seedCapacityObservation({ snapshotAtMs: now + 1, resetAtMs: now + 7 * DAY_MS, usedPercent: 100 });
+  // No reset deadline: this is the deadline-less capacity exhaustion that
+  // stays half-open and must remain probe-recoverable.
+  await seedCapacityObservation({ snapshotAtMs: now + 1, resetAtMs: null, usedPercent: 100 });
 };
 
 /**
@@ -160,6 +162,35 @@ Deno.test("a capacity-exhausted subscription with no class circuit admits a boun
     // The same unclaimed routing account must not mint a second lease while
     // the first one is live.
     assert.equal(await claimCodexRoutingProbe(singlePool, probeAccount, now + 4), null);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("a capacity exhaustion with a future reset deadline is the blocked cohort identity", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  resetProviderSelectionCacheForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const auth = harnessAuth(now);
+    await seedAuthPool(kv, auth, now);
+    await seedRoutingState(kv, auth, now, {
+      primary_used_percent: 100,
+      observed_reset_at_ms: now - 7 * DAY_MS,
+      observed_reset_at_is_stable: true,
+      banked_reset_generation_ambiguous: true,
+    });
+    const resetAtMs = now + 7 * DAY_MS;
+    await seedCapacityObservation({ snapshotAtMs: now + 1, resetAtMs, usedPercent: 100 });
+
+    const selected = await selectCodexRoutingAccountsStrong(singlePool, singlePool.accounts, now + 2, LUNA);
+    assert.equal(selected.kind, "quota_blocked");
+    assert.equal(selected.fullCohortExhausted, true);
+    assert.equal(selected.blockedAccounts.length, 1);
+    assert.equal(selected.blockedAccounts[0].quotaResetAtMs, resetAtMs);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();

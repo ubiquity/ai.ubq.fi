@@ -545,7 +545,7 @@ export const clearBankedResetRecords = (): void => {
 export const liveBankedResetFixtureConfig = (): CodexBankedResetConfig => ({
   enabled: true,
   mode: "live",
-  maxGlobalPerDay: 1,
+  maxPerAccountPerDay: 1,
   maxPerAccountPerWindow: 1,
 });
 

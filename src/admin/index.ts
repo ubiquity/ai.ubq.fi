@@ -22,6 +22,7 @@ export { handleAdminApiKeyChanges } from "./api-key-audit.ts";
 export { handleAdminApiKeysDelete, handleAdminApiKeysRevoke, handleAdminApiKeysUnrevoke, handleAdminApiKeysUpdate } from "./api-key-mutations.ts";
 export {
   handleAdminCodexResetSettings,
+  handleAdminCodexOverageUsage,
   handleAdminKernelPolicyQueueList,
   handleAdminKernelPubKeysCreate,
   handleAdminKernelPubKeysDelete,

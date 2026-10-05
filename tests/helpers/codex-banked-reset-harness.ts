@@ -353,7 +353,7 @@ const hasKey = (keys: readonly Deno.KvKey[], expected: Deno.KvKey): boolean => k
 const config = (overrides: Partial<CodexBankedResetConfig> = {}): CodexBankedResetConfig => ({
   enabled: true,
   mode: "live",
-  maxGlobalPerDay: 5,
+  maxPerAccountPerDay: 1,
   maxPerAccountPerWindow: 1,
   ...overrides,
 });
@@ -602,7 +602,9 @@ export type { ResetInventory } from "../../src/codex/banked-reset-provider.ts";
 export { CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS } from "../../src/codex/banked-reset.ts";
 export { CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS } from "../../src/codex/banked-reset.ts";
 export { CODEX_BANKED_RESET_LEASE_MS } from "../../src/codex/banked-reset.ts";
+/** Retained legacy key: the submission budget never reads or enforces it after the per-account cutover. */
 export { codexResetGlobalDailyKey } from "../../src/codex/banked-reset.ts";
+export { codexResetAccountDailyKey } from "../../src/codex/banked-reset.ts";
 export { codexResetRedemptionKey } from "../../src/codex/banked-reset.ts";
 export { codexResetUsageKey } from "../../src/codex/reset-settings.ts";
 export { attemptCodexBankedReset };

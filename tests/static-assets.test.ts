@@ -374,7 +374,7 @@ Deno.test("admin analytics view places capacity history before current providers
   assert.match(adminHtml, /id="view-tab-analytics"[\s\S]*?>\s*Analytics\s*</);
   assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
   assert.match(adminHtml, /admin\.css\?v=passport-design-20260922/);
-  assert.match(adminHtml, /admin\.js\?v=analytics-trim-20261003/);
+  assert.match(adminHtml, /admin\.js\?v=overage-toggle-20261005/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);

@@ -18,6 +18,7 @@ import {
   handleAdminCodexPromptsPurge,
   handleAdminCodexRecheck,
   handleAdminCodexResetSettings,
+  handleAdminCodexOverageUsage,
   handleAdminDebugRouting,
   handleAdminDefaults,
   handleAdminKernelPolicyQueueList,
@@ -124,6 +125,7 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["PATCH"], path: "/admin/passkey-users", superAdmin: true, run: (req) => handlePasskeyUsersUpdate(req) },
   { methods: ["POST"], path: "/admin/codex/auth", run: (req) => handleAdminCodexAuth(req) },
   { methods: ["GET", "PATCH"], path: "/admin/providers/codex/banked-resets", run: (req) => handleAdminCodexResetSettings(req) },
+  { methods: ["GET", "PATCH"], path: "/admin/providers/codex/overage-usage", run: (req) => handleAdminCodexOverageUsage(req) },
   { methods: ["GET"], path: "/admin/providers/codex/banked-resets/shadow-decisions", run: () => handleAdminCodexBankedResetShadowDecisions() },
   {
     methods: ["GET"],

@@ -3,6 +3,8 @@
 import { config } from "../config.ts";
 import { readCodexResetAvailableCount } from "../codex/banked-reset-provider.ts";
 import { codexResetUsageKey, readCodexResetUsage } from "../codex/reset-settings.ts";
+import { loadOverageUsageSettings, readOverageUsage, writeOverageUsage } from "../codex/overage-settings.ts";
+import { getAuthPoolEntry } from "../codex/auth.ts";
 import { getCodexCapacityAccounts } from "../codex/index.ts";
 import { json, openaiError } from "../http.ts";
 import { reloadKernelPublicKeys } from "../kernel/attestation.ts";
@@ -583,4 +585,48 @@ export const handleAdminCodexResetSettings = async (request: Request): Promise<R
     })
   );
   return json(200, { data }, { "Cache-Control": "no-store" });
+};
+
+export const handleAdminCodexOverageUsage = async (request: Request): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "Settings storage unavailable", "server_error");
+  const accounts = await getCodexCapacityAccounts();
+  const identities = await Promise.all(
+    accounts.map(async (account) => ({
+      slot: account.slot,
+      account_id_hash: await sha256Hex(account.account_id),
+      account_cohort_id: await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${account.account_id}`),
+    }))
+  );
+  if (request.method === "PATCH") {
+    const raw: unknown = await request.json().catch(() => null);
+    if (!isRecord(raw) || typeof raw.account_id_hash !== "string" || typeof raw.allow !== "boolean") {
+      return openaiError(400, "account_id_hash and boolean allow are required", "invalid_request_error");
+    }
+    if (!identities.some((account) => account.account_id_hash === raw.account_id_hash)) {
+      return openaiError(409, "Subscription changed. Reload Providers.", "invalid_request_error");
+    }
+    await writeOverageUsage(kv, raw.account_id_hash, raw.allow);
+    await refreshOverageUsageRoutingCache();
+    return json(200, { account_id_hash: raw.account_id_hash, allow: raw.allow }, { "Cache-Control": "no-store" });
+  }
+  // The admin read doubles as a cache refresh so the routing path sees a
+  // just-confirmed change without waiting for its bounded revalidation.
+  await refreshOverageUsageRoutingCache();
+  const data = await Promise.all(
+    identities.map(async (account) => ({
+      ...account,
+      allow: await readOverageUsage(kv, account.account_id_hash),
+    }))
+  );
+  return json(200, { data }, { "Cache-Control": "no-store" });
+};
+
+/** Best-effort refresh of the routing-facing cache from the live auth pool. */
+const refreshOverageUsageRoutingCache = async (): Promise<void> => {
+  try {
+    await loadOverageUsageSettings((await getAuthPoolEntry(true)).pool, true);
+  } catch {
+    // The switch remains durable; the next routing request refreshes the cache.
+  }
 };

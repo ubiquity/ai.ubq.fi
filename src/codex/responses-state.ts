@@ -1,6 +1,7 @@
 // Codex Responses execution state and operations interface, split out of src/codex.ts.
 
 import { selectCodexRoutingAccountsStrong } from "./account-routing.ts";
+import { loadOverageUsageSettings } from "./overage-settings.ts";
 import { CODEX_ORIGINATOR, CodexAuthAccountEntry, CodexDispatchAccountEntry, CodexError, codexUserAgent, getAuthPoolEntry } from "./auth.ts";
 import {
   CodexBankedResetConfig,
@@ -178,6 +179,9 @@ export const createCodexResponseState = async (
   const body = prepared.body;
   const requestedModel = requestedCodexModel(body);
   const poolEntry = await getAuthPoolEntry(true, true);
+  // Refresh the per-account overage switch once per request so the synchronous
+  // routing evaluation reads a bounded, current value.
+  await loadOverageUsageSettings(poolEntry.pool);
   const selected = await selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, Date.now(), requestedModel);
   const terminalSelection = initialCodexSelectionResponse(selected);
   if (terminalSelection) return { kind: "terminal" as const, response: terminalSelection };

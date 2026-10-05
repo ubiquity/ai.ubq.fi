@@ -78,7 +78,7 @@ const loadCurrentPoolConfig = (
     const config = dependencies.reloadConfig?.() ?? dependencies.config;
     if (!config.enabled) return { config: null, reason: "feature_disabled" };
     if (config.mode === "disabled") return { config: null, reason: "mode_disabled" };
-    if (config.maxGlobalPerDay <= 0) return { config: null, reason: "global_limit_disabled" };
+    if (config.maxPerAccountPerDay <= 0) return { config: null, reason: "per_account_day_limit_invalid" };
     if (config.maxPerAccountPerWindow !== 1) return { config: null, reason: "per_account_window_limit_invalid" };
     return { config, reason: null };
   } catch {
@@ -202,8 +202,11 @@ const loadPoolSubmissionConfig = (
   const loadedConfig = loadCurrentPoolConfig(dependencies);
   if (!loadedConfig.config) return { kind: "failure", reason: loadedConfig.reason };
   const config = loadedConfig.config;
-  if (config.mode === "live" && config.maxGlobalPerDay !== 1 && anyPoolProviderTreatsRedeemOutcomeAsFinal(ordered)) {
-    return { kind: "failure", reason: "terminal_outcome_global_limit_must_be_one" };
+  if (config.mode === "live" && config.maxPerAccountPerDay !== 1) {
+    return {
+      kind: "failure",
+      reason: anyPoolProviderTreatsRedeemOutcomeAsFinal(ordered) ? "terminal_outcome_account_day_limit_must_be_one" : "per_account_day_limit_invalid",
+    };
   }
   return { kind: "config", config };
 };

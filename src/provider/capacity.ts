@@ -511,10 +511,7 @@ export const getPersistedProviderCapacityView = async (options: Pick<ProviderCap
     : unavailableView(nowMs, history, resetEvents, mergedRateLimitResetEvents, downtimeEvents);
 };
 
-const refreshProviderCapacityInternal = async (
-  options: ProviderCapacitySnapshotOptions = {},
-  forceMeteredRefresh = true
-): Promise<ProviderCapacityView> => {
+const refreshProviderCapacityInternal = async (options: ProviderCapacitySnapshotOptions = {}, forceMeteredRefresh = true): Promise<ProviderCapacityView> => {
   const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {

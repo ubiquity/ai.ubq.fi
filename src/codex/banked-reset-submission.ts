@@ -359,9 +359,9 @@ const prepareLiveSubmission = async (
   if (nowBeforePreparation === null) return { kind: "outcome", outcome: outcome("pending", "invalid_clock", context, record) };
   const closed = await rejectIfClaimWindowClosed(kv, context, record, candidate, nowBeforePreparation);
   if (closed) return { kind: "outcome", outcome: closed };
-  const prepared = await prepareSubmission(kv, context, candidate, record, nowBeforePreparation, clock, finalConfig.config.maxGlobalPerDay);
+  const prepared = await prepareSubmission(kv, context, candidate, record, nowBeforePreparation, clock, finalConfig.config.maxPerAccountPerDay);
   if (prepared.kind === "failure") {
-    return { kind: "outcome", outcome: outcome(prepared.code === "global_limit_reached" ? "skipped" : "pending", prepared.code, context, record) };
+    return { kind: "outcome", outcome: outcome(prepared.code === "account_day_limit_reached" ? "skipped" : "pending", prepared.code, context, record) };
   }
   return { kind: "prepared", record: prepared.record };
 };
@@ -693,8 +693,8 @@ const handleClaimResult = async (
       return outcome("skipped", claimed.code, context);
     case "no_transaction":
       return outcome("skipped", "no_existing_transaction", context);
-    case "global_limit":
-      return outcome("skipped", "global_limit_reached", context);
+    case "account_day_limit":
+      return outcome("skipped", "account_day_limit_reached", context);
     case "in_progress":
       emit(telemetry, "codex_reset_duplicate_prevented", telemetryFields(context, candidate, { state: claimed.record.state, fence: claimed.record.fence }));
       metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);

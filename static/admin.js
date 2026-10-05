@@ -1123,6 +1123,12 @@ const codexResetSaving = new Set();
 let codexResetSettingsTarget = "";
 let codexResetSettingsToken = "";
 
+let codexOverageSettings = [];
+let codexOverageSettingsRevision = 0;
+const codexOverageSaving = new Set();
+let codexOverageSettingsTarget = "";
+let codexOverageSettingsToken = "";
+
 const renderCodexCapacitySource = (source, provider = null) => {
   // The capacity list is a role="list" container, and aria-allowed-role rejects listitem on article.
   const row = document.createElement("div");
@@ -1193,6 +1199,68 @@ const renderCodexCapacitySource = (source, provider = null) => {
         renderProviderCapacityList(latestProviderCapacityChartState.sources);
       }
       input.disabled = false;
+      if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
+    }
+  });
+
+  const overageSetting =
+    codexOverageSettingsTarget === apiUrl("/admin/providers") && codexOverageSettingsToken === getAdminToken()
+      ? codexOverageSettings.find((entry) =>
+        entry.account_cohort_id === source.account_cohort_id && entry.slot === source.slot
+      )
+      : null;
+  const overageLabel = document.createElement("label");
+  overageLabel.dataset.check = "";
+  const overageCopy = document.createElement("span");
+  overageCopy.textContent = "Allow overage spending";
+  const overageState = document.createElement("small");
+  const applyOverageState = (allow) => {
+    overageState.textContent = allow ? "Overage allowed" : "Resets first";
+  };
+  applyOverageState(overageSetting?.allow === true);
+  const overageInput = document.createElement("input");
+  overageInput.type = "checkbox";
+  overageInput.setAttribute("role", "switch");
+  overageInput.setAttribute("aria-label", "Allow overage spending for " + title.textContent);
+  overageInput.checked = overageSetting?.allow === true;
+  overageInput.disabled = !overageSetting || codexOverageSaving.has(overageSetting.account_id_hash);
+  overageLabel.append(overageCopy, overageInput, overageState);
+  header.append(overageLabel);
+  overageInput.addEventListener("change", async () => {
+    if (!overageSetting) return;
+    const target = apiUrl("/admin/providers");
+    const token = getAdminToken();
+    const allow = overageInput.checked;
+    overageInput.disabled = true;
+    codexOverageSaving.add(overageSetting.account_id_hash);
+    codexOverageSettingsRevision++;
+    try {
+      const response = await fetch(apiUrl("/admin/providers/codex/overage-usage"), {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ account_id_hash: overageSetting.account_id_hash, allow }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error?.message || "Could not save overage usage setting");
+      if (target !== apiUrl("/admin/providers") || token !== getAdminToken()) return;
+      overageSetting.allow = data.allow;
+      for (const entry of codexOverageSettings) {
+        if (entry.account_id_hash === overageSetting.account_id_hash) entry.allow = data.allow;
+      }
+      applyOverageState(data.allow);
+    } catch (error) {
+      if (target === apiUrl("/admin/providers") && token === getAdminToken()) {
+        overageInput.checked = overageSetting.allow;
+        applyOverageState(overageSetting.allow);
+        toast.error("Save failed", { description: error.message });
+      }
+    } finally {
+      codexOverageSaving.delete(overageSetting.account_id_hash);
+      codexOverageSettingsRevision++;
+      if (latestProviderCapacityChartState?.sources) {
+        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+      }
+      overageInput.disabled = false;
       if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
     }
   });
@@ -2841,6 +2909,7 @@ const loadProviders = async () => {
   const loadId = ++providersLoadId;
   const settingsTarget = apiUrl("/admin/providers");
   const settingsRevision = codexResetSettingsRevision;
+  const overageRevision = codexOverageSettingsRevision;
   providersLoading = true;
   try {
     const response = await fetch(apiUrl("/admin/providers"), {
@@ -2875,6 +2944,19 @@ const loadProviders = async () => {
     }
     codexResetSettingsTarget = settingsTarget;
     codexResetSettingsToken = token;
+    const overageResponse = await fetch(apiUrl("/admin/providers/codex/overage-usage"), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const overagePayload = await overageResponse.json().catch(() => null);
+    if (loadId !== providersLoadId || token !== getAdminToken() || settingsTarget !== apiUrl("/admin/providers")) {
+      return;
+    }
+    if (overageRevision === codexOverageSettingsRevision && codexOverageSaving.size === 0) {
+      codexOverageSettings = overageResponse.ok && Array.isArray(overagePayload?.data) ? overagePayload.data : [];
+    }
+    codexOverageSettingsTarget = settingsTarget;
+    codexOverageSettingsToken = token;
     latestProviderHealth = payload;
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();

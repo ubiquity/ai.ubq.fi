@@ -13,7 +13,7 @@ import {
   TestClock,
   attemptCodexBankedReset,
   candidate,
-  codexResetGlobalDailyKey,
+  codexResetAccountDailyKey,
   codexResetRedemptionKey,
   codexResetUsageKey,
   config,
@@ -45,21 +45,21 @@ Deno.test("banked reset disabled, shadow, and invalid limits make zero provider 
       reason: "feature_disabled",
     },
     {
-      name: "global shadow",
-      configured: config({ mode: "shadow", maxGlobalPerDay: 0 }),
+      name: "shadow ignores the disabled day cap",
+      configured: config({ mode: "shadow", maxPerAccountPerDay: 0 }),
       reason: "shadow",
       expectShadowEvent: true,
     },
     {
       name: "shadow",
-      configured: config({ mode: "shadow", maxGlobalPerDay: 0 }),
+      configured: config({ mode: "shadow", maxPerAccountPerDay: 0 }),
       reason: "shadow",
       expectShadowEvent: true,
     },
     {
-      name: "global cap disabled",
-      configured: config({ maxGlobalPerDay: 0 }),
-      reason: "global_limit_disabled",
+      name: "account day cap disabled",
+      configured: config({ maxPerAccountPerDay: 0 }),
+      reason: "per_account_day_limit_invalid",
     },
     {
       name: "per-account cap invalid",
@@ -126,7 +126,7 @@ Deno.test("banked reset live happy path commits exactly once with a stable durab
   assert.equal(durable.value.idempotency_key_hash, first.idempotencyKeyHash);
 
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  const daily = await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day));
+  const daily = await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(requiredHash(first.accountIdHash), day));
   assert.equal(daily.value?.submission_count, 1);
 
   const duplicate = await attemptCodexBankedReset(candidate({ requestId: "same-window-later-request" }), deps);
@@ -395,7 +395,7 @@ Deno.test("an already-expired quota window is never claimed or charged against t
   assert.equal(provider.commitCount, 0);
   assert.equal(kv.atomicCommitCount, 0);
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+  assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value, null);
 });
 
 Deno.test("a quota deadline crossing during submission preparation cannot reserve daily capacity", async () => {
@@ -405,7 +405,7 @@ Deno.test("a quota deadline crossing during submission preparation cannot reserv
   const reset = candidate({ quotaResetAtMs: clock.nowMs + 1 });
   await seedFences(kv, reset);
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  const dailyKey = codexResetGlobalDailyKey(day);
+  const dailyKey = codexResetAccountDailyKey(await testHash(reset.accountId), day);
   kv.beforeGet = (key) => {
     if (encodeKey(key) === encodeKey(dailyKey)) {
       kv.beforeGet = null;
@@ -582,7 +582,7 @@ Deno.test("a disabled subscription does not block another subscription", async (
     { slot: 0, candidate: reset, provider },
     { slot: 1, candidate: other, provider: otherProvider },
   ];
-  const deps = dependencies(kv, provider, clock, config({ mode: "shadow", maxGlobalPerDay: 1 }));
+  const deps = dependencies(kv, provider, clock, config({ mode: "shadow", maxPerAccountPerDay: 1 }));
   const allowed = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(allowed.reason, "shadow_selected");
   assert.equal(provider.inventoryInputs.length, 0);
@@ -607,7 +607,7 @@ Deno.test("disabling a subscription during inventory prevents a late shadow or l
     provider.inventoryGate = gate.promise;
     provider.inventoryEntered = entered;
     const pending = evaluateCodexBankedResetPool([{ slot: 0, candidate: reset, provider }], {
-      ...dependencies(kv, provider, clock, config({ mode, maxGlobalPerDay: 1 })),
+      ...dependencies(kv, provider, clock, config({ mode, maxPerAccountPerDay: 1 })),
     });
     await entered.promise;
     await kv.set(codexResetUsageKey(await testHash(reset.accountId)), { ...key, enabled: false });
@@ -680,7 +680,7 @@ Deno.test("documented terminal outcomes enable one-shot redemption and retain th
 
       const result = await attemptCodexBankedReset(
         reset,
-        dependencies(kv, provider, clock, config({ maxGlobalPerDay: 1 }), {
+        dependencies(kv, provider, clock, config({ maxPerAccountPerDay: 1 }), {
           event: (event, fields) => {
             if (event === "codex_reset_verified") verified.push(fields);
           },
@@ -702,8 +702,8 @@ Deno.test("documented terminal outcomes enable one-shot redemption and retain th
   }
 });
 
-Deno.test("a terminal-only provider requires an exact global daily cap of one", async () => {
-  for (const maxGlobalPerDay of [0, 2]) {
+Deno.test("a terminal-only provider requires an exact per-account daily cap of one", async () => {
+  for (const maxPerAccountPerDay of [0, 2]) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider({
       ...provenContract(),
@@ -713,13 +713,13 @@ Deno.test("a terminal-only provider requires an exact global daily cap of one", 
       redeemOutcomeIsFinal: true,
       receiptIdsSafeToPersistAndLog: false,
     });
-    const reset = candidate({ requestId: `terminal-cap-${maxGlobalPerDay}` });
+    const reset = candidate({ requestId: `terminal-cap-${maxPerAccountPerDay}` });
     await seedFences(kv, reset);
 
-    const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, new TestClock(), config({ maxGlobalPerDay })));
+    const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, new TestClock(), config({ maxPerAccountPerDay })));
 
     assert.equal(result.kind, "skipped");
-    assert.equal(result.reason, maxGlobalPerDay === 0 ? "global_limit_disabled" : "terminal_outcome_global_limit_must_be_one");
+    assert.equal(result.reason, maxPerAccountPerDay === 0 ? "per_account_day_limit_invalid" : "terminal_outcome_account_day_limit_must_be_one");
     assert.equal(provider.callCount, 0);
   }
 });
@@ -741,7 +741,7 @@ Deno.test("an ambiguous one-shot outcome stays unknown and never submits again",
   provider.lookupResult = { kind: "unknown", providerReceiptId: null };
   provider.verifyResult = false;
 
-  const oneShotConfig = config({ maxGlobalPerDay: 1 });
+  const oneShotConfig = config({ maxPerAccountPerDay: 1 });
   const first = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock, oneShotConfig));
   assert.equal(first.kind, "pending");
   assert.equal(first.reason, "provider_commit_unknown");
@@ -783,7 +783,7 @@ Deno.test("a malformed terminal reconciliation capability fails closed without p
   const provider = new FakeCodexUsageResetProvider(terminalContract);
   const clock = new TestClock();
   const reset = candidate({ requestId: "malformed-terminal-reconciliation" });
-  const oneShotConfig = config({ maxGlobalPerDay: 1 });
+  const oneShotConfig = config({ maxPerAccountPerDay: 1 });
   await seedFences(kv, reset);
   provider.redeemResult = { kind: "unknown", providerReceiptId: null };
 
@@ -898,7 +898,7 @@ Deno.test("an expired claimed record cannot be taken over after its quota deadli
   assert.equal(provider.redeemInputs.length, 0);
   assert.equal(provider.commitCount, 0);
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+  assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value, null);
 
   inventoryGate.resolve(undefined);
   const originalResult = await original;

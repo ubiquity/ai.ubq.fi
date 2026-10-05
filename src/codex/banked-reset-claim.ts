@@ -23,7 +23,7 @@ import {
   CODEX_BANKED_RESET_LEASE_MS,
   MAX_CAS_ATTEMPTS,
   claimedDuringCurrentUtcDay,
-  codexResetGlobalDailyKey,
+  codexResetAccountDailyKey,
   codexResetRedemptionKey,
   emit,
   isNonEmptyText,
@@ -32,7 +32,7 @@ import {
   metric,
   outcome,
   parseCodexResetRedemptionRecord,
-  parseGlobalDailyRecord,
+  parseAccountDayRecord,
   policyReason,
   providerPolicyReason,
   readUsageGate,
@@ -90,7 +90,7 @@ type ClaimResult =
   | Readonly<{ kind: "rejected"; record: CodexResetRedemptionRecord }>
   | Readonly<{ kind: "in_progress"; record: CodexResetRedemptionRecord }>
   | Readonly<{ kind: "no_transaction" }>
-  | Readonly<{ kind: "global_limit" }>
+  | Readonly<{ kind: "account_day_limit" }>
   | Readonly<{ kind: "failure"; code: string }>;
 
 type FenceRead =
@@ -420,14 +420,14 @@ const updateOwnedRecord = async (
  * after this durable side-effect boundary succeeds.
  */
 /**
- * Strong read of the UTC day's submission budget. A corrupt daily record fails
- * closed rather than resetting the cap to zero.
+ * Strong read of the account's UTC-day submission budget. A corrupt daily
+ * record fails closed rather than resetting the cap to zero.
  */
 const readDailySubmissionBudget = async (
   kv: Deno.Kv,
   dailyKey: Deno.KvKey,
   day: string,
-  maxGlobalPerDay: number
+  maxPerAccountPerDay: number
 ): Promise<
   Readonly<{ kind: "ok"; entry: Deno.KvEntryMaybe<CodexResetGlobalDailyRecord>; submissionCount: number }> | Readonly<{ kind: "failure"; code: string }>
 > => {
@@ -437,10 +437,10 @@ const readDailySubmissionBudget = async (
   } catch {
     return { kind: "failure", code: "kv_unavailable" };
   }
-  const daily = dailyEntry.value === null ? null : parseGlobalDailyRecord(dailyEntry.value, day);
-  if (dailyEntry.value !== null && !daily) return { kind: "failure", code: "global_limit_record_invalid" };
+  const daily = dailyEntry.value === null ? null : parseAccountDayRecord(dailyEntry.value, day);
+  if (dailyEntry.value !== null && !daily) return { kind: "failure", code: "account_day_record_invalid" };
   const submissionCount = daily?.submission_count ?? 0;
-  if (submissionCount >= maxGlobalPerDay) return { kind: "failure", code: "global_limit_reached" };
+  if (submissionCount >= maxPerAccountPerDay) return { kind: "failure", code: "account_day_limit_reached" };
   return { kind: "ok", entry: dailyEntry, submissionCount };
 };
 
@@ -455,7 +455,7 @@ const prepareSubmissionAttempt = async (
   expected: CodexResetRedemptionRecord,
   nowMs: number,
   clock: () => number,
-  maxGlobalPerDay: number,
+  maxPerAccountPerDay: number,
   expiresAtMs: number,
   day: string,
   key: Deno.KvKey,
@@ -478,7 +478,7 @@ const prepareSubmissionAttempt = async (
 
   const usage = await readUsageGate(kv, context.account.accountIdHash);
   if (usage.kind === "failure") return { kind: "failure", code: usage.code };
-  const budget = await readDailySubmissionBudget(kv, dailyKey, day, maxGlobalPerDay);
+  const budget = await readDailySubmissionBudget(kv, dailyKey, day, maxPerAccountPerDay);
   if (budget.kind === "failure") return { kind: "failure", code: budget.code };
   const submissionCount = budget.submissionCount;
   // Inventory, fences, and the daily budget are all strong reads. Check
@@ -517,15 +517,15 @@ const prepareSubmission = async (
   expected: CodexResetRedemptionRecord,
   nowMs: number,
   clock: () => number,
-  maxGlobalPerDay: number
+  maxPerAccountPerDay: number
 ): Promise<SubmissionPreparation> => {
   const expiresAtMs = leaseUntil(nowMs);
   const day = utcDay(nowMs);
   if (expiresAtMs === null || !day) return { kind: "failure", code: "invalid_clock" };
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
-  const dailyKey = codexResetGlobalDailyKey(day);
+  const dailyKey = codexResetAccountDailyKey(context.account.accountIdHash, day);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-    const prepared = await prepareSubmissionAttempt(kv, context, candidate, expected, nowMs, clock, maxGlobalPerDay, expiresAtMs, day, key, dailyKey);
+    const prepared = await prepareSubmissionAttempt(kv, context, candidate, expected, nowMs, clock, maxPerAccountPerDay, expiresAtMs, day, key, dailyKey);
     if (prepared) return prepared;
   }
   return { kind: "failure", code: "kv_cas_exhausted" };
