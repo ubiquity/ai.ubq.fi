@@ -345,9 +345,25 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   const helperServers: Deno.HttpServer[] = [];
   const releaseFixture = f.dispose;
   f.dispose = async () => {
-    closeReservations();
-    for (const server of helperServers.splice(0)) await server.shutdown();
-    await releaseFixture();
+    const errors: unknown[] = [];
+    try {
+      closeReservations();
+    } catch (err) {
+      errors.push(err);
+    }
+    const shutdowns = helperServers.splice(0).map((server) => server.shutdown());
+    const results = await Promise.allSettled(shutdowns);
+    for (const res of results) {
+      if (res.status === "rejected") errors.push(res.reason);
+    }
+    try {
+      await releaseFixture();
+    } catch (err) {
+      errors.push(err);
+    }
+    if (errors.length > 0) {
+      throw errors[0];
+    }
   };
   assert.notEqual(ports[0], ports[1]);
   assert.ok(!ports.includes(7999) && !ports.includes(8001));
