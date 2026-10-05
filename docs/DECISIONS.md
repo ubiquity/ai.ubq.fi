@@ -1469,3 +1469,21 @@ the ported value; fitting first drops additional unpinned kept results, lowest J
 minimal fitting prefix across re-renders, cap-forced drops count toward the reduction contract, and the request still
 fails closed above the raised bound. `JEV_COMPACTION_DISABLED=1` bypasses interception entirely for an operator fallback
 to the ordinary provider route; it stays unset by default.
+
+## Jev compaction dynamic floor acceptance - 2026-10-05
+
+A floor-bound render - nothing left that may be dropped or truncated, so text, pinned and already dropped content alone
+exceed the 1.5M-character fit target - is no longer an automatic failure. It is accepted when its token estimate (the
+library's calibrated estimator) is at most 85% of the token estimate of the request input it replaces. The bound is a
+ratio, so it scales with any session size and leaves the client headroom for the continuation after the adopted summary.
+Accepted floors are logged with `floor_bound=true`, `floor_tokens` and `input_estimate_tokens`, and the response header
+carries `floor=1`. Every other summary-too-large path is unchanged: a floor that cannot be measured or is not
+sufficiently smaller than its input still fails closed with 400. The no-reduction contract still rejects a summary that
+did not shrink at all.
+
+Reason: a production VPS session with a ~1M-token context produced a 1.63M-character floor that nothing could shrink, so
+every compaction attempt failed closed and the session could not continue (the client retried in a loop). The fixed 1.5M
+cap was chosen for bounded memory, not as a client-window limit; a floor that is token-measurably smaller than the input
+it replaces is adoptable and is strictly better than a session that can never compact. Reversal risk: a session whose
+text alone is very large can now adopt a multi-megabyte memory; the input-relative ratio keeps it below the window
+implied by the input, and summaries that did not shrink are still refused.

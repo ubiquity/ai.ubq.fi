@@ -8,7 +8,7 @@ import {
   SUMMARY_CHAR_CAP,
 } from "../src/jev_compaction/compaction.ts";
 import { parseCodexInput, renderSummary, SUMMARY_MARKER } from "../lib/jev_compaction/codex_items.ts";
-import { collectToolCalls } from "../lib/jev_compaction/state.ts";
+import { collectToolCalls, estimateTokens } from "../lib/jev_compaction/state.ts";
 import type { JevAsker, JevQuestions, JevResponse } from "../lib/jev_compaction/types.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
 
@@ -141,6 +141,46 @@ Deno.test("renderer marks kept calls and never rewrites kept text", () => {
   assert.ok(!summary.includes("no decision (kept)"));
   assert.ok(summary.includes(KEPT_MARKER));
   assert.ok(summary.includes("[tool call old_c] shell — keep"));
+});
+
+/** Mixed text whose token estimate stays near four characters per token. */
+const largeText = (chars: number): string => {
+  const base =
+    "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu ";
+  return base.repeat(Math.ceil(chars / base.length)).slice(0, chars);
+};
+
+/** A request at the intended validation scale whose floor exceeds the fit target. */
+const largeTranscript = (textChars: number, resultChars: number): unknown[] => {
+  const input: unknown[] = [text("user", "Goal: finish the large-session check."), call("big", "cat /tmp/big.log"), output("big", largeText(resultChars))];
+  const chunks = 8;
+  for (let index = 0; index < chunks; index += 1) input.push(text("user", largeText(Math.floor(textChars / chunks))));
+  input.push(text("user", "Final goal: keep the exact state."));
+  input.push(text("user", COMPACTION_PROMPT));
+  return input;
+};
+
+Deno.test("floor-bound summary ships for a roughly 1.5-million-token input that cannot shrink further", async () => {
+  const verdicts = { t1: { keepCall: 0.1, keepResult: 0.1 } };
+  const input = largeTranscript(5_100_000, 3_000_000);
+  const requestTokens = estimateTokens(JSON.stringify(input));
+  assert.ok(requestTokens > 1_500_000, `the fixture must be a ~1.5M-token request (got ${requestTokens})`);
+  const outcome = await buildCompactionResponse(body(input), decisionAsker(verdicts), { stream: false });
+  assert.equal(outcome.status, 200);
+  assert.ok(outcome.body.includes(SUMMARY_MARKER));
+  assert.ok(outcome.body.length > SUMMARY_CHAR_CAP, `the accepted floor must exceed the fit target (got ${outcome.body.length})`);
+  assert.ok(outcome.body.length < JSON.stringify(input).length, "the floor must be smaller than the input it replaces");
+  assert.match(outcome.headers["x-jev-compaction"] ?? "", /floor=1/);
+  assert.match(outcome.headers["x-jev-compaction"] ?? "", /calls_dropped=1/);
+});
+
+Deno.test("a floor that is not measurably smaller than its input still fails closed", async () => {
+  const verdicts = { t1: { keepCall: 0.1, keepResult: 0.1 } };
+  const input = largeTranscript(3_900_000, 250_000);
+  await assert.rejects(
+    () => buildCompactionResponse(body(input), decisionAsker(verdicts), { stream: false }),
+    (error: unknown) => error instanceof CompactionUnavailable && error.kind === "summary-too-large"
+  );
 });
 
 Deno.test("compaction fails closed on malformed input, no candidates and no reduction", async () => {
