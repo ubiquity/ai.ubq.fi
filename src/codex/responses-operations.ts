@@ -382,7 +382,7 @@ export const installCodexResponseOperations = (ctx: CodexResponseContext): void 
       const nowMs = Date.now();
       const observations = await loadCodexCapacityRoutingObservations(currentPoolEntry.pool, true);
       const kv = ctx.bankedResetDependencies.kv ?? (await getKv());
-      let existing = kv ? parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value) : null;
+      const existing = kv ? parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value) : null;
       let wrote = false;
       for (const [slot, auth] of currentPoolEntry.pool.accounts.entries()) {
         try {
