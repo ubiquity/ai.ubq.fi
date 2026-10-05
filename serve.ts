@@ -60,7 +60,9 @@ export const shutdownOptionalTelemetry = async (): Promise<void> => {
 /**
  * The Mac startup event reconciles due billing and prunes its own KV once.
  * Later terminal, admin-read and analytics-write events maintain that same KV;
- * no periodic work runs while it is idle. The VPS launcher never calls this.
+ * no periodic work runs while it is idle. If a terminal sweep cannot yet see a
+ * provider log, its durable retry marker therefore waits for a later authorized
+ * event instead of waking an otherwise idle Mac. The VPS launcher never calls this.
  */
 export const startMacMaintenance = (kv: Deno.Kv): (() => Promise<void>) => {
   let stopped = false;

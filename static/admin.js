@@ -38,6 +38,9 @@ const STORAGE_KEYS = {
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
+const DEFAULT_FINITE_USAGE_LIMIT = 50;
+const DEFAULT_FINITE_PAID_FALLBACK_LIMIT = 1;
+const KEY_CHANGES_LIMIT = 20;
 const LEGACY_ADMIN_CACHE_STORAGE_KEYS = [
   "uos_ai.admin.defaults_snapshot",
   "uos_ai.admin.defaults_models",
@@ -168,10 +171,12 @@ const loadingProvidersStatus = mustGet("loading-providers-status");
 
 const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
+const keyUsageLimitUnlimitedInput = mustGet("key-usage-limit-unlimited");
 const keyUsageWindowInput = mustGet("key-usage-window");
 const keyExpiresSelect = mustGet("key-expires");
 const keyPaidFallbackEnabledInput = mustGet("key-paid-fallback-enabled");
 const keyPaidFallbackLimitInput = mustGet("key-paid-fallback-limit");
+const keyPaidFallbackLimitUnlimitedInput = mustGet("key-paid-fallback-limit-unlimited");
 const keyPaidFallbackSettings = mustGet("key-paid-fallback-settings");
 const createKeyBtn = mustGet("create-key");
 const createBadge = mustGet("create-badge");
@@ -183,6 +188,10 @@ const keyWindowPreset1w = mustGet("key-window-1w");
 
 const keysBadge = mustGet("keys-badge");
 const keysList = mustGet("keys-list");
+const keyChangesBadge = mustGet("key-changes-badge");
+const keyChangesSummary = mustGet("key-changes-summary");
+const keyChangesList = mustGet("key-changes-list");
+const keyChangesLoadMoreBtn = mustGet("key-changes-load-more");
 const passkeyUsersBadge = mustGet("passkey-users-badge");
 const passkeyUsersList = mustGet("passkey-users-list");
 
@@ -781,11 +790,49 @@ const clearCreateResult = () => {
   createResult.hidden = true;
 };
 
+/** Parses a finite non-negative integer request limit; null when malformed. */
+const parseFiniteUsageLimit = (raw) => {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.trunc(parsed);
+};
+
+/** Parses a finite positive credit cap with at most six decimals; null when malformed. */
+const parseFinitePaidFallbackLimit = (raw) => {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const scaled = parsed * MICROCREDITS_PER_CREDIT;
+  if (Math.abs(scaled - Math.round(scaled)) > 0.000001) return null;
+  return Math.round(scaled) / MICROCREDITS_PER_CREDIT;
+};
+
+/** A finite value worth restoring when an Unlimited checkbox is unchecked. */
+const finiteValueOrFallback = (raw, fallback, options = {}) => {
+  const trimmed = String(raw ?? "").trim();
+  const parsed = Number(trimmed);
+  if (!trimmed || !Number.isFinite(parsed) || parsed < 0 || (options.positive && parsed <= 0)) return String(fallback);
+  return trimmed;
+};
+
+let lastFiniteUsageLimitValue = String(DEFAULT_FINITE_USAGE_LIMIT);
+let lastFinitePaidFallbackLimitValue = String(DEFAULT_FINITE_PAID_FALLBACK_LIMIT);
+
+const syncCreateUsageLimitControls = () => {
+  const unlimited = keyUsageLimitUnlimitedInput.checked;
+  keyUsageLimitInput.disabled = unlimited;
+  keyUsageLimitInput.required = !unlimited;
+};
+
 const syncCreatePaidFallbackControls = () => {
   const enabled = keyPaidFallbackEnabledInput.checked;
+  const unlimited = keyPaidFallbackLimitUnlimitedInput.checked;
   keyPaidFallbackSettings.hidden = !enabled;
-  keyPaidFallbackLimitInput.disabled = !enabled;
-  keyPaidFallbackLimitInput.required = enabled;
+  keyPaidFallbackLimitInput.disabled = !enabled || unlimited;
+  keyPaidFallbackLimitInput.required = enabled && !unlimited;
 };
 
 const clearKeysListLoading = () => {
@@ -5658,6 +5705,22 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
   panel.dataset.requestLogsLoading = "0";
 };
 
+/** A labelled native Unlimited checkbox controlling one numeric limit input. */
+const buildUnlimitedToggle = (id, controlId, labelText) => {
+  const label = document.createElement("label");
+  label.dataset.check = "true";
+  label.dataset.unlimitedToggle = "true";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.id = id;
+  input.setAttribute("aria-controls", controlId);
+  const text = document.createElement("span");
+  text.textContent = labelText;
+  label.appendChild(input);
+  label.appendChild(text);
+  return { label, input };
+};
+
 const renderKeys = (keys, view = "all") => {
   clearKeysListLoading();
   keysList.textContent = "";
@@ -5724,21 +5787,23 @@ const renderKeys = (keys, view = "all") => {
     };
 
     const usageData = getUsageInfoData();
+    let observedAtMs = Date.now();
     const limitState = usageData.limitValue === 0 ? "bad" : "";
     const limitInfo = appendKeyInfo(
       infoRow,
-      "Rate limit",
+      "Request limit",
       formatLimitValue(usageData.limitValue),
       limitState ? { state: limitState } : {},
     );
     const windowInfo = appendKeyInfo(infoRow, "Window", formatWindowShort(usageData.windowMs), {
       title: formatWindowMs(usageData.windowMs),
     });
-    const usageInfo = appendKeyInfo(infoRow, "Window requests", usageData.usageText, {
+    const usageInfo = appendKeyInfo(infoRow, "Requests used", usageData.usageText, {
       state: usageData.state,
       title: usageData.title,
     });
     const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(key.usage_reset_at_ms));
+    const observedInfo = appendKeyInfo(infoRow, "Observed", formatDate(observedAtMs));
 
     const paidFallbackSummary = document.createElement("details");
     paidFallbackSummary.dataset.disclosure = "";
@@ -5757,9 +5822,10 @@ const renderKeys = (keys, view = "all") => {
     const paidFallbackInfo = document.createElement("div");
     paidFallbackInfo.dataset.keyInfo = "info";
     paidFallbackInfo.dataset.paidFallbackInfo = "info";
-    const paidLimitInfo = appendKeyInfo(paidFallbackInfo, "Window limit", "unknown");
-    const paidSpentInfo = appendKeyInfo(paidFallbackInfo, "Window spent", "unknown");
-    const paidReservedInfo = appendKeyInfo(paidFallbackInfo, "Window reserved", "unknown");
+    const paidLimitInfo = appendKeyInfo(paidFallbackInfo, "Window cap", "unknown");
+    const paidSpentInfo = appendKeyInfo(paidFallbackInfo, "Settled credits", "unknown");
+    const paidReservedInfo = appendKeyInfo(paidFallbackInfo, "Reserved credits", "unknown");
+    const paidPendingInfo = appendKeyInfo(paidFallbackInfo, "Pending requests", "unknown");
     const paidResetInfo = appendKeyInfo(paidFallbackInfo, "Window resets", "unknown");
     const lifetimeSpendInfo = appendKeyInfo(paidFallbackInfo, "Lifetime spend", "unknown");
     const fallbackCountInfo = appendKeyInfo(paidFallbackInfo, "Fallbacks", "unknown");
@@ -5787,13 +5853,13 @@ const renderKeys = (keys, view = "all") => {
         ? providerUsage.surplus
         : null;
 
-      paidFallbackSummary.hidden = !enabled;
       paidFallbackStatus.dataset.state = enabled ? "ok" : "unknown";
       paidFallbackStatus.textContent = enabled ? "Enabled" : "Disabled";
       paidFallbackSummary.dataset.state = enabled ? "enabled" : "disabled";
-      paidLimitInfo.valueEl.textContent = formatPaidFallbackLimit(limit);
+      paidLimitInfo.valueEl.textContent = enabled ? formatPaidFallbackLimit(limit) : "Not enabled";
       paidSpentInfo.valueEl.textContent = formatCredits(spent);
       paidReservedInfo.valueEl.textContent = formatCredits(reserved);
+      paidPendingInfo.valueEl.textContent = formatNumber(normalizeFiniteNumber(key.paid_fallback_pending_count) ?? 0);
       paidResetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
       lifetimeSpendInfo.valueEl.textContent = usage &&
           Object.prototype.hasOwnProperty.call(usage, "metered_spend_microcredits")
@@ -5875,7 +5941,7 @@ const renderKeys = (keys, view = "all") => {
     main.appendChild(header);
     const primaryInfo = document.createElement("div");
     primaryInfo.dataset.keyInfo = "info";
-    primaryInfo.append(usageInfo.item, expiresInfo.item);
+    primaryInfo.append(usageInfo.item, expiresInfo.item, observedInfo.item);
     const keyDetails = document.createElement("details");
     keyDetails.dataset.disclosure = "";
     const keyDetailsTitle = document.createElement("summary");
@@ -5910,13 +5976,26 @@ const renderKeys = (keys, view = "all") => {
     limitField.dataset.field = "true";
     const limitLabel = document.createElement("span");
     limitLabel.dataset.label = "label";
-    limitLabel.textContent = "Rate limit";
+    limitLabel.textContent = "Request limit";
     const limitInput = document.createElement("input");
     limitInput.type = "number";
     limitInput.inputMode = "numeric";
-    limitInput.value = typeof key.usage_limit_requests === "number" ? String(key.usage_limit_requests) : "-1";
+    limitInput.min = "0";
+    limitInput.step = "1";
+    limitInput.id = `key-usage-limit-${key.id}`;
+    const initialLimit = typeof key.usage_limit_requests === "number" ? key.usage_limit_requests : -1;
+    let lastFiniteLimit = initialLimit >= 0 ? initialLimit : DEFAULT_FINITE_USAGE_LIMIT;
+    limitInput.value = String(lastFiniteLimit);
+    limitInput.disabled = initialLimit === -1;
     limitField.appendChild(limitLabel);
     limitField.appendChild(limitInput);
+
+    const limitUnlimited = buildUnlimitedToggle(
+      `key-usage-limit-unlimited-${key.id}`,
+      limitInput.id,
+      "Unlimited requests",
+    );
+    limitUnlimited.input.checked = initialLimit === -1;
 
     const windowField = document.createElement("label");
     windowField.dataset.field = "true";
@@ -5978,39 +6057,60 @@ const renderKeys = (keys, view = "all") => {
     paidFallbackLimitField.dataset.field = "true";
     const paidFallbackLimitLabel = document.createElement("span");
     paidFallbackLimitLabel.dataset.label = "label";
-    paidFallbackLimitLabel.textContent = "Window cap (credits; -1 = unlimited)";
+    paidFallbackLimitLabel.textContent = "Window cap (credits)";
     const paidFallbackLimitInput = document.createElement("input");
     paidFallbackLimitInput.type = "number";
     paidFallbackLimitInput.inputMode = "decimal";
-    paidFallbackLimitInput.min = "-1";
+    paidFallbackLimitInput.min = "0";
     paidFallbackLimitInput.step = "0.000001";
-    paidFallbackLimitInput.placeholder = "-1 or 1";
-    paidFallbackLimitInput.value = typeof key.paid_fallback_limit_credits === "number"
-      ? String(key.paid_fallback_limit_credits)
-      : "0";
+    paidFallbackLimitInput.placeholder = "1";
+    paidFallbackLimitInput.id = `key-paid-fallback-limit-${key.id}`;
+    const initialPaidFallbackLimit = normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0;
+    let lastFinitePaidFallbackLimit = initialPaidFallbackLimit > 0
+      ? initialPaidFallbackLimit
+      : DEFAULT_FINITE_PAID_FALLBACK_LIMIT;
+    paidFallbackLimitInput.value = String(lastFinitePaidFallbackLimit);
     paidFallbackLimitField.appendChild(paidFallbackLimitLabel);
     paidFallbackLimitField.appendChild(paidFallbackLimitInput);
+
+    const paidLimitUnlimited = buildUnlimitedToggle(
+      `key-paid-fallback-limit-unlimited-${key.id}`,
+      paidFallbackLimitInput.id,
+      "Unlimited credits",
+    );
+    paidLimitUnlimited.input.checked = initialPaidFallbackLimit === -1;
 
     const paidFallbackWarning = document.createElement("p");
     paidFallbackWarning.dataset.paidFallbackWarning = "warning";
     paidFallbackWarning.textContent =
       "Enabling fallback can send prompts, code, tools, and attachments to Metered. Pricing is checked only when this key is enabled; re-enabling checks it again. Ordinary requests never recheck it.";
 
-    paidFallbackSettings.appendChild(paidFallbackLimitField);
+    const paidFallbackLimitControl = document.createElement("div");
+    paidFallbackLimitControl.dataset.limitControl = "true";
+    const paidFallbackLimitHelp = document.createElement("small");
+    paidFallbackLimitHelp.dataset.fieldHelp = "true";
+    paidFallbackLimitHelp.textContent = "Unchecked uses the finite credit cap; checked removes the window cap.";
+
+    paidFallbackLimitControl.appendChild(paidFallbackLimitField);
+    paidFallbackLimitControl.appendChild(paidLimitUnlimited.label);
+    paidFallbackLimitControl.appendChild(paidFallbackLimitHelp);
+    paidFallbackSettings.appendChild(paidFallbackLimitControl);
     paidFallbackSettings.appendChild(paidFallbackWarning);
     paidFallbackEditor.appendChild(paidFallbackToggle);
     paidFallbackEditor.appendChild(paidFallbackSettings);
 
     const syncPaidFallbackEditorVisibility = () => {
       const enabled = paidFallbackInput.checked;
+      const unlimited = paidLimitUnlimited.input.checked;
       paidFallbackSettings.hidden = !enabled;
-      paidFallbackLimitInput.disabled = !enabled;
-      paidFallbackLimitInput.required = enabled;
+      paidFallbackLimitInput.disabled = !enabled || unlimited;
+      paidFallbackLimitInput.required = enabled && !unlimited;
     };
     syncPaidFallbackEditorVisibility();
 
     editFields.appendChild(nameField);
     editFields.appendChild(limitField);
+    editFields.appendChild(limitUnlimited.label);
     editFields.appendChild(windowField);
     editFields.appendChild(expiresField);
     editPanel.appendChild(editFields);
@@ -6064,31 +6164,42 @@ const renderKeys = (keys, view = "all") => {
     const getEditInputState = () => ({
       name: nameInput.value,
       limit: limitInput.value,
+      limitUnlimited: limitUnlimited.input.checked,
       window: windowInput.value,
       expires: expiresInput.value,
       never: neverInput.checked,
       paidFallbackEnabled: paidFallbackInput.checked,
       paidFallbackLimit: paidFallbackLimitInput.value,
+      paidFallbackLimitUnlimited: paidLimitUnlimited.input.checked,
     });
 
     const isSameEditInputState = (left, right) =>
       left.name === right.name &&
       left.limit === right.limit &&
+      left.limitUnlimited === right.limitUnlimited &&
       left.window === right.window &&
       left.expires === right.expires &&
       left.never === right.never &&
       left.paidFallbackEnabled === right.paidFallbackEnabled &&
-      left.paidFallbackLimit === right.paidFallbackLimit;
+      left.paidFallbackLimit === right.paidFallbackLimit &&
+      left.paidFallbackLimitUnlimited === right.paidFallbackLimitUnlimited;
 
     const syncEditInputsFromKey = () => {
       nameInput.value = key.name || "";
-      limitInput.value = String(key.usage_limit_requests);
+      const limit = typeof key.usage_limit_requests === "number" ? key.usage_limit_requests : -1;
+      limitUnlimited.input.checked = limit === -1;
+      if (limit >= 0) lastFiniteLimit = limit;
+      limitInput.value = String(lastFiniteLimit);
+      limitInput.disabled = limitUnlimited.input.checked;
       windowInput.value = String(resolveKeyWindowMs());
       neverInput.checked = key.expires_at_ms === -1;
       expiresInput.disabled = neverInput.checked;
       expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(key.expires_at_ms);
       paidFallbackInput.checked = key.paid_fallback_enabled === true;
-      paidFallbackLimitInput.value = String(normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0);
+      const paidLimit = normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0;
+      paidLimitUnlimited.input.checked = paidLimit === -1;
+      if (paidLimit > 0) lastFinitePaidFallbackLimit = paidLimit;
+      paidFallbackLimitInput.value = String(lastFinitePaidFallbackLimit);
       syncPaidFallbackEditorVisibility();
     };
 
@@ -6110,6 +6221,7 @@ const renderKeys = (keys, view = "all") => {
       }
       usageInfo.valueEl.title = usageData.title;
       resetInfo.valueEl.textContent = formatDate(key.usage_reset_at_ms);
+      observedInfo.valueEl.textContent = formatDate(observedAtMs);
       updatePaidFallbackInfo();
     };
 
@@ -6127,21 +6239,16 @@ const renderKeys = (keys, view = "all") => {
         changed = true;
       }
 
-      const limitRaw = limitInput.value.trim();
-      if (!limitRaw) {
-        setEditBadge("bad", "Rate limit required");
-        return null;
-      }
       let nextLimit;
-      if (limitRaw === "unlimited" || limitRaw === "-1") {
+      if (limitUnlimited.input.checked) {
         nextLimit = -1;
       } else {
-        const parsed = Number(limitRaw);
-        if (!Number.isFinite(parsed) || parsed < 0) {
-          setEditBadge("bad", "Invalid rate limit");
+        const parsed = parseFiniteUsageLimit(limitInput.value);
+        if (parsed === null) {
+          setEditBadge("bad", "Rate limit must be a non-negative number");
           return null;
         }
-        nextLimit = Math.trunc(parsed);
+        nextLimit = parsed;
       }
       if (nextLimit !== editSnapshot.usage_limit_requests) {
         payload.usage_limit_requests = nextLimit;
@@ -6178,27 +6285,21 @@ const renderKeys = (keys, view = "all") => {
       }
 
       const nextPaidFallbackEnabled = paidFallbackInput.checked;
-      const paidFallbackLimitRaw = paidFallbackLimitInput.value.trim();
       let nextPaidFallbackLimit = editSnapshot.paid_fallback_limit_credits;
-      if (nextPaidFallbackEnabled && !paidFallbackLimitRaw) {
-        setEditBadge("bad", "Fallback cap or -1 required");
-        return null;
-      }
-      if (paidFallbackLimitRaw) {
-        const parsed = Number(paidFallbackLimitRaw);
-        const scaled = parsed * MICROCREDITS_PER_CREDIT;
-        if (!Number.isFinite(parsed) || (parsed !== -1 && parsed < 0)) {
-          setEditBadge("bad", "Invalid fallback cap");
-          return null;
+      if (nextPaidFallbackEnabled) {
+        if (paidLimitUnlimited.input.checked) {
+          nextPaidFallbackLimit = -1;
+        } else {
+          const parsed = parseFinitePaidFallbackLimit(paidFallbackLimitInput.value);
+          if (parsed === null) {
+            setEditBadge("bad", "Fallback cap must be a positive number or Unlimited");
+            return null;
+          }
+          nextPaidFallbackLimit = parsed;
         }
-        if (parsed !== -1 && Math.abs(scaled - Math.round(scaled)) > 0.000001) {
-          setEditBadge("bad", "Fallback cap supports 6 decimals");
-          return null;
-        }
-        nextPaidFallbackLimit = parsed === -1 ? -1 : Math.round(scaled) / MICROCREDITS_PER_CREDIT;
       }
       if (nextPaidFallbackEnabled && nextPaidFallbackLimit !== -1 && nextPaidFallbackLimit <= 0) {
-        setEditBadge("bad", "Fallback cap must be positive or -1");
+        setEditBadge("bad", "Fallback cap must be positive or Unlimited");
         return null;
       }
       if (nextPaidFallbackEnabled !== editSnapshot.paid_fallback_enabled) {
@@ -6304,6 +6405,7 @@ const renderKeys = (keys, view = "all") => {
 
         title.textContent = key.name || "Untitled";
         expiresInfo.valueEl.textContent = formatExpires(key.expires_at_ms);
+        observedAtMs = Date.now();
         updateUsageInfo();
 
         const inputsUnchanged = isSameEditInputState(requestInputs, getEditInputState());
@@ -6361,6 +6463,19 @@ const renderKeys = (keys, view = "all") => {
       markEditDirty();
     });
     limitInput.addEventListener("input", () => {
+      if (!limitUnlimited.input.checked) {
+        const current = Number(limitInput.value);
+        if (Number.isFinite(current) && current >= 0) lastFiniteLimit = Math.trunc(current);
+      }
+      markEditDirty();
+    });
+    limitUnlimited.input.addEventListener("change", () => {
+      if (limitUnlimited.input.checked) {
+        const current = Number(limitInput.value);
+        if (Number.isFinite(current) && current >= 0) lastFiniteLimit = Math.trunc(current);
+      }
+      limitInput.value = String(lastFiniteLimit);
+      limitInput.disabled = limitUnlimited.input.checked;
       markEditDirty();
     });
     windowInput.addEventListener("input", () => {
@@ -6378,11 +6493,24 @@ const renderKeys = (keys, view = "all") => {
       syncPaidFallbackEditorVisibility();
       markEditDirty();
       const paidFallbackLimit = Number(paidFallbackLimitInput.value);
-      if (paidFallbackInput.checked && paidFallbackLimit !== -1 && !(paidFallbackLimit > 0)) {
+      if (paidFallbackInput.checked && !paidLimitUnlimited.input.checked && !(paidFallbackLimit > 0)) {
         paidFallbackLimitInput.focus();
       }
     });
     paidFallbackLimitInput.addEventListener("input", () => {
+      if (!paidLimitUnlimited.input.checked) {
+        const current = Number(paidFallbackLimitInput.value);
+        if (Number.isFinite(current) && current > 0) lastFinitePaidFallbackLimit = current;
+      }
+      markEditDirty();
+    });
+    paidLimitUnlimited.input.addEventListener("change", () => {
+      if (paidLimitUnlimited.input.checked) {
+        const current = Number(paidFallbackLimitInput.value);
+        if (Number.isFinite(current) && current > 0) lastFinitePaidFallbackLimit = current;
+      }
+      paidFallbackLimitInput.value = String(lastFinitePaidFallbackLimit);
+      syncPaidFallbackEditorVisibility();
       markEditDirty();
     });
 
@@ -7287,31 +7415,40 @@ const createKey = async () => {
 
   const expiresPreset = keyExpiresSelect.value;
   const expiresAtMs = computeExpiresAtMs(expiresPreset);
-  const usageLimit = parseInt(keyUsageLimitInput.value, 10);
+
+  let usageLimit;
+  if (keyUsageLimitUnlimitedInput.checked) {
+    usageLimit = -1;
+  } else {
+    usageLimit = parseFiniteUsageLimit(keyUsageLimitInput.value);
+    if (usageLimit === null) {
+      setCreateBadge("bad", "Rate limit must be a non-negative number");
+      keyUsageLimitInput.focus();
+      return;
+    }
+  }
+
   const windowResult = parseKernelWindowValue(keyUsageWindowInput.value, setCreateBadge);
   if (!windowResult.ok) return;
   const paidFallbackEnabled = keyPaidFallbackEnabledInput.checked;
   let paidFallbackLimitCredits = 0;
   if (paidFallbackEnabled) {
-    const paidFallbackLimitRaw = keyPaidFallbackLimitInput.value.trim();
-    const parsed = Number(paidFallbackLimitRaw);
-    const scaled = parsed * MICROCREDITS_PER_CREDIT;
-    if (!paidFallbackLimitRaw || !Number.isFinite(parsed) || (parsed !== -1 && parsed <= 0)) {
-      setCreateBadge("bad", "Fallback cap must be positive or -1");
-      keyPaidFallbackLimitInput.focus();
-      return;
+    if (keyPaidFallbackLimitUnlimitedInput.checked) {
+      paidFallbackLimitCredits = -1;
+    } else {
+      const parsed = parseFinitePaidFallbackLimit(keyPaidFallbackLimitInput.value);
+      if (parsed === null) {
+        setCreateBadge("bad", "Fallback cap must be a positive number or Unlimited");
+        keyPaidFallbackLimitInput.focus();
+        return;
+      }
+      paidFallbackLimitCredits = parsed;
     }
-    if (parsed !== -1 && Math.abs(scaled - Math.round(scaled)) > 0.000001) {
-      setCreateBadge("bad", "Fallback cap supports 6 decimals");
-      keyPaidFallbackLimitInput.focus();
-      return;
-    }
-    paidFallbackLimitCredits = parsed === -1 ? -1 : Math.round(scaled) / MICROCREDITS_PER_CREDIT;
   }
   const payload = {
     name,
     expires_at_ms: expiresAtMs,
-    usage_limit_requests: isNaN(usageLimit) ? 50 : usageLimit,
+    usage_limit_requests: usageLimit,
     paid_fallback_enabled: paidFallbackEnabled,
     paid_fallback_limit_credits: paidFallbackLimitCredits,
   };
@@ -7367,8 +7504,12 @@ const createKey = async () => {
     toast.success("API key created", { description: "Copy the token now — it won't be shown again." });
     keyNameInput.value = "";
     keyUsageWindowInput.value = "";
+    keyUsageLimitUnlimitedInput.checked = false;
+    keyUsageLimitInput.value = String(DEFAULT_FINITE_USAGE_LIMIT);
     keyPaidFallbackEnabledInput.checked = false;
-    keyPaidFallbackLimitInput.value = "";
+    keyPaidFallbackLimitUnlimitedInput.checked = false;
+    keyPaidFallbackLimitInput.value = String(DEFAULT_FINITE_PAID_FALLBACK_LIMIT);
+    syncCreateUsageLimitControls();
     syncCreatePaidFallbackControls();
     void refreshKeys();
   } catch {
@@ -7418,6 +7559,7 @@ const refreshKeys = async () => {
     allKeys = keys;
     keysLoadedAt = Date.now();
     renderKeys(allKeys, currentKeyView);
+    void ensureKeyChangesLoaded({ force: true });
   } catch {
     if (keysLoadedAt) {
       setKeysBadge("unknown", "Cached · offline");
@@ -7443,9 +7585,154 @@ const ensureKeysLoaded = async () => {
   }
   if (keysLoadedAt && Date.now() - keysLoadedAt < 10_000) {
     renderKeys(allKeys, currentKeyView);
+    void ensureKeyChangesLoaded();
     return;
   }
   await refreshKeys();
+};
+
+let keyChangesCursor = null;
+let keyChangesLoading = false;
+let keyChangesLoadedAt = 0;
+
+const formatKeyChangeAction = (action) => {
+  switch (action) {
+    case "create":
+      return "Created";
+    case "update":
+      return "Updated";
+    case "revoke":
+      return "Revoked";
+    case "unrevoke":
+      return "Unrevoked";
+    case "delete":
+      return "Deleted";
+    default:
+      return "Changed";
+  }
+};
+
+const formatKeyChangeActor = (actor) => {
+  if (!actor || typeof actor !== "object") return "Unknown actor";
+  const label = typeof actor.principal_label === "string" && actor.principal_label ? actor.principal_label : null;
+  const principalId = typeof actor.principal_id === "string" && actor.principal_id ? actor.principal_id : null;
+  if (actor.kind === "passkey_user") {
+    return label ? `Passkey user ${label}` : `Passkey user ${principalId ?? "unknown"}`;
+  }
+  if (actor.kind === "shared_admin_credential") return "Shared admin credential";
+  if (actor.kind === "local_admin") return "Local admin (admin auth disabled)";
+  return "Unknown actor";
+};
+
+const formatKeyChangeFieldValue = (field, value) => {
+  if (field === "expires_at_ms" && value === -1) return "Never";
+  if (field === "revoked_at_ms" && value === null) return "cleared";
+  if (field === "reset_usage") return value ? "yes" : "no";
+  if (value === -1) return "Unlimited";
+  if (value === true) return "enabled";
+  if (value === false) return "disabled";
+  if (typeof value === "number") return formatNumber(value);
+  return String(value ?? "unknown");
+};
+
+const formatKeyChangeFields = (changed) => {
+  if (!changed || typeof changed !== "object") return "No policy fields changed";
+  const entries = Object.entries(changed);
+  if (!entries.length) return "No policy fields changed";
+  return entries.map(([field, value]) => `${field}=${formatKeyChangeFieldValue(field, value)}`).join(" · ");
+};
+
+const createKeyChangeRow = (event) => {
+  const row = document.createElement("div");
+  row.dataset.key = "change";
+  row.dataset.keyChangeItem = "item";
+  row.setAttribute("role", "listitem");
+
+  const header = document.createElement("div");
+  header.dataset.keyChangeHeader = "header";
+  const title = document.createElement("strong");
+  title.textContent = `${formatKeyChangeAction(event.action)} · ${
+    typeof event.target_key_name === "string" && event.target_key_name
+      ? event.target_key_name
+      : formatOptionalText(event.target_key_id)
+  }`;
+  const time = document.createElement("span");
+  time.textContent = formatDate(event.at_ms);
+  header.appendChild(title);
+  header.appendChild(time);
+
+  const fields = document.createElement("div");
+  fields.dataset.keyChangeFields = "fields";
+  fields.textContent = formatKeyChangeFields(event.changed);
+
+  const meta = document.createElement("div");
+  meta.dataset.keyChangeFields = "fields";
+  meta.textContent = `Actor: ${formatKeyChangeActor(event.actor)} · Key ${
+    formatOptionalText(event.target_key_id)
+  } · Request ${formatOptionalText(event.request_id)}`;
+
+  row.appendChild(header);
+  row.appendChild(fields);
+  row.appendChild(meta);
+  return row;
+};
+
+const loadKeyChanges = async (options = {}) => {
+  if (keyChangesLoading) return;
+  const token = getAdminToken();
+  if (!token && !hasAdminCredential()) {
+    setBadge(keyChangesBadge, "bad", "Missing token");
+    return;
+  }
+  keyChangesLoading = true;
+  keyChangesLoadMoreBtn.disabled = true;
+  setBadge(keyChangesBadge, "unknown", options.append ? "Loading older..." : "Loading...");
+  try {
+    const url = new URL(apiUrl("/admin/api-keys/changes"));
+    url.searchParams.set("limit", String(KEY_CHANGES_LIMIT));
+    if (options.append && keyChangesCursor) url.searchParams.set("cursor", keyChangesCursor);
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setBadge(keyChangesBadge, "bad", data?.error?.message ?? "Error");
+      return;
+    }
+    const events = Array.isArray(data?.data) ? data.data : [];
+    keyChangesCursor = typeof data?.next_cursor === "string" && data.next_cursor ? data.next_cursor : null;
+    keyChangesLoadedAt = Date.now();
+    if (!options.append) keyChangesList.textContent = "";
+    if (!options.append && events.length === 0) {
+      const message = document.createElement("p");
+      message.dataset.empty = "key-changes";
+      message.textContent = "No key changes recorded yet.";
+      keyChangesList.appendChild(message);
+    } else {
+      events.forEach((event) => keyChangesList.appendChild(createKeyChangeRow(event)));
+    }
+    keyChangesLoadMoreBtn.hidden = !keyChangesCursor;
+    const retentionDays = typeof data?.retention_days === "number" ? data.retention_days : 90;
+    keyChangesSummary.textContent = `${
+      options.append
+        ? `Showing ${formatPlural(events.length, "older change")}`
+        : `${formatPlural(events.length, "change")} shown`
+    } · retained ${retentionDays} days · audit coverage begins at deployment`;
+    setBadge(keyChangesBadge, "ok", options.append ? "Loaded older" : formatPlural(events.length, "change"));
+  } catch {
+    setBadge(keyChangesBadge, "bad", "Offline");
+  } finally {
+    keyChangesLoading = false;
+    keyChangesLoadMoreBtn.disabled = false;
+  }
+};
+
+const ensureKeyChangesLoaded = async (options = {}) => {
+  if (currentAdminView !== "keys") return;
+  if (keyChangesLoading) return;
+  if (!options.force && keyChangesLoadedAt && Date.now() - keyChangesLoadedAt < 10_000) return;
+  await loadKeyChanges();
 };
 
 const updateKeyRevocationState = (id, revokedAtMs) => {
@@ -7458,6 +7745,7 @@ const updateKeyRevocationState = (id, revokedAtMs) => {
   if (updated) {
     keysLoadedAt = Date.now();
     renderKeys(allKeys, currentKeyView);
+    void ensureKeyChangesLoaded({ force: true });
   }
   return updated;
 };
@@ -9422,6 +9710,7 @@ const scheduleDefaultsSave = debounce(() => {
 }, 500);
 
 restoreSettings();
+syncCreateUsageLimitControls();
 syncCreatePaidFallbackControls();
 setAuthBadge("unknown", "Not checked");
 setSignedInState(false);
@@ -9763,7 +10052,51 @@ keyWindowPreset1w.addEventListener("click", () => {
 keyPaidFallbackEnabledInput.addEventListener("change", () => {
   syncCreatePaidFallbackControls();
   setCreateBadge("unknown", "Editing...");
-  if (keyPaidFallbackEnabledInput.checked) keyPaidFallbackLimitInput.focus();
+  if (keyPaidFallbackEnabledInput.checked && !keyPaidFallbackLimitUnlimitedInput.checked) {
+    keyPaidFallbackLimitInput.focus();
+  }
+});
+
+keyUsageLimitInput.addEventListener("input", () => {
+  if (!keyUsageLimitUnlimitedInput.checked) {
+    lastFiniteUsageLimitValue = finiteValueOrFallback(keyUsageLimitInput.value, DEFAULT_FINITE_USAGE_LIMIT);
+  }
+});
+
+keyUsageLimitUnlimitedInput.addEventListener("change", () => {
+  if (keyUsageLimitUnlimitedInput.checked) {
+    lastFiniteUsageLimitValue = finiteValueOrFallback(keyUsageLimitInput.value, DEFAULT_FINITE_USAGE_LIMIT);
+  }
+  keyUsageLimitInput.value = lastFiniteUsageLimitValue;
+  syncCreateUsageLimitControls();
+  setCreateBadge("unknown", "Editing...");
+});
+
+keyPaidFallbackLimitInput.addEventListener("input", () => {
+  if (!keyPaidFallbackLimitUnlimitedInput.checked) {
+    lastFinitePaidFallbackLimitValue = finiteValueOrFallback(
+      keyPaidFallbackLimitInput.value,
+      DEFAULT_FINITE_PAID_FALLBACK_LIMIT,
+      {
+        positive: true,
+      },
+    );
+  }
+});
+
+keyPaidFallbackLimitUnlimitedInput.addEventListener("change", () => {
+  if (keyPaidFallbackLimitUnlimitedInput.checked) {
+    lastFinitePaidFallbackLimitValue = finiteValueOrFallback(
+      keyPaidFallbackLimitInput.value,
+      DEFAULT_FINITE_PAID_FALLBACK_LIMIT,
+      {
+        positive: true,
+      },
+    );
+  }
+  keyPaidFallbackLimitInput.value = lastFinitePaidFallbackLimitValue;
+  syncCreatePaidFallbackControls();
+  setCreateBadge("unknown", "Editing...");
 });
 
 viewTabKeys.addEventListener("click", () => setAdminView("keys", { hashMode: "push", focusAuth: true }));
@@ -9786,6 +10119,10 @@ globalThis.setInterval(() => {
 
 createKeyBtn.addEventListener("click", () => {
   void createKey();
+});
+
+keyChangesLoadMoreBtn.addEventListener("click", () => {
+  void loadKeyChanges({ append: true });
 });
 
 kernelNewToggle.addEventListener("click", () => {

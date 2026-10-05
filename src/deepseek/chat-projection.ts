@@ -72,7 +72,8 @@ const chatContentFromResponseParts = (
   path: string,
   elisions: ForwardedPayloadElision[]
 ): DeepSeekResponsesResult<string | ChatContentPart[]> => {
-  if (typeof value === "string") return { ok: true, value };
+  const contentPath = `${path}.content`;
+  if (typeof value === "string") return boundedChatContent(value, contentPath, reduction, elisions);
   if (!Array.isArray(value)) return failure("input.content", "input.content must be a string or an array");
   const images: ChatContentPart[] = [];
   const texts: string[] = [];
@@ -83,9 +84,9 @@ const chatContentFromResponseParts = (
     if (part.value.image) images.push(part.value.image);
   }
   // Collapse a text-only message to the plain string form the provider expects.
-  if (!images.length) return { ok: true, value: texts.join("") };
+  if (!images.length) return boundedChatContent(texts.join(""), contentPath, reduction, elisions);
   if (texts.length) images.unshift({ type: "text", text: texts.join("") });
-  return { ok: true, value: images };
+  return boundedChatContent(images, contentPath, reduction, elisions);
 };
 
 const chatToolCallItem = (item: Record<string, unknown>): DeepSeekResponsesResult<Record<string, unknown>> => {
@@ -97,6 +98,20 @@ const chatToolCallItem = (item: Record<string, unknown>): DeepSeekResponsesResul
 };
 
 const forwardedByteLength = (value: string): number => new TextEncoder().encode(value).byteLength;
+
+const chatImageUrl = (part: ChatContentPart): string | null => {
+  if (part.type !== "image_url" || !isRecord(part.image_url) || Array.isArray(part.image_url)) return null;
+  return getString(part.image_url.url);
+};
+
+const chatContentBytes = (content: string | ChatContentPart[]): number => {
+  if (typeof content === "string") return forwardedByteLength(content);
+  return content.reduce((total, part) => {
+    if (part.type === "text" && typeof part.text === "string") return total + forwardedByteLength(part.text);
+    const url = chatImageUrl(part);
+    return url === null ? total : total + forwardedByteLength(url);
+  }, 0);
+};
 
 /**
  * The visible notice an elided payload carries. It names the declared policy
@@ -150,14 +165,15 @@ const reduceForwardedPayload = (
   value: string,
   path: string,
   callId: string | null,
-  kind: ForwardedPayloadElision["kind"] = "tool_output"
+  kind: ForwardedPayloadElision["kind"] = "tool_output",
+  limit: number = FORWARDED_PAYLOAD_POLICY.perMessageLimit
 ): Readonly<{ content: string; elision: ForwardedPayloadElision }> => {
   const originalBytes = forwardedByteLength(value);
-  let head = utf8Head(value, FORWARDED_PAYLOAD_POLICY.perMessageLimit);
+  let head = utf8Head(value, limit);
   for (;;) {
     const headBytes = forwardedByteLength(head);
     const notice = forwardedPayloadMarker(originalBytes - headBytes);
-    if (head.length === 0 || headBytes + forwardedByteLength(notice) <= FORWARDED_PAYLOAD_POLICY.perMessageLimit) {
+    if (head.length === 0 || headBytes + forwardedByteLength(notice) <= limit) {
       const content = head + notice;
       return {
         content,
@@ -173,6 +189,77 @@ const reduceForwardedPayload = (
     }
     head = utf16Head(head, Math.floor(head.length * 0.9));
   }
+};
+
+const boundedForwardedText = (
+  value: string,
+  path: string,
+  reduction: ForwardedPayloadReduction,
+  elisions: ForwardedPayloadElision[],
+  limit: number = FORWARDED_PAYLOAD_POLICY.perMessageLimit
+): DeepSeekResponsesResult<string> => {
+  const bytes = forwardedByteLength(value);
+  if (bytes <= limit) return { ok: true, value };
+  if (reduction === "reject") return oversizedPayloadFailure(path, bytes, null);
+  const reduced = reduceForwardedPayload(value, path, null, "message", limit);
+  elisions.push(reduced.elision);
+  return { ok: true, value: reduced.content };
+};
+
+const boundedChatContent = (
+  content: string | ChatContentPart[],
+  path: string,
+  reduction: ForwardedPayloadReduction,
+  elisions: ForwardedPayloadElision[]
+): DeepSeekResponsesResult<string | ChatContentPart[]> => {
+  const bytes = chatContentBytes(content);
+  if (bytes <= FORWARDED_PAYLOAD_POLICY.perMessageLimit) return { ok: true, value: content };
+  if (reduction === "reject") return oversizedPayloadFailure(path, bytes, null);
+  if (typeof content === "string") return boundedForwardedText(content, path, reduction, elisions);
+
+  const parts = content.map((part) => ({ ...part }));
+  while (chatContentBytes(parts) > FORWARDED_PAYLOAD_POLICY.perMessageLimit) {
+    const imageIndex = parts.findLastIndex((part) => chatImageUrl(part) !== null);
+    if (imageIndex < 0) break;
+    const url = chatImageUrl(parts[imageIndex]);
+    if (url === null) break;
+    const marker = omittedImageMarker(forwardedByteLength(url));
+    parts[imageIndex] = { type: "text", text: marker };
+    elisions.push({
+      path: `${path}[${imageIndex}]`,
+      callId: null,
+      kind: "image",
+      originalBytes: forwardedByteLength(url),
+      forwardedBytes: forwardedByteLength(marker),
+      omittedBytes: forwardedByteLength(url),
+    });
+  }
+
+  if (chatContentBytes(parts) > FORWARDED_PAYLOAD_POLICY.perMessageLimit) {
+    const textIndex = parts.findIndex((part) => part.type === "text" && typeof part.text === "string");
+    if (textIndex >= 0) {
+      const text = parts[textIndex].text as string;
+      const textBytes = forwardedByteLength(text);
+      const available = Math.max(0, FORWARDED_PAYLOAD_POLICY.perMessageLimit - chatContentBytes(parts) + textBytes);
+      const reduced = boundedForwardedText(text, path, reduction, elisions, available);
+      if (!reduced.ok) return reduced;
+      parts[textIndex] = { type: "text", text: reduced.value };
+    }
+  }
+
+  if (chatContentBytes(parts) > FORWARDED_PAYLOAD_POLICY.perMessageLimit) {
+    const marker = forwardedPayloadMarker(bytes);
+    elisions.push({
+      path,
+      callId: null,
+      kind: "message",
+      originalBytes: bytes,
+      forwardedBytes: forwardedByteLength(marker),
+      omittedBytes: bytes,
+    });
+    return { ok: true, value: marker };
+  }
+  return { ok: true, value: parts };
 };
 
 /**
@@ -344,7 +431,9 @@ const appendInputItem = (
   elisions: ForwardedPayloadElision[]
 ): DeepSeekResponsesResult<void> => {
   if (typeof rawItem === "string") {
-    messages.push({ role: "user", content: rawItem });
+    const content = boundedForwardedText(rawItem, path, reduction, elisions);
+    if (!content.ok) return content;
+    messages.push({ role: "user", content: content.value });
     return { ok: true, value: undefined };
   }
   if (!isRecord(rawItem) || Array.isArray(rawItem)) return failure("input", "input items must be objects");
@@ -385,9 +474,17 @@ export const toDeepSeekChatMessages = (
   elisions: ForwardedPayloadElision[] = []
 ): DeepSeekResponsesResult<Record<string, unknown>[]> => {
   const messages: Record<string, unknown>[] = [];
-  if (instructions) messages.push({ role: "system", content: instructions });
+  if (instructions) {
+    const content = boundedForwardedText(instructions, "instructions", reduction, elisions);
+    if (!content.ok) return content;
+    messages.push({ role: "system", content: content.value });
+  }
   if (typeof input === "string") {
-    if (input) messages.push({ role: "user", content: input });
+    if (input) {
+      const content = boundedForwardedText(input, "input", reduction, elisions);
+      if (!content.ok) return content;
+      messages.push({ role: "user", content: content.value });
+    }
     return { ok: true, value: messages };
   }
   if (input === undefined || input === null) return { ok: true, value: messages };
@@ -642,10 +739,18 @@ const applyTools = (
 const CONTINUATION_INSTRUCTION =
   "When tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.";
 
-const appendContinuationInstruction = (messages: Record<string, unknown>[]): void => {
+const appendContinuationInstruction = (
+  messages: Record<string, unknown>[],
+  reduction: ForwardedPayloadReduction,
+  elisions: ForwardedPayloadElision[]
+): DeepSeekResponsesFailure | null => {
   const system = messages.find((message) => message.role === "system" && typeof message.content === "string");
-  if (system) system.content = `${String(system.content)}\n\n${CONTINUATION_INSTRUCTION}`;
-  else messages.unshift({ role: "system", content: CONTINUATION_INSTRUCTION });
+  const content = system ? `${String(system.content)}\n\n${CONTINUATION_INSTRUCTION}` : CONTINUATION_INSTRUCTION;
+  const bounded = boundedForwardedText(content, "instructions", reduction, elisions);
+  if (!bounded.ok) return bounded;
+  if (system) system.content = bounded.value;
+  else messages.unshift({ role: "system", content: bounded.value });
+  return null;
 };
 
 /**
@@ -705,7 +810,10 @@ export const toDeepSeekResponsesChatBody = (
   if (Array.isArray(body.tools) && body.tools.length) {
     // `tool_choice: "none"` stays a hard no-tools request, and a request without
     // mapped executable tools (ordinary non-agent traffic) is untouched.
-    if (rawRecord.tool_choice !== "none") appendContinuationInstruction(messages.value);
+    if (rawRecord.tool_choice !== "none") {
+      const continuationFailure = appendContinuationInstruction(messages.value, reduction.value, elisions);
+      if (continuationFailure) return continuationFailure;
+    }
     ensureTrailingAssistantReasoning(messages.value);
   }
   return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions } };

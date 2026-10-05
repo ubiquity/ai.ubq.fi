@@ -465,12 +465,18 @@ Deno.test("a final-answer rollout item reaches the brief tail when projected his
     },
   });
   const events = parseSupervisorRolloutTail(jsonl);
-  assert.deepEqual(events.map((event) => event.text), ["final result: shipped"]);
+  assert.deepEqual(
+    events.map((event) => event.text),
+    ["final result: shipped"]
+  );
   const turns = appendRolloutTailTurn([], { threadId, state: "active", events });
   const [tail] = turns;
   assert.ok(tail);
   assert.equal(tail.freshTail, true, "the lagging projection is covered by the rollout tail");
-  assert.deepEqual(tail.items.map((item) => item.text), ["final result: shipped"]);
+  assert.deepEqual(
+    tail.items.map((item) => item.text),
+    ["final result: shipped"]
+  );
 });
 
 Deno.test("rollout parsing and tail merging retain the newest bounded entries", () => {

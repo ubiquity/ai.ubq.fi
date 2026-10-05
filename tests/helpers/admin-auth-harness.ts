@@ -24,11 +24,15 @@ class TestKvStore extends Map<string, unknown> {
     super.clear();
     atomicCommitsToFail = 0;
     atomicCommitsBeforeFailure = null;
+    atomicSetCalls.length = 0;
     resetRuntimeCache();
     resetAuthCache();
   }
 }
 const kvStore = new TestKvStore();
+
+/** Records the `expireIn` option every `kv.atomic().set()` call receives. */
+const atomicSetCalls: { key: Deno.KvKey; expireIn?: number }[] = [];
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -62,7 +66,7 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: function* (selector: Deno.KvListSelector, options: Deno.KvListOptions = {}) {
+  list: (selector: Deno.KvListSelector, options: Deno.KvListOptions = {}) => {
     const prefix = "prefix" in selector ? selector.prefix : [];
     let entries = [...kvStore.entries()]
       .map(([encodedKey, value]) => ({
@@ -73,15 +77,33 @@ const kvStub = {
       .filter((entry) => matchesPrefix(entry.key, prefix))
       .sort((left, right) => compareKvKeys(left.key, right.key));
     if (options.reverse) entries = entries.reverse();
-    if (typeof options.limit === "number") entries = entries.slice(0, options.limit);
-    for (const entry of entries) yield entry;
+    // A numeric index cursor stands in for Deno's opaque cursor, so the
+    // production pagination contract (limit + iterator.cursor) is exercisable
+    // against this in-memory store. A malformed cursor throws the same
+    // TypeError the real Deno KV raises.
+    const startIndex = options.cursor === undefined ? 0 : Number(options.cursor);
+    if (!Number.isSafeInteger(startIndex) || startIndex < 0) throw new TypeError("Invalid cursor");
+    const limited = typeof options.limit === "number" ? entries.slice(startIndex, startIndex + options.limit) : entries.slice(startIndex);
+    const nextIndex = startIndex + limited.length;
+    return {
+      // Real Deno KV reports an exhausted iterator with an empty cursor.
+      cursor: nextIndex >= entries.length ? "" : String(nextIndex),
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      next() {
+        const value = limited.shift();
+        return Promise.resolve(value ? { done: false, value } : { done: true, value: undefined });
+      },
+    };
   },
   atomic: () => {
     const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
     const chain = {
       check: () => chain,
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
+      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
         ops.push({ type: "set", key, value });
+        atomicSetCalls.push({ key, expireIn: options?.expireIn });
         return chain;
       },
       delete: (key: Deno.KvKey) => {
@@ -194,6 +216,7 @@ export {
   ENABLED_FALLBACK_TOKEN,
   FAILED_FALLBACK_TOKEN,
   TestKvStore,
+  atomicSetCalls,
   authPayload,
   compareKvKeyPart,
   compareKvKeys,

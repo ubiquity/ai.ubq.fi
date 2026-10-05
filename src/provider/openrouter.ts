@@ -31,7 +31,9 @@ export class OpenRouterError extends Error {
     /** Client-facing status, normalized (e.g. an upstream 401 answers 502). */
     readonly status: number,
     /** The raw upstream status when a response arrived; null otherwise. */
-    readonly upstreamStatus: number | null = null
+    readonly upstreamStatus: number | null = null,
+    /** True when a local dispatch hook prevented transport from starting. */
+    readonly beforeTransport = false
   ) {
     super(code);
     this.name = "OpenRouterError";
@@ -158,7 +160,7 @@ export const fetchOpenRouterSystemOne = async (input: {
   const dispatch = input.hooks?.beforeDispatch ? await input.hooks.beforeDispatch() : undefined;
   if (signal.aborted) {
     await dispatch?.cancelBeforeTransport();
-    throw new OpenRouterError("openrouter_upstream_unreachable", 502);
+    throw new OpenRouterError("openrouter_upstream_unreachable", 502, null, true);
   }
   dispatch?.markTransportStarted();
   input.hooks?.onDispatch?.();

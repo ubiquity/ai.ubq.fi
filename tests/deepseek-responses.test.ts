@@ -1287,6 +1287,30 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
   const kept = messages(toDeepSeekChatMessages([{ type: "message", role: "user", content: [{ type: "input_image", image_url: smallImage }] }], null));
   assert.deepEqual((kept.at(-1) as { content: unknown }).content, [{ type: "image_url", image_url: { url: smallImage } }]);
 
+  // The bound applies to the assembled message, not only to individual parts.
+  const oversizedTextMessage = messages(
+    toDeepSeekChatMessages([{ type: "message", role: "user", content: [{ type: "input_text", text: "x".repeat(limit + 4_464) }] }], null)
+  );
+  const boundedTextMessage = (oversizedTextMessage.at(-1) as { content: string }).content;
+  assert.equal(new TextEncoder().encode(boundedTextMessage).byteLength <= limit, true);
+  assert.equal(boundedTextMessage.includes("bytes omitted"), true);
+
+  const imagePart = `data:image/png;base64,${"A".repeat(40 * 1024)}`;
+  const boundedImageMessage = messages(
+    toDeepSeekChatMessages(
+      [{ type: "message", role: "user", content: [{ type: "input_image", image_url: imagePart }, { type: "input_image", image_url: imagePart }] }],
+      null
+    )
+  );
+  const boundedImageContent = (boundedImageMessage.at(-1) as { content: Record<string, unknown>[] }).content;
+  const assembledImageBytes = boundedImageContent.reduce((total, part) => {
+    if (part.type === "text") return total + new TextEncoder().encode(String(part.text)).byteLength;
+    const image = part.image_url as Record<string, unknown>;
+    return total + new TextEncoder().encode(String(image.url)).byteLength;
+  }, 0);
+  assert.equal(assembledImageBytes <= limit, true);
+  assert.equal(boundedImageContent.some((part) => part.type === "text" && String(part.text).includes("image omitted")), true);
+
   // An explicit `truncation: "disabled"` fails closed instead of reducing: the
   // error names the input path, the byte counts and the declared limit, and it
   // is recoverable without re-deriving which item was too large.

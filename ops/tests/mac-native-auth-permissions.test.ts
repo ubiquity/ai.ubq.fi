@@ -306,10 +306,28 @@ async function* outputLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<
   if (buffer) yield buffer;
 }
 
-const start = (args: string[], input: FixtureInput, env: Record<string, string>): FixtureRun => {
+/**
+ * The tracked plist pins the Mac absolute hash tool. A non-Mac host can still
+ * run this fixture with the same real shasum interface from another absolute
+ * path (Arch: /usr/bin/core_perl/shasum): the fixture substitutes that real
+ * executable only when the pinned Mac path is absent, and the unchanged
+ * integrity guard still verifies the real digest, so no check is weakened.
+ */
+const MAC_HASH_EXECUTABLE = "/usr/bin/shasum";
+const hostHashExecutable = async (): Promise<string> => {
+  for (const candidate of [MAC_HASH_EXECUTABLE, "/usr/bin/core_perl/shasum"]) {
+    const probe = await new Deno.Command("/bin/sh", { args: ["-c", 'test -x "$1"', "--", candidate] }).output();
+    if (probe.code === 0) return candidate;
+  }
+  throw new Error("No real shasum executable is available for the Mac launcher fixture");
+};
+
+const start = async (args: string[], input: FixtureInput, env: Record<string, string>): Promise<FixtureRun> => {
+  const hashExecutable = await hostHashExecutable();
   const command = args[2]
     .replaceAll(PRODUCTION_ROOT, input.root)
     .replace("!= " + MAC_RUNTIME.binarySha256, "!= " + input.runtimeHash)
+    .replaceAll(MAC_HASH_EXECUTABLE, hashExecutable)
     .replace("scripts/serve-mac.ts", "scripts/native-auth-fixture.ts");
   const child = new Deno.Command(args[0], {
     args: [args[1], command],
@@ -378,7 +396,7 @@ for (const testCase of cases) {
     const { base, input, env } = await prepare(testCase);
     let run: FixtureRun | undefined;
     try {
-      run = start(args, input, env);
+      run = await start(args, input, env);
       if (testCase.missing || testCase.runtimeFailure) {
         const status = await bounded(run.child.status, "missing-home exit");
         assert.notEqual(status.code, 0);

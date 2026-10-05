@@ -73,6 +73,8 @@ type PersistDependencies = Readonly<{
   kv: Deno.Kv;
   keyBytes: Uint8Array<ArrayBuffer>;
   now?: () => number;
+  /** Fresh wall-clock seam for reservation lease checks. */
+  currentNow?: () => number;
   randomUuid?: () => string;
   randomBytes?: (length: number) => Uint8Array<ArrayBuffer>;
   incidentEvent?: Deno.KvEntry<SentinelIncidentFailureEvent>;

@@ -60,6 +60,7 @@ import {
   isLegacyReservation,
   manifestKeyMatches,
   readLedger,
+  readSentinelReplayRetentionStatus,
   RESERVATION_REAP_LIMIT,
   SENTINEL_REPLAY_ACCOUNTING_PREFIX,
   SENTINEL_REPLAY_ACCOUNTING_REASON,
@@ -80,7 +81,6 @@ import {
   sentinelReplayRequestStatusKey,
   sentinelReplayStatusMetadataBytes,
   STATUS_PRUNE_BATCH,
-  STATUS_PRUNE_SCAN,
   storedStatusMetadataBytes,
   type SentinelReplayAccountingRow,
   type SentinelReplayAdmission,
@@ -139,7 +139,7 @@ type StatusCandidate = Readonly<{ key: Deno.KvKey; versionstamp: string; bytes: 
 
 const statusCandidates = async (kv: Deno.Kv): Promise<StatusCandidate[] | null> => {
   const candidates: StatusCandidate[] = [];
-  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_REQUEST_PREFIX }, { limit: STATUS_PRUNE_SCAN })) {
+  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_REQUEST_PREFIX })) {
     if (!isSentinelReplayCaptureStatusRow(entry.value) || !metadataEntryMatches(entry, SENTINEL_REPLAY_REQUEST_PREFIX)) return null;
     candidates.push({
       key: entry.key,
@@ -148,7 +148,7 @@ const statusCandidates = async (kv: Deno.Kv): Promise<StatusCandidate[] | null> 
       captured_at_ms: entry.value.captured_at_ms,
     });
   }
-  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_EVICTION_PREFIX }, { limit: STATUS_PRUNE_SCAN })) {
+  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_EVICTION_PREFIX })) {
     if (!metadataEntryMatches(entry, SENTINEL_REPLAY_EVICTION_PREFIX)) return null;
     const value = entry.value as { evicted_at_ms: number };
     candidates.push({
@@ -243,7 +243,7 @@ type PublishAttemptContext = Readonly<{
   /** Net record and byte movement of the status row this attempt replaces. */
   statusRecordsDelta: number;
   statusBytesDelta: number;
-  nowMs: number;
+  leaseNowMs: number;
 }>;
 
 /**
@@ -278,11 +278,12 @@ const publishAttemptRow = (
   const row = entry.value;
   if (row.state !== "reserved") return null;
   if (row.fence !== context.accounting.fence) return null;
-  if (row.expires_at_ms <= context.nowMs) return null;
+  if (row.expires_at_ms <= context.leaseNowMs) return null;
   if (row.created_at_ms !== context.accounting.created_at_ms) return null;
   if (!Number.isSafeInteger(context.actualCharge) || context.actualCharge <= 0) return null;
   if (context.actualCharge > row.bytes) return null;
   if (ledger.reserved_bytes < row.bytes) return null;
+  if (ledger.records + 1 > SENTINEL_REPLAY_MAX_RECORDS) return null;
   // The published charge must fit what the reservation already held back: the
   // reserved charge is released in the same commit that stores the actual one.
   if (ledger.stored_bytes + ledger.reserved_bytes - row.bytes + context.actualCharge > context.payloadBudget) return null;
@@ -301,7 +302,15 @@ export const prepareSentinelReplayPublication = async (
   accounting: SentinelReplayAccountingRow,
   accountingKey: Deno.KvKey,
   actualCharge: number,
-  options: Readonly<{ now_ms: number; status_key: Deno.KvKey; status_bytes?: number; budget_bytes?: number }>
+  options: Readonly<{
+    /** Frozen capture time used to keep published expiry aligned with the manifest. */
+    now_ms: number;
+    /** Fresh wall-clock time used only to validate the reservation lease. */
+    lease_now_ms: number;
+    status_key: Deno.KvKey;
+    status_bytes?: number;
+    budget_bytes?: number;
+  }>
 ): Promise<SentinelReplayPublication | null> => {
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(options.budget_bytes ?? sentinelReplayBudgetBytes()));
   const payloadBudget = sentinelReplayPayloadBudgetBytes(budgetBytes);
@@ -328,7 +337,7 @@ export const prepareSentinelReplayPublication = async (
       reserve,
       statusRecordsDelta,
       statusBytesDelta,
-      nowMs: options.now_ms,
+      leaseNowMs: options.lease_now_ms,
     });
     if (row === null) return null;
     const stored = ledger.stored_bytes + actualCharge;
@@ -431,26 +440,26 @@ export const abandonSentinelReplayAccounting = async (
   return { revoked: true, deleted_chunks: cleanup.deleted, released, remaining: 0 };
 };
 
-/**
- * Find fenced/abandoned rows to clean up with bounded work. A revoked row keeps
- * its original capture timestamp, so it can sit anywhere in the oldest-first
- * prefix: scanning only the oldest window would never reach a fresh revoke on a
- * busy host, and scanning only the newest would strand an old one. Both ends of
- * the prefix are swept in bounded windows, without adding a second index.
- */
+/** Find fenced/abandoned rows with bounded work and a durable prefix cursor. */
+// Keep the cursor outside the accounting prefix so discovery never counts it as a row.
+const SENTINEL_REPLAY_REAP_CURSOR_KEY = ["uos_ai", "sentinel_replay", "v1", "reap_cursor"] as const;
 const reapCandidates = async (kv: Deno.Kv, nowMs: number, limit: number): Promise<Readonly<{ key: Deno.KvKey; row: SentinelReplayAccountingRow }>[]> => {
-  const found = new Map<string, Readonly<{ key: Deno.KvKey; row: SentinelReplayAccountingRow }>>();
+  const cursorEntry = await kv.get<string>(SENTINEL_REPLAY_REAP_CURSOR_KEY);
+  const cursor = typeof cursorEntry.value === "string" && cursorEntry.value.length > 0 ? cursorEntry.value : undefined;
+  const iterator = kv.list<SentinelReplayAccountingRow>({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX }, { cursor, limit: limit * 4 });
+  const found: { key: Deno.KvKey; row: SentinelReplayAccountingRow }[] = [];
   const isCandidate = (row: SentinelReplayAccountingRow): boolean => row.state === "revoked" || (row.state === "reserved" && row.expires_at_ms <= nowMs);
-  for (const reverse of [false, true]) {
-    for await (const entry of kv.list<SentinelReplayAccountingRow>({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX }, { limit: limit * 4, reverse })) {
-      if (!isAccountingRow(entry.value) || !accountingKeyMatches(entry.key, entry.value)) continue;
-      if (!isCandidate(entry.value)) continue;
-      found.set(entry.key.join("\u0000"), { key: entry.key, row: entry.value });
-      if (found.size >= limit) break;
+  for await (const entry of iterator) {
+    if (isAccountingRow(entry.value) && accountingKeyMatches(entry.key, entry.value) && isCandidate(entry.value)) {
+      found.push({ key: entry.key, row: entry.value });
     }
-    if (found.size >= limit) break;
+    if (found.length >= limit) break;
   }
-  return [...found.values()].slice(0, limit);
+  const nextCursor = iterator.cursor || null;
+  const operation = kv.atomic().check({ key: SENTINEL_REPLAY_REAP_CURSOR_KEY, versionstamp: cursorEntry.versionstamp });
+  const committed = nextCursor === null ? operation.delete(SENTINEL_REPLAY_REAP_CURSOR_KEY) : operation.set(SENTINEL_REPLAY_REAP_CURSOR_KEY, nextCursor);
+  await committed.commit();
+  return found;
 };
 
 const reapAccountingRows = async (kv: Deno.Kv, nowMs: number, budgetBytes: number): Promise<number> => {
@@ -580,6 +589,7 @@ const finalizeClaimedVictim = async (
 ): Promise<Readonly<{ finalized: boolean; chunks: number }>> => {
   const kind = row.claim_kind;
   if (kind === undefined) return { finalized: false, chunks: 0 };
+  const reason = kind === "evicted" ? SENTINEL_REPLAY_EVICTION_REASON : SENTINEL_REPLAY_EXPIRED_REASON;
   const cleanup = await deleteChunkBatch(kv, row.capture_id, maxChunkDeletes);
   const remaining = cleanup.remaining > 0 ? cleanup.remaining : await countChunks(kv, row.capture_id);
   if (remaining > 0) return { finalized: false, chunks: cleanup.deleted };
@@ -600,8 +610,8 @@ const finalizeClaimedVictim = async (
   const statusRow: SentinelReplayCaptureStatusRow = {
     version: 1,
     request_id: row.request_id,
-    status: kind === "evicted" ? "evicted" : "expired",
-    reason: kind === "evicted" ? SENTINEL_REPLAY_EVICTION_REASON : SENTINEL_REPLAY_EXPIRED_REASON,
+    status: kind,
+    reason,
     captured_at_ms: row.created_at_ms,
     manifest_key: null,
     fingerprint: null,
@@ -612,7 +622,7 @@ const finalizeClaimedVictim = async (
     fingerprint: row.fingerprint,
     request_id: row.request_id,
     evicted_at_ms: nowMs,
-    reason: kind === "evicted" ? SENTINEL_REPLAY_EVICTION_REASON : SENTINEL_REPLAY_EXPIRED_REASON,
+    reason,
   };
   const statusKey = sentinelReplayRequestStatusKey(row.request_id);
   const hasOwner = row.request_id !== "";
@@ -744,16 +754,24 @@ const selectVictims = async (
 };
 
 /**
- * Evict oldest stored captures until the ledger reaches the target. Each victim
- * is claimed by exactly one caller before anything is deleted, and its charge is
- * released only when its chunk prefix is proven empty.
+ * Evict oldest stored captures until the ledger reaches its byte and record
+ * targets. Each victim is claimed by exactly one caller before anything is
+ * deleted, and its charge is released only when its chunk prefix is proven empty.
  */
 export const evictSentinelReplays = async (
   kv: Deno.Kv,
-  options: Readonly<{ target_bytes: number; max_records?: number; max_chunk_deletes?: number; now_ms: number; budget_bytes?: number }>
+  options: Readonly<{
+    target_bytes: number;
+    target_records?: number;
+    max_records?: number;
+    max_chunk_deletes?: number;
+    now_ms: number;
+    budget_bytes?: number;
+  }>
 ): Promise<Readonly<{ records: number; bytes: number; chunks: number }>> => {
   const budgetBytes = Math.max(64 * 1_024, Math.trunc(options.budget_bytes ?? sentinelReplayBudgetBytes()));
   const maxRecords = Math.max(1, Math.min(EVICTION_BATCH_RECORDS, options.max_records ?? EVICTION_BATCH_RECORDS));
+  const targetRecords = options.target_records === undefined ? null : Math.max(0, Math.trunc(options.target_records));
   // Expired payloads belong to the TTL reclamation pass, which reports them as
   // `expired`; each claim records its cause so a resumed row keeps that cause
   // even when its payload TTL has since passed.
@@ -767,7 +785,7 @@ export const evictSentinelReplays = async (
     const state = await readLedger(kv, budgetBytes);
     if (state.kind === "corrupt") break;
     const ledger = withBudget(state.ledger, budgetBytes);
-    if (ledger.stored_bytes <= options.target_bytes) break;
+    if (ledger.stored_bytes <= options.target_bytes && (targetRecords === null || ledger.records <= targetRecords)) break;
     const claimed = await claimVictim(kv, victim.key, victim.row, "evicted", budgetBytes);
     if (claimed === null) continue;
     const result = await finalizeClaimedVictim(kv, victim.key, claimed, options.now_ms, budgetBytes, remainingDeletes);
@@ -805,14 +823,19 @@ export const reclaimExpiredSentinelReplays = async (
 };
 
 /**
- * Bounded cleanup for an over-budget admission: reclaim payload-TTL expiry first,
- * then evict oldest-first toward the clean target. Returns whether any capacity
- * was actually reclaimed, so a refusal is only reported when nothing moved.
+ * Bounded cleanup for an over-budget or over-cap admission: reclaim payload-TTL
+ * expiry first, then evict oldest-first toward both clean targets. Returns whether
+ * any capacity was actually reclaimed, so a refusal is only reported when nothing moved.
  */
 const reclaimAdmissionCapacity = async (kv: Deno.Kv, budgetBytes: number, payloadBudget: number, charge: number, nowMs: number): Promise<boolean> => {
   const target = Math.floor(payloadBudget * SENTINEL_REPLAY_CLEAN_TARGET_RATIO) - charge;
   const expired = await reclaimExpiredSentinelReplays(kv, { now_ms: nowMs, budget_bytes: budgetBytes });
-  const evicted = await evictSentinelReplays(kv, { target_bytes: Math.max(0, target), now_ms: nowMs, budget_bytes: budgetBytes });
+  const evicted = await evictSentinelReplays(kv, {
+    target_bytes: Math.max(0, target),
+    target_records: SENTINEL_REPLAY_MAX_RECORDS - 1,
+    now_ms: nowMs,
+    budget_bytes: budgetBytes,
+  });
   return evicted.records > 0 || expired.records > 0;
 };
 
@@ -922,76 +945,4 @@ export const runSentinelReplayRetentionMaintenance = async (
   return await readSentinelReplayRetentionStatus(kv, budgetBytes);
 };
 
-/** Current retention status for the admin surface; `unavailable` is never reported as zero. */
-export const readSentinelReplayRetentionStatus = async (kv: Deno.Kv, budgetBytes?: number): Promise<SentinelReplayRetentionStatus> => {
-  const budget = Math.max(64 * 1_024, Math.trunc(budgetBytes ?? sentinelReplayBudgetBytes()));
-  try {
-    const state = await readLedger(kv, budget);
-    if (state.kind === "corrupt") {
-      return {
-        state: "ok",
-        scope: "capture_owned_kv_payload",
-        budget_bytes: budget,
-        stored_bytes: null,
-        reserved_bytes: null,
-        records: null,
-        metadata_bytes: null,
-        status_records: null,
-        evicted_records: null,
-        evicted_bytes: null,
-        expired_records: null,
-        last_eviction_at_ms: null,
-        last_warning_at_ms: null,
-        over_budget: false,
-        near_capacity: false,
-        accounting_complete: false,
-        accounting_error: "ledger_corrupt",
-        skipped_reason: SENTINEL_REPLAY_ACCOUNTING_REASON,
-      };
-    }
-    const ledger = withBudget(state.ledger, budget);
-    const payloadBudget = sentinelReplayPayloadBudgetBytes(budget);
-    const used = ledger.stored_bytes + ledger.reserved_bytes;
-    return {
-      state: "ok",
-      scope: "capture_owned_kv_payload",
-      budget_bytes: budget,
-      stored_bytes: ledger.stored_bytes,
-      reserved_bytes: ledger.reserved_bytes,
-      records: ledger.records,
-      metadata_bytes: ledger.metadata_bytes,
-      status_records: ledger.status_records,
-      evicted_records: ledger.evicted_records,
-      evicted_bytes: ledger.evicted_bytes,
-      expired_records: ledger.expired_records,
-      last_eviction_at_ms: ledger.last_eviction_at_ms,
-      last_warning_at_ms: ledger.last_warning_at_ms,
-      over_budget: used > payloadBudget,
-      near_capacity: used >= Math.floor(payloadBudget * SENTINEL_REPLAY_CLEAN_TARGET_RATIO),
-      accounting_complete: ledger.bootstrap_complete && ledger.accounting_error === null,
-      accounting_error: ledger.accounting_error,
-      skipped_reason: ledger.last_skip_reason,
-    };
-  } catch {
-    return {
-      state: "unavailable",
-      scope: "capture_owned_kv_payload",
-      budget_bytes: null,
-      stored_bytes: null,
-      reserved_bytes: null,
-      records: null,
-      metadata_bytes: null,
-      status_records: null,
-      evicted_records: null,
-      evicted_bytes: null,
-      expired_records: null,
-      last_eviction_at_ms: null,
-      last_warning_at_ms: null,
-      over_budget: false,
-      near_capacity: false,
-      accounting_complete: false,
-      accounting_error: "unavailable",
-      skipped_reason: null,
-    };
-  }
-};
+export { readSentinelReplayRetentionStatus } from "./replay-retention-schema.ts";

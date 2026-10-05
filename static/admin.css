@@ -1352,6 +1352,43 @@ body[data-page="admin"] [data-paid-fallback-settings]:not([hidden]) {
   gap: 12px;
 }
 
+body[data-page="admin"] [data-limit-control] {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Native checkbox for the unlimited sentinel: a full-height touch target. */
+body[data-page="admin"] label[data-unlimited-toggle] {
+  min-height: var(--control-height);
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+body[data-page="admin"] [data-key-change-item] {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+body[data-page="admin"] [data-key-change-header] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+body[data-page="admin"] [data-key-change-fields] {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
 body[data-page="admin"] [data-paid-fallback-warning] {
   margin: 0;
   padding: 9px 10px;

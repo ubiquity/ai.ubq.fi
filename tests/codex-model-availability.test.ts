@@ -797,6 +797,48 @@ Deno.test("codex dispatch: the learned 400 retries exactly one sibling and retur
   assert.equal(advances, 1, "exactly one reselection");
 });
 
+Deno.test("codex dispatch: a generic 429 short retry classifies its unsupported 400 and retries one sibling", async () => {
+  const unsupported = jsonResponse({ detail: UNSUPPORTED_DETAIL }, 400);
+  const sibling = jsonResponse({ id: "served-by-sibling" });
+  let dispatches = 0;
+  let advances = 0;
+  let pendingRetry = false;
+  let retries = 0;
+  const response = await runCodexSerialAdmissionLoop({
+    runPendingShortRetry: () => {
+      if (!pendingRetry) return Promise.resolve(null);
+      pendingRetry = false;
+      retries += 1;
+      return Promise.resolve(unsupported);
+    },
+    dispatchActive: () => {
+      dispatches += 1;
+      if (dispatches === 1) {
+        pendingRetry = true;
+        return Promise.resolve(null);
+      }
+      return Promise.resolve(sibling);
+    },
+    terminalTransportResponse: () => Promise.resolve(null),
+    hasQueuedRetry: () => pendingRetry,
+    reselectionRequested: () => false,
+    advanceReselection: () => {
+      advances += 1;
+      return Promise.resolve(null);
+    },
+    exhaustedResponse: () => Promise.resolve(new Response("exhausted", { status: 503 })),
+    classifyModelUnavailable: async (candidate) => {
+      const parsed = await codexModelUnsupportedFromResponse(candidate);
+      return parsed === null ? null : { accountId: "loop-a", model: parsed.model, detail: parsed.detail };
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), JSON.stringify({ id: "served-by-sibling" }));
+  assert.equal(retries, 1, "the queued 429 retry runs once");
+  assert.equal(dispatches, 2, "the initial 429 and one sibling attempt are bounded");
+  assert.equal(advances, 1, "the unsupported retry response triggers one reselection");
+});
+
 Deno.test("codex dispatch: a failing sibling returns the graceful 404 with a bounded attempt count", async () => {
   const unsupported = jsonResponse({ detail: UNSUPPORTED_DETAIL }, 400);
   let dispatches = 0;

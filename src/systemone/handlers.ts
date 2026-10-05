@@ -149,7 +149,7 @@ const systemOneDispatchFailure = (error: unknown): Response => {
   if (error instanceof OpenRouterError) {
     if (error.code === "openrouter_upstream_error" && error.upstreamStatus !== null) {
       recordSystemOneResponseHealth(error.upstreamStatus);
-    } else if (error.code !== "openrouter_api_key_missing") {
+    } else if (!error.beforeTransport && error.code !== "openrouter_api_key_missing") {
       // Unreachable transport or an unusable body: not healthy, and there is
       // no upstream status to classify.
       void recordOpenRouterProviderHealth("upstream_error", null, Date.now);

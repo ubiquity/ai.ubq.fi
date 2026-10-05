@@ -680,3 +680,62 @@ Deno.test({
     });
   },
 });
+
+Deno.test({
+  name: "native KV releases a local owner after a concurrent revoked-record update",
+  ignore: !originalOpenKv,
+  fn: async () => {
+    await withNativeLocalKeyKv(async (isolated) => {
+      assert.equal(await ensureLocalDevelopmentApiKey(isolated, { initializePolicy }), "created");
+      assert.equal((await handleAdminApiKeysRevoke(localKeyMutationRequest())).status, 200);
+
+      let entered = (): void => {};
+      const enter = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      let resume = (): void => {};
+      const resumed = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      const originalList = isolated.list.bind(isolated);
+      let paused = false;
+      isolated.list = <T>(selector: Deno.KvListSelector, options?: Deno.KvListOptions): Deno.KvListIterator<T> => {
+        const iterator = originalList<T>(selector, options);
+        if (!paused && JSON.stringify(selector) === JSON.stringify({ prefix: paidFallbackRequestV3Prefix(LOCAL_DEVELOPMENT_KEY_ID) })) {
+          paused = true;
+          const next = iterator.next.bind(iterator);
+          iterator.next = async () => {
+            entered();
+            await resumed;
+            return await next();
+          };
+        }
+        return iterator;
+      };
+
+      const deletion = handleAdminApiKeysDelete(localKeyMutationRequest());
+      try {
+        await enter;
+        const guardKey = paidFallbackDeletionGuardV3Key(LOCAL_DEVELOPMENT_KEY_ID);
+        const claimed = await isolated.get<Record<string, unknown>>(guardKey);
+        const claimedGuard = claimed.value as { local_deletion?: { owner?: unknown } } | null;
+        assert.equal(typeof claimedGuard?.local_deletion?.owner, "string");
+        assert.equal((await handleAdminApiKeysDelete(localKeyMutationRequest())).status, 409);
+        assert.equal((await handleAdminApiKeysUnrevoke(localKeyMutationRequest())).status, 409);
+        assert.deepEqual(await isolated.get(guardKey), claimed);
+
+        // This repeats the revoked record write after the local owner is claimed.
+        assert.equal((await handleAdminApiKeysRevoke(localKeyMutationRequest())).status, 200);
+      } finally {
+        resume();
+        assert.equal((await deletion).status, 409);
+        isolated.list = originalList;
+      }
+
+      const released = (await isolated.get<Record<string, unknown>>(paidFallbackDeletionGuardV3Key(LOCAL_DEVELOPMENT_KEY_ID))).value;
+      assert.deepEqual(released?.local_deletion, { owner: null, completed_at_ms: null });
+      assert.equal((await handleAdminApiKeysDelete(localKeyMutationRequest())).status, 200);
+      assert.equal(await ensureLocalDevelopmentApiKey(isolated, { initializePolicy }), "created");
+    });
+  },
+});

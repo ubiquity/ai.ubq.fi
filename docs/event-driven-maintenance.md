@@ -30,11 +30,26 @@ call. This document is the mapping from each retired job to the event that repla
 - **Reconciliation has a manual path.** Reading a key's paid-fallback ledger schedules best-effort reconciliation of due
   work without awaiting it; the response can still contain unreconciled rows.
 
+## Deferred paid-fallback logs on an idle Mac
+
+**Decision for issue #854 (2026-10-04):** do not approve an autonomous retry or a Mac-only timer. Retain the deliberate
+no-timer policy and the durable pending state described below.
+
+The no-timer policy is intentional for the Mac as well as the shared handler. A terminal event starts one best-effort
+reconciliation pass. If the provider log is absent, late, or the fetch fails, `deferPaidFallbackReconciliationV3()`
+records the bounded durable backoff and leaves the request pending; it does not schedule delivery at that timestamp. An
+otherwise idle Mac may therefore retain the request's pending row and reserved exposure until a later authorized event
+(startup, another terminal event, an admin ledger read, or an admission that needs reconciliation). No usage is settled
+without the authoritative provider log. A blocked admission reconciles work that is due before its bounded retry, so a
+late log can release the original request's exposure without reintroducing periodic maintenance; if the work is not due
+or the log remains unavailable, admission stays fail-closed.
+
 ## What an operator should expect
 
-- Capacity history converges on the next request or the next admin read: a normal capacity read is at most one 30-second
-  freshness window behind (`PROVIDER_CAPACITY_READ_FRESH_MS`), while the durable capacity history bucket remains fifteen
-  minutes. Paid-fallback terminal events and ledger reads schedule best-effort reconciliation; a ledger read can return
-  before settlement. `?refresh=live` on the capacity endpoint still forces an immediate probe.
+- Capacity history converges on the next request or the next admin read: a normal capacity read uses the 30-second
+  window (`PROVIDER_CAPACITY_READ_FRESH_MS`) to trigger revalidation, but if revalidation throws, the read returns the
+  last known snapshot, which may be older than 30 seconds. The durable capacity history bucket remains fifteen minutes.
+  Paid-fallback terminal events and ledger reads schedule best-effort reconciliation; a ledger read can return before
+  settlement. `?refresh=live` on the capacity endpoint still forces an immediate probe.
 - On a busy gateway the events arrive continuously, so cadence is effectively the same as the retired jobs were, without
   the idle-time work.

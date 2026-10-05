@@ -37,7 +37,7 @@ export type ForwardedPayloadReduction = "reduce" | "reject";
 export type ForwardedPayloadElision = Readonly<{
   path: string;
   callId: string | null;
-  kind: "tool_output" | "image" | "agent_message";
+  kind: "tool_output" | "image" | "agent_message" | "message";
   originalBytes: number;
   forwardedBytes: number;
   omittedBytes: number;

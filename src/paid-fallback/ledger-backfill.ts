@@ -725,12 +725,11 @@ export const reconcilePaidFallbackV3 = async (
     const logs = await loadMeteredLogsForCandidatesV3(meteredCandidates, now);
     if (logs === null) {
       await Promise.all(meteredCandidates.map((requestEntry) => deferPaidFallbackReconciliationV3(kv, keyId, requestEntry.value.request_id, now)));
-      // The durable marker carries the retry timestamp. New Deno Deploy
-      // reconciles it from cron because KV queue delivery is unavailable.
+      // The durable marker carries the retry timestamp, but it is not a
+      // delivery schedule. The event-driven policy intentionally leaves this
+      // work pending on an idle Mac until a later authorized event.
       return 0;
     }
-    // The durable marker carries the retry timestamp. New Deno Deploy
-    // reconciles it from cron because KV queue delivery is unavailable.
     return await settleMeteredCandidatesV3(kv, keyId, meteredCandidates, new Map(logs.map((log) => [log.request_id, log])), now);
   } finally {
     await releaseReconciliationLease(kv, keyId, lease);
@@ -798,11 +797,12 @@ export const markPaidFallbackTerminalV3 = async (
     increment_reconciliation_attempts: true,
   });
   // A terminal event can arrive while the pending marker is still scheduled
-  // for a later retry. Move that marker to "due" before queueing so the
-  // consumer never burns a delivery on a no-op reconciliation.
+  // for a later retry. Move that marker to "due" before the event's
+  // best-effort sweep so it never burns this event on a no-op reconciliation.
   await _expeditePaidFallbackReconciliationV3(reservation, Date.now());
-  // The queue consumer owns provider-log reads and settlement. Never fetch
-  // provider logs from the inference request or an admin read.
+  // The event owns the best-effort provider-log read; never fetch provider
+  // logs from the inference request itself. A failed or late read remains
+  // durably pending for the next authorized event.
   return 0;
 };
 

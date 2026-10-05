@@ -215,8 +215,28 @@
               </label>
               <label data-field>
                 <span data-label>Rate limit (requests)</span>
-                <input id="key-usage-limit" type="number" inputmode="numeric" placeholder="50" value="50" />
+                <input
+                  id="key-usage-limit"
+                  type="number"
+                  inputmode="numeric"
+                  min="0"
+                  step="1"
+                  placeholder="50"
+                  value="50"
+                  aria-describedby="key-usage-limit-unlimited-help"
+                />
               </label>
+              <label data-check data-unlimited-toggle>
+                <input
+                  id="key-usage-limit-unlimited"
+                  type="checkbox"
+                  aria-controls="key-usage-limit"
+                />
+                <span>Unlimited requests</span>
+              </label>
+              <small id="key-usage-limit-unlimited-help" data-field-help>
+                Unchecked uses the finite request limit above; a checked box sends the gateway's existing unlimited policy value.
+              </small>
               <label data-field>
                 <span data-label>Rate-limit window</span>
                 <input
@@ -248,19 +268,32 @@
                   />
                 </label>
                 <div id="key-paid-fallback-settings" data-paid-fallback-settings hidden>
-                  <label data-field>
-                    <span data-label>Window cap (credits; -1 = unlimited)</span>
-                    <input
-                      id="key-paid-fallback-limit"
-                      type="number"
-                      inputmode="decimal"
-                      min="-1"
-                      step="0.000001"
-                      placeholder="-1 or 1"
-                      aria-describedby="key-paid-fallback-warning"
-                      disabled
-                    />
-                  </label>
+                  <div data-limit-control>
+                    <label data-field>
+                      <span data-label>Window cap (credits)</span>
+                      <input
+                        id="key-paid-fallback-limit"
+                        type="number"
+                        inputmode="decimal"
+                        min="0"
+                        step="0.000001"
+                        placeholder="1"
+                        aria-describedby="key-paid-fallback-warning key-paid-fallback-limit-unlimited-help"
+                        disabled
+                      />
+                    </label>
+                    <label data-check data-unlimited-toggle>
+                      <input
+                        id="key-paid-fallback-limit-unlimited"
+                        type="checkbox"
+                        aria-controls="key-paid-fallback-limit"
+                      />
+                      <span>Unlimited credits</span>
+                    </label>
+                    <small id="key-paid-fallback-limit-unlimited-help" data-field-help>
+                      Unchecked uses the finite credit cap above; a checked box removes the window cap.
+                    </small>
+                  </div>
                   <p id="key-paid-fallback-warning" data-paid-fallback-warning>
                     Enabling fallback can send prompts, code, tools, and attachments to Metered.
                     Pricing is checked only when this key is enabled; re-enabling checks it again.
@@ -320,6 +353,27 @@
                 </button>
               </div>
               <div id="keys-list" data-key-list role="list"></div>
+            </div>
+          </article>
+
+          <article data-card data-key-changes aria-labelledby="card-key-changes">
+            <header data-card-heading>
+              <div>
+                <h2 id="card-key-changes">Key change history</h2>
+                <p>Key policy changes recorded by this gateway, retained 90 days.</p>
+              </div>
+              <span id="key-changes-badge" data-badge data-state="unknown" role="status" aria-live="polite">
+                Not loaded
+              </span>
+            </header>
+            <div data-card-body>
+              <p id="key-changes-summary" data-field-help>
+                Audit coverage begins when this panel is deployed; changes made before that were not recorded.
+              </p>
+              <div id="key-changes-list" data-key-list role="list"></div>
+              <div data-layout="row">
+                <button id="key-changes-load-more" type="button" hidden>Load older changes</button>
+              </div>
             </div>
           </article>
         </section>

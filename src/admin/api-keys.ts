@@ -29,6 +29,7 @@ import {
 import { defaultPaidFallbackPolicy, initializePaidFallbackPolicy, paidFallbackHashFields } from "../paid-fallback/index.ts";
 import { reconcileDuePaidFallbacksV3 } from "../paid-fallback/ledger-backfill.ts";
 import { getPaidFallbackProviderUsageV3, getPaidFallbackWindowProjectionV3, listPaidFallbackRequestsV3 } from "../paid-fallback/ledger-state.ts";
+import { appendApiKeyChangeEvent, buildApiKeyChangeEvent, type ApiKeyAuditContext } from "./api-key-audit.ts";
 import { getKv } from "../kv.ts";
 import { readJsonBody } from "../request.ts";
 import { isRecord, sha256Base64Url } from "../utils.ts";
@@ -99,11 +100,7 @@ const paidFallbackInputError = (message: string): Response => openaiError(400, m
 
 const rejectRetiredApiKeyResetSetting = (raw: Record<string, unknown>): Response | null => {
   if (!Object.prototype.hasOwnProperty.call(raw, "banked_resets_enabled")) return null;
-  return openaiError(
-    400,
-    "banked_resets_enabled is retired; configure banked resets per Codex subscription",
-    "invalid_request_error"
-  );
+  return openaiError(400, "banked_resets_enabled is retired; configure banked resets per Codex subscription", "invalid_request_error");
 };
 
 const paidFallbackInitializationError = (error: unknown): Response => {
@@ -339,7 +336,7 @@ const resolveApiKeyCreatePolicy = async (
   }
 };
 
-export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
+export const handleAdminApiKeysCreate = async (req: Request, context?: ApiKeyAuditContext): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
@@ -406,15 +403,31 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
   const quotaWindow = makeApiKeyUsageWindowV3(quotaPolicy, now);
 
-  const commit = await kv
-    .atomic()
-    .check(hashEntry)
-    .set(apiKeyIdKey(id), record)
-    .set(hashKey, hashRecord)
-    .set(apiKeyUsageV3WindowKey(quotaPolicy), quotaWindow, {
-      expireIn: apiKeyUsageV3RetentionMs(quotaWindow.window_reset_at_ms, now),
+  const commit = await appendApiKeyChangeEvent(
+    kv
+      .atomic()
+      .check(hashEntry)
+      .set(apiKeyIdKey(id), record)
+      .set(hashKey, hashRecord)
+      .set(apiKeyUsageV3WindowKey(quotaPolicy), quotaWindow, {
+        expireIn: apiKeyUsageV3RetentionMs(quotaWindow.window_reset_at_ms, now),
+      }),
+    buildApiKeyChangeEvent({
+      action: "create",
+      targetKeyId: id,
+      targetKeyName: name,
+      changed: {
+        name,
+        expires_at_ms: expiresAtMs,
+        usage_limit_requests: usageLimitRequests,
+        window_ms: windowMs,
+        paid_fallback_enabled: record.paid_fallback_enabled,
+        paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
+      },
+      context,
+      nowMs: now,
     })
-    .commit();
+  ).commit();
   if (!commit.ok) {
     return openaiError(500, "Failed to persist API key", "server_error");
   }

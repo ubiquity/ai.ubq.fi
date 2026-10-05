@@ -434,6 +434,7 @@ Deno.test("lithos wiring: streams the translated Responses event sequence", asyn
     assert.equal(response.headers.get("Content-Type"), "text/event-stream");
     assert.equal(response.headers.get("x-uos-upstream"), "lithos");
     assert.equal(calls[0].body.stream, true);
+    assert.equal(calls[0].body.reasoning_effort, "medium");
     assert.equal(Object.hasOwn(calls[0].body, "stream_options"), false, "this provider's usage is unconditional");
 
     const events = (await response.text())

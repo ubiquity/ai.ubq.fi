@@ -1,7 +1,14 @@
 // Admin API key mutation handlers, split out of src/admin.ts.
 
 import { json, openaiError } from "../http.ts";
-import { apiKeyHashKey, apiKeyIdKey, coerceApiKeyExpiresAtMs, coerceApiKeyWindowMs, paidFallbackCreditsToMicrocredits } from "../api-keys.ts";
+import {
+  apiKeyHashKey,
+  apiKeyIdKey,
+  coerceApiKeyExpiresAtMs,
+  coerceApiKeyWindowMs,
+  paidFallbackCreditsToMicrocredits,
+  paidFallbackMicrocreditsToCredits,
+} from "../api-keys.ts";
 import {
   API_KEY_USAGE_V2_PREFIX,
   apiKeyPolicyFromHashRecord,
@@ -23,6 +30,7 @@ import { LOCAL_DEVELOPMENT_KEY_ID, type LocalDevelopmentDeletionGuard } from "..
 import { readJsonBody } from "../request.ts";
 import { getString, isRecord } from "../utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageWindowV3 } from "../types.ts";
+import { appendApiKeyChangeEvent, buildApiKeyChangeEvent, type ApiKeyAuditContext } from "./api-key-audit.ts";
 import {
   normalizeApiKeyExpiresAtMs,
   normalizeApiKeyName,
@@ -302,6 +310,27 @@ const apiKeyUpdateChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, curren
   apiKeyUpdateQuotaChanged(record, updated, currentWindowMs, resetUsage) ||
   apiKeyUpdatePaidFallbackChanged(record, updated);
 
+/** The safe policy fields that actually changed, ready for the audit allowlist. */
+const apiKeyUpdateAuditChanges = (
+  record: ApiKeyRecord,
+  updated: ApiKeyRecord,
+  currentExpiresAtMs: number,
+  currentWindowMs: number,
+  resetUsage: boolean
+): Record<string, unknown> => {
+  const changed: Record<string, unknown> = {};
+  if (updated.name !== record.name) changed.name = updated.name;
+  if (updated.expires_at_ms !== currentExpiresAtMs) changed.expires_at_ms = updated.expires_at_ms;
+  if (updated.usage_limit_requests !== record.usage_limit_requests) changed.usage_limit_requests = updated.usage_limit_requests;
+  if (updated.window_ms !== currentWindowMs) changed.window_ms = updated.window_ms;
+  if (updated.paid_fallback_enabled !== record.paid_fallback_enabled) changed.paid_fallback_enabled = updated.paid_fallback_enabled;
+  if (updated.paid_fallback_limit_microcredits !== record.paid_fallback_limit_microcredits) {
+    changed.paid_fallback_limit_credits = paidFallbackMicrocreditsToCredits(updated.paid_fallback_limit_microcredits);
+  }
+  if (resetUsage) changed.reset_usage = true;
+  return changed;
+};
+
 /** The no-op response, which reports the live usage counter of the stored policy. */
 const apiKeyUpdateUnchangedResponse = async (
   kv: Deno.Kv,
@@ -401,6 +430,10 @@ const persistApiKeyUpdate = async (
     updated: ApiKeyRecord;
     replaceQuotaWindow: boolean;
     nowMs: number;
+    currentExpiresAtMs: number;
+    currentWindowMs: number;
+    resetUsage: boolean;
+    context?: ApiKeyAuditContext;
   }>
 ): Promise<
   { ok: true; updated: ApiKeyRecord; quotaPolicy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>> } | { ok: false; response: Response }
@@ -447,6 +480,17 @@ const persistApiKeyUpdate = async (
     });
   }
   if (currentQuotaWindowEntry) atomic.check(currentQuotaWindowEntry);
+  appendApiKeyChangeEvent(
+    atomic,
+    buildApiKeyChangeEvent({
+      action: "update",
+      targetKeyId: input.updated.id,
+      targetKeyName: input.updated.name,
+      changed: apiKeyUpdateAuditChanges(input.record, input.updated, input.currentExpiresAtMs, input.currentWindowMs, input.resetUsage),
+      context: input.context,
+      nowMs: input.nowMs,
+    })
+  );
 
   const commit = await atomic.commit();
   if (!commit.ok) {
@@ -463,7 +507,7 @@ const persistApiKeyUpdate = async (
   return { ok: true, updated: input.updated, quotaPolicy };
 };
 
-export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> => {
+export const handleAdminApiKeysUpdate = async (req: Request, context?: ApiKeyAuditContext): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
@@ -489,7 +533,18 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     return await apiKeyUpdateUnchangedResponse(kv, record, currentExpiresAtMs, currentWindowMs, now);
   }
 
-  const persisted = await persistApiKeyUpdate(kv, { idKey, entry, record, updated, replaceQuotaWindow, nowMs: now });
+  const persisted = await persistApiKeyUpdate(kv, {
+    idKey,
+    entry,
+    record,
+    updated,
+    replaceQuotaWindow,
+    nowMs: now,
+    currentExpiresAtMs,
+    currentWindowMs,
+    resetUsage,
+    context,
+  });
   if (!persisted.ok) return persisted.response;
 
   return json(
@@ -511,7 +566,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   );
 };
 
-export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> => {
+export const handleAdminApiKeysRevoke = async (req: Request, context?: ApiKeyAuditContext): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
@@ -552,6 +607,20 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
 
   const atomic = kv.atomic().check(entry).set(idKey, updated).set(hashKey, updatedHash);
   if (hashEntry.versionstamp) atomic.check(hashEntry);
+  appendApiKeyChangeEvent(
+    atomic,
+    buildApiKeyChangeEvent({
+      action: "revoke",
+      targetKeyId: id,
+      targetKeyName: updated.name,
+      changed: {
+        ...(updated.revoked_at_ms !== entry.value.revoked_at_ms ? { revoked_at_ms: updated.revoked_at_ms } : {}),
+        ...(updated.expires_at_ms !== entry.value.expires_at_ms ? { expires_at_ms: updated.expires_at_ms } : {}),
+      },
+      context,
+      nowMs: now,
+    })
+  );
 
   const commit = await atomic.commit();
   if (!commit.ok) {
@@ -569,7 +638,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
   );
 };
 
-export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response> => {
+export const handleAdminApiKeysUnrevoke = async (req: Request, context?: ApiKeyAuditContext): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
@@ -597,6 +666,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
     return json(200, { id, revoked_at_ms: null }, { "x-uos-upstream": "chatgpt_codex" });
   }
 
+  const now = Date.now();
   const expiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
   const updated: ApiKeyRecord = { ...entry.value, expires_at_ms: expiresAtMs, revoked_at_ms: null };
   const hashKey = apiKeyHashKey(entry.value.hash);
@@ -615,6 +685,17 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
 
   const atomic = kv.atomic().check(entry).check(deletionGuard).set(idKey, updated).set(hashKey, updatedHash);
   if (hashEntry.versionstamp) atomic.check(hashEntry);
+  appendApiKeyChangeEvent(
+    atomic,
+    buildApiKeyChangeEvent({
+      action: "unrevoke",
+      targetKeyId: id,
+      targetKeyName: updated.name,
+      changed: { revoked_at_ms: null },
+      context,
+      nowMs: now,
+    })
+  );
 
   const commit = await atomic.commit();
   if (!commit.ok) {
@@ -687,6 +768,14 @@ const releaseLocalDeletionClaim = async (kv: Deno.Kv, entry: Deno.KvEntryMaybe<A
     .commit();
 };
 
+/** A failed ID deletion can release only after a fresh read still proves the key is revoked. */
+const releaseLocalDeletionClaimAfterConflict = async (kv: Deno.Kv, idKey: Deno.KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<void> => {
+  if (!claim) return;
+  const entry = await kv.get<ApiKeyRecord>(idKey, { consistency: "strong" });
+  if (!entry.value?.revoked_at_ms) return;
+  await releaseLocalDeletionClaim(kv, entry, claim);
+};
+
 const completeLocalDeletion = async (kv: Deno.Kv, idKey: Deno.KvKey, claim: LocalApiKeyDeletionClaim | null): Promise<Response | null> => {
   if (!claim) return null;
   const absentId = await kv.get(idKey, { consistency: "strong" });
@@ -703,7 +792,7 @@ const completeLocalDeletion = async (kv: Deno.Kv, idKey: Deno.KvKey, claim: Loca
   return completion.ok ? null : openaiError(409, "Local API key deletion ownership changed", "paid_fallback_deletion_in_progress");
 };
 
-export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> => {
+export const handleAdminApiKeysDelete = async (req: Request, context?: ApiKeyAuditContext): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot manage API keys", "server_error");
@@ -756,9 +845,27 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
 
   const atomic = kv.atomic().check(entry).delete(idKey).delete(apiKeyHashKey(entry.value.hash)).delete(apiKeyUsageKey(id)).delete(apiKeyUsageDailyKey(id));
   if (localDeletionClaim) atomic.check(localDeletionClaim.check);
+  appendApiKeyChangeEvent(
+    atomic,
+    buildApiKeyChangeEvent({
+      action: "delete",
+      targetKeyId: id,
+      targetKeyName: entry.value.name,
+      changed: {},
+      context,
+      nowMs: Date.now(),
+    })
+  );
 
   const commit = await atomic.commit();
   if (!commit.ok) {
+    try {
+      await releaseLocalDeletionClaimAfterConflict(kv, idKey, localDeletionClaim);
+    } catch (error) {
+      console.error("[ai.ubq.fi] Failed to release local API key deletion claim after a concurrent update:", {
+        error,
+      });
+    }
     return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
   }
   invalidateApiKeyPolicy(id);

@@ -1,4 +1,5 @@
 import {
+  handleAdminApiKeyChanges,
   handleAdminApiKeysCreate,
   handleAdminApiKeysDelete,
   handleAdminApiKeysList,
@@ -37,8 +38,9 @@ import {
   handleAdminProvidersQuotaProjectionBackfill,
 } from "../admin/index.ts";
 import { handleAdminErrors } from "../admin/error-log.ts";
+import type { ApiKeyAuditContext } from "../admin/api-key-audit.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "../agent-messages.ts";
-import { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth, requireSuperAdminAuth } from "../auth/index.ts";
+import { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth, type AdminAuthResult } from "../auth/index.ts";
 import {} from "../api-key-policy.ts";
 
 import { handleAdminCodexSupervisorOutput, handleAdminCodexSupervisorSessions } from "../codex/supervisor.ts";
@@ -78,12 +80,26 @@ type ExactRouteEntry = Readonly<{
   run: (req: Request) => Response | Promise<Response>;
 }>;
 
+/** The authenticated admin identity and request id handed to key mutations. */
+type AdminRouteContext = Readonly<{ auth: AdminAuthResult; requestId: string }>;
+
 /** An admin route, optionally restricted to super admins. */
-type AdminRouteEntry = ExactRouteEntry & Readonly<{ superAdmin?: true }>;
+type AdminRouteEntry = Readonly<{
+  methods: readonly string[];
+  path: string;
+  superAdmin?: true;
+  run: (req: Request, context: AdminRouteContext) => Response | Promise<Response>;
+}>;
+
+/** The subset a route needs for matching, shared by auth and admin route tables. */
+type RouteMatch = Readonly<{ methods: readonly string[]; path: string }>;
 
 /** The first exact-path route matching this request, if any. */
-const matchExactRoute = <TRoute extends ExactRouteEntry>(routes: readonly TRoute[], req: Request, path: string): TRoute | undefined =>
+const matchExactRoute = <TRoute extends RouteMatch>(routes: readonly TRoute[], req: Request, path: string): TRoute | undefined =>
   routes.find((entry) => entry.methods.includes(req.method) && entry.path === path);
+
+/** Projects the router auth into the key-audit context. */
+const apiKeyAuditContext = (context: AdminRouteContext): ApiKeyAuditContext => ({ auth: context.auth, request_id: context.requestId });
 
 /** Reads the optional client authentication used by the session and logout routes. */
 const optionalClientAuth = async (req: Request): Promise<ClientAuthResult | null> =>
@@ -141,12 +157,13 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET"], path: "/admin/providers/quota-projection", run: (req) => handleAdminProvidersQuotaProjection(req) },
   { methods: ["POST"], path: "/admin/providers/quota-projection/backfill", run: (req) => handleAdminProvidersQuotaProjectionBackfill(req) },
   { methods: ["GET"], path: "/admin/prompt-cache-analytics", run: (req) => handleAdminPromptCacheAnalytics(req) },
-  { methods: ["POST"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysCreate(req) },
+  { methods: ["POST"], path: "/admin/api-keys", run: (req, context) => handleAdminApiKeysCreate(req, apiKeyAuditContext(context)) },
   { methods: ["GET"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysList(req) },
-  { methods: ["PATCH"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysUpdate(req) },
-  { methods: ["POST"], path: "/admin/api-keys/revoke", run: (req) => handleAdminApiKeysRevoke(req) },
-  { methods: ["POST"], path: "/admin/api-keys/unrevoke", run: (req) => handleAdminApiKeysUnrevoke(req) },
-  { methods: ["DELETE"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysDelete(req) },
+  { methods: ["GET"], path: "/admin/api-keys/changes", run: (req) => handleAdminApiKeyChanges(req) },
+  { methods: ["PATCH"], path: "/admin/api-keys", run: (req, context) => handleAdminApiKeysUpdate(req, apiKeyAuditContext(context)) },
+  { methods: ["POST"], path: "/admin/api-keys/revoke", run: (req, context) => handleAdminApiKeysRevoke(req, apiKeyAuditContext(context)) },
+  { methods: ["POST"], path: "/admin/api-keys/unrevoke", run: (req, context) => handleAdminApiKeysUnrevoke(req, apiKeyAuditContext(context)) },
+  { methods: ["DELETE"], path: "/admin/api-keys", run: (req, context) => handleAdminApiKeysDelete(req, apiKeyAuditContext(context)) },
   { methods: ["GET"], path: "/admin/kernel-usage", run: (req) => handleAdminKernelUsageGet(req) },
   { methods: ["GET"], path: "/admin/kernel-policy-queue", run: () => handleAdminKernelPolicyQueueList() },
   { methods: ["POST"], path: "/admin/kernel-usage", run: (req) => handleAdminKernelUsageSet(req) },
@@ -229,12 +246,15 @@ const handleApiKeyPaidFallbacksRoute = async (req: Request, path: string): Promi
 };
 
 /** Serves the admin API surface; null when no admin route matches. */
-const handleAdminRoute = async (req: Request, path: string): Promise<Response | null> => {
+const handleAdminRoute = async (req: Request, path: string, requestId: string): Promise<Response | null> => {
   const route = matchExactRoute(ADMIN_ROUTES, req, path);
   if (route) {
-    const authError = route.superAdmin ? await requireSuperAdminAuth(req) : await requireAdminAuth(req);
-    if (authError) return authError;
-    return await route.run(req);
+    const auth = await authenticateAdmin(req);
+    if (!auth.ok) return auth.response;
+    if (route.superAdmin && !auth.is_super_admin) {
+      return openaiError(403, "Super admin token required", "forbidden");
+    }
+    return await route.run(req, { auth, requestId });
   }
   const recheckMatch = /^\/admin\/providers\/codex\/(\d+)\/recheck$/.exec(path);
   if (req.method === "POST" && recheckMatch) {
@@ -284,7 +304,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   if (healthResponse) return withCors(healthResponse);
   const authRouteResponse = await handleAuthRoute(req, path);
   if (authRouteResponse) return withCors(authRouteResponse);
-  const adminResponse = await handleAdminRoute(req, path);
+  const adminResponse = await handleAdminRoute(req, path, requestId);
   if (adminResponse) return withCors(adminResponse);
   const uosResponse = await handleUosRoute(req, path);
   if (uosResponse) return withCors(uosResponse);

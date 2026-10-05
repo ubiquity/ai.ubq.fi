@@ -750,10 +750,7 @@ const runCodexSerialAdmissionLoop = async (drivers: CodexSerialAdmissionDrivers)
   const classifyModelUnavailable = drivers.classifyModelUnavailable ?? learnCodexModelUnavailable;
   const state: CodexModelUnavailableLoopState = { reselections: 0, siblingAttempted: false };
   for (;;) {
-    const retried = await drivers.runPendingShortRetry();
-    if (retried) return retried;
-
-    const dispatched = await drivers.dispatchActive();
+    const dispatched = (await drivers.runPendingShortRetry()) ?? (await drivers.dispatchActive());
     const outcome =
       dispatched === null
         ? await continueCodexAdmissionWithoutDispatch(drivers, state)

@@ -93,6 +93,11 @@ const _expeditePaidFallbackReconciliationV3 = async (reservation: PaidFallbackAd
   throw new Error("Paid fallback reconciliation scheduling changed concurrently.");
 };
 
+/**
+ * Records bounded backoff after a provider log is unavailable or invalid.
+ * This writes durable state only: the event-driven policy does not arm a timer
+ * or otherwise deliver a future reconciliation to an idle Mac.
+ */
 const deferPaidFallbackReconciliationV3 = async (kv: Deno.Kv, keyId: string, requestId: string, now: number): Promise<number | null> => {
   const requestKey = paidFallbackRequestV3Key(keyId, requestId);
   const pendingKey = paidFallbackPendingV3Key(keyId, requestId);

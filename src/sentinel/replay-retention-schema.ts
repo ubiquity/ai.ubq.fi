@@ -41,7 +41,6 @@ export const EVICTION_MAX_CHUNK_DELETES = 512;
 export const BOOTSTRAP_BATCH_ENTRIES = 32;
 export const RESERVATION_REAP_LIMIT = 8;
 export const STATUS_PRUNE_BATCH = 16;
-export const STATUS_PRUNE_SCAN = 128;
 export const CAS_ATTEMPTS = 5;
 const TEXT_ENCODER = new TextEncoder();
 const HEX_DIGEST = /^[0-9a-f]{64}$/;
@@ -396,4 +395,78 @@ export const commitAccountingMutation = async (
       .set(SENTINEL_REPLAY_BUDGET_LEDGER_KEY, next)
   ).commit();
   return committed.ok;
+};
+
+/** Current retention status for the admin surface; `unavailable` is never reported as zero. */
+export const readSentinelReplayRetentionStatus = async (kv: Deno.Kv, budgetBytes?: number): Promise<SentinelReplayRetentionStatus> => {
+  const budget = Math.max(64 * 1_024, Math.trunc(budgetBytes ?? sentinelReplayBudgetBytes()));
+  try {
+    const state = await readLedger(kv, budget);
+    if (state.kind === "corrupt") {
+      return {
+        state: "ok",
+        scope: "capture_owned_kv_payload",
+        budget_bytes: budget,
+        stored_bytes: null,
+        reserved_bytes: null,
+        records: null,
+        metadata_bytes: null,
+        status_records: null,
+        evicted_records: null,
+        evicted_bytes: null,
+        expired_records: null,
+        last_eviction_at_ms: null,
+        last_warning_at_ms: null,
+        over_budget: false,
+        near_capacity: false,
+        accounting_complete: false,
+        accounting_error: "ledger_corrupt",
+        skipped_reason: SENTINEL_REPLAY_ACCOUNTING_REASON,
+      };
+    }
+    const ledger = withBudget(state.ledger, budget);
+    const payloadBudget = sentinelReplayPayloadBudgetBytes(budget);
+    const used = ledger.stored_bytes + ledger.reserved_bytes;
+    return {
+      state: "ok",
+      scope: "capture_owned_kv_payload",
+      budget_bytes: budget,
+      stored_bytes: ledger.stored_bytes,
+      reserved_bytes: ledger.reserved_bytes,
+      records: ledger.records,
+      metadata_bytes: ledger.metadata_bytes,
+      status_records: ledger.status_records,
+      evicted_records: ledger.evicted_records,
+      evicted_bytes: ledger.evicted_bytes,
+      expired_records: ledger.expired_records,
+      last_eviction_at_ms: ledger.last_eviction_at_ms,
+      last_warning_at_ms: ledger.last_warning_at_ms,
+      over_budget: used > payloadBudget,
+      near_capacity: used >= Math.floor(payloadBudget * SENTINEL_REPLAY_CLEAN_TARGET_RATIO),
+      accounting_complete: ledger.bootstrap_complete && ledger.accounting_error === null,
+      accounting_error: ledger.accounting_error,
+      skipped_reason: ledger.last_skip_reason,
+    };
+  } catch {
+    return {
+      state: "unavailable",
+      scope: "capture_owned_kv_payload",
+      budget_bytes: null,
+      stored_bytes: null,
+      reserved_bytes: null,
+      records: null,
+      metadata_bytes: null,
+      status_records: null,
+      evicted_records: null,
+      evicted_bytes: null,
+      expired_records: null,
+      last_eviction_at_ms: null,
+      last_warning_at_ms: null,
+      over_budget: false,
+      near_capacity: false,
+      accounting_complete: false,
+      accounting_error: "unavailable",
+      skipped_reason: null,
+    };
+  }
 };

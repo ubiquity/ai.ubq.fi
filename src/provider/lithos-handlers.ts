@@ -812,6 +812,7 @@ export const handleLithosResponses = async (
     instructions: typeof rawRecord.instructions === "string" && rawRecord.instructions.trim() ? rawRecord.instructions : null,
   };
   const reasoningLabel = typeof chatBody.reasoning_effort === "string" ? chatBody.reasoning_effort : LITHOS_DEFAULT_REASONING_EFFORT;
+  chatBody.reasoning_effort = reasoningLabel;
   // The client's cap when it sent one, else unknown: this vendor publishes no
   // per-tier default allowance to stand in for it.
   const outputAllowance = typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null;

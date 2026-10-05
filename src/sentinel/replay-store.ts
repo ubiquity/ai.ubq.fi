@@ -443,6 +443,7 @@ const storeReplayEnvelope = async (
 ): Promise<SentinelReplayPersistResult> => {
   const { dependencies, chunks, dedupeKey, manifestKey, manifest, indexKey, indexFingerprint, captureId, evidenceDigest, now, expiresAtMs } = context;
   const fingerprint = manifest.fingerprint;
+  const currentNow = (): number => dependencies.currentNow?.() ?? dependencies.now?.() ?? Date.now();
   const cleanupChunks = async (): Promise<void> => {
     await Promise.all(chunks.map((_chunk, index) => dependencies.kv.delete([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index])));
   };
@@ -455,7 +456,7 @@ const storeReplayEnvelope = async (
       const fence = await advanceSentinelReplayStagingFence(dependencies.kv, {
         accounting_key: context.accountingKey,
         fence: context.accounting.fence,
-        now_ms: context.now,
+        now_ms: currentNow(),
         budget_bytes: dependencies.budgetBytes,
       });
       if (!fence.ok) {
@@ -488,7 +489,8 @@ const storeReplayEnvelope = async (
         expiresAtMs: manifest.expires_at_ms,
       });
       const publication = await prepareSentinelReplayPublication(dependencies.kv, context.accounting, context.accountingKey, context.actualCharge, {
-        now_ms: context.now,
+        now_ms: now,
+        lease_now_ms: currentNow(),
         status_key: requestStatusKey(context.requestId),
         status_bytes: sentinelReplayStatusMetadataBytes(statusRow),
         budget_bytes: dependencies.budgetBytes,
@@ -846,7 +848,12 @@ export const persistSentinelReplayFromEnvironment = async (
       return { status: "disabled", reason: "key_missing" };
     }
     try {
-      const result = await persistEncryptedSentinelReplay(input, observation, { kv, keyBytes, now: () => now, incidentEvent }, resolvedClientObservation);
+      const result = await persistEncryptedSentinelReplay(
+        input,
+        observation,
+        { kv, keyBytes, now: () => now, currentNow: () => Date.now(), incidentEvent },
+        resolvedClientObservation
+      );
       if (result.status === "incomplete") {
         // Retention refused the capture without growing above budget: make the
         // skip visible on its request instead of looking like an empty history.

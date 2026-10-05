@@ -6,6 +6,51 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Stage 1 key administration shows effective limits and audits every key change for 90 days - 2026-10-04
+
+The API Keys view presents request-quota and paid-overflow limits with the same explicit Unlimited checkbox in the
+create form and the per-key editor. A checked box disables its numeric input, sends the existing `-1` wire sentinel, and
+displays no negative number; unchecking restores the last finite value (50 requests and 1 credit when the key has none).
+A finite value must parse as a non-negative integer (requests) or a positive credit amount with at most six decimals, so
+an empty or malformed entry is refused instead of becoming unlimited. Paid overflow stays three distinct states:
+disabled, enabled with unlimited credits, and enabled with a finite cap. The existing expiry Never selector is
+unchanged.
+
+The key panel labels the effective request limit, window, used count, reset time and observation time, and the
+paid-overflow section shows enablement, the window cap (or "Not enabled"), settled and reserved credits, pending
+requests and the existing paid-fallback history. No new history path was added; the panel reuses
+`/admin/api-keys/:id/paid-fallbacks`.
+
+Every create, edit, revoke, unrevoke and delete that actually changes key state appends one compact event to
+`["uos_ai","api_keys","change"]` in the same `kv.atomic()` commit as the key-state change, so an injected audit-commit
+failure leaves the key unchanged and returns failure. A no-op PATCH and an unrevoke of an already-active key keep their
+original success response and append no event: the contract is that a real state change cannot succeed without its audit
+event, not that an idempotent call fabricates one. Deletion events are written before the purge loops and live under a
+prefix the purge does not touch, so a deleted key keeps a minimal nonsecret event. An event carries a stable id,
+timestamp, action, target key id, the key name, the safe changed policy fields (allowlisted: name, expiry, request
+limit, window, paid-overflow enablement/limit, reset, revocation), the admin request id and the release identity. Actor
+kinds distinguish an identified passkey user (`principal_id` = passkey user id) from the shared admin allowlist/deploy
+credential, a local admin with auth disabled, and unknown; a shared credential never records a human identity. No token,
+token hash, Authorization header, prompt or raw error is persisted or served.
+
+`GET /admin/api-keys/changes` is an admin-only read surface (ordinary admin auth, not super-admin) returning
+newest-first events with a bounded `limit` (default 20, maximum 50) and an opaque cursor; events carry KV TTLs of 90
+days and the response reports `retention_days`. The reader additionally drops any event whose own `at_ms` is older than
+90 days, because TTL expiry alone is not an exact-time visibility guarantee. Audit coverage begins at deployment: no
+historical actor is reconstructed, and the UI says so.
+
+Wire schemas, `-1` sentinel semantics, paid-accounting enforcement, reservation guards and the outstanding-billing
+deletion guard are unchanged.
+
+Reason: the approved Stage 1 plan requires clear effective-limit presentation, iPhone-safe unlimited entry without
+negative numbers, and durable, safely attributed key-change history so an operator can see who changed a key's policy
+and when.
+
+Reversal risk: re-enabling negative-number entry reintroduces the iPhone input problem and lets a malformed finite value
+become unlimited; moving the audit append out of the key-state commit makes a success without a durable event possible;
+recording tokens, hashes or shared-credential human identities would leak secrets or fabricate attribution; dropping the
+cursor/limit bound or the 90-day TTL makes the history unbounded.
+
 ## The Mac gateway uses a checksum-pinned managed Deno 2.9.5 - 2026-10-03
 
 Only the Mac gateway launcher uses the official aarch64 Deno 2.9.5 artifact in
@@ -518,6 +563,54 @@ chunks, making the ledger authoritative instead of the rows, applying a ledger d
 change, releasing a charge before the chunk prefix is provably empty, evicting without a claim CAS, or letting
 capture-owned status metadata grow without bound would each restore silent unbounded growth, double-charge capacity or
 lose accounting.
+
+## Gateway Jev compaction for marked Codex requests - 2026-09-22
+
+`POST /v1/responses` answers an explicitly marked Codex compaction locally instead of dispatching a main model. The
+predicate is header-only: `x-codex-turn-metadata` must parse as JSON with `request_kind: "compaction"` and
+`compaction.implementation: "responses"` (the one enum variant verified against official Codex rust-v0.155.1). Absent,
+malformed, unknown and `responses_compaction_v2` markers keep the existing route; prompt text is never inspected. The
+seam is inside `runResponsesRoute` in `src/handler/terminal-route.ts`, after `authenticateClient` and admission, so the
+route keeps `executeInference` ownership and its terminal wrapper, and an ordinary request's body, abort signal and
+provider routing are untouched.
+
+The handler reuses the finished selection and rendering core of `0x4007/fast-jev-compaction` (MIT) at
+`c1eab5fdbd6bde7d67f2da070116496558836884`, pinned with its license and a file map in `lib/jev_compaction/`; the gateway
+adapter is `src/jev_compaction/compaction.ts`. Only the library and Codex item mapping were ported; the upstream HTTP
+proxy, CLI and server are not part of this gateway. One handled compaction may make several bounded Jev batches (state
+ceiling 25,000 tokens, request ceiling 30,000 tokens, 30-second per-call transport bound, caller abort forwarded), and
+local code renders retained text verbatim under the existing 400,000-character summary cap.
+
+Failure is closed and local: malformed or empty input, no unpinned candidates, no measured reduction, Jev error or
+timeout, partial decisions, empty or oversized summary, and cancellation each return a non-success response before any
+completion is emitted, so Codex keeps its existing history. There is no main-model fallback, no account rotation, no
+invented usage, and no `encrypted_content`. `TYPESAFE_API_KEY` is read lazily with `Deno.env` only when a recognized
+compaction is handled; a missing or denied value is an explicit 503, never a startup failure. A successful local answer
+carries explicit completion telemetry (`setResponseCompletionTelemetry` in `src/openai-telemetry.ts`: completed,
+semantic output observed, a `response.completed` stream terminal, and usage counters left null), so the normal terminal
+wrapper's own completion decision commits the repository reservation after delivery instead of releasing it as a stream
+that ended without a completion; a failed or cancelled answer stays unmarked and releases through the same wrapper. No
+main-model token, allowance, model or cost counter is fabricated either way.
+
+Reason: the official client decides when to compact and must keep its normal history and routing; only the summary text
+for an explicitly marked local compaction is gateway-owned. The alternative client-side fork would need per-client
+maintenance and was rejected by the user.
+
+Status: implemented and accepted as a prototype on 2026-09-22. The focused tests and the credential-free real HTTP
+fixture exercise the real handler over loopback HTTP with an injected asker, including the actual completion/telemetry
+settlement and the history-preserving failure path. Historically, the stock Mac Codex client 0.155.1 against the
+hash-verified candidate completed one manual and one automatic compaction with real Jev, each path making one Jev API
+request; the next requests carried the adopted summaries, and normal turns made zero Jev calls. The live receipt is
+`591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/9baf75f6-b2e7-4a74-9962-e61ceb3ad0df`. The current
+port was additionally accepted on the installed stock Codex 0.160.0 in credential-free fake-asker mode: the real CLI
+completed one manual and one automatic compaction, the next request adopted the automatic summary, an injected Jev
+outage left the original history intact, normal turns invoked no Jev asker, no marked compaction reached the main-model
+upstream, and the run made zero real Jev API requests and no paid API calls. Repository verification and PR/CI delivery
+remain pending, and nothing here is deployed.
+
+Reversal risk: removing the predicate restores main-model compaction dispatch, and widening it to prompt matching or to
+unverified metadata variants would claim requests the gateway cannot answer. Treating a Jev failure as success, or
+truncating kept content to force a summary, would silently replace the client's history.
 
 ## Gateway reliability program: finite admission, terminal parity, deadlines, optional analytics - 2026-09-22
 

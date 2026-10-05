@@ -13,6 +13,7 @@ import {
   readSentinelReplayLedgerSnapshot,
   sentinelReplayAccountingKey,
   SENTINEL_REPLAY_STAGING_BATCH_CHUNKS,
+  SENTINEL_REPLAY_RESERVATION_TTL_MS,
   SENTINEL_REPLAY_STORAGE_FULL_REASON,
   type SentinelReplayAccountingRow,
 } from "../src/sentinel/replay-retention-schema.ts";
@@ -159,6 +160,44 @@ const chunkCount = async (kv: Deno.Kv, captureId: string): Promise<number> => {
   }
   return count;
 };
+
+Deno.test({
+  name: "publication rejects a reservation expired during capture staging",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    const requestId = "staging-expired-publication";
+    let wallNow = NOW;
+    let leaseReads = 0;
+    const currentNow = () => {
+      leaseReads += 1;
+      if (leaseReads === 2) wallNow = NOW + SENTINEL_REPLAY_RESERVATION_TTL_MS + 1;
+      return wallNow;
+    };
+    try {
+      const result = await persistEncryptedSentinelReplay(
+        { ...captureInput(requestId), body: new TextEncoder().encode("{}") },
+        failure,
+        {
+          kv,
+          keyBytes: crypto.getRandomValues(new Uint8Array(32)),
+          now: () => NOW,
+          currentNow,
+          randomUuid: () => `capture-${requestId}`,
+          budgetBytes: BUDGET_BYTES,
+        }
+      );
+      assert.deepEqual(result, { status: "incomplete", reason: SENTINEL_REPLAY_STORAGE_FULL_REASON });
+      assert.equal(leaseReads, 2);
+      assert.equal(await chunkCount(kv, `capture-${requestId}`), 0);
+      assert.equal((await ledgerOf(kv)).reserved_bytes, 0);
+    } finally {
+      kv.close();
+    }
+  },
+});
 
 Deno.test({
   name: "first and second chunk transactions reject a released reservation before writer cleanup",

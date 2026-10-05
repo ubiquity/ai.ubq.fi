@@ -304,9 +304,11 @@ export const recordMeteredUpstreamResponse = async (
 };
 
 /**
- * Settlement runs because a request reached a terminal state, not because a
- * minute passed. Tests replace the sweep so a background provider-log read cannot
- * race their KV budgets; `null` restores the real one.
+ * Settlement gets one best-effort sweep because a request reached a terminal
+ * state, not because a minute passed. A missing provider log is deliberately
+ * left to the next authorized event; no autonomous retry is armed here. Tests
+ * replace the sweep so a background provider-log read cannot race their KV
+ * budgets; `null` restores the real one.
  */
 const defaultPaidFallbackTerminalSweep = (): void => {
   void reconcileDuePaidFallbacksV3().catch(() => {});
@@ -329,9 +331,9 @@ export const recordMeteredAmbiguousFailure = async (
     dispatch_state: "dispatched",
   });
   await markPaidFallbackTerminalV3(reservation, "ambiguous");
-  // A terminal event is what makes pending marks due; settle them now instead of
-  // waiting for the retired every-minute cron. Fire-and-forget so provider-log
-  // reads never delay the response, and gate-guarded so an idle sweep is one read.
+  // A terminal event makes pending marks due and starts one best-effort sweep.
+  // Fire-and-forget so provider-log reads never delay the response; deferred
+  // work remains durable for a later event instead of using a periodic timer.
   paidFallbackTerminalSweep();
 };
 
@@ -350,7 +352,8 @@ export const recordMeteredTerminal = async (
 ): Promise<void> => {
   await markPaidFallbackTerminalV3(reservation, terminalState, provider);
   // Same event-driven settlement as the ambiguous path: the request is over, so
-  // reconcile what its terminal state made due without blocking anything.
+  // make one non-blocking attempt at what its terminal state made due. Deferred
+  // provider-log work remains durable and waits for another authorized event.
   paidFallbackTerminalSweep();
 };
 

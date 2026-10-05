@@ -229,6 +229,8 @@ Deno.test("systemone loopback deadline responses preserve quota hook errors and 
     }
     assert.equal(fetchCalls, 0);
     assert.equal(cancelCalls, 2);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assert.equal((await getOpenRouterProviderHealth()).state, "unknown");
   } finally {
     await server.shutdown();
     AbortSignal.timeout = originalTimeout;

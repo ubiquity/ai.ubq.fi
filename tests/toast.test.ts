@@ -180,6 +180,18 @@ Deno.test("loading toasts persist beyond normal durations and remain dismissible
     assert.equal(finiteEl.dataset.exiting, "", "explicit finite durations still expire on schedule");
     advance(160);
     assert.equal(finiteEl.isConnected, false);
+
+    toast.success("Hovered success");
+    const hoveredEl = host.children[0];
+    advance(1000);
+    hoveredEl.listeners.get("mouseenter")?.();
+    advance(10_000);
+    assert.equal(hoveredEl.dataset.exiting, undefined, "hovering pauses the toast past its original deadline");
+    hoveredEl.listeners.get("mouseleave")?.();
+    advance(2499);
+    assert.equal(hoveredEl.dataset.exiting, undefined, "the toast remains for its captured remaining duration");
+    advance(1);
+    assert.equal(hoveredEl.dataset.exiting, "", "the toast expires after the captured remaining duration");
   } finally {
     body.children[0]?.remove();
     Date.now = originalNow;

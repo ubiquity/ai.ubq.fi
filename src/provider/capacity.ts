@@ -250,7 +250,8 @@ const meteredCapacitySource = (snapshot: MeteredQuotaSnapshot | null, snapshotAt
 const captureProviderCapacitySnapshot = async (
   options: ProviderCapacitySnapshotOptions,
   snapshotAtMs: number,
-  kv: Deno.Kv | null
+  kv: Deno.Kv | null,
+  forceMeteredRefresh = true
 ): Promise<ProviderCapacitySnapshot> => {
   let accounts: readonly CodexCapacityAccount[] = [];
   try {
@@ -281,7 +282,7 @@ const captureProviderCapacitySnapshot = async (
     fetcher,
     now: () => snapshotAtMs,
     signal,
-    forceRefresh: true,
+    forceRefresh: forceMeteredRefresh,
     createLeaseOwner: options.createLeaseOwner,
   }).catch(() => null);
   const [codexSources, meteredSnapshot] = await Promise.all([codexPromise, meteredPromise]);
@@ -510,11 +511,14 @@ export const getPersistedProviderCapacityView = async (options: Pick<ProviderCap
     : unavailableView(nowMs, history, resetEvents, mergedRateLimitResetEvents, downtimeEvents);
 };
 
-export const refreshProviderCapacity = async (options: ProviderCapacitySnapshotOptions = {}): Promise<ProviderCapacityView> => {
+const refreshProviderCapacityInternal = async (
+  options: ProviderCapacitySnapshotOptions = {},
+  forceMeteredRefresh = true
+): Promise<ProviderCapacityView> => {
   const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {
-    const snapshot = await captureProviderCapacitySnapshot(options, nowMs, null);
+    const snapshot = await captureProviderCapacitySnapshot(options, nowMs, null, forceMeteredRefresh);
     return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], [], [], [], nowMs);
   }
 
@@ -547,7 +551,7 @@ export const refreshProviderCapacity = async (options: ProviderCapacitySnapshotO
   }
 
   try {
-    const snapshot = await captureProviderCapacitySnapshot(options, nowMs, kv);
+    const snapshot = await captureProviderCapacitySnapshot(options, nowMs, kv, forceMeteredRefresh);
     const persisted = await persistCapacitySnapshot(kv, lease.entry, snapshot).catch(() => false);
     const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
     const resetEvents = await listProviderCapacityResetEvents({ kv, now: () => nowMs }).catch(() => resetEventsBefore);
@@ -567,6 +571,9 @@ export const refreshProviderCapacity = async (options: ProviderCapacitySnapshotO
     await releaseCapacityLease(kv, owner);
   }
 };
+
+export const refreshProviderCapacity = (options: ProviderCapacitySnapshotOptions = {}): Promise<ProviderCapacityView> =>
+  refreshProviderCapacityInternal(options, true);
 
 /**
  * Persist one capacity sample for an observed event, without building the admin
@@ -682,7 +689,7 @@ export const handleProviderCapacity = async (
     if (!live && cached && capacityViewIsFresh(cached, safeNow(options.now ?? Date.now))) {
       return json(200, { ...cached, prompt_cache: await promptCache, ledger_growth: ledgerGrowth }, { "Cache-Control": "no-store" });
     }
-    const refreshed = await refreshProviderCapacity(options).catch(() => null);
+    const refreshed = await refreshProviderCapacityInternal(options, live).catch(() => null);
     const view = refreshed ?? cached ?? unavailableView(Date.now(), [], [], [], []);
     return json(200, { ...view, prompt_cache: await promptCache, ledger_growth: ledgerGrowth }, { "Cache-Control": "no-store" });
   } catch {

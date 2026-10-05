@@ -18,6 +18,7 @@ export {
 } from "./codex.ts";
 export { handleAdminDefaults, handleAdminKvMigrationImport, handleAdminKvMigrationValidate } from "./defaults.ts";
 export { handleAdminApiKeysCreate, handleAdminApiKeysList, handleAdminApiKeysPaidFallbacks } from "./api-keys.ts";
+export { handleAdminApiKeyChanges } from "./api-key-audit.ts";
 export { handleAdminApiKeysDelete, handleAdminApiKeysRevoke, handleAdminApiKeysUnrevoke, handleAdminApiKeysUpdate } from "./api-key-mutations.ts";
 export {
   handleAdminCodexResetSettings,
