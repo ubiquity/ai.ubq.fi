@@ -1298,7 +1298,16 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
   const imagePart = `data:image/png;base64,${"A".repeat(40 * 1024)}`;
   const boundedImageMessage = messages(
     toDeepSeekChatMessages(
-      [{ type: "message", role: "user", content: [{ type: "input_image", image_url: imagePart }, { type: "input_image", image_url: imagePart }] }],
+      [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_image", image_url: imagePart },
+            { type: "input_image", image_url: imagePart },
+          ],
+        },
+      ],
       null
     )
   );
@@ -1309,7 +1318,10 @@ Deno.test("deepseek responses: bounds oversized forwarded payloads under the dec
     return total + new TextEncoder().encode(String(image.url)).byteLength;
   }, 0);
   assert.equal(assembledImageBytes <= limit, true);
-  assert.equal(boundedImageContent.some((part) => part.type === "text" && String(part.text).includes("image omitted")), true);
+  assert.equal(
+    boundedImageContent.some((part) => part.type === "text" && String(part.text).includes("image omitted")),
+    true
+  );
 
   // An explicit `truncation: "disabled"` fails closed instead of reducing: the
   // error names the input path, the byte counts and the declared limit, and it

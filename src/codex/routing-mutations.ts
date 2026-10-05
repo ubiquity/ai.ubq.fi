@@ -440,13 +440,16 @@ const buildExpiredProbeClaim = (
   const current = slotFor(base, account);
   const circuit = routingProbeCircuit(account);
   const requestedQuotaClass = quotaClass(account.requestedModel);
-  const circuitDeadline =
-    circuit === "upstream_timeout" ? current.upstream_timeout_blocked_until_ms : quotaBlockForClass(current, requestedQuotaClass)?.blocked_until_ms;
+  const classBlock = quotaBlockForClass(current, requestedQuotaClass);
+  const circuitDeadline = circuit === "upstream_timeout" ? current.upstream_timeout_blocked_until_ms : classBlock?.blocked_until_ms;
+  // A capacity-exhausted subscription with no class circuit is the probe
+  // candidate that has no deadline to expire: its only trusted recovery is a
+  // successful bounded probe, so it is claimed like an expired circuit.
+  const capacityProbe = circuit === "quota" && classBlock === null && account.quotaHeadroom === 0;
   if (
     !slotMatchesRoutingAccount(current, account) ||
     current.invalid_credential_version === account.credentialVersion ||
-    !circuitDeadline ||
-    circuitDeadline > now ||
+    (!capacityProbe && (!circuitDeadline || circuitDeadline > now)) ||
     (current.probe_lease?.expires_at_ms ?? 0) > now
   )
     return null;

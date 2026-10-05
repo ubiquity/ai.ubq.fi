@@ -14,7 +14,9 @@ import { isRecord } from "../utils.ts";
  * describing a provider-side redemption that may still need reconciliation.
  */
 export const CODEX_RESET_REDEMPTION_KV_PREFIX = ["uos_ai", "codex_reset_redemption", "v1"] as const;
+/** Retained for rollback and audit only: the submission budget never reads this key after the per-account cutover. */
 export const CODEX_RESET_GLOBAL_DAILY_KV_PREFIX = ["uos_ai", "codex_reset_redemption", "global_day", "v1"] as const;
+export const CODEX_RESET_ACCOUNT_DAILY_KV_PREFIX = ["uos_ai", "codex_reset_redemption", "account_day", "v1"] as const;
 export const CODEX_RESET_SHADOW_DECISION_KV_PREFIX = ["uos_ai", "codex_reset_shadow_decision", "v1"] as const;
 export const CODEX_BANKED_RESET_LEASE_MS = 30_000;
 /** Inventory is an authorization input for an external spend, not a cache. */
@@ -29,7 +31,10 @@ export const codexResetRedemptionKey = (accountIdHash: string, quotaGeneration: 
   quotaGeneration,
 ];
 
+/** Retained for rollback and audit only; never enforced after the per-account cutover. */
 export const codexResetGlobalDailyKey = (day: string): Deno.KvKey => [...CODEX_RESET_GLOBAL_DAILY_KV_PREFIX, day];
+
+export const codexResetAccountDailyKey = (accountIdHash: string, day: string): Deno.KvKey => [...CODEX_RESET_ACCOUNT_DAILY_KV_PREFIX, accountIdHash, day];
 
 export const codexResetShadowDecisionKey = (episodeHash: string): Deno.KvKey => [...CODEX_RESET_SHADOW_DECISION_KV_PREFIX, episodeHash];
 
@@ -38,7 +43,7 @@ export type CodexBankedResetMode = "disabled" | "shadow" | "live";
 export type CodexBankedResetConfig = Readonly<{
   enabled: boolean;
   mode: CodexBankedResetMode;
-  maxGlobalPerDay: number;
+  maxPerAccountPerDay: number;
   maxPerAccountPerWindow: number;
 }>;
 
@@ -85,7 +90,8 @@ export const parseCodexBankedResetConfig = (readEnv: (key: string) => string | u
   // explicit live mode, valid caps, and an approved provider contract.
   enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
   mode: parseMode(readEnv("CODEX_BANKED_RESET_MODE")),
-  maxGlobalPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY"), 0),
+  // The retired CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY environment is no longer read.
+  maxPerAccountPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY"), 1),
   maxPerAccountPerWindow: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW"), 1),
 });
 
@@ -344,7 +350,7 @@ export const parseCodexResetRedemptionRecord = (value: unknown): CodexResetRedem
   };
 };
 
-const parseGlobalDailyRecord = (value: unknown, day: string): CodexResetGlobalDailyRecord | null => {
+const parseAccountDayRecord = (value: unknown, day: string): CodexResetGlobalDailyRecord | null => {
   if (!isRecord(value) || value.v !== 1 || value.day !== day || !isSafeMs(value.updated_at_ms)) return null;
   if (!isSafeNonnegativeInteger(value.submission_count)) return null;
   return { v: 1, day, submission_count: value.submission_count, updated_at_ms: value.updated_at_ms };
@@ -414,7 +420,7 @@ const utcDay = (nowMs: number): string | null => {
 };
 
 /**
- * A global cap is a cap on externally visible submissions, not merely on
+ * The daily cap is a cap on externally visible submissions, not merely on
  * ledger claims. A claim that crosses UTC midnight must never carry an old
  * day's reservation into a new day, where it could bypass that day's cap.
  */
@@ -455,7 +461,7 @@ const policyReason = (config: CodexBankedResetConfig): string | null => {
     // shadow. The production cohort evaluator requires a positive cap before
     // its bounded inventory reads.
     if (config.mode === "shadow") return null;
-    if (config.maxGlobalPerDay <= 0) return "global_limit_disabled";
+    if (config.maxPerAccountPerDay <= 0) return "per_account_day_limit_invalid";
     // The non-negotiable at-most-once rule is stronger than a mutable setting.
     if (config.maxPerAccountPerWindow !== 1) return "per_account_window_limit_invalid";
     return null;
@@ -464,8 +470,16 @@ const policyReason = (config: CodexBankedResetConfig): string | null => {
   }
 };
 
-const providerPolicyReason = (config: CodexBankedResetConfig, provider: CodexUsageResetProvider): string | null =>
-  config.mode === "live" && providerTreatsRedeemOutcomeAsFinal(provider) && config.maxGlobalPerDay !== 1 ? "terminal_outcome_global_limit_must_be_one" : null;
+/**
+ * Live mode is exactly one redemption per account per UTC day. A provider whose
+ * redeem outcome is final gets the terminal-specific message because a lost
+ * response can never be reconciled; every other live provider still fails
+ * closed instead of handing out a second daily submission.
+ */
+const providerPolicyReason = (config: CodexBankedResetConfig, provider: CodexUsageResetProvider): string | null => {
+  if (config.mode !== "live" || config.maxPerAccountPerDay === 1) return null;
+  return providerTreatsRedeemOutcomeAsFinal(provider) ? "terminal_outcome_account_day_limit_must_be_one" : "per_account_day_limit_invalid";
+};
 
 const boundedInventorySignal = (signal?: AbortSignal): AbortSignal => {
   const timeout = AbortSignal.timeout(CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS);
@@ -533,7 +547,7 @@ export {
   isSafeNonnegativeInteger,
   metric,
   outcome,
-  parseGlobalDailyRecord,
+  parseAccountDayRecord,
   policyReason,
   providerPolicyReason,
   readUsageGate,

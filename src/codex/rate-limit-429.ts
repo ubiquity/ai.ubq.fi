@@ -358,15 +358,25 @@ const resolveQuotaClassResetIdentity = (
   retryAtMs: number,
   priorDeadline: number,
   hasClassBlocks: boolean,
-  boundedRecoveryProbe: boolean
+  boundedRecoveryProbe: boolean,
+  now: number
 ): CodexQuotaClassResetIdentity => {
   const priorObservedResetAtMs = priorClassBlock?.observed_reset_at_ms ?? (!hasClassBlocks ? current.observed_reset_at_ms : null);
   const priorObservedResetIsStable = priorClassBlock?.observed_reset_at_is_stable ?? (!hasClassBlocks && current.observed_reset_at_is_stable);
   const hasStableObservation = priorObservedResetAtMs !== null && priorObservedResetIsStable;
+  // A carried ambiguity only protects against re-reading an old window while
+  // that window could still describe the current block. Once its deadline has
+  // passed (or no observation was ever recorded), a fresh live 429 with a
+  // stable future deadline is the current window: refusing here would strand
+  // the reset fences forever, because every later observation inherits the
+  // same flag. The durable redemption ledger still makes each window
+  // spend-once, so a superseded observation cannot double-spend.
+  const priorWindowRuledOut = priorObservedResetAtMs === null || priorObservedResetAtMs <= now;
+  const liveDeadlineSupersedes = !hasClassBlocks && priorWindowRuledOut && parsed.resetDeadlineIsStable && retryAtMs > now;
   const generationAmbiguous =
     boundedRecoveryProbe ||
     priorClassBlock?.banked_reset_generation_ambiguous === true ||
-    (!hasClassBlocks && current.banked_reset_generation_ambiguous) ||
+    (!hasClassBlocks && current.banked_reset_generation_ambiguous && !liveDeadlineSupersedes) ||
     parsed.resetDeadlineConflict ||
     (hasStableObservation && (!parsed.resetDeadlineIsStable || retryAtMs !== priorObservedResetAtMs));
   const preserveStableObservation = hasStableObservation && generationAmbiguous;
@@ -406,7 +416,7 @@ const buildQuotaBlockedSlot = (
   const priorTimeout = current.upstream_timeout_blocked_until_ms ?? 0;
   const boundedRecoveryProbe = recoveryProbe || (current.banked_reset_recovery_probe_pending && account.probeGeneration !== null);
   const deadline = boundedRecoveryProbe ? now + CODEX_HALF_OPEN_LEASE_MS : Math.max(priorDeadline, retryAtMs);
-  const identity = resolveQuotaClassResetIdentity(current, priorClassBlock, parsed, retryAtMs, priorDeadline, hasClassBlocks, boundedRecoveryProbe);
+  const identity = resolveQuotaClassResetIdentity(current, priorClassBlock, parsed, retryAtMs, priorDeadline, hasClassBlocks, boundedRecoveryProbe, now);
   const blockedClassBlock: CodexQuotaClassBlock = {
     blocked_until_ms: deadline,
     source: quotaBlockSource,

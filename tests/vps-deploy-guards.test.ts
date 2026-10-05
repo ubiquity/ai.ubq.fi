@@ -335,9 +335,20 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   await runFixtureGit(root, f.env, ["update-ref", "refs/remotes/origin/development", sha]);
   const reservations = [Deno.listen({ hostname: "127.0.0.1", port: 0 }), Deno.listen({ hostname: "127.0.0.1", port: 0 })];
   const ports = reservations.map((listener) => (listener.addr as Deno.NetAddr).port);
-  reservations.forEach((listener) => {
-    listener.close();
-  });
+  // The release ports stay reserved until both helper servers below have bound
+  // their own ephemeral ports. Releasing them earlier lets the kernel hand a
+  // released port to the proxy or control helper, which silently satisfies the
+  // readiness wait and leaves the real child unable to bind its mapped port.
+  const closeReservations = (): void => {
+    for (const listener of reservations.splice(0)) listener.close();
+  };
+  const helperServers: Deno.HttpServer[] = [];
+  const releaseFixture = f.dispose;
+  f.dispose = async () => {
+    closeReservations();
+    for (const server of helperServers.splice(0)) await server.shutdown();
+    await releaseFixture();
+  };
   assert.notEqual(ports[0], ports[1]);
   assert.ok(!ports.includes(7999) && !ports.includes(8001));
   const record = (event: string): Promise<void> =>
@@ -381,6 +392,38 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       output = undefined;
     }
   };
+  const foreignListeners = new Map<number, Deno.HttpServer>();
+  // Controlled negative for the readiness contract: a foreign listener that
+  // answers HTTP 200 with a valid but different release identity must never be
+  // mistaken for the release this start is waiting for. It also reproduces the
+  // release-port collision directly, because it holds the mapped port before the
+  // real child is spawned.
+  const occupyReleasePort = async (port: number): Promise<void> => {
+    if (foreignListeners.has(port)) return;
+    let markBound: () => void = () => {};
+    const bound = new Promise<void>((resolve) => {
+      markBound = resolve;
+    });
+    const foreignBody = JSON.stringify({ release: { git_sha: oldSha, deployment_id: "vps-" + oldSha } });
+    const server = Deno.serve(
+      {
+        hostname: "127.0.0.1",
+        port,
+        onListen: () => {
+          markBound();
+        },
+      },
+      () =>
+        new Response(foreignBody, {
+          status: 200,
+          headers: { "content-type": "application/json", "x-uos-git-sha": oldSha, "x-uos-deployment-id": "vps-" + oldSha },
+        })
+    );
+    foreignListeners.set(port, server);
+    helperServers.push(server);
+    await bound;
+    await record("foreign-listener " + String(port));
+  };
   const unitLine = String(VPS_UNIT)
     .split("\n")
     .find((line) => line.startsWith("ExecStart="));
@@ -400,6 +443,9 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       await write(root, "scripts/legacy.fixture.ts", oldLauncher);
       command = command.replace('"$release/scripts/serve-vps.ts"', quote(root + "/scripts/legacy.fixture.ts"));
     }
+    const port = selected === "releases/" + oldSha ? ports[0] : ports[1];
+    const expected = selected === "releases/" + oldSha ? oldSha : sha;
+    if (await pathExists(root + "/foreign-listener")) await occupyReleasePort(port);
     await record("unit-exec " + command);
     child = new Deno.Command("/bin/sh", {
       args: ["-c", command],
@@ -410,13 +456,11 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       stderr: "piped",
     }).spawn();
     output = child.output();
-    const port = selected === "releases/" + oldSha ? ports[0] : ports[1];
     const deadline = performance.now() + 5000;
     while (performance.now() < deadline) {
       try {
         const response = await fetch("http://127.0.0.1:" + String(port) + "/health");
-        await response.body?.cancel();
-        return;
+        if (await servesExpectedRelease(response, expected)) return;
       } catch {
         /* startup */
       }
@@ -441,6 +485,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
     return new Response(body, { status: refused ? 503 : response.status, headers: response.headers });
   });
   const proxyPort = (proxy.addr as Deno.NetAddr).port;
+  helperServers.push(proxy);
   const control = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async (request) => {
     try {
       const action = new URL(request.url).pathname;
@@ -457,6 +502,12 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       return new Response(error instanceof Error ? error.message : String(error), { status: 500 });
     }
   });
+  helperServers.push(control);
+  const controlPort = (control.addr as Deno.NetAddr).port;
+  // Both reservations were still held while these two helpers bound, so a
+  // release port here means the reservation contract regressed.
+  assert.notEqual(proxyPort, controlPort);
+  assert.ok(!ports.includes(proxyPort) && !ports.includes(controlPort), "fixture helpers must not bind a release physical port");
   await write(
     root,
     "control-client.ts",
@@ -464,13 +515,14 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       String((control.addr as Deno.NetAddr).port) +
       '/" + Deno.args[0]);\nif (!response.ok) { console.error(await response.text()); Deno.exit(72); }\nawait response.body?.cancel();\n'
   );
-  const dispose = f.dispose;
+  const childDispose = f.dispose;
   f.dispose = async () => {
     await stop();
-    await control.shutdown();
-    await proxy.shutdown();
-    await dispose();
+    await childDispose();
   };
+  // Cleanup is installed and both helpers are bound on distinct ephemeral
+  // ports, so the release ports can now be handed to the real children.
+  closeReservations();
   try {
     await start(profile === "legacy");
   } catch (error) {
@@ -546,6 +598,8 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
       sha,
       oldSha,
       physical_ports: ports,
+      proxy_port: proxyPort,
+      control_port: controlPort,
       launcher_hash: await hash(new TextEncoder().encode(oldLauncher)),
       unit_hash: await hash(new TextEncoder().encode(VPS_UNIT)),
       bootstrap_hash: await hash(new TextEncoder().encode(bootstrap)),
@@ -572,6 +626,25 @@ const identity = async (response: Response): Promise<string> => {
   assert.equal(body.release.deployment_id, "vps-" + String(body.release.git_sha));
   assert.equal(response.headers.get("x-uos-deployment-id"), body.release.deployment_id);
   return body.release.git_sha;
+};
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * The fixture's launcher wait must prove the identity of the release it is
+ * starting, not merely that some process answered on the mapped port: its own
+ * proxy or control helper, a stale release, a foreign listener, or a dead child
+ * must never satisfy readiness. The production HTTP-200 gate stays authoritative
+ * in `ops/deploy.ts` (`ready`), which is what reports a started-but-not-ready
+ * candidate, so this check is status-agnostic and never replaces that guard.
+ */
+const servesExpectedRelease = async (response: Response, expected: string): Promise<boolean> => {
+  const deploymentId = "vps-" + expected;
+  if (response.headers.get("x-uos-git-sha") !== expected || response.headers.get("x-uos-deployment-id") !== deploymentId) {
+    await response.body?.cancel();
+    return false;
+  }
+  const health: unknown = await response.json().catch(() => undefined);
+  const release = isRecord(health) ? health.release : undefined;
+  return isRecord(release) && release.git_sha === expected && release.deployment_id === deploymentId;
 };
 const snapshot = async (root: string): Promise<string> => {
   const entries: unknown[] = [];
@@ -706,6 +779,21 @@ for (const marker of ["archive-refused", "preparation-refused", "restart-refused
     assert.doesNotMatch(run.stdout, /"health_verified":true/);
     assert.ok(!(await calls(f)).includes(RELOAD_COMMAND));
   });
+withLauncher("VPS fixture readiness rejects a foreign listener on the mapped release port", async (f, a) => {
+  await write(f.root, "foreign-listener", "fault\n");
+  const run = await runDeployFixture(f, a.options);
+  assert.notEqual(run.code, 0);
+  // A foreign HTTP 200 without the expected release identity must never satisfy
+  // the launcher wait. Without the identity check this run instead advances to
+  // the deploy's own health gate and reports /did not serve the expected release/.
+  assert.match(run.stderr, /actual launcher (failed|did not bind)/);
+  assert.doesNotMatch(run.stderr, /did not serve the expected release/);
+  assert.ok(
+    (await calls(f)).some((line) => line.startsWith("foreign-listener ")),
+    "the controlled negative must hold the release port"
+  );
+  assert.equal(await Deno.readLink(f.root + "/.data/current"), "releases/" + a.oldSha);
+});
 for (const corruption of [
   "no-receipt",
   "malformed",

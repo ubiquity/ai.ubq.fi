@@ -20,7 +20,7 @@ import {
   attemptCodexBankedReset,
   candidate,
   clone,
-  codexResetGlobalDailyKey,
+  codexResetAccountDailyKey,
   codexResetRedemptionKey,
   codexResetUsageKey,
   config,
@@ -108,11 +108,11 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
   }
 });
 
-Deno.test("global daily cap stops a second account before it reaches the provider", async () => {
+Deno.test("two different accounts can each redeem once in the same UTC day", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
-  const configured = config({ maxGlobalPerDay: 1 });
+  const configured = config({ maxPerAccountPerDay: 1 });
   const deps = dependencies(kv, provider, clock, configured);
   const firstCandidate = candidate();
   const secondCandidate = candidate({ accountId: "test-account-b", requestId: "second-account" });
@@ -122,17 +122,25 @@ Deno.test("global daily cap stops a second account before it reaches the provide
   const second = await attemptCodexBankedReset(secondCandidate, deps);
 
   assert.equal(first.kind, "verified");
-  assert.equal(second.kind, "skipped");
-  assert.equal(second.reason, "global_limit_reached");
-  assert.equal(provider.redeemInputs.length, 1);
-  assert.equal(provider.commitCount, 1);
+  assert.equal(second.kind, "verified");
+  assert.equal(provider.redeemInputs.length, 2);
+  assert.equal(provider.commitCount, 2);
+  const day = new Date(clock.nowMs).toISOString().slice(0, 10);
+  assert.equal(
+    (await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(firstCandidate.accountId), day))).value?.submission_count,
+    1
+  );
+  assert.equal(
+    (await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(secondCandidate.accountId), day))).value?.submission_count,
+    1
+  );
 });
 
-Deno.test("an inventory failure leaves the global daily submission budget available", async () => {
+Deno.test("an inventory failure leaves the account's daily submission budget available", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
-  const configured = config({ maxGlobalPerDay: 1 });
+  const configured = config({ maxPerAccountPerDay: 1 });
   const firstCandidate = candidate();
   const secondCandidate = candidate({ accountId: "test-account-b", requestId: "after-inventory-failure" });
   await seedFences(kv, firstCandidate);
@@ -143,29 +151,32 @@ Deno.test("an inventory failure leaves the global daily submission budget availa
   assert.equal(first.kind, "rejected");
   assert.equal(first.reason, "inventory_unavailable");
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+  assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(firstCandidate.accountId), day))).value, null);
 
   provider.inventoryFailure = null;
   const second = await attemptCodexBankedReset(secondCandidate, dependencies(kv, provider, clock, configured));
   assert.equal(second.kind, "verified");
   assert.equal(provider.redeemInputs.length, 1);
-  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
+  assert.equal(
+    (await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(secondCandidate.accountId), day))).value?.submission_count,
+    1
+  );
 });
 
-Deno.test("a claim held across UTC midnight cannot bypass the next day's global redemption cap", async () => {
+Deno.test("a claim held across UTC midnight cannot bypass the next day's per-account redemption cap", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
   const dayMs = 24 * 60 * 60 * 1_000;
   const firstCandidate = candidate({ quotaResetAtMs: clock.nowMs + 2 * dayMs });
   const secondCandidate = candidate({
-    accountId: "test-account-b",
+    accountId: "test-account-a",
     requestId: "next-day-account",
     quotaResetAtMs: clock.nowMs + dayMs + 60_000,
   });
   await seedFences(kv, firstCandidate);
   await seedFences(kv, secondCandidate);
-  const deps = dependencies(kv, provider, clock, config({ maxGlobalPerDay: 1 }));
+  const deps = dependencies(kv, provider, clock, config({ maxPerAccountPerDay: 1 }));
   const inventoryGate = new Deferred<void>();
   const inventoryEntered = new Deferred<void>();
   provider.inventoryGate = inventoryGate.promise;
@@ -187,7 +198,10 @@ Deno.test("a claim held across UTC midnight cannot bypass the next day's global 
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
   const currentDay = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(currentDay))).value?.submission_count, 1);
+  assert.equal(
+    (await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(secondCandidate.accountId), currentDay))).value?.submission_count,
+    1
+  );
 });
 
 Deno.test("empty or unsupported inventory and provider rejection become durable terminal rejections", async () => {
@@ -798,7 +812,7 @@ Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing 
   try {
     const pending = evaluateCodexBankedResetPool(
       [{ slot: 0, candidate: reset, provider }],
-      dependencies(kv, provider, clock, config({ mode: "shadow", maxGlobalPerDay: 1 }))
+      dependencies(kv, provider, clock, config({ mode: "shadow", maxPerAccountPerDay: 1 }))
     );
     await inventoryEntered.promise;
     assert.equal(observedSignal, timeoutController.signal);
@@ -830,7 +844,7 @@ Deno.test("full-pool shadow reads each account inventory, selects the earliest e
   const events: string[] = [];
   const shadow = config({
     mode: "shadow",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
 
   const result = await evaluateCodexBankedResetPool(
@@ -866,7 +880,7 @@ Deno.test("a new persistent-live episode auto-arms without spending, then consum
   const events: string[] = [];
   const live = config({
     mode: "live",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
   const deps = dependencies(kv, provider, clock, live, {
     event: (event) => events.push(event),
@@ -886,7 +900,7 @@ Deno.test("a new persistent-live episode auto-arms without spending, then consum
   assert.equal(kv.entries.size, 3);
 
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+  assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value, null);
 
   const consumed = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(consumed.kind, "verified");
@@ -895,7 +909,7 @@ Deno.test("a new persistent-live episode auto-arms without spending, then consum
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
   assert.equal(provider.commitCount, 1);
-  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
 
   const repeated = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(repeated.kind, "verified");
@@ -923,7 +937,7 @@ Deno.test("concurrent initial persistent-live evaluations only arm before a late
   const pool = [{ slot: 0, candidate: reset, provider }] as const;
   const live = config({
     mode: "live",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
   const deps = dependencies(kv, provider, clock, live);
 
@@ -947,7 +961,7 @@ Deno.test("concurrent initial persistent-live evaluations only arm before a late
   assert.equal(shadowDecisionFrom(kv).decision_reason, "selected");
   assert.equal(kv.entries.size, 3);
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get(codexResetGlobalDailyKey(day))).value, null);
+  assert.equal((await kv.get(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value, null);
 
   const consumed = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(consumed.kind, "verified");
@@ -955,7 +969,7 @@ Deno.test("concurrent initial persistent-live evaluations only arm before a late
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
   assert.equal(provider.commitCount, 1);
-  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
 });
 
 Deno.test("invalid or ineligible live inventory cannot arm or consume", async (t) => {
@@ -1007,7 +1021,7 @@ Deno.test("invalid or ineligible live inventory cannot arm or consume", async (t
       const events: string[] = [];
       const live = config({
         mode: "live",
-        maxGlobalPerDay: 1,
+        maxPerAccountPerDay: 1,
       });
 
       const result = await evaluateCodexBankedResetPool(
@@ -1039,7 +1053,7 @@ Deno.test("sequential shadow duplicates skip inventory only after current strong
   secondProvider.inventory = inventory("credit-b", clock.nowMs + 20_000);
   const shadow = config({
     mode: "shadow",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
   const pool = fullPool(first, firstProvider, second, secondProvider);
   const deps = dependencies(kv, firstProvider, clock, shadow);
@@ -1072,7 +1086,7 @@ Deno.test("an unreadable settings record on the shadow duplicate path returns co
   await seedFences(kv, reset);
   const provider = new FakeCodexUsageResetProvider();
   provider.inventory = inventory("credit-a", clock.nowMs + 40_000);
-  const shadow = config({ mode: "shadow", maxGlobalPerDay: 1 });
+  const shadow = config({ mode: "shadow", maxPerAccountPerDay: 1 });
   const pool = [{ slot: 0, candidate: reset, provider }];
   const deps = dependencies(kv, provider, clock, shadow);
 
@@ -1111,7 +1125,7 @@ Deno.test("a subscription disabled after its shadow decision stays fenced on the
   await seedFences(kv, reset);
   const provider = new FakeCodexUsageResetProvider();
   provider.inventory = inventory("credit-a", clock.nowMs + 40_000);
-  const shadow = config({ mode: "shadow", maxGlobalPerDay: 1 });
+  const shadow = config({ mode: "shadow", maxPerAccountPerDay: 1 });
   const pool = [{ slot: 0, candidate: reset, provider }];
   const deps = dependencies(kv, provider, clock, shadow);
 
@@ -1156,7 +1170,7 @@ Deno.test("concurrent shadow observations deduplicate one episode, and live cons
   const telemetry: string[] = [];
   const shadow = config({
     mode: "shadow",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
   const pool = fullPool(first, firstProvider, second, secondProvider);
   const shadowDependencies = dependencies(kv, firstProvider, clock, shadow, {
@@ -1171,7 +1185,7 @@ Deno.test("concurrent shadow observations deduplicate one episode, and live cons
 
   const live = config({
     mode: "live",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
   const liveResult = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
   assert.equal(liveResult.kind, "verified");
@@ -1197,7 +1211,7 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
   const pool = [{ slot: 0, candidate: reset, provider }] as const;
   const shadow = config({
     mode: "shadow",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
 
   const audited = await evaluateCodexBankedResetPool(pool, dependencies(kv, provider, clock, shadow));
@@ -1207,7 +1221,7 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
 
   const live = config({
     mode: "live",
-    maxGlobalPerDay: 1,
+    maxPerAccountPerDay: 1,
   });
   const redeemEntered = new Deferred<void>();
   const redeemGate = new Deferred<void>();
@@ -1227,7 +1241,7 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetAccountDailyKey(await testHash(reset.accountId), day))).value?.submission_count, 1);
 });
 
 Deno.test("incomplete, duplicate, expired, and changed inventories never select or consume a shadow-audited credit", async (t) => {
@@ -1245,7 +1259,7 @@ Deno.test("incomplete, duplicate, expired, and changed inventories never select 
       secondProvider.inventory = inventory("credit-b", clock.nowMs + 20_000);
       const shadow = config({
         mode: "shadow",
-        maxGlobalPerDay: 1,
+        maxPerAccountPerDay: 1,
       });
       const pool = fullPool(first, firstProvider, second, secondProvider);
       if (scenario === "incomplete" || scenario === "duplicate") {
@@ -1282,7 +1296,7 @@ Deno.test("incomplete, duplicate, expired, and changed inventories never select 
         }
         const live = config({
           mode: "live",
-          maxGlobalPerDay: 1,
+          maxPerAccountPerDay: 1,
         });
         const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
         assert.equal(result.kind, "skipped");

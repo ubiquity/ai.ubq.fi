@@ -24,10 +24,12 @@ This rollout is deliberately **at-most-one**, not generally reconcilable exactly
 - Upstream commit plus response loss can consume the credit while leaving the gateway unable to prove it. Operators must
   treat `unknown` as possibly spent.
 
-The terminal-only path is structurally enabled only when `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY` is exactly `1`. The cap
-is one provider submission per UTC day, not one for the lifetime of the deployment. The historical one-reset canary
-returned mode to `shadow` immediately. An explicitly approved persistent production rollout may remain in `live`, but
-every new quota episode still requires a separate read-only arm request before any later request can submit.
+The terminal-only path is structurally enabled only when `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY` is exactly `1`.
+The cap is one provider submission per account per UTC day, not one for the lifetime of the deployment. The retired
+`CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY` variable is no longer read; remove it from any environment that still sets it.
+The historical one-reset canary returned mode to `shadow` immediately. An explicitly approved persistent production
+rollout may remain in `live`, but every new quota episode still requires a separate read-only arm request before any
+later request can submit.
 
 All automated tests use fake providers or mocked transports. They do not call the real reset-credit endpoint.
 
@@ -57,6 +59,19 @@ reselect/failover and may be served by a sibling without any reset-provider call
 authoritative for that ordinary transition even though it cannot mint a banked-reset fence. Because the serial active
 account is retained until an authoritative transition, the persisted blocked cohort is evaluated only when the whole
 pool is exhausted.
+
+## Capacity-observed exhaustion (2026-10-05)
+
+Since the 2026-10-05 incident fix (`docs/incident-codex-banked-reset-capacity-deadlock-2026-10-05.md`), a fresh capacity
+observation at 100% used for the requested class with a future reset deadline is also an authoritative exhaustion
+source: routing yields the blocked identity from that observation, and the blocked-cohort evaluator materializes the
+durable class block (same persisted transition a live 429 uses) before evaluating, so an ordinary request arms and later
+spends. A 100%-used observation without a deadline keeps the account half-open as a bounded probe instead. A live stable
+future deadline supersedes an absent or expired prior observation for the ambiguity gate while the redemption ledger
+keeps each quota window spend-once. Empty blocked cohorts log `codex_banked_reset_preflight` with reason
+`no_blocked_identity` instead of returning silently. The once-per-UTC-day global cap described above was still enforced
+at the time of the incident; it has since been replaced by one redemption per account per UTC day (see Configuration).
+The explicit per-account overage-usage setting remains approved-but-pending as recorded in `docs/DECISIONS.md`.
 
 Inventory reads have a fixed five-second deadline. Inventory failure or timeout skips reset work and leaves the ordinary
 retryable error in place. Malformed or unavailable durable routing state also fails retryably before dispatch; the
@@ -91,22 +106,23 @@ and daily-cap records are retained.
 
 Settings are re-read on each gateway request and immediately before the consume boundary.
 
-| Variable                                        | Safe default | Canary requirement                                                  |
-| ----------------------------------------------- | ------------ | ------------------------------------------------------------------- |
-| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | `true` during shadow/live; `false` for fail-closed rollback.        |
-| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Canary: `shadow` -> `live` -> `shadow`; persistent rollout: `live`. |
-| `CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY`         | `0`          | Exactly `1`; terminal-only live rejects every other value.          |
-| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Exactly `1`; every other value fails closed.                        |
+| Variable                                        | Safe default | Canary requirement                                                                                    |
+| ----------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
+| `CODEX_BANKED_RESET_ENABLED`                    | `true`       | `true` during shadow/live; `false` for fail-closed rollback.                                          |
+| `CODEX_BANKED_RESET_MODE`                       | `shadow`     | Canary: `shadow` -> `live` -> `shadow`; persistent rollout: `live`.                                   |
+| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY`    | `1`          | Exactly `1`; live rejects every other value (terminal-outcome providers report the dedicated reason). |
+| `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW` | `1`          | Exactly `1`; every other value fails closed.                                                          |
 
 Shadow mode may GET inventory for stable blocked accounts and writes one redacted, deduplicated decision for that
 blocked episode. It makes zero consume calls. A repeated selected decision returns `already_would_spend_once` without a
 second inventory GET after current strong fences pass. A repeated non-selection preserves its original reason; it is
 never mislabeled as a spend candidate.
 
-The global daily record is charged atomically when a transaction crosses the durable `submitted` boundary. A claim that
-crosses a UTC-day boundary is rejected before provider submission and cannot borrow the next day's capacity.
+Each account's daily record is charged atomically when a transaction crosses the durable `submitted` boundary. A claim
+that crosses a UTC-day boundary is rejected before provider submission and cannot borrow the next day's capacity.
 
-Never clear routing KV, shadow decisions, the redemption ledger, or daily-cap records during rollout or rollback.
+Never clear routing KV, shadow decisions, the redemption ledger, or daily-cap records during rollout or rollback. The
+retained legacy `global_day` rows are rollback evidence and are never enforced.
 
 ## Shadow proof
 
@@ -193,8 +209,8 @@ call the consume route directly. Ordinary inference traffic drives both phases:
    never reaches inventory.
 4. A later ordinary request strongly re-reads the persisted decision, repeats inventory and fence validation, and
    requires the exact selected account, credit hash, credit expiry, and episode fences to match.
-5. Only that later matching request may enter the unchanged durable claim/submission path, atomically reserve the daily
-   cap, submit one consume request, and run the single post-reset inference probe.
+5. Only that later matching request may enter the unchanged durable claim/submission path, atomically reserve the
+   account's daily budget, submit one consume request, and run the single post-reset inference probe.
 
 Invalid, unavailable, expired, or ineligible inventory cannot arm or consume. A negative live observation is not
 persisted, so later requests may repeat the bounded inventory read until the episode becomes eligible. An expired
@@ -203,11 +219,17 @@ decision, changed inventory, changed fence, ambiguous generation, or unavailable
 
 ## Durable state and ambiguity
 
-The redemption ledger key is separate from routing state:
+The redemption ledger key and the per-account daily budget key are separate from routing state:
 
 ```text
 ["uos_ai", "codex_reset_redemption", "v1", account_id_hash, quota_generation]
+["uos_ai", "codex_reset_redemption", "account_day", "v1", account_id_hash, day]
 ```
+
+The budget row uses the retired global record's shape (`{ v, day, submission_count, updated_at_ms }`) and is charged in
+the same transaction that crosses the durable `submitted` boundary. Legacy
+`["uos_ai", "codex_reset_redemption", "global_day", "v1", day]` rows are retained for rollback and are never read or
+enforced after the per-account cutover.
 
 `claimed` has an owner lease. `submitted` means the provider may have received the request. `unknown` means it may have
 committed but did not return a recognized terminal result. `verified` follows exact `reset` or `already_redeemed`, or a
@@ -224,7 +246,8 @@ post-reset probe. Only a successfully completed recovery response clears that am
 For a terminal-only `submitted` or `unknown` record:
 
 1. Return mode to `shadow`; use the full rollback below if any unexpected activity continues.
-2. Preserve the ledger, routing state, decision, daily cap, logs, and exact deployment identity.
+2. Preserve the ledger, routing state, decision, account-day cap records (and the retained legacy global_day rows),
+   logs, and exact deployment identity.
 3. Do not repeat the consume request, even with the same `redeem_request_id`.
 4. Treat the credit as possibly spent and investigate manually.
 
@@ -271,5 +294,5 @@ git diff --check
 ```
 
 The gateway tests cover complete-cohort shadow selection, persistent-live all-blocked auto-arm, sequential
-deduplication, exact decision-to-live credit matching, one terminal consume, concurrency and the daily cap, definitive
-probe fallback, transport no-replay, inventory timeout, fence and credit drift, and full-pool recovery.
+deduplication, exact decision-to-live credit matching, one terminal consume, concurrency and the per-account daily cap,
+definitive probe fallback, transport no-replay, inventory timeout, fence and credit drift, and full-pool recovery.

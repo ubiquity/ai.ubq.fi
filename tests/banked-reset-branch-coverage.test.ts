@@ -22,7 +22,7 @@ import { evaluateCodexBankedResetPool, listCodexResetShadowDecisions } from "../
 import { attemptCodexBankedReset, reconcileCodexBankedReset } from "../src/codex/banked-reset-submission.ts";
 import {
   candidate,
-  codexResetGlobalDailyKey,
+  codexResetAccountDailyKey,
   Deferred,
   fullPool,
   codexResetRedemptionKey,
@@ -397,7 +397,7 @@ Deno.test("prepareSubmission refuses a claim that lost its lease, an unreadable 
     "submit",
     "the fixture must be a submit decision"
   );
-  budgetKv.failGetKeys.push(JSON.stringify(codexResetGlobalDailyKey("2023-11-14")));
+  budgetKv.failGetKeys.push(JSON.stringify(codexResetAccountDailyKey(context.account.accountIdHash, "2023-11-14")));
   const unreadableBudget = await prepareSubmission(budgetKv as unknown as Deno.Kv, context, input, budgetClaim.record, fresh.nowMs, () => fresh.nowMs, 5);
   assert.deepEqual(unreadableBudget, { kind: "failure", code: "kv_unavailable" });
 
@@ -455,7 +455,8 @@ Deno.test("prepareSubmission refuses a claim that lost its lease, an unreadable 
     "the submission boundary must be crossed"
   );
   assert.equal(prepared.record.state, "submitted");
-  const daily = happy.entries.get(JSON.stringify(codexResetGlobalDailyKey("2023-11-14")))?.value as { submission_count: number } | undefined;
+  const daily = happy.entries.get(JSON.stringify(codexResetAccountDailyKey(context.account.accountIdHash, "2023-11-14")))?.value as
+    { submission_count: number } | undefined;
   assert.equal(daily?.submission_count, 1, "the daily budget is consumed exactly once at the boundary");
 });
 
@@ -622,7 +623,7 @@ Deno.test("loadLiveSubmissionConfig names every reason a live submission is clos
 
   assert.equal(loadLiveSubmissionConfig({ ...live, config: config({ enabled: false }) }).reason, "feature_disabled");
   assert.equal(loadLiveSubmissionConfig({ ...live, config: config({ mode: "disabled" }) }).reason, "mode_disabled");
-  assert.equal(loadLiveSubmissionConfig({ ...live, config: config({ maxGlobalPerDay: 0 }) }).reason, "global_limit_disabled");
+  assert.equal(loadLiveSubmissionConfig({ ...live, config: config({ maxPerAccountPerDay: 0 }) }).reason, "per_account_day_limit_invalid");
   assert.equal(loadLiveSubmissionConfig({ ...live, config: config({ maxPerAccountPerWindow: 2 }) }).reason, "per_account_window_limit_invalid");
   assert.equal(loadLiveSubmissionConfig({ ...live, config: config({ mode: "shadow" }) }).reason, "mode_not_live");
   const exploding = dependencies(kv, provider, clock, config(), {}, () => {
@@ -1055,7 +1056,7 @@ Deno.test("evaluateCodexBankedResetPool reports malformed pools, an unreadable c
   );
 });
 
-Deno.test("a live pool refuses a global limit above one when an injected provider treats redeem outcomes as final", async () => {
+Deno.test("a live pool refuses a per-account day limit above one when an injected provider treats redeem outcomes as final", async () => {
   const clock = new TestClock();
   const input = candidate();
   const kv = new MemoryKv();
@@ -1066,15 +1067,15 @@ Deno.test("a live pool refuses a global limit above one when an injected provide
 
   const outcome = await evaluateCodexBankedResetPool(
     [...fullPool(input, terminalProvider, second, terminalProvider)],
-    dependencies(kv, terminalProvider, clock, config({ mode: "live", maxGlobalPerDay: 2 }))
+    dependencies(kv, terminalProvider, clock, config({ mode: "live", maxPerAccountPerDay: 2 }))
   );
-  assert.equal(outcome.reason, "terminal_outcome_global_limit_must_be_one");
+  assert.equal(outcome.reason, "terminal_outcome_account_day_limit_must_be_one");
 
   const atMostOnce = await evaluateCodexBankedResetPool(
     [...fullPool(input, terminalProvider, second, terminalProvider)],
-    dependencies(kv, terminalProvider, clock, config({ mode: "live", maxGlobalPerDay: 1 }))
+    dependencies(kv, terminalProvider, clock, config({ mode: "live", maxPerAccountPerDay: 1 }))
   );
-  assert.notEqual(atMostOnce.reason, "terminal_outcome_global_limit_must_be_one");
+  assert.notEqual(atMostOnce.reason, "terminal_outcome_account_day_limit_must_be_one");
 });
 
 Deno.test("a shadow pool refuses an unreadable usage record and reports its read-only decision", async () => {

@@ -177,18 +177,14 @@ Deno.test({
       return wallNow;
     };
     try {
-      const result = await persistEncryptedSentinelReplay(
-        { ...captureInput(requestId), body: new TextEncoder().encode("{}") },
-        failure,
-        {
-          kv,
-          keyBytes: crypto.getRandomValues(new Uint8Array(32)),
-          now: () => NOW,
-          currentNow,
-          randomUuid: () => `capture-${requestId}`,
-          budgetBytes: BUDGET_BYTES,
-        }
-      );
+      const result = await persistEncryptedSentinelReplay({ ...captureInput(requestId), body: new TextEncoder().encode("{}") }, failure, {
+        kv,
+        keyBytes: crypto.getRandomValues(new Uint8Array(32)),
+        now: () => NOW,
+        currentNow,
+        randomUuid: () => `capture-${requestId}`,
+        budgetBytes: BUDGET_BYTES,
+      });
       assert.deepEqual(result, { status: "incomplete", reason: SENTINEL_REPLAY_STORAGE_FULL_REASON });
       assert.equal(leaseReads, 2);
       assert.equal(await chunkCount(kv, `capture-${requestId}`), 0);
