@@ -56,6 +56,10 @@ Deno.test("responses attempts: eligibility and trigger classification cover the 
   assert.equal(failureKindForResponsesAttemptTrigger("empty_upstream_completion"), "empty_upstream_completion");
   assert.equal(failureKindForResponsesAttemptTrigger("read_error"), "read_error");
   assert.equal(failureKindForResponsesAttemptTrigger("missing_body"), "read_error");
+  // A gateway response is built by us after refusing to dispatch, so it keeps its
+  // own classification instead of being reported as a provider HTTP failure.
+  assert.equal(failureKindForResponsesAttemptTrigger("gateway_response"), "gateway_rejection");
+  assert.notEqual(failureKindForResponsesAttemptTrigger("gateway_response"), "upstream_http_4xx");
   assert.equal(failureKindForResponsesAttemptTrigger("not_a_trigger" as never), null);
 });
 

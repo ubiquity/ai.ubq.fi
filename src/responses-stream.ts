@@ -19,7 +19,8 @@ export type ResponsesStreamFailureKind =
   | "upstream_http_4xx"
   | "upstream_http_5xx"
   | "upstream_http_error"
-  | "empty_upstream_completion";
+  | "empty_upstream_completion"
+  | "gateway_rejection";
 
 export const MAX_RESPONSES_SSE_EVENT_BYTES = 16 * 1024 * 1024;
 

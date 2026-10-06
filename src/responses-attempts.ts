@@ -67,7 +67,8 @@ type ResponsesAttemptTrigger =
   | "terminal_failure"
   | "empty_upstream_completion"
   | "read_error"
-  | "invalid_model";
+  | "invalid_model"
+  | "gateway_response";
 
 export type PreparedResponsesAttempt = Readonly<{
   provider: UpstreamProvider;
@@ -122,6 +123,8 @@ export const failureKindForResponsesAttemptTrigger = (trigger: ResponsesAttemptT
   switch (trigger) {
     case "http_4xx":
       return "upstream_http_4xx";
+    case "gateway_response":
+      return "gateway_rejection";
     case "http_5xx":
       return "upstream_http_5xx";
     case "http_error":
@@ -509,6 +512,19 @@ const failedPrimaryResponsesFetchOutcome = (error: CodexError, deadline: StreamD
   };
 };
 
+/**
+ * A `gatewayResponse` was produced locally: the routing layer refused to dispatch
+ * to a provider at all, or the provider failed before response headers, so no
+ * inference request ever reached one. Its status describes our own policy or
+ * transport outcome, not an upstream provider's HTTP status, and deriving the
+ * trigger from it reported every local 400/403/429 as `upstream_http_4xx` in
+ * terminal telemetry and the admin error ledger — pointing the error
+ * investigation at a provider that was never called successfully.
+ *
+ * A 504 is the exception: the gateway already reports it as a semantic timeout,
+ * and that classification is about our own deadline rather than a status code,
+ * so it is kept.
+ */
 const failedPrimaryResponsesGatewayOutcome = (
   routed: RoutedResponsesUpstream,
   lifecycle: MeteredTransportLifecycle,
@@ -521,7 +537,7 @@ const failedPrimaryResponsesGatewayOutcome = (
     failed: {
       provider: routed.provider,
       response: routed.response,
-      trigger: primaryResponsesAttemptTrigger(routed.response.status),
+      trigger: routed.response.status === 504 ? "semantic_timeout" : "gateway_response",
       signal: preparationDeadline.signal,
       clearDeadline: preparationDeadline.clear,
     },
