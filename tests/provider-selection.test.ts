@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin/index.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
 import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek/index.ts";
-import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
+import { DEEPSEEK_WATERFALL_MODEL_ID, deepSeekWaterfallCatalogEnabled } from "../src/deepseek/waterfall.ts";
 import { handleHealthProviders } from "../src/health.ts";
 import { LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
 import { readOpenRouterApiKey } from "../src/provider/openrouter.ts";
@@ -12,7 +12,13 @@ import handler from "../src/handler/index.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { buildModelCatalogSnapshot, handleModels } from "../src/models/catalog.ts";
 import { RECORD_PROVIDER_IDS } from "../src/provider/health.ts";
-import { PROVIDER_PRESENTATION, PROVIDER_TIERS, providerPresentation } from "../src/provider/presentation.ts";
+import {
+  GATEWAY_PROVIDER_ID,
+  GATEWAY_PROVIDER_PRESENTATION,
+  PROVIDER_PRESENTATION,
+  PROVIDER_TIERS,
+  providerPresentation,
+} from "../src/provider/presentation.ts";
 import {
   codexAccountEligibility,
   codexSubscriptionHash,
@@ -273,11 +279,18 @@ Deno.test("admin provider picker reports the roster, catalog counts, and the sav
         status: readOpenRouterApiKey() !== null ? "available" : "unavailable",
         configured: readOpenRouterApiKey() !== null,
       },
+      {
+        id: GATEWAY_PROVIDER_ID,
+        model_count: deepSeekWaterfallCatalogEnabled(null) ? 1 : 0,
+        status: deepSeekWaterfallCatalogEnabled(null) ? "available" : "unavailable",
+        configured: deepSeekWaterfallCatalogEnabled(null),
+        selectable: false,
+      },
     ];
     assert.deepEqual(
       body.data.providers,
       rows.map((row) => {
-        const presentation = providerPresentation(row.id);
+        const presentation = row.id === GATEWAY_PROVIDER_ID ? GATEWAY_PROVIDER_PRESENTATION : providerPresentation(row.id);
         return {
           ...presentation,
           tier_label: PROVIDER_TIERS.find((tier) => tier.id === presentation.tier)?.label,
@@ -313,15 +326,19 @@ Deno.test("every selectable provider carries a complete presentation and a healt
             detail?: string;
             endpoints?: string[];
             health_key?: string;
+            selectable?: boolean;
           }[];
           tiers: { id: string; label: string }[];
         };
       };
       assert.deepEqual(
         body.data.providers.map((provider) => provider.id),
-        [...SELECTABLE_PROVIDER_IDS],
-        "the roster keeps the waterfall order"
+        [...SELECTABLE_PROVIDER_IDS, GATEWAY_PROVIDER_ID],
+        "the roster keeps the waterfall order, with the display-only gateway identity last"
       );
+      const gateway = body.data.providers.find((provider) => provider.id === GATEWAY_PROVIDER_ID);
+      assert.ok(gateway, "the gateway identity must be on the roster");
+      assert.equal(gateway.selectable, false, "the gateway identity is display-only");
       assert.deepEqual(
         body.data.tiers.map((tier) => tier.id),
         PROVIDER_TIERS.map((tier) => tier.id),
@@ -332,7 +349,7 @@ Deno.test("every selectable provider carries a complete presentation and a healt
       // publishes exactly one key per provider it can report.
       const healthKeys = new Set(Object.keys(await (await handleHealthProviders()).json()));
       for (const provider of body.data.providers) {
-        const presentation = PROVIDER_PRESENTATION[provider.id as SelectableProviderId];
+        const presentation = provider.id === GATEWAY_PROVIDER_ID ? GATEWAY_PROVIDER_PRESENTATION : PROVIDER_PRESENTATION[provider.id as SelectableProviderId];
         assert.ok(presentation, `${provider.id} must have a presentation entry`);
         assert.equal(provider.label, presentation.label, `${provider.id} label`);
         assert.equal(provider.tier, presentation.tier, `${provider.id} tier`);

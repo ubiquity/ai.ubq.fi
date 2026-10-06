@@ -197,8 +197,8 @@ Deno.test("the gateway waterfall model is cataloged with one provider row per us
     assert.ok(row, "a configured hop makes the waterfall model selectable");
     assert.deepEqual(
       row.providers.map((provider) => provider.id),
-      ["openrouter", "deepseek"],
-      "one provider row per usable hop, in waterfall order"
+      ["ubiquity", "openrouter", "deepseek"],
+      "the gateway identity leads, with one row per usable hop behind it"
     );
     assert.deepEqual(row.providers[0].supported_endpoints, ["/v1/responses"]);
     assert.equal(row.providers[0].owned_by, "ubiquity");

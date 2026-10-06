@@ -37,7 +37,7 @@ export type ProviderHealthView = Readonly<{
  * top-level key for, named after the route each one reports on: OpenLux
  * reports through `metered`.
  */
-export const RECORD_PROVIDER_IDS = ["cerebras", "codex", "deepseek", "lithos", "metered", "openrouter", "surplus"] as const;
+export const RECORD_PROVIDER_IDS = ["cerebras", "codex", "deepseek", "lithos", "metered", "openrouter", "surplus", "ubiquity"] as const;
 
 export type RecordProvider = (typeof RECORD_PROVIDER_IDS)[number];
 

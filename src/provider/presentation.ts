@@ -11,6 +11,7 @@ export const PROVIDER_TIERS = [
   { id: "subscription", label: "Subscription" },
   { id: "paid", label: "Paid fallback" },
   { id: "direct", label: "Direct" },
+  { id: "gateway", label: "Gateway" },
 ] as const;
 
 export type ProviderTierId = (typeof PROVIDER_TIERS)[number]["id"];
@@ -23,6 +24,22 @@ export type ProviderPresentation = Readonly<{
   /** The key the provider-health view reports this route under. */
   health_key: RecordProvider;
 }>;
+
+/**
+ * The gateway-owned provider identity behind the synthetic
+ * `ubiquity/deepseek-v4.1-flash` model. It is display-only: the operator
+ * narrows the real upstream tiers, never this row, so it is deliberately not a
+ * `SelectableProviderId`.
+ */
+export const GATEWAY_PROVIDER_ID = "ubiquity" as const;
+
+export const GATEWAY_PROVIDER_PRESENTATION: ProviderPresentation = {
+  label: "Ubiquity",
+  tier: "gateway",
+  detail: "Gateway-owned DeepSeek V4.1 Flash waterfall: OpenRouter, then LithosAI, then DeepSeek, then Surplus.",
+  endpoints: ["/v1/responses"],
+  health_key: "ubiquity",
+};
 
 /**
  * Display copy for every selectable provider, in the order the roster lists

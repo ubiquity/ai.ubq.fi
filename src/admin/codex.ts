@@ -32,7 +32,8 @@ import {
   SELECTABLE_PROVIDER_IDS,
   storeProviderSelection,
 } from "../provider/selection.ts";
-import { PROVIDER_TIERS, providerPresentation } from "../provider/presentation.ts";
+import { GATEWAY_PROVIDER_ID, GATEWAY_PROVIDER_PRESENTATION, PROVIDER_TIERS, providerPresentation } from "../provider/presentation.ts";
+import { deepSeekWaterfallCatalogEnabled } from "../deepseek/waterfall.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { buildModelCatalogSnapshot, type ModelCatalogSource } from "../models/catalog.ts";
 import { listCodexResetShadowDecisions } from "../codex/banked-reset-pool.ts";
@@ -710,30 +711,48 @@ export const handleAdminProviderSelectionGet = async (dependencies: Readonly<{ b
     {
       ok: true,
       data: {
-        providers: SELECTABLE_PROVIDER_IDS.map((id) => {
-          const source = sources.get(id);
-          const presentation = providerPresentation(id);
-          // OpenRouter's catalog source is metadata enrichment, not dispatch
-          // readiness: whether this gateway can serve /v1/systemone is the
-          // credential alone, so its row reports the key, not the source.
-          const credentialConfigured = id === "openrouter" ? readOpenRouterApiKey() !== null : null;
-          return {
-            id,
-            label: presentation.label,
-            tier: presentation.tier,
-            tier_label: PROVIDER_TIERS.find((tier) => tier.id === presentation.tier)?.label ?? presentation.tier,
-            detail: presentation.detail,
-            endpoints: [...presentation.endpoints],
-            health_key: presentation.health_key,
-            model_count: counts.get(id) ?? 0,
-            status: providerStatusFor(credentialConfigured, source),
-            // Only credential-gated providers report this; for the discovered
-            // sources the status already says whether they answered.
-            configured: credentialConfigured ?? (source ? (source.configured ?? source.status === "available") : false),
-            // Only the Codex tier can be narrowed to individual subscriptions.
-            ...(id === "codex" ? { subscriptions } : {}),
-          };
-        }),
+        providers: [
+          ...SELECTABLE_PROVIDER_IDS.map((id) => {
+            const source = sources.get(id);
+            const presentation = providerPresentation(id);
+            // OpenRouter's catalog source is metadata enrichment, not dispatch
+            // readiness: whether this gateway can serve /v1/systemone is the
+            // credential alone, so its row reports the key, not the source.
+            const credentialConfigured = id === "openrouter" ? readOpenRouterApiKey() !== null : null;
+            return {
+              id,
+              label: presentation.label,
+              tier: presentation.tier,
+              tier_label: PROVIDER_TIERS.find((tier) => tier.id === presentation.tier)?.label ?? presentation.tier,
+              detail: presentation.detail,
+              endpoints: [...presentation.endpoints],
+              health_key: presentation.health_key,
+              model_count: counts.get(id) ?? 0,
+              status: providerStatusFor(credentialConfigured, source),
+              // Only credential-gated providers report this; for the discovered
+              // sources the status already says whether they answered.
+              configured: credentialConfigured ?? (source ? (source.configured ?? source.status === "available") : false),
+              // Only the Codex tier can be narrowed to individual subscriptions.
+              ...(id === "codex" ? { subscriptions } : {}),
+            };
+          }),
+          // Display-only gateway identity: the synthetic waterfall model's
+          // provider. The operator narrows the real tiers, never this row, so
+          // it carries `selectable: false` and the picker renders it inert.
+          {
+            id: GATEWAY_PROVIDER_ID,
+            label: GATEWAY_PROVIDER_PRESENTATION.label,
+            tier: GATEWAY_PROVIDER_PRESENTATION.tier,
+            tier_label: PROVIDER_TIERS.find((tier) => tier.id === GATEWAY_PROVIDER_PRESENTATION.tier)?.label ?? GATEWAY_PROVIDER_PRESENTATION.tier,
+            detail: GATEWAY_PROVIDER_PRESENTATION.detail,
+            endpoints: [...GATEWAY_PROVIDER_PRESENTATION.endpoints],
+            health_key: GATEWAY_PROVIDER_PRESENTATION.health_key,
+            model_count: deepSeekWaterfallCatalogEnabled(selection) ? 1 : 0,
+            status: deepSeekWaterfallCatalogEnabled(selection) ? "available" : "unavailable",
+            configured: deepSeekWaterfallCatalogEnabled(selection),
+            selectable: false,
+          },
+        ],
         // The picker renders its tier filter from this list, in this order.
         tiers: PROVIDER_TIERS.map((tier) => ({ id: tier.id, label: tier.label })),
         selection: { provider_ids: selection ? [...selection.provider_ids] : [], updated_at_ms: selection?.updated_at_ms ?? 0 },
