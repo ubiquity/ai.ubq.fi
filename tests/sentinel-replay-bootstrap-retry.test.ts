@@ -97,6 +97,26 @@ const assertHistory = (ledger: SentinelReplayBudgetLedger): void => {
   for (const [key, value] of Object.entries(history)) assert.equal(ledger[key as keyof SentinelReplayBudgetLedger], value);
 };
 
+Deno.test({
+  name: "bootstrap retry: orphan chunks are reclaimed instead of being ignored",
+  ignore: typeof Deno.openKv !== "function",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    const orphanKey = [...SENTINEL_REPLAY_CHUNK_PREFIX, "orphan-bootstrap", 0] as Deno.KvKey;
+    try {
+      await kv.set(orphanKey, new Uint8Array([1, 2, 3]));
+      const ledger = await finishSweep(kv);
+      assert.equal(ledger.bootstrap_complete, true);
+      assert.equal(ledger.stored_bytes, 0);
+      assert.equal((await kv.get(orphanKey)).value, null);
+    } finally {
+      kv.close();
+    }
+  },
+});
+
 for (const accounted of [false, true]) {
   Deno.test({
     name: `bootstrap retry: ${accounted ? "existing" : "materialized legacy"} charges rebuild once and preserve history`,

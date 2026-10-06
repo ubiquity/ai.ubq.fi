@@ -196,10 +196,24 @@ const bootstrapLegacyDelta = async (kv: Deno.Kv, key: Deno.KvKey, value: unknown
   return addDelta(delta, { legacy_reaped: 1 });
 };
 
-/** Chunk rows carry no independent charge, but a malformed key must fail closed. */
-const bootstrapChunkDelta = (key: Deno.KvKey, delta: BootstrapDelta): BootstrapDelta => {
+const chunkHasOwner = async (kv: Deno.Kv, captureId: string): Promise<boolean> => {
+  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX })) {
+    if (isAccountingRow(entry.value) && accountingKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) return true;
+  }
+  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_MANIFEST_PREFIX })) {
+    if (isSentinelReplayManifest(entry.value) && manifestKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) return true;
+  }
+  return false;
+};
+
+/** Reclaim staged chunks that have no durable manifest or accounting owner. */
+const bootstrapChunkDelta = async (kv: Deno.Kv, entry: Deno.KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
+  const { key } = entry;
   if (key.length !== SENTINEL_REPLAY_CHUNK_PREFIX.length + 2 || typeof key[4] !== "string" || !counter(key[5])) return addDelta(delta, { invalid: true });
-  return delta;
+  if (await chunkHasOwner(kv, key[4])) return delta;
+  fault("delete");
+  const deleted = await kv.atomic().check({ key, versionstamp: entry.versionstamp }).delete(key).commit();
+  return deleted.ok ? delta : addDelta(delta, { invalid: true });
 };
 
 /** A dedupe row must reference a well-formed manifest key. */
@@ -228,7 +242,7 @@ const bootstrapEntryDelta = async (
   if (prefix === SENTINEL_REPLAY_REQUEST_PREFIX) return bootstrapStatusDelta(entry.value, delta);
   if (prefix === SENTINEL_REPLAY_EVICTION_PREFIX) return bootstrapTombstoneDelta(entry.value, delta);
   if (prefix === SENTINEL_REPLAY_RESERVATION_PREFIX) return await bootstrapLegacyDelta(kv, entry.key, entry.value, delta, budgetBytes);
-  if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) return bootstrapChunkDelta(entry.key, delta);
+  if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) return await bootstrapChunkDelta(kv, entry, delta);
   return bootstrapDedupeDelta(entry.value, delta);
 };
 
