@@ -320,6 +320,21 @@ Deno.test({
       assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
       assert.equal(body.data[0]?.manifest.algorithm, "AES-256-GCM");
       assert.equal(body.data[0]?.manifest.compression, "gzip");
+      // The exported manifest is exactly the frozen wire schema: the additive
+      // retention-accounting fields never leave the store.
+      assert.deepEqual(Object.keys(body.data[0]?.manifest ?? {}), [
+        "version",
+        "capture_id",
+        "fingerprint",
+        "case_group_digest",
+        "captured_at_ms",
+        "expires_at_ms",
+        "algorithm",
+        "compression",
+        "iv",
+        "chunk_count",
+        "ciphertext_bytes",
+      ]);
       // The exported payload is encrypted only: no plaintext bytes may appear.
       assert.equal(body.data[0]?.chunks.join("").includes("synthetic replay bytes for export round trip"), false);
 
@@ -689,6 +704,21 @@ Deno.test({
       };
       assert.equal(body.data.length, 1);
       assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+      // The incident listing emits the same frozen manifest schema; a strict
+      // consumer rejects unknown keys.
+      assert.deepEqual(Object.keys(body.data[0]?.manifest ?? {}), [
+        "version",
+        "capture_id",
+        "fingerprint",
+        "case_group_digest",
+        "captured_at_ms",
+        "expires_at_ms",
+        "algorithm",
+        "compression",
+        "iv",
+        "chunk_count",
+        "ciphertext_bytes",
+      ]);
       const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
       assert.equal(plaintext.request_id, "synthetic-incident-request");
       assert.deepEqual([...plaintext.body], [...bytes]);

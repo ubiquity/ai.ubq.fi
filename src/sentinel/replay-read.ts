@@ -150,6 +150,26 @@ const manifestMatchesKey = (key: Deno.KvKey, manifest: SentinelReplayManifest): 
   );
 };
 
+/**
+ * Project a stored manifest onto the frozen export wire schema. `stored_bytes`
+ * and `request_id` are additive retention-accounting fields of the stored row;
+ * the export contract is frozen and its strict consumer rejects unknown
+ * manifest keys, so those fields never leave the store.
+ */
+const exportedManifest = (manifest: SentinelReplayManifest): SentinelReplayManifest => ({
+  version: manifest.version,
+  capture_id: manifest.capture_id,
+  fingerprint: manifest.fingerprint,
+  case_group_digest: manifest.case_group_digest,
+  captured_at_ms: manifest.captured_at_ms,
+  expires_at_ms: manifest.expires_at_ms,
+  algorithm: manifest.algorithm,
+  compression: manifest.compression,
+  iv: manifest.iv,
+  chunk_count: manifest.chunk_count,
+  ciphertext_bytes: manifest.ciphertext_bytes,
+});
+
 export const listEncryptedSentinelReplays = async (
   kv: Deno.Kv,
   options: Readonly<{ afterMs: number; beforeMs: number; cursor?: string; limit?: number }>
@@ -185,7 +205,7 @@ export const listEncryptedSentinelReplays = async (
       break;
     }
     const chunks = await getChunks(kv, entry.value);
-    captures.push({ manifest: entry.value, chunks: chunks.map(base64UrlEncode) });
+    captures.push({ manifest: exportedManifest(entry.value), chunks: chunks.map(base64UrlEncode) });
     break;
   }
   return { captures, cursor: rangeExhausted ? "" : iterator.cursor };
@@ -253,7 +273,7 @@ export const listEncryptedSentinelIncidentReplays = async (
     )
       throw new Error("Sentinel incident replay manifest is unavailable");
     const chunks = await getChunks(kv, manifestEntry.value);
-    captures.push({ manifest: manifestEntry.value, chunks: chunks.map(base64UrlEncode) });
+    captures.push({ manifest: exportedManifest(manifestEntry.value), chunks: chunks.map(base64UrlEncode) });
     return { captures, cursor: resumeCursor };
   }
 };
@@ -318,7 +338,7 @@ export const listEncryptedSentinelReplaysByRequestId = async (
     return { captures: [], status: { ...status, status: "expired", reason: "manifest_unavailable" } };
   }
   const chunks = await getChunks(kv, manifestEntry.value);
-  return { captures: [{ manifest: manifestEntry.value, chunks: chunks.map(base64UrlEncode) }], status };
+  return { captures: [{ manifest: exportedManifest(manifestEntry.value), chunks: chunks.map(base64UrlEncode) }], status };
 };
 
 export const decryptExportedSentinelReplay = async (
