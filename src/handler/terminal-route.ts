@@ -499,13 +499,18 @@ const handleTerminalRoute = async (
   };
   const runResponsesRoute = async (): Promise<Response> => {
     // Header-marked Codex compaction is answered locally by Jev; the body is
-    // read only for a recognized request. A failure is a non-success response,
-    // never a fallback to the main model, so Codex keeps its existing history.
-    // The normal terminal wrapper keeps cancellation, settlement and terminal
-    // logging ownership exactly as the ordinary route does.
+    // read only for a recognized request. When Jev cannot serve the session
+    // (for example a decision state that stays over its cap after every
+    // reduction stage, or a decision failure), fall through to the ordinary
+    // provider route so the client still receives a compaction instead of a
+    // 502. The normal terminal wrapper keeps cancellation, settlement and
+    // terminal logging ownership exactly as the ordinary route does.
     if (isJevCompactionRequest(req)) {
-      const response = await executeInference(() => handleJevResponsesCompaction(req, { signal: callerSignal }));
-      return await finishTerminalResponse(response, "responses", true, true);
+      const response = await executeInference(() => handleJevResponsesCompaction(req.clone(), { signal: callerSignal }));
+      if (response.ok || callerSignal?.aborted) {
+        return await finishTerminalResponse(response, "responses", true, true);
+      }
+      console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: response.status }));
     }
     const response = await executeInference(() => handleResponses(req, usageContext));
     return await finishTerminalResponse(response, "responses", true, true);

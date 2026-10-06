@@ -8,8 +8,8 @@ import {
   SUMMARY_CHAR_CAP,
 } from "../src/jev_compaction/compaction.ts";
 import { parseCodexInput, renderSummary, SUMMARY_MARKER } from "../lib/jev_compaction/codex_items.ts";
-import { collectToolCalls, estimateTokens } from "../lib/jev_compaction/state.ts";
-import type { JevAsker, JevQuestions, JevResponse } from "../lib/jev_compaction/types.ts";
+import { collectToolCalls, estimateTokens, fitState } from "../lib/jev_compaction/state.ts";
+import type { JevAsker, JevQuestions, JevResponse, Message } from "../lib/jev_compaction/types.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
 
 /**
@@ -262,6 +262,19 @@ Deno.test("compaction fits kept results under the cap by dropping the lowest rel
   assert.ok(summary.length <= SUMMARY_CHAR_CAP, "the fitted summary must respect the cap");
   assert.ok(summary.includes("[tool result old_e — kept verbatim]"), "the highest-relevance result must stay verbatim");
   assert.ok(summary.includes("[tool result old_a — truncated"), "the lowest-relevance result must be fitted away");
+});
+
+Deno.test("fitState drops the oldest merged call runs instead of failing on very long sessions", () => {
+  const messages: Message[] = [{ role: "user", text: "Goal: keep the current state.", toolUses: [] }];
+  for (let index = 0; index < 400; index += 1) {
+    messages.push({ role: "assistant", text: "", toolUses: [{ tool_use_id: `call_${index}`, tool: "exec_command", input: { cmd: `command ${index}` } }] });
+    messages.push({ role: "user", text: "", toolUses: [], toolResults: [{ tool_use_id: `call_${index}`, text: `result ${index}` }] });
+  }
+  messages.push({ role: "user", text: "Final goal: keep the current state.", toolUses: [] });
+  const calls = collectToolCalls(messages, 2);
+  const fitted = fitState(messages, calls, { maxStateTokens: 800, preserveRecentMessages: 2, goal: "" });
+  assert.ok(fitted.tokens <= 800, `the state must fit the cap, got ${fitted.tokens}`);
+  assert.equal(fitted.stage, "old call runs left out");
 });
 
 Deno.test("gateway handler fails closed without a credential and on caller cancellation", async () => {
