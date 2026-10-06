@@ -64,3 +64,39 @@ and the Codex waterfall are untouched by construction.
   pinning to `["lithos"]` / `["deepseek"]` serves via those providers through the synthetic id; the terminal log records
   the served provider.
 - Repository gate: `sh scripts/verify.sh` plus the CI checks on the pull request.
+
+## Phase 2 implementation notes (scoped 2026-10-06)
+
+Phase 1 shipped as PR #938 (merged `05f59243`). Phase 2 executes with these concrete mechanisms:
+
+1. **Surplus hop through the ordinary pipeline tail.**
+   - Export the tail of `handleResponsesInternal` (`prepareResponsesRequest` → `runResponsesFailover` →
+     `buildResponsesDelivery` → `deliverPreparedResponses`) from `src/responses-handler.ts` as one function and call it
+     from both the ordinary router and the waterfall, so nothing is duplicated.
+   - The waterfall handler keeps `rawBody` (its dispatch branch gains the argument) and, for the final hop, builds a
+     fresh `Request` whose body is `{...rawBody, model: "deepseek-v4.1-flash"}` and calls that tail. Admission,
+     reservation and ledger settlement stay exactly the paid path's.
+   - `fetchResponsesWithPaidFallback` gains an optional `allowedPaidProviders` filter (default unchanged) so this hop
+     pins `["surplus"]` and can never silently advance to metered/OpenLux.
+   - The hop's success/failure is the tail's response status; it is last, so nothing advances past it.
+
+2. **Pre-semantic mid-stream failover.**
+   - Gate every 200 streaming hop response on the first semantic commitment using the paid route's own helpers:
+     `readResponsesStream`, `responsesEventSemanticKind`, `appendResponsesPrecommitEvent` (bounds
+     `MAX_RESPONSES_PRECOMMIT_EVENTS` / `MAX_RESPONSES_PRECOMMIT_CHARS`) and replay through
+     `createOwnedResponsesStream`.
+   - A parse error, premature EOF, malformed frame or missing terminal observed before any text or tool-call event is a
+     failed hop: discard its buffer and continue the chain. Once semantic output exists, deliver the replayed stream and
+     stop failing over.
+   - The pre-commit phase stays bounded by the existing first-event and semantic deadlines; a hop that stalls before
+     commitment fails like a timeout.
+
+3. **Tests for phase 2.**
+   - Injected dispatchers over synthetic SSE streams: dropped before first output advances the chain; dropped after
+     first output does not; the surplus hop receives the paid model id and delegates to the tail stub.
+   - Paid-routing unit coverage: `allowedPaidProviders: ["surplus"]` never selects metered, including on surplus
+     capacity failure; the absent filter preserves today's behavior byte-for-byte.
+   - Live: four-hop smoke (each direct hop pinned through the operator selection plus the surplus hop) and one forced
+     pre-output stream failure against the scratch instance.
+
+4. **Docs.** Update the benchmark report and this plan with the phase-2 evidence and the final waterfall semantics.
