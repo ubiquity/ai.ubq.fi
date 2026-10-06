@@ -26,7 +26,7 @@ import { SYSTEMONE_DEFAULT_MODEL } from "../systemone/handlers.ts";
 import { JevClient } from "../../lib/jev_compaction/client.ts";
 import { compact } from "../../lib/jev_compaction/compact.ts";
 import { isResponsesCompaction, parseCodexInput, parseTurnMetadata, renderSummary } from "../../lib/jev_compaction/codex_items.ts";
-import { collectToolCalls } from "../../lib/jev_compaction/state.ts";
+import { collectToolCalls, estimateTokens } from "../../lib/jev_compaction/state.ts";
 import type { CallDecision, CompactResult, JevAsker, ToolCall } from "../../lib/jev_compaction/types.ts";
 
 const TURN_METADATA_HEADER = "x-codex-turn-metadata";
@@ -52,6 +52,22 @@ export const JEV_TIMEOUT_MS = 30_000;
  * 1,048,576-token session window.
  */
 export const SUMMARY_CHAR_CAP = 1_500_000;
+
+/**
+ * A floor-bound summary (nothing left that may be dropped or truncated) is
+ * accepted only when the token-estimated render is at least this much smaller
+ * than the token-estimated request input it replaces. The fraction is relative,
+ * so the bound scales with any session size: at a 1M-token input the accepted
+ * floor may be several megabytes of characters, while a small window keeps a
+ * correspondingly small bound. The reduction also leaves the client headroom
+ * for the continuation that follows the adopted summary.
+ */
+export const SUMMARY_MIN_REDUCTION_RATIO = 0.15;
+
+/** The largest token-estimated floor render accepted for a given input estimate. */
+export function maxFloorSummaryTokens(inputTokens: number): number {
+  return Math.floor(inputTokens * (1 - SUMMARY_MIN_REDUCTION_RATIO));
+}
 
 type FailureKind =
   | "unparsable-body"
@@ -139,6 +155,7 @@ function structuralHeader(counts: {
   charsBefore: number;
   charsAfter: number;
   fitted?: number;
+  floorBound?: boolean;
 }): string {
   const parts = [
     "summary",
@@ -150,6 +167,7 @@ function structuralHeader(counts: {
     `chars_after=${counts.charsAfter}`,
   ];
   if (counts.fitted !== undefined && counts.fitted > 0) parts.push(`fitted=${counts.fitted}`);
+  if (counts.floorBound === true) parts.push("floor=1");
   return parts.join("; ");
 }
 
@@ -236,8 +254,10 @@ function renderCompactedSummary(
 function fitCompactedSummary(
   transcript: ReturnType<typeof parseCodexInput>,
   calls: readonly ToolCall[],
-  result: CompactResult
-): { summary: string; fittedDrops: number; stats: CompactResult["stats"] } {
+  result: CompactResult,
+  inputTokens: number
+): { summary: string; fittedDrops: number; stats: CompactResult["stats"]; floorBound?: boolean } {
+  const acceptsFloor = (floor: string): boolean => inputTokens > 0 && estimateTokens(floor) <= maxFloorSummaryTokens(inputTokens);
   const summary = renderCompactedSummary(transcript, calls, result);
   if (summary.length <= SUMMARY_CHAR_CAP) return { summary, fittedDrops: 0, stats: result.stats };
 
@@ -254,7 +274,10 @@ function fitCompactedSummary(
   };
 
   if (fitIds.length === 0) {
-    // Only pinned or already-dropped data exceeds the cap; nothing may shrink.
+    // Only pinned, dropped or text content exceeds the fit target; nothing may
+    // shrink. Ship the floor when it is token-measurably smaller than the input
+    // it replaces; otherwise fail closed as before.
+    if (acceptsFloor(summary)) return { summary, fittedDrops: 0, stats: result.stats, floorBound: true };
     throw new CompactionUnavailable(
       "summary-too-large",
       `summary is ${summary.length} chars (limit ${SUMMARY_CHAR_CAP}); unpinned_kept=0 pinned=${result.stats.pinned} results_dropped=${result.stats.resultsDropped}`
@@ -262,6 +285,21 @@ function fitCompactedSummary(
   }
   const floor = renderWithDropped(fitIds.length);
   if (floor.length > SUMMARY_CHAR_CAP) {
+    if (acceptsFloor(floor)) {
+      const droppedIds = new Set(fitIds);
+      const droppedChars = calls.filter((call) => droppedIds.has(call.id)).reduce((sum, call) => sum + call.resultChars, 0);
+      return {
+        summary: floor,
+        fittedDrops: fitIds.length,
+        floorBound: true,
+        stats: {
+          ...result.stats,
+          kept: Math.max(0, result.stats.kept - fitIds.length),
+          resultsDropped: result.stats.resultsDropped + fitIds.length,
+          charsAfter: Math.max(0, result.stats.charsAfter - droppedChars),
+        },
+      };
+    }
     throw new CompactionUnavailable(
       "summary-too-large",
       `summary is ${floor.length} chars (limit ${SUMMARY_CHAR_CAP}) with all ${fitIds.length} unpinned kept results dropped; unpinned_kept=${fitIds.length} pinned=${result.stats.pinned} results_dropped=${result.stats.resultsDropped + fitIds.length}`
@@ -328,7 +366,8 @@ export async function buildCompactionResponse(body: unknown, asker: JevAsker, op
   assertEveryCandidateDecided(result, candidates);
   // Fit first: cap-forced drops count toward the reduction contract, so a
   // session whose kept render exceeds the cap can still compact.
-  const fitted = fitCompactedSummary(transcript, calls, result);
+  const inputTokens = estimateTokens(JSON.stringify(requestBody.input));
+  const fitted = fitCompactedSummary(transcript, calls, result, inputTokens);
   assertCompactionReduced(fitted.stats);
   const summary = fitted.summary;
 
@@ -343,6 +382,9 @@ export async function buildCompactionResponse(body: unknown, asker: JevAsker, op
     chars_before: fitted.stats.charsBefore,
     chars_after: fitted.stats.charsAfter,
     fitted: fitted.fittedDrops,
+    floor_bound: fitted.floorBound === true,
+    input_estimate_tokens: inputTokens,
+    floor_tokens: fitted.floorBound === true ? estimateTokens(summary) : null,
     jev_requests: fitted.stats.requests,
     state_stage: fitted.stats.stateStage || "none",
     total_ms: fitted.stats.ms,
@@ -350,7 +392,7 @@ export async function buildCompactionResponse(body: unknown, asker: JevAsker, op
 
   const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
   const headers = {
-    "x-jev-compaction": structuralHeader({ ...fitted.stats, fitted: fitted.fittedDrops }),
+    "x-jev-compaction": structuralHeader({ ...fitted.stats, fitted: fitted.fittedDrops, floorBound: fitted.floorBound }),
   };
   if (options.stream) {
     return {
