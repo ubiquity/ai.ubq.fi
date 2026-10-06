@@ -34,12 +34,19 @@ import {
 import { markChatSemanticOutput } from "../chat/stream-translation.ts";
 import {
   GPT_OSS_STREAM_DOWNGRADED_WARNING,
+  cancelResponseBody,
   cerebrasResponseHeaders,
   chatCompletionHasAnswerBearingOutput,
   streamCerebrasChatCompletion,
   toCerebrasErrorResponse,
   toCerebrasUpstreamErrorResponse,
 } from "../upstream-wire.ts";
+import {
+  cerebrasRefusalWait,
+  logCerebrasRateLimitWait,
+  recordCerebrasRateLimitWaitMs,
+  waitForCerebrasRetry,
+} from "./cerebras-rate-limits.ts";
 import { parseChatStreamOptions, parseReasoningEffortField, parseStreamField } from "../request-policy.ts";
 
 export const recordCerebrasResponseHealth = (status: number, providerRequestId: string | null): void => {
@@ -323,19 +330,43 @@ export const handleCerebrasChatCompletions = async (
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
   let upstream: Response;
+  let waitedMs = 0;
+  let waits = 0;
   try {
-    upstream = await fetchCerebrasChatCompletions(cerebrasBody, {
-      signal: requestSignal,
-      beforeDispatch: () => usageContext?.beforeProviderDispatch?.("cerebras") ?? Promise.resolve(undefined),
-      onDispatch: () => {
-        recordAttemptedProvider(usageContext, "cerebras");
-        recordFirstProviderDispatch(usageContext);
-      },
-      onHeaders: () => {
-        recordFirstProviderHeaders(usageContext);
-      },
-      sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
-    });
+    // A 429 whose own headers name a short reset window is waited out and
+    // retried instead of being surfaced as an HTTP 429 the client reads as a
+    // retryable failure. Unwaitable refusals fall through to the responder.
+    for (;;) {
+      upstream = await fetchCerebrasChatCompletions(cerebrasBody, {
+        signal: requestSignal,
+        beforeDispatch: () => usageContext?.beforeProviderDispatch?.("cerebras") ?? Promise.resolve(undefined),
+        onDispatch: () => {
+          recordAttemptedProvider(usageContext, "cerebras");
+          recordFirstProviderDispatch(usageContext);
+        },
+        onHeaders: () => {
+          recordFirstProviderHeaders(usageContext);
+        },
+        sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
+      });
+      if (upstream.status !== 429) break;
+      const planned = cerebrasRefusalWait(upstream.headers, waitedMs, waits);
+      if (planned === null) break;
+      waitedMs += planned.waitMs;
+      waits += 1;
+      logCerebrasRateLimitWait({
+        request_id: usageContext?.requestId ?? null,
+        model: modelRaw,
+        attempt: waits,
+        wait_ms: planned.waitMs,
+        wait_source: planned.source,
+        waited_ms: waitedMs,
+      });
+      recordCerebrasRateLimitWaitMs(usageContext, waitedMs);
+      // The refused body is never read, so it is released here.
+      cancelResponseBody(upstream);
+      await waitForCerebrasRetry(planned.waitMs, requestSignal);
+    }
   } catch (error) {
     return await respondCerebrasChatDispatchFailure(error, downstreamSignal, usageContext);
   }
