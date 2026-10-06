@@ -13,6 +13,7 @@ import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "../provider/sur
 
 import { warmOpenRouterModels } from "../models/openrouter-models.ts";
 import { isProviderEnabled, loadProviderSelectionCached, type ProviderSelection } from "../provider/selection.ts";
+import { deepSeekWaterfallCatalogEnabled } from "../deepseek/waterfall.ts";
 
 import { CODEX_CATALOG_FRESH_MS } from "./types.ts";
 import type { LoadedCodexCatalog } from "./types.ts";
@@ -41,6 +42,7 @@ import {
   uniqueResponsesModels,
   withCerebrasModels,
   withDeepSeekOfficialModels,
+  withDeepSeekWaterfallModel,
   withLithosModels,
   withOpenRouterModels,
 } from "./models.ts";
@@ -114,6 +116,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   const selection = await loadProviderSelectionCached();
   const codexEnabled = isProviderEnabled("codex", selection);
   const deepSeekEnabled = isProviderEnabled("deepseek", selection);
+  const deepSeekWaterfallEnabled = deepSeekWaterfallCatalogEnabled(selection);
   const lithosEnabled = isProviderEnabled("lithos", selection);
   const cerebrasEnabled = isProviderEnabled("cerebras", selection);
   // OpenRouter serves its own dynamic catalogue on both OpenAI wires; its rows
@@ -138,6 +141,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     !catalogWhitelistIsActive(catalogWhitelist) &&
     !paidModels.length &&
     !deepSeekEnabled &&
+    !deepSeekWaterfallEnabled &&
     !lithosEnabled &&
     !cerebrasEnabled &&
     !openRouterEnabled &&
@@ -158,6 +162,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   // The official ids are appended first so an operator whitelist still has the
   // final say over every advertised model, this route included.
   parsed.models = deepSeekEnabled ? withDeepSeekOfficialModels(parsed.models) : parsed.models;
+  parsed.models = deepSeekWaterfallEnabled ? withDeepSeekWaterfallModel(parsed.models) : parsed.models;
   parsed.models = lithosEnabled ? withLithosModels(parsed.models) : parsed.models;
   parsed.models = cerebrasEnabled ? withCerebrasModels(parsed.models) : parsed.models;
   parsed.models = applyCatalogWhitelist(parsed.models, openRouterEnabled, catalogWhitelist);
@@ -175,6 +180,7 @@ const meteredCatalogResponse = async (selection: ProviderSelection | null): Prom
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   const openRouterModels = isProviderEnabled("openrouter", selection) ? openRouterCodexModels() : [];
   const configured = [
+    ...(deepSeekWaterfallCatalogEnabled(selection) ? withDeepSeekWaterfallModel([]) : []),
     ...(isProviderEnabled("deepseek", selection) ? deepSeekOfficialCodexModels() : []),
     ...(isProviderEnabled("lithos", selection) ? lithosCodexModels() : []),
     ...(isProviderEnabled("cerebras", selection) ? cerebrasCodexModels() : []),
@@ -186,7 +192,9 @@ const meteredCatalogResponse = async (selection: ProviderSelection | null): Prom
   const codexRecords = codexSnapshotRecords(await loadFullCodexModelsSnapshot());
   const rows = withOpenRouterModels(
     withCerebrasModels(
-      withLithosModels(withDeepSeekOfficialModels(paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null))))
+      withLithosModels(
+        withDeepSeekWaterfallModel(withDeepSeekOfficialModels(paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null))))
+      )
     )
   );
   // Without a stored body this route still answers the versioned catalog a

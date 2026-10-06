@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin/index.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex/index.ts";
 import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek/index.ts";
+import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 import { handleHealthProviders } from "../src/health.ts";
 import { LITHOS_MODEL_IDS } from "../src/provider/lithos.ts";
 import { readOpenRouterApiKey } from "../src/provider/openrouter.ts";
@@ -526,7 +527,15 @@ Deno.test("/v1/models hides the models of a switched-off provider", async () => 
     await withKv(kv, async () => {
       assert.deepEqual(
         await listModelIds(),
-        ["gpt-5.6-sol", "gpt-oss-120b", "qwen-3.8-27b", ...DEEPSEEK_OFFICIAL_MODEL_IDS, ...LITHOS_MODEL_IDS, "typesafe/jev-latest"],
+        [
+          "gpt-5.6-sol",
+          "gpt-oss-120b",
+          "qwen-3.8-27b",
+          ...DEEPSEEK_OFFICIAL_MODEL_IDS,
+          ...LITHOS_MODEL_IDS,
+          DEEPSEEK_WATERFALL_MODEL_ID,
+          "typesafe/jev-latest",
+        ],
         "no filter lists every provider"
       );
 
@@ -534,7 +543,7 @@ Deno.test("/v1/models hides the models of a switched-off provider", async () => 
       resetProviderSelectionCacheForTest();
       assert.deepEqual(
         await listModelIds(),
-        ["gpt-oss-120b", "qwen-3.8-27b", ...DEEPSEEK_OFFICIAL_MODEL_IDS],
+        ["gpt-oss-120b", "qwen-3.8-27b", ...DEEPSEEK_OFFICIAL_MODEL_IDS, DEEPSEEK_WATERFALL_MODEL_ID],
         "a switched-off Codex provider contributes no rows"
       );
 

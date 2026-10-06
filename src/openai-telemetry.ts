@@ -44,13 +44,22 @@ export type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "lith
 export const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
+/**
+ * Exact fallback reason for one failed hop of the `ubiquity/deepseek-v4.1-flash`
+ * waterfall, so production traffic keeps the same per-hop evidence the
+ * benchmark recorded (provider plus failure class or status). The paid
+ * admission reasons stay their own union; only the telemetry record carries
+ * either kind.
+ */
+export type DeepSeekWaterfallFallbackReason = `deepseek_waterfall:${"openrouter" | "lithos" | "deepseek"}:${number | "transport_failure"}`;
+export type RecordedFallbackReason = InferenceFallbackReason | DeepSeekWaterfallFallbackReason;
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type ActiveTransitionReason = "quota_exhausted" | "credential_invalid" | "account_removed_or_replaced" | "model_unavailable" | null;
 
 export type ResponseTelemetry = Readonly<{
   provider: string;
-  fallbackReason: InferenceFallbackReason | null;
+  fallbackReason: RecordedFallbackReason | null;
   model: string | null;
   reasoning: string | null;
   outputTokenAllowance: number | null;
@@ -102,7 +111,7 @@ export type ResponseStreamTerminalType = "response.completed" | "response.failed
 
 export type ResponseTelemetryState = {
   provider: string | null;
-  fallbackReason: InferenceFallbackReason | null;
+  fallbackReason: RecordedFallbackReason | null;
   model: string | null;
   reasoning: string | null;
   outputTokenAllowance: number | null;
@@ -628,7 +637,7 @@ export type RoutedResponsesUpstream = Readonly<{
    */
   paidFallbackErrorHealth?: PaidProviderHealthClassification;
   gatewayResponse: boolean;
-  fallbackReason: InferenceFallbackReason | null;
+  fallbackReason: RecordedFallbackReason | null;
   /** Local admission decisions are terminal and must not enter legacy recovery. */
   allowRemovedProviderRecovery?: false;
   /** Record stream health even though this free route has no paid reservation. */

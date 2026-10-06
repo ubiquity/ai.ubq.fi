@@ -17,6 +17,18 @@ import {
   readDeepSeekApiKey,
 } from "./deepseek/index.ts";
 import { LITHOS_DEFAULT_REASONING_EFFORT, LITHOS_DISPLAY_NAMES, LITHOS_MODEL_IDS, LITHOS_REASONING_LEVELS, readLithosApiKey } from "./provider/lithos.ts";
+import {
+  DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
+  DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+  DEEPSEEK_WATERFALL_CREATED,
+  DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
+  DEEPSEEK_WATERFALL_DISPLAY_NAME,
+  DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  DEEPSEEK_WATERFALL_MODEL_ID,
+  DEEPSEEK_WATERFALL_ORDER,
+  DEEPSEEK_WATERFALL_REASONING_LEVELS,
+  deepSeekWaterfallProviderConfigured,
+} from "./deepseek/waterfall.ts";
 import { openRouterModelsSnapshot } from "./models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "./provider/openrouter.ts";
 import { normalizePromptCacheCapabilities } from "./models/codex-models.ts";
@@ -483,6 +495,51 @@ export const withConfiguredLithosModels = (models: readonly Record<string, unkno
   if (!configured.length) return [...models];
   const ids = new Set(configured.map((model) => model.id));
   return [...models.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
+};
+
+/** The gateway-owned DeepSeek waterfall id, listed whenever one hop is usable. */
+const configuredDeepSeekWaterfallModels = (): Record<string, unknown>[] =>
+  DEEPSEEK_WATERFALL_ORDER.some(deepSeekWaterfallProviderConfigured)
+    ? [{ id: DEEPSEEK_WATERFALL_MODEL_ID, object: "model", created: DEEPSEEK_WATERFALL_CREATED, owned_by: "ubiquity" }]
+    : [];
+
+const configuredDeepSeekWaterfallModelCapabilities = (): Record<string, unknown>[] => {
+  if (!DEEPSEEK_WATERFALL_ORDER.some(deepSeekWaterfallProviderConfigured)) return [];
+  return [
+    {
+      id: DEEPSEEK_WATERFALL_MODEL_ID,
+      object: "uos.model_capabilities",
+      owned_by: "ubiquity",
+      display_name: DEEPSEEK_WATERFALL_DISPLAY_NAME,
+      upstream_provider: "ubiquity",
+      supported_endpoints: ["/v1/responses"],
+      supported_reasoning_levels: [...DEEPSEEK_WATERFALL_REASONING_LEVELS],
+      default_reasoning_effort: DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
+      reasoning_effort_wire_map: {},
+      context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+      max_context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+      auto_compact_token_limit_tokens: DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
+      effective_context_window_percent: DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+      // The window and tiers are the intersection measured across the candidate
+      // providers; the source labels keep the admin surfaces honest about it.
+      context_source: "openrouter",
+      reasoning_source: "provider_discovery",
+    },
+  ];
+};
+
+export const withConfiguredDeepSeekWaterfallModels = (models: readonly Record<string, unknown>[], enabled: boolean): Record<string, unknown>[] => {
+  const configured = enabled ? configuredDeepSeekWaterfallModels() : [];
+  if (!configured.length) return [...models];
+  const ids = new Set(configured.map((model) => model.id));
+  return [...models.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
+};
+
+export const withConfiguredDeepSeekWaterfallCapabilities = (data: readonly Record<string, unknown>[], enabled: boolean): Record<string, unknown>[] => {
+  const configured = enabled ? configuredDeepSeekWaterfallModelCapabilities() : [];
+  if (!configured.length) return [...data];
+  const ids = new Set(configured.map((model) => model.id));
+  return [...data.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
 };
 
 /** The Typesafe System One decision model, served through the same upstream. */
