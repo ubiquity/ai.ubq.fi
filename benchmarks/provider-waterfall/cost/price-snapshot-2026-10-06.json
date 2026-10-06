@@ -1,0 +1,66 @@
+{
+  "retrieved_at": "2026-10-06T01:38:09.403Z",
+  "rate_card_version": "2026-10-06.v1",
+  "surplus": {
+    "available": true,
+    "model": "deepseek-v4.1-flash",
+    "pricing": {
+      "prompt": "0.0000003000",
+      "completion": "0.0000012000",
+      "input_cache_read": "0.0000000060",
+      "input_cache_write": "0.0000003000"
+    },
+    "supports_tools": true
+  },
+  "openlux": {
+    "available": true,
+    "model": "deepseek-v4.1-flash",
+    "model_ratio": 0.15,
+    "completion_ratio": 4,
+    "cache_ratio": 0.02,
+    "note": "USD per token = ratio / quota_per_unit; quota_per_unit is recorded in cost.ts from the same retrieval"
+  },
+  "openrouter": {
+    "available": true,
+    "model": "deepseek/deepseek-v4.1-flash",
+    "pricing": {
+      "prompt": "0.0000003",
+      "completion": "0.0000012",
+      "input_cache_read": "0.000000006"
+    }
+  },
+  "lithos": {
+    "available": true,
+    "source": "https://www.lithosai.com/pricing (retrieved 2026-10-06)",
+    "rates_per_million_usd": {
+      "input": 0.15,
+      "cached_input": 0.003,
+      "output": 0.6
+    },
+    "note": "Early-access Base tier; Fast $0.25/$0.005/$1.00, Ultra $0.35/$0.007/$1.40. Chat-only API publishes no price metadata; the pricing page is the bounded source."
+  },
+  "deepseek": {
+    "available": true,
+    "source": "https://api-docs.deepseek.com/quick_start/pricing/ (retrieved 2026-10-06)",
+    "peak_per_million_usd": {
+      "input_cache_miss": 0.3,
+      "input_cache_hit": 0.006,
+      "output": 1.2
+    },
+    "off_peak_per_million_usd": {
+      "input_cache_miss": 0.15,
+      "input_cache_hit": 0.003,
+      "output": 0.6
+    },
+    "windows_utc": {
+      "peak": "01:00-04:00 and 06:00-10:00 Mon-Fri; off-peak otherwise (all other hours, weekends; Chinese public holidays not encoded)"
+    }
+  },
+  "rate_card_providers": [
+    "surplus",
+    "openlux",
+    "lithos",
+    "deepseek",
+    "openrouter"
+  ]
+}

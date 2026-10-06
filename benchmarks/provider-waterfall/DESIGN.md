@@ -47,7 +47,7 @@ request reconstructed from the session's recorded `response_item` sequence up to
 message or a tool result), dropping `reasoning` items, `web_search_call` items and any provider-specific encrypted
 payload fields that cannot be replayed. Secrets are removed by the sanitizer described below. The tools array is the
 frozen capture `fixtures/codex-tools-0.160.1.json` (sha256
-`40bcbfaa3c8c40b8cce159696b68164571c75fc30d298a6c2052f857fedaa2db`), captured from codex-cli 0.160.1 against the
+`e48b8f1e1533e676ba43f1f15660a8f5e35d2a775c607b94cb4d46a2116e29ab`), captured from codex-cli 0.160.1 against the
 loopback gateway on 2026-10-06; the same array is used for every entry and every provider.
 
 Classes by recorded input tokens (tools included): small 2k–10k (20%), medium 10k–40k (30%), large 40k–160k (30%),
@@ -138,3 +138,14 @@ must not spend on paid inference beyond bounded metadata fetches (no completion 
 
 Primary owns everything else: `instance.ts`, `client.ts`, `runner.ts`, `metrics.ts`, `score.ts`, `providers.ts`,
 `types.ts`, `README.md`, results and the report.
+
+## Integration addendum (2026-10-06)
+
+- The tools fixture hash in this document is `e48b8f1e1533e676ba43f1f15660a8f5e35d2a775c607b94cb4d46a2116e29ab`: the
+  repository's deno-fmt pre-commit hook normalized the raw capture at commit `ccbcc364`, so the committed bytes differ
+  from the pre-commit copy while the JSON semantics are unchanged.
+- Frozen corpus: `corpus/corpus-v1.jsonl`, 30 entries, sha256
+  `6aa1248dac25135f6fe2dfe8444f33f8f357d369940d296cd692b68ba1cdb288`, class counts 6/9/9/6.
+- The recorded candidate pool contains no request below 18.7k input tokens, so the six small entries are the closest
+  recorded requests (18.7k-18.8k); the corpus spans 18.7k-598k recorded tokens. The frozen tools array is added to every
+  entry, so actual sizes differ from the recorded value by the toolset delta.

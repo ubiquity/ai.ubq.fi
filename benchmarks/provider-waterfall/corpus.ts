@@ -39,8 +39,15 @@ export const loadCorpus = async (root: string): Promise<Readonly<{ entries: read
   const sha256 = await sha256Hex(bytes);
   const manifestRaw = JSON.parse(await Deno.readTextFile(manifestPath)) as unknown;
   if (!isRecord(manifestRaw)) throw new Error("corpus manifest is not an object");
+  const corpusRecord = isRecord(manifestRaw.corpus) ? manifestRaw.corpus : null;
   const manifestSha =
-    typeof manifestRaw.sha256 === "string" ? manifestRaw.sha256 : typeof manifestRaw.content_sha256 === "string" ? manifestRaw.content_sha256 : null;
+    typeof manifestRaw.sha256 === "string"
+      ? manifestRaw.sha256
+      : typeof manifestRaw.content_sha256 === "string"
+        ? manifestRaw.content_sha256
+        : corpusRecord && typeof corpusRecord.sha256 === "string"
+          ? corpusRecord.sha256
+          : null;
   if (manifestSha === null) throw new Error("corpus manifest carries no content sha256");
   if (manifestSha !== sha256) throw new Error(`corpus sha256 mismatch: manifest ${manifestSha} != file ${sha256}`);
   const text = new TextDecoder().decode(bytes);

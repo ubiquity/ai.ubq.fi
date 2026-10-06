@@ -132,6 +132,7 @@ type StreamState = Readonly<{
   events: number;
   output_chars: number;
   tool_calls: number;
+  tool_call_indexes: ReadonlySet<number>;
   first_event_at: number | null;
   first_output_at: number | null;
   first_item_at: number | null;
@@ -147,6 +148,7 @@ const emptyState = (): StreamState => ({
   events: 0,
   output_chars: 0,
   tool_calls: 0,
+  tool_call_indexes: new Set<number>(),
   first_event_at: null,
   first_output_at: null,
   first_item_at: null,
@@ -249,7 +251,21 @@ const applyChatChunk = (chunk: Json, now: number, state: StreamState): StreamSta
     const reasoningDelta = typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
     if ((contentDelta.length || reasoningDelta.length) && next.first_output_at === null) next.first_output_at = now;
     next.output_chars += contentDelta.length;
-    if (Array.isArray(delta.tool_calls)) next.tool_calls += delta.tool_calls.length;
+    if (Array.isArray(delta.tool_calls)) {
+      const seen = new Set(next.tool_call_indexes);
+      for (const call of delta.tool_calls) {
+        if (!isRecord(call)) continue;
+        const index = typeof call.index === "number" ? call.index : seen.size;
+        const fn = isRecord(call.function) ? call.function : {};
+        const hasPayload = typeof call.id === "string" || typeof fn.name === "string" || (typeof fn.arguments === "string" && fn.arguments.length > 0);
+        if (!seen.has(index)) {
+          seen.add(index);
+          next.tool_calls += 1;
+        }
+        if (hasPayload && next.first_output_at === null) next.first_output_at = now;
+      }
+      next.tool_call_indexes = seen;
+    }
     if (typeof choice.finish_reason === "string" && choice.finish_reason.length) {
       next.terminal_at = now;
       next.terminal_kind = choice.finish_reason === "length" ? "incomplete" : "completed";
