@@ -1,5 +1,6 @@
 import { getKv } from "../kv.ts";
 import { getString, isRecord, sha256Hex } from "../utils.ts";
+import { GATEWAY_PROVIDER_ID } from "./presentation.ts";
 
 // ── KV key ───────────────────────────────────────────────────────────────────
 
@@ -14,9 +15,12 @@ export const PROVIDER_SELECTION_CACHE_TTL_MS = 5_000;
  * The provider vocabulary the model catalog already publishes, in the order the
  * inference waterfall tries it: the Codex subscription tier first, then the two
  * paid fallback tiers (`surplus` before `openlux`), then the credential-gated
- * direct routes (`deepseek`, `cerebras`, `lithos`).
+ * direct routes (`deepseek`, `cerebras`, `lithos`), and the gateway-owned
+ * `ubiquity` identity last. Checking `ubiquity` allows the synthetic
+ * `ubiquity/deepseek-v4.1-flash` route; in an active selection its absence
+ * switches that route off like any other unchecked provider.
  */
-export const SELECTABLE_PROVIDER_IDS = ["codex", "surplus", "openlux", "deepseek", "cerebras", "lithos", "openrouter"] as const;
+export const SELECTABLE_PROVIDER_IDS = ["codex", "surplus", "openlux", "deepseek", "cerebras", "lithos", "openrouter", "ubiquity"] as const;
 
 export type SelectableProviderId = (typeof SELECTABLE_PROVIDER_IDS)[number];
 
@@ -197,6 +201,9 @@ export const filterCatalogEntriesByProviderSelection = <T extends Readonly<{ pro
   const enabled = (id: string): boolean => (selectableProviderIdSet.has(id) ? isProviderEnabled(id as SelectableProviderId, selection) : true);
   const filtered: T[] = [];
   for (const entry of entries) {
+    // The gateway identity owns its route's entry: when it is switched off the
+    // whole entry leaves, even if one of its upstream hops stays enabled.
+    if (entry.providers.some((provider) => provider.id === GATEWAY_PROVIDER_ID) && !enabled(GATEWAY_PROVIDER_ID)) continue;
     const providers = entry.providers.filter((provider) => enabled(provider.id));
     if (!providers.length) continue;
     filtered.push(providers.length === entry.providers.length ? entry : { ...entry, providers });

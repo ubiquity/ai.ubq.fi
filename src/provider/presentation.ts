@@ -27,9 +27,9 @@ export type ProviderPresentation = Readonly<{
 
 /**
  * The gateway-owned provider identity behind the synthetic
- * `ubiquity/deepseek-v4.1-flash` model. It is display-only: the operator
- * narrows the real upstream tiers, never this row, so it is deliberately not a
- * `SelectableProviderId`.
+ * `ubiquity/deepseek-v4.1-flash` model. It is an ordinary selectable provider:
+ * checking it allows the route, and an active selection without it switches the
+ * route off.
  */
 export const GATEWAY_PROVIDER_ID = "ubiquity" as const;
 
@@ -96,6 +96,7 @@ export const PROVIDER_PRESENTATION: Readonly<Record<SelectableProviderId, Provid
     endpoints: ["/v1/chat/completions", "/v1/responses"],
     health_key: "lithos",
   },
+  ubiquity: GATEWAY_PROVIDER_PRESENTATION,
 };
 
 /**

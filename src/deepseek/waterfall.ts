@@ -9,6 +9,7 @@ import { readSurplusApiKey } from "../provider/surplus.ts";
 import { readDeepSeekApiKey } from "./index.ts";
 import { readLithosApiKey } from "../provider/lithos.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
+import { GATEWAY_PROVIDER_ID } from "../provider/presentation.ts";
 import { isProviderEnabled, type ProviderSelection } from "../provider/selection.ts";
 
 export const DEEPSEEK_WATERFALL_MODEL_ID = "ubiquity/deepseek-v4.1-flash";
@@ -92,6 +93,11 @@ export const deepSeekWaterfallFailureReason = (
   return `deepseek_waterfall:${provider}:${label}` as DeepSeekWaterfallFallbackReason;
 };
 
-/** Whether at least one hop is switched on and credentialed, for catalogue gating. */
+/**
+ * Whether the synthetic route may be advertised and dispatched: the operator
+ * leaves the gateway identity enabled (absent or empty selection, or `ubiquity`
+ * checked) and at least one hop has a credential. An active selection without
+ * `ubiquity` switches the whole route off.
+ */
 export const deepSeekWaterfallCatalogEnabled = (selection: ProviderSelection | null): boolean =>
-  DEEPSEEK_WATERFALL_ORDER.some((provider) => isProviderEnabled(provider, selection) && deepSeekWaterfallProviderConfigured(provider));
+  isProviderEnabled(GATEWAY_PROVIDER_ID, selection) && DEEPSEEK_WATERFALL_ORDER.some((provider) => deepSeekWaterfallProviderConfigured(provider));
