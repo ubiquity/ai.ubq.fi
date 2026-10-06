@@ -123,7 +123,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
 };
 
 type PublicModelProvider = Readonly<{
-  id: "codex" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos" | "openrouter";
+  id: "codex" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos" | "openrouter" | "ubiquity";
   owned_by: string;
   supported_endpoints: readonly string[];
 }>;
@@ -310,6 +310,30 @@ const addCredentialGatedCatalogProviders = (models: Map<string, PublicModelCatal
  * admin console reads it unfiltered so a disabled model stays visible (and can
  * be switched back on) in the operator's picker.
  */
+/** One catalog row for the gateway waterfall id: identity first, then hops. */
+const addDeepSeekWaterfallCatalogEntries = (models: Map<string, PublicModelCatalogEntry>): void => {
+  if (!DEEPSEEK_WATERFALL_ORDER.some(deepSeekWaterfallProviderConfigured)) return;
+  addPublicModelCatalogEntry(
+    models,
+    DEEPSEEK_WATERFALL_MODEL_ID,
+    { id: "ubiquity", owned_by: "ubiquity", supported_endpoints: ["/v1/responses"] },
+    DEEPSEEK_WATERFALL_CREATED,
+    {
+      provider: {
+        context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+        max_context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+        effective_context_window_percent: DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+        supported_reasoning_levels: DEEPSEEK_WATERFALL_REASONING_LEVELS,
+        default_reasoning_effort: DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
+      },
+    }
+  );
+  for (const provider of DEEPSEEK_WATERFALL_ORDER) {
+    if (!deepSeekWaterfallProviderConfigured(provider)) continue;
+    addPublicModelCatalogEntry(models, DEEPSEEK_WATERFALL_MODEL_ID, { id: provider, owned_by: "ubiquity", supported_endpoints: ["/v1/responses"] }, null);
+  }
+};
+
 export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot> => {
   // Enrichment is cache-only and never awaited, so a slow third party cannot
   // delay the catalog; the first load after a cold start simply shows less.
@@ -373,26 +397,7 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
   // The gateway-owned DeepSeek waterfall id is a real client-selectable model,
   // so the admin picker and the public catalog must list it too: one provider
   // row per usable hop, attributed to the gateway itself.
-  if (DEEPSEEK_WATERFALL_ORDER.some(deepSeekWaterfallProviderConfigured)) {
-    for (const provider of DEEPSEEK_WATERFALL_ORDER) {
-      if (!deepSeekWaterfallProviderConfigured(provider)) continue;
-      addPublicModelCatalogEntry(
-        models,
-        DEEPSEEK_WATERFALL_MODEL_ID,
-        { id: provider, owned_by: "ubiquity", supported_endpoints: ["/v1/responses"] },
-        DEEPSEEK_WATERFALL_CREATED,
-        {
-          provider: {
-            context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
-            max_context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
-            effective_context_window_percent: DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
-            supported_reasoning_levels: DEEPSEEK_WATERFALL_REASONING_LEVELS,
-            default_reasoning_effort: DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
-          },
-        }
-      );
-    }
-  }
+  addDeepSeekWaterfallCatalogEntries(models);
   // OpenRouter serves its cached public catalogue on the OpenAI-compatible
   // wires and the Typesafe System One model behind /v1/systemone.
   let openrouterServed = 0;

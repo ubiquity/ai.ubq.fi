@@ -8917,7 +8917,10 @@ const setProvidersSelectionBadge = (state, text) => setBadge(providersSelectionB
 const providerRosterEntry = (id) => providerRoster.find((entry) => entry.id === id) ?? null;
 
 /** The loaded roster, so a retired provider never reaches the API again. */
-const providersRosterIds = () => providerRoster.map((entry) => entry.id);
+/** Selectable roster ids: display-only rows (e.g. the gateway identity) never join a selection. */
+const providersRosterIds = () => providerRoster.filter((entry) => entry.selectable !== false).map((entry) => entry.id);
+/** Roster order for rendering, display-only rows included. */
+const providersDisplayOrderIds = () => providerRoster.map((entry) => entry.id);
 
 /** One tier chip per tier the payload lists, plus the unfiltered "all" chip. */
 const buildProviderTierFilterChip = (id, label) => {
@@ -9059,7 +9062,7 @@ const providersVisibleEntries = () => {
   if (providersSortSelect.value === "id") {
     return visible.sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
   }
-  const rosterIds = providersRosterIds();
+  const rosterIds = providersDisplayOrderIds();
   return visible.sort((left, right) => rosterIds.indexOf(left.id) - rosterIds.indexOf(right.id));
 };
 
@@ -9093,7 +9096,13 @@ const buildProviderOption = (entry) => {
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
-  checkbox.dataset.providerToggle = id;
+  if (entry.selectable === false) {
+    // Display-only identity: it describes the route, it is not narrowable.
+    checkbox.disabled = true;
+    option.dataset.providerInfo = "true";
+  } else {
+    checkbox.dataset.providerToggle = id;
+  }
   checkbox.checked = checked;
   checkbox.indeterminate = partial;
 
@@ -9542,6 +9551,7 @@ providersOnlyActiveInput.addEventListener("change", () => {
 
 /** The `codex` umbrella and the individual subscription ids never coexist. */
 const setProviderChecked = (providerId, checked) => {
+  if (providerRosterEntry(providerId)?.selectable === false) return;
   if (providerId !== "codex") {
     if (checked) providerSelection.add(providerId);
     else providerSelection.delete(providerId);
@@ -9592,19 +9602,21 @@ providersList.addEventListener("change", (event) => {
 
 providersCheckAllBtn.addEventListener("click", () => {
   applyProvidersSelection((visible) => {
-    for (const entry of visible) setProviderChecked(entry.id, true);
+    for (const entry of visible) if (entry.selectable !== false) setProviderChecked(entry.id, true);
   });
 });
 
 providersUncheckAllBtn.addEventListener("click", () => {
   applyProvidersSelection((visible) => {
-    for (const entry of visible) setProviderChecked(entry.id, false);
+    for (const entry of visible) if (entry.selectable !== false) setProviderChecked(entry.id, false);
   });
 });
 
 providersInvertBtn.addEventListener("click", () => {
   applyProvidersSelection((visible) => {
-    for (const entry of visible) setProviderChecked(entry.id, !isProviderChecked(entry.id));
+    for (const entry of visible) {
+      if (entry.selectable !== false) setProviderChecked(entry.id, !isProviderChecked(entry.id));
+    }
   });
 });
 

@@ -21,6 +21,7 @@ import type { CodexAuthPoolState } from "./types.ts";
 import { readMeteredApiKey } from "./provider/metered.ts";
 import { readOpenRouterApiKey } from "./provider/openrouter.ts";
 import { readSurplusApiKey } from "./provider/surplus.ts";
+import { deepSeekWaterfallCatalogEnabled } from "./deepseek/waterfall.ts";
 import {
   fetchMeteredQuotaObservation,
   getCachedConfiguredMeteredQuotaSnapshot,
@@ -225,6 +226,32 @@ const quotaView = (snapshot: MeteredQuotaSnapshot | null) => {
   };
 };
 
+/**
+ * The gateway-owned waterfall identity: "at least one hop is configured" is the
+ * whole state, because this route owns no upstream observations of its own.
+ */
+const gatewayProviderHealthSubtree = (): Record<string, unknown> => {
+  const configured = deepSeekWaterfallCatalogEnabled(null);
+  return {
+    configured,
+    health: {
+      state: configured ? "healthy" : "unknown",
+      stale: false,
+      last_event: null,
+      last_status: null,
+      last_observed_at_ms: null,
+      last_provider_request_id: null,
+      last_provider_request_id_at_ms: null,
+      last_success_at_ms: null,
+      last_401_at_ms: null,
+      last_429_at_ms: null,
+      last_error_at_ms: null,
+      last_refresh_at_ms: null,
+      last_refresh_succeeded: null,
+    },
+  };
+};
+
 export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ includeQuota?: boolean }> = {}): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
@@ -302,6 +329,7 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
             },
           }),
     },
+    ubiquity: gatewayProviderHealthSubtree(),
   };
 };
 
