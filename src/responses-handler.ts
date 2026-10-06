@@ -3,6 +3,8 @@
 import { handleLithosResponses } from "./provider/lithos-handlers.ts";
 import { handleCerebrasResponses } from "./provider/cerebras-responses.ts";
 import { handleDeepSeekResponses } from "./deepseek/handlers.ts";
+import { handleDeepSeekWaterfallResponses } from "./deepseek/waterfall-handler.ts";
+import { isDeepSeekWaterfallModel } from "./deepseek/waterfall.ts";
 import { markCodexResponseCompleted, markCodexResponseUpstreamError, releaseCodexResponseProbe } from "./codex/index.ts";
 import { deepSeekUpstreamModelFor } from "./deepseek/index.ts";
 import { cerebrasUpstreamModelFor } from "./provider/cerebras.ts";
@@ -785,6 +787,12 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   // takes this branch; a switched-off DeepSeek provider leaves its ids to the
   // ordinary availability check.
   const requestedModel = getString(rawRecord.model)?.trim();
+  // The synthetic waterfall id is owned by the gateway itself: it walks the
+  // measured DeepSeek provider order on the client's behalf, so it dispatches
+  // before the provider-specific ids and their availability checks.
+  if (requestedModel && isDeepSeekWaterfallModel(requestedModel)) {
+    return await handleDeepSeekWaterfallResponses(req, rawRecord, usageContext);
+  }
   if (requestedModel && deepSeekUpstreamModelFor(requestedModel) && isProviderEnabled("deepseek", await loadProviderSelectionCached())) {
     return await handleDeepSeekResponses(req, rawRecord, requestedModel, usageContext);
   }

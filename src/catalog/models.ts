@@ -5,6 +5,16 @@ import { compareCodexClientVersions, mergeCodexModelPromptCacheCapabilities, nor
 import { buildRuntimeConfig, cacheRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY, type RuntimeConfigV2 } from "../runtime-config.ts";
 import { getString, isRecord } from "../utils.ts";
 import { DEEPSEEK_CONTEXT_WINDOW_TOKENS, DEEPSEEK_DISPLAY_NAMES, DEEPSEEK_OFFICIAL_MODEL_IDS, readDeepSeekApiKey } from "../deepseek/index.ts";
+import {
+  DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
+  DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+  DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
+  DEEPSEEK_WATERFALL_DESCRIPTION,
+  DEEPSEEK_WATERFALL_DISPLAY_NAME,
+  DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  DEEPSEEK_WATERFALL_MODEL_ID,
+  DEEPSEEK_WATERFALL_REASONING_LEVELS,
+} from "../deepseek/waterfall.ts";
 import { FORWARDED_PAYLOAD_POLICY } from "../deepseek/forwarded-payload-policy.ts";
 import { CEREBRAS_MODELS, readCerebrasApiKey } from "../provider/cerebras.ts";
 import { CEREBRAS_MODEL_DISPLAY_NAMES } from "../input-normalization.ts";
@@ -240,6 +250,50 @@ const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]):
   if (!configured.length) return [...models];
   const present = new Set(models.map((model) => getString(model.slug) ?? getString(model.id) ?? ""));
   return [...models, ...configured.filter((model) => !present.has(String(model.slug)))];
+};
+
+/**
+ * Codex catalog record for the gateway-owned `ubiquity/deepseek-v4.1-flash`
+ * waterfall model. The advertised reasoning tiers are the intersection every
+ * candidate hop accepts verbatim (low/high/max); the waterfall boundary
+ * rejects anything else rather than letting a hop refuse it later.
+ */
+export const buildDeepSeekWaterfallCodexRecord = (): Record<string, unknown> => ({
+  slug: DEEPSEEK_WATERFALL_MODEL_ID,
+  display_name: DEEPSEEK_WATERFALL_DISPLAY_NAME,
+  description: DEEPSEEK_WATERFALL_DESCRIPTION,
+  owned_by: "ubiquity",
+  supported_endpoint_types: ["openai-response"],
+  supported_reasoning_levels: DEEPSEEK_WATERFALL_REASONING_LEVELS.map((effort) => ({
+    effort,
+    description: codexReasoningEffortDescription(effort),
+  })),
+  default_reasoning_level: DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
+  context_window: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+  max_context_window: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+  auto_compact_token_limit: DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT,
+  effective_context_window_percent: DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  shell_type: "shell_command",
+  visibility: "list",
+  supported_in_api: true,
+  priority: 0,
+  availability_nux: null,
+  upgrade: null,
+  base_instructions: "",
+  support_verbosity: false,
+  default_verbosity: null,
+  apply_patch_tool_type: null,
+  web_search_tool_type: "text",
+  truncation_policy: { mode: "tokens", limit: 10000 },
+  supports_parallel_tool_calls: false,
+  experimental_supported_tools: [],
+});
+
+/** Appends the waterfall record when the stored catalogue does not list it. */
+export const withDeepSeekWaterfallModel = (models: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
+  const present = new Set(models.map((model) => getString(model.slug) ?? getString(model.id) ?? ""));
+  if (present.has(DEEPSEEK_WATERFALL_MODEL_ID)) return [...models];
+  return [...models, buildDeepSeekWaterfallCodexRecord()];
 };
 
 /**

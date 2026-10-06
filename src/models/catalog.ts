@@ -44,10 +44,13 @@ import {
   withConfiguredCerebrasModel,
   withConfiguredDeepSeekCapabilities,
   withConfiguredDeepSeekModels,
+  withConfiguredDeepSeekWaterfallCapabilities,
+  withConfiguredDeepSeekWaterfallModels,
   withConfiguredLithosCapabilities,
   withConfiguredLithosModels,
   OPENROUTER_SERVED_MODEL_ID,
 } from "../input-normalization.ts";
+import { deepSeekWaterfallCatalogEnabled } from "../deepseek/waterfall.ts";
 
 const snapshotUpstreamSource = (snapshot: CodexModelsSnapshot | null): string => {
   const source = snapshot?.source;
@@ -69,9 +72,15 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   const snapshot = await loadCodexModelsSnapshot();
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0 ? normalizeModelList(snapshot) : null;
   const codexModels = isProviderEnabled("codex", selection) ? (normalized?.data ?? []) : [];
-  const providerModels = withConfiguredLithosModels(
-    withConfiguredDeepSeekModels(withConfiguredCerebrasModel(codexModels, isProviderEnabled("cerebras", selection)), isProviderEnabled("deepseek", selection)),
-    isProviderEnabled("lithos", selection)
+  const providerModels = withConfiguredDeepSeekWaterfallModels(
+    withConfiguredLithosModels(
+      withConfiguredDeepSeekModels(
+        withConfiguredCerebrasModel(codexModels, isProviderEnabled("cerebras", selection)),
+        isProviderEnabled("deepseek", selection)
+      ),
+      isProviderEnabled("lithos", selection)
+    ),
+    deepSeekWaterfallCatalogEnabled(selection)
   );
   const [metered, surplus] = await Promise.all([
     isProviderEnabled("openlux", selection) ? fetchMeteredModels() : Promise.resolve(null),
@@ -512,6 +521,7 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   // fallback is replaced by the capabilities of the route it actually uses.
   data = withConfiguredDeepSeekCapabilities(data, isProviderEnabled("deepseek", selection));
   data = withConfiguredLithosCapabilities(data, isProviderEnabled("lithos", selection));
+  data = withConfiguredDeepSeekWaterfallCapabilities(data, deepSeekWaterfallCatalogEnabled(selection));
 
   const capabilitiesKv = await getKv();
   const capabilitiesWhitelist = capabilitiesKv ? await loadCodexModelsWhitelist(capabilitiesKv) : null;

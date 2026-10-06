@@ -72,7 +72,9 @@ const kvStub = {
 } as unknown as Deno.Kv;
 
 const { handleCodexCatalogModels } = await import("../src/catalog/index.ts");
+const { buildDeepSeekWaterfallCodexRecord } = await import("../src/catalog/models.ts");
 const { handleModels } = await import("../src/models/catalog.ts");
+const { DEEPSEEK_WATERFALL_MODEL_ID } = await import("../src/deepseek/waterfall.ts");
 const { storeCodexCatalog } = await import("../src/catalog/store.ts");
 const { CODEX_CATALOG_AUTH_GENERATION_KEY } = await import("../src/catalog/types.ts");
 const { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
@@ -262,7 +264,7 @@ Deno.test("codex catalog: an empty whitelist is no filter and OpenRouter rows st
       const payload = (await response.json()) as { models: Record<string, unknown>[] };
       assert.deepEqual(
         payload.models.map((model) => model.slug),
-        ["gpt-0.100.0", "hidden-0.100.0", "vendor/alpha", "vendor/beta"]
+        ["gpt-0.100.0", "hidden-0.100.0", DEEPSEEK_WATERFALL_MODEL_ID, "vendor/alpha", "vendor/beta"]
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -322,11 +324,12 @@ Deno.test("codex catalog: served-byte ETags change when OpenRouter enriches an u
         fetchedAtMs: Date.now(),
       });
       assert.equal(stored, true, "the unchanged upstream catalog is cached");
+      const expectedInitialBody = JSON.stringify({ models: [{ slug: "gpt-stored" }, buildDeepSeekWaterfallCodexRecord()] });
       const first = await handleModels(codexCatalogRequest());
       assert.equal(first.status, 200);
-      assert.equal(await first.text(), body, "the assembled path initially serves the exact upstream bytes");
+      assert.equal(await first.text(), expectedInitialBody, "the assembled path serves the upstream bytes plus the always-on waterfall row");
       const oldTag = first.headers.get("ETag") ?? "";
-      assert.equal(oldTag, `"uos-catalog-${createHash("sha256").update(body).digest("hex").slice(0, 32)}"`);
+      assert.equal(oldTag, `"uos-catalog-${createHash("sha256").update(expectedInitialBody).digest("hex").slice(0, 32)}"`);
       await fetchOpenRouterModels({
         force: true,
         fetcher: () => Promise.resolve(Response.json({ data: [{ id: "vendor/beta", context_length: 128_000 }] })),
@@ -339,7 +342,7 @@ Deno.test("codex catalog: served-byte ETags change when OpenRouter enriches an u
       const changedTag = changed.headers.get("ETag") ?? "";
       assert.equal(changedTag, `"uos-catalog-${createHash("sha256").update(changedBody).digest("hex").slice(0, 32)}"`);
       assert.notEqual(changedTag, oldTag);
-      assert.equal((JSON.parse(changedBody) as { models: { context_window: number }[] }).models[1].context_window, 128_000);
+      assert.equal((JSON.parse(changedBody) as { models: { context_window: number }[] }).models[2].context_window, 128_000);
       const current = await handleModels(new Request(codexCatalogRequest(), { headers: { "If-None-Match": changedTag } }));
       assert.equal(current.status, 304);
       assert.equal(current.headers.get("ETag"), changedTag);
