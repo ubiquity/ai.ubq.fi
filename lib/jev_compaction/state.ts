@@ -168,7 +168,9 @@ function goalFromMessages(messages: readonly Message[]): string {
  * are abridged oldest-first (pinned messages last), then old messages collapse
  * to a one-line note, then old tool calls shrink to one line each, then old
  * messages that carry no call are left out, then runs of old call-only
- * messages are folded into one entry. Throws when even that is too big.
+ * messages are folded into one entry, and finally the oldest merged call runs
+ * are dropped while pinned entries stay. Throws only when the pinned floor
+ * alone exceeds the cap.
  */
 export function fitState(
   messages: readonly Message[],
@@ -283,6 +285,20 @@ export function fitState(
   perEntry = history.map(entryTokens);
   tokens = baseTokens + perEntry.reduce((sum, n) => sum + n, 0);
   if (fits()) return fitted(history, tokens, "old calls merged");
+
+  // Last resort for very long sessions: drop the oldest merged call runs while
+  // keeping pinned entries. The per-call questions carry each candidate on
+  // their own, so old calls can still be decided without their collapsed
+  // context, and the state stays inside the cap at any session length.
+  for (let index = 0; index < history.length; index += 1) {
+    const entry = history[index];
+    if (!entry || pinned(entry)) continue;
+    tokens -= perEntry[index] ?? 0;
+    history.splice(index, 1);
+    perEntry.splice(index, 1);
+    index -= 1;
+    if (fits()) return fitted(history, tokens, "old call runs left out");
+  }
 
   throw new Error(`history too large for Jev (~${tokens} tokens after truncation, limit ${options.maxStateTokens})`);
 }
