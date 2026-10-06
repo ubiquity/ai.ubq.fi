@@ -5,6 +5,7 @@
 // as the final hop in phase 2 through the paid pipeline.
 
 import type { DeepSeekWaterfallFallbackReason } from "../openai-telemetry.ts";
+import { readSurplusApiKey } from "../provider/surplus.ts";
 import { readDeepSeekApiKey } from "./index.ts";
 import { readLithosApiKey } from "../provider/lithos.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
@@ -22,15 +23,23 @@ export const DEEPSEEK_WATERFALL_CREATED = 1_791_244_800;
 export const DEEPSEEK_WATERFALL_REASONING_LEVELS = ["low", "high", "max"] as const;
 export const DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL = "high";
 
-export type DeepSeekWaterfallProvider = "openrouter" | "lithos" | "deepseek";
+export type DeepSeekWaterfallProvider = "openrouter" | "lithos" | "deepseek" | "surplus";
 
-export const DEEPSEEK_WATERFALL_ORDER: readonly DeepSeekWaterfallProvider[] = ["openrouter", "lithos", "deepseek"];
+/**
+ * The paid catalogue id whose Surplus tier is the waterfall's final hop. The
+ * hop re-enters the ordinary Responses pipeline under this id so admission,
+ * reservation and ledger settlement stay the paid path's.
+ */
+export const DEEPSEEK_WATERFALL_PAID_MODEL_ID = "deepseek-v4.1-flash";
+
+export const DEEPSEEK_WATERFALL_ORDER: readonly DeepSeekWaterfallProvider[] = ["openrouter", "lithos", "deepseek", "surplus"];
 
 /** The provider-specific id each hop is dispatched with. */
 export const DEEPSEEK_WATERFALL_PROVIDER_MODEL: Readonly<Record<DeepSeekWaterfallProvider, string>> = {
   openrouter: "deepseek/deepseek-v4.1-flash",
   lithos: "deepseek-ai/DeepSeek-V4.1-Flash",
   deepseek: "deepseek-flash",
+  surplus: DEEPSEEK_WATERFALL_PAID_MODEL_ID,
 };
 
 export const isDeepSeekWaterfallModel = (model: string): boolean => model.trim().toLowerCase() === DEEPSEEK_WATERFALL_MODEL_ID;
@@ -41,7 +50,8 @@ export const isDeepSeekWaterfallReasoningLevel = (effort: string): boolean => (D
 export const deepSeekWaterfallProviderConfigured = (provider: DeepSeekWaterfallProvider): boolean => {
   if (provider === "openrouter") return readOpenRouterApiKey() !== null;
   if (provider === "lithos") return readLithosApiKey() !== null;
-  return readDeepSeekApiKey() !== null;
+  if (provider === "deepseek") return readDeepSeekApiKey() !== null;
+  return readSurplusApiKey() !== null;
 };
 
 /** The hop order after removing providers the operator switched off or that have no credential. */
@@ -73,8 +83,14 @@ export const deepSeekWaterfallRequestedEffort = (rawRecord: Readonly<Record<stri
 };
 
 /** The exact fallback reason recorded for one failed hop. */
-export const deepSeekWaterfallFailureReason = (provider: DeepSeekWaterfallProvider, failure: number | "transport"): DeepSeekWaterfallFallbackReason =>
-  `deepseek_waterfall:${provider}:${failure === "transport" ? "transport_failure" : failure}`;
+export const deepSeekWaterfallFailureReason = (
+  provider: DeepSeekWaterfallProvider,
+  failure: number | "transport" | "stream"
+): DeepSeekWaterfallFallbackReason => {
+  const failureLabel: Readonly<Record<"transport" | "stream", string>> = { transport: "transport_failure", stream: "stream_failure" };
+  const label = typeof failure === "number" ? String(failure) : failureLabel[failure];
+  return `deepseek_waterfall:${provider}:${label}` as DeepSeekWaterfallFallbackReason;
+};
 
 /** Whether at least one hop is switched on and credentialed, for catalogue gating. */
 export const deepSeekWaterfallCatalogEnabled = (selection: ProviderSelection | null): boolean =>

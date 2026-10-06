@@ -203,7 +203,14 @@ const replenishPaidFallbackCatalogs = async (
     meteredOnly: boolean;
     codexEnabled: boolean;
   }>,
-  routingInput: Readonly<{ codexModelKnown: boolean; endpointType: string; requestUsesTools: boolean; model: string; selection: ProviderSelection | null }>,
+  routingInput: Readonly<{
+    codexModelKnown: boolean;
+    endpointType: string;
+    requestUsesTools: boolean;
+    model: string;
+    selection: ProviderSelection | null;
+    allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+  }>,
   fallbackSignal: AbortSignal | undefined
 ): Promise<
   Readonly<{
@@ -241,6 +248,7 @@ const replenishPaidFallbackCatalogs = async (
     requestUsesTools: routingInput.requestUsesTools,
     model: routingInput.model,
     selection: routingInput.selection,
+    allowedPaidProviders: routingInput.allowedPaidProviders ?? null,
   });
   if (nextRouting.paidProviders.length) refreshStalePaidCatalogsInBackground(nextMeteredCatalog, nextSurplusCatalog);
   return { meteredCatalog: nextMeteredCatalog, surplusCatalog: nextSurplusCatalog, routing: nextRouting };
@@ -640,6 +648,12 @@ export const fetchResponsesWithPaidFallback = async (
     clientVersion?: string | null;
     signal?: AbortSignal;
     fallbackSignal?: AbortSignal;
+    /**
+     * Request-scoped narrowing for the DeepSeek waterfall's Surplus hop: only
+     * the named paid tiers may be selected, preserving admission, reservation
+     * and ledger settlement. Null or absent keeps the fixed cost order.
+     */
+    allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
   }>
 ): Promise<RoutedResponsesUpstream> => {
   const fallbackSignal = options.fallbackSignal ?? options.signal;
@@ -705,7 +719,14 @@ export const fetchResponsesWithPaidFallback = async (
     meteredCatalog,
     surplusCatalog,
     routing,
-    { codexModelKnown, endpointType, requestUsesTools, model: options.model, selection: catalogs.selection },
+    {
+      codexModelKnown,
+      endpointType,
+      requestUsesTools,
+      model: options.model,
+      selection: catalogs.selection,
+      allowedPaidProviders: options.allowedPaidProviders ?? null,
+    },
     fallbackSignal
   );
   surplusCatalog = replenished.surplusCatalog;

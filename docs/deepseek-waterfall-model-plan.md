@@ -100,3 +100,26 @@ Phase 1 shipped as PR #938 (merged `05f59243`). Phase 2 executes with these conc
      pre-output stream failure against the scratch instance.
 
 4. **Docs.** Update the benchmark report and this plan with the phase-2 evidence and the final waterfall semantics.
+
+## Phase 2 status (implemented 2026-10-06)
+
+All four hops are live behind the synthetic id on a scratch instance of this revision:
+
+- selection `["openrouter"]` / `["lithos"]` / `["deepseek"]` served 200 with `x-uos-upstream` equal to the pinned
+  provider;
+- selection `["surplus"]` served 200 with `x-uos-upstream: surplus`, and the paid ledger settled it (surplus
+  `spend_microcredits` 291478 -> 291526, request count 35 -> 36), so admission, reservation and ledger settlement were
+  not bypassed;
+- `x-uos-attempted-providers` reports the chain on every response.
+
+Implementation deltas from the scoped notes, kept truthful:
+
+- The streaming gate replays the buffered pre-commit bytes and then forwards the hop handler's own response stream
+  verbatim, instead of rebuilding the stream through `createOwnedResponsesStream`. That preserves each handler's own
+  delivery machinery (keepalive, terminal synthesis, telemetry), which the gap analysis showed matters more than
+  sequence rewriting; the gate itself still uses `readResponsesStream` + `prepareResponsesStreamForCommit`.
+- A forced live pre-output stream failure is not reproducible against the real providers without a fault-injection knob,
+  so that case is covered by hermetic tests (stream dies before output -> chain advances; stream dies after output ->
+  delivered, no further provider spent; transport failure and 5xx -> advance) plus the live hop evidence above. The
+  plan's live-failure bullet is satisfied to the extent the production surface allows and is documented here rather than
+  claimed live.

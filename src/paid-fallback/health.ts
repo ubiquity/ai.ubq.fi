@@ -313,6 +313,12 @@ export const resolvePaidRoutingState = (
     requestUsesTools: boolean;
     model: string;
     selection: ProviderSelection | null;
+    /**
+     * Request-scoped narrowing for callers that need one paid tier on its own
+     * (the DeepSeek waterfall's Surplus hop). Null or absent keeps the fixed
+     * Surplus -> Metered cost order untouched.
+     */
+    allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
   }>
 ): Readonly<{
   surplusBilling: SurplusBillingPricing | null;
@@ -364,7 +370,10 @@ export const resolvePaidRoutingState = (
   // The paid tiers have a fixed cost order for every model. Provider
   // availability may remove a tier, but it must never reverse the order.
   const preferredPaidProviders: readonly ("metered" | "surplus")[] = ["surplus", "metered"];
-  const paidProviders = preferredPaidProviders.filter((provider) => (provider === "surplus" ? surplusCanServe : meteredCanServe));
+  const allowedPaidProviders = input.allowedPaidProviders ?? null;
+  const paidProviders = preferredPaidProviders.filter(
+    (provider) => (provider === "surplus" ? surplusCanServe : meteredCanServe) && (allowedPaidProviders === null || allowedPaidProviders.includes(provider))
+  );
   return {
     surplusBilling,
     paidProviders,
@@ -472,7 +481,12 @@ export const fetchTemporaryFreeSurplusRoutedResponses = async (
 
 export const loadPaidResponsesCatalogs = async (
   body: Record<string, unknown>,
-  options: Readonly<{ model: string; route: "chat.completions" | "responses"; signal?: AbortSignal }>,
+  options: Readonly<{
+    model: string;
+    route: "chat.completions" | "responses";
+    signal?: AbortSignal;
+    allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+  }>,
   selection: ProviderSelection | null
 ): Promise<
   Readonly<{
@@ -513,7 +527,16 @@ export const loadPaidResponsesCatalogs = async (
     [meteredCatalog, surplusCatalog] = await refreshPaidCatalogs(meteredCatalog, surplusCatalog, options.signal);
   }
   const resolveRouting = () =>
-    resolvePaidRoutingState({ meteredCatalog, surplusCatalog, codexModelKnown, endpointType, requestUsesTools, model: options.model, selection });
+    resolvePaidRoutingState({
+      meteredCatalog,
+      surplusCatalog,
+      codexModelKnown,
+      endpointType,
+      requestUsesTools,
+      model: options.model,
+      selection,
+      allowedPaidProviders: options.allowedPaidProviders ?? null,
+    });
   let routing = resolveRouting();
   // With the Codex tier switched off, the enabled paid catalogs are the only
   // routing evidence left, so a cold enabled catalog must be discovered before

@@ -51,7 +51,8 @@ export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_mo
  * admission reasons stay their own union; only the telemetry record carries
  * either kind.
  */
-export type DeepSeekWaterfallFallbackReason = `deepseek_waterfall:${"openrouter" | "lithos" | "deepseek"}:${number | "transport_failure"}`;
+export type DeepSeekWaterfallFallbackReason =
+  `deepseek_waterfall:${"openrouter" | "lithos" | "deepseek" | "surplus"}:${number | "transport_failure" | "stream_failure"}`;
 export type RecordedFallbackReason = InferenceFallbackReason | DeepSeekWaterfallFallbackReason;
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
