@@ -9,6 +9,7 @@ import {
 } from "../src/jev_compaction/compaction.ts";
 import { parseCodexInput, renderSummary, SUMMARY_MARKER } from "../lib/jev_compaction/codex_items.ts";
 import { collectToolCalls, estimateTokens, fitState } from "../lib/jev_compaction/state.ts";
+import { compact } from "../lib/jev_compaction/compact.ts";
 import type { JevAsker, JevQuestions, JevResponse, Message } from "../lib/jev_compaction/types.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
 
@@ -262,6 +263,52 @@ Deno.test("compaction fits kept results under the cap by dropping the lowest rel
   assert.ok(summary.length <= SUMMARY_CHAR_CAP, "the fitted summary must respect the cap");
   assert.ok(summary.includes("[tool result old_e — kept verbatim]"), "the highest-relevance result must stay verbatim");
   assert.ok(summary.includes("[tool result old_a — truncated"), "the lowest-relevance result must be fitted away");
+});
+
+Deno.test("windowed decisions keep local state when a long transcript degrades the global fit", async () => {
+  const messages: Message[] = [];
+  for (let index = 0; index < 400; index += 1) {
+    messages.push({ role: "assistant", text: "", toolUses: [{ tool_use_id: `call_${index}`, tool: "exec_command", input: { cmd: `command ${index}` } }] });
+    messages.push({ role: "user", text: "", toolUses: [], toolResults: [{ tool_use_id: `call_${index}`, text: `result ${index} `.repeat(50) }] });
+  }
+  messages.push({ role: "user", text: "Final goal.", toolUses: [] });
+  const states: string[] = [];
+  const asker: JevAsker = {
+    ask(state: unknown, questions: JevQuestions): Promise<JevResponse> {
+      states.push(JSON.stringify(state));
+      const answers: Record<string, { noul: number }> = {};
+      for (const name of Object.keys(questions)) answers[name] = { noul: 0.1 };
+      return Promise.resolve({ answers });
+    },
+  };
+  const result = await compact(messages, asker, { preserveRecentMessages: 2, maxStateTokens: 800, maxRequestTokens: 4_000, keepThreshold: 0.5 });
+  assert.ok(result.stats.stateStage.startsWith("windowed"), `expected windowed stage, got ${result.stats.stateStage}`);
+  assert.ok(result.stats.windows > 1, "a long transcript must use more than one window");
+  assert.equal(result.decisions.length, 400, "every call must still be decided");
+  for (const state of states) {
+    assert.ok(estimateTokens(state) <= 1_200, `each window state must stay local, got ~${estimateTokens(state)} tokens`);
+  }
+});
+
+Deno.test("short transcripts keep the single global state path", async () => {
+  const messages: Message[] = [
+    { role: "user", text: "Goal.", toolUses: [] },
+    { role: "assistant", text: "", toolUses: [{ tool_use_id: "call_a", tool: "exec_command", input: { cmd: "one" } }] },
+    { role: "user", text: "", toolUses: [], toolResults: [{ tool_use_id: "call_a", text: "first result" }] },
+    { role: "assistant", text: "", toolUses: [{ tool_use_id: "call_b", tool: "exec_command", input: { cmd: "two" } }] },
+    { role: "user", text: "", toolUses: [], toolResults: [{ tool_use_id: "call_b", text: "second result" }] },
+    { role: "user", text: "Final goal.", toolUses: [] },
+  ];
+  const asker: JevAsker = {
+    ask(_state: unknown, questions: JevQuestions): Promise<JevResponse> {
+      const answers: Record<string, { noul: number }> = {};
+      for (const name of Object.keys(questions)) answers[name] = { noul: 0.1 };
+      return Promise.resolve({ answers });
+    },
+  };
+  const result = await compact(messages, asker, { preserveRecentMessages: 1, keepThreshold: 0.5 });
+  assert.equal(result.stats.windows, 0);
+  assert.equal(result.stats.stateStage, "full");
 });
 
 Deno.test("fitState drops the oldest merged call runs instead of failing on very long sessions", () => {
