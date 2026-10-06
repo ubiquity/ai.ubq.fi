@@ -14,6 +14,7 @@ import { handleResponses } from "../src/responses-handler.ts";
 import { handleChatCompletions } from "../src/chat/envelope.ts";
 import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
+import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps this suite on the credential-gated providers it owns, and keeps the
@@ -665,7 +666,11 @@ Deno.test("lithos wiring: the catalog advertises eight addressable ids only whil
       () => new Response("{}", { status: 503 }),
       () => buildModelCatalogSnapshot()
     );
-    const rows = snapshot.result.models.filter((model) => model.providers.some((provider) => provider.id === "lithos"));
+    // The gateway waterfall model also carries a lithos hop row; it is covered
+    // by the admin-catalog suite, so this test owns the vendor ids themselves.
+    const rows = snapshot.result.models.filter(
+      (model) => model.id !== DEEPSEEK_WATERFALL_MODEL_ID && model.providers.some((provider) => provider.id === "lithos")
+    );
     assert.equal(rows.length, LITHOS_MODEL_IDS.length);
     assert.deepEqual(
       rows.map((model) => model.id).sort((a, b) => a.localeCompare(b)),

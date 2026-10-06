@@ -30,6 +30,7 @@ import { loadProviderSelection, PROVIDER_SELECTION_KV_KEY, resetProviderSelectio
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "../src/catalog/types.ts";
 import { resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } from "../src/provider/metered.ts";
 import { resetSurplusModelsCacheForTest } from "../src/provider/surplus.ts";
+import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps these tests on the credential-gated providers they own, and keeps
@@ -159,7 +160,9 @@ Deno.test("the official DeepSeek ids are cataloged as their own provider categor
   Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
   try {
     const catalog = await buildModelCatalogSnapshot();
-    const rows = catalog.models.filter((model) => model.providers.some((provider) => provider.id === "deepseek"));
+    // The gateway waterfall model also carries a deepseek hop row and is
+    // asserted separately; this test owns the official ids themselves.
+    const rows = catalog.models.filter((model) => model.id !== DEEPSEEK_WATERFALL_MODEL_ID && model.providers.some((provider) => provider.id === "deepseek"));
     assert.deepEqual(
       rows.map((model) => model.id),
       ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"],
@@ -178,6 +181,33 @@ Deno.test("the official DeepSeek ids are cataloged as their own provider categor
     assert.deepEqual(catalog.sources.deepseek, { status: "available", count: 3, updated_at_ms: null, configured: true });
     assert.deepEqual(catalog.sources.cerebras, { status: "unavailable", count: 0, updated_at_ms: null, configured: false });
   } finally {
+    Deno.env.delete("DEEPSEEK_API_KEY");
+  }
+});
+
+Deno.test("the gateway waterfall model is cataloged with one provider row per usable hop", async () => {
+  Deno.env.delete("DEEPSEEK_API_KEY");
+  Deno.env.delete("LITHOSAI_API_KEY");
+  Deno.env.delete("CEREBRAS_API_KEY");
+  Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+  Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+  try {
+    const catalog = await buildModelCatalogSnapshot();
+    const row = catalog.models.find((model) => model.id === DEEPSEEK_WATERFALL_MODEL_ID);
+    assert.ok(row, "a configured hop makes the waterfall model selectable");
+    assert.deepEqual(
+      row.providers.map((provider) => provider.id),
+      ["openrouter", "deepseek"],
+      "one provider row per usable hop, in waterfall order"
+    );
+    assert.deepEqual(row.providers[0].supported_endpoints, ["/v1/responses"]);
+    assert.equal(row.providers[0].owned_by, "ubiquity");
+    assert.equal(row.context_window_tokens, 1_048_576);
+    assert.equal(row.context_source, "provider_discovery");
+    assert.deepEqual(row.supported_reasoning_levels, ["low", "high", "max"]);
+    assert.equal(row.default_reasoning_effort, "high");
+  } finally {
+    Deno.env.delete("OPENROUTER_API_KEY");
     Deno.env.delete("DEEPSEEK_API_KEY");
   }
 });

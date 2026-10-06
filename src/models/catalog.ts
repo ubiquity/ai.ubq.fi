@@ -50,7 +50,17 @@ import {
   withConfiguredLithosModels,
   OPENROUTER_SERVED_MODEL_ID,
 } from "../input-normalization.ts";
-import { deepSeekWaterfallCatalogEnabled } from "../deepseek/waterfall.ts";
+import {
+  DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+  DEEPSEEK_WATERFALL_CREATED,
+  DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
+  DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  DEEPSEEK_WATERFALL_MODEL_ID,
+  DEEPSEEK_WATERFALL_ORDER,
+  DEEPSEEK_WATERFALL_REASONING_LEVELS,
+  deepSeekWaterfallCatalogEnabled,
+  deepSeekWaterfallProviderConfigured,
+} from "../deepseek/waterfall.ts";
 
 const snapshotUpstreamSource = (snapshot: CodexModelsSnapshot | null): string => {
   const source = snapshot?.source;
@@ -360,6 +370,29 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
   }
 
   const credentialGated = addCredentialGatedCatalogProviders(models);
+  // The gateway-owned DeepSeek waterfall id is a real client-selectable model,
+  // so the admin picker and the public catalog must list it too: one provider
+  // row per usable hop, attributed to the gateway itself.
+  if (DEEPSEEK_WATERFALL_ORDER.some(deepSeekWaterfallProviderConfigured)) {
+    for (const provider of DEEPSEEK_WATERFALL_ORDER) {
+      if (!deepSeekWaterfallProviderConfigured(provider)) continue;
+      addPublicModelCatalogEntry(
+        models,
+        DEEPSEEK_WATERFALL_MODEL_ID,
+        { id: provider, owned_by: "ubiquity", supported_endpoints: ["/v1/responses"] },
+        DEEPSEEK_WATERFALL_CREATED,
+        {
+          provider: {
+            context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+            max_context_window_tokens: DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS,
+            effective_context_window_percent: DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+            supported_reasoning_levels: DEEPSEEK_WATERFALL_REASONING_LEVELS,
+            default_reasoning_effort: DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL,
+          },
+        }
+      );
+    }
+  }
   // OpenRouter serves its cached public catalogue on the OpenAI-compatible
   // wires and the Typesafe System One model behind /v1/systemone.
   let openrouterServed = 0;
