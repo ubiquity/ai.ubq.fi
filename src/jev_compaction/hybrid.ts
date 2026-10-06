@@ -4,10 +4,11 @@
  * After the verbatim Jev selection has produced a summary, one Cerebras
  * gpt-oss-120b call compresses it (dedupe, supersession, prose reduction) and
  * deterministic guards append the harvested identifier ledger and a verbatim
- * tail of the latest memory. The pass is enabled with `JEV_COMPACTION_HYBRID=1`
- * and is best-effort by contract: any missing credential, transport failure,
- * timeout, empty or non-shrinking output returns null and the caller keeps the
- * pure Jev summary, so a compaction can never fail because of this pass.
+ * tail of the latest memory. The pass is on by default; setting
+ * `JEV_COMPACTION_HYBRID=0` disables it as an operator kill switch. It is
+ * best-effort by contract: any missing credential, transport failure, timeout,
+ * empty or non-shrinking output returns null and the caller keeps the pure Jev
+ * summary, so a compaction can never fail because of this pass.
  *
  * The model never carries identifiers on its own: the ledger is copied from the
  * original memory by code, and the tail is appended verbatim.
@@ -209,10 +210,14 @@ export async function runHybridResiduePass(summary: string, deps: HybridResidueD
   }
 }
 
-/** Operator switch: the residue pass stays off unless the environment selects it. */
+/**
+ * Operator switch: the residue pass runs by default and `JEV_COMPACTION_HYBRID=0`
+ * is the kill switch. An environment that cannot be read at all keeps the safe
+ * pure-Jev behavior.
+ */
 export function hybridResidueEnabled(): boolean {
   try {
-    return Deno.env.get(HYBRID_ENV) === "1";
+    return Deno.env.get(HYBRID_ENV) !== "0";
   } catch {
     return false;
   }
