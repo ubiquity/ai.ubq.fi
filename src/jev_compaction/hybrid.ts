@@ -20,16 +20,19 @@
 import { CEREBRAS_GPT_OSS_120B_MODEL, fetchCerebrasChatCompletions, readCerebrasApiKey } from "../provider/cerebras.ts";
 
 export const HYBRID_ENV = "JEV_COMPACTION_HYBRID";
-export const HYBRID_RESIDUE_TIMEOUT_MS = 8_000;
+export const HYBRID_RESIDUE_TIMEOUT_MS = 20_000;
 export const HYBRID_TAIL_FRACTION = 0.12;
 export const HYBRID_LEDGER_LIMIT = 300;
 /**
  * Per-call residue input bound. The residue model's context is roughly 131k
- * tokens; 350k characters of rendered memory plus the prompt and identifier
- * block stays inside it with margin, while a whole 1.5M-character memory is
- * covered by several parallel calls.
+ * tokens, and hash-dense memories tokenize near 2.2 characters per token, so a
+ * 350k-character chunk could exceed the context and fail every chunk of a large
+ * memory. 150k characters stays under ~70k tokens plus the prompt and required
+ * identifier block; a whole 1.5M-character memory is covered by parallel calls.
  */
-export const HYBRID_INPUT_CHUNK_CHARS = 350_000;
+export const HYBRID_INPUT_CHUNK_CHARS = 150_000;
+/** Residue chunk calls in flight at once; more trips provider transport limits. */
+export const HYBRID_CHUNK_CONCURRENCY = 4;
 
 const HYBRID_PROMPT = `You are compacting a coding-agent session memory so another model can continue the session.
 
@@ -225,19 +228,39 @@ export async function runHybridResiduePass(summary: string, deps: HybridResidueD
   const chunkChars = deps.chunkChars ?? HYBRID_INPUT_CHUNK_CHARS;
   const chunks = chunkMemoryForResidue(summary, chunkChars);
   try {
-    const texts = await Promise.all(
-      chunks.map(async (chunk) => {
-        const upstream = await fetchCerebrasChatCompletions(residueBody(chunk), {
-          apiKey,
-          signal: AbortSignal.timeout(timeoutMs),
-          ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
-        });
-        if (!upstream.ok) throw new Error("upstream-" + String(upstream.status));
-        const text = residueText(await upstream.json());
-        if (text === null) throw new Error("empty-output");
-        return text;
-      })
-    );
+    const texts: string[] = new Array(chunks.length);
+    let failed = 0;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= chunks.length) return;
+        const chunk = chunks[index];
+        try {
+          const upstream = await fetchCerebrasChatCompletions(residueBody(chunk), {
+            apiKey,
+            signal: AbortSignal.timeout(timeoutMs),
+            ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
+          });
+          if (!upstream.ok) throw new Error("upstream-" + String(upstream.status));
+          const text = residueText(await upstream.json());
+          if (text === null) throw new Error("empty-output");
+          texts[index] = text;
+        } catch (error) {
+          // One flaky chunk must not sink the whole rewrite: keep that chunk
+          // verbatim and rewrite the rest.
+          failed += 1;
+          texts[index] = chunk;
+          hybridFailureLog("chunk-" + (error instanceof Error && error.name === "TimeoutError" ? "timeout" : "failed") + "-" + String(index));
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(HYBRID_CHUNK_CONCURRENCY, chunks.length)) }, () => worker()));
+    if (failed === chunks.length) {
+      hybridFailureLog("all-chunks-failed");
+      return null;
+    }
     const composed = composeHybridSummary(texts.join("\n\n"), summary);
     if (composed.trim().length === 0 || composed.length >= summary.length) {
       hybridFailureLog("no-reduction");

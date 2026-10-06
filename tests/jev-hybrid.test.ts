@@ -139,7 +139,7 @@ Deno.test("hybrid residue pass chunks memories larger than the input bound and m
   assert.ok(composed.length < pure.length, "the merged rewrite plus guards must shrink the memory");
 });
 
-Deno.test("hybrid residue pass falls back to pure Jev when any chunk fails", async () => {
+Deno.test("hybrid residue keeps a failing chunk verbatim and rewrites the rest", async () => {
   const block = (index: number): string => `[tool result call_${index}] ` + `older log line ${index}. `.repeat(20);
   const pure = Array.from({ length: 8 }, (_, index) => block(index)).join("\n");
   let calls = 0;
@@ -147,6 +147,17 @@ Deno.test("hybrid residue pass falls back to pure Jev when any chunk fails", asy
     calls += 1;
     return Promise.resolve(calls === 2 ? completion(SLIM_MARKER, 500) : completion(SLIM_MARKER + " rewrite."));
   };
+  const composed = await runHybridResiduePass(pure, { apiKey: "test", fetcher, chunkChars: 400 });
+  assert.ok(composed, "one failed chunk must not sink the rewrite");
+  assert.ok(composed.includes(SLIM_MARKER), "the successful chunks must be rewritten");
+  assert.ok(composed.includes("older log line"), "the failed chunk must stay verbatim");
+  assert.ok(composed.length < pure.length, "the composed summary must still shrink the memory");
+});
+
+Deno.test("hybrid residue falls back to pure Jev when every chunk fails", async () => {
+  const block = (index: number): string => `[tool result call_${index}] ` + `older log line ${index}. `.repeat(20);
+  const pure = Array.from({ length: 8 }, (_, index) => block(index)).join("\n");
+  const fetcher: typeof fetch = () => Promise.resolve(completion(SLIM_MARKER, 500));
   assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher, chunkChars: 400 }), null);
 });
 
