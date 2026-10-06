@@ -211,6 +211,33 @@ export const listEncryptedSentinelReplays = async (
   return { captures, cursor: rangeExhausted ? "" : iterator.cursor };
 };
 
+/** Validate one capture reference row and return its fingerprint and manifest key. */
+const incidentCaptureReference = (reference: Deno.KvEntry<unknown>, prefixLength: number): Readonly<{ fingerprint: string; manifestKey: Deno.KvKey }> => {
+  const fingerprint = reference.key.at(-1);
+  if (
+    reference.key.length !== prefixLength + 1 ||
+    typeof fingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/.test(fingerprint) ||
+    !isSentinelIncidentCaptureReference(reference.value)
+  )
+    throw new Error("Sentinel incident replay reference is invalid");
+  return { fingerprint, manifestKey: reference.value.manifest_key };
+};
+
+/**
+ * Best-effort CAS cleanup of a reference whose manifest is gone. The check is
+ * pinned to the listed versionstamp so a concurrent writer that re-created the
+ * reference wins; the scan still advances past the entry either way.
+ */
+const dropStaleCaptureReference = async (kv: Deno.Kv, reference: Deno.KvEntry<unknown>): Promise<void> => {
+  await kv
+    .atomic()
+    .check({ key: reference.key, versionstamp: reference.versionstamp })
+    .delete(reference.key)
+    .commit()
+    .catch(() => {});
+};
+
 /**
  * List one incident's exportable captures, one capture per page.
  *
@@ -245,31 +272,17 @@ export const listEncryptedSentinelIncidentReplays = async (
     // were all evicted or expired genuinely has nothing left to export.
     if (reference === null) return { captures, cursor: "" };
     const resumeCursor = iterator.cursor;
-    const fingerprint = reference.key.at(-1);
-    if (
-      reference.key.length !== prefix.length + 1 ||
-      typeof fingerprint !== "string" ||
-      !/^[0-9a-f]{64}$/.test(fingerprint) ||
-      !isSentinelIncidentCaptureReference(reference.value)
-    )
-      throw new Error("Sentinel incident replay reference is invalid");
-    const manifestEntry = await kv.get<SentinelReplayManifest>(reference.value.manifest_key);
-    if (manifestEntry.value === null || manifestEntry.value === undefined) {
-      // CAS-guarded so a concurrent writer that re-created the reference wins;
-      // the deletion is best effort and the scan still advances past the entry.
-      await kv
-        .atomic()
-        .check({ key: reference.key, versionstamp: reference.versionstamp })
-        .delete(reference.key)
-        .commit()
-        .catch(() => {});
+    const { fingerprint, manifestKey } = incidentCaptureReference(reference, prefix.length);
+    const manifestEntry = await kv.get<SentinelReplayManifest>(manifestKey);
+    if (manifestEntry.value === null) {
+      await dropStaleCaptureReference(kv, reference);
       scanCursor = resumeCursor;
       continue;
     }
     if (
       !isSentinelReplayManifest(manifestEntry.value) ||
       manifestEntry.value.fingerprint !== fingerprint ||
-      !manifestMatchesKey(reference.value.manifest_key, manifestEntry.value)
+      !manifestMatchesKey(manifestKey, manifestEntry.value)
     )
       throw new Error("Sentinel incident replay manifest is unavailable");
     const chunks = await getChunks(kv, manifestEntry.value);
