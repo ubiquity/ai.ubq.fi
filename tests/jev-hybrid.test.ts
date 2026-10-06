@@ -117,6 +117,39 @@ Deno.test("hybrid residue pass returns null on every failure path", async () => 
   assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher: hanging, timeoutMs: 30 }), null);
 });
 
+Deno.test("hybrid residue pass chunks memories larger than the input bound and merges the rewrites", async () => {
+  const block = (index: number): string =>
+    `[tool result call_${index}] ` + `obsolete build log line with detail ${index}. `.repeat(20) + `revision ${String(index).repeat(8)} end`;
+  const pure = Array.from({ length: 8 }, (_, index) => block(index)).join("\n");
+  const bodies: string[] = [];
+  const fetcher: typeof fetch = (_input, init) => {
+    const raw = init?.body;
+    bodies.push(typeof raw === "string" ? raw : JSON.stringify(raw));
+    return Promise.resolve(completion(`${SLIM_MARKER} rewrite ${bodies.length}.`));
+  };
+  const composed = await runHybridResiduePass(pure, { apiKey: "test", fetcher, chunkChars: 400 });
+  assert.ok(composed, "a chunked pass must return the composed summary");
+  assert.ok(bodies.length >= 2, "the memory must be split into multiple residue calls");
+  for (const body of bodies) {
+    const parsed = JSON.parse(body) as { messages: { content: string }[] };
+    assert.ok(parsed.messages[0].content.length <= 400 + 8_000, "every chunk request must stay inside the residue input bound");
+  }
+  assert.ok(composed.includes(SLIM_MARKER));
+  assert.ok(composed.includes("## Verbatim identifiers"));
+  assert.ok(composed.length < pure.length, "the merged rewrite plus guards must shrink the memory");
+});
+
+Deno.test("hybrid residue pass falls back to pure Jev when any chunk fails", async () => {
+  const block = (index: number): string => `[tool result call_${index}] ` + `older log line ${index}. `.repeat(20);
+  const pure = Array.from({ length: 8 }, (_, index) => block(index)).join("\n");
+  let calls = 0;
+  const fetcher: typeof fetch = () => {
+    calls += 1;
+    return Promise.resolve(calls === 2 ? completion(SLIM_MARKER, 500) : completion(SLIM_MARKER + " rewrite."));
+  };
+  assert.equal(await runHybridResiduePass(pure, { apiKey: "test", fetcher, chunkChars: 400 }), null);
+});
+
 Deno.test("route keeps the pure Jev summary when the residue seam is absent, null or throwing", async () => {
   const pureOutcome = await buildCompactionResponse(body(transcript()), decisionAsker(dropEverything), { stream: false });
   assert.ok(!(pureOutcome.headers["x-jev-compaction"] ?? "").includes("hybrid=1"));

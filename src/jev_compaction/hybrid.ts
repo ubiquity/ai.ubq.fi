@@ -1,14 +1,18 @@
 /**
  * Optional hybrid residue pass for Jev compaction.
  *
- * After the verbatim Jev selection has produced a summary, one Cerebras
- * gpt-oss-120b call compresses it (dedupe, supersession, prose reduction) and
+ * After the verbatim Jev selection has produced a summary, Cerebras
+ * gpt-oss-120b calls compress it (dedupe, supersession, prose reduction) and
  * deterministic guards append the harvested identifier ledger and a verbatim
- * tail of the latest memory. The pass is on by default; setting
- * `JEV_COMPACTION_HYBRID=0` disables it as an operator kill switch. It is
- * best-effort by contract: any missing credential, transport failure, timeout,
- * empty or non-shrinking output returns null and the caller keeps the pure Jev
- * summary, so a compaction can never fail because of this pass.
+ * tail of the latest memory. Large memories are rewritten in context-sized
+ * chunks and concatenated, because a real 1M-token session renders a memory
+ * (up to `SUMMARY_CHAR_CAP`) that exceeds the residue model's context window;
+ * the single-call path remains for memories that already fit. The pass is on by
+ * default; setting `JEV_COMPACTION_HYBRID=0` disables it as an operator kill
+ * switch. It is best-effort by contract: any missing credential, transport
+ * failure, timeout, empty or non-shrinking output returns null and the caller
+ * keeps the pure Jev summary, so a compaction can never fail because of this
+ * pass.
  *
  * The model never carries identifiers on its own: the ledger is copied from the
  * original memory by code, and the tail is appended verbatim.
@@ -19,6 +23,13 @@ export const HYBRID_ENV = "JEV_COMPACTION_HYBRID";
 export const HYBRID_RESIDUE_TIMEOUT_MS = 8_000;
 export const HYBRID_TAIL_FRACTION = 0.12;
 export const HYBRID_LEDGER_LIMIT = 300;
+/**
+ * Per-call residue input bound. The residue model's context is roughly 131k
+ * tokens; 350k characters of rendered memory plus the prompt and identifier
+ * block stays inside it with margin, while a whole 1.5M-character memory is
+ * covered by several parallel calls.
+ */
+export const HYBRID_INPUT_CHUNK_CHARS = 350_000;
 
 const HYBRID_PROMPT = `You are compacting a coding-agent session memory so another model can continue the session.
 
@@ -134,6 +145,33 @@ export function composeHybridSummary(modelText: string, pureSummary: string): st
   return modelText + renderLedgerSection(ledger, pureSummary.length) + renderTailSection(pureSummary);
 }
 
+/** Split a memory into chunks at block boundaries so every residue call fits the model context. */
+export function chunkMemoryForResidue(memory: string, maxChars: number): string[] {
+  if (maxChars <= 0 || memory.length <= maxChars) return [memory];
+  const chunks: string[] = [];
+  let current = "";
+  const flush = (): void => {
+    if (current.length === 0) return;
+    chunks.push(current);
+    current = "";
+  };
+  for (const block of memory.split(/\n(?=\[)/)) {
+    if (block.length > maxChars) {
+      flush();
+      for (let start = 0; start < block.length; start += maxChars) chunks.push(block.slice(start, start + maxChars));
+      continue;
+    }
+    if (current.length > 0 && current.length + block.length + 1 > maxChars) {
+      flush();
+      current = block;
+    } else {
+      current = current.length > 0 ? current + "\n" + block : block;
+    }
+  }
+  flush();
+  return chunks;
+}
+
 function residueBody(memory: string): Record<string, unknown> {
   const required = harvestLedger(memory);
   const requiredBlock =
@@ -169,6 +207,7 @@ export type HybridResidueDeps = Readonly<{
   fetcher?: typeof fetch;
   apiKey?: string | null;
   timeoutMs?: number;
+  chunkChars?: number;
 }>;
 
 /**
@@ -183,28 +222,34 @@ export async function runHybridResiduePass(summary: string, deps: HybridResidueD
     return null;
   }
   const timeoutMs = deps.timeoutMs ?? HYBRID_RESIDUE_TIMEOUT_MS;
+  const chunkChars = deps.chunkChars ?? HYBRID_INPUT_CHUNK_CHARS;
+  const chunks = chunkMemoryForResidue(summary, chunkChars);
   try {
-    const upstream = await fetchCerebrasChatCompletions(residueBody(summary), {
-      apiKey,
-      signal: AbortSignal.timeout(timeoutMs),
-      ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
-    });
-    if (!upstream.ok) {
-      hybridFailureLog("upstream-" + String(upstream.status));
-      return null;
-    }
-    const text = residueText(await upstream.json());
-    if (text === null) {
-      hybridFailureLog("empty-output");
-      return null;
-    }
-    const composed = composeHybridSummary(text, summary);
+    const texts = await Promise.all(
+      chunks.map(async (chunk) => {
+        const upstream = await fetchCerebrasChatCompletions(residueBody(chunk), {
+          apiKey,
+          signal: AbortSignal.timeout(timeoutMs),
+          ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
+        });
+        if (!upstream.ok) throw new Error("upstream-" + String(upstream.status));
+        const text = residueText(await upstream.json());
+        if (text === null) throw new Error("empty-output");
+        return text;
+      })
+    );
+    const composed = composeHybridSummary(texts.join("\n\n"), summary);
     if (composed.trim().length === 0 || composed.length >= summary.length) {
       hybridFailureLog("no-reduction");
       return null;
     }
     return composed;
   } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.startsWith("upstream-") || message === "empty-output") {
+      hybridFailureLog(message);
+      return null;
+    }
     hybridFailureLog(error instanceof Error && error.name === "TimeoutError" ? "timeout" : "transport");
     return null;
   }
