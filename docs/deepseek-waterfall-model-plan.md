@@ -118,8 +118,10 @@ Implementation deltas from the scoped notes, kept truthful:
   verbatim, instead of rebuilding the stream through `createOwnedResponsesStream`. That preserves each handler's own
   delivery machinery (keepalive, terminal synthesis, telemetry), which the gap analysis showed matters more than
   sequence rewriting; the gate itself still uses `readResponsesStream` + `prepareResponsesStreamForCommit`.
-- A forced live pre-output stream failure is not reproducible against the real providers without a fault-injection knob,
-  so that case is covered by hermetic tests (stream dies before output -> chain advances; stream dies after output ->
-  delivered, no further provider spent; transport failure and 5xx -> advance) plus the live hop evidence above. The
-  plan's live-failure bullet is satisfied to the extent the production surface allows and is documented here rather than
-  claimed live.
+- Simulated infrastructure failures were validated live with a fault-injecting instance of this revision (the process
+  intercepts only OpenRouter's completion endpoints; everything else passes through to the real network and the real
+  handler stack serves the request): with the operator selection pinned to `["openrouter","deepseek"]`, an injected 503
+  on the first hop produced HTTP 200 from DeepSeek with `x-uos-attempted-providers: openrouter,deepseek` and terminal
+  `fallback_reason: deepseek_waterfall:openrouter:503`; an injected stream that sent only `response.created` before
+  closing produced the same advancement through the pre-output stream-death path. Hermetic tests additionally cover
+  stream death after output (delivered, no further provider spent) and transport failure.
