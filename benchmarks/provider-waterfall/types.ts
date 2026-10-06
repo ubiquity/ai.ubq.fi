@@ -92,6 +92,8 @@ export type AttemptRecord = Readonly<{
   http_status: number | null;
   upstream: string | null;
   provider_request_id: string | null;
+  /** Upstream response id when the wire exposes one (OpenRouter generation ids). */
+  response_id: string | null;
   success: boolean;
   first_attempt: boolean;
   failure_kind: FailureKind | null;

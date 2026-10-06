@@ -235,7 +235,7 @@ if (import.meta.main) {
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       const record = JSON.parse(line) as AttemptRecord;
-      if (record.period.startsWith("probe")) continue;
+      if (!/^w\d/.test(record.period)) continue;
       records.push(record);
     }
   }

@@ -1,0 +1,243 @@
+{
+  "generated_at": "2026-10-06T02:09:23.348Z",
+  "sources": [
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-pilot-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-probe-concurrency-w1-b0.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w1-eve-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-pilot-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-probe-concurrency-w1-b0.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w1-eve-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-pilot-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-probe-concurrency-w1-b0.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w1-eve-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-pilot-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-probe-concurrency-w1-b0.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w1-eve-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-pilot-b1.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-w1-b0.jsonl"
+  ],
+  "providers": [
+    {
+      "provider": "deepseek",
+      "wire": "responses",
+      "model": "deepseek-flash",
+      "samples": 30,
+      "successful_items": 30,
+      "first_attempt_successes": 30,
+      "first_attempt_success_rate": 1,
+      "retried_items": 0,
+      "retry_recoveries": 0,
+      "retry_recovery_rate": null,
+      "attempts_total": 30,
+      "failures_total": 0,
+      "failures": {},
+      "median_ttft_ms": 1182.5,
+      "p90_ttft_ms": 1946.3,
+      "p95_ttft_ms": 2088.6999999999994,
+      "p99_ttft_ms": 5495.270000000004,
+      "median_tps": 254.80734079110914,
+      "p90_tps": 295.60232176959744,
+      "p95_tps": 322.8353771832032,
+      "median_e2e_ms": 3028.5,
+      "p90_e2e_ms": 40152.5,
+      "p95_e2e_ms": 42464.74999999999,
+      "p99_e2e_ms": 111488.21000000008,
+      "input_tokens": 1396878,
+      "cached_input_tokens": 684288,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 71918,
+      "reasoning_tokens": 67813,
+      "cache_hit_ratio": 0.48986955195800924,
+      "usage_coverage": 1,
+      "per_class": {
+        "small": {
+          "samples": 6,
+          "successes": 6
+        },
+        "medium": {
+          "samples": 9,
+          "successes": 9
+        },
+        "large": {
+          "samples": 9,
+          "successes": 9
+        },
+        "xlarge": {
+          "samples": 6,
+          "successes": 6
+        }
+      },
+      "by_wire": {
+        "responses": 30
+      }
+    },
+    {
+      "provider": "lithos",
+      "wire": "responses",
+      "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "samples": 30,
+      "successful_items": 30,
+      "first_attempt_successes": 30,
+      "first_attempt_success_rate": 1,
+      "retried_items": 0,
+      "retry_recoveries": 0,
+      "retry_recovery_rate": null,
+      "attempts_total": 30,
+      "failures_total": 0,
+      "failures": {},
+      "median_ttft_ms": 3800.5,
+      "p90_ttft_ms": 6207.2,
+      "p95_ttft_ms": 6393.4,
+      "p99_ttft_ms": 30052.13000000003,
+      "median_tps": 289.2175462803266,
+      "p90_tps": 412.9960426514237,
+      "p95_tps": 626.926473456332,
+      "median_e2e_ms": 5915.5,
+      "p90_e2e_ms": 45031.30000000001,
+      "p95_e2e_ms": 56143.599999999984,
+      "p99_e2e_ms": 72307.94000000002,
+      "input_tokens": 1407399,
+      "cached_input_tokens": 431104,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 78158,
+      "reasoning_tokens": 74157,
+      "cache_hit_ratio": 0.3063125666566482,
+      "usage_coverage": 1,
+      "per_class": {
+        "small": {
+          "samples": 6,
+          "successes": 6
+        },
+        "medium": {
+          "samples": 9,
+          "successes": 9
+        },
+        "large": {
+          "samples": 9,
+          "successes": 9
+        },
+        "xlarge": {
+          "samples": 6,
+          "successes": 6
+        }
+      },
+      "by_wire": {
+        "responses": 30
+      }
+    },
+    {
+      "provider": "openlux",
+      "wire": "chat",
+      "model": "deepseek-v4.1-flash",
+      "samples": 30,
+      "successful_items": 30,
+      "first_attempt_successes": 29,
+      "first_attempt_success_rate": 0.9666666666666667,
+      "retried_items": 1,
+      "retry_recoveries": 1,
+      "retry_recovery_rate": 1,
+      "attempts_total": 31,
+      "failures_total": 1,
+      "failures": {
+        "http_5xx": 1
+      },
+      "median_ttft_ms": 6707.5,
+      "p90_ttft_ms": 11521.2,
+      "p95_ttft_ms": 18545.949999999968,
+      "p99_ttft_ms": 87012.45000000007,
+      "median_tps": 2727.563343594601,
+      "p90_tps": 40300.00000000003,
+      "p95_tps": 63754.910714285696,
+      "median_e2e_ms": 6909,
+      "p90_e2e_ms": 12011.000000000002,
+      "p95_e2e_ms": 18976.299999999967,
+      "p99_e2e_ms": 87255.36000000007,
+      "input_tokens": 1402225,
+      "cached_input_tokens": 50944,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 33989,
+      "reasoning_tokens": 0,
+      "cache_hit_ratio": 0.036330831357307136,
+      "usage_coverage": 1,
+      "per_class": {
+        "small": {
+          "samples": 6,
+          "successes": 6
+        },
+        "medium": {
+          "samples": 9,
+          "successes": 9
+        },
+        "large": {
+          "samples": 9,
+          "successes": 9
+        },
+        "xlarge": {
+          "samples": 6,
+          "successes": 6
+        }
+      },
+      "by_wire": {
+        "chat": 31
+      }
+    },
+    {
+      "provider": "openrouter",
+      "wire": "responses",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "samples": 30,
+      "successful_items": 30,
+      "first_attempt_successes": 30,
+      "first_attempt_success_rate": 1,
+      "retried_items": 0,
+      "retry_recoveries": 0,
+      "retry_recovery_rate": null,
+      "attempts_total": 30,
+      "failures_total": 0,
+      "failures": {},
+      "median_ttft_ms": 642.5,
+      "p90_ttft_ms": 1010.7000000000003,
+      "p95_ttft_ms": 1181.35,
+      "p99_ttft_ms": 4266.6200000000035,
+      "median_tps": 314.3212036647398,
+      "p90_tps": 471.0936682365258,
+      "p95_tps": 744.932844932845,
+      "median_e2e_ms": 2018.5,
+      "p90_e2e_ms": 7869.200000000024,
+      "p95_e2e_ms": 57304.099999999824,
+      "p99_e2e_ms": 103372.76000000002,
+      "input_tokens": 1410033,
+      "cached_input_tokens": 1047808,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 64550,
+      "reasoning_tokens": 60737,
+      "cache_hit_ratio": 0.7431088492255146,
+      "usage_coverage": 1,
+      "per_class": {
+        "small": {
+          "samples": 6,
+          "successes": 6
+        },
+        "medium": {
+          "samples": 9,
+          "successes": 9
+        },
+        "large": {
+          "samples": 9,
+          "successes": 9
+        },
+        "xlarge": {
+          "samples": 6,
+          "successes": 6
+        }
+      },
+      "by_wire": {
+        "responses": 30
+      }
+    }
+  ]
+}

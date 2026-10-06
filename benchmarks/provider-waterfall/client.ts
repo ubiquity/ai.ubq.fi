@@ -142,6 +142,7 @@ type StreamState = Readonly<{
   incomplete_reason: string | null;
   usage: TokenUsage | null;
   parse_failures: number;
+  response_id: string | null;
 }>;
 
 const emptyState = (): StreamState => ({
@@ -158,6 +159,7 @@ const emptyState = (): StreamState => ({
   incomplete_reason: null,
   usage: null,
   parse_failures: 0,
+  response_id: null,
 });
 
 const normalizeResponsesUsage = (raw: unknown): TokenUsage | null => {
@@ -199,6 +201,10 @@ const normalizeChatUsage = (raw: unknown): TokenUsage | null => {
 
 const applyResponsesEvent = (event: Json, now: number, state: StreamState): StreamState => {
   const type = typeof event.type === "string" ? event.type : "";
+  const responseRecord = isRecord(event.response) ? event.response : null;
+  if (responseRecord && typeof responseRecord.id === "string" && state.response_id === null) {
+    state = { ...state, response_id: responseRecord.id };
+  }
   const next: { -readonly [K in keyof StreamState]: StreamState[K] } = { ...state, events: state.events + 1 };
   if (next.first_event_at === null) next.first_event_at = now;
   switch (type) {
@@ -240,6 +246,7 @@ const applyResponsesEvent = (event: Json, now: number, state: StreamState): Stre
 
 const applyChatChunk = (chunk: Json, now: number, state: StreamState): StreamState => {
   const next: { -readonly [K in keyof StreamState]: StreamState[K] } = { ...state, events: state.events + 1 };
+  if (typeof chunk.id === "string" && next.response_id === null) next.response_id = chunk.id;
   if (next.first_event_at === null) next.first_event_at = now;
   const usage = normalizeChatUsage(chunk.usage);
   if (usage) next.usage = usage;
@@ -356,6 +363,7 @@ export const runAttempt = async (options: AttemptOptions): Promise<AttemptRecord
         http_status: response.status,
         upstream,
         provider_request_id: providerRequestId,
+        response_id: null,
         success: false,
         first_attempt: options.first_attempt,
         failure_kind: failure,
@@ -475,6 +483,7 @@ export const runAttempt = async (options: AttemptOptions): Promise<AttemptRecord
     http_status: httpStatus,
     upstream,
     provider_request_id: providerRequestId,
+    response_id: state.response_id,
     success: failure === null,
     first_attempt: options.first_attempt,
     failure_kind: failure,

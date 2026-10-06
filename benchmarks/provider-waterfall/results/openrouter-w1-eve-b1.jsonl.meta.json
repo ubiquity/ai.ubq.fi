@@ -1,0 +1,26 @@
+{
+  "run_id": "openrouter-w1-eve-b1-1791251627005",
+  "provider": "openrouter",
+  "label": "OpenRouter",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "wire": "responses",
+  "selection_requested": [
+    "openrouter"
+  ],
+  "selection_stored": [
+    "openrouter"
+  ],
+  "gateway": "http://127.0.0.1:7998",
+  "gateway_release": {
+    "status": "available",
+    "release": {
+      "git_sha": "3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698",
+      "deployment_id": "mac-3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698"
+    }
+  },
+  "corpus_sha256": "6aa1248dac25135f6fe2dfe8444f33f8f357d369940d296cd692b68ba1cdb288",
+  "period": "w1-eve",
+  "batch": 1,
+  "pilot": false,
+  "started_at": "2026-10-06T01:53:47.005Z"
+}

@@ -87,6 +87,16 @@ const main = async (): Promise<void> => {
   const batch = Number.parseInt(args.get("batch") ?? "1", 10);
   const offset = Number.parseInt(args.get("offset") ?? "0", 10);
   const limit = args.get("limit") ? Number.parseInt(args.get("limit") ?? "0", 10) : null;
+  const ids = args.get("ids")
+    ? new Set(
+        args
+          .get("ids")
+          ?.split(",")
+          .map((value) => value.trim())
+          .filter(Boolean) ?? []
+      )
+    : null;
+  const concurrency = Math.max(1, Number.parseInt(args.get("concurrency") ?? "1", 10));
   const retryBudget = Number.parseInt(args.get("retries") ?? "1", 10);
   const pilot = args.get("pilot") === "true";
   const root = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
@@ -105,7 +115,8 @@ const main = async (): Promise<void> => {
     const corpus = await loadCorpus(root);
     corpusSha = corpus.sha256;
     const ordered = args.get("reverse") === "true" ? [...corpus.entries].reverse() : [...corpus.entries];
-    const sliced = ordered.slice(offset);
+    const filtered = ids ? ordered.filter((entry) => ids.has(entry.id)) : ordered;
+    const sliced = filtered.slice(offset);
     entries = limit === null ? sliced : sliced.slice(0, limit);
     console.log(`[runner] corpus ${corpusSha} entries ${entries.length}`);
   }
@@ -137,7 +148,7 @@ const main = async (): Promise<void> => {
   let successFirst = 0;
   let successRetry = 0;
   let failures = 0;
-  for (const entry of entries) {
+  const runEntry = async (entry: CorpusEntry): Promise<void> => {
     let attempt = 0;
     let record: AttemptRecord | null = null;
     for (;;) {
@@ -171,8 +182,23 @@ const main = async (): Promise<void> => {
     } else {
       failures += 1;
     }
+  };
+  if (concurrency === 1) {
+    for (const entry of entries) await runEntry(entry);
+  } else {
+    const queue = [...entries];
+    const workers = Array.from({ length: Math.min(concurrency, entries.length) }, async () => {
+      for (;;) {
+        const entry = queue.shift();
+        if (!entry) return;
+        await runEntry(entry);
+      }
+    });
+    await Promise.all(workers);
   }
-  console.log(`[runner] done provider=${provider.id} first_attempt_success=${successFirst} retry_recovered=${successRetry} failed=${failures} out=${out}`);
+  console.log(
+    `[runner] done provider=${provider.id} first_attempt_success=${successFirst} retry_recovered=${successRetry} failed=${failures} concurrency=${concurrency} out=${out}`
+  );
 };
 
 if (import.meta.main) await main();
