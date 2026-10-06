@@ -88,7 +88,8 @@ deno run --env-file=$REPO/.env --allow-env=SURPLUS_API_KEY,METERED_API_KEY,OPENR
   exists in the harvested sessions.
 - OpenLux can only serve the chat wire for this model, so its rows are chat-wire; every row records the wire and model
   id.
-- Surplus refused every request during this pass with a 402 insufficient USDC balance; its rows are capacity-failure
-  evidence until the account is funded.
+- Surplus refused every request before the operator funded the account mid-pass (402 insufficient USDC balance); after
+  funding it completed the full corpus with 30/30 success, so its rows are measured results and the pre-funding failures
+  are retained as probe evidence.
 - The frozen tools array is larger than some recorded sessions' own toolsets; sizes are comparable across providers, not
   byte-identical to each session's original request.
