@@ -10,6 +10,10 @@ Recommended provider-level waterfall for DeepSeek V4.1 Flash subagents:
 
 **OpenRouter → LithosAI → DeepSeek direct → Surplus Intelligence**
 
+This order is codified as the gateway-owned `ubiquity/deepseek-v4.1-flash` synthetic model — automatic provider fallback
+with per-hop evidence — so agents address one model id and the gateway walks the measured order on their behalf; see
+`docs/deepseek-waterfall-model-plan.md` for the implementation and its live hop evidence.
+
 - **OpenRouter (`deepseek/deepseek-v4.1-flash`), primary.** Highest overall score (88.3): lowest measured effective cost
   per request ($0.0064), fastest TTFT (643 ms median), best prompt-cache accounting (74.3% cache-hit tokens) and 30/30
   first-attempt success. Observed serving path: `deepseek/deepseek-v4.1-flash-20260910` routed by OpenRouter to upstream
@@ -28,9 +32,10 @@ Recommended provider-level waterfall for DeepSeek V4.1 Flash subagents:
   independence is unknown.
 
 **Excluded: OpenLux.** The `deepseek-v4.1-flash` record from OpenLux advertises only `/v1/chat/completions`, so the
-gateway cannot select it for the `/v1/responses` wire that subagent traffic uses. Its chat-wire measurement (75.9%
-slower TTFT than OpenRouter, $0.0149/request, one recovered 504) is recorded but it is not a fallback for this workload
-until OpenLux advertises Responses support for the model.
+gateway cannot select it for the `/v1/responses` wire that subagent traffic uses. Its unadvertised `/v1/responses` route
+answered HTTP 200 in a direct probe (two correct trivial completions) but also returned one completion unrelated to its
+prompt, so it is excluded pending provider support rather than wired in on an undocumented route. Its chat-wire
+measurement (75.9% slower TTFT than OpenRouter, $0.0149/request, one recovered 504) is recorded alongside.
 
 ## Scope and method
 

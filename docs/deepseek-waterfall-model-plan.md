@@ -64,3 +64,62 @@ and the Codex waterfall are untouched by construction.
   pinning to `["lithos"]` / `["deepseek"]` serves via those providers through the synthetic id; the terminal log records
   the served provider.
 - Repository gate: `sh scripts/verify.sh` plus the CI checks on the pull request.
+
+## Phase 2 implementation notes (scoped 2026-10-06)
+
+Phase 1 shipped as PR #938 (merged `05f59243`). Phase 2 executes with these concrete mechanisms:
+
+1. **Surplus hop through the ordinary pipeline tail.**
+   - Export the tail of `handleResponsesInternal` (`prepareResponsesRequest` → `runResponsesFailover` →
+     `buildResponsesDelivery` → `deliverPreparedResponses`) from `src/responses-handler.ts` as one function and call it
+     from both the ordinary router and the waterfall, so nothing is duplicated.
+   - The waterfall handler keeps `rawBody` (its dispatch branch gains the argument) and, for the final hop, builds a
+     fresh `Request` whose body is `{...rawBody, model: "deepseek-v4.1-flash"}` and calls that tail. Admission,
+     reservation and ledger settlement stay exactly the paid path's.
+   - `fetchResponsesWithPaidFallback` gains an optional `allowedPaidProviders` filter (default unchanged) so this hop
+     pins `["surplus"]` and can never silently advance to metered/OpenLux.
+   - The hop's success/failure is the tail's response status; it is last, so nothing advances past it.
+
+2. **Pre-semantic mid-stream failover.**
+   - Gate every 200 streaming hop response on the first semantic commitment using the paid route's own helpers:
+     `readResponsesStream`, `responsesEventSemanticKind`, `appendResponsesPrecommitEvent` (bounds
+     `MAX_RESPONSES_PRECOMMIT_EVENTS` / `MAX_RESPONSES_PRECOMMIT_CHARS`) and replay through
+     `createOwnedResponsesStream`.
+   - A parse error, premature EOF, malformed frame or missing terminal observed before any text or tool-call event is a
+     failed hop: discard its buffer and continue the chain. Once semantic output exists, deliver the replayed stream and
+     stop failing over.
+   - The pre-commit phase stays bounded by the existing first-event and semantic deadlines; a hop that stalls before
+     commitment fails like a timeout.
+
+3. **Tests for phase 2.**
+   - Injected dispatchers over synthetic SSE streams: dropped before first output advances the chain; dropped after
+     first output does not; the surplus hop receives the paid model id and delegates to the tail stub.
+   - Paid-routing unit coverage: `allowedPaidProviders: ["surplus"]` never selects metered, including on surplus
+     capacity failure; the absent filter preserves today's behavior byte-for-byte.
+   - Live: four-hop smoke (each direct hop pinned through the operator selection plus the surplus hop) and one forced
+     pre-output stream failure against the scratch instance.
+
+4. **Docs.** Update the benchmark report and this plan with the phase-2 evidence and the final waterfall semantics.
+
+## Phase 2 status (implemented 2026-10-06)
+
+All four hops are live behind the synthetic id on a scratch instance of this revision:
+
+- selection `["openrouter"]` / `["lithos"]` / `["deepseek"]` served 200 with `x-uos-upstream` equal to the pinned
+  provider;
+- selection `["surplus"]` served 200 with `x-uos-upstream: surplus`, and the paid ledger settled it (surplus
+  `spend_microcredits` 291478 -> 291526, request count 35 -> 36), so admission, reservation and ledger settlement were
+  not bypassed;
+- `x-uos-attempted-providers` reports the chain on every response.
+
+Implementation deltas from the scoped notes, kept truthful:
+
+- The streaming gate replays the buffered pre-commit bytes and then forwards the hop handler's own response stream
+  verbatim, instead of rebuilding the stream through `createOwnedResponsesStream`. That preserves each handler's own
+  delivery machinery (keepalive, terminal synthesis, telemetry), which the gap analysis showed matters more than
+  sequence rewriting; the gate itself still uses `readResponsesStream` + `prepareResponsesStreamForCommit`.
+- A forced live pre-output stream failure is not reproducible against the real providers without a fault-injection knob,
+  so that case is covered by hermetic tests (stream dies before output -> chain advances; stream dies after output ->
+  delivered, no further provider spent; transport failure and 5xx -> advance) plus the live hop evidence above. The
+  plan's live-failure bullet is satisfied to the extent the production surface allows and is documented here rather than
+  claimed live.

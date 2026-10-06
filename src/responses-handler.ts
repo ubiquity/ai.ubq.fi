@@ -791,7 +791,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   // measured DeepSeek provider order on the client's behalf, so it dispatches
   // before the provider-specific ids and their availability checks.
   if (requestedModel && isDeepSeekWaterfallModel(requestedModel)) {
-    return await handleDeepSeekWaterfallResponses(req, rawRecord, usageContext);
+    return await handleDeepSeekWaterfallResponses(req, rawRecord, rawBody, usageContext);
   }
   if (requestedModel && deepSeekUpstreamModelFor(requestedModel) && isProviderEnabled("deepseek", await loadProviderSelectionCached())) {
     return await handleDeepSeekResponses(req, rawRecord, requestedModel, usageContext);
@@ -815,6 +815,22 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   if (requestedModel && (await resolveOpenRouterUpstreamModel(requestedModel)) && isProviderEnabled("openrouter", await loadProviderSelectionCached())) {
     return await handleOpenRouterResponses(req, rawRecord, requestedModel, usageContext);
   }
+  return await runOrdinaryResponsesTail(req, rawRecord, rawBody, usageContext);
+};
+
+/**
+ * The ordinary routing tail behind the specialty-provider branches: prepare the
+ * request, run the primary/paid failover path and deliver the result. Exported
+ * so the DeepSeek waterfall's Surplus hop re-enters exactly this pipeline
+ * (admission, reservation and ledger settlement included) instead of
+ * reimplementing it.
+ */
+export const runOrdinaryResponsesTail = async (
+  req: Request,
+  rawRecord: Record<string, unknown>,
+  rawBody: ResponsesRequest,
+  usageContext?: UsageContext
+): Promise<Response> => {
   const prepared = await prepareResponsesRequest(req, rawRecord, rawBody, usageContext);
   if (!prepared.ok) return prepared.response;
   const failoverResponse = await runResponsesFailover(prepared.value);
