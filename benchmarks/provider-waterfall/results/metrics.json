@@ -1,24 +1,29 @@
 {
-  "generated_at": "2026-10-06T02:09:23.348Z",
+  "generated_at": "2026-10-06T03:23:34.498Z",
   "sources": [
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-pilot-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-probe-concurrency-w1-b0.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w1-eve-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w2-asia-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-pilot-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-probe-concurrency-w1-b0.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w1-eve-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w2-asia-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-pilot-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-probe-concurrency-w1-b0.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w1-eve-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w2-asia-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-pilot-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-probe-concurrency-w1-b0.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w1-eve-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w1-eve-b2.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w2-asia-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-pilot-b1.jsonl",
-    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-w1-b0.jsonl"
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-w1-b0.jsonl",
+    "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-w2-b1.jsonl"
   ],
   "providers": [
     {
@@ -29,10 +34,10 @@
       "successful_items": 30,
       "first_attempt_successes": 30,
       "first_attempt_success_rate": 1,
-      "retried_items": 0,
+      "retried_items": 6,
       "retry_recoveries": 0,
-      "retry_recovery_rate": null,
-      "attempts_total": 30,
+      "retry_recovery_rate": 0,
+      "attempts_total": 36,
       "failures_total": 0,
       "failures": {},
       "median_ttft_ms": 1182.5,
@@ -72,7 +77,7 @@
         }
       },
       "by_wire": {
-        "responses": 30
+        "responses": 36
       }
     },
     {
@@ -83,10 +88,10 @@
       "successful_items": 30,
       "first_attempt_successes": 30,
       "first_attempt_success_rate": 1,
-      "retried_items": 0,
+      "retried_items": 6,
       "retry_recoveries": 0,
-      "retry_recovery_rate": null,
-      "attempts_total": 30,
+      "retry_recovery_rate": 0,
+      "attempts_total": 36,
       "failures_total": 0,
       "failures": {},
       "median_ttft_ms": 3800.5,
@@ -126,7 +131,7 @@
         }
       },
       "by_wire": {
-        "responses": 30
+        "responses": 36
       }
     },
     {
@@ -137,10 +142,10 @@
       "successful_items": 30,
       "first_attempt_successes": 29,
       "first_attempt_success_rate": 0.9666666666666667,
-      "retried_items": 1,
+      "retried_items": 7,
       "retry_recoveries": 1,
-      "retry_recovery_rate": 1,
-      "attempts_total": 31,
+      "retry_recovery_rate": 0.14285714285714285,
+      "attempts_total": 37,
       "failures_total": 1,
       "failures": {
         "http_5xx": 1
@@ -182,7 +187,7 @@
         }
       },
       "by_wire": {
-        "chat": 31
+        "chat": 37
       }
     },
     {
@@ -193,10 +198,10 @@
       "successful_items": 30,
       "first_attempt_successes": 30,
       "first_attempt_success_rate": 1,
-      "retried_items": 0,
+      "retried_items": 6,
       "retry_recoveries": 0,
-      "retry_recovery_rate": null,
-      "attempts_total": 30,
+      "retry_recovery_rate": 0,
+      "attempts_total": 36,
       "failures_total": 0,
       "failures": {},
       "median_ttft_ms": 642.5,
@@ -236,7 +241,7 @@
         }
       },
       "by_wire": {
-        "responses": 30
+        "responses": 36
       }
     }
   ]
