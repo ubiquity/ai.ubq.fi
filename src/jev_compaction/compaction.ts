@@ -27,6 +27,7 @@ import { JevClient } from "../../lib/jev_compaction/client.ts";
 import { compact } from "../../lib/jev_compaction/compact.ts";
 import { isResponsesCompaction, parseCodexInput, parseTurnMetadata, renderSummary } from "../../lib/jev_compaction/codex_items.ts";
 import { collectToolCalls, estimateTokens } from "../../lib/jev_compaction/state.ts";
+import { hybridResidueEnabled, runHybridResiduePass } from "./hybrid.ts";
 import type { CallDecision, CompactResult, JevAsker, ToolCall } from "../../lib/jev_compaction/types.ts";
 
 const TURN_METADATA_HEADER = "x-codex-turn-metadata";
@@ -90,6 +91,9 @@ export class CompactionUnavailable extends Error {
     this.kind = kind;
   }
 }
+
+/** Best-effort residue rewrite; null keeps the pure Jev summary. */
+export type CompactionResidue = (summary: string) => Promise<string | null>;
 
 export type CompactionOutcome = {
   status: number;
@@ -156,6 +160,7 @@ function structuralHeader(counts: {
   charsAfter: number;
   fitted?: number;
   floorBound?: boolean;
+  hybrid?: boolean;
 }): string {
   const parts = [
     "summary",
@@ -168,6 +173,7 @@ function structuralHeader(counts: {
   ];
   if (counts.fitted !== undefined && counts.fitted > 0) parts.push(`fitted=${counts.fitted}`);
   if (counts.floorBound === true) parts.push("floor=1");
+  if (counts.hybrid === true) parts.push("hybrid=1");
   return parts.join("; ");
 }
 
@@ -336,7 +342,11 @@ function fitCompactedSummary(
  * Throws `CompactionUnavailable` for every non-success path; the caller maps it
  * to an explicit error status so Codex keeps the original history.
  */
-export async function buildCompactionResponse(body: unknown, asker: JevAsker, options: { stream: boolean }): Promise<CompactionOutcome> {
+export async function buildCompactionResponse(
+  body: unknown,
+  asker: JevAsker,
+  options: { stream: boolean; residue?: CompactionResidue }
+): Promise<CompactionOutcome> {
   const requestBody: Record<string, unknown> = record(body) ?? {};
   const transcript = parseCodexInput(requestBody.input);
   if (!transcript) {
@@ -368,31 +378,55 @@ export async function buildCompactionResponse(body: unknown, asker: JevAsker, op
   // session whose kept render exceeds the cap can still compact.
   const inputTokens = estimateTokens(JSON.stringify(requestBody.input));
   const fitted = fitCompactedSummary(transcript, calls, result, inputTokens);
-  assertCompactionReduced(fitted.stats);
-  const summary = fitted.summary;
+  let summary = fitted.summary;
+  let hybridApplied = false;
+  let hybridMs: number | null = null;
+  if (options.residue) {
+    const hybridStarted = Date.now();
+    try {
+      const rewritten = await options.residue(summary);
+      // The residue pass is best-effort: a null, empty or non-shrinking result
+      // keeps the pure Jev summary, so compaction never fails because of it.
+      if (rewritten !== null && rewritten.trim().length > 0 && rewritten.length < summary.length) {
+        summary = rewritten;
+        hybridApplied = true;
+      }
+    } catch {
+      // keep the pure Jev summary
+    }
+    hybridMs = Date.now() - hybridStarted;
+  }
+  // The rendered summary is what Codex adopts, and the renderer keeps dropped
+  // calls as bounded provenance instead of erasing them, so the reduction
+  // contract and the reported chars_after are measured on the rendered text
+  // rather than on the decision projection.
+  const renderedStats = { ...fitted.stats, charsAfter: summary.length };
+  assertCompactionReduced(renderedStats);
 
   logCompaction({
     outcome: "ok",
     items: transcript.entries.length,
     candidates: candidates.length,
-    kept: fitted.stats.kept,
-    results_dropped: fitted.stats.resultsDropped,
-    calls_dropped: fitted.stats.callsDropped,
-    pinned: fitted.stats.pinned,
-    chars_before: fitted.stats.charsBefore,
-    chars_after: fitted.stats.charsAfter,
+    kept: renderedStats.kept,
+    results_dropped: renderedStats.resultsDropped,
+    calls_dropped: renderedStats.callsDropped,
+    pinned: renderedStats.pinned,
+    chars_before: renderedStats.charsBefore,
+    chars_after: renderedStats.charsAfter,
     fitted: fitted.fittedDrops,
     floor_bound: fitted.floorBound === true,
+    hybrid: hybridApplied,
+    hybrid_ms: hybridMs,
     input_estimate_tokens: inputTokens,
     floor_tokens: fitted.floorBound === true ? estimateTokens(summary) : null,
-    jev_requests: fitted.stats.requests,
-    state_stage: fitted.stats.stateStage || "none",
-    total_ms: fitted.stats.ms,
+    jev_requests: renderedStats.requests,
+    state_stage: renderedStats.stateStage || "none",
+    total_ms: renderedStats.ms,
   });
 
   const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
   const headers = {
-    "x-jev-compaction": structuralHeader({ ...fitted.stats, fitted: fitted.fittedDrops, floorBound: fitted.floorBound }),
+    "x-jev-compaction": structuralHeader({ ...renderedStats, fitted: fitted.fittedDrops, floorBound: fitted.floorBound, hybrid: hybridApplied }),
   };
   if (options.stream) {
     return {
@@ -515,6 +549,8 @@ export type JevCompactionDeps = {
   fetch?: typeof fetch;
   /** Resolved provider credential seam; `null` forces the explicit missing-key failure. */
   apiKey?: string | null;
+  /** Test seam: replaces the hybrid residue pass entirely. */
+  residue?: CompactionResidue;
 };
 
 let askerForTest: JevAsker | null = null;
@@ -559,6 +595,16 @@ function failureResponse(kind: FailureKind): Response {
 }
 
 /**
+ * The hybrid residue pass stays off unless the environment selects it; a test
+ * seam overrides both. It never throws: a failed pass returns null and the
+ * caller keeps the pure Jev summary.
+ */
+function resolveResidue(deps: JevCompactionDeps): CompactionResidue | undefined {
+  if (deps.residue) return deps.residue;
+  return hybridResidueEnabled() ? runHybridResiduePass : undefined;
+}
+
+/**
  * Handles one recognized compaction request end to end. The body is read only
  * here (the normal route is never parsed), Jev work is bounded by the caller
  * signal and the per-call timeout, and every failure is a non-success response.
@@ -581,7 +627,7 @@ export async function handleJevResponsesCompaction(req: Request, deps: JevCompac
   }
   let outcome: CompactionOutcome;
   try {
-    outcome = await buildCompactionResponse(body, asker, { stream });
+    outcome = await buildCompactionResponse(body, asker, { stream, residue: resolveResidue(deps) });
   } catch (error) {
     if (deps.signal?.aborted) {
       logCompaction({ outcome: "failed", kind: "cancelled" });

@@ -814,7 +814,7 @@ type Report = {
   summary_has_stats_trailer: boolean;
   summary_has_goal: boolean;
   summary_kept_gamma: boolean;
-  summary_dropped_alpha: boolean;
+  summary_alpha_provenance_kept: boolean;
   summary_dropped_beta_tail: boolean;
   codex_installed_summary: boolean;
   auto_compaction_observed: boolean;
@@ -841,7 +841,7 @@ const report: Report = {
   summary_has_stats_trailer: false,
   summary_has_goal: false,
   summary_kept_gamma: false,
-  summary_dropped_alpha: false,
+  summary_alpha_provenance_kept: false,
   summary_dropped_beta_tail: false,
   codex_installed_summary: false,
   auto_compaction_observed: false,
@@ -990,8 +990,8 @@ async function main(): Promise<void> {
     require_(report.summary_has_goal, "the real user goal did not survive compaction");
     report.summary_kept_gamma = summary.includes(GAMMA_MARKER);
     require_(report.summary_kept_gamma, "the retained Gamma marker was lost from the compacted memory");
-    report.summary_dropped_alpha = !summary.includes(ALPHA_MARKER);
-    require_(report.summary_dropped_alpha, "the dropped Alpha call/result is still present in the adopted summary");
+    report.summary_alpha_provenance_kept = summary.includes(ALPHA_MARKER);
+    require_(report.summary_alpha_provenance_kept, "the dropped Alpha call/result kept no bounded provenance in the adopted summary");
     report.summary_dropped_beta_tail = !summary.includes(BETA_TAIL);
     require_(report.summary_dropped_beta_tail, "a dropped result tail survived compaction");
     if (report.mode === "fake") {

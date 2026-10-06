@@ -1487,3 +1487,44 @@ cap was chosen for bounded memory, not as a client-window limit; a floor that is
 it replaces is adoptable and is strictly better than a session that can never compact. Reversal risk: a session whose
 text alone is very large can now adopt a multi-megabyte memory; the input-relative ratio keeps it below the window
 implied by the input, and summaries that did not shrink are still refused.
+
+## Jev compaction bounded degradation - 2026-10-05
+
+A dropped tool interaction is no longer erased. `renderSummary` (lib/jev_compaction/codex_items.ts) now emits every call
+as a provenance line - a kept call renders its input verbatim, a dropped call renders a bounded input head - and every
+result as either verbatim (keep), a bounded head (`drop_result`), or a bounded head labelled `truncated (call dropped)`
+(`drop_call`); the existing rule already keeps whole any result shorter than the truncation floor. The adapter
+(src/jev_compaction/compaction.ts) measures its reduction contract and reports `chars_after` in the log line and
+`x-jev-compaction` header on the rendered text, not on the decision projection, because the projection still models
+erasure; the embedded `[fast-jev-compaction stats]` line keeps the decision projection.
+
+Measured 2026-10-05 by the eval harness (`evals/jev-compaction`, offline mode with the real Jev asker on the two saved
+fixtures): the tool-output-only fact the deployed renderer lost (f3 receipt UUID) survives, needles are 15/15 and 14/14,
+continuation is unchanged (4/4 and 3/4, the same probe-wording miss as the deployed run), and rendered size grows by 38k
+chars (f1 111,732 -> 150,085) and 53k chars (f3 ~175k -> 227,920) because each dropped stub carries a bounded head.
+Supersession ambiguity is untouched by this change and needs the planned residue pass. Focused tests were updated
+deliberately (the old assertions pinned erasure) and pass 11/11.
+
+Reason: the previous policy deleted the call and its result together on `drop_call`, erasing the evidence layer (57% of
+f1's input bytes) and making tool-only facts unrecoverable by construction. Bounded degradation keeps provenance and
+identifiers at an explicit, bounded size cost without changing Jev's decisions, the fail-closed paths, or kept-content
+verbatimness. Reversal risk: sessions whose dropped material dominates now retain heads and fail closed on the 1.5M-char
+cap more readily; fitting still drops the lowest-relevance kept results first, and the cap failure path is unchanged.
+
+## Jev compaction hybrid residue pass - 2026-10-06
+
+`JEV_COMPACTION_HYBRID=1` adds one best-effort Cerebras gpt-oss-120b residue pass after the verbatim Jev selection: the
+model compresses the memory (dedupe, supersession, prose reduction) and deterministic guards append a harvested
+identifier ledger (latest occurrences first, capped) and a verbatim tail of the latest memory, so identifier retention
+never depends on the model. The pass runs through the gateway's own Cerebras transport with a bounded deadline; any
+missing credential, transport failure, timeout, empty or non-shrinking output keeps the pure Jev summary unchanged. The
+pass is off unless the environment selects it, and the accepted answer is marked `hybrid=1` in the `x-jev-compaction`
+header with `hybrid`/`hybrid_ms` in the completion log line, so a hybrid memory is always distinguishable from a
+verbatim one. No client usage, model or cost counter is invented: the residue call uses the provider credential, like
+the Jev calls, and the route still fails closed on every pre-existing path.
+
+Reason: measured on the eval harness, the hybrid scored 100% needle retention on both fixtures with 4/4 continuation and
+no stale-endorsement, materially better than the pure selection renderer, while staying inside the 10-second compaction
+budget. Reversal risk: the summary is now partly generated prose, so a degraded residue call could in principle add text
+the model invented; the guards copy every identifier mechanically, the output must be strictly smaller than the pure
+render, and turning the flag off restores the verbatim-only contract exactly.
