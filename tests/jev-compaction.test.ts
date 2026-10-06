@@ -102,7 +102,7 @@ Deno.test("jev compaction predicate is header-only and exact", async () => {
   assert.equal(await marked.text(), JSON.stringify(body(transcript())), "the predicate must not consume the body");
 });
 
-Deno.test("renderer applies Jev decisions verbatim and drops selected content", async () => {
+Deno.test("renderer applies Jev decisions verbatim and degrades dropped content to bounded provenance", async () => {
   const verdicts = {
     t1: { keepCall: 0.1, keepResult: 0.1 },
     t2: { keepCall: 0.9, keepResult: 0.1 },
@@ -119,9 +119,11 @@ Deno.test("renderer applies Jev decisions verbatim and drops selected content", 
   assert.ok(summary.includes(KEPT_MARKER), "pinned text must be kept verbatim");
   assert.ok(summary.includes("[tool result old_c — kept verbatim]"), "kept results must be labelled verbatim");
   assert.ok(summary.includes("[tool result old_b — truncated, original was"), "dropped results must be truncated, not removed");
-  assert.ok(!summary.includes("[tool result old_a"), "a dropped call's result must not survive");
-  assert.ok(!summary.includes("RESULT_A"), "a dropped call's payload must not survive");
-  assert.ok(!summary.includes("[tool call old_a]"), "the dropped call line must not survive");
+  assert.ok(summary.includes("[tool call old_a]"), "a dropped call's provenance line must survive");
+  assert.ok(summary.includes("[tool result old_a — truncated (call dropped), original was"), "a dropped call's result must keep a bounded head");
+  assert.ok(summary.includes("RESULT_A"), "the bounded head must carry the result's opening bytes");
+  assert.ok(summary.includes("fast-jev-compaction truncated"), "the truncated result must carry the truncation note");
+  assert.ok(!summary.includes("RESULT_A obsolete build log line. ".repeat(20)), "the dropped call's payload must be bounded, not full");
   assert.ok(summary.includes("event: response.completed"), "a streamed compaction must terminate with response.completed");
   assert.ok(!summary.includes(COMPACTION_PROMPT.split(" ")[0] + " " + "are performing"), "the injected prompt must be excluded from the state");
 

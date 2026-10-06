@@ -320,19 +320,28 @@ export type RenderOptions = {
 };
 
 /** Renders the surviving transcript; kept text is emitted verbatim. */
+/**
+ * Bounded call input for a dropped call: the call line itself is provenance we
+ * never erase, but a long script or command list is truncated like a dropped
+ * result is. Kept calls render their input verbatim.
+ */
+function truncatedCallInput(text: string, limit: number): string {
+  if (text.length <= limit + 60) return text;
+  return `${text.slice(0, limit)}\n[fast-jev-compaction truncated ${text.length - limit} chars of this tool input; the call is kept as provenance]`;
+}
+
 export function renderSummary(transcript: CodexTranscript, options: RenderOptions): string {
   const decisionByCall = new Map<string, CallDecision>();
-  const droppedCalls = new Set<string>();
   for (const decision of options.decisions) {
     const callId = options.callIds.get(decision.id) ?? decision.id;
     decisionByCall.set(callId, decision);
-    if (decision.action === "drop_call") droppedCalls.add(callId);
   }
   const out: string[] = [
     SUMMARY_MARKER,
-    "Tool calls and results below were classified by TypeSafe Jev (keep / truncate / drop the call).",
-    "Text kept verbatim is copied from the original transcript; this memory is text only, so structured",
-    "tool-call replay and opaque items (encrypted reasoning or compaction payloads) are not restored.",
+    "Tool calls and results below were classified by TypeSafe Jev (keep / truncate).",
+    "A dropped call keeps its provenance line and a bounded head of its result; nothing is erased",
+    "outright. Text kept verbatim is copied from the original transcript; this memory is text only, so",
+    "structured tool-call replay and opaque items (encrypted reasoning or compaction payloads) are not restored.",
     "",
   ];
   for (const entry of transcript.entries) {
@@ -341,30 +350,30 @@ export function renderSummary(transcript: CodexTranscript, options: RenderOption
       continue;
     }
     if (entry.kind === "call") {
-      if (droppedCalls.has(entry.callId)) continue;
       const decision = decisionByCall.get(entry.callId);
+      const action = decision?.action ?? "keep";
+      const renderedInput = action === "keep" ? entry.inputJson : truncatedCallInput(entry.inputJson, options.headChars);
       out.push(
         `[tool call ${entry.callId || "(no call id)"}] ${entry.tool || "(unnamed tool)"} — ${decision ? decision.action : "no decision (kept)"}`,
-        `input: ${entry.inputJson}`,
+        `input: ${renderedInput}`,
         ""
       );
       continue;
     }
-    if (droppedCalls.has(entry.callId)) continue;
     const decision = decisionByCall.get(entry.callId);
     if (!decision) {
       out.push(`[tool result ${entry.callId || "(no call id)"} — no matching call in this transcript]`, entry.text, "");
       continue;
     }
-    if (decision.action === "drop_result") {
-      out.push(
-        `[tool result ${entry.callId} — truncated, original was ${entry.text.length} chars]`,
-        truncatedResultText(entry.text, entry.isError, options.headChars),
-        ""
-      );
+    if (decision.action === "keep") {
+      out.push(`[tool result ${entry.callId} — kept verbatim]`, entry.text, "");
       continue;
     }
-    out.push(`[tool result ${entry.callId} — kept verbatim]`, entry.text, "");
+    const label =
+      decision.action === "drop_call"
+        ? `[tool result ${entry.callId} — truncated (call dropped), original was ${entry.text.length} chars]`
+        : `[tool result ${entry.callId} — truncated, original was ${entry.text.length} chars]`;
+    out.push(label, truncatedResultText(entry.text, entry.isError, options.headChars), "");
   }
   const stats = options.stats;
   const excluded = transcript.exclusion;

@@ -285,7 +285,9 @@ const main = async (): Promise<void> => {
     assert.ok(compactionText.includes(SUMMARY_MARKER), "the Jev summary marker must be present");
     assert.ok(compactionText.includes(KEPT_MARKER), "pinned content must be kept verbatim");
     assert.ok(compactionText.includes("event: response.completed"), "the summary must terminate with response.completed");
-    assert.ok(!compactionText.includes("SMOKE_RESULT_A"), "a dropped call must not survive");
+    assert.ok(compactionText.includes("[tool call old_a]"), "a dropped call must keep its provenance line");
+    assert.ok(compactionText.includes("SMOKE_RESULT_A"), "a dropped result must keep its bounded head");
+    assert.ok(!compactionText.includes("SMOKE_RESULT_A obsolete build log line. ".repeat(20)), "a dropped result must be bounded, not full");
     assert.match(report.compaction_structural_header, /calls_dropped=3/);
     report.compaction_dropped = 3;
     report.compaction_summary_chars = compactionText.length;
