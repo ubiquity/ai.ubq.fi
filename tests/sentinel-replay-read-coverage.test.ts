@@ -523,19 +523,30 @@ Deno.test({
       assert.equal(listed.captures[0]?.manifest.fingerprint, stored.manifest.fingerprint);
       assert.equal((await decryptExportedSentinelReplay(listed.captures[0] as ExportedSentinelReplayCapture, KEY_BYTES)).request_id, "incident-request");
 
-      // A reference that points at no manifest, or at a manifest that is not
-      // its own, is reported as unavailable rather than as an empty export.
-      const danglingFingerprint = "4".repeat(64);
-      const danglingKey = [...SENTINEL_REPLAY_MANIFEST_PREFIX, NOW, danglingFingerprint, "capture-dangling"];
-      await kv.set([...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, incidentId, danglingFingerprint], { version: 1, manifest_key: danglingKey });
+      // A reference that points at no manifest names a payload the store no
+      // longer holds (evicted, expired, or written without a TTL by an older
+      // revision). It is skipped and removed, and the same page still returns
+      // the next live capture instead of a fault. The all-zero fingerprint
+      // sorts before every real HMAC fingerprint, so the skip path runs first.
+      const danglingFingerprint = "0".repeat(64);
+      assert.notEqual(stored.manifest.fingerprint, danglingFingerprint);
+      const danglingRefKey = [...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, incidentId, danglingFingerprint];
+      await kv.set(danglingRefKey, { version: 1, manifest_key: [...SENTINEL_REPLAY_MANIFEST_PREFIX, NOW, danglingFingerprint, "capture-dangling"] });
+      const firstPage = await listEncryptedSentinelIncidentReplays(kv, { incidentId });
+      assert.equal(firstPage.captures.length, 1);
+      assert.equal(firstPage.captures[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+      assert.notEqual(firstPage.cursor, "");
+      assert.equal((await kv.get(danglingRefKey)).value, null);
+      assert.deepEqual(await listEncryptedSentinelIncidentReplays(kv, { incidentId, cursor: firstPage.cursor }), { captures: [], cursor: "" });
+
+      // A reference whose manifest exists but is not its own is still a fault.
       await kv.delete([...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, incidentId, stored.manifest.fingerprint]);
-      await assert.rejects(() => listEncryptedSentinelIncidentReplays(kv, { incidentId }), /Sentinel incident replay manifest is unavailable/);
-      await kv.set([...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, incidentId, danglingFingerprint], {
+      await kv.set(danglingRefKey, {
         version: 1,
         manifest_key: [...SENTINEL_REPLAY_MANIFEST_PREFIX, NOW, stored.manifest.fingerprint, "capture-incident"],
       });
       await assert.rejects(() => listEncryptedSentinelIncidentReplays(kv, { incidentId }), /Sentinel incident replay manifest is unavailable/);
-      await kv.delete([...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, incidentId, danglingFingerprint]);
+      await kv.delete(danglingRefKey);
     } finally {
       closeKv(kv);
     }
