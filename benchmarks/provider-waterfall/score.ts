@@ -228,6 +228,7 @@ const listJsonl = async (dir: string): Promise<string[]> => {
 if (import.meta.main) {
   const args = parseArgs(Deno.args);
   const dir = args.get("dir") ?? new URL("results/", import.meta.url).pathname;
+  const period = args.get("period") ?? "w1-eve";
   const files = args.get("files") ? (args.get("files")?.split(",") ?? []) : await listJsonl(dir);
   const records: AttemptRecord[] = [];
   for (const file of files) {
@@ -235,7 +236,7 @@ if (import.meta.main) {
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
       const record = JSON.parse(line) as AttemptRecord;
-      if (!/^w\d/.test(record.period)) continue;
+      if (record.period !== period) continue;
       records.push(record);
     }
   }

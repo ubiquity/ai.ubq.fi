@@ -201,7 +201,8 @@ if (import.meta.main) {
   const dir = args.get("dir") ?? new URL("results/", import.meta.url).pathname;
   const paths = args.get("files") ? (args.get("files")?.split(",") ?? []) : await listJsonl(dir);
   const all = await loadRunRecords(paths);
-  const records = args.get("all") === "true" ? all : all.filter((record) => /^w\d/.test(record.period));
+  const period = args.get("period") ?? "w1-eve";
+  const records = args.get("all") === "true" ? all : all.filter((record) => record.period === period);
   const metrics = computeProviderMetrics(records);
   const out = args.get("out") ?? `${dir.replace(/\/$/, "")}/metrics.json`;
   await Deno.writeTextFile(out, JSON.stringify({ generated_at: new Date().toISOString(), sources: paths, providers: metrics }, null, 1));

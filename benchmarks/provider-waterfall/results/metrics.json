@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-06T03:23:34.498Z",
+  "generated_at": "2026-10-06T03:23:51.769Z",
   "sources": [
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-pilot-b1.jsonl",
     "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-probe-concurrency-w1-b0.jsonl",
@@ -34,10 +34,10 @@
       "successful_items": 30,
       "first_attempt_successes": 30,
       "first_attempt_success_rate": 1,
-      "retried_items": 6,
+      "retried_items": 0,
       "retry_recoveries": 0,
-      "retry_recovery_rate": 0,
-      "attempts_total": 36,
+      "retry_recovery_rate": null,
+      "attempts_total": 30,
       "failures_total": 0,
       "failures": {},
       "median_ttft_ms": 1182.5,
@@ -77,7 +77,7 @@
         }
       },
       "by_wire": {
-        "responses": 36
+        "responses": 30
       }
     },
     {
@@ -88,10 +88,10 @@
       "successful_items": 30,
       "first_attempt_successes": 30,
       "first_attempt_success_rate": 1,
-      "retried_items": 6,
+      "retried_items": 0,
       "retry_recoveries": 0,
-      "retry_recovery_rate": 0,
-      "attempts_total": 36,
+      "retry_recovery_rate": null,
+      "attempts_total": 30,
       "failures_total": 0,
       "failures": {},
       "median_ttft_ms": 3800.5,
@@ -131,7 +131,7 @@
         }
       },
       "by_wire": {
-        "responses": 36
+        "responses": 30
       }
     },
     {
@@ -142,10 +142,10 @@
       "successful_items": 30,
       "first_attempt_successes": 29,
       "first_attempt_success_rate": 0.9666666666666667,
-      "retried_items": 7,
+      "retried_items": 1,
       "retry_recoveries": 1,
-      "retry_recovery_rate": 0.14285714285714285,
-      "attempts_total": 37,
+      "retry_recovery_rate": 1,
+      "attempts_total": 31,
       "failures_total": 1,
       "failures": {
         "http_5xx": 1
@@ -187,7 +187,7 @@
         }
       },
       "by_wire": {
-        "chat": 37
+        "chat": 31
       }
     },
     {
@@ -198,10 +198,10 @@
       "successful_items": 30,
       "first_attempt_successes": 30,
       "first_attempt_success_rate": 1,
-      "retried_items": 6,
+      "retried_items": 0,
       "retry_recoveries": 0,
-      "retry_recovery_rate": 0,
-      "attempts_total": 36,
+      "retry_recovery_rate": null,
+      "attempts_total": 30,
       "failures_total": 0,
       "failures": {},
       "median_ttft_ms": 642.5,
@@ -241,7 +241,7 @@
         }
       },
       "by_wire": {
-        "responses": 36
+        "responses": 30
       }
     }
   ]
