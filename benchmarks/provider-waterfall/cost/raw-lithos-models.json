@@ -1,0 +1,23 @@
+{
+  "object": "list",
+  "data": [
+    { "id": "deepseek-ai/DeepSeek-V4.1-Flash", "object": "model", "created": 1788998400, "owned_by": "DeepSeek" },
+    { "id": "deepseek-ai/DeepSeek-V4.1-Flash-fast", "object": "model", "created": 1788998400, "owned_by": "DeepSeek" },
+    { "id": "deepseek-ai/DeepSeek-V4.1-Flash-ultra", "object": "model", "created": 1788998400, "owned_by": "DeepSeek" },
+    {
+      "id": "deepseek-ai/DeepSeek-V4.1-Flash-ultra-chat",
+      "object": "model",
+      "created": 1788998400,
+      "owned_by": "DeepSeek"
+    },
+    { "id": "zai-org/GLM-5.3", "object": "model", "created": 1787616000, "owned_by": "Z.ai" },
+    { "id": "zai-org/GLM-5.3-Flash", "object": "model", "created": 1787616000, "owned_by": "Z.ai" },
+    { "id": "zai-org/GLM-5.3-Flash-ultra", "object": "model", "created": 1787616000, "owned_by": "Z.ai" },
+    { "id": "zai-org/GLM-5.3-Flash-ultra-chat", "object": "model", "created": 1787616000, "owned_by": "Z.ai" },
+    { "id": "zai-org/GLM-5.3-ultra-chat", "object": "model", "created": 1787616000, "owned_by": "Z.ai" },
+    { "id": "moonshotai/Kimi-K3", "object": "model", "created": 1785110400, "owned_by": "Moonshot AI" },
+    { "id": "moonshotai/Kimi-K3-fast", "object": "model", "created": 1785110400, "owned_by": "Moonshot AI" },
+    { "id": "moonshotai/Kimi-K3-ultra", "object": "model", "created": 1785110400, "owned_by": "Moonshot AI" },
+    { "id": "moonshotai/Kimi-K3-ultra-chat", "object": "model", "created": 1785110400, "owned_by": "Moonshot AI" }
+  ]
+}

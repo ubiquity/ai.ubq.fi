@@ -1,0 +1,816 @@
+{
+  "schema": "corpus-v1",
+  "generator": "benchmarks/provider-waterfall/corpus-build.ts",
+  "corpus": {
+    "path": "corpus/corpus-v1.jsonl",
+    "bytes": 5832678,
+    "sha256": "6aa1248dac25135f6fe2dfe8444f33f8f357d369940d296cd692b68ba1cdb288"
+  },
+  "counts_by_class": {
+    "small": 6,
+    "medium": 9,
+    "large": 9,
+    "xlarge": 6
+  },
+  "class_windows": {
+    "small": [
+      2000,
+      10000
+    ],
+    "medium": [
+      10000,
+      40000
+    ],
+    "large": [
+      40000,
+      160000
+    ],
+    "xlarge": [
+      160000,
+      600000
+    ]
+  },
+  "class_target": "6 small, 9 medium, 9 large, 6 xlarge",
+  "sources": {
+    "root": "/Users/nv/.codex/sessions",
+    "primary_months": [
+      "2026/10"
+    ],
+    "months_used": [
+      "2026/10"
+    ],
+    "fallback_months_harvested": false,
+    "candidate_sessions": 41,
+    "multi_meta_candidate_files": 6,
+    "candidate_filter": "session_meta.thread_source=subagent or source.subagent present; turn_context model deepseek-ai/DeepSeek-V4.1-Flash*, deepseek-flash, or deepseek-v4-flash*"
+  },
+  "selection": {
+    "order": [
+      "xlarge",
+      "small",
+      "large",
+      "medium"
+    ],
+    "xlarge": "largest in-window boundary per session; sessions ranked by largest in-window recorded input tokens desc",
+    "small": "closest-recorded-request",
+    "small_note": "no DeepSeek V4.1 Flash session under 2026/10 has a boundary inside 2000-10000 recorded input tokens; the six recorded requests closest to the window were used",
+    "large": "first in-window boundary per session; sessions in path order",
+    "medium": "first in-window boundary per session; sessions in path order",
+    "one_entry_per_session": true
+  },
+  "sanitizer": {
+    "revision": "sanitizer-v1",
+    "rules": [
+      {
+        "id": "authorization_header",
+        "pattern": "(Authorization:\\s*)[A-Za-z0-9._~+/=-]{16,}",
+        "flags": "gi",
+        "substitutions": 0
+      },
+      {
+        "id": "assignment",
+        "pattern": "([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=(?!\\[REDACTED:)[^\\s'\"`]+",
+        "flags": "g",
+        "substitutions": 0
+      },
+      {
+        "id": "bearer",
+        "pattern": "\\bBearer\\s+[A-Za-z0-9._-]{20,}",
+        "flags": "g",
+        "substitutions": 0
+      },
+      {
+        "id": "lith_sk",
+        "pattern": "lith_sk_[A-Za-z0-9]{16,}",
+        "flags": "g",
+        "substitutions": 0
+      },
+      {
+        "id": "fernet",
+        "pattern": "gAAAAA[A-Za-z0-9_-]{40,}",
+        "flags": "g",
+        "substitutions": 2
+      },
+      {
+        "id": "slack_bot",
+        "pattern": "xoxb-[A-Za-z0-9-]{10,}",
+        "flags": "g",
+        "substitutions": 0
+      },
+      {
+        "id": "github_pat",
+        "pattern": "ghp_[A-Za-z0-9]{30,}",
+        "flags": "g",
+        "substitutions": 0
+      },
+      {
+        "id": "aws_access_key",
+        "pattern": "AKIA[0-9A-Z]{16}",
+        "flags": "g",
+        "substitutions": 0
+      },
+      {
+        "id": "hex_ak_sk",
+        "pattern": "(?:AK|SK)[0-9a-f]{32}",
+        "flags": "g",
+        "substitutions": 0
+      },
+      {
+        "id": "sk",
+        "pattern": "sk-[A-Za-z0-9_-]{16,}",
+        "flags": "g",
+        "substitutions": 1
+      }
+    ],
+    "conditional_rules": [
+      {
+        "id": "email",
+        "note": "applied only inside strings that matched a credential rule",
+        "substitutions": 0
+      }
+    ],
+    "total_substitutions": 3,
+    "decoded_string_residual_matches": 0,
+    "serialized_line_escape_artifacts": 1,
+    "serialized_line_note": "matches exist only in the JSON-escaped serialization: a real newline is rendered as backslash-n, so an empty NAME= at end of line folds into the following lines; no decoded string contains a match"
+  },
+  "tools_fixture": {
+    "path": "fixtures/codex-tools-0.160.1.json",
+    "sha256": "e48b8f1e1533e676ba43f1f15660a8f5e35d2a775c607b94cb4d46a2116e29ab",
+    "bytes": 102688,
+    "entries": 23,
+    "design_doc_expected_sha256": "e48b8f1e1533e676ba43f1f15660a8f5e35d2a775c607b94cb4d46a2116e29ab",
+    "matches_design_doc": true
+  },
+  "dropped_item_types": [
+    "reasoning",
+    "web_search_call"
+  ],
+  "dropped_item_type_counts": {
+    "reasoning": 288,
+    "web_search_call": 0
+  },
+  "encrypted_content_entries_removed": 40,
+  "entries": [
+    {
+      "id": "corpus-small-01",
+      "cls": "small",
+      "session_id": "01a10151-42b0-7112-853a-e0c1778e03dd",
+      "thread_id": "01a10151-5b28-7043-a626-1642835bebfc",
+      "turn_id": "01a10151-5cec-78f0-81d3-a1bdf1c29752",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:31:12.303Z",
+      "recorded_input_tokens": 18789,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-31-11-01a10151-5b28-7043-a626-1642835bebfc.jsonl",
+      "cwd": "/private/tmp",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-small-02",
+      "cls": "small",
+      "session_id": "01a10156-b782-73b2-a20d-43c6b3e559e9",
+      "thread_id": "01a10156-ce18-7860-8f0d-c0099b5474c4",
+      "turn_id": "01a10156-cf80-7a10-8d22-6be775a9606d",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:37:09.218Z",
+      "recorded_input_tokens": 18797,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-37-08-01a10156-ce18-7860-8f0d-c0099b5474c4.jsonl",
+      "cwd": "/private/tmp",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-small-03",
+      "cls": "small",
+      "session_id": "01a1015e-77bf-71c0-9232-b7f96027ef96",
+      "thread_id": "01a1015e-861f-7fb0-8b31-892353386559",
+      "turn_id": "01a1015e-8816-7341-a2ab-c850b386660b",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:45:35.349Z",
+      "recorded_input_tokens": 18779,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-45-34-01a1015e-861f-7fb0-8b31-892353386559.jsonl",
+      "cwd": "/private/tmp",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-small-04",
+      "cls": "small",
+      "session_id": "01a10164-467b-7dc0-a531-dc39ae60a2d7",
+      "thread_id": "01a10164-5e2e-7e20-ab5d-5346f36d5f24",
+      "turn_id": "01a10164-5f8d-7b83-b174-a0a7fe86dd82",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:51:58.153Z",
+      "recorded_input_tokens": 18689,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-51-57-01a10164-5e2e-7e20-ab5d-5346f36d5f24.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-small-05",
+      "cls": "small",
+      "session_id": "01a10164-c2ff-7ef1-90ac-050103b07d1f",
+      "thread_id": "01a10164-d448-7a82-9282-943ac02b49aa",
+      "turn_id": "01a10164-d497-7403-87fc-46029baae728",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:52:28.031Z",
+      "recorded_input_tokens": 18779,
+      "item_count": 7,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 16",
+        "ordinal": 16,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-52-27-01a10164-d448-7a82-9282-943ac02b49aa.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 2
+    },
+    {
+      "id": "corpus-small-06",
+      "cls": "small",
+      "session_id": "01a10165-a809-7ef3-b358-78557efc957b",
+      "thread_id": "01a10165-b643-7752-bb76-d21cb7209b3c",
+      "turn_id": "01a10165-b6d1-7b41-bb40-1078e4866ac8",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:53:26.079Z",
+      "recorded_input_tokens": 18769,
+      "item_count": 7,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 16",
+        "ordinal": 16,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-53-25-01a10165-b643-7752-bb76-d21cb7209b3c.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 2
+    },
+    {
+      "id": "corpus-medium-01",
+      "cls": "medium",
+      "session_id": "01a10161-63ff-75d2-af48-b965bae0395f",
+      "thread_id": "01a10161-777e-77c3-9d3a-9b7a439f263d",
+      "turn_id": "01a10161-79fa-75f0-85a4-069ba198e4a8",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:48:48.494Z",
+      "recorded_input_tokens": 18835,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-48-47-01a10161-777e-77c3-9d3a-9b7a439f263d.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-medium-02",
+      "cls": "medium",
+      "session_id": "01a10161-63ff-75d2-af48-b965bae0395f",
+      "thread_id": "01a10161-9c64-7f43-9bcf-158bbbeaf78d",
+      "turn_id": "01a10161-9e31-7fd0-a97e-e77e4a884df9",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:48:57.599Z",
+      "recorded_input_tokens": 18832,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-48-56-01a10161-9c64-7f43-9bcf-158bbbeaf78d.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-medium-03",
+      "cls": "medium",
+      "session_id": "01a10162-78da-71c1-9ced-30c04ae6f1c1",
+      "thread_id": "01a10162-895d-71c1-bbd0-08634ee18895",
+      "turn_id": "01a10162-8ac1-77e1-b9d0-795219715ca4",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:49:58.384Z",
+      "recorded_input_tokens": 18835,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-49-57-01a10162-895d-71c1-bbd0-08634ee18895.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-medium-04",
+      "cls": "medium",
+      "session_id": "01a10162-78da-71c1-9ced-30c04ae6f1c1",
+      "thread_id": "01a10162-a31d-78e1-a91c-bfc996526eca",
+      "turn_id": "01a10162-a493-7583-b808-9631ac19cf18",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:50:05.042Z",
+      "recorded_input_tokens": 18832,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-50-03-01a10162-a31d-78e1-a91c-bfc996526eca.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-medium-05",
+      "cls": "medium",
+      "session_id": "01a10163-1125-7693-8ec5-47815574d1a0",
+      "thread_id": "01a10163-26d6-7c63-835b-f3f6f1193db6",
+      "turn_id": "01a10163-272d-7c90-871a-9a23a5a5eebd",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:50:38.240Z",
+      "recorded_input_tokens": 18902,
+      "item_count": 7,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 16",
+        "ordinal": 16,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-50-37-01a10163-26d6-7c63-835b-f3f6f1193db6.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 2
+    },
+    {
+      "id": "corpus-medium-06",
+      "cls": "medium",
+      "session_id": "01a10180-5e8a-7b70-a8c2-8efeb91cbbdc",
+      "thread_id": "01a10180-8407-7bc0-a047-c02fdc395da7",
+      "turn_id": "01a10180-859c-78e1-9dc7-86526e63b9df",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T11:22:42.944Z",
+      "recorded_input_tokens": 22927,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T07-22-42-01a10180-8407-7bc0-a047-c02fdc395da7.jsonl",
+      "cwd": "/private/tmp",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-medium-07",
+      "cls": "medium",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109c1-60d8-7291-bcc2-5c8aac97766c",
+      "turn_id": "01a109c1-6467-7b80-bf1e-57e8fe1091be",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:50:33.028Z",
+      "recorded_input_tokens": 20106,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-50-31-01a109c1-60d8-7291-bcc2-5c8aac97766c.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-medium-08",
+      "cls": "medium",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109e0-a267-7a01-b0bb-f110c5b8f202",
+      "turn_id": "01a109e0-a409-7033-a889-3246ebf970be",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T02:24:41.662Z",
+      "recorded_input_tokens": 20106,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T22-24-39-01a109e0-a267-7a01-b0bb-f110c5b8f202.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-medium-09",
+      "cls": "medium",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109e0-a508-7a72-893b-1a6133ed9ce6",
+      "turn_id": "01a109e0-a7b0-7b33-a5b2-213e4d5abfe8",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T02:24:41.672Z",
+      "recorded_input_tokens": 20106,
+      "item_count": 6,
+      "dropped_item_types": [],
+      "boundary": {
+        "description": "message/developer @ord 10",
+        "ordinal": 10,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T22-24-40-01a109e0-a508-7a72-893b-1a6133ed9ce6.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-01",
+      "cls": "large",
+      "session_id": "01a1015e-fbc3-7170-83ee-79e14744ac49",
+      "thread_id": "01a1015f-10b9-7482-af8d-a6b615d6ea17",
+      "turn_id": "01a1015f-111b-7ee0-ac87-9e337ea0cc0e",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T10:46:31.659Z",
+      "recorded_input_tokens": 48329,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/user @ord 24",
+        "ordinal": 24,
+        "type": "message",
+        "role": "user"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T06-46-09-01a1015f-10b9-7482-af8d-a6b615d6ea17.jsonl",
+      "cwd": "/private/tmp/subgate-smoke",
+      "session_meta_records": 2
+    },
+    {
+      "id": "corpus-large-02",
+      "cls": "large",
+      "session_id": "01a1016d-579a-7d31-8376-8f467a720689",
+      "thread_id": "01a10170-c156-76d1-9bad-a1d651ac4ed3",
+      "turn_id": "01a10170-c408-7123-af33-edafe6236a75",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T11:05:40.212Z",
+      "recorded_input_tokens": 48850,
+      "item_count": 12,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 23",
+        "ordinal": 23,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T07-05-29-01a10170-c156-76d1-9bad-a1d651ac4ed3.jsonl",
+      "cwd": "/Users/nv/.codex",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-03",
+      "cls": "large",
+      "session_id": "01a10187-eda0-7db3-b0f9-6a6ca01ab3c0",
+      "thread_id": "01a10188-28be-71f1-8923-b9742ffc8d19",
+      "turn_id": "01a10188-2a56-7310-8584-e7c8e0de54ed",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T11:31:06.642Z",
+      "recorded_input_tokens": 46455,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 20",
+        "ordinal": 20,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T07-31-02-01a10188-28be-71f1-8923-b9742ffc8d19.jsonl",
+      "cwd": "/private/tmp",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-04",
+      "cls": "large",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109b5-767b-7f33-bc31-56a612fac4eb",
+      "turn_id": "01a109b5-78eb-7932-8f3b-06df11533d0f",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:37:35.377Z",
+      "recorded_input_tokens": 43604,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 20",
+        "ordinal": 20,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-37-30-01a109b5-767b-7f33-bc31-56a612fac4eb.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-05",
+      "cls": "large",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109b8-d1fc-78f2-8924-04c3ce5eeaf8",
+      "turn_id": "01a109b8-d3e4-7170-ac8a-36faf79efb18",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:41:15.822Z",
+      "recorded_input_tokens": 44483,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 20",
+        "ordinal": 20,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-41-09-01a109b8-d1fc-78f2-8924-04c3ce5eeaf8.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-06",
+      "cls": "large",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109b8-d49a-7bc2-b2f1-f59613905f1a",
+      "turn_id": "01a109b8-d60e-7683-a1fb-b0a119766e16",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:41:13.966Z",
+      "recorded_input_tokens": 43363,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 20",
+        "ordinal": 20,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-41-10-01a109b8-d49a-7bc2-b2f1-f59613905f1a.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-07",
+      "cls": "large",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109be-a16f-7491-b5e9-ba353b52863f",
+      "turn_id": "01a109be-a408-75a0-9e06-46dd80b7ce8d",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:47:36.806Z",
+      "recorded_input_tokens": 43379,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 20",
+        "ordinal": 20,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-47-30-01a109be-a16f-7491-b5e9-ba353b52863f.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-08",
+      "cls": "large",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109be-a4e8-7d82-a60a-529be359e372",
+      "turn_id": "01a109be-a71a-7173-92ef-b40f34dde2c7",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:47:36.770Z",
+      "recorded_input_tokens": 44243,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 20",
+        "ordinal": 20,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-47-31-01a109be-a4e8-7d82-a60a-529be359e372.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-large-09",
+      "cls": "large",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109c1-5de4-7882-b956-67ba797e9f27",
+      "turn_id": "01a109c1-600f-7543-8ff5-260f03854ac0",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:50:34.360Z",
+      "recorded_input_tokens": 42428,
+      "item_count": 10,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 20",
+        "ordinal": 20,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-50-30-01a109c1-5de4-7882-b956-67ba797e9f27.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-xlarge-01",
+      "cls": "xlarge",
+      "session_id": "01a1016d-579a-7d31-8376-8f467a720689",
+      "thread_id": "01a10170-5509-74c0-9141-1ad2082252f0",
+      "turn_id": "01a10170-5779-7b30-a85f-5e9319e48df9",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T11:07:38.759Z",
+      "recorded_input_tokens": 591585,
+      "item_count": 65,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 151",
+        "ordinal": 151,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T07-05-01-01a10170-5509-74c0-9141-1ad2082252f0.jsonl",
+      "cwd": "/Users/nv/.codex",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-xlarge-02",
+      "cls": "xlarge",
+      "session_id": "01a1016d-579a-7d31-8376-8f467a720689",
+      "thread_id": "01a10193-9329-7611-9df0-94bf4ccfc93f",
+      "turn_id": "01a10193-95cf-7cc1-82c3-7d3deb71d349",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-03T11:44:17.920Z",
+      "recorded_input_tokens": 565649,
+      "item_count": 63,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 154",
+        "ordinal": 154,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/03/rollout-2026-10-03T07-43-31-01a10193-9329-7611-9df0-94bf4ccfc93f.jsonl",
+      "cwd": "/Users/nv/.codex",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-xlarge-03",
+      "cls": "xlarge",
+      "session_id": "01a1098c-0a52-7a31-940f-e7ed6f25c6f1",
+      "thread_id": "01a109b5-72d5-7b42-bf65-6d96b0b090fe",
+      "turn_id": "01a109b5-75ad-7c50-aa6c-1fc29a398663",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T01:39:53.886Z",
+      "recorded_input_tokens": 211377,
+      "item_count": 18,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 40",
+        "ordinal": 40,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T21-37-29-01a109b5-72d5-7b42-bf65-6d96b0b090fe.jsonl",
+      "cwd": "/Users/nv/repos/0x4007/codex-mid-task-stop",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-xlarge-04",
+      "cls": "xlarge",
+      "session_id": "01a10a1e-f0ba-7652-9e87-5484dff0bb6e",
+      "thread_id": "01a10a33-61f0-7a03-820d-3ed8ca216912",
+      "turn_id": "01a10ab4-e778-7d33-bdee-eb8909d0de06",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash-ultra",
+      "recorded_at": "2026-10-05T06:16:30.446Z",
+      "recorded_input_tokens": 598401,
+      "item_count": 943,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 2310",
+        "ordinal": 2310,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/04/rollout-2026-10-04T23-55-02-01a10a33-61f0-7a03-820d-3ed8ca216912.jsonl",
+      "cwd": "/Users/nv/repos/ubiquity/ai.ubq.fi",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-xlarge-05",
+      "cls": "xlarge",
+      "session_id": "01a10ead-d886-7562-ad08-e039274b8f66",
+      "thread_id": "01a10eb7-6a21-7342-b3e8-c313c80ce40f",
+      "turn_id": "01a10eb7-6bec-7891-92ef-1c26ab13df56",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "recorded_at": "2026-10-06T00:59:18.346Z",
+      "recorded_input_tokens": 573544,
+      "item_count": 49,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 108",
+        "ordinal": 108,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/05/rollout-2026-10-05T20-57-43-01a10eb7-6a21-7342-b3e8-c313c80ce40f.jsonl",
+      "cwd": "/Users/nv/repos/ubiquity/ai.ubq.fi",
+      "session_meta_records": 1
+    },
+    {
+      "id": "corpus-xlarge-06",
+      "cls": "xlarge",
+      "session_id": "01a10ead-d886-7562-ad08-e039274b8f66",
+      "thread_id": "01a10eb7-6cad-7ba2-9a5c-5334a508b826",
+      "turn_id": "01a10eb7-6eb9-7280-9efd-b9355b2e08ad",
+      "recorded_model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "recorded_at": "2026-10-06T00:58:39.302Z",
+      "recorded_input_tokens": 507010,
+      "item_count": 52,
+      "dropped_item_types": [
+        "reasoning"
+      ],
+      "boundary": {
+        "description": "message/developer @ord 105",
+        "ordinal": 105,
+        "type": "message",
+        "role": "developer"
+      },
+      "source_path": "2026/10/05/rollout-2026-10-05T20-57-44-01a10eb7-6cad-7ba2-9a5c-5334a508b826.jsonl",
+      "cwd": "/Users/nv/repos/ubiquity/ai.ubq.fi",
+      "session_meta_records": 1
+    }
+  ]
+}

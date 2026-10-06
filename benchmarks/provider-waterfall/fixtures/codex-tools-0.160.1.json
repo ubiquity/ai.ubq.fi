@@ -1,0 +1,2585 @@
+[
+  {
+    "type": "function",
+    "name": "exec_command",
+    "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "additional_permissions": {
+          "type": "object",
+          "description": "Sandboxed filesystem or network access for this command; only with `sandbox_permissions: \"with_additional_permissions\"`.",
+          "properties": {
+            "file_system": {
+              "type": "object",
+              "description": "Filesystem access request.",
+              "properties": {
+                "read": {
+                  "type": "array",
+                  "description": "Absolute paths to grant read access; omit when none are needed.",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "write": {
+                  "type": "array",
+                  "description": "Absolute paths to grant write access; omit when none are needed.",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "network": {
+              "type": "object",
+              "description": "Network access request.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "True requests network access; false or omitted requests none."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "cmd": {
+          "type": "string",
+          "description": "Shell command to execute."
+        },
+        "justification": {
+          "type": "string",
+          "description": "User-facing approval question for `require_escalated`; omit otherwise."
+        },
+        "login": {
+          "type": "boolean",
+          "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."
+        },
+        "max_output_tokens": {
+          "type": "number",
+          "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+        },
+        "prefix_rule": {
+          "type": "array",
+          "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sandbox_permissions": {
+          "type": "string",
+          "description": "Per-command sandbox override. Defaults to `use_default`; use `with_additional_permissions` with `additional_permissions`, or `require_escalated` for unsandboxed execution.",
+          "enum": [
+            "use_default",
+            "with_additional_permissions",
+            "require_escalated"
+          ]
+        },
+        "shell": {
+          "type": "string",
+          "description": "Shell binary to launch. Defaults to the user's default shell."
+        },
+        "tty": {
+          "type": "boolean",
+          "description": "True allocates a PTY for the command; false or omitted uses plain pipes."
+        },
+        "workdir": {
+          "type": "string",
+          "description": "Working directory for the command. Defaults to the turn cwd."
+        },
+        "yield_time_ms": {
+          "type": "number",
+          "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
+        }
+      },
+      "required": [
+        "cmd"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "write_stdin",
+    "description": "Writes characters to an existing unified exec session and returns recent output.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "chars": {
+          "type": "string",
+          "description": "Bytes to write to stdin. Defaults to empty, which polls without writing."
+        },
+        "max_output_tokens": {
+          "type": "number",
+          "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+        },
+        "session_id": {
+          "type": "number",
+          "description": "Identifier of the running unified exec session."
+        },
+        "yield_time_ms": {
+          "type": "number",
+          "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls wait 5000-300000 ms by default."
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "list_mcp_resources",
+    "description": "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from a previous list_mcp_resources call; omit for the first page."
+        },
+        "server": {
+          "type": "string",
+          "description": "MCP server name. Omit to list resources from every configured server."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "list_mcp_resource_templates",
+    "description": "Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Opaque cursor from a previous list_mcp_resource_templates call; omit for the first page."
+        },
+        "server": {
+          "type": "string",
+          "description": "MCP server name. Omit to list resource templates from every configured server."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "read_mcp_resource",
+    "description": "Read a specific resource from an MCP server given the server name and resource URI.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "server": {
+          "type": "string",
+          "description": "MCP server name exactly as configured. Must match the 'server' field returned by list_mcp_resources."
+        },
+        "uri": {
+          "type": "string",
+          "description": "Resource URI to read. Must be one of the URIs returned by list_mcp_resources."
+        }
+      },
+      "required": [
+        "server",
+        "uri"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "update_plan",
+    "description": "Updates the task plan.\nProvide an optional explanation and a list of plan items, each with a step and status.\nAt most one step can be in_progress at a time.\n",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "explanation": {
+          "type": "string",
+          "description": "Optional explanation for this plan update."
+        },
+        "plan": {
+          "type": "array",
+          "description": "The list of steps",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "description": "Step status.",
+                "enum": [
+                  "pending",
+                  "in_progress",
+                  "completed"
+                ]
+              },
+              "step": {
+                "type": "string",
+                "description": "Task step text."
+              }
+            },
+            "required": [
+              "step",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "plan"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "request_user_input",
+    "description": "Request user input for one to three short questions and wait for the response. This tool is only available in Default or Plan mode.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "description": "Questions to show the user. Prefer 1 and do not exceed 3",
+          "items": {
+            "type": "object",
+            "properties": {
+              "header": {
+                "type": "string",
+                "description": "Short header label shown in the UI (12 or fewer chars)."
+              },
+              "id": {
+                "type": "string",
+                "description": "Stable identifier for mapping answers (snake_case)."
+              },
+              "options": {
+                "type": "array",
+                "description": "Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option in this list; the client will add a free-form \"Other\" option automatically.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "type": "string",
+                      "description": "One short sentence explaining impact/tradeoff if selected."
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "User-facing label (1-5 words)."
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "description"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "question": {
+                "type": "string",
+                "description": "Single-sentence prompt shown to the user."
+              }
+            },
+            "required": [
+              "id",
+              "header",
+              "question",
+              "options"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "questions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "namespace",
+    "name": "clock",
+    "description": "Tools for reading and waiting on time.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "curr_time",
+        "description": "Return the current time in UTC.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "sleep",
+        "description": "Pause execution for a specified duration. The sleep ends early when new input arrives for the active turn. Returns the elapsed wall-clock time.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "duration_ms": {
+              "type": "number",
+              "description": "How long to sleep in milliseconds. Must be between 1 and 43200000."
+            }
+          },
+          "required": [
+            "duration_ms"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "view_image",
+    "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Local filesystem path to an image file."
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "namespace",
+    "name": "collaboration",
+    "description": "Tools for spawning and managing sub-agents.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "followup_task",
+        "description": "Send a follow-up task to an existing non-root target agent and trigger a turn if it is idle. If the target is already running, deliver the task promptly at message boundaries while sampling, or after the pending tool call completes.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "Message text to send to the target agent.",
+              "encrypted": true
+            },
+            "target": {
+              "type": "string",
+              "description": "Agent id or canonical task name to send a follow-up task to (from spawn_agent)."
+            }
+          },
+          "required": [
+            "target",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "interrupt_agent",
+        "description": "Interrupt an agent's current turn, if any, and return its previous status. The agent remains available for messages and follow-up tasks.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "description": "Agent id or canonical task name to interrupt (from spawn_agent)."
+            }
+          },
+          "required": [
+            "target"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "list_agents",
+        "description": "List live agents in the current root thread tree. Optionally filter by task-path prefix.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path_prefix": {
+              "type": "string",
+              "description": "Task-path prefix filter without a trailing slash. Omit to list all live agents."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "send_message",
+        "description": "Send a message to an existing agent. The message will be delivered promptly. Does not trigger a new turn.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "Message text to queue on the target agent.",
+              "encrypted": true
+            },
+            "target": {
+              "type": "string",
+              "description": "Relative or canonical task name to message (from spawn_agent)."
+            }
+          },
+          "required": [
+            "target",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "spawn_agent",
+        "description": "\n        Available model overrides (optional; inherited parent model is preferred):\n- `gpt-6.1-sol`: Latest workhorse model for coding and everyday work. Reasoning efforts: low (default), medium, high, xhigh, max, ultra. Service tiers: priority.\n- `deepseek-flash`: DeepSeek official API (deepseek-flash) served by this gateway. Reasoning efforts: none, low, high (default), max.\n- `deepseek-ai/DeepSeek-V4.1-Flash`: LithosAI API (Chat Completions) served by this gateway. Reasoning efforts: none, minimal, low, medium (default), high, xhigh, max.\n- `deepseek-ai/DeepSeek-V4.1-Flash-ultra`: LithosAI API (Chat Completions) served by this gateway. Reasoning efforts: none, minimal, low, medium (default), high, xhigh, max.\n- `gpt-oss-120b`: Cerebras API (Chat Completions) served by this gateway. Reasoning efforts: low, medium (default), high.\n        Spawns an agent to work on the specified task. If your current task is `/root/task1` and you spawn_agent with task_name \"task_3\" the agent will have canonical task name `/root/task1/task_3`.\nYou are then able to refer to this agent as `task_3` or `/root/task1/task_3` interchangeably. However an agent `/root/task2/task_3` would only be able to communicate with this agent via its canonical name `/root/task1/task_3`.\nThe spawned agent will have the same tools as you and the ability to spawn its own subagents.\n\nIt will be able to send you and other running agents messages, and its final answer will be provided to you when it finishes.\nThe new agent's canonical task name will be provided to it along with the message.\n\nNote that passing `fork_turns=\"none\"` will not pass any surrounding context to the spawned subagent, which may cause the agent to lack the context it needs to complete its task, whereas `fork_turns=\"all\"` will provide the subagent with all surrounding context.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "fork_turns": {
+              "type": "string",
+              "description": "Optional number of turns to fork. Defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns."
+            },
+            "message": {
+              "type": "string",
+              "description": "Initial plain-text task for the new agent.",
+              "encrypted": true
+            },
+            "model": {
+              "type": "string",
+              "description": "Model override for the new agent. Omit unless an explicit override is needed."
+            },
+            "reasoning_effort": {
+              "type": "string",
+              "description": "Reasoning effort override for the new agent. Omit to inherit the parent effort."
+            },
+            "task_name": {
+              "type": "string",
+              "description": "Task name for the new agent. Use lowercase letters, digits, and underscores."
+            }
+          },
+          "required": [
+            "task_name",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "wait_agent",
+        "description": "Wait for a mailbox update from any live agent, including queued messages and final-status notifications. The wait also ends early when new user input is steered into the active turn. Does not return the content; returns either a summary of which agents have updates (if any), an interruption summary for steered input, or a timeout summary if no activity arrives before the deadline.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "timeout_ms": {
+              "type": "number",
+              "description": "Timeout in milliseconds. Defaults to 30000, min 10000, max 3600000."
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__cloudflare",
+    "description": "Tools in the mcp__cloudflare namespace.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "docs",
+        "description": "Search the Cloudflare documentation.\n\n\t\tThis tool should be used to answer any question about Cloudflare products or features, including:\n\t\t- Workers, Pages, R2, Images, Stream, D1, Durable Objects, KV, Workflows, Hyperdrive, Queues\n\t\t- AI Search, Workers AI, Vectorize, AI Gateway, Browser Rendering\n\t\t- Zero Trust, Access, Tunnel, Gateway, Browser Isolation, WARP, DDOS, Magic Transit, Magic WAN\n\t\t- CDN, Cache, DNS, Zaraz, Argo, Rulesets, Terraform, Account and Billing\n\n\t\tResults are returned as semantically similar chunks to the query.\n\t\t",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Cloudflare documentation search query"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "execute",
+        "description": "Execute JavaScript code that can read, create, update, or delete resources through the Cloudflare API. First use the 'search' tool to find the right endpoints, then write code using the cloudflare.request() function.\n\nAvailable in your code:\n\ninterface CloudflareRequestOptions {\n  method: \"GET\" | \"POST\" | \"PUT\" | \"PATCH\" | \"DELETE\";\n  path: string;\n  query?: Record<string, string | number | boolean | undefined>;\n  body?: unknown;\n  contentType?: string;  // Custom Content-Type header (defaults to application/json if body is present)\n  rawBody?: boolean;     // If true, sends body as-is without JSON.stringify\n}\n\ninterface CloudflareResponse<T = unknown> {\n  success: boolean;\n  status: number;\n  result: T;\n  errors: Array<{ code: number; message: string }>;\n  messages: Array<{ code: number; message: string }>;\n  result_info?: {\n    page: number;\n    per_page: number;\n    total_pages: number;\n    count: number;\n    total_count: number;\n  };\n}\n\ndeclare const cloudflare: {\n  request<T = unknown>(options: CloudflareRequestOptions): Promise<CloudflareResponse<T>>;\n};\n\ndeclare const accountId: string;\n\n// accountId is the account_id tool argument when passed; otherwise the session's account when it is authorized for exactly one. Reading it when neither applies throws an error.\n\nWhen the session has access to multiple accounts, pass account_id. Call GET /accounts to discover available accounts. Paginate as needed, or filter by exact name with GET /accounts?name=<exact account name>.\n\nYour code must be an async arrow function that returns the result.\n\nExample: Worker with bindings (requires multipart/form-data):\nasync () => {\n  const code = `addEventListener('fetch', e => e.respondWith(MY_KV.get('key').then(v => new Response(v || 'none'))));`;\n  const metadata = { body_part: \"script\", bindings: [{ type: \"kv_namespace\", name: \"MY_KV\", namespace_id: \"your-kv-id\" }] };\n  const b = `--F${Date.now()}`;\n  const body = [`--${b}`, 'Content-Disposition: form-data; name=\"metadata\"', 'Content-Type: application/json', '', JSON.stringify(metadata), `--${b}`, 'Content-Disposition: form-data; name=\"script\"', 'Content-Type: application/javascript', '', code, `--${b}--`].join(\"\\r\\n\");\n  return cloudflare.request({ method: \"PUT\", path: `/accounts/${accountId}/workers/scripts/my-worker`, body, contentType: `multipart/form-data; boundary=${b}`, rawBody: true });\n}",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "Cloudflare account ID to run against. Optional when the session is authorized for exactly one account, and for account-independent calls such as GET /accounts."
+            },
+            "code": {
+              "type": "string",
+              "description": "JavaScript async arrow function to execute"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "search",
+        "description": "Search the Cloudflare OpenAPI spec. All $refs are pre-resolved inline.\n\nProducts: cloudforce-one, access, workers, magic, dlp, email-security, realtime, devices, ai-gateway, email, intel, gateway, stream, settings, brand-protection, data-security, ai-search, builds, security-center, browser-rendering, dex, images, logpush, api_gateway, addressing, load_balancers, rulesets, vectorize, firewall, logs... (172 total)\n\nTypes:\n\ninterface OperationInfo {\n  summary?: string;\n  description?: string;\n  tags?: string[];\n  parameters?: Array<{ name: string; in: string; required?: boolean; schema?: unknown; description?: string }>;\n  requestBody?: { required?: boolean; content?: Record<string, { schema?: unknown }> };\n  responses?: Record<string, { description?: string; content?: Record<string, { schema?: unknown }> }>;\n}\n\ninterface PathItem {\n  get?: OperationInfo;\n  post?: OperationInfo;\n  put?: OperationInfo;\n  patch?: OperationInfo;\n  delete?: OperationInfo;\n}\n\ndeclare const spec: {\n  paths: Record<string, PathItem>;\n};\n\n\nExamples:\n\n// Find endpoints by product\nasync () => {\n  const results = [];\n  for (const [path, methods] of Object.entries(spec.paths)) {\n    for (const [method, op] of Object.entries(methods)) {\n      if (op.tags?.some(t => t.toLowerCase() === 'workers')) {\n        results.push({ method: method.toUpperCase(), path, summary: op.summary });\n      }\n    }\n  }\n  return results;\n}\n\n// Get endpoint with requestBody schema (refs are resolved)\nasync () => {\n  const op = spec.paths['/accounts/{account_id}/d1/database']?.post;\n  return { summary: op?.summary, requestBody: op?.requestBody };\n}\n\n// Get endpoint parameters\nasync () => {\n  const op = spec.paths['/accounts/{account_id}/workers/scripts']?.get;\n  return op?.parameters;\n}",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "JavaScript async arrow function to search the OpenAPI spec"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__cloudflare_bindings",
+    "description": "## Your Cloudflare accounts\nYour credentials can access multiple accounts. Pass `account_id` to any account-scoped tool to choose one:\n  - Alexanders Apple Account (3075108016c07e677f6bf7128201ce79)\n  - Michaelymwang93@gmail.com's Account (117f7f4d203f21db1a3de6e295945ed4)\n  - Ubiquity DAO Workers (17b9dfa79e16b79dffcb11a66768539c)\n  - \u30a2\u30ec\u30af\u30b5\u30f3\u30c0\u30fc.eth (5c0228bee348f4cf48829ffe21b61fe9)\n\nTo avoid passing `account_id` on every call, set a `cf-account-id` header to one of the IDs above in your MCP client configuration.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "d1_database_create",
+        "description": "Create a new D1 database in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "name": {
+              "type": "string"
+            },
+            "primary_location_hint": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "wnam",
+                    "enam",
+                    "weur",
+                    "eeur",
+                    "apac",
+                    "oc"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "d1_database_delete",
+        "description": "Delete a d1 database in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "database_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "database_id"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "d1_database_get",
+        "description": "Get a D1 database in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "database_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "database_id"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "d1_database_query",
+        "description": "Query a D1 database in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "database_id": {
+              "type": "string"
+            },
+            "params": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sql": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "database_id",
+            "sql"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "d1_databases_list",
+        "description": "List all of the D1 databases in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "page": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "per_page": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "name": "hyperdrive_config_delete",
+        "description": "Delete a Hyperdrive configuration in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "hyperdrive_id": {
+              "type": "string",
+              "description": "The ID of the Hyperdrive configuration"
+            }
+          },
+          "required": [
+            "hyperdrive_id"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "hyperdrive_config_edit",
+        "description": "Edit (patch) a Hyperdrive configuration in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "caching_disabled": {
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "description": "Whether caching is disabled"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "caching_max_age": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Maximum cache age in seconds"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "caching_stale_while_revalidate": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Stale while revalidate duration in seconds"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "database": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "The database name"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "host": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "The database host address"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "hyperdrive_id": {
+              "type": "string",
+              "description": "The ID of the Hyperdrive configuration"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "The name of the Hyperdrive configuration (alphanumeric, underscore, hyphen)"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "port": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "The database port"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scheme": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "The database protocol",
+                  "enum": [
+                    "postgresql"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "user": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "The database user"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "hyperdrive_id"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "hyperdrive_config_get",
+        "description": "Get details of a specific Hyperdrive configuration in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "hyperdrive_id": {
+              "type": "string",
+              "description": "The ID of the Hyperdrive configuration"
+            }
+          },
+          "required": [
+            "hyperdrive_id"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "hyperdrive_configs_list",
+        "description": "List Hyperdrive configurations in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "direction": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Direction to order",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "order": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Field to order by",
+                  "enum": [
+                    "id",
+                    "name"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "page": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Page number of results"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "per_page": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Number of results per page"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "name": "kv_namespace_create",
+        "description": "Create a new kv namespace in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "title": {
+              "type": "string",
+              "description": "The human-readable name/title of the KV namespace"
+            }
+          },
+          "required": [
+            "title"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "kv_namespace_delete",
+        "description": "Delete a kv namespace in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "namespace_id": {
+              "type": "string",
+              "description": "The ID of the KV namespace"
+            }
+          },
+          "required": [
+            "namespace_id"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "kv_namespace_get",
+        "description": "Get details of a kv namespace in your Cloudflare account.\n\t\tUse this tool when you need to get details of a specific kv namespace in your Cloudflare account.\n\t\tReturns a kv namespace with the following properties:\n\t\t\t- id: The id of the kv namespace.\n\t\t\t- title: The title of the kv namespace.\n\t\t\t- supports_url_encoding: Whether the kv namespace supports url encoding.\n\t\t\t- beta: Whether the kv namespace is in beta.\n\t\t",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "namespace_id": {
+              "type": "string",
+              "description": "The ID of the KV namespace"
+            }
+          },
+          "required": [
+            "namespace_id"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "kv_namespace_update",
+        "description": "Update the title of a kv namespace in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "namespace_id": {
+              "type": "string",
+              "description": "The ID of the KV namespace"
+            },
+            "title": {
+              "type": "string",
+              "description": "The human-readable name/title of the KV namespace"
+            }
+          },
+          "required": [
+            "namespace_id",
+            "title"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "kv_namespaces_list",
+        "description": "\n\t\t\tList all of the kv namespaces in your Cloudflare account.\n\t\t\tUse this tool when you need to list all of the kv namespaces in your Cloudflare account.\n\t\t\tReturns a list of kv namespaces with the following properties:\n\t\t\t- id: The id of the kv namespace.\n\t\t\t- title: The title of the kv namespace.\n\t\t\t",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "params": {
+              "type": "object",
+              "description": "Optional parameters for listing KV namespaces",
+              "properties": {
+                "direction": {
+                  "type": "string",
+                  "description": "Direction to order namespaces (asc/desc)",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                },
+                "order": {
+                  "type": "string",
+                  "description": "Field to order namespaces by (id/title)",
+                  "enum": [
+                    "id",
+                    "title"
+                  ]
+                },
+                "page": {
+                  "type": "integer",
+                  "description": "Page number of results (starts at 1)"
+                },
+                "per_page": {
+                  "type": "integer",
+                  "description": "Number of namespaces per page (1-100)"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "name": "migrate_pages_to_workers_guide",
+        "description": "ALWAYS read this guide before migrating Pages projects to Workers.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "type": "function",
+        "name": "r2_bucket_create",
+        "description": "Create a new r2 bucket in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "name": {
+              "type": "string",
+              "description": "The name of the r2 bucket"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "r2_bucket_delete",
+        "description": "Delete an R2 bucket",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "name": {
+              "type": "string",
+              "description": "The name of the r2 bucket"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "r2_bucket_get",
+        "description": "Get details about a specific R2 bucket",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "name": {
+              "type": "string",
+              "description": "The name of the r2 bucket"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "r2_buckets_list",
+        "description": "List r2 buckets in your Cloudflare account",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "cursor": {
+              "description": "Query param: Pagination cursor received during the last List Buckets call. R2 buckets are paginated using cursors instead of page numbers.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "direction": {
+              "description": "Direction to order buckets",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name_contains": {
+              "description": "Bucket names to filter by. Only buckets with this phrase in their name will be returned.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "per_page": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "start_after": {
+              "description": "Bucket name to start searching after. Buckets are ordered lexicographically.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "name": "search_cloudflare_documentation",
+        "description": "Search the Cloudflare documentation.\n\n\t\tThis tool should be used to answer any question about Cloudflare products or features, including:\n\t\t- Workers, Pages, R2, Images, Stream, D1, Durable Objects, KV, Workflows, Hyperdrive, Queues\n\t\t- AI Search, Workers AI, Vectorize, AI Gateway, Browser Run\n\t\t- Zero Trust, Access, Tunnel, Gateway, Browser Isolation, WARP, DDOS, Magic Transit, Magic WAN\n\t\t- CDN, Cache, DNS, Zaraz, Argo, Rulesets, Terraform, Account and Billing\n\n\t\tResults are returned as semantically similar chunks to the query.\n\t\t",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_get_worker",
+        "description": "Get the details of the Cloudflare Worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "scriptName": {
+              "type": "string",
+              "description": "The name of the worker script to retrieve"
+            }
+          },
+          "required": [
+            "scriptName"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_get_worker_code",
+        "description": "Get the source code of a Cloudflare Worker. Note: This may be a bundled version of the worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "scriptName": {
+              "type": "string",
+              "description": "The name of the worker script to retrieve"
+            }
+          },
+          "required": [
+            "scriptName"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_list",
+        "description": "List all Workers in your Cloudflare account.\n\nIf you only need details of a single Worker, use workers_get_worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__cloudflare_builds",
+    "description": "# Cloudflare Workers Builds Tool\n* A Cloudflare Worker is a serverless function.\n* Workers Builds is a CI/CD system for building and deploying your Worker whenever you push code to GitHub or GitLab.\n\nThis server lets you view and debug Cloudflare Workers Builds for Workers (not Cloudflare Pages).\n\nStart by listing Workers with workers_list. Pass the selected Worker's ID explicitly as workerId to workers_builds_list_builds. Pass a build UUID explicitly to workers_builds_get_build or workers_builds_get_build_logs.\n\n## Your Cloudflare accounts\nYour credentials can access multiple accounts. Pass `account_id` to any account-scoped tool to choose one:\n  - Alexanders Apple Account (3075108016c07e677f6bf7128201ce79)\n  - Michaelymwang93@gmail.com's Account (117f7f4d203f21db1a3de6e295945ed4)\n  - Ubiquity DAO Workers (17b9dfa79e16b79dffcb11a66768539c)\n  - \u30a2\u30ec\u30af\u30b5\u30f3\u30c0\u30fc.eth (5c0228bee348f4cf48829ffe21b61fe9)\n\nTo avoid passing `account_id` on every call, set a `cf-account-id` header to one of the IDs above in your MCP client configuration.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "workers_builds_get_build",
+        "description": "Get details for a specific build by its UUID.\nIncludes build and deploy commands for the build (useful for debugging build failures).",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "buildUUID": {
+              "type": "string",
+              "description": "The build UUID to get details for."
+            }
+          },
+          "required": [
+            "buildUUID"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_builds_get_build_logs",
+        "description": "Get logs for a Cloudflare Workers build by its explicit UUID.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "buildUUID": {
+              "type": "string",
+              "description": "The build UUID to get logs for."
+            }
+          },
+          "required": [
+            "buildUUID"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_builds_list_builds",
+        "description": "Use the Workers Builds API to list builds for a Cloudflare Worker.\n\nworkerId is required. Use workers_list to find a Worker's ID when needed.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "page": {
+              "type": "number",
+              "description": "The page number to return."
+            },
+            "perPage": {
+              "type": "number",
+              "description": "The number of builds per page."
+            },
+            "workerId": {
+              "type": "string",
+              "description": "The Worker ID to list builds for."
+            }
+          },
+          "required": [
+            "workerId"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_get_worker",
+        "description": "Get the details of the Cloudflare Worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "scriptName": {
+              "type": "string",
+              "description": "The name of the worker script to retrieve"
+            }
+          },
+          "required": [
+            "scriptName"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_get_worker_code",
+        "description": "Get the source code of a Cloudflare Worker. Note: This may be a bundled version of the worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "scriptName": {
+              "type": "string",
+              "description": "The name of the worker script to retrieve"
+            }
+          },
+          "required": [
+            "scriptName"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_list",
+        "description": "List all Workers in your Cloudflare account.\n\nIf you only need details of a single Worker, use workers_get_worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__cloudflare_docs",
+    "description": "Tools in the mcp__cloudflare_docs namespace.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "migrate_pages_to_workers_guide",
+        "description": "ALWAYS read this guide before migrating Pages projects to Workers.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "type": "function",
+        "name": "search_cloudflare_documentation",
+        "description": "Search the Cloudflare documentation.\n\n\t\tThis tool should be used to answer any question about Cloudflare products or features, including:\n\t\t- Workers, Pages, R2, Images, Stream, D1, Durable Objects, KV, Workflows, Hyperdrive, Queues\n\t\t- AI Search, Workers AI, Vectorize, AI Gateway, Browser Run\n\t\t- Zero Trust, Access, Tunnel, Gateway, Browser Isolation, WARP, DDOS, Magic Transit, Magic WAN\n\t\t- CDN, Cache, DNS, Zaraz, Argo, Rulesets, Terraform, Account and Billing\n\n\t\tResults are returned as semantically similar chunks to the query.\n\t\t",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__cloudflare_observability",
+    "description": "# Cloudflare Workers Observability Tool\n* A Cloudflare Worker is a serverless function\n* Workers Observability lets you inspect structured logs for your Cloudflare Workers\n\nThis server allows you to analyze your Cloudflare Workers logs and metrics.\n\n## Your Cloudflare accounts\nYour credentials can access multiple accounts. Pass `account_id` to any account-scoped tool to choose one:\n  - Alexanders Apple Account (3075108016c07e677f6bf7128201ce79)\n  - Michaelymwang93@gmail.com's Account (117f7f4d203f21db1a3de6e295945ed4)\n  - Ubiquity DAO Workers (17b9dfa79e16b79dffcb11a66768539c)\n  - \u30a2\u30ec\u30af\u30b5\u30f3\u30c0\u30fc.eth (5c0228bee348f4cf48829ffe21b61fe9)\n\nTo avoid passing `account_id` on every call, set a `cf-account-id` header to one of the IDs above in your MCP client configuration.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "migrate_pages_to_workers_guide",
+        "description": "ALWAYS read this guide before migrating Pages projects to Workers.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "type": "function",
+        "name": "observability_keys",
+        "description": "Find keys in the Workers Observability Data\n\n## Best Practices\n- Set a high limit (1000+) to ensure you see all available keys\n- Add the $metadata.service filter to narrow results to a specific Worker\n\n## Troubleshooting\n- If expected fields are missing, verify the Worker is actively logging\n- For empty results, try broadening your time range\n",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "keysQuery": {
+              "type": "object",
+              "properties": {
+                "datasets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filters": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "operation": {
+                        "type": "string",
+                        "enum": [
+                          "includes",
+                          "not_includes",
+                          "starts_with",
+                          "regex",
+                          "exists",
+                          "is_null",
+                          "in",
+                          "not_in",
+                          "eq",
+                          "neq",
+                          "gt",
+                          "gte",
+                          "lt",
+                          "lte"
+                        ]
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "string",
+                          "number",
+                          "boolean"
+                        ]
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "operation",
+                      "type"
+                    ]
+                  }
+                },
+                "keyNeedle": {
+                  "type": "object",
+                  "properties": {
+                    "isRegex": {
+                      "type": "boolean"
+                    },
+                    "matchCase": {
+                      "type": "boolean"
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ]
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "needle": {
+                  "type": "object",
+                  "properties": {
+                    "isRegex": {
+                      "type": "boolean"
+                    },
+                    "matchCase": {
+                      "type": "boolean"
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ]
+                },
+                "timeframe": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "to",
+                        "from"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "offset": {
+                          "type": "string"
+                        },
+                        "reference": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "reference",
+                        "offset"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "timeframe"
+              ]
+            }
+          },
+          "required": [
+            "keysQuery"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "observability_values",
+        "description": "Find values in the Workers Observability Data.\n\n## Troubleshooting\n- For no results, verify the field exists using observability_keys first\n- If expected values are missing, try broadening your time range",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "valuesQuery": {
+              "type": "object",
+              "properties": {
+                "datasets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "filters": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string"
+                      },
+                      "operation": {
+                        "type": "string",
+                        "enum": [
+                          "includes",
+                          "not_includes",
+                          "starts_with",
+                          "regex",
+                          "exists",
+                          "is_null",
+                          "in",
+                          "not_in",
+                          "eq",
+                          "neq",
+                          "gt",
+                          "gte",
+                          "lt",
+                          "lte"
+                        ]
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "string",
+                          "number",
+                          "boolean"
+                        ]
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "boolean"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "operation",
+                      "type"
+                    ]
+                  }
+                },
+                "key": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "needle": {
+                  "type": "object",
+                  "properties": {
+                    "isRegex": {
+                      "type": "boolean"
+                    },
+                    "matchCase": {
+                      "type": "boolean"
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "value"
+                  ]
+                },
+                "timeframe": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "to",
+                        "from"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "offset": {
+                          "type": "string"
+                        },
+                        "reference": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "reference",
+                        "offset"
+                      ]
+                    }
+                  ]
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "string",
+                    "boolean",
+                    "number"
+                  ]
+                }
+              },
+              "required": [
+                "timeframe",
+                "key",
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "valuesQuery"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "query_worker_observability",
+        "description": "Query the Workers Observability API to analyze logs and metrics from your Cloudflare Workers.\n\n\t* A query typical query looks like this:\n\t\t\t\t{\"view\":\"events\",\"queryId\":\"workers-logs-events\",\"limit\":5,\"dry\":true,\"parameters\":{\"datasets\":[\"cloudflare-workers\"],\"filters\":[{\"id\":\"520\",\"key\":\"message\",\"operation\":\"eq\",\"type\":\"string\",\"value\":\"Clickhouse Statistics\"},{\"id\":\"2088\",\"key\":\"statistics.elapsed\",\"operation\":\"gt\",\"type\":\"number\",\"value\":\"0.269481519\"}],\"calculations\":[],\"groupBys\":[],\"havings\":[]},\"timeframe\":{\"to\":\"2025-04-30T20:53:15Z\",\"from\":\" \"\"2025-04-30T19:53:15Z\"}}\n## Core Capabilities\nThis tool provides three primary views of your Worker data:\n1. **List Events** - Browse individual request logs and errors\n2. **Calculate Metrics** - Compute statistics across requests (avg, p99, etc.)\n3. **Find Specific Invocations** - Locate individual requests matching criteria\n\n## Filtering Best Practices\n- Before applying filters, use the observability_keys and observability_values tools to confirm available filter fields and the correct filter value to add unless you have the data in a response from a previous query.\n- Common filter fields:  $metadata.service, $metadata.trigger, $metadata.message, $metadata.level, $metadata.requestId,\n\n## Calculation Best Practices\n- Before applying calculations, use the observability_keys tools to confirm key that should be used for the calculation\n\n## Troubleshooting\n- If no results are returned, suggest broadening the time range or relaxing filters\n- For errors about invalid fields, recommend using observability_keys to see available options\n",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string"
+            },
+            "query": {
+              "type": "object",
+              "properties": {
+                "dry": {
+                  "type": "boolean"
+                },
+                "granularity": {
+                  "type": "number"
+                },
+                "limit": {
+                  "type": "number"
+                },
+                "offset": {
+                  "type": "string"
+                },
+                "offsetBy": {
+                  "type": "number"
+                },
+                "offsetDirection": {
+                  "type": "string"
+                },
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "calculations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "alias": {
+                            "type": "string"
+                          },
+                          "key": {
+                            "type": "string"
+                          },
+                          "keyType": {
+                            "type": "string",
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          },
+                          "operator": {
+                            "type": "string",
+                            "enum": [
+                              "uniq",
+                              "count",
+                              "max",
+                              "min",
+                              "sum",
+                              "avg",
+                              "median",
+                              "p001",
+                              "p01",
+                              "p05",
+                              "p10",
+                              "p25",
+                              "p75",
+                              "p90",
+                              "p95",
+                              "p99",
+                              "p999",
+                              "stddev",
+                              "variance"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "operator"
+                        ]
+                      }
+                    },
+                    "datasets": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "filterCombination": {
+                      "type": "string",
+                      "enum": [
+                        "and",
+                        "or",
+                        "AND",
+                        "OR"
+                      ]
+                    },
+                    "filters": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "operation": {
+                            "type": "string",
+                            "enum": [
+                              "includes",
+                              "not_includes",
+                              "starts_with",
+                              "regex",
+                              "exists",
+                              "is_null",
+                              "in",
+                              "not_in",
+                              "eq",
+                              "neq",
+                              "gt",
+                              "gte",
+                              "lt",
+                              "lte"
+                            ]
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "boolean"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "operation",
+                          "type"
+                        ]
+                      }
+                    },
+                    "groupBys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "string",
+                              "number",
+                              "boolean"
+                            ]
+                          },
+                          "value": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "value"
+                        ]
+                      }
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "needle": {
+                      "type": "object",
+                      "properties": {
+                        "isRegex": {
+                          "type": "boolean"
+                        },
+                        "matchCase": {
+                          "type": "boolean"
+                        },
+                        "value": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "value"
+                      ]
+                    },
+                    "orderBy": {
+                      "type": "object",
+                      "properties": {
+                        "order": {
+                          "type": "string",
+                          "enum": [
+                            "asc",
+                            "desc"
+                          ]
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "value"
+                      ]
+                    }
+                  }
+                },
+                "queryId": {
+                  "type": "string"
+                },
+                "timeframe": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "type": "string"
+                        },
+                        "to": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "to",
+                        "from"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "offset": {
+                          "type": "string"
+                        },
+                        "reference": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "reference",
+                        "offset"
+                      ]
+                    }
+                  ]
+                },
+                "view": {
+                  "type": "string",
+                  "enum": [
+                    "events",
+                    "calculations",
+                    "invocations"
+                  ]
+                }
+              },
+              "required": [
+                "queryId",
+                "parameters",
+                "timeframe"
+              ]
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "search_cloudflare_documentation",
+        "description": "Search the Cloudflare documentation.\n\n\t\tThis tool should be used to answer any question about Cloudflare products or features, including:\n\t\t- Workers, Pages, R2, Images, Stream, D1, Durable Objects, KV, Workflows, Hyperdrive, Queues\n\t\t- AI Search, Workers AI, Vectorize, AI Gateway, Browser Run\n\t\t- Zero Trust, Access, Tunnel, Gateway, Browser Isolation, WARP, DDOS, Magic Transit, Magic WAN\n\t\t- CDN, Cache, DNS, Zaraz, Argo, Rulesets, Terraform, Account and Billing\n\n\t\tResults are returned as semantically similar chunks to the query.\n\t\t",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_get_worker",
+        "description": "Get the details of the Cloudflare Worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "scriptName": {
+              "type": "string",
+              "description": "The name of the worker script to retrieve"
+            }
+          },
+          "required": [
+            "scriptName"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_get_worker_code",
+        "description": "Get the source code of a Cloudflare Worker. Note: This may be a bundled version of the worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            },
+            "scriptName": {
+              "type": "string",
+              "description": "The name of the worker script to retrieve"
+            }
+          },
+          "required": [
+            "scriptName"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "workers_list",
+        "description": "List all Workers in your Cloudflare account.\n\nIf you only need details of a single Worker, use workers_get_worker.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "account_id": {
+              "type": "string",
+              "description": "The Cloudflare account ID to scope this call to. Only needed when your credentials can access multiple accounts and no cf-account-id header is configured."
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__codex_session_search",
+    "description": "Tools in the mcp__codex_session_search namespace.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "codex_session_search",
+        "description": "Read-only search of the local Codex session state and projected history. Returns matching session IDs, concise descriptions, working directories, source surfaces, persisted turn status, and last activity time. Use an empty query for a recent-session view; set active_only to find sessions with one or more persisted inProgress turns.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "active_only": {
+              "type": "boolean",
+              "description": "Only sessions with one or more projected turns still inProgress."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Optional exact working-directory filter."
+            },
+            "deep_search": {
+              "type": "boolean",
+              "description": "Scan projected history even when metadata already yields enough matches."
+            },
+            "include_archived": {
+              "type": "boolean",
+              "description": "Include archived sessions."
+            },
+            "include_subagents": {
+              "type": "boolean",
+              "description": "Include worker, explorer, review, and other subagent threads."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of sessions to return."
+            },
+            "model_assist": {
+              "type": "boolean",
+              "description": "Ask the gateway model to verify and summarize bounded results. Defaults to true for keyword queries; set false for local-only search."
+            },
+            "query": {
+              "type": "string",
+              "description": "Keywords or a short phrase such as 'linkedin mcp' or 'continuous head movement'. Empty returns the recent view."
+            },
+            "recent_hours": {
+              "type": "integer",
+              "description": "Only include sessions active within this many hours. Default is 168; use 0 to disable the cutoff."
+            },
+            "sort": {
+              "type": "string",
+              "description": "Use relevance for keyword searches or recent for a time-ordered view.",
+              "enum": [
+                "relevance",
+                "recent"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__cua_repl",
+    "description": "UI automation through cua_repl using the initialized cua API.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "js",
+        "description": "Control native apps or browsers on the user\u2019s computer by reading or operating UI. Prefer purpose-built skills, connectors, APIs, or CLIs when available.\n\nOn the first invocation of `cua_repl`, or after resetting it, execute exactly one of the API calls shown below, optionally assigning its result to a variable. Do not add other API calls, waits, or snapshots to that invocation.\nThe tool result will include documentation and, when creating or selecting a tab or selecting an app, its initial UI state. Selecting a browser does not open a tab. Read that result before continuing.\nUse only APIs described in the tool instructions or returned documentation.\n\nWhen you need an inventory of available apps, browsers, and tabs, get a snapshot of all enabled surfaces. Otherwise, use the relevant entry point below:\n\n```javascript\nawait cua.getState();\n```\n\nUse the first matching browser control option from the user's request:\n\nFor a tab @-mention (`mention=tab-v1`):\nPass the complete `plugin://...` URL to get the referenced tab.\n\n```javascript\nlet tab = await cua.getTab({ mention: tabMentionUrl });\n```\n\nFor an existing tab identified by URL in browser context (including the current IAB tab):\n\n```javascript\nlet tab = await cua.getTab({ url }, { browser: browserId });\n```\n\nKnown tab ID (`tabId` or `providerTabId`) and browser (name or browser @-mention):\n\n```javascript\nlet tab = await cua.getTab(tabId, { browser: browserId });\n```\n\nTo open a URL in the in-app browser (`@Browser`):\n\n```javascript\nlet tab = await cua.createBrowserTab(\"iab\", url, { visible: boolean });\n```\n\nTo open a URL in another named browser: pass its name directly; do not call `getBrowser` first.\n\n```javascript\nlet tab = await cua.createBrowserTab(browserName, url, browserOptions);\n```\n\nKnown URL, only when the user has not specified a browser by name or @-mention:\n\n```javascript\nlet browser = await cua.getBrowser({ url });\n```\n\nBrowser IDs and options:\n\n- `\"mcpapps\"`: use `cua.getBrowser({ id: \"mcpapps\" })` for existing full-screen MCP Apps in the task\u2019s side panel.\n- `\"iab\"` (in-app browser): in `createBrowserTab`, use `visible: true` to show the browser; `false` to keep it hidden.\n- `\"chrome\"` (@Chrome), `\"edge\"` (@Edge): pass a short, emoji-prefixed `sessionName` (e.g. `\"\ud83d\udd0e Task\"`) to `createBrowserTab` when starting a task.\n\nIf the user specifies an app to use, get the app by name, bundle ID, or path:\n\n```javascript\nlet app = await cua.getApp(\"Example App\");\n```\n\nTo add other content to the tool result, use `nodeRepl.write(value)` for text or other values and `await nodeRepl.emitImage(image)` for images. The APIs listed above already display their documentation or UI state; do not wrap their results in `write` or `emitImage`.\n\nIf your context begins with a summary of an existing computer use task, call `await cua.rewriteDocumentation()` before continuing the computer use task to ensure you have a complete view of the necessary documentation. This tool is part of plugin `unified-computer-use`.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "JavaScript to execute using the initialized cua_repl runtime."
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "description": "Optional execution timeout in milliseconds. Defaults to 30000 (30 seconds) when omitted."
+            },
+            "title": {
+              "type": "string",
+              "description": "Short user-facing description of what the code does."
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "js_reset",
+        "description": "Reset the persistent cua_repl JavaScript session. All JavaScript bindings are discarded. The next cua_repl.js call initializes a fresh runtime for the enabled surfaces. This does not close browser tabs or native apps, or erase their state. This tool is part of plugin `unified-computer-use`.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__node_repl",
+    "description": "Use `js` for `node_repl` execution with persistent, redeclarable top-level bindings, `js_reset` to clear bindings, and `js_add_node_module_dir` to add package directories.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "js",
+        "description": "Execute JavaScript in a persistent `node_repl` with top-level await. Top-level bindings persist until `js_reset` and can be redeclared. Use `const` for stable values and `let` for changing values. Use dynamic imports such as `await import(\"playwright\")`; top-level static imports and `node:process` are unavailable. Use `nodeRepl.write(value)` for output and `await nodeRepl.emitImage(image)` for images. Execution context is available through `nodeRepl.cwd`, `nodeRepl.homeDir`, `nodeRepl.tmpDir`, and `nodeRepl.requestMeta`. The default timeout is 30000 ms (30 seconds); increase `timeout_ms` for longer operations. Use `js_add_node_module_dir` when an additional package directory is required.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "JavaScript code to execute with top-level await."
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "description": "Optional execution timeout in milliseconds. Defaults to 30000 (30 seconds) when omitted."
+            },
+            "title": {
+              "type": "string",
+              "description": "Short user-facing description of what the code does."
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "js_add_node_module_dir",
+        "description": "Add an absolute `node_modules` directory for package imports. The directory remains available after `js_reset`.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute path to a node_modules directory to add to Node package resolution."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "js_reset",
+        "description": "Reset the JavaScript kernel and clear all bindings.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  {
+    "type": "namespace",
+    "name": "mcp__openaiDeveloperDocs",
+    "description": "Tools in the mcp__openaiDeveloperDocs namespace.",
+    "tools": [
+      {
+        "type": "function",
+        "name": "fetch_openai_doc",
+        "description": "Fetch the markdown for a specific doc page from `developers.openai.com`, `platform.openai.com`, or `learn.chatgpt.com` so you can quote or summarize exact, up-to-date guidance (schemas, examples, limits, and edge cases). Prefer to **`search_openai_docs` first** (or `list_openai_docs` if you\u2019re browsing) to find the best URL, then `fetch_openai_doc` to pull the exact text; you can pass `anchor` (for example, `#streaming`) to fetch just that section.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "anchor": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "get_openapi_spec",
+        "description": "Return the OpenAPI spec for a specific API endpoint URL. Optionally filter code samples by language, or return only code samples.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "codeExamplesOnly": {
+              "type": "boolean"
+            },
+            "languages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ]
+        }
+      },
+      {
+        "type": "function",
+        "name": "list_api_endpoints",
+        "description": "List all OpenAI API endpoint URLs available in the OpenAPI spec.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "type": "function",
+        "name": "list_openai_docs",
+        "description": "List or browse pages from `platform.openai.com`, `developers.openai.com`, and `learn.chatgpt.com` that this server crawls (useful when you don\u2019t know the right query yet or you\u2019re paging through results). Use this whenever you are working with the OpenAI API (including the Responses API), OpenAI API SDKs, plugins, ChatGPT, or Codex. Results include URLs\u2014**after `list`, use `fetch_openai_doc`** on a result URL to get the full markdown.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "type": "function",
+        "name": "search_openai_docs",
+        "description": "Search across `platform.openai.com`, `developers.openai.com`, and `learn.chatgpt.com` docs. Use this whenever you are working with the OpenAI API (including the Responses API), OpenAI API SDKs, plugins, ChatGPT, or Codex. Results include URLs\u2014**after `search`, use `fetch_openai_doc`** to read/quote the exact markdown.",
+        "strict": false,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer"
+            },
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "get_goal",
+    "description": "Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "create_goal",
+    "description": "Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.\nSet token_budget only when an explicit token budget is requested. Fails if an unfinished goal exists; use update_goal only for status.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "objective": {
+          "type": "string",
+          "description": "Required. The concrete objective to start pursuing. This starts a new active goal when no goal exists or replaces the current goal when it is complete."
+        },
+        "token_budget": {
+          "type": "integer",
+          "description": "Positive token budget for the new goal. Omit unless explicitly requested."
+        }
+      },
+      "required": [
+        "objective"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "update_goal",
+    "description": "Update the existing goal.\nSet status to `paused` only at the user's explicit request to pause this goal, never on your own initiative. Ask if unclear; a later resume revokes that request. Report the returned status and stop goal work. Budget limits take precedence over pausing.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.",
+    "strict": false,
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Required. `paused` requires an explicit user request. Set to `complete` only when the objective is achieved and no required work remains. Set to `blocked` only after the same blocking condition has recurred for at least three consecutive goal turns and the agent is at an impasse. After a previously blocked goal is resumed, the resumed run starts a fresh blocked audit.",
+          "enum": [
+            "complete",
+            "blocked",
+            "paused"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "web_search",
+    "external_web_access": false,
+    "user_location": {
+      "type": "approximate",
+      "country": "US",
+      "region": "NY",
+      "city": "New York",
+      "timezone": "America/New_York"
+    }
+  }
+]

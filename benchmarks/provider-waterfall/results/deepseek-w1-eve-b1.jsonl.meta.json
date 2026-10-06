@@ -1,0 +1,26 @@
+{
+  "run_id": "deepseek-w1-eve-b1-1791250085504",
+  "provider": "deepseek",
+  "label": "DeepSeek direct",
+  "model": "deepseek-flash",
+  "wire": "responses",
+  "selection_requested": [
+    "deepseek"
+  ],
+  "selection_stored": [
+    "deepseek"
+  ],
+  "gateway": "http://127.0.0.1:7998",
+  "gateway_release": {
+    "status": "available",
+    "release": {
+      "git_sha": "3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698",
+      "deployment_id": "mac-3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698"
+    }
+  },
+  "corpus_sha256": "6aa1248dac25135f6fe2dfe8444f33f8f357d369940d296cd692b68ba1cdb288",
+  "period": "w1-eve",
+  "batch": 1,
+  "pilot": false,
+  "started_at": "2026-10-06T01:28:05.505Z"
+}

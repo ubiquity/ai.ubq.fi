@@ -1,0 +1,26 @@
+{
+  "run_id": "lithos-probe-concurrency-w1-b0-1791251931083",
+  "provider": "lithos",
+  "label": "LithosAI",
+  "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "wire": "responses",
+  "selection_requested": [
+    "lithos"
+  ],
+  "selection_stored": [
+    "lithos"
+  ],
+  "gateway": "http://127.0.0.1:7998",
+  "gateway_release": {
+    "status": "available",
+    "release": {
+      "git_sha": "3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698",
+      "deployment_id": "mac-3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698"
+    }
+  },
+  "corpus_sha256": "6aa1248dac25135f6fe2dfe8444f33f8f357d369940d296cd692b68ba1cdb288",
+  "period": "probe-concurrency-w1",
+  "batch": 0,
+  "pilot": false,
+  "started_at": "2026-10-06T01:58:51.084Z"
+}

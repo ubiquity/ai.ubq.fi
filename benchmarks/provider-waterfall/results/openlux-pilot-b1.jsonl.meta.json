@@ -1,0 +1,26 @@
+{
+  "run_id": "openlux-pilot-b1-1791248767166",
+  "provider": "openlux",
+  "label": "OpenLux",
+  "model": "deepseek-v4.1-flash",
+  "wire": "chat",
+  "selection_requested": [
+    "openlux"
+  ],
+  "selection_stored": [
+    "openlux"
+  ],
+  "gateway": "http://127.0.0.1:7998",
+  "gateway_release": {
+    "status": "available",
+    "release": {
+      "git_sha": "3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698",
+      "deployment_id": "mac-3691fe4a36e4e4c6aae6f8c6aa04c12ed3ff6698"
+    }
+  },
+  "corpus_sha256": null,
+  "period": "pilot",
+  "batch": 1,
+  "pilot": true,
+  "started_at": "2026-10-06T01:06:07.166Z"
+}
