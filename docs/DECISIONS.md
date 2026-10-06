@@ -1513,18 +1513,19 @@ cap more readily; fitting still drops the lowest-relevance kept results first, a
 
 ## Jev compaction hybrid residue pass - 2026-10-06
 
-`JEV_COMPACTION_HYBRID=1` adds one best-effort Cerebras gpt-oss-120b residue pass after the verbatim Jev selection: the
-model compresses the memory (dedupe, supersession, prose reduction) and deterministic guards append a harvested
-identifier ledger (latest occurrences first, capped) and a verbatim tail of the latest memory, so identifier retention
-never depends on the model. The pass runs through the gateway's own Cerebras transport with a bounded deadline; any
-missing credential, transport failure, timeout, empty or non-shrinking output keeps the pure Jev summary unchanged. The
-pass is off unless the environment selects it, and the accepted answer is marked `hybrid=1` in the `x-jev-compaction`
-header with `hybrid`/`hybrid_ms` in the completion log line, so a hybrid memory is always distinguishable from a
-verbatim one. No client usage, model or cost counter is invented: the residue call uses the provider credential, like
-the Jev calls, and the route still fails closed on every pre-existing path.
+The hybrid residue pass adds one best-effort Cerebras gpt-oss-120b call after the verbatim Jev selection: the model
+compresses the memory (dedupe, supersession, prose reduction) and deterministic guards append a harvested identifier
+ledger (latest occurrences first, capped) and a verbatim tail of the latest memory, so identifier retention never
+depends on the model. The pass runs through the gateway's own Cerebras transport with a bounded deadline; any missing
+credential, transport failure, timeout, empty or non-shrinking output keeps the pure Jev summary unchanged. The pass
+runs by default with no configuration (`JEV_COMPACTION_HYBRID=0` is the operator kill switch, and an injected asker seam
+bypasses it for tests and diagnostics), and the accepted answer is marked `hybrid=1` in the `x-jev-compaction` header
+with `hybrid`/`hybrid_ms` in the completion log line, so a hybrid memory is always distinguishable from a verbatim one.
+No client usage, model or cost counter is invented: the residue call uses the provider credential, like the Jev calls,
+and the route still fails closed on every pre-existing path.
 
 Reason: measured on the eval harness, the hybrid scored 100% needle retention on both fixtures with 4/4 continuation and
 no stale-endorsement, materially better than the pure selection renderer, while staying inside the 10-second compaction
 budget. Reversal risk: the summary is now partly generated prose, so a degraded residue call could in principle add text
 the model invented; the guards copy every identifier mechanically, the output must be strictly smaller than the pure
-render, and turning the flag off restores the verbatim-only contract exactly.
+render, and setting `JEV_COMPACTION_HYBRID=0` restores the verbatim-only contract exactly.
