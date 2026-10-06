@@ -421,6 +421,7 @@ export async function buildCompactionResponse(
     floor_tokens: fitted.floorBound === true ? estimateTokens(summary) : null,
     jev_requests: renderedStats.requests,
     state_stage: renderedStats.stateStage || "none",
+    windows: renderedStats.windows,
     total_ms: renderedStats.ms,
   });
 

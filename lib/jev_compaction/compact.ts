@@ -34,6 +34,15 @@ const DEFAULT_OPTIONS: ResolvedCompactOptions = {
 /** Tokens the request envelope (`model`, key names) adds around state and questions. */
 const REQUEST_OVERHEAD_TOKENS = 20;
 
+/**
+ * Windowed decisions: when the global state fit has to collapse or drop
+ * context and the transcript carries enough calls to matter, calls are decided
+ * per message window with a local state instead of one degraded global state.
+ */
+const WINDOW_MIN_CANDIDATES = 40;
+const WINDOW_TARGET_CHARS = 80_000;
+const WINDOW_CONCURRENCY = 3;
+
 function finite(value: number | undefined, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -212,7 +221,94 @@ function count(decisions: readonly CallDecision[], reason: CallDecision["reason"
   return decisions.filter((decision) => decision.reason === reason).length;
 }
 
+function isDegradedStage(stage: string): boolean {
+  return stage !== "full" && !stage.startsWith("inputs<=");
+}
+
 /**
+ * Splits messages into windows of at most `maxWindowChars`, never splitting a
+ * tool call from its result pair. Callers slice windows out of the transcript
+ * for local state fitting and decisions.
+ */
+export function planWindows(messages: readonly Message[], calls: readonly ToolCall[], maxWindowChars: number): { start: number; end: number }[] {
+  const requiredEnd = new Map<number, number>();
+  for (const call of calls) {
+    const lo = Math.min(call.callIndex, call.resultIndex);
+    const hi = Math.max(call.callIndex, call.resultIndex);
+    const existing = requiredEnd.get(lo);
+    if (existing === undefined || existing < hi) requiredEnd.set(lo, hi);
+  }
+  const windows: { start: number; end: number }[] = [];
+  let start = 0;
+  let chars = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const size = messageChars(messages[index]);
+    if (index > start && chars + size > maxWindowChars) {
+      let end = index;
+      for (let cursor = start; cursor < end; cursor += 1) {
+        const required = requiredEnd.get(cursor);
+        if (required !== undefined) end = Math.max(end, required + 1);
+      }
+      windows.push({ start, end });
+      start = end;
+      chars = 0;
+      index = Math.max(index, end - 1);
+      continue;
+    }
+    chars += size;
+  }
+  if (start < messages.length) windows.push({ start, end: messages.length });
+  return windows;
+}
+
+async function askWindowed(
+  asker: JevAsker,
+  messages: readonly Message[],
+  calls: readonly ToolCall[],
+  candidates: readonly ToolCall[],
+  options: ResolvedCompactOptions,
+  plan: readonly { start: number; end: number }[]
+): Promise<{ answers: Map<string, CallAnswer>; windows: number; stages: string[]; maxStateTokens: number; requests: number }> {
+  const candidateIds = new Set(candidates.map((call) => call.id));
+  const tasks = plan
+    .map((window) => {
+      const windowCalls = calls.filter((call) => call.callIndex >= window.start && call.callIndex < window.end && call.resultIndex < window.end);
+      return {
+        messages: messages.slice(window.start, window.end),
+        calls: windowCalls,
+        candidates: windowCalls.filter((call) => candidateIds.has(call.id)),
+      };
+    })
+    .filter((task) => task.candidates.length > 0);
+  const answers = new Map<string, CallAnswer>();
+  const stages: string[] = [];
+  let maxStateTokens = 0;
+  let requests = 0;
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= tasks.length) return;
+      const task = tasks[index];
+      const local = fitState(task.messages, task.calls, { maxStateTokens: options.maxStateTokens, preserveRecentMessages: 0, goal: options.goal });
+      stages[index] = local.stage;
+      maxStateTokens = Math.max(maxStateTokens, local.tokens);
+      for (const batch of batchCalls(task.candidates, local.tokens, options)) {
+        const answered = await askBatch(asker, local.state, batch);
+        for (const [id, answer] of answered) answers.set(id, answer);
+        requests += 1;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(WINDOW_CONCURRENCY, tasks.length)) }, () => worker()));
+  return { answers, windows: tasks.length, stages, maxStateTokens, requests };
+}
+
+/**
+ * Compacts a transcript by asking Jev, for every tool call outside the pinned
+ * first and newest messages, whether the call and whether its result must
+ * stay./**
  * Compacts a transcript by asking Jev, for every tool call outside the pinned
  * first and newest messages, whether the call and whether its result must
  * stay. The whole history (results omitted, fitted into `maxStateTokens`) is
@@ -228,13 +324,23 @@ export async function compact(messages: readonly Message[], asker: JevAsker, opt
 
   let fitted: { tokens: number; stage: string } = { tokens: 0, stage: "" };
   let batches: ToolCall[][] = [];
+  let windows = 0;
   const answers = new Map<string, CallAnswer>();
   if (candidates.length > 0) {
     const state = fitState(messages, calls, resolved);
-    fitted = state;
-    batches = batchCalls(candidates, state.tokens, resolved);
-    const answered = await Promise.all(batches.map((batch) => askBatch(asker, state.state, batch)));
-    for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
+    const plan = planWindows(messages, calls, WINDOW_TARGET_CHARS);
+    if (candidates.length >= WINDOW_MIN_CANDIDATES && isDegradedStage(state.stage) && plan.length > 1) {
+      const windowed = await askWindowed(asker, messages, calls, candidates, resolved, plan);
+      fitted = { tokens: windowed.maxStateTokens, stage: `windowed x${windowed.windows} [${windowed.stages.join(", ")}]`.slice(0, 200) };
+      batches = new Array(windowed.requests);
+      windows = windowed.windows;
+      for (const [id, answer] of windowed.answers) answers.set(id, answer);
+    } else {
+      fitted = state;
+      batches = batchCalls(candidates, state.tokens, resolved);
+      const answered = await Promise.all(batches.map((batch) => askBatch(asker, state.state, batch)));
+      for (const map of answered) for (const [id, answer] of map) answers.set(id, answer);
+    }
   }
 
   const decisions = calls.map((call) => decideCall(call, answers.get(call.id) ?? { keepCall: 1, keepResult: 1 }, resolved));
@@ -254,6 +360,7 @@ export async function compact(messages: readonly Message[], asker: JevAsker, opt
       pinned: count(decisions, "pinned"),
       stateTokens: fitted.tokens,
       stateStage: fitted.stage,
+      windows,
       requests: batches.length,
       ms: Date.now() - started,
     },

@@ -138,6 +138,8 @@ export type CompactResult = {
     stateTokens: number;
     /** Which fitting stage the state needed, "" when no request was made. */
     stateStage: string;
+    /** Number of decision windows used; 0 when the global state served every call. */
+    windows: number;
     requests: number;
     ms: number;
   };
