@@ -595,12 +595,14 @@ function failureResponse(kind: FailureKind): Response {
 }
 
 /**
- * The hybrid residue pass stays off unless the environment selects it; a test
- * seam overrides both. It never throws: a failed pass returns null and the
- * caller keeps the pure Jev summary.
+ * The hybrid residue pass runs by default (`JEV_COMPACTION_HYBRID=0` disables
+ * it). An injected asker marks a test or diagnostic seam, so the default pass is
+ * bypassed there unless the caller injects a residue explicitly. The pass never
+ * throws: a failed pass returns null and the caller keeps the pure Jev summary.
  */
 function resolveResidue(deps: JevCompactionDeps): CompactionResidue | undefined {
   if (deps.residue) return deps.residue;
+  if (deps.asker || askerForTest) return undefined;
   return hybridResidueEnabled() ? runHybridResiduePass : undefined;
 }
 

@@ -161,3 +161,29 @@ Deno.test("handler routes the residue seam through the real compaction handler",
   assert.ok((await response.text()).includes(SLIM_MARKER));
   assert.equal(typeof hybridResidueEnabled(), "boolean");
 });
+
+Deno.test("injected asker seams bypass the default residue pass without any network attempt", async () => {
+  const request = new Request("http://127.0.0.1:7999/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-codex-turn-metadata": COMPACTION_METADATA },
+    body: JSON.stringify(body(transcript())),
+  });
+  const originalFetch = globalThis.fetch;
+  let residueAttempts = 0;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    let url: string;
+    if (typeof input === "string") url = input;
+    else if (input instanceof URL) url = input.toString();
+    else url = input.url;
+    if (url.includes("cerebras.ai")) residueAttempts += 1;
+    return originalFetch(input as RequestInfo, init);
+  }) as typeof fetch;
+  try {
+    const response = await handleJevResponsesCompaction(request, { asker: decisionAsker(dropEverything) });
+    assert.equal(response.status, 200);
+    assert.ok(!(response.headers.get("x-jev-compaction") ?? "").includes("hybrid=1"));
+    assert.equal(residueAttempts, 0, "an injected asker must not engage the default residue pass");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
