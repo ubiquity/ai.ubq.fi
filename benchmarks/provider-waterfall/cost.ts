@@ -182,9 +182,6 @@ export const RATE_CARD: Readonly<Partial<Record<ProviderId, ProviderRateCard>>> 
   },
 };
 
-/** Renders a per-token rate as USD per 1M tokens. */
-export const usdPerMillionTokens = (usdPerToken: number): number => Math.round(usdPerToken * 1_000_000 * 1e6) / 1e6;
-
 /**
  * DeepSeek pricing window for a request instant. Window boundaries are exact
  * whole UTC hours; weekends are off-peak. Chinese public holidays are also

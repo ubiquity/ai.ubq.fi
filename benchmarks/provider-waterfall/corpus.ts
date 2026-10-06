@@ -32,6 +32,15 @@ export const validateCorpusEntry = (value: unknown): CorpusEntry => {
   return value as unknown as CorpusEntry;
 };
 
+/** First non-empty string among the manifest's supported hash fields. */
+const manifestSha256 = (manifestRaw: Record<string, unknown>): string | null => {
+  for (const candidate of [manifestRaw.sha256, manifestRaw.content_sha256]) {
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  const corpusRecord = isRecord(manifestRaw.corpus) ? manifestRaw.corpus : null;
+  return corpusRecord && typeof corpusRecord.sha256 === "string" && corpusRecord.sha256 ? corpusRecord.sha256 : null;
+};
+
 export const loadCorpus = async (root: string): Promise<Readonly<{ entries: readonly CorpusEntry[]; manifest: CorpusManifest; sha256: string }>> => {
   const corpusPath = `${root}/corpus/corpus-v1.jsonl`;
   const manifestPath = `${root}/corpus/corpus-v1.manifest.json`;
@@ -39,15 +48,7 @@ export const loadCorpus = async (root: string): Promise<Readonly<{ entries: read
   const sha256 = await sha256Hex(bytes);
   const manifestRaw = JSON.parse(await Deno.readTextFile(manifestPath)) as unknown;
   if (!isRecord(manifestRaw)) throw new Error("corpus manifest is not an object");
-  const corpusRecord = isRecord(manifestRaw.corpus) ? manifestRaw.corpus : null;
-  const manifestSha =
-    typeof manifestRaw.sha256 === "string"
-      ? manifestRaw.sha256
-      : typeof manifestRaw.content_sha256 === "string"
-        ? manifestRaw.content_sha256
-        : corpusRecord && typeof corpusRecord.sha256 === "string"
-          ? corpusRecord.sha256
-          : null;
+  const manifestSha = manifestSha256(manifestRaw);
   if (manifestSha === null) throw new Error("corpus manifest carries no content sha256");
   if (manifestSha !== sha256) throw new Error(`corpus sha256 mismatch: manifest ${manifestSha} != file ${sha256}`);
   const text = new TextDecoder().decode(bytes);

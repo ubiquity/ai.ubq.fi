@@ -75,37 +75,44 @@ const normalizeHigherBetter = (values: readonly (number | null)[]): (number | nu
   });
 };
 
+type ProviderCostTotals = Readonly<{ total: number; priced: number; unpriced: number; outputTokens: number; successful: number }>;
+
+const providerCostTotals = (spec: (typeof BENCHMARK_PROVIDERS)[number], records: readonly AttemptRecord[]): ProviderCostTotals => {
+  let total = 0;
+  let priced = 0;
+  let unpriced = 0;
+  let outputTokens = 0;
+  let successful = 0;
+  for (const record of records) {
+    if (record.provider !== spec.id || !record.success || !record.usage) continue;
+    successful += 1;
+    const cost = expectedCostMicroUsd(
+      spec.id,
+      {
+        input_tokens: record.usage.input_tokens,
+        cached_input_tokens: record.usage.cached_input_tokens,
+        cache_write_input_tokens: record.usage.cache_write_input_tokens,
+        output_tokens: record.usage.output_tokens,
+      },
+      Date.parse(record.started_at)
+    );
+    if (cost === null) {
+      unpriced += 1;
+      continue;
+    }
+    total += cost.total_micro_usd;
+    priced += 1;
+    outputTokens += record.usage.output_tokens;
+  }
+  return { total, priced, unpriced, outputTokens, successful };
+};
+
 export const summarizeCosts = (records: readonly AttemptRecord[]): readonly CostSummary[] => {
   const summaries: CostSummary[] = [];
   for (const spec of BENCHMARK_PROVIDERS) {
     const providerRecords = records.filter((record) => record.provider === spec.id);
     if (!providerRecords.length) continue;
-    let total = 0;
-    let priced = 0;
-    let unpriced = 0;
-    let outputTokens = 0;
-    let successful = 0;
-    for (const record of providerRecords) {
-      if (!record.success || !record.usage) continue;
-      successful += 1;
-      const cost = expectedCostMicroUsd(
-        spec.id,
-        {
-          input_tokens: record.usage.input_tokens,
-          cached_input_tokens: record.usage.cached_input_tokens,
-          cache_write_input_tokens: record.usage.cache_write_input_tokens,
-          output_tokens: record.usage.output_tokens,
-        },
-        Date.parse(record.started_at)
-      );
-      if (cost === null) {
-        unpriced += 1;
-        continue;
-      }
-      total += cost.total_micro_usd;
-      priced += 1;
-      outputTokens += record.usage.output_tokens;
-    }
+    const { total, priced, unpriced, outputTokens, successful } = providerCostTotals(spec, records);
     const costKnown = priced > 0;
     summaries.push({
       provider: spec.id,
@@ -133,9 +140,10 @@ export const scoreProviders = (metrics: readonly ProviderMetrics[], costs: reado
   const tps = providers.map((id) => byId.get(id)?.median_tps ?? null);
   const reliability = providers.map((id) => {
     const row = byId.get(id);
-    if (!row || !row.samples) return 0;
+    if (!row?.samples) return 0;
     const itemRate = row.successful_items / row.samples;
-    return (0.6 * row.first_attempt_success_rate + 0.4 * itemRate) * 100;
+    const combined = 0.6 * row.first_attempt_success_rate + 0.4 * itemRate;
+    return combined * 100;
   });
   const costScores = normalizeLowerBetter(costValues);
   const e2eP50Scores = normalizeLowerBetter(e2eP50);
@@ -212,7 +220,10 @@ const parseArgs = (args: readonly string[]): Map<string, string> => {
   const map = new Map<string, string>();
   for (const arg of args) {
     const match = /^--([a-z0-9-]+)(?:=(.*))?$/i.exec(arg);
-    if (match) map.set(match[1].toLowerCase(), match[2] ?? "true");
+    if (match) {
+      const value: string | undefined = match[2] as string | undefined;
+      map.set(match[1].toLowerCase(), value ?? "true");
+    }
   }
   return map;
 };
@@ -222,14 +233,15 @@ const listJsonl = async (dir: string): Promise<string[]> => {
   for await (const entry of Deno.readDir(dir)) {
     if (entry.isFile && entry.name.endsWith(".jsonl") && !entry.name.startsWith("probe-")) files.push(`${dir}/${entry.name}`);
   }
-  return files.sort();
+  return files.sort((left, right) => left.localeCompare(right));
 };
 
 if (import.meta.main) {
   const args = parseArgs(Deno.args);
   const dir = args.get("dir") ?? new URL("results/", import.meta.url).pathname;
   const period = args.get("period") ?? "w1-eve";
-  const files = args.get("files") ? (args.get("files")?.split(",") ?? []) : await listJsonl(dir);
+  const filesArg = args.get("files");
+  const files = filesArg ? filesArg.split(",") : await listJsonl(dir);
   const records: AttemptRecord[] = [];
   for (const file of files) {
     const text = await Deno.readTextFile(file);

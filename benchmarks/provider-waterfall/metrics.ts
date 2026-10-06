@@ -59,110 +59,145 @@ const isSuccess = (record: AttemptRecord): boolean => record.success;
 
 const itemKey = (record: AttemptRecord): string => `${record.provider}::${record.corpus_id}`;
 
-export const computeProviderMetrics = (records: readonly AttemptRecord[]): readonly ProviderMetrics[] => {
-  const byProvider = new Map<string, AttemptRecord[]>();
-  for (const record of records) {
-    const list = byProvider.get(record.provider) ?? [];
-    list.push(record);
-    byProvider.set(record.provider, list);
+type Accumulator = {
+  classes: Record<CorpusClass, { samples: number; successes: number }>;
+  failures: Record<string, number>;
+  ttfts: number[];
+  tpsValues: number[];
+  e2eValues: number[];
+  usage: {
+    input_tokens: number;
+    cached_input_tokens: number;
+    cache_write_input_tokens: number;
+    output_tokens: number;
+    reasoning_tokens: number;
+    total_tokens: number;
+  };
+  successfulItems: number;
+  firstAttemptSuccesses: number;
+  retriedItems: number;
+  retryRecoveries: number;
+  usageRows: number;
+  byWire: Record<string, number>;
+  attempts: AttemptRecord[];
+};
+
+const emptyAccumulator = (): Accumulator => ({
+  classes: {
+    small: { samples: 0, successes: 0 },
+    medium: { samples: 0, successes: 0 },
+    large: { samples: 0, successes: 0 },
+    xlarge: { samples: 0, successes: 0 },
+  },
+  failures: {},
+  ttfts: [],
+  tpsValues: [],
+  e2eValues: [],
+  usage: { input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0 },
+  successfulItems: 0,
+  firstAttemptSuccesses: 0,
+  retriedItems: 0,
+  retryRecoveries: 0,
+  usageRows: 0,
+  byWire: {},
+  attempts: [],
+});
+
+const applySuccess = (successful: AttemptRecord, acc: Accumulator, cls: CorpusClass): void => {
+  acc.successfulItems += 1;
+  acc.classes[cls].successes += 1;
+  if (successful.first_attempt) acc.firstAttemptSuccesses += 1;
+  const firstOutput = successful.t_first_output_ms;
+  const end = successful.t_end_ms;
+  if (firstOutput !== null) acc.ttfts.push(firstOutput);
+  if (firstOutput !== null && end !== null && successful.usage && end > firstOutput) {
+    acc.tpsValues.push((successful.usage.output_tokens / (end - firstOutput)) * 1000);
   }
+  if (end !== null) acc.e2eValues.push(end);
+  if (!successful.usage) return;
+  acc.usageRows += 1;
+  acc.usage.input_tokens += successful.usage.input_tokens;
+  acc.usage.cached_input_tokens += successful.usage.cached_input_tokens;
+  acc.usage.cache_write_input_tokens += successful.usage.cache_write_input_tokens;
+  acc.usage.output_tokens += successful.usage.output_tokens;
+  acc.usage.reasoning_tokens += successful.usage.reasoning_tokens;
+  acc.usage.total_tokens += successful.usage.total_tokens;
+};
+
+const applyItem = (attempts: readonly AttemptRecord[], acc: Accumulator): void => {
+  const ordered = [...attempts].sort((left, right) => left.attempt - right.attempt);
+  const first = ordered[0];
+  acc.attempts.push(...ordered);
+  for (const attempt of ordered) {
+    if (!attempt.success && attempt.failure_kind) acc.failures[attempt.failure_kind] = (acc.failures[attempt.failure_kind] ?? 0) + 1;
+    acc.byWire[attempt.wire] = (acc.byWire[attempt.wire] ?? 0) + 1;
+  }
+  acc.classes[first.cls].samples += 1;
+  const successful = ordered.find(isSuccess) ?? null;
+  if (successful) applySuccess(successful, acc, first.cls);
+  if (ordered.length > 1) {
+    acc.retriedItems += 1;
+    if (!first.success && successful) acc.retryRecoveries += 1;
+  }
+};
+
+const groupBy = <T>(values: readonly T[], key: (value: T) => string): Map<string, T[]> => {
+  const groups = new Map<string, T[]>();
+  for (const value of values) {
+    const list = groups.get(key(value)) ?? [];
+    list.push(value);
+    groups.set(key(value), list);
+  }
+  return groups;
+};
+
+const providerRow = (provider: string, providerRecords: readonly AttemptRecord[], acc: Accumulator): ProviderMetrics => {
+  const retryOffered = acc.retriedItems;
+  const samples = acc.classes.small.samples + acc.classes.medium.samples + acc.classes.large.samples + acc.classes.xlarge.samples;
+  return {
+    provider,
+    wire: providerRecords[0]?.wire ?? "unknown",
+    model: providerRecords[0]?.model ?? "unknown",
+    samples,
+    successful_items: acc.successfulItems,
+    first_attempt_successes: acc.firstAttemptSuccesses,
+    first_attempt_success_rate: samples ? acc.firstAttemptSuccesses / samples : 0,
+    retried_items: retryOffered,
+    retry_recoveries: acc.retryRecoveries,
+    retry_recovery_rate: retryOffered ? acc.retryRecoveries / retryOffered : null,
+    attempts_total: acc.attempts.length,
+    failures_total: acc.attempts.filter((record) => !record.success).length,
+    failures: acc.failures,
+    median_ttft_ms: percentile(acc.ttfts, 0.5),
+    p90_ttft_ms: percentile(acc.ttfts, 0.9),
+    p95_ttft_ms: percentile(acc.ttfts, 0.95),
+    p99_ttft_ms: percentile(acc.ttfts, 0.99),
+    median_tps: percentile(acc.tpsValues, 0.5),
+    p90_tps: percentile(acc.tpsValues, 0.9),
+    p95_tps: percentile(acc.tpsValues, 0.95),
+    median_e2e_ms: percentile(acc.e2eValues, 0.5),
+    p90_e2e_ms: percentile(acc.e2eValues, 0.9),
+    p95_e2e_ms: percentile(acc.e2eValues, 0.95),
+    p99_e2e_ms: percentile(acc.e2eValues, 0.99),
+    input_tokens: acc.usage.input_tokens,
+    cached_input_tokens: acc.usage.cached_input_tokens,
+    cache_write_input_tokens: acc.usage.cache_write_input_tokens,
+    output_tokens: acc.usage.output_tokens,
+    reasoning_tokens: acc.usage.reasoning_tokens,
+    cache_hit_ratio: acc.usage.input_tokens > 0 ? acc.usage.cached_input_tokens / acc.usage.input_tokens : null,
+    usage_coverage: acc.successfulItems ? acc.usageRows / acc.successfulItems : 0,
+    per_class: acc.classes,
+    by_wire: acc.byWire,
+  };
+};
+
+export const computeProviderMetrics = (records: readonly AttemptRecord[]): readonly ProviderMetrics[] => {
+  const byProvider = groupBy(records, (record) => record.provider);
   const rows: ProviderMetrics[] = [];
   for (const [provider, providerRecords] of byProvider) {
-    const items = new Map<string, AttemptRecord[]>();
-    for (const record of providerRecords) {
-      const list = items.get(itemKey(record)) ?? [];
-      list.push(record);
-      items.set(itemKey(record), list);
-    }
-    const classes: Record<CorpusClass, { samples: number; successes: number }> = {
-      small: { samples: 0, successes: 0 },
-      medium: { samples: 0, successes: 0 },
-      large: { samples: 0, successes: 0 },
-      xlarge: { samples: 0, successes: 0 },
-    };
-    const failures: Record<string, number> = {};
-    const ttfts: number[] = [];
-    const tpsValues: number[] = [];
-    const e2eValues: number[] = [];
-    const usage = { input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0 };
-    let successfulItems = 0;
-    let firstAttemptSuccesses = 0;
-    let retriedItems = 0;
-    let retryRecoveries = 0;
-    let usageRows = 0;
-    const byWire: Record<string, number> = {};
-    for (const [key, attempts] of items) {
-      void key;
-      const ordered = [...attempts].sort((left, right) => left.attempt - right.attempt);
-      const first = ordered[0];
-      const successful = ordered.find(isSuccess) ?? null;
-      for (const attempt of ordered) {
-        if (!attempt.success && attempt.failure_kind) failures[attempt.failure_kind] = (failures[attempt.failure_kind] ?? 0) + 1;
-        byWire[attempt.wire] = (byWire[attempt.wire] ?? 0) + 1;
-      }
-      classes[first.cls].samples += 1;
-      if (successful) {
-        successfulItems += 1;
-        classes[first.cls].successes += 1;
-        if (successful.first_attempt) firstAttemptSuccesses += 1;
-        const firstOutput = successful.t_first_output_ms;
-        const end = successful.t_end_ms;
-        if (firstOutput !== null) ttfts.push(firstOutput);
-        if (firstOutput !== null && end !== null && successful.usage && end > firstOutput) {
-          tpsValues.push((successful.usage.output_tokens / (end - firstOutput)) * 1000);
-        }
-        if (end !== null) e2eValues.push(end);
-        if (successful.usage) {
-          usageRows += 1;
-          usage.input_tokens += successful.usage.input_tokens;
-          usage.cached_input_tokens += successful.usage.cached_input_tokens;
-          usage.cache_write_input_tokens += successful.usage.cache_write_input_tokens;
-          usage.output_tokens += successful.usage.output_tokens;
-          usage.reasoning_tokens += successful.usage.reasoning_tokens;
-          usage.total_tokens += successful.usage.total_tokens;
-        }
-      }
-      if (ordered.length > 1) {
-        retriedItems += 1;
-        if (!first.success && successful) retryRecoveries += 1;
-      }
-    }
-    const retryOffered = retriedItems;
-    rows.push({
-      provider,
-      wire: providerRecords[0]?.wire ?? "unknown",
-      model: providerRecords[0]?.model ?? "unknown",
-      samples: items.size,
-      successful_items: successfulItems,
-      first_attempt_successes: firstAttemptSuccesses,
-      first_attempt_success_rate: items.size ? firstAttemptSuccesses / items.size : 0,
-      retried_items: retryOffered,
-      retry_recoveries: retryRecoveries,
-      retry_recovery_rate: retryOffered ? retryRecoveries / retryOffered : null,
-      attempts_total: providerRecords.length,
-      failures_total: providerRecords.filter((record) => !record.success).length,
-      failures,
-      median_ttft_ms: percentile(ttfts, 0.5),
-      p90_ttft_ms: percentile(ttfts, 0.9),
-      p95_ttft_ms: percentile(ttfts, 0.95),
-      p99_ttft_ms: percentile(ttfts, 0.99),
-      median_tps: percentile(tpsValues, 0.5),
-      p90_tps: percentile(tpsValues, 0.9),
-      p95_tps: percentile(tpsValues, 0.95),
-      median_e2e_ms: percentile(e2eValues, 0.5),
-      p90_e2e_ms: percentile(e2eValues, 0.9),
-      p95_e2e_ms: percentile(e2eValues, 0.95),
-      p99_e2e_ms: percentile(e2eValues, 0.99),
-      input_tokens: usage.input_tokens,
-      cached_input_tokens: usage.cached_input_tokens,
-      cache_write_input_tokens: usage.cache_write_input_tokens,
-      output_tokens: usage.output_tokens,
-      reasoning_tokens: usage.reasoning_tokens,
-      cache_hit_ratio: usage.input_tokens > 0 ? usage.cached_input_tokens / usage.input_tokens : null,
-      usage_coverage: successfulItems ? usageRows / successfulItems : 0,
-      per_class: classes,
-      by_wire: byWire,
-    });
+    const acc = emptyAccumulator();
+    for (const attempts of groupBy(providerRecords, itemKey).values()) applyItem(attempts, acc);
+    rows.push(providerRow(provider, providerRecords, acc));
   }
   return rows.sort((left, right) => left.provider.localeCompare(right.provider));
 };
@@ -183,7 +218,10 @@ const parseArgs = (args: readonly string[]): Map<string, string> => {
   const map = new Map<string, string>();
   for (const arg of args) {
     const match = /^--([a-z0-9-]+)(?:=(.*))?$/i.exec(arg);
-    if (match) map.set(match[1].toLowerCase(), match[2] ?? "true");
+    if (match) {
+      const value: string | undefined = match[2] as string | undefined;
+      map.set(match[1].toLowerCase(), value ?? "true");
+    }
   }
   return map;
 };
@@ -193,13 +231,14 @@ const listJsonl = async (dir: string): Promise<string[]> => {
   for await (const entry of Deno.readDir(dir)) {
     if (entry.isFile && entry.name.endsWith(".jsonl")) files.push(`${dir}/${entry.name}`);
   }
-  return files.sort();
+  return files.sort((left, right) => left.localeCompare(right));
 };
 
 if (import.meta.main) {
   const args = parseArgs(Deno.args);
   const dir = args.get("dir") ?? new URL("results/", import.meta.url).pathname;
-  const paths = args.get("files") ? (args.get("files")?.split(",") ?? []) : await listJsonl(dir);
+  const filesArg = args.get("files");
+  const paths = filesArg ? filesArg.split(",") : await listJsonl(dir);
   const all = await loadRunRecords(paths);
   const period = args.get("period") ?? "w1-eve";
   const records = args.get("all") === "true" ? all : all.filter((record) => record.period === period);

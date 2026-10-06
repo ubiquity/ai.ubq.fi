@@ -16,8 +16,8 @@ Unit conventions: `cost.ts` returns micro-USD (1 micro-USD = 1e-6 USD). The gate
 
 - `cost/price-snapshot-2026-10-06.json` — live probe output for Surplus, OpenLux and OpenRouter (metadata only, no
   inference).
-- `cost/raw-deepseek-pricing.html`, `cost/raw-lithos-pricing.html`, `cost/raw-lithos-billing.md` — the published pricing
-  pages the rate card cites.
+- `cost/raw-deepseek-pricing.html.txt`, `cost/raw-lithos-pricing.html.txt`, `cost/raw-lithos-billing.md` — the published
+  pricing pages the rate card cites.
 - `cost/raw-openlux-ratio.json` — the ratio configuration the OpenLux math is derived from.
 - `cost/raw-lithos-models.json`, `cost/raw-lithos-models-doc.md`, `cost/raw-lithos-model-detail.json`,
   `cost/raw-lithos-llms.txt` — the negative evidence that the Lithos API publishes no prices.

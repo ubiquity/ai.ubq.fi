@@ -25,7 +25,7 @@ const fetchJson = async (url: string, headers: Record<string, string>, timeoutMs
 const readEnv = (name: string): string | null => {
   try {
     const value = Deno.env.get(name);
-    return value && value.trim() ? value : null;
+    return value?.trim() ? value : null;
   } catch {
     return null;
   }
@@ -35,7 +35,7 @@ const surplusProbe = async (): Promise<Json> => {
   const key = readEnv("SURPLUS_API_KEY");
   if (!key) return { available: false, reason: "SURPLUS_API_KEY unset" };
   const body = await fetchJson("https://api.surplusintelligence.ai/v1/models", { Authorization: `Bearer ${key}`, Accept: "application/json" });
-  const models = Array.isArray(body?.data) ? body?.data : [];
+  const models = Array.isArray(body?.data) ? body.data : [];
   const record = models.find((entry) => isRecord(entry) && entry.id === "deepseek-v4.1-flash");
   if (!isRecord(record)) return { available: false, reason: "deepseek-v4.1-flash not in Surplus catalogue" };
   return {
@@ -50,7 +50,7 @@ const openluxProbe = async (): Promise<Json> => {
   const key = readEnv("METERED_API_KEY") ?? readEnv("OPENLUX_API_KEY");
   if (!key) return { available: false, reason: "METERED_API_KEY unset" };
   const body = await fetchJson("https://api.openlux.ai/api/ratio_config", { Authorization: `Bearer ${key}`, Accept: "application/json" });
-  const data = isRecord(body?.data) ? (body?.data as Json) : null;
+  const data = isRecord(body?.data) ? body.data : null;
   if (!data) return { available: false, reason: "ratio_config unavailable" };
   const modelRatio = isRecord(data.model_ratio) ? data.model_ratio : {};
   const completionRatio = isRecord(data.completion_ratio) ? data.completion_ratio : {};
@@ -71,7 +71,7 @@ const openrouterProbe = async (): Promise<Json> => {
   const key = readEnv("OPENROUTER_API_KEY");
   if (!key) return { available: false, reason: "OPENROUTER_API_KEY unset" };
   const body = await fetchJson("https://openrouter.ai/api/v1/models", { Authorization: `Bearer ${key}`, Accept: "application/json" });
-  const models = Array.isArray(body?.data) ? body?.data : [];
+  const models = Array.isArray(body?.data) ? body.data : [];
   const record = models.find((entry) => isRecord(entry) && entry.id === "deepseek/deepseek-v4.1-flash");
   if (!isRecord(record)) return { available: false, reason: "deepseek/deepseek-v4.1-flash not in OpenRouter catalogue" };
   const pricing = isRecord(record.pricing) ? record.pricing : {};
@@ -107,7 +107,9 @@ const main = async (): Promise<void> => {
   await Deno.mkdir(new URL("cost/", import.meta.url).pathname, { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(snapshot, null, 1));
   console.log(`[cost-probe] wrote ${path}`);
-  console.log(`[cost-probe] surplus available=${surplus.available} openlux available=${openlux.available} openrouter available=${openrouter.available}`);
+  console.log(
+    `[cost-probe] surplus available=${String(surplus.available)} openlux available=${String(openlux.available)} openrouter available=${String(openrouter.available)}`
+  );
   console.log(`[cost-probe] rate-card providers: ${Object.keys(rateCard).join(", ")}`);
 };
 

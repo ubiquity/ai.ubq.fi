@@ -15,7 +15,8 @@ Deno.test("percentile interpolates between order statistics", () => {
   assert.equal(percentile([], 0.5), null);
   assert.equal(percentile([5], 0.5), 5);
   assert.equal(percentile([1, 2, 3, 4], 0.5), 2.5);
-  assert.ok(Math.abs((percentile([1, 2, 3, 4], 0.95) as number) - 3.85) <= 1e-9);
+  const p95 = percentile([1, 2, 3, 4], 0.95);
+  assert.ok(p95 !== null && Math.abs(p95 - 3.85) <= 1e-9);
   assert.equal(percentile([10, 0, 20], 0.5), 10);
 });
 
@@ -157,11 +158,11 @@ Deno.test("chat projection preserves ordered text and flattens namespaced tools"
   assert.equal(projected.messages[0].content, "instr-a");
   const assistant = projected.messages.find((message) => Array.isArray(message.tool_calls));
   assert.ok(assistant);
-  assert.equal((assistant.tool_calls as Array<Record<string, unknown>>).length, 1);
+  assert.equal((assistant.tool_calls as Record<string, unknown>[]).length, 1);
   const toolMessage = projected.messages.find((message) => message.role === "tool");
   assert.ok(toolMessage);
   assert.equal(toolMessage.tool_call_id, "call_1");
-  const names = projected.tools.map((tool) => ((tool.function as Record<string, unknown>)?.name as string) ?? "");
+  const names = projected.tools.map((tool) => (tool.function as { name?: string }).name ?? "");
   assert.deepEqual(names, ["f", "ns__g"]);
 });
 
