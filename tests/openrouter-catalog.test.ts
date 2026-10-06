@@ -305,8 +305,10 @@ Deno.test("codex catalog: an active whitelist filters a fresh stored-catalog hit
 
 Deno.test("codex catalog: served-byte ETags change when OpenRouter enriches an unchanged upstream catalog", async () => {
   await withFixture([], async () => {
+    // The gateway identity is checked so the synthetic route stays assembled;
+    // this test owns the OpenRouter enrichment behavior, not the route gate.
     kvStore.set(keyToString([...PROVIDER_SELECTION_KV_KEY]), {
-      value: { provider_ids: ["codex", "openrouter"], updated_at_ms: 1 },
+      value: { provider_ids: ["codex", "openrouter", "ubiquity"], updated_at_ms: 1 },
       versionstamp: nextVersion(),
     });
     resetProviderSelectionCacheForTest();

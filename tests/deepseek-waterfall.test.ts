@@ -302,3 +302,34 @@ Deno.test("waterfall: allowedPaidProviders pins the Surplus hop without changing
     else Deno.env.set("METERED_API_KEY", savedMetered);
   }
 });
+
+Deno.test("waterfall: an active selection without the gateway identity is a 503 without dispatching", async () => {
+  let calls = 0;
+  const dispatch: DeepSeekWaterfallDispatch = () => {
+    calls += 1;
+    return Promise.resolve(Response.json({}));
+  };
+  const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), {}, undefined, {
+    selection: { provider_ids: ["openrouter"] as const, updated_at_ms: 1 },
+    configured: () => true,
+    dispatch,
+  });
+  assert.equal(response.status, 503);
+  assert.equal(calls, 0);
+});
+
+Deno.test("waterfall: checking the gateway identity serves the configured chain", async () => {
+  const seen: string[] = [];
+  const dispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
+    seen.push(provider);
+    return Promise.resolve(Response.json({ id: "resp_ok", object: "response" }));
+  };
+  const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), {}, undefined, {
+    selection: { provider_ids: ["ubiquity"] as const, updated_at_ms: 1 },
+    configured: () => true,
+    dispatch,
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(seen, ["openrouter"], "the first configured hop of the fixed order serves");
+  assert.equal(response.headers.get("x-uos-attempted-providers"), "openrouter");
+});

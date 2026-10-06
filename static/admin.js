@@ -8917,7 +8917,7 @@ const setProvidersSelectionBadge = (state, text) => setBadge(providersSelectionB
 const providerRosterEntry = (id) => providerRoster.find((entry) => entry.id === id) ?? null;
 
 /** The loaded roster, so a retired provider never reaches the API again. */
-/** Selectable roster ids: display-only rows (e.g. the gateway identity) never join a selection. */
+/** Selectable roster ids: rows the server marks display-only never join a selection. */
 const providersRosterIds = () => providerRoster.filter((entry) => entry.selectable !== false).map((entry) => entry.id);
 /** Roster order for rendering, display-only rows included. */
 const providersDisplayOrderIds = () => providerRoster.map((entry) => entry.id);
@@ -9097,7 +9097,7 @@ const buildProviderOption = (entry) => {
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   if (entry.selectable === false) {
-    // Display-only identity: it describes the route, it is not narrowable.
+    // Rows the server marks display-only stay informational, never selectable.
     checkbox.disabled = true;
     option.dataset.providerInfo = "true";
   } else {

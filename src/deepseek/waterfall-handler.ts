@@ -10,6 +10,7 @@ import { openaiError } from "../http.ts";
 import { recordAttemptedProvider, type DeepSeekWaterfallFallbackReason, type UsageContext } from "../openai-telemetry.ts";
 import { handleLithosResponses } from "../provider/lithos-handlers.ts";
 import { handleOpenRouterResponses } from "../provider/openrouter-handlers.ts";
+import { GATEWAY_PROVIDER_ID } from "../provider/presentation.ts";
 import { isProviderEnabled, loadProviderSelectionCached, type ProviderSelection } from "../provider/selection.ts";
 import { prepareResponsesStreamForCommit, type PreparedResponsesStream } from "../responses-failover-stream.ts";
 import { runOrdinaryResponsesTail } from "../responses-handler.ts";
@@ -187,7 +188,10 @@ export const handleDeepSeekWaterfallResponses = async (
   if (effort !== null && !isDeepSeekWaterfallReasoningLevel(effort)) return unsupportedEffortResponse(effort);
 
   const selection = options.selection === undefined ? await loadProviderSelectionCached() : options.selection;
-  const enabled = options.enabled ?? ((provider: DeepSeekWaterfallProvider) => isProviderEnabled(provider, selection));
+  // The hop plan is the model's fixed definition: while the Ubiquity provider
+  // is enabled every configured hop serves in order, and an active selection
+  // without it switches the whole route off.
+  const enabled = options.enabled ?? (() => isProviderEnabled(GATEWAY_PROVIDER_ID, selection));
   const configured = options.configured ?? deepSeekWaterfallProviderConfigured;
   const plan = deepSeekWaterfallPlan({ enabled, configured });
   if (!plan.length) return unavailableResponse();

@@ -1529,3 +1529,19 @@ no stale-endorsement, materially better than the pure selection renderer, while 
 budget. Reversal risk: the summary is now partly generated prose, so a degraded residue call could in principle add text
 the model invented; the guards copy every identifier mechanically, the output must be strictly smaller than the pure
 render, and setting `JEV_COMPACTION_HYBRID=0` restores the verbatim-only contract exactly.
+
+## Gateway provider identity is selectable - 2026-10-06
+
+`ubiquity` is now a selectable provider id on the admin provider picker, on equal footing with the upstream routes: the
+checkbox stages, saves, reloads, and participates in check-all, invert, and the active-only filter like any other row,
+and the roster row reports its catalog count and credential readiness instead of a selection-derived status. Checking it
+allows the synthetic `ubiquity/deepseek-v4.1-flash` route, whose hop plan stays the model's fixed definition (every
+configured hop in the measured order); an active selection without `ubiquity` switches the whole route off, so the model
+leaves `/v1/models`, the public catalog, and the Codex catalog, and a direct request answers 503
+`deepseek_waterfall_unavailable` without dispatching. An absent or empty selection still keeps every provider, this
+route included, enabled.
+
+Reason: the operator asked for the gateway identity to behave like every other provider instead of a display-only row,
+and unchecking it must mean it is off. Reversal risk: a non-empty stored selection written before this change does not
+list `ubiquity`, so the route stays hidden until the operator checks the new row; the empty default selection is
+unaffected.

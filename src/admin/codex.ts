@@ -712,7 +712,7 @@ export const handleAdminProviderSelectionGet = async (dependencies: Readonly<{ b
       ok: true,
       data: {
         providers: [
-          ...SELECTABLE_PROVIDER_IDS.map((id) => {
+          ...SELECTABLE_PROVIDER_IDS.filter((id) => id !== GATEWAY_PROVIDER_ID).map((id) => {
             const source = sources.get(id);
             const presentation = providerPresentation(id);
             // OpenRouter's catalog source is metadata enrichment, not dispatch
@@ -736,9 +736,10 @@ export const handleAdminProviderSelectionGet = async (dependencies: Readonly<{ b
               ...(id === "codex" ? { subscriptions } : {}),
             };
           }),
-          // Display-only gateway identity: the synthetic waterfall model's
-          // provider. The operator narrows the real tiers, never this row, so
-          // it carries `selectable: false` and the picker renders it inert.
+          // The gateway identity is a selectable provider like every other row:
+          // checking it allows the synthetic waterfall route, and an active
+          // selection without it switches the route off. Its catalog count and
+          // credential readiness come from state, never from the checkbox.
           {
             id: GATEWAY_PROVIDER_ID,
             label: GATEWAY_PROVIDER_PRESENTATION.label,
@@ -747,10 +748,9 @@ export const handleAdminProviderSelectionGet = async (dependencies: Readonly<{ b
             detail: GATEWAY_PROVIDER_PRESENTATION.detail,
             endpoints: [...GATEWAY_PROVIDER_PRESENTATION.endpoints],
             health_key: GATEWAY_PROVIDER_PRESENTATION.health_key,
-            model_count: deepSeekWaterfallCatalogEnabled(selection) ? 1 : 0,
-            status: deepSeekWaterfallCatalogEnabled(selection) ? "available" : "unavailable",
-            configured: deepSeekWaterfallCatalogEnabled(selection),
-            selectable: false,
+            model_count: counts.get(GATEWAY_PROVIDER_ID) ?? 0,
+            status: deepSeekWaterfallCatalogEnabled(null) ? "available" : "unavailable",
+            configured: deepSeekWaterfallCatalogEnabled(null),
           },
         ],
         // The picker renders its tier filter from this list, in this order.

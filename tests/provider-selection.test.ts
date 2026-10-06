@@ -281,10 +281,10 @@ Deno.test("admin provider picker reports the roster, catalog counts, and the sav
       },
       {
         id: GATEWAY_PROVIDER_ID,
-        model_count: deepSeekWaterfallCatalogEnabled(null) ? 1 : 0,
+        // The injected fixture carries no ubiquity-provider row, so it counts 0.
+        model_count: 0,
         status: deepSeekWaterfallCatalogEnabled(null) ? "available" : "unavailable",
         configured: deepSeekWaterfallCatalogEnabled(null),
-        selectable: false,
       },
     ];
     assert.deepEqual(
@@ -333,12 +333,12 @@ Deno.test("every selectable provider carries a complete presentation and a healt
       };
       assert.deepEqual(
         body.data.providers.map((provider) => provider.id),
-        [...SELECTABLE_PROVIDER_IDS, GATEWAY_PROVIDER_ID],
-        "the roster keeps the waterfall order, with the display-only gateway identity last"
+        [...SELECTABLE_PROVIDER_IDS],
+        "the roster keeps the waterfall order, with the gateway identity last"
       );
       const gateway = body.data.providers.find((provider) => provider.id === GATEWAY_PROVIDER_ID);
       assert.ok(gateway, "the gateway identity must be on the roster");
-      assert.equal(gateway.selectable, false, "the gateway identity is display-only");
+      assert.notEqual(gateway.selectable, false, "the gateway identity is selectable like every provider");
       assert.deepEqual(
         body.data.tiers.map((tier) => tier.id),
         PROVIDER_TIERS.map((tier) => tier.id),
@@ -560,8 +560,16 @@ Deno.test("/v1/models hides the models of a switched-off provider", async () => 
       resetProviderSelectionCacheForTest();
       assert.deepEqual(
         await listModelIds(),
+        ["gpt-oss-120b", "qwen-3.8-27b", ...DEEPSEEK_OFFICIAL_MODEL_IDS],
+        "a switched-off Codex provider contributes no rows, and the unchecked gateway identity takes its route off"
+      );
+
+      kv.seedSelection(["deepseek", "cerebras", "ubiquity"]);
+      resetProviderSelectionCacheForTest();
+      assert.deepEqual(
+        await listModelIds(),
         ["gpt-oss-120b", "qwen-3.8-27b", ...DEEPSEEK_OFFICIAL_MODEL_IDS, DEEPSEEK_WATERFALL_MODEL_ID],
-        "a switched-off Codex provider contributes no rows"
+        "checking the gateway identity admits its route while the other providers stay narrowed"
       );
 
       kv.seedSelection(["codex"]);
@@ -591,4 +599,48 @@ Deno.test("/v1/models still applies the model whitelist on top of the provider s
   } finally {
     resetRuntimeConfigCacheForTest();
   }
+});
+
+Deno.test("the gateway identity joins the selection like any provider", async () => {
+  const kv = new SelectionKv();
+  await withKv(kv, async () => {
+    const response = await handleAdminProviderSelectionSet(
+      new Request("https://ai.ubq.fi/admin/providers/selection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider_ids: ["ubiquity", "openrouter"] }),
+      })
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.provider_ids, ["openrouter", "ubiquity"], "storage keeps the roster order");
+    assert.deepEqual(kv.storedSelection(), { provider_ids: ["openrouter", "ubiquity"], updated_at_ms: body.updated_at_ms });
+  });
+});
+
+Deno.test("an active selection without the gateway identity switches the waterfall route off", () => {
+  const withGateway = { provider_ids: ["ubiquity", "openrouter"] as SelectableProviderId[], updated_at_ms: 1 };
+  const withoutGateway = { provider_ids: ["openrouter"] as SelectableProviderId[], updated_at_ms: 1 };
+  assert.equal(isProviderEnabled(GATEWAY_PROVIDER_ID, withGateway), true);
+  assert.equal(isProviderEnabled(GATEWAY_PROVIDER_ID, withoutGateway), false);
+  assert.equal(deepSeekWaterfallCatalogEnabled(withoutGateway), false, "the route leaves when its identity is unchecked");
+});
+
+Deno.test("the public catalog drops the gateway route while its identity is off", () => {
+  const entries = [
+    { id: "ubiquity/deepseek-v4.1-flash", providers: [{ id: "ubiquity" }, { id: "openrouter" }] },
+    { id: "some-other", providers: [{ id: "openrouter" }] },
+  ];
+  assert.deepEqual(
+    filterCatalogEntriesByProviderSelection(entries, { provider_ids: ["openrouter"], updated_at_ms: 1 }).map((entry) => entry.id),
+    ["some-other"],
+    "an enabled hop never keeps a switched-off gateway route on the page"
+  );
+  assert.deepEqual(
+    filterCatalogEntriesByProviderSelection(entries, { provider_ids: ["ubiquity"], updated_at_ms: 1 }).map((entry) =>
+      entry.providers.map((provider) => provider.id)
+    ),
+    [["ubiquity"]],
+    "with the identity on, the row narrows to the enabled providers like any other entry"
+  );
 });
