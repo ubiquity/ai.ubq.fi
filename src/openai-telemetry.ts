@@ -52,7 +52,7 @@ export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_mo
  * either kind.
  */
 export type DeepSeekWaterfallFallbackReason =
-  `deepseek_waterfall:${"openrouter" | "lithos" | "deepseek" | "surplus"}:${number | "transport_failure" | "stream_failure"}`;
+  `deepseek_waterfall:${"lithos" | "deepseek" | "openrouter" | "surplus" | "openlux"}:${number | "transport_failure" | "stream_failure"}`;
 export type RecordedFallbackReason = InferenceFallbackReason | DeepSeekWaterfallFallbackReason;
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";

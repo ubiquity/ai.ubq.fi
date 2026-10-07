@@ -9,13 +9,17 @@ Agents keep addressing one id; the gateway owns provider choice, failover, and e
   automatic provider fallback.
 - Wire: `/v1/responses` only (the subagent wire). Chat Completions is out of scope for phase 1.
 - Provider-specific ids stay unchanged: `deepseek/deepseek-v4.1-flash` (OpenRouter), `deepseek-ai/DeepSeek-V4.1-Flash`
-  (LithosAI), `deepseek-flash` (official), `deepseek-v4.1-flash` (paid catalogue for Surplus). Operators keep the
-  existing provider-selection pinning, so benchmark batches can still force a single provider.
+  (LithosAI), `deepseek-flash` (official), `deepseek-v4.1-flash` (paid catalogue for Surplus and OpenLux). Operators
+  keep the existing provider-selection pinning, so benchmark batches can still force a single provider.
 
 ## Order and semantics
 
-Order: **OpenRouter → LithosAI → DeepSeek direct** in phase 1; **Surplus** joins as the final hop in phase 2 through the
-paid pipeline (surplus-only, because the metered/OpenLux model record cannot serve the Responses wire).
+Order: **LithosAI → DeepSeek direct → OpenRouter → Surplus → OpenLux** since the 2026-10-07 economy reorder
+(docs/DECISIONS.md). Within the three direct hops the cheaper per-token routes lead: LithosAI Base and the DeepSeek
+off-peak rate are $0.15/$0.60 per 1M input/output at list price, half of OpenRouter's $0.30/$1.20 for the same weights,
+so OpenRouter drops from first to third. **Surplus** and **OpenLux** are the two paid hops, each pinned to its own paid
+tier (`allowedPaidProviders`) so neither can silently advance to the other; the routing layer names OpenLux "metered".
+The pre-reorder order was OpenRouter → LithosAI → DeepSeek → Surplus (phase 1/2).
 
 Per request the gateway attempts each enabled provider in order and advances only on infrastructure/serving failures:
 
@@ -41,6 +45,8 @@ Per request the gateway attempts each enabled provider in order and advances onl
   waterfall boundary rejects any other value for this id with a 400 instead of letting a provider refuse it later.
   (DeepSeek official also accepts `none`; Surplus/OpenRouter advertise only low/high/max, so `none` is not advertised.)
 - The Codex-facing catalogue record mirrors the LithosAI record shape; the plain `/v1/models` list also carries the id.
+- The public/admin catalogue's provider rows follow the order above: the gateway identity first, then one row per
+  configured hop (lithos, deepseek, openrouter, surplus, openlux).
 
 ## Phases
 
@@ -50,6 +56,9 @@ Per request the gateway attempts each enabled provider in order and advances onl
   bypassed), and pre-semantic mid-stream failover by integrating with the attempt primitives (`prepareResponsesAttempt`
   and the precommit buffering the paid route already uses) instead of handler-level wrapping.
 - **Phase 3 (optional):** explicit per-provider pin ids for experiments; not needed for production.
+- **Phase 4 (shipped 2026-10-07):** the economy reorder above, the OpenLux responses hop wired to its `/v1/responses`
+  endpoint as the last resort, and the paid-hop pin fix that threads `allowedPaidProviders` from the waterfall through
+  the ordinary paid pipeline.
 
 ## Rollback
 
@@ -125,3 +134,17 @@ Implementation deltas from the scoped notes, kept truthful:
   `fallback_reason: deepseek_waterfall:openrouter:503`; an injected stream that sent only `response.created` before
   closing produced the same advancement through the pre-output stream-death path. Hermetic tests additionally cover
   stream death after output (delivered, no further provider spent) and transport failure.
+
+## Phase 4 status (implemented 2026-10-07)
+
+The cost-first economy order ships behind the same synthetic id:
+
+- order `["lithos","deepseek","openrouter","surplus","openlux"]`; the plan drops switched-off and uncredentialed hops
+  without reordering the rest;
+- the Surplus hop's paid tail receives `allowedPaidProviders: ["surplus"]` and the OpenLux hop's receives `["metered"]`
+  (the routing layer's name for OpenLux), threaded end-to-end from the waterfall through `runOrdinaryResponsesTail` to
+  `fetchResponsesWithPaidFallback`; every other caller keeps the default Surplus -> Metered paid order;
+- OpenLux serves the Responses wire through the existing `fetchMeteredResponses` transport
+  (`https://api.openlux.ai/v1/responses`), so the last hop is wired rather than merely advertised;
+- hermetic coverage: order/plan assertions, both paid-hop pin assertions, and a last-hop failover test where every prior
+  paid hop fails and OpenLux serves, pinned to metered.

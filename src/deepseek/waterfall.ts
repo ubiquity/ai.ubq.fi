@@ -1,10 +1,12 @@
 // `ubiquity/deepseek-v4.1-flash` — the synthetic DeepSeek V4.1 Flash model that
 // walks the measured provider waterfall on the client's behalf. The order is
-// data from the 2026-10-06 benchmark (docs/deepseek-waterfall-model-plan.md),
-// not control flow: phase 1 covers the three direct routes, and Surplus joins
-// as the final hop in phase 2 through the paid pipeline.
+// data from the 2026-10-06 benchmark (docs/deepseek-waterfall-model-plan.md)
+// with the 2026-10-07 economy reorder (docs/DECISIONS.md), not control flow:
+// the cost-first order runs the three direct routes, then the two paid hops
+// through the ordinary paid pipeline, and pins each paid hop to its own tier.
 
 import type { DeepSeekWaterfallFallbackReason } from "../openai-telemetry.ts";
+import { readMeteredApiKey } from "../provider/metered.ts";
 import { readSurplusApiKey } from "../provider/surplus.ts";
 import { readDeepSeekApiKey } from "./index.ts";
 import { readLithosApiKey } from "../provider/lithos.ts";
@@ -15,7 +17,7 @@ import { isProviderEnabled, type ProviderSelection } from "../provider/selection
 export const DEEPSEEK_WATERFALL_MODEL_ID = "ubiquity/deepseek-v4.1-flash";
 export const DEEPSEEK_WATERFALL_DISPLAY_NAME = "Ubiquity DeepSeek V4.1 Flash";
 export const DEEPSEEK_WATERFALL_DESCRIPTION =
-  "Automatic DeepSeek V4.1 Flash waterfall: OpenRouter, then LithosAI, then the official DeepSeek API. Falls back only on infrastructure or serving failures.";
+  "Cost-first DeepSeek V4.1 Flash waterfall: LithosAI, then the official DeepSeek API, then OpenRouter, then Surplus, then OpenLux. Falls back only on infrastructure or serving failures.";
 export const DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS = 1_048_576;
 export const DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
 export const DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT = 891_289;
@@ -24,7 +26,7 @@ export const DEEPSEEK_WATERFALL_CREATED = 1_791_244_800;
 export const DEEPSEEK_WATERFALL_REASONING_LEVELS = ["low", "high", "max"] as const;
 export const DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL = "high";
 
-export type DeepSeekWaterfallProvider = "openrouter" | "lithos" | "deepseek" | "surplus";
+export type DeepSeekWaterfallProvider = "lithos" | "deepseek" | "openrouter" | "surplus" | "openlux";
 
 /**
  * The paid catalogue id whose Surplus tier is the waterfall's final hop. The
@@ -33,14 +35,34 @@ export type DeepSeekWaterfallProvider = "openrouter" | "lithos" | "deepseek" | "
  */
 export const DEEPSEEK_WATERFALL_PAID_MODEL_ID = "deepseek-v4.1-flash";
 
-export const DEEPSEEK_WATERFALL_ORDER: readonly DeepSeekWaterfallProvider[] = ["openrouter", "lithos", "deepseek", "surplus"];
+/**
+ * The cost-first economy order (2026-10-07): LithosAI Base and the DeepSeek
+ * off-peak rate are half of OpenRouter's per-token price for the same weights,
+ * so the cheaper direct routes lead. Surplus and OpenLux are the two paid hops
+ * and are each pinned to their own tier by {@link DEEPSEEK_WATERFALL_PAID_PIN}.
+ */
+export const DEEPSEEK_WATERFALL_ORDER: readonly DeepSeekWaterfallProvider[] = ["lithos", "deepseek", "openrouter", "surplus", "openlux"];
 
 /** The provider-specific id each hop is dispatched with. */
 export const DEEPSEEK_WATERFALL_PROVIDER_MODEL: Readonly<Record<DeepSeekWaterfallProvider, string>> = {
-  openrouter: "deepseek/deepseek-v4.1-flash",
   lithos: "deepseek-ai/DeepSeek-V4.1-Flash",
   deepseek: "deepseek-flash",
+  openrouter: "deepseek/deepseek-v4.1-flash",
   surplus: DEEPSEEK_WATERFALL_PAID_MODEL_ID,
+  openlux: DEEPSEEK_WATERFALL_PAID_MODEL_ID,
+};
+
+/**
+ * The paid tier each paid hop is pinned to. Both paid hops re-enter the
+ * ordinary paid pipeline under {@link DEEPSEEK_WATERFALL_PAID_MODEL_ID}, and
+ * without a pin that pipeline would pick the fixed Surplus -> Metered cost
+ * order for either hop — so the Surplus hop could silently advance to metered
+ * and the OpenLux hop might never be tried. The routing layer names OpenLux
+ * "metered", hence the `metered` entry for the openlux hop.
+ */
+export const DEEPSEEK_WATERFALL_PAID_PIN: Readonly<Partial<Record<DeepSeekWaterfallProvider, readonly ("metered" | "surplus")[]>>> = {
+  surplus: ["surplus"],
+  openlux: ["metered"],
 };
 
 export const isDeepSeekWaterfallModel = (model: string): boolean => model.trim().toLowerCase() === DEEPSEEK_WATERFALL_MODEL_ID;
@@ -49,9 +71,10 @@ export const isDeepSeekWaterfallReasoningLevel = (effort: string): boolean => (D
 
 /** Whether the route has a credential for one hop. */
 export const deepSeekWaterfallProviderConfigured = (provider: DeepSeekWaterfallProvider): boolean => {
-  if (provider === "openrouter") return readOpenRouterApiKey() !== null;
   if (provider === "lithos") return readLithosApiKey() !== null;
   if (provider === "deepseek") return readDeepSeekApiKey() !== null;
+  if (provider === "openrouter") return readOpenRouterApiKey() !== null;
+  if (provider === "openlux") return readMeteredApiKey() !== null;
   return readSurplusApiKey() !== null;
 };
 

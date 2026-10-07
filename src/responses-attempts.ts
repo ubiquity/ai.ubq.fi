@@ -473,6 +473,12 @@ type PrimaryResponsesOptions = Readonly<{
   createFallbackDeadline?: () => StreamDeadline;
   rejectPresemanticFailureTerminal?: boolean;
   releaseOnProgress?: boolean;
+  /**
+   * Request-scoped paid-tier pin, threaded from the DeepSeek waterfall's paid
+   * hops; null or absent keeps the fixed paid cost order for every other
+   * caller.
+   */
+  allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
 }>;
 
 const isRetryablePrimaryFetchFailure = (error: unknown): error is CodexError =>
@@ -573,6 +579,7 @@ export const fetchAndPreparePrimaryResponses = async (
       clientVersion: options.clientVersion,
       signal: deadline.signal,
       fallbackSignal: options.fallbackSignal,
+      allowedPaidProviders: options.allowedPaidProviders ?? null,
     });
   } catch (error) {
     deadline.clear();

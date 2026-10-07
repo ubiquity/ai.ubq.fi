@@ -9,6 +9,7 @@ import {
   DEEPSEEK_WATERFALL_MODEL_ID,
   DEEPSEEK_WATERFALL_ORDER,
   DEEPSEEK_WATERFALL_PAID_MODEL_ID,
+  DEEPSEEK_WATERFALL_PAID_PIN,
   DEEPSEEK_WATERFALL_PROVIDER_MODEL,
   DEEPSEEK_WATERFALL_REASONING_LEVELS,
   deepSeekWaterfallFailureReason,
@@ -42,22 +43,26 @@ const request = (): Request => new Request("http://127.0.0.1:7999/v1/responses",
 
 const record = (model: string): Record<string, unknown> => ({ model, input: [{ type: "message", role: "user", content: "hi" }] });
 
-Deno.test("waterfall: the synthetic id normalizes and resolves to the measured provider order", () => {
+Deno.test("waterfall: the synthetic id normalizes and resolves to the cost-first economy order", () => {
   assert.equal(isDeepSeekWaterfallModel("  Ubiquity/DeepSeek-V4.1-Flash "), true);
   assert.equal(isDeepSeekWaterfallModel("deepseek-flash"), false);
-  assert.deepEqual(DEEPSEEK_WATERFALL_ORDER, ["openrouter", "lithos", "deepseek", "surplus"]);
+  assert.deepEqual(DEEPSEEK_WATERFALL_ORDER, ["lithos", "deepseek", "openrouter", "surplus", "openlux"]);
 });
 
 Deno.test("waterfall: the plan keeps order and drops switched-off or uncredentialed hops", () => {
-  assert.deepEqual(deepSeekWaterfallPlan(allEnabled), ["openrouter", "lithos", "deepseek", "surplus"]);
+  assert.deepEqual(deepSeekWaterfallPlan(allEnabled), ["lithos", "deepseek", "openrouter", "surplus", "openlux"]);
   assert.deepEqual(
     deepSeekWaterfallPlan({
       enabled: (provider) => provider !== "lithos",
       configured: (provider) => provider !== "deepseek",
     }),
-    ["openrouter", "surplus"]
+    ["openrouter", "surplus", "openlux"]
   );
   assert.deepEqual(deepSeekWaterfallPlan({ enabled: () => false, configured: () => true }), []);
+});
+
+Deno.test("waterfall: each paid hop is pinned to its own paid tier", () => {
+  assert.deepEqual(DEEPSEEK_WATERFALL_PAID_PIN, { surplus: ["surplus"], openlux: ["metered"] });
 });
 
 Deno.test("waterfall: only infrastructure or serving statuses advance the chain", () => {
@@ -95,8 +100,8 @@ Deno.test("waterfall: a failing first hop serves from the next provider and reco
   const seen: Readonly<{ provider: string; model: string; recordModel: unknown }>[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider, model, rawRecord }) => {
     seen.push({ provider, model, recordModel: rawRecord.model });
-    if (provider === "openrouter") return Promise.resolve(Response.json({ error: { message: "down" } }, { status: 503 }));
-    return Promise.resolve(Response.json({ id: "resp_ok", object: "response" }, { headers: { "x-uos-upstream": "lithos" } }));
+    if (provider === "lithos") return Promise.resolve(Response.json({ error: { message: "down" } }, { status: 503 }));
+    return Promise.resolve(Response.json({ id: "resp_ok", object: "response" }, { headers: { "x-uos-upstream": "deepseek" } }));
   };
   const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), {}, context, {
     ...allEnabled,
@@ -104,16 +109,16 @@ Deno.test("waterfall: a failing first hop serves from the next provider and reco
     dispatch,
   });
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get("x-uos-attempted-providers"), "openrouter,lithos");
+  assert.equal(response.headers.get("x-uos-attempted-providers"), "lithos,deepseek");
   assert.deepEqual(
     seen.map((entry) => [entry.provider, entry.model, entry.recordModel]),
     [
-      ["openrouter", DEEPSEEK_WATERFALL_PROVIDER_MODEL.openrouter, DEEPSEEK_WATERFALL_PROVIDER_MODEL.openrouter],
       ["lithos", DEEPSEEK_WATERFALL_PROVIDER_MODEL.lithos, DEEPSEEK_WATERFALL_PROVIDER_MODEL.lithos],
+      ["deepseek", DEEPSEEK_WATERFALL_PROVIDER_MODEL.deepseek, DEEPSEEK_WATERFALL_PROVIDER_MODEL.deepseek],
     ]
   );
-  assert.deepEqual(telemetry.attemptedProviders, ["openrouter", "lithos"]);
-  assert.equal(telemetry.fallbackReason, "deepseek_waterfall:openrouter:503");
+  assert.deepEqual(telemetry.attemptedProviders, ["lithos", "deepseek"]);
+  assert.equal(telemetry.fallbackReason, "deepseek_waterfall:lithos:503");
 });
 
 Deno.test("waterfall: a client-facing 4xx is the answer and never spends another provider", async () => {
@@ -128,8 +133,8 @@ Deno.test("waterfall: a client-facing 4xx is the answer and never spends another
     dispatch,
   });
   assert.equal(response.status, 400);
-  assert.deepEqual(attempted, ["openrouter"]);
-  assert.equal(response.headers.get("x-uos-attempted-providers"), "openrouter");
+  assert.deepEqual(attempted, ["lithos"]);
+  assert.equal(response.headers.get("x-uos-attempted-providers"), "lithos");
 });
 
 Deno.test("waterfall: a transport failure advances and an exhausted chain returns the last failure", async () => {
@@ -137,7 +142,7 @@ Deno.test("waterfall: a transport failure advances and an exhausted chain return
   const attempted: string[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
     attempted.push(provider);
-    if (provider === "openrouter") return Promise.reject(new Error("connect refused"));
+    if (provider === "lithos") return Promise.reject(new Error("connect refused"));
     return Promise.resolve(Response.json({ error: { message: "upstream down" } }, { status: 500 }));
   };
   const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), {}, context, {
@@ -146,9 +151,9 @@ Deno.test("waterfall: a transport failure advances and an exhausted chain return
     dispatch,
   });
   assert.equal(response.status, 500);
-  assert.deepEqual(attempted, ["openrouter", "lithos", "deepseek", "surplus"]);
-  assert.equal(response.headers.get("x-uos-attempted-providers"), "openrouter,lithos,deepseek,surplus");
-  assert.equal(telemetry.fallbackReason, "deepseek_waterfall:openrouter:transport_failure");
+  assert.deepEqual(attempted, ["lithos", "deepseek", "openrouter", "surplus", "openlux"]);
+  assert.equal(response.headers.get("x-uos-attempted-providers"), "lithos,deepseek,openrouter,surplus,openlux");
+  assert.equal(telemetry.fallbackReason, "deepseek_waterfall:lithos:transport_failure");
 });
 
 Deno.test("waterfall: no usable hop is a 503 without dispatching", async () => {
@@ -206,10 +211,12 @@ const completedEvent = (id: string): Record<string, unknown> => ({
   response: { id, object: "response", status: "completed", output: [] },
 });
 
-Deno.test("waterfall: the surplus hop re-enters the paid pipeline under the paid catalogue id", async () => {
+Deno.test("waterfall: the surplus hop re-enters the paid pipeline under the paid catalogue id, pinned to surplus", async () => {
   const seen: Record<string, unknown>[] = [];
-  const paidTail: DeepSeekWaterfallPaidTail = async (req, rawRecord, rawBody) => {
+  const pins: (readonly ("metered" | "surplus")[] | null | undefined)[] = [];
+  const paidTail: DeepSeekWaterfallPaidTail = async (req, rawRecord, rawBody, _usageContext, options) => {
     seen.push(JSON.parse(await req.text()) as Record<string, unknown>);
+    pins.push(options?.allowedPaidProviders);
     assert.equal(rawRecord.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
     assert.equal(rawBody.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
     return Response.json({ id: "resp_paid" });
@@ -224,6 +231,56 @@ Deno.test("waterfall: the surplus hop re-enters the paid pipeline under the paid
   assert.equal(response.headers.get("x-uos-attempted-providers"), "surplus");
   assert.equal(seen.length, 1);
   assert.equal(seen[0].model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+  assert.deepEqual(pins, [["surplus"]], "the surplus hop must never silently advance to metered");
+});
+
+Deno.test("waterfall: the openlux hop re-enters the paid pipeline pinned to metered", async () => {
+  const seen: Record<string, unknown>[] = [];
+  const pins: (readonly ("metered" | "surplus")[] | null | undefined)[] = [];
+  const paidTail: DeepSeekWaterfallPaidTail = async (req, rawRecord, rawBody, _usageContext, options) => {
+    seen.push(JSON.parse(await req.text()) as Record<string, unknown>);
+    pins.push(options?.allowedPaidProviders);
+    assert.equal(rawRecord.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+    assert.equal(rawBody.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+    return Response.json({ id: "resp_openlux" });
+  };
+  const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), { model: DEEPSEEK_WATERFALL_MODEL_ID }, undefined, {
+    enabled: (provider) => provider === "openlux",
+    configured: () => true,
+    selection: null,
+    paidTail,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-uos-attempted-providers"), "openlux");
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+  assert.deepEqual(pins, [["metered"]], "the routing layer names OpenLux 'metered'");
+});
+
+Deno.test("waterfall: openlux as the last hop serves when every prior paid hop fails, pinned to metered", async () => {
+  const { context, telemetry } = usageContextWithTelemetry();
+  const pins: (readonly ("metered" | "surplus")[] | null | undefined)[] = [];
+  // Only the two paid hops are configured, so the plan is [surplus, openlux]
+  // and every hop runs through the production default dispatch into the tail.
+  const paidTail: DeepSeekWaterfallPaidTail = async (req, _rawRecord, _rawBody, _usageContext, options) => {
+    pins.push(options?.allowedPaidProviders);
+    const body = JSON.parse(await req.text()) as Record<string, unknown>;
+    assert.equal(body.model, DEEPSEEK_WATERFALL_PAID_MODEL_ID);
+    if (options?.allowedPaidProviders?.includes("surplus")) {
+      return Response.json({ error: { message: "surplus capacity exhausted" } }, { status: 503 });
+    }
+    return Response.json({ id: "resp_openlux", object: "response" });
+  };
+  const response = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), {}, context, {
+    enabled: () => true,
+    configured: (provider) => provider === "surplus" || provider === "openlux",
+    selection: null,
+    paidTail,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-uos-attempted-providers"), "surplus,openlux");
+  assert.deepEqual(pins, [["surplus"], ["metered"]], "the surplus hop is pinned to surplus and the openlux hop to metered");
+  assert.equal(telemetry.fallbackReason, "deepseek_waterfall:surplus:503");
 });
 
 Deno.test("waterfall: a stream that dies before output advances, and one that dies after output does not", async () => {
@@ -231,26 +288,26 @@ Deno.test("waterfall: a stream that dies before output advances, and one that di
   const attemptedProviders: string[] = [];
   const dispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
     attemptedProviders.push(provider);
-    if (provider === "openrouter") return Promise.resolve(sseResponse(sseBody([createdEvent("resp_or")])));
-    return Promise.resolve(sseResponse(sseBody([createdEvent("resp_li"), deltaEvent(), completedEvent("resp_li")])));
+    if (provider === "lithos") return Promise.resolve(sseResponse(sseBody([createdEvent("resp_li")])));
+    return Promise.resolve(sseResponse(sseBody([createdEvent("resp_or"), deltaEvent(), completedEvent("resp_or")])));
   };
   const advanced = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), {}, context, {
-    enabled: (provider) => provider === "openrouter" || provider === "lithos",
+    enabled: (provider) => provider === "lithos" || provider === "openrouter",
     configured: () => true,
     selection: null,
     dispatch,
   });
   assert.equal(advanced.status, 200);
-  assert.equal(advanced.headers.get("x-uos-attempted-providers"), "openrouter,lithos");
-  assert.deepEqual(attemptedProviders, ["openrouter", "lithos"]);
-  assert.equal(telemetry.fallbackReason, "deepseek_waterfall:openrouter:stream_failure");
+  assert.equal(advanced.headers.get("x-uos-attempted-providers"), "lithos,openrouter");
+  assert.deepEqual(attemptedProviders, ["lithos", "openrouter"]);
+  assert.equal(telemetry.fallbackReason, "deepseek_waterfall:lithos:stream_failure");
   const advancedBody = await advanced.text();
   assert.match(advancedBody, /"delta":"he"/);
 
   const committedProviders: string[] = [];
   const committedDispatch: DeepSeekWaterfallDispatch = ({ provider }) => {
     committedProviders.push(provider);
-    return Promise.resolve(sseResponse(sseBody([createdEvent("resp_or"), deltaEvent(), completedEvent("resp_or")])));
+    return Promise.resolve(sseResponse(sseBody([createdEvent("resp_li"), deltaEvent(), completedEvent("resp_li")])));
   };
   const committed = await handleDeepSeekWaterfallResponses(request(), record(DEEPSEEK_WATERFALL_MODEL_ID), {}, undefined, {
     enabled: () => true,
@@ -259,8 +316,8 @@ Deno.test("waterfall: a stream that dies before output advances, and one that di
     dispatch: committedDispatch,
   });
   assert.equal(committed.status, 200);
-  assert.deepEqual(committedProviders, ["openrouter"]);
-  assert.equal(committed.headers.get("x-uos-attempted-providers"), "openrouter");
+  assert.deepEqual(committedProviders, ["lithos"]);
+  assert.equal(committed.headers.get("x-uos-attempted-providers"), "lithos");
   assert.match(await committed.text(), /"delta":"he"/);
 });
 
@@ -330,6 +387,6 @@ Deno.test("waterfall: checking the gateway identity serves the configured chain"
     dispatch,
   });
   assert.equal(response.status, 200);
-  assert.deepEqual(seen, ["openrouter"], "the first configured hop of the fixed order serves");
-  assert.equal(response.headers.get("x-uos-attempted-providers"), "openrouter");
+  assert.deepEqual(seen, ["lithos"], "the first configured hop of the fixed order serves");
+  assert.equal(response.headers.get("x-uos-attempted-providers"), "lithos");
 });
