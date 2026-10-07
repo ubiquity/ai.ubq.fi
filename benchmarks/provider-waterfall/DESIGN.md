@@ -113,7 +113,7 @@ effective cost is the primary cost metric. Dynamic-pricing marketplaces use obse
 
 Among candidates that can serve the workload, each dimension is normalized to 0–100 (min–max across candidates; lower
 cost, lower latency and higher reliability score higher; identical values tie at 100). Overall = 0.50 × cost + 0.30 ×
-speed + 0.20 × reliability, where speed = 0.50 × median E2E + 0.25 × P95 E2E + 0.25 × median throughput, and reliability
+reliability + 0.20 × speed, where speed = 0.50 × median E2E + 0.25 × P95 E2E + 0.25 × median throughput, and reliability
 = first-attempt success rate with P95/P99 tail failures and the light concurrency probe folded in as evidence rather
 than a separate weighted term.
 

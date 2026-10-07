@@ -1,5 +1,5 @@
 // Normalization and overall scoring for the DeepSeek V4.1 Flash provider
-// waterfall benchmark. Cost 50%, speed 30%, reliability 20%, each dimension
+// waterfall benchmark. Cost 50%, reliability 30%, speed 20%, each dimension
 // normalized to 0-100 across the providers under comparison.
 
 import { expectedCostMicroUsd } from "./cost.ts";
@@ -159,7 +159,7 @@ export const scoreProviders = (metrics: readonly ProviderMetrics[], costs: reado
       : 0.5 * (e2eP50Scores[index] ?? 0) + 0.25 * (e2eP95Scores[index] ?? 0) + 0.25 * (tpsScores[index] ?? 0);
     const reliabilityScore = reliability[index];
     const costScore = costScores[index];
-    const overall = costScore === null || speedScore === null ? null : 0.5 * costScore + 0.3 * speedScore + 0.2 * reliabilityScore;
+    const overall = costScore === null || speedScore === null ? null : 0.5 * costScore + 0.3 * reliabilityScore + 0.2 * speedScore;
     return {
       rank: 0,
       provider: id as ProviderId,
