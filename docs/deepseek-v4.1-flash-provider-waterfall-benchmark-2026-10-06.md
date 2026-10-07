@@ -14,11 +14,11 @@ This order is codified as the gateway-owned `ubiquity/deepseek-v4.1-flash` synth
 with per-hop evidence — so agents address one model id and the gateway walks the measured order on their behalf; see
 `docs/deepseek-waterfall-model-plan.md` for the implementation and its live hop evidence.
 
-- **OpenRouter (`deepseek/deepseek-v4.1-flash`), primary.** Highest overall score (88.3): lowest measured effective cost
+- **OpenRouter (`deepseek/deepseek-v4.1-flash`), primary.** Highest overall score (92.2): lowest measured effective cost
   per request ($0.0064), fastest TTFT (643 ms median), best prompt-cache accounting (74.3% cache-hit tokens) and 30/30
   first-attempt success. Observed serving path: `deepseek/deepseek-v4.1-flash-20260910` routed by OpenRouter to upstream
   provider **Together** in all 34 generations, so it is not DeepSeek-direct capacity.
-- **LithosAI (`deepseek-ai/DeepSeek-V4.1-Flash`), secondary.** Near-identical economics ($0.0065/request, score 75.9) on
+- **LithosAI (`deepseek-ai/DeepSeek-V4.1-Flash`), secondary.** Near-identical economics ($0.0065/request, score 83.8) on
   a fully independent serving stack (`api.lithosai.cloud`) with 30/30 first-attempt success. If the OpenRouter
   marketplace or its Together upstream degrades, Lithos shares no observed serving path with it.
 - **DeepSeek direct (`deepseek-flash`), tertiary.** The authoritative model source (`api.deepseek.com`, documented as
@@ -26,7 +26,7 @@ with per-hop evidence — so agents address one model id and the gateway walks t
   effective cost of the top two at peak pricing ($0.0101). As the canonical upstream it is the strongest independence
   tier behind the two aggregators.
 - **Surplus Intelligence (`deepseek-v4.1-flash`), final tier.** After the operator funded the account mid-benchmark it
-  served 30/30 first-attempt successes at $0.0094/request (score 54.8) with the highest median generation throughput
+  served 30/30 first-attempt successes at $0.0094/request (score 64.1) with the highest median generation throughput
   (365.6 tok/s) but the worst tail latency (p95 84 s, p99 102 s; for example `xlarge-01` took 101 s for 1,865 output
   tokens). Usable as a last-resort tier; its upstream serving path is not exposed by the marketplace, so its failure
   independence is unknown.
@@ -36,6 +36,10 @@ gateway cannot select it for the `/v1/responses` wire that subagent traffic uses
 answered HTTP 200 in a direct probe (two correct trivial completions) but also returned one completion unrelated to its
 prompt, so it is excluded pending provider support rather than wired in on an undocumented route. Its chat-wire
 measurement (75.9% slower TTFT than OpenRouter, $0.0149/request, one recovered 504) is recorded alongside.
+
+Reweight note (2026-10-07): the scoring formula is now 0.50 × cost + 0.30 × reliability + 0.20 × speed. Recomputing the
+rows above leaves the ranking unchanged; the operational waterfall later moved to a cost-first economy ordering recorded
+in `docs/deepseek-waterfall-model-plan.md`.
 
 ## Scope and method
 
@@ -66,11 +70,11 @@ measurement (75.9% slower TTFT than OpenRouter, $0.0149/request, one recovered 5
 
 | Rank | Provider             | Wire      | Effective cost/req | Corpus cost (30 req) | TTFT P50/P95  | TPS P50     | E2E P50/P95   | First-attempt success | Cache hit | Cost/Speed/Reliability | Overall               |
 | ---- | -------------------- | --------- | ------------------ | -------------------- | ------------- | ----------- | ------------- | --------------------- | --------- | ---------------------- | --------------------- |
-| 1    | OpenRouter           | responses | $0.0064            | $0.1924              | 643/1181 ms   | 314.3 tok/s | 2019/57304 ms | 30/30                 | 74.3%     | 100.0/60.9/100.0       | **88.3**              |
-| 2    | LithosAI             | responses | $0.0065            | $0.1946              | 3801/6393 ms  | 289.2 tok/s | 5916/56144 ms | 30/30                 | 30.6%     | 99.1/21.2/100.0        | 75.9                  |
-| 3    | DeepSeek direct      | responses | $0.0101            | $0.3042              | 1183/2089 ms  | 254.8 tok/s | 3029/42465 ms | 30/30                 | 49.0%     | 56.0/55.7/100.0        | 64.7                  |
-| 4    | Surplus Intelligence | responses | $0.0094            | $0.2806              | 1995/7176 ms  | 365.6 tok/s | 6313/84157 ms | 30/30                 | 37.7%     | 65.3/7.2/100.0         | 54.8                  |
-| 5    | OpenLux              | chat      | $0.0149            | $0.4465              | 6708/18546 ms | 2728 tok/s  | 6909/18976 ms | 29/30                 | 3.6%      | 0.0/50.0/98.0          | 34.6 (excluded: wire) |
+| 1    | OpenRouter           | responses | $0.0064            | $0.1924              | 643/1181 ms   | 314.3 tok/s | 2019/57304 ms | 30/30                 | 74.3%     | 100.0/60.9/100.0       | **92.2**              |
+| 2    | LithosAI             | responses | $0.0065            | $0.1946              | 3801/6393 ms  | 289.2 tok/s | 5916/56144 ms | 30/30                 | 30.6%     | 99.1/21.2/100.0        | 83.8                  |
+| 3    | DeepSeek direct      | responses | $0.0101            | $0.3042              | 1183/2089 ms  | 254.8 tok/s | 3029/42465 ms | 30/30                 | 49.0%     | 56.0/55.7/100.0        | 69.1                  |
+| 4    | Surplus Intelligence | responses | $0.0094            | $0.2806              | 1995/7176 ms  | 365.6 tok/s | 6313/84157 ms | 30/30                 | 37.7%     | 65.3/7.2/100.0         | 64.1                  |
+| 5    | OpenLux              | chat      | $0.0149            | $0.4465              | 6708/18546 ms | 2728 tok/s  | 6909/18976 ms | 29/30                 | 3.6%      | 0.0/50.0/98.0          | 39.4 (excluded: wire) |
 
 Latency detail: median/P90/P95/P99 per provider is in `results/metrics.json`. OpenLux's single first-attempt failure was
 a 504 pre-header gateway timeout on the 943-item `xlarge-04` request, recovered by the retry (100% retry recovery).

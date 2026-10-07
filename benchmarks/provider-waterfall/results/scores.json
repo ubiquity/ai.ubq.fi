@@ -1,34 +1,34 @@
 {
- "generated_at": "2026-10-06T04:10:46.982Z",
+ "generated_at": "2026-10-07T03:08:09.388Z",
  "sources": [
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-pilot-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-probe-concurrency-w1-b0.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w1-eve-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w1-eve-b2.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/deepseek-w2-asia-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-pilot-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-probe-concurrency-w1-b0.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w1-eve-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w1-eve-b2.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/lithos-w2-asia-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-pilot-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-probe-concurrency-w1-b0.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w1-eve-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w1-eve-b2.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openlux-w2-asia-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-pilot-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-probe-concurrency-w1-b0.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w1-eve-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w1-eve-b2.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/openrouter-w2-asia-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-pilot-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-concurrency-w1-b0.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-funded-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-funding-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-w1-b0.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-probe-surplus-w2-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-w1-eve-b1.jsonl",
-  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/pasted-text-1-g94f770bf51/benchmarks/provider-waterfall/results/surplus-w1-eve-b2.jsonl"
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//deepseek-pilot-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//deepseek-probe-concurrency-w1-b0.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//deepseek-w1-eve-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//deepseek-w1-eve-b2.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//deepseek-w2-asia-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//lithos-pilot-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//lithos-probe-concurrency-w1-b0.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//lithos-w1-eve-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//lithos-w1-eve-b2.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//lithos-w2-asia-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openlux-pilot-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openlux-probe-concurrency-w1-b0.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openlux-w1-eve-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openlux-w1-eve-b2.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openlux-w2-asia-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openrouter-pilot-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openrouter-probe-concurrency-w1-b0.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openrouter-w1-eve-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openrouter-w1-eve-b2.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//openrouter-w2-asia-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-pilot-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-probe-concurrency-w1-b0.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-probe-surplus-funded-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-probe-surplus-funding-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-probe-surplus-w1-b0.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-probe-surplus-w2-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-w1-eve-b1.jsonl",
+  "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/waterfall-scoring-reweight-20261007/benchmarks/provider-waterfall/results//surplus-w1-eve-b2.jsonl"
  ],
  "costs": [
   {
@@ -117,7 +117,7 @@
    "cost_score": 100,
    "speed_score": 60.90113560962634,
    "reliability_score": 100,
-   "overall_score": 88.2703406828879
+   "overall_score": 92.18022712192527
   },
   {
    "rank": 2,
@@ -148,7 +148,7 @@
    "cost_score": 99.12622505608691,
    "speed_score": 21.249889039798486,
    "reliability_score": 100,
-   "overall_score": 75.938079239983
+   "overall_score": 83.81309033600316
   },
   {
    "rank": 3,
@@ -179,7 +179,7 @@
    "cost_score": 56.016058566536785,
    "speed_score": 55.664903928777974,
    "reliability_score": 100,
-   "overall_score": 64.70750046190179
+   "overall_score": 69.14101006902399
   },
   {
    "rank": 4,
@@ -210,7 +210,7 @@
    "cost_score": 65.30877317274766,
    "speed_score": 7.218885593730963,
    "reliability_score": 100,
-   "overall_score": 54.82005226449312
+   "overall_score": 64.09816370512003
   },
   {
    "rank": 5,
@@ -241,7 +241,7 @@
    "cost_score": 0,
    "speed_score": 50,
    "reliability_score": 98,
-   "overall_score": 34.6
+   "overall_score": 39.4
   }
  ]
 }
