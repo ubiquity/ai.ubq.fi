@@ -1,10 +1,11 @@
 // Request handler for the `ubiquity/deepseek-v4.1-flash` synthetic model:
-// dispatch each hop of the measured provider waterfall in order and advance
-// only on infrastructure or serving failures. The final Surplus hop re-enters
-// the ordinary Responses pipeline (admission, reservation and ledger
-// settlement included); streaming hops are gated on their first semantic
-// output so a stream that dies before any output still advances the chain.
-// See docs/deepseek-waterfall-model-plan.md.
+// dispatch each hop of the cost-first provider order and advance only on
+// infrastructure or serving failures. The two paid hops (Surplus, OpenLux)
+// re-enter the ordinary Responses pipeline (admission, reservation and ledger
+// settlement included) each pinned to its own paid tier, so a paid hop can
+// never silently advance to the other paid provider; streaming hops are gated
+// on their first semantic output so a stream that dies before any output still
+// advances the chain. See docs/deepseek-waterfall-model-plan.md.
 
 import { openaiError } from "../http.ts";
 import { recordAttemptedProvider, type DeepSeekWaterfallFallbackReason, type UsageContext } from "../openai-telemetry.ts";
@@ -20,6 +21,7 @@ import { handleDeepSeekResponses } from "./handlers.ts";
 import {
   DEEPSEEK_WATERFALL_MODEL_ID,
   DEEPSEEK_WATERFALL_PAID_MODEL_ID,
+  DEEPSEEK_WATERFALL_PAID_PIN,
   DEEPSEEK_WATERFALL_PROVIDER_MODEL,
   DEEPSEEK_WATERFALL_REASONING_LEVELS,
   type DeepSeekWaterfallProvider,
@@ -42,18 +44,19 @@ export type DeepSeekWaterfallDispatch = (
   }>
 ) => Promise<Response>;
 
-/** The ordinary Responses pipeline tail, injected so tests can stub the paid hop. */
+/** The ordinary Responses pipeline tail, injected so tests can stub a paid hop. */
 export type DeepSeekWaterfallPaidTail = (
   req: Request,
   rawRecord: Record<string, unknown>,
   rawBody: ResponsesRequest,
-  usageContext?: UsageContext
+  usageContext?: UsageContext,
+  options?: Readonly<{ allowedPaidProviders?: readonly ("metered" | "surplus")[] | null }>
 ) => Promise<Response>;
 
 export type DeepSeekWaterfallOptions = Readonly<{
   /** Injected transports; production wires the three provider handlers plus the paid tail. */
   dispatch?: DeepSeekWaterfallDispatch;
-  /** Overrides the Surplus hop's pipeline tail (tests only). */
+  /** Overrides the paid hops' pipeline tail (tests only). */
   paidTail?: DeepSeekWaterfallPaidTail;
   /** Overrides for tests; production reads the operator selection and credentials. */
   selection?: ProviderSelection | null;
@@ -92,12 +95,16 @@ const dispatchPaidHop = async (paidTail: DeepSeekWaterfallPaidTail, input: Param
   // The rewritten body has its own length; the constructor recomputes it.
   headers.delete("content-length");
   const paidRequest = new Request(input.req.url, { method: "POST", headers, body: JSON.stringify(paidBody), signal: input.req.signal });
-  return await paidTail(paidRequest, paidBody, paidBody, input.usageContext);
+  // Pin the hop to its own paid tier: without the pin the paid pipeline would
+  // apply its fixed Surplus -> Metered cost order to either hop, letting the
+  // Surplus hop silently advance to metered and starving the OpenLux hop.
+  const allowedPaidProviders = DEEPSEEK_WATERFALL_PAID_PIN[input.provider] ?? null;
+  return await paidTail(paidRequest, paidBody, paidBody, input.usageContext, { allowedPaidProviders });
 };
 
 const defaultDispatchFor = (paidTail: DeepSeekWaterfallPaidTail): DeepSeekWaterfallDispatch => {
   return (input) => {
-    if (input.provider === "surplus") return dispatchPaidHop(paidTail, input);
+    if (input.provider === "surplus" || input.provider === "openlux") return dispatchPaidHop(paidTail, input);
     if (input.provider === "openrouter") return handleOpenRouterResponses(input.req, input.rawRecord, input.model, input.usageContext);
     if (input.provider === "lithos") return handleLithosResponses(input.req, input.rawRecord, input.model, input.usageContext);
     return handleDeepSeekResponses(input.req, input.rawRecord, input.model, input.usageContext);

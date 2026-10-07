@@ -36,7 +36,7 @@ export const GATEWAY_PROVIDER_ID = "ubiquity" as const;
 export const GATEWAY_PROVIDER_PRESENTATION: ProviderPresentation = {
   label: "Ubiquity",
   tier: "gateway",
-  detail: "Gateway-owned DeepSeek V4.1 Flash waterfall: OpenRouter, then LithosAI, then DeepSeek, then Surplus.",
+  detail: "Gateway-owned DeepSeek V4.1 Flash waterfall: LithosAI, then DeepSeek, then OpenRouter, then Surplus, then OpenLux.",
   endpoints: ["/v1/responses"],
   health_key: "ubiquity",
 };

@@ -277,7 +277,7 @@ const handleCodexPrimaryThrow = async (state: ResponsesHandlerState, error: unkn
   return toPreHeaderErrorResponse(error, terminalType, state.usageContext?.responseTelemetry?.provider);
 };
 
-const runCodexPrimaryAttempt = async (state: ResponsesHandlerState): Promise<Response | null> => {
+const runCodexPrimaryAttempt = async (state: ResponsesHandlerState, options?: ResponsesTailOptions): Promise<Response | null> => {
   try {
     const remainingMs = state.preHeaderDeadline.remainingMs();
     const failoverReserveMs = Math.min(STREAM_FAILOVER_RESERVE_MS, remainingMs / 2);
@@ -298,6 +298,7 @@ const runCodexPrimaryAttempt = async (state: ResponsesHandlerState): Promise<Res
         : undefined,
       rejectPresemanticFailureTerminal: state.apiKey !== null,
       releaseOnProgress: state.clientWantsStream,
+      allowedPaidProviders: options?.allowedPaidProviders ?? null,
     });
     if (result.kind === "ready") {
       completeCodexPrimaryAttempt(state, result.value);
@@ -378,7 +379,8 @@ const settleResponsesRecoveryFailure = async (
 const runResponsesRecoveryAttempt = async (
   state: ResponsesHandlerState,
   fallbackAttempt: FailedResponsesAttempt,
-  recoveryProbe: RemovedProviderCircuitProbe | null
+  recoveryProbe: RemovedProviderCircuitProbe | null,
+  options?: ResponsesTailOptions
 ): Promise<Response | null> => {
   let recovery: Awaited<ReturnType<typeof fetchAndPreparePrimaryResponses>>;
   try {
@@ -394,6 +396,7 @@ const runResponsesRecoveryAttempt = async (
       attemptDeadline: createStreamSemanticDeadline(state.preHeaderDeadline.signal, Math.ceil(state.preHeaderDeadline.remainingMs())),
       rejectPresemanticFailureTerminal: true,
       releaseOnProgress: state.clientWantsStream,
+      allowedPaidProviders: options?.allowedPaidProviders ?? null,
     });
   } catch (error) {
     await releaseResponsesRecoveryProbe(state, recoveryProbe);
@@ -408,7 +411,11 @@ const runResponsesRecoveryAttempt = async (
   return null;
 };
 
-const settleRemovedProviderFailure = async (state: ResponsesHandlerState, attempt: FailedResponsesAttempt): Promise<Response | null> => {
+const settleRemovedProviderFailure = async (
+  state: ResponsesHandlerState,
+  attempt: FailedResponsesAttempt,
+  options?: ResponsesTailOptions
+): Promise<Response | null> => {
   void persistFailedRemovedProviderAttempt(state.usageContext, state.fallbackStartedAt, attempt.trigger);
   if (attempt.trigger === "empty_upstream_completion") {
     if (state.usageContext?.responseTelemetry) {
@@ -438,10 +445,10 @@ const settleRemovedProviderFailure = async (state: ResponsesHandlerState, attemp
   const recovery = await acquireResponsesRecoveryProbe(attempt.response);
   if (!recovery.ok) return recovery.response;
   state.probe = recovery.value;
-  return await runResponsesRecoveryAttempt(state, attempt, recovery.value);
+  return await runResponsesRecoveryAttempt(state, attempt, recovery.value, options);
 };
 
-const runRemovedProviderAttempt = async (state: ResponsesHandlerState, apiKey: string): Promise<Response | null> => {
+const runRemovedProviderAttempt = async (state: ResponsesHandlerState, apiKey: string, options?: ResponsesTailOptions): Promise<Response | null> => {
   state.fallbackStartedAt = performance.now();
   const removedProvider = await fetchAndPrepareRemovedProviderResponses(state.removedProviderBody, {
     usageContext: state.usageContext,
@@ -451,7 +458,7 @@ const runRemovedProviderAttempt = async (state: ResponsesHandlerState, apiKey: s
     attemptDeadline: createStreamSemanticDeadline(state.preHeaderDeadline.signal, Math.ceil(state.preHeaderDeadline.remainingMs())),
   });
   if (removedProvider.kind !== "ready") {
-    return await settleRemovedProviderFailure(state, removedProvider.attempt);
+    return await settleRemovedProviderFailure(state, removedProvider.attempt, options);
   }
   state.removedProviderAttempt = removedProvider.attempt;
   state.selectedModel = removedProvider.attempt.selectedModel;
@@ -464,15 +471,22 @@ const runRemovedProviderAttempt = async (state: ResponsesHandlerState, apiKey: s
   return null;
 };
 
-const runResponsesFailover = async (state: ResponsesHandlerState): Promise<Response | null> => {
+/**
+ * Request-scoped paid-tier pin for the DeepSeek waterfall's paid hops. Null or
+ * absent keeps the routing layer's fixed Surplus -> Metered cost order for
+ * every other caller.
+ */
+type ResponsesTailOptions = Readonly<{ allowedPaidProviders?: readonly ("metered" | "surplus")[] | null }>;
+
+const runResponsesFailover = async (state: ResponsesHandlerState, options?: ResponsesTailOptions): Promise<Response | null> => {
   try {
     if (state.route === "codex") {
-      const codexResponse = await runCodexPrimaryAttempt(state);
+      const codexResponse = await runCodexPrimaryAttempt(state, options);
       if (codexResponse) return codexResponse;
     }
 
     if (state.route === "removed_provider" && state.apiKey) {
-      const removedProviderResponse = await runRemovedProviderAttempt(state, state.apiKey);
+      const removedProviderResponse = await runRemovedProviderAttempt(state, state.apiKey, options);
       if (removedProviderResponse) return removedProviderResponse;
     }
     return null;
@@ -821,19 +835,20 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
 /**
  * The ordinary routing tail behind the specialty-provider branches: prepare the
  * request, run the primary/paid failover path and deliver the result. Exported
- * so the DeepSeek waterfall's Surplus hop re-enters exactly this pipeline
+ * so the DeepSeek waterfall's paid hops re-enter exactly this pipeline
  * (admission, reservation and ledger settlement included) instead of
- * reimplementing it.
+ * reimplementing it, each pinned to its own paid tier through `options`.
  */
 export const runOrdinaryResponsesTail = async (
   req: Request,
   rawRecord: Record<string, unknown>,
   rawBody: ResponsesRequest,
-  usageContext?: UsageContext
+  usageContext?: UsageContext,
+  options?: ResponsesTailOptions
 ): Promise<Response> => {
   const prepared = await prepareResponsesRequest(req, rawRecord, rawBody, usageContext);
   if (!prepared.ok) return prepared.response;
-  const failoverResponse = await runResponsesFailover(prepared.value);
+  const failoverResponse = await runResponsesFailover(prepared.value, options);
   if (failoverResponse) return failoverResponse;
   const delivery = buildResponsesDelivery(prepared.value);
   if (!delivery.ok) return delivery.response;

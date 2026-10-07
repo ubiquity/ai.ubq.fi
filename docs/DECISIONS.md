@@ -1545,3 +1545,24 @@ Reason: the operator asked for the gateway identity to behave like every other p
 and unchecking it must mean it is off. Reversal risk: a non-empty stored selection written before this change does not
 list `ubiquity`, so the route stays hidden until the operator checks the new row; the empty default selection is
 unaffected.
+
+## DeepSeek waterfall economy order and the OpenLux hop - 2026-10-07
+
+The `ubiquity/deepseek-v4.1-flash` synthetic waterfall now runs the cost-first economy order
+`["lithos","deepseek","openrouter","surplus","openlux"]`. The operator chose the economy ordering priorities cost 50 /
+reliability 30 / speed 20 (the prior ranking was cost 50 / speed 30 / reliability 20) and the listed per-token costs.
+LithosAI Base and the DeepSeek off-peak rate are $0.15/$0.60 per 1M input/output at list price, half of OpenRouter's
+$0.30/$1.20 for the same weights, so the cheaper direct routes lead and OpenRouter drops to third; Surplus and OpenLux
+remain the two paid hops. The OpenLux hop is now wired to its `/v1/responses` endpoint through the existing
+`fetchMeteredResponses` transport as the final fallback, instead of being excluded because the earlier chat-wire
+benchmark record could not serve Responses. The paid routing layer already accepted `options.allowedPaidProviders` but
+no production caller supplied it, so the Surplus hop could silently advance to metered; the waterfall now threads an
+explicit per-hop pin through `runOrdinaryResponsesTail` to `fetchResponsesWithPaidFallback` (`surplus` -> `["surplus"]`,
+`openlux` -> `["metered"]`, which is the routing layer's name for OpenLux), keeping the default `[surplus, metered]`
+order for every other caller.
+
+Reason: the operator asked for a cost-first order under the benchmark's stated priorities and for OpenLux to serve as
+the last resort rather than be skipped by a chat-only wire record, and the pin closes a live correctness gap the recon
+found. Reversal risk: the paid hops depend on their own tier credentials and catalog records, so a model missing from
+one paid catalog now fails that hop closed instead of advancing to the sibling tier within the same hop; the next hop in
+the waterfall still runs, and the pin only narrows one request's paid selection.

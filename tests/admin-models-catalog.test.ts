@@ -185,7 +185,7 @@ Deno.test("the official DeepSeek ids are cataloged as their own provider categor
   }
 });
 
-Deno.test("the gateway waterfall model is cataloged with one provider row per usable hop", async () => {
+Deno.test("the gateway waterfall model is cataloged with one provider row per usable hop in cost-first order", async () => {
   Deno.env.delete("DEEPSEEK_API_KEY");
   Deno.env.delete("LITHOSAI_API_KEY");
   Deno.env.delete("CEREBRAS_API_KEY");
@@ -197,8 +197,8 @@ Deno.test("the gateway waterfall model is cataloged with one provider row per us
     assert.ok(row, "a configured hop makes the waterfall model selectable");
     assert.deepEqual(
       row.providers.map((provider) => provider.id),
-      ["ubiquity", "openrouter", "deepseek"],
-      "the gateway identity leads, with one row per usable hop behind it"
+      ["ubiquity", "deepseek", "openrouter"],
+      "the gateway identity leads, with one row per usable hop behind it in cost-first order"
     );
     assert.deepEqual(row.providers[0].supported_endpoints, ["/v1/responses"]);
     assert.equal(row.providers[0].owned_by, "ubiquity");
@@ -209,6 +209,39 @@ Deno.test("the gateway waterfall model is cataloged with one provider row per us
   } finally {
     Deno.env.delete("OPENROUTER_API_KEY");
     Deno.env.delete("DEEPSEEK_API_KEY");
+  }
+});
+
+Deno.test("the gateway waterfall model lists the paid hops, OpenLux last, when their credentials are configured", async () => {
+  Deno.env.delete("DEEPSEEK_API_KEY");
+  Deno.env.delete("LITHOSAI_API_KEY");
+  Deno.env.delete("CEREBRAS_API_KEY");
+  Deno.env.delete("OPENROUTER_API_KEY");
+  Deno.env.set("SURPLUS_API_KEY", "fixture-surplus-key");
+  Deno.env.set("METERED_API_KEY", "fixture-metered-key");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  try {
+    const catalog = await buildModelCatalogSnapshot();
+    const row = catalog.models.find((model) => model.id === DEEPSEEK_WATERFALL_MODEL_ID);
+    assert.ok(row, "a paid credential alone makes the waterfall model selectable");
+    assert.deepEqual(
+      row.providers.map((provider) => provider.id),
+      ["ubiquity", "surplus", "openlux"],
+      "the paid hops keep the fixed cost order and the OpenLux row joins last"
+    );
+    for (const provider of row.providers.slice(1)) {
+      assert.equal(provider.owned_by, "ubiquity");
+      assert.deepEqual(provider.supported_endpoints, ["/v1/responses"]);
+    }
+    assert.equal(row.context_window_tokens, 1_048_576);
+    assert.deepEqual(row.supported_reasoning_levels, ["low", "high", "max"]);
+    assert.equal(row.default_reasoning_effort, "high");
+  } finally {
+    Deno.env.delete("SURPLUS_API_KEY");
+    Deno.env.delete("METERED_API_KEY");
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
   }
 });
 
