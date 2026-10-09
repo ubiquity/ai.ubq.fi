@@ -77,21 +77,25 @@
   2026-09-07 for the standalone Sentinel integration. Keep scheduling and agents standalone; live activation and
   promotion ownership transfer remain separate from this integration.
 
-## Rolling Asynchronous Codex Review Workflow
+## Rolling Local Code Review Workflow
 
-- Ship a bounded pull request for each unit of work, request a Codex review on it without waiting for the review to
-  finish, merge the pull request only after the required deterministic CI and branch protections pass, test the merged
-  result, continue with the next pull request, and collect completed review findings from earlier open or merged pull
-  requests only after the fact.
-- Codex review latency is never a merge gate. A review that has not completed, an unreviewed open pull request, or a
-  review run that could not start must not block delivery, merging, testing, or the next unit of work.
-- P0 and P1 Codex findings never block the reviewed pull request merge. No Codex review finding of any severity (P0, P1,
-  P2, or P3) gates merge, delivery, testing, or the next unit of work: deterministic CI and branch protections are the
-  only merge gates. Every severity enters the asynchronous official review backlog after the fact, with P0 then P1
-  priority (P0 before P1 before P2 before P3) for selection as normal future work. Every claim and remediation carries
-  exact evidence (exact reviewed head and base SHA, review identity, and the original finding text), and the existing
-  production preview, health-identity, monitoring, and acceptance safeguards remain mandatory for every deployed
-  candidate.
+- Ship a bounded pull request for each unit of work and merge it only after the required deterministic CI and branch
+  protections pass, then test the merged result, continue with the next pull request, and collect review findings from
+  earlier pull requests only after the fact.
+- Run reviews with the actual local Codex review mode: `codex review --base <base-branch>` for a pull request's
+  committed diff (fetch the base and head first), or `codex review --commit <sha>` / `codex review --uncommitted` for
+  other targets; `codex exec review` runs the same review mode non-interactively. Choose the reviewer with
+  `review_model` where a dedicated review model is configured (the gateway exposes `codex-auto-review`).
+- Never request a review by prompting a normal-mode session, and never post `@codex review` or invoke the hosted Codex
+  GitHub app: external review requests are retired.
+- Review latency is never a merge gate. A review that has not completed, an unreviewed pull request, or a review run
+  that could not start must not block delivery, merging, testing, or the next unit of work.
+- No review finding of any severity (P0, P1, P2, or P3) gates merge, delivery, testing, or the next unit of work:
+  deterministic CI and branch protections are the only merge gates. Every severity enters the asynchronous official
+  review backlog after the fact, with P0 then P1 priority (P0 before P1 before P2 before P3) for selection as normal
+  future work. Every claim and remediation carries exact evidence (exact reviewed head and base SHA, the review command
+  and model identity, and the original finding text), and the existing production preview, health-identity, monitoring,
+  and acceptance safeguards remain mandatory for every deployed candidate.
 - Treat malformed, incomplete, or identity-mismatched review data as fail-closed: preserve the exact evidence, ingest
   nothing, and surface the failure. Never drop findings, salvage a partial parse, or mark a failed review complete.
 
