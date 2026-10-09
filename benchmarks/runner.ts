@@ -30,6 +30,7 @@ import {
   TrajectoryEvent,
   validateBenchmarkResult,
   validateTrajectoryEvent,
+  VerificationOutcome,
 } from "./schemas.ts";
 
 // ---------------------------------------------------------------------------
@@ -257,9 +258,24 @@ export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts
   }
 
   // Verification and oracle evaluation against the final workspace state.
-  const verification = prepared
-    ? await runVerification(task, workspace)
-    : { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  let verification: VerificationOutcome;
+  if (!prepared) {
+    verification = { ran: false, passed: false, command: null, exit_code: null, timed_out: false, output: null };
+  } else {
+    try {
+      verification = await runVerification(task, workspace);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      verification = {
+        ran: true,
+        passed: false,
+        command: task.verify?.command ?? null,
+        exit_code: null,
+        timed_out: false,
+        output: `verification failed: ${message}`.slice(0, 4000),
+      };
+    }
+  }
   record({
     type: "verify",
     at: isoNow(),

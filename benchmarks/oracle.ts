@@ -21,7 +21,20 @@ export async function runVerification(task: TaskManifest, workspace: FixtureWork
   if (!task.verify) {
     return { ran: false, passed: true, command: null, exit_code: null, timed_out: false, output: null };
   }
-  const res = await workspace.execShell(task.verify.command, task.verify.timeout_ms ?? 20_000);
+  let res: Awaited<ReturnType<FixtureWorkspace["execShell"]>>;
+  try {
+    res = await workspace.execShell(task.verify.command, task.verify.timeout_ms ?? 20_000);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      ran: true,
+      passed: false,
+      command: task.verify.command,
+      exit_code: null,
+      timed_out: false,
+      output: truncate(`verification failed: ${message}`),
+    };
+  }
   const output = [res.stdout, res.stderr].filter((s) => s.trim() !== "").join("\n");
   return {
     ran: true,
