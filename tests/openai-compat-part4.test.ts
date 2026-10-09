@@ -42,6 +42,7 @@ import {
   sseResponse,
   waitForPaidFallbackTerminal,
   withFetchMock,
+  withProviderSelection,
 } from "./helpers/openai-compat-harness.ts";
 
 Deno.test("openai: a generic post-reset 429 does not authorize paid fallback", async () => {
@@ -1173,6 +1174,7 @@ Deno.test("openai: unknown paid-model routing honors catalog refresh backoff", a
           assert.equal(response.status, 403);
           const payload = (await response.json()) as { error?: { code?: string } };
           assert.equal(payload.error?.code, "paid_fallback_disabled");
+          assert.notEqual(getResponseTelemetry(response)?.failureKind, "upstream_http_4xx");
         }
       }
     );
@@ -1268,7 +1270,75 @@ Deno.test("openai: dynamic tool requests reject unverified Surplus capability be
     assert.equal(upstreamCalls, 0);
     assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
     assert.equal(getResponseTelemetry(response)?.fallbackReason, "dynamic_paid_model");
+    assert.notEqual(getResponseTelemetry(response)?.failureKind, "upstream_http_4xx");
     assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+  } finally {
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
+Deno.test("openai: local paid limit rejection is not an upstream HTTP failure", async () => {
+  const keyId = "local-paid-limit-rejection";
+  const requestId = `request-${keyId}`;
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  Deno.env.delete("METERED_API_KEY");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  seedPaidFallbackKey(keyId, { limitMicrocredits: 100, v3SettledMicrocredits: 100 });
+
+  try {
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(
+          Response.json({
+            data: [
+              {
+                id: DEFAULT_TEST_MODEL,
+                provider: "Surplus",
+                supported_endpoint_types: ["openai-response"],
+                pricing: { prompt: 0.000001, completion: 0.000003 },
+              },
+            ],
+          })
+        ),
+    });
+
+    await withProviderSelection(["surplus"], async () => {
+      let upstreamCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          upstreamCalls += 1;
+          throw new Error(`Paid limit rejection must not reach an upstream: ${url}`);
+        },
+        () =>
+          handleResponses(responsesRequest({ model: DEFAULT_TEST_MODEL }), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId,
+            startedAtMs: Date.now(),
+          })
+      );
+
+      assert.equal(response.status, 429);
+      const payload = (await response.json()) as { error?: { code?: string } };
+      assert.equal(payload.error?.code, "paid_fallback_limit_exceeded");
+      assert.equal(upstreamCalls, 0);
+      assert.notEqual(getResponseTelemetry(response)?.failureKind, "upstream_http_4xx");
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+    });
   } finally {
     kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
     kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));

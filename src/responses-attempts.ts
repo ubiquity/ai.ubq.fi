@@ -527,7 +527,10 @@ const failedPrimaryResponsesGatewayOutcome = (
     failed: {
       provider: routed.provider,
       response: routed.response,
-      trigger: primaryResponsesAttemptTrigger(routed.response.status),
+      // Admission and capability rejections are gateway decisions, not HTTP
+      // responses from the selected provider. Preserve their pre-existing
+      // gateway classification instead of labeling them upstream failures.
+      trigger: routed.allowRemovedProviderRecovery === false ? "read_error" : primaryResponsesAttemptTrigger(routed.response.status),
       signal: preparationDeadline.signal,
       clearDeadline: preparationDeadline.clear,
     },
