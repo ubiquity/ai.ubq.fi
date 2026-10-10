@@ -8591,10 +8591,18 @@ const refreshModelsMetadata = async () => {
       return;
     }
     await loadModelsWhitelist({ force: true });
-    const upstream = payload?.data?.openrouter?.upstream_models;
-    toast.success("Model metadata refreshed", {
-      description: typeof upstream === "number" ? `${formatNumber(upstream)} upstream models` : undefined,
-    });
+    const openrouter = payload?.data?.openrouter;
+    const upstream = openrouter?.upstream_models;
+    const refreshed = openrouter?.refreshed;
+    if (refreshed === false) {
+      toast.info("Model metadata unchanged", {
+        description: typeof upstream === "number" ? `${formatNumber(upstream)} upstream models cached (refresh timed out or unchanged)` : "Upstream metadata timed out or unchanged",
+      });
+    } else {
+      toast.success("Model metadata refreshed", {
+        description: typeof upstream === "number" ? `${formatNumber(upstream)} upstream models` : undefined,
+      });
+    }
   } catch {
     toast.error("Metadata refresh failed", { description: "Offline" });
   } finally {

@@ -835,3 +835,57 @@ Deno.test("admin paid-provider wallet display never claims a balance the token e
   assert.match(adminScript, /appendProviderFact\(facts, "Inference", status\.health \? providerStateLabel\(status\.health\) : "Not observed"\)/);
   assert.match(adminScript, /appendProviderFact\(facts, "Last response", formatDate\(status\.health\?\.last_observed_at_ms\)\)/);
 });
+
+Deno.test("metadata refresh toast checks reported openrouter.refreshed outcome", () => {
+  assert.match(adminScript, /const refreshed = openrouter\?\.refreshed;/);
+  assert.match(adminScript, /if \(refreshed === false\)/);
+  assert.match(adminScript, /toast\.info\("Model metadata unchanged"/);
+  assert.match(adminScript, /toast\.success\("Model metadata refreshed"/);
+
+  const toasts: { type: string; title: string; description?: string }[] = [];
+  const toast = {
+    info: (title: string, options?: { description?: string }) => toasts.push({ type: "info", title, description: options?.description }),
+    success: (title: string, options?: { description?: string }) => toasts.push({ type: "success", title, description: options?.description }),
+    error: (title: string, options?: { description?: string }) => toasts.push({ type: "error", title, description: options?.description }),
+  };
+  const formatNumber = (n: number) => String(n);
+
+  const simulateToast = (payload: { data?: { openrouter?: { upstream_models?: number; refreshed?: boolean } } }) => {
+    const fn = new Function(
+      "payload",
+      "toast",
+      "formatNumber",
+      `
+      const openrouter = payload?.data?.openrouter;
+      const upstream = openrouter?.upstream_models;
+      const refreshed = openrouter?.refreshed;
+      if (refreshed === false) {
+        toast.info("Model metadata unchanged", {
+          description: typeof upstream === "number" ? \`\${formatNumber(upstream)} upstream models cached (refresh timed out or unchanged)\` : "Upstream metadata timed out or unchanged",
+        });
+      } else {
+        toast.success("Model metadata refreshed", {
+          description: typeof upstream === "number" ? \`\${formatNumber(upstream)} upstream models\` : undefined,
+        });
+      }
+      `
+    );
+    fn(payload, toast, formatNumber);
+  };
+
+  // Case 1: refreshed === false (timed-out or unchanged)
+  toasts.length = 0;
+  simulateToast({ data: { openrouter: { upstream_models: 226, refreshed: false } } });
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].type, "info");
+  assert.equal(toasts[0].title, "Model metadata unchanged");
+  assert.match(toasts[0].description ?? "", /226 upstream models cached \(refresh timed out or unchanged\)/);
+
+  // Case 2: refreshed === true (successful refresh)
+  toasts.length = 0;
+  simulateToast({ data: { openrouter: { upstream_models: 228, refreshed: true } } });
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].type, "success");
+  assert.equal(toasts[0].title, "Model metadata refreshed");
+  assert.equal(toasts[0].description, "228 upstream models");
+});
