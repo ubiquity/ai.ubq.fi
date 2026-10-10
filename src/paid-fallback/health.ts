@@ -27,6 +27,7 @@ import {
 } from "../openai-telemetry.ts";
 import { normalizeProviderRequestId } from "../upstream-wire.ts";
 import { isAdditionalTrustedCodexModel } from "../request-policy.ts";
+import { DEEPSEEK_WATERFALL_PAID_MODEL_ID } from "../deepseek/waterfall.ts";
 
 export const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): void => {
   console.warn(`[ai.ubq.fi] Paid fallback ${operation} failed; leaving the reservation pending:`, error instanceof Error ? error.message : String(error));
@@ -319,6 +320,8 @@ export const resolvePaidRoutingState = (
      * Surplus -> Metered cost order untouched.
      */
     allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+    /** Server-owned synthetic-hop context; never read from the request body. */
+    deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
   }>
 ): Readonly<{
   surplusBilling: SurplusBillingPricing | null;
@@ -327,7 +330,22 @@ export const resolvePaidRoutingState = (
   meteredOnly: boolean;
   codexEnabled: boolean;
 }> => {
+  const waterfallPaidHop =
+    input.model === DEEPSEEK_WATERFALL_PAID_MODEL_ID &&
+    input.endpointType === "openai-response" &&
+    isProviderEnabled("ubiquity", input.selection) &&
+    input.allowedPaidProviders?.length === 1 &&
+    input.allowedPaidProviders[0] === (input.deepSeekWaterfallPaidHop === "openlux" ? "metered" : "surplus")
+      ? (input.deepSeekWaterfallPaidHop ?? null)
+      : null;
+  // OpenLux served this exact native Responses hop on 2026-10-10 despite its
+  // catalog advertising only Chat/Anthropic endpoints. Retain the exact row
+  // and Chat capability as evidence; ordinary callers keep the catalog gate.
+  const verifiedOpenLuxResponses =
+    waterfallPaidHop === "openlux" &&
+    input.meteredCatalog?.models.some((entry) => entry.id === input.model && entry.supported_endpoint_types.includes("openai")) === true;
   const meteredModelSupportsRoute =
+    verifiedOpenLuxResponses ||
     input.meteredCatalog?.models.some((entry) => entry.id === input.model && entry.supported_endpoint_types.includes(input.endpointType)) === true;
   const surplusModelSupportsRoute =
     input.surplusCatalog?.models.some((entry) => entry.id === input.model && entry.supported_endpoint_types.includes(input.endpointType)) === true;
@@ -356,13 +374,13 @@ export const resolvePaidRoutingState = (
   // its discovery request is temporarily unavailable. Surplus is selected
   // only when its own catalog proves that the exact model is routable.
   const meteredCanServe =
-    isProviderEnabled("openlux", input.selection) &&
+    (isProviderEnabled("openlux", input.selection) || waterfallPaidHop === "openlux") &&
     Boolean(readMeteredApiKey()) &&
     (input.meteredCatalog === null ? input.codexModelKnown : meteredModelSupportsRoute);
   // Tool-bearing work needs explicit capability evidence from the exact
   // Surplus model record. Missing or partial metadata remains fail-closed.
   const surplusCanServe =
-    isProviderEnabled("surplus", input.selection) &&
+    (isProviderEnabled("surplus", input.selection) || waterfallPaidHop === "surplus") &&
     (!input.requestUsesTools || surplusModel?.supports_tools === true) &&
     Boolean(readSurplusApiKey()) &&
     surplusModelSupportsRoute &&
@@ -486,6 +504,7 @@ export const loadPaidResponsesCatalogs = async (
     route: "chat.completions" | "responses";
     signal?: AbortSignal;
     allowedPaidProviders?: readonly ("metered" | "surplus")[] | null;
+    deepSeekWaterfallPaidHop?: "surplus" | "openlux" | null;
   }>,
   selection: ProviderSelection | null
 ): Promise<
@@ -536,6 +555,7 @@ export const loadPaidResponsesCatalogs = async (
       model: options.model,
       selection,
       allowedPaidProviders: options.allowedPaidProviders ?? null,
+      deepSeekWaterfallPaidHop: options.deepSeekWaterfallPaidHop ?? null,
     });
   let routing = resolveRouting();
   // With the Codex tier switched off, the enabled paid catalogs are the only
