@@ -74,7 +74,7 @@ const splitTableRow = (line) =>
     .split("|")
     .map((cell) => cell.trim());
 
-const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line);
+const isTableRow = (line) => /^\s*\|?.*\|.*\|?\s*$/.test(line);
 
 const isTableSeparator = (line) => {
   if (!isTableRow(line)) return false;
