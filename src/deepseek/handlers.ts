@@ -13,7 +13,7 @@ import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "./respon
 import { logForwardedPayloadElisions, toDeepSeekResponsesChatBody } from "./chat-projection.ts";
 import { readBoundedResponseBody } from "../bounded-response-body.ts";
 import { json, openaiError } from "../http.ts";
-import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
+import { BUFFERED_INFERENCE_DEADLINE_MS, createStreamFirstEventDeadline } from "../inference-deadline.ts";
 import { isRecord } from "../utils.ts";
 import { UsageContext, extractChatUsageTokens, recordCompletionUsage, recordRequestUsage, recordStreamTerminalType } from "../openai-telemetry.ts";
 import { markChatSemanticOutput } from "../chat/stream-translation.ts";
@@ -422,6 +422,11 @@ type DeepSeekDispatchResult =
   | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
   | Readonly<{ ok: false; response: Response }>;
 
+export type DeepSeekDispatchOptions = Readonly<{
+  apiKey?: string;
+  fetcher?: typeof fetch;
+}>;
+
 /**
  * Shared DeepSeek dispatch for both gateway routes. It owns the provider
  * request-id capture, the dispatch/headers telemetry, and the failure
@@ -432,10 +437,14 @@ export const dispatchDeepSeekUpstream = async (
   req: Request,
   body: Record<string, unknown>,
   modelRaw: string,
-  usageContext: UsageContext | undefined
+  usageContext: UsageContext | undefined,
+  options?: DeepSeekDispatchOptions
 ): Promise<DeepSeekDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
-  const requestSignal = inferenceSignal(req, usageContext);
+  const clientWantsStream = Boolean(body.stream);
+  const streamDeadline = clientWantsStream ? createStreamFirstEventDeadline(downstreamSignal) : null;
+  const dispatchSignal = streamDeadline ? streamDeadline.signal : inferenceSignal(req, usageContext);
+  const requestSignal = clientWantsStream ? downstreamSignal : dispatchSignal;
   let upstream: Response;
   let bodyDiagnostic: Record<string, unknown> | undefined;
   try {
@@ -443,7 +452,7 @@ export const dispatchDeepSeekUpstream = async (
       onProjectedBody: (projectedBody) => {
         bodyDiagnostic = deepSeekChatBodyDiagnostic(projectedBody);
       },
-      signal: requestSignal,
+      signal: dispatchSignal,
       beforeDispatch: () => usageContext?.beforeProviderDispatch?.("deepseek") ?? Promise.resolve(undefined),
       onDispatch: () => {
         recordAttemptedProvider(usageContext, "deepseek");
@@ -453,11 +462,15 @@ export const dispatchDeepSeekUpstream = async (
         recordFirstProviderHeaders(usageContext);
       },
       sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
+      apiKey: options?.apiKey,
+      fetcher: options?.fetcher,
     });
   } catch (error) {
+    streamDeadline?.clear();
     return { ok: false, response: await respondDeepSeekChatDispatchFailure(error, downstreamSignal, usageContext) };
   }
 
+  streamDeadline?.clear();
   const providerRequestId = getDeepSeekProviderRequestId(upstream);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   if (!upstream.ok) {

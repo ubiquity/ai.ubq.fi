@@ -39,8 +39,9 @@ export const INFERENCE_DEADLINE_MS = STREAM_FIRST_EVENT_DEADLINE_MS;
 export const BUFFERED_INFERENCE_DEADLINE_MS = INFERENCE_DEADLINE_MS;
 
 let streamFirstEventDeadlineMs = STREAM_FIRST_EVENT_DEADLINE_MS;
+let bufferedInferenceDeadlineMs = BUFFERED_INFERENCE_DEADLINE_MS;
 
-export const createInferenceSignal = (requestSignal: AbortSignal, timeoutMs = BUFFERED_INFERENCE_DEADLINE_MS): AbortSignal =>
+export const createInferenceSignal = (requestSignal: AbortSignal, timeoutMs = bufferedInferenceDeadlineMs): AbortSignal =>
   AbortSignal.any([requestSignal, AbortSignal.timeout(timeoutMs)]);
 
 /**
@@ -150,4 +151,8 @@ export const setStreamFirstEventDeadlineMsForTest = (timeoutMs: number | null): 
 
 export const setPaidProviderFirstHeadersDeadlineMsForTest = (timeoutMs: number | null): void => {
   paidProviderFirstHeadersDeadlineMs = timeoutMs ?? PAID_PROVIDER_FIRST_HEADERS_DEADLINE_MS;
+};
+
+export const setBufferedInferenceDeadlineMsForTest = (timeoutMs: number | null): void => {
+  bufferedInferenceDeadlineMs = timeoutMs ?? BUFFERED_INFERENCE_DEADLINE_MS;
 };

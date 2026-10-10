@@ -10,7 +10,9 @@ import {
   STREAM_FAILOVER_RESERVE_MS,
   STREAM_FIRST_EVENT_DEADLINE_MS,
   STREAM_INACTIVITY_DEADLINE_MS,
+  setBufferedInferenceDeadlineMsForTest,
 } from "../src/inference-deadline.ts";
+import { dispatchDeepSeekUpstream, streamDeepSeekChatCompletion } from "../src/deepseek/handlers.ts";
 
 /** The wall-clock budget one inference attempt owns, in milliseconds. */
 const INFERENCE_BUDGET_MS = 30 * 60_000;
@@ -98,4 +100,119 @@ Deno.test("clearing a selected attempt leaves it available after the shared dead
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(selected.signal.aborted, false);
   assert.equal(shared.signal.aborted, false);
+});
+
+Deno.test("streamed dispatch does not abort a healthy stream that outlives BUFFERED_INFERENCE_DEADLINE_MS", async () => {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const makeChunk = (content: string): Uint8Array =>
+    encoder.encode(
+      `data: ${JSON.stringify({
+        id: "chatcmpl-stream-deadline",
+        object: "chat.completion.chunk",
+        created: 1_780_000_000,
+        model: "deepseek-flash",
+        choices: [{ index: 0, delta: { content }, finish_reason: null }],
+      })}\n\n`
+    );
+  const doneChunk = encoder.encode("data: [DONE]\n\n");
+
+  // Set the buffered deadline to a short window (40 ms)
+  setBufferedInferenceDeadlineMsForTest(40);
+
+  try {
+    // Upstream stream that emits frames every 20 ms across 80 ms (outliving 40 ms)
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const safeEnqueue = (data: Uint8Array): void => {
+          try {
+            controller.enqueue(data);
+          } catch {
+            // Already closed or cancelled
+          }
+        };
+        const safeClose = (): void => {
+          try {
+            controller.close();
+          } catch {
+            // Already closed or cancelled
+          }
+        };
+        setTimeout(() => safeEnqueue(makeChunk("frame-1")), 10);
+        setTimeout(() => safeEnqueue(makeChunk("frame-2")), 30);
+        setTimeout(() => safeEnqueue(makeChunk("frame-3")), 50);
+        setTimeout(() => safeEnqueue(doneChunk), 70);
+        setTimeout(() => safeClose(), 75);
+      },
+    });
+
+    const req = new Request("https://ai.ubq.fi/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    });
+    const streamedBody = {
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    };
+
+    const upstreamResponse = new Response(stream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+
+    const dispatched = await dispatchDeepSeekUpstream(req, streamedBody, "deepseek-flash", undefined, {
+      apiKey: "sk-test",
+      fetcher: () => Promise.resolve(upstreamResponse),
+    });
+    assert.equal(dispatched.ok, true);
+
+    const relay = streamDeepSeekChatCompletion(
+      dispatched.upstream,
+      dispatched.providerRequestId,
+      undefined,
+      dispatched.downstreamSignal,
+      dispatched.requestSignal,
+      "deepseek-flash"
+    );
+    assert.equal(relay.status, 200);
+
+    const reader = relay.body?.getReader();
+    assert.ok(reader);
+    let collected = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      collected += decoder.decode(value);
+    }
+
+    // Verify all frames delivered across the 75 ms generation despite 40 ms buffered deadline
+    assert.ok(collected.includes("frame-1"));
+    assert.ok(collected.includes("frame-2"));
+    assert.ok(collected.includes("frame-3"));
+    assert.ok(collected.includes("[DONE]"));
+
+    // Verify contrast: buffered inference with a slow upstream stalls and aborts at the buffered deadline
+    const bufferedBody = {
+      model: "deepseek-flash",
+      messages: [{ role: "user", content: "hello" }],
+      stream: false,
+    };
+    const slowFetcher = (_url: unknown, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response("{}", { status: 200 })), 70);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(init.signal?.reason ?? new DOMException("The operation was aborted.", "TimeoutError"));
+        });
+      });
+    const bufferedDispatched = await dispatchDeepSeekUpstream(req, bufferedBody, "deepseek-flash", undefined, {
+      apiKey: "sk-test",
+      fetcher: slowFetcher as typeof fetch,
+    });
+    assert.equal(bufferedDispatched.ok, false);
+    assert.equal(bufferedDispatched.response.status, 504);
+  } finally {
+    setBufferedInferenceDeadlineMsForTest(null);
+  }
 });
