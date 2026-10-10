@@ -6,6 +6,20 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## External reasoning tiers use ascending Codex picker order - 2026-10-10
+
+The native Codex catalog orders standard tiers from `none` through `ultra` only when projecting external provider
+metadata. This is a permutation of advertised values: omitted tiers stay omitted, custom strings retain their positions,
+and uploaded Codex records retain their own order and defaults. Raw external snapshots and official unversioned model
+responses remain unchanged.
+
+Reason: the Claude alias advertised `max,xhigh,high,medium,low`, reversing the Codex iOS scalar picker. The separate
+native Codex Plan preset still explicitly selects `medium`; gateway ordering does not repair that preset or justify
+overriding a requested effort at inference time.
+
+Validation: regression cases cover the observed Claude ladder, custom tiers, and uploaded-record precedence. Live iOS
+refresh and native Plan preservation must be verified separately.
+
 ## Synthetic paid hops have separate billing identities - 2026-10-10
 
 Each DeepSeek paid hop owns a separate internal billing request id derived from the client request id and provider.

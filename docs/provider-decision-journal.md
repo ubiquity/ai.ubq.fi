@@ -515,3 +515,32 @@ A refusal deadline belongs to the refused rung of the requested model ladder. Ne
 unexpired deadline, and selection chooses the highest eligible rung in the existing ladder. Each rung recovers at its
 own reset; preserve native deadline and caller-cancellation reasons, bounded opt-in waits, and the existing provider
 waterfall.
+
+## 2026-10-10 — Claude OpenRouter requests enable the five-minute prompt cache
+
+### Decision
+
+For OpenRouter Claude models, add request-root `cache_control: { type: "ephemeral" }` on the upstream wire when the
+client has not supplied a cache policy or explicit content/tool breakpoints. Preserve native Responses and Chat
+Completions, client input, explicit cache controls, reasoning effort, and provider routing. Keep this provider extension
+out of the public OpenAI request allowlists. Report effective cache policy and both provider cache-read and cache-write
+counts without inventing zeros for absent counters.
+
+### Why
+
+Three existing generations in session `01a126e0-7f98-7373-ac0a-48e3e2dcdf62` each sent 187,725–193,800 native input
+tokens with zero cached input. Their OpenRouter receipts charged $0.84045060, $0.77250888, and $0.77560560;
+approximately 95.3% of the combined charge came from input. They served `anthropic/claude-opus-5.5-20260921` on Claude
+Platform on AWS. No paid inference probes were needed to establish the misses.
+
+Current OpenRouter documentation supports request-root automatic caching on both native wires, including Claude Platform
+on AWS: https://openrouter.ai/docs/guides/best-practices/prompt-caching. Use its default five-minute TTL: initial writes
+cost 1.25 times input, versus two times for one hour. Reads refresh the TTL. Longer TTLs remain explicit choices; cache
+hits require a matching prefix and do not discount generated output.
+
+### Status and reversal risk
+
+Implemented with mock transport regressions for streamed and buffered native requests, explicit controls, unrelated
+models, and missing usage counters. Production deployment and observed cache-hit acceptance are tracked separately from
+these deterministic tests. Removing the hint restores uncached Claude input; forcing an automatic policy over explicit
+breakpoints can change user intent and provider costs.

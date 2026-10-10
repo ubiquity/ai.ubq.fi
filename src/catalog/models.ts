@@ -92,6 +92,18 @@ const etagMatches = (requestValue: string | null, etag: string | null): boolean 
  */
 const codexReasoningEffortDescription = (effort: string): string => (effort === "none" ? "No reasoning" : `Reasoning effort: ${effort}`);
 
+/** Order standard external tiers for scalar pickers without moving model-defined tiers. */
+const ascendingExternalReasoningLevels = (levels: readonly string[] | null): readonly string[] | null => {
+  if (levels === null) return null;
+  const standardOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+  const rank = (effort: string): number => standardOrder.indexOf(effort);
+  const standardLevels = levels.filter((effort) => rank(effort) >= 0).sort((left, right) => rank(left) - rank(right));
+  let index = 0;
+  // This is a permutation of the source's values, not a supported-tier allowlist.
+  // Unknown strings retain both their position and their relative source order.
+  return levels.map((effort) => (rank(effort) < 0 ? effort : (standardLevels[index++] ?? effort)));
+};
+
 /**
  * Raw uploaded records by id. A Codex-served id must keep the Codex endpoint's
  * own window: discovery and enrichment describe how the gateway can serve the id,
@@ -123,7 +135,7 @@ const meteredCodexModelRecord = (
   const resolved = codexRecord
     ? resolveModelMetadata(model.id, { codex: codexSnapshotMetadataHint(codexRecord), codexSubscription: codexSubscriptionMetadataHint() })
     : resolveModelMetadata(model.id);
-  const levels = resolved.supported_reasoning_levels;
+  const levels = codexRecord ? resolved.supported_reasoning_levels : ascendingExternalReasoningLevels(resolved.supported_reasoning_levels);
   return {
     slug: model.id,
     display_name: model.id,
@@ -462,7 +474,7 @@ const openRouterCodexModels = (): Record<string, unknown>[] => {
   if (readOpenRouterApiKey() === null) return [];
   return (openRouterModelsSnapshot()?.models ?? []).map((model) => {
     const resolved = resolveModelMetadata(model.id);
-    const levels = resolved.supported_reasoning_levels;
+    const levels = ascendingExternalReasoningLevels(resolved.supported_reasoning_levels);
     return {
       slug: model.id,
       display_name: model.id,

@@ -805,11 +805,19 @@ export const extractChatUsageTokens = (value: unknown): UsageTokens | null => {
   if (inputTokens === null || outputTokens === null || totalTokens === null) return null;
   const details = isRecord(value.prompt_tokens_details) && !Array.isArray(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
   const cachedInputTokens = normalizeTokenCount(details?.cached_tokens);
+  const cacheWriteInputTokens = normalizeTokenCount(details?.cache_write_tokens);
   return extractUsageTokens({
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     total_tokens: totalTokens,
-    ...(cachedInputTokens === null ? {} : { input_tokens_details: { cached_tokens: cachedInputTokens } }),
+    ...(cachedInputTokens === null && cacheWriteInputTokens === null
+      ? {}
+      : {
+          input_tokens_details: {
+            ...(cachedInputTokens === null ? {} : { cached_tokens: cachedInputTokens }),
+            ...(cacheWriteInputTokens === null ? {} : { cache_write_tokens: cacheWriteInputTokens }),
+          },
+        }),
   });
 };
 
