@@ -129,6 +129,18 @@ Deno.test("a narrower third-party entry never shrinks a first-party window", () 
     openRouter: enrichment({ context_window_tokens: 300_000, max_context_window_tokens: 300_000 }),
   });
   assert.equal(resolved.context_window_tokens, 400_000);
+  assert.equal(resolved.max_context_window_tokens, 400_000);
+  assert.equal(resolved.context_source, "codex_upload");
+});
+
+Deno.test("an uploaded window below the subscription bound is not inflated by the subscription hint", () => {
+  const resolved = resolveModelMetadata("gpt-5.6-sol", {
+    codex: { context_window_tokens: 200_000, max_context_window_tokens: 200_000 },
+    codexSubscription: codexSubscriptionMetadataHint(),
+    openRouter: null,
+  });
+  assert.equal(resolved.context_window_tokens, 200_000);
+  assert.equal(resolved.max_context_window_tokens, 200_000);
   assert.equal(resolved.context_source, "codex_upload");
 });
 

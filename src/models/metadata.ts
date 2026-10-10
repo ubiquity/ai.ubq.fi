@@ -217,19 +217,23 @@ export const resolveModelMetadata = (modelId: string, sources: ModelMetadataSour
   const provider = sources.provider ?? null;
   const enrichment = openRouter ? openRouterHint(openRouter) : null;
 
-  const resolvedWindow = windowFrom([
+  const declaredWindow = windowFrom([
     ["openrouter", hintWindow(enrichment)],
     ["codex_upload", hintWindow(codex)],
     ["provider_discovery", hintWindow(provider)],
-    ["codex_subscription", hintWindow(subscription)],
   ]);
+  const resolvedWindow =
+    declaredWindow.tokens !== null || subscription === null ? declaredWindow : windowFrom([["codex_subscription", hintWindow(subscription)]]);
   const contextWindow = resolvedWindow.tokens;
-  const declaredMaxWindow = windowFrom([
+  const declaredMaxFromEndpoints = windowFrom([
     ["openrouter", positiveTokenCount(enrichment?.max_context_window_tokens)],
     ["codex_upload", positiveTokenCount(codex?.max_context_window_tokens)],
     ["provider_discovery", positiveTokenCount(provider?.max_context_window_tokens)],
-    ["codex_subscription", positiveTokenCount(subscription?.max_context_window_tokens)],
   ]).tokens;
+  const declaredMaxWindow =
+    declaredMaxFromEndpoints !== null || resolvedWindow.source !== "codex_subscription" || subscription === null
+      ? declaredMaxFromEndpoints
+      : positiveTokenCount(subscription.max_context_window_tokens);
   const declaredAutoCompact = firstTokenCount(codex?.auto_compact_token_limit_tokens, provider?.auto_compact_token_limit_tokens);
   const declaredPercent = codex?.effective_context_window_percent ?? provider?.effective_context_window_percent;
   const reasoning = reasoningFrom(codex, provider, enrichment);
