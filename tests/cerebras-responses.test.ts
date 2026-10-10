@@ -255,6 +255,39 @@ Deno.test("cerebras responses: instructions and a leading developer item collaps
   });
 });
 
+Deno.test("cerebras responses: rejects non-text developer content instead of dropping it", async () => {
+  await withCerebrasKey(async () => {
+    const { result, calls } = await withUpstream(
+      () => {
+        throw new Error("unsupported content must not reach Cerebras");
+      },
+      () =>
+        handleResponses(
+          responsesRequest({
+            model: QWEN,
+            instructions: "Follow the house style.",
+            input: [
+              {
+                type: "message",
+                role: "developer",
+                content: [{ type: "input_image", image_url: "data:image/png;base64,AA==" }],
+              },
+              { type: "message", role: "user", content: "Say pong." },
+            ],
+            reasoning: { effort: "none" },
+          })
+        )
+    );
+
+    assert.equal(result.status, 400);
+    assert.equal(calls.length, 0);
+    const payload = (await result.json()) as { error?: { code?: string; type?: string; message?: string } };
+    assert.equal(payload.error?.code, "cerebras_request_invalid");
+    assert.equal(payload.error?.type, "invalid_request_error");
+    assert.match(payload.error?.message ?? "", /only text content/);
+  });
+});
+
 Deno.test("cerebras responses: a mid-list developer item collapses into one leading system message", async () => {
   await withCerebrasKey(async () => {
     const { result, calls } = await withUpstream(
