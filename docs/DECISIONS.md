@@ -6,6 +6,36 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Compaction fallback retains request admission until provider dispatch - 2026-10-10
+
+Jev compaction and its ordinary Responses fallback share one `executeInference` lifetime and quota reservation.
+
+A failed local compaction cannot release admission before the fallback provider dispatches. Settlement runs once.
+
+Successful local compaction still releases unused request quota. Cancellation still stops before fallback.
+
+Reason: a failed Jev attempt released the reservation, so every DeepSeek waterfall hop failed before transport.
+
+The live compaction-marked reproduction returned 503; the same unmarked request completed through LithosAI.
+
+Reversal risk: settling either attempt separately restores false quota failures across the entire provider chain.
+
+## DeepSeek paid hops use the synthetic route's verified capabilities - 2026-10-10
+
+The synthetic route owns its paid-hop context internally; clients cannot enable it with a request-body field.
+
+An enabled `ubiquity` selection permits its configured paid hops, even when their standalone providers are unchecked.
+
+For its exact `deepseek-v4.1-flash` OpenLux hop, an existing catalog row also permits native Responses dispatch.
+
+Reason: OpenLux advertises only `openai` and `anthropic` for this model, but its native Responses endpoint completes.
+
+A direct authenticated probe on 2026-10-10 returned HTTP 200, `status: completed`, and `pong` from that endpoint.
+
+Ordinary routes retain their catalog and selection gates. Paid admission, accounting, and per-hop pins still apply.
+
+Reversal risk: removing the scoped capability restores a local refusal before the working final hop can dispatch.
+
 ## Every admin gets the full console; super-admin route gating is removed - 2026-10-05
 
 Admin authentication is unchanged: admin tokens, allowlist tokens, Deno Deploy tokens, and admin passkey sessions still
