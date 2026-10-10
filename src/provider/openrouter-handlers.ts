@@ -53,25 +53,27 @@ export type OpenRouterHandlerDeps = Readonly<{
 
 const OPENROUTER_UPSTREAM_LABEL = "openrouter";
 
-/** Apply Claude's default five-minute cache policy only on the upstream wire. */
-const withOpenRouterClaudePromptCache = (
-  body: Record<string, unknown>,
-  model: string
-): Readonly<{ body: Record<string, unknown>; promptCacheMode: PromptCacheMode; explicitBreakpointCount: number }> => {
+const enqueueOpenRouterCacheBlocks = (item: unknown, pending: unknown[]): void => {
+  if (Array.isArray(item)) {
+    for (const part of item) pending.push(part);
+    return;
+  }
+  if (!isRecord(item)) return;
+  // Walk request content and tool blocks, excluding tool JSON schemas.
+  for (const key of ["instructions", "input", "messages", "tools", "content", "output", "function"]) {
+    if (item[key] !== undefined) pending.push(item[key]);
+  }
+};
+
+const openRouterExplicitCacheControls = (body: Record<string, unknown>): Readonly<{ nestedControlPresent: boolean; explicitBreakpointCount: number }> => {
   const pending: unknown[] = [body];
   let explicitBreakpointCount = 0;
   let nestedControlPresent = false;
   while (pending.length > 0) {
     const item = pending.pop();
-    if (Array.isArray(item)) {
-      for (const part of item) pending.push(part);
-      continue;
-    }
-    if (!isRecord(item)) continue;
-    if (
-      item !== body &&
-      (Object.prototype.hasOwnProperty.call(item, "cache_control") || Object.prototype.hasOwnProperty.call(item, "prompt_cache_breakpoint"))
-    ) {
+    enqueueOpenRouterCacheBlocks(item, pending);
+    if (!isRecord(item) || item === body) continue;
+    if (Object.prototype.hasOwnProperty.call(item, "cache_control") || Object.prototype.hasOwnProperty.call(item, "prompt_cache_breakpoint")) {
       nestedControlPresent = true;
       if (
         (isRecord(item.cache_control) && item.cache_control.type === "ephemeral") ||
@@ -79,18 +81,26 @@ const withOpenRouterClaudePromptCache = (
       )
         explicitBreakpointCount += 1;
     }
-    // Walk request content and tool blocks, excluding tool JSON schemas.
-    for (const key of ["instructions", "input", "messages", "tools", "content", "output", "function"]) {
-      if (item[key] !== undefined) pending.push(item[key]);
-    }
   }
+  return { nestedControlPresent, explicitBreakpointCount };
+};
+
+/** Apply Claude's default five-minute cache policy only on the upstream wire. */
+const withOpenRouterClaudePromptCache = (
+  body: Record<string, unknown>,
+  model: string
+): Readonly<{ body: Record<string, unknown>; promptCacheMode: PromptCacheMode; explicitBreakpointCount: number }> => {
+  const { nestedControlPresent, explicitBreakpointCount } = openRouterExplicitCacheControls(body);
   const declaredMode = promptCacheModeFor(body);
   const explicit = nestedControlPresent || declaredMode === "explicit";
   const automaticControlPresent = Object.prototype.hasOwnProperty.call(body, "cache_control");
   const enableAutomatic = /^~?anthropic\/claude-/.test(model) && !automaticControlPresent && !explicit;
+  let promptCacheMode = declaredMode;
+  if (explicit) promptCacheMode = "explicit";
+  else if (automaticControlPresent || enableAutomatic) promptCacheMode = "implicit";
   return {
     body: enableAutomatic ? { ...body, cache_control: { type: "ephemeral" } } : body,
-    promptCacheMode: explicit ? "explicit" : automaticControlPresent || enableAutomatic ? "implicit" : declaredMode,
+    promptCacheMode,
     explicitBreakpointCount,
   };
 };
