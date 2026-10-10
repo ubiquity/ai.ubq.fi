@@ -196,21 +196,28 @@ const bootstrapLegacyDelta = async (kv: Deno.Kv, key: Deno.KvKey, value: unknown
   return addDelta(delta, { legacy_reaped: 1 });
 };
 
-const chunkHasOwner = async (kv: Deno.Kv, captureId: string): Promise<boolean> => {
+const chunkHasOwner = async (kv: Deno.Kv, captureId: string, knownOwners?: Set<string>): Promise<boolean> => {
+  if (knownOwners?.has(captureId)) return true;
   for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_ACCOUNTING_PREFIX })) {
-    if (isAccountingRow(entry.value) && accountingKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) return true;
+    if (isAccountingRow(entry.value) && accountingKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) {
+      knownOwners?.add(captureId);
+      return true;
+    }
   }
   for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_MANIFEST_PREFIX })) {
-    if (isSentinelReplayManifest(entry.value) && manifestKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) return true;
+    if (isSentinelReplayManifest(entry.value) && manifestKeyMatches(entry.key, entry.value) && entry.value.capture_id === captureId) {
+      knownOwners?.add(captureId);
+      return true;
+    }
   }
   return false;
 };
 
 /** Reclaim staged chunks that have no durable manifest or accounting owner. */
-const bootstrapChunkDelta = async (kv: Deno.Kv, entry: Deno.KvEntry<unknown>, delta: BootstrapDelta): Promise<BootstrapDelta> => {
+const bootstrapChunkDelta = async (kv: Deno.Kv, entry: Deno.KvEntry<unknown>, delta: BootstrapDelta, knownOwners?: Set<string>): Promise<BootstrapDelta> => {
   const { key } = entry;
   if (key.length !== SENTINEL_REPLAY_CHUNK_PREFIX.length + 2 || typeof key[4] !== "string" || !counter(key[5])) return addDelta(delta, { invalid: true });
-  if (await chunkHasOwner(kv, key[4])) return delta;
+  if (await chunkHasOwner(kv, key[4], knownOwners)) return delta;
   fault("delete");
   const deleted = await kv.atomic().check({ key, versionstamp: entry.versionstamp }).delete(key).commit();
   return deleted.ok ? delta : addDelta(delta, { invalid: true });
@@ -235,14 +242,15 @@ const bootstrapEntryDelta = async (
   prefix: Deno.KvKey,
   entry: Deno.KvEntry<unknown>,
   delta: BootstrapDelta,
-  budgetBytes: number
+  budgetBytes: number,
+  knownOwners?: Set<string>
 ): Promise<BootstrapDelta> => {
   if (prefix === SENTINEL_REPLAY_ACCOUNTING_PREFIX) return bootstrapAccountingDelta(entry.key, entry.value, delta);
   if (prefix === SENTINEL_REPLAY_MANIFEST_PREFIX) return await bootstrapManifestDelta(kv, entry, delta);
   if (prefix === SENTINEL_REPLAY_REQUEST_PREFIX) return bootstrapStatusDelta(entry.value, delta);
   if (prefix === SENTINEL_REPLAY_EVICTION_PREFIX) return bootstrapTombstoneDelta(entry.value, delta);
   if (prefix === SENTINEL_REPLAY_RESERVATION_PREFIX) return await bootstrapLegacyDelta(kv, entry.key, entry.value, delta, budgetBytes);
-  if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) return await bootstrapChunkDelta(kv, entry, delta);
+  if (prefix === SENTINEL_REPLAY_CHUNK_PREFIX) return await bootstrapChunkDelta(kv, entry, delta, knownOwners);
   return bootstrapDedupeDelta(entry.value, delta);
 };
 
@@ -260,13 +268,14 @@ const sweepBootstrapPrefix = async (
   cursor: string | null,
   budget: number,
   delta: BootstrapDelta,
-  budgetBytes: number
+  budgetBytes: number,
+  knownOwners?: Set<string>
 ): Promise<BootstrapSweep> => {
   const iterator = kv.list({ prefix }, { cursor: cursor ?? undefined, limit: budget });
   let scanned = 0;
   for await (const entry of iterator) {
     scanned += 1;
-    delta = await bootstrapEntryDelta(kv, prefix, entry, delta, budgetBytes);
+    delta = await bootstrapEntryDelta(kv, prefix, entry, delta, budgetBytes, knownOwners);
     if (scanned >= budget) return { delta, scanned, cursor: iterator.cursor, exhausted: true };
   }
   return { delta, scanned, cursor: null, exhausted: false };
@@ -294,8 +303,9 @@ export const runBootstrapBatch = async (
   const live = ledger.bootstrap_cursor === null && ledger.accounting_error !== null ? emptyDelta() : ledger;
   let delta = emptyDelta();
   let scanned = 0;
+  const knownOwners = new Set<string>();
   while (index < prefixes.length && scanned < BOOTSTRAP_BATCH_ENTRIES) {
-    const sweep = await sweepBootstrapPrefix(kv, prefixes[index], inner, BOOTSTRAP_BATCH_ENTRIES - scanned, delta, budgetBytes);
+    const sweep = await sweepBootstrapPrefix(kv, prefixes[index], inner, BOOTSTRAP_BATCH_ENTRIES - scanned, delta, budgetBytes, knownOwners);
     delta = sweep.delta;
     scanned += sweep.scanned;
     if (sweep.exhausted) {

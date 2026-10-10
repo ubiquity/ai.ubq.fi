@@ -117,6 +117,44 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "bootstrap retry: chunk owner lookups do not perform redundant manifest or accounting scans across chunks of the same capture",
+  ignore: typeof Deno.openKv !== "function",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    const manifest = manifestFor(1);
+    const captureId = manifest.capture_id;
+    try {
+      await seedManifest(kv, manifest, true);
+      // Seed 4 additional chunks for the same captureId
+      for (let index = 1; index < 5; index += 1) {
+        await kv.set([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index], new Uint8Array(100));
+      }
+      let ownerScanCount = 0;
+      const originalList = kv.list.bind(kv);
+      kv.list = ((selector: Deno.KvListSelector, options?: Deno.KvListOptions) => {
+        if ("prefix" in selector && Array.isArray(selector.prefix) && (selector.prefix[3] === "accounting" || selector.prefix[3] === "manifest")) {
+          ownerScanCount += 1;
+        }
+        return originalList(selector, options);
+      }) as typeof kv.list;
+
+      const ledger = await finishSweep(kv);
+      assert.equal(ledger.bootstrap_complete, true);
+      // The accounting scan found the owner on the first chunk and cached it in knownOwners,
+      // so chunks 1..4 did not trigger repeat owner prefix scans (total 1 accounting scan during chunk sweep, plus 1 accounting prefix pass and 1 manifest prefix pass).
+      assert.equal(ownerScanCount, 3);
+      for (let index = 0; index < 5; index += 1) {
+        assert.ok((await kv.get([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index])).value);
+      }
+    } finally {
+      kv.close();
+    }
+  },
+});
+
 for (const accounted of [false, true]) {
   Deno.test({
     name: `bootstrap retry: ${accounted ? "existing" : "materialized legacy"} charges rebuild once and preserve history`,
