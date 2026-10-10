@@ -9012,11 +9012,17 @@ const providersSelectionIsEmpty = () => providerSelection.size === 0;
  */
 const providersSelectedIds = () => {
   const rosterIds = providersRosterIds();
-  if (providersSelectionIsEmpty() || rosterIds.every((id) => providerSelection.has(id))) return [];
+  const missing = providersMissingSelectionIds();
+  if (providersSelectionIsEmpty() || (!missing.length && rosterIds.every((id) => providerSelection.has(id)))) return [];
   const selected = rosterIds.filter((id) => providerSelection.has(id));
   for (const subscription of providerSubscriptions()) {
     if (providerSubscriptionSelected(subscription.id) && !providerSelection.has("codex")) {
       selected.push(subscription.id);
+    }
+  }
+  for (const id of missing) {
+    if (!id.startsWith("codex:") || !providerSelection.has("codex")) {
+      selected.push(id);
     }
   }
   return selected;

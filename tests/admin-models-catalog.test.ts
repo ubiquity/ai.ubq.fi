@@ -726,6 +726,45 @@ Deno.test("each Codex subscription is selectable under the Codex provider", () =
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
 });
 
+Deno.test("providersSelectedIds preserves unconfigured subscriptions when a remaining provider is unchecked", () => {
+  const removedHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const removedId = `codex:${removedHash}`;
+
+  assert.match(adminScript, /const providersSelectedIds = \(\) => \{/);
+  assert.match(adminScript, /const missing = providersMissingSelectionIds\(\);/);
+
+  const providerRoster = [{ id: "codex", subscriptions: [{ id: "codex:active1" }] }, { id: "surplus" }, { id: "openlux" }];
+  const providersRosterIds = () => providerRoster.map((entry) => entry.id);
+  const providerSubscriptions = () => providerRoster.find((entry) => entry.id === "codex")?.subscriptions ?? [];
+
+  // Start with saved selection: [codex:<removed-account-hash>, surplus]
+  const providerSelection = new Set([removedId, "surplus"]);
+  // User unchecks Surplus:
+  providerSelection.delete("surplus");
+
+  const serialize = new Function(
+    "providerRoster",
+    "providerSelection",
+    "providersRosterIds",
+    "providerSubscriptions",
+    `
+    const providerSubscriptionSelected = (subscriptionId) =>
+      providerSelection.has("codex") || providerSelection.has(subscriptionId);
+    const providersMissingSelectionIds = () => {
+      const known = new Set([...providersRosterIds(), ...providerSubscriptions().map((s) => s.id)]);
+      return [...providerSelection].filter((id) => !known.has(id)).sort();
+    };
+    const providersSelectionIsEmpty = () => providerSelection.size === 0;
+    ${adminScript.slice(adminScript.indexOf("const providersSelectedIds = () => {"), adminScript.indexOf("const providersTierCounts = () => {"))}
+    return providersSelectedIds();
+    `
+  );
+
+  const result = serialize(providerRoster, providerSelection, providersRosterIds, providerSubscriptions) as string[];
+  assert.deepEqual(result, [removedId]);
+  assert.notDeepEqual(result, [], "a nonempty restricted selection must not serialize to an empty filter");
+});
+
 Deno.test("admin metadata refresh forces every upstream and reports what is cached", async () => {
   const calls: string[] = [];
   const enrichment: OpenRouterModelsSnapshot = {
