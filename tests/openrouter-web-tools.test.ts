@@ -66,7 +66,7 @@ const dispatch = async (wire: Wire, model = PRO_MODEL, fields: Record<string, un
   const fetchUpstream = (body: Readonly<Record<string, unknown>>): Promise<Response> => {
     captured.calls += 1;
     captured.body = body;
-    return Promise.resolve(upstreamAnswer(wire, raw.stream === true));
+    return Promise.resolve(upstreamAnswer(wire, raw.stream));
   };
   const path = wire === "chat" ? "/v1/chat/completions" : "/v1/responses";
   const handle = wire === "chat" ? handleOpenRouterChatCompletions : handleOpenRouterResponses;
@@ -155,10 +155,10 @@ Deno.test("OpenRouter defaults respect empty tools and disabled, required, or co
       const tools = [functionTool(wire)];
       const forced = wire === "chat" ? { type: "function", function: { name: "lookup_record" } } : { type: "function", name: "lookup_record" };
       const choices = ["none", "required", forced, { type: "allowed_tools", mode: "auto", tools: [forced] }, null, "invalid-choice"];
-      for (const tool_choice of choices) {
-        const body = await dispatch(wire, PRO_MODEL, { tools, tool_choice });
+      for (const toolChoice of choices) {
+        const body = await dispatch(wire, PRO_MODEL, { tools, tool_choice: toolChoice });
         assert.equal(body.tools, tools, "defaults must not broaden an explicitly constrained tool set");
-        assert.equal(body.tool_choice, tool_choice);
+        assert.equal(body.tool_choice, toolChoice);
       }
       const requiredWithoutTools = await dispatch(wire, PRO_MODEL, { tool_choice: "required" });
       assert.equal(requiredWithoutTools.tools, undefined, "defaults must not make an invalid required-tool request valid");
