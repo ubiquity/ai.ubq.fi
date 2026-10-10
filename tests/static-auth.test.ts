@@ -6,6 +6,7 @@ const {
   formatAuthSessionLabel,
   hasAuthPasskeyCredential,
   isLocalDevelopmentOrigin,
+  isLoopbackHostname,
   signInWithPasskey,
   signOut,
   registerPasskey,
@@ -120,8 +121,58 @@ Deno.test("local development auth is restricted to loopback HTTP origins", () =>
   restoreLoopbackTls();
 
   const restoreIpv6Loopback = setGlobal("location", { protocol: "http:", hostname: "::1" });
-  assert.equal(isLocalDevelopmentOrigin(), false);
+  assert.equal(isLocalDevelopmentOrigin(), true);
   restoreIpv6Loopback();
+
+  const restoreBracketedIpv6 = setGlobal("location", { protocol: "http:", hostname: "[::1]" });
+  assert.equal(isLocalDevelopmentOrigin(), true);
+  restoreBracketedIpv6();
+
+  const restoreIpv4Range = setGlobal("location", { protocol: "http:", hostname: "127.0.0.2" });
+  assert.equal(isLocalDevelopmentOrigin(), true);
+  restoreIpv4Range();
+
+  const restoreNonLoopback = setGlobal("location", { protocol: "http:", hostname: "localhost.example.com" });
+  assert.equal(isLocalDevelopmentOrigin(), false);
+  restoreNonLoopback();
+});
+
+Deno.test("isLocalDevelopmentOrigin recognizes ::1, [::1], and 127.0.0.2 loopback listeners over HTTP", () => {
+  for (const hostname of ["::1", "[::1]", "127.0.0.2"]) {
+    const restoreLocation = setGlobal("location", { protocol: "http:", hostname });
+    try {
+      assert.equal(isLocalDevelopmentOrigin(), true, `expected ${hostname} over http: to be recognized as local development origin`);
+    } finally {
+      restoreLocation();
+    }
+  }
+
+  for (const hostname of ["::1", "[::1]", "127.0.0.2"]) {
+    const restoreLocation = setGlobal("location", { protocol: "https:", hostname });
+    try {
+      assert.equal(isLocalDevelopmentOrigin(), false, `expected ${hostname} over https: to be rejected as local development origin`);
+    } finally {
+      restoreLocation();
+    }
+  }
+});
+
+Deno.test("isLoopbackHostname classifies loopback hostnames across formats", () => {
+  assert.equal(isLoopbackHostname("localhost"), true);
+  assert.equal(isLoopbackHostname("LOCALHOST"), true);
+  assert.equal(isLoopbackHostname("127.0.0.1"), true);
+  assert.equal(isLoopbackHostname("127.0.0.2"), true);
+  assert.equal(isLoopbackHostname("127.255.255.254"), true);
+  assert.equal(isLoopbackHostname("::1"), true);
+  assert.equal(isLoopbackHostname("[::1]"), true);
+  assert.equal(isLoopbackHostname("0:0:0:0:0:0:0:1"), true);
+  assert.equal(isLoopbackHostname("[0:0:0:0:0:0:0:1]"), true);
+
+  assert.equal(isLoopbackHostname("localhost.example.com"), false);
+  assert.equal(isLoopbackHostname("127.0.0.1.example.com"), false);
+  assert.equal(isLoopbackHostname("128.0.0.1"), false);
+  assert.equal(isLoopbackHostname("::2"), false);
+  assert.equal(isLoopbackHostname(""), false);
 });
 
 const captureRegisterStartBody = async (input: { handle?: string; token: string; baseUrl?: string }): Promise<Record<string, unknown>> => {
