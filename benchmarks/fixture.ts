@@ -232,7 +232,15 @@ export class FixtureWorkspace {
 
   /** Delete the disposable working tree. */
   async remove(): Promise<void> {
-    await Deno.remove(this.root, { recursive: true });
+    try {
+      await Deno.remove(this.root, { recursive: true });
+    } catch (err) {
+      if (!(err instanceof Deno.errors.PermissionDenied)) throw err;
+      // An allowed command may intentionally leave a directory read-only.
+      // Recover owner access for cleanup without following workspace links.
+      makeWorkspaceRemovable(this.root);
+      await Deno.remove(this.root, { recursive: true });
+    }
   }
 
   read(rel: string): string {
@@ -368,7 +376,15 @@ export class FixtureWorkspace {
 
     const directoryModes: { abs: string; mode: number | null }[] = [];
     const unauthorizedSet = new Set(unauthorized);
-    for (const rel of unauthorized) this._restoreWorkspaceEntry(rel, before, directoryModes, unauthorizedSet);
+    // Restore descendants first. Removing a directory recursively requires
+    // write access to every nested directory, not just the top-level entry.
+    // Each descendant restoration grants access to its own ancestors before
+    // it is removed, so a non-root runner can unwind a read-only created tree.
+    const restoreOrder = [...unauthorized].sort((a, b) => {
+      const depth = (path: string): number => path.split("/").length;
+      return depth(b) - depth(a) || compareCodeUnits(a, b);
+    });
+    for (const rel of restoreOrder) this._restoreWorkspaceEntry(rel, before, directoryModes, unauthorizedSet);
     // Directory modes are applied last, deepest first, so a read-only restored
     // directory cannot block the restoration of the entries inside it. A null
     // mode means the platform does not report permission bits for the entry.
@@ -462,7 +478,12 @@ export class FixtureWorkspace {
       // its children were written. Make it removable before rolling it back.
       if (expected?.kind !== "directory") {
         const accessMode = currentMode | 0o700;
-        if (currentMode !== accessMode) Deno.chmodSync(abs, accessMode);
+        if (currentMode !== accessMode) {
+          Deno.chmodSync(abs, accessMode);
+          // This ancestor is not being rolled back itself, so retain the
+          // command's mode after granting temporary access to its children.
+          if (!unauthorized.has(ancestor)) directoryModes.push({ abs, mode: currentMode });
+        }
         continue;
       }
       if (expected.mode === null) continue;
@@ -751,8 +772,28 @@ function removeWorkspaceEntry(abs: string): void {
   try {
     Deno.removeSync(abs, { recursive: true });
   } catch (err) {
+    if (err instanceof Deno.errors.PermissionDenied) {
+      // A removable tree can contain allowed descendants with restrictive
+      // modes; make the whole tree accessible before retrying the removal.
+      makeWorkspaceRemovable(abs);
+      try {
+        Deno.removeSync(abs, { recursive: true });
+      } catch (retryErr) {
+        if (!(retryErr instanceof Deno.errors.NotFound)) throw retryErr;
+      }
+      return;
+    }
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
+}
+
+/** Grant owner directory access needed to remove a disposable workspace. */
+function makeWorkspaceRemovable(abs: string): void {
+  const info = lstatIfExists(abs);
+  if (info?.isDirectory !== true) return;
+  const mode = snapshotMode(info);
+  if (mode !== null) Deno.chmodSync(abs, mode | 0o700);
+  for (const entry of Deno.readDirSync(abs)) makeWorkspaceRemovable(`${abs}/${entry.name}`);
 }
 
 function sandboxString(value: string): string {
