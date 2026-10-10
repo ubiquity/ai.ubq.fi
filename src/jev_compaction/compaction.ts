@@ -21,6 +21,7 @@
 import { openaiError } from "../http.ts";
 import { setResponseCompletionTelemetry } from "../openai-telemetry.ts";
 import { readJsonBody } from "../request.ts";
+import { parseStreamField } from "../request-policy.ts";
 import { OPENROUTER_SYSTEMONE_URL, readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { SYSTEMONE_DEFAULT_MODEL } from "../systemone/handlers.ts";
 import { JevClient } from "../../lib/jev_compaction/client.ts";
@@ -619,7 +620,9 @@ export async function handleJevResponsesCompaction(req: Request, deps: JevCompac
     logCompaction({ outcome: "failed", kind: "unparsable-body" });
     return failureResponse("unparsable-body");
   }
-  const stream = record(body)?.stream !== false;
+  const parsedStream = parseStreamField(record(body)?.stream);
+  if (!parsedStream.ok) return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
+  const stream = parsedStream.value;
   let asker: JevAsker;
   try {
     asker = deps.asker ?? askerForTest ?? defaultAsker(deps);
