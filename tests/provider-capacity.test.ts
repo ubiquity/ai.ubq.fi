@@ -862,6 +862,39 @@ Deno.test("read freshness window stays separate from the fifteen-minute history 
   assert.equal(persisted.history.filter((point) => point.bucket_start_at_ms === bucketStartAtMs).length, 1);
 });
 
+Deno.test("ordinary read path reflects unbounded staleness when revalidation throws or live refresh is omitted", async () => {
+  seed();
+  await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher([]), now: () => nowMs });
+
+  // Reading persisted capacity without live refresh far past the 15-minute bucket
+  // (e.g. 45 minutes later) returns the durable snapshot with unbounded staleness.
+  const elapsedMs = 45 * 60_000;
+  const persisted = await getPersistedProviderCapacityView({
+    kv: kvStub,
+    now: () => nowMs + elapsedMs,
+  });
+  assert.equal(persisted.snapshot_at_ms, nowMs);
+  assert.equal(persisted.cache_state, "stale");
+
+  // On the ordinary HTTP read path (handleProviderCapacity), revalidation is triggered
+  // when older than 30s. If revalidation throws, the endpoint safely falls
+  // back to the cached snapshot with unbounded age rather than failing.
+  const fallbackResponse = await handleProviderCapacity(new Request("https://ai.ubq.fi/admin/providers/capacity"), {
+    kv: kvStub,
+    createLeaseOwner: () => {
+      throw new Error("injected revalidation failure");
+    },
+    now: () => nowMs + elapsedMs,
+  });
+  assert.equal(fallbackResponse.status, 200);
+  const fallbackBody = (await fallbackResponse.json()) as {
+    cache_state?: string;
+    snapshot_at_ms?: number;
+  };
+  assert.equal(fallbackBody.cache_state, "stale");
+  assert.equal(fallbackBody.snapshot_at_ms, nowMs);
+});
+
 // Both concurrent-refresh tests hold their provider calls open until the test releases them.
 const createGatedFetcher =
   (

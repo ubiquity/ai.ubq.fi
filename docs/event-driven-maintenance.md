@@ -22,9 +22,11 @@ call. This document is the mapping from each retired job to the event that repla
   because a job did not run.
 - **Debounce is a bucket for event sampling, and a shared lease for read revalidation.** Event-driven capacity sampling
   keeps one probe per fifteen-minute history bucket (`PROVIDER_CAPACITY_HISTORY_BUCKET_MS`), and analytics pruning keeps
-  one scan per analytics bucket. A normal capacity read revalidates at most once per `PROVIDER_CAPACITY_READ_FRESH_MS`
-  (30 s) through the same durable lease, so two processes still cannot probe at once, and a same-bucket refresh
-  overwrites that bucket's point instead of adding one.
+  one scan per analytics bucket. The fifteen-minute interval is a debounce interval for triggering refresh upon events
+  rather than a strict age bound: persisted view reads without live refresh (or on an idle gateway without events)
+  have unbounded staleness until an observation or read revalidation occurs. A normal capacity read revalidates at most
+  once per `PROVIDER_CAPACITY_READ_FRESH_MS` (30 s) through the same durable lease, so two processes still cannot
+  probe at once, and a same-bucket refresh overwrites that bucket's point instead of adding one.
 - **Maintenance never delays a user request.** Every hook is fired fire-and-forget, and the reconciliation sweep is
   gate-guarded, so a sweep with nothing due costs one KV read.
 - **Reconciliation has a manual path.** Reading a key's paid-fallback ledger schedules best-effort reconciliation of due
@@ -46,10 +48,13 @@ or the log remains unavailable, admission stays fail-closed.
 
 ## What an operator should expect
 
-- Capacity history converges on the next request or the next admin read: a normal capacity read uses the 30-second
-  window (`PROVIDER_CAPACITY_READ_FRESH_MS`) to trigger revalidation, but if revalidation throws, the read returns the
-  last known snapshot, which may be older than 30 seconds. The durable capacity history bucket remains fifteen minutes.
-  Paid-fallback terminal events and ledger reads schedule best-effort reconciliation; a ledger read can return before
-  settlement. `?refresh=live` on the capacity endpoint still forces an immediate probe.
+- Capacity history converges on the next request or the next admin read: the fifteen-minute interval
+  (`PROVIDER_CAPACITY_HISTORY_BUCKET_MS`) is a debounce interval for triggering refresh on events rather than a strict
+  upper bound on persisted view age. On an idle gateway or when live refresh is omitted, persisted view staleness is
+  unbounded until the next observation or revalidation occurs. A normal capacity read uses the 30-second window
+  (`PROVIDER_CAPACITY_READ_FRESH_MS`) to trigger revalidation, but if revalidation throws, the read safely returns the
+  last known snapshot, which may be arbitrarily older than 30 seconds or 15 minutes. The durable capacity history bucket
+  remains fifteen minutes. Paid-fallback terminal events and ledger reads schedule best-effort reconciliation; a ledger
+  read can return before settlement. `?refresh=live` on the capacity endpoint still forces an immediate probe.
 - On a busy gateway the events arrive continuously, so cadence is effectively the same as the retired jobs were, without
   the idle-time work.
