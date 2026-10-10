@@ -724,6 +724,7 @@ Deno.test("each Codex subscription is selectable under the Codex provider", () =
   assert.match(adminScript, /providersMissingSelectionIds/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/selection"\), \{/);
   assert.match(adminScript, /subscriptions\.every\(\(subscription\) => providerSelection\.has\(subscription\.id\)\)/);
+  assert.match(adminScript, /\[\.\.\.providersVisibleIds\]\.filter\(\(id\) => isProviderChecked\(id\)\)\.length/);
 });
 
 Deno.test("admin metadata refresh forces every upstream and reports what is cached", async () => {
