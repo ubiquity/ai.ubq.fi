@@ -6,6 +6,20 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## External reasoning tiers use ascending Codex picker order - 2026-10-10
+
+The native Codex catalog orders standard tiers from `none` through `ultra` only when projecting external provider
+metadata. This is a permutation of advertised values: omitted tiers stay omitted, custom strings retain their positions,
+and uploaded Codex records retain their own order and defaults. Raw external snapshots and official unversioned model
+responses remain unchanged.
+
+Reason: external provider metadata can advertise standard tiers in descending order, for example
+`max,xhigh,high,medium,low`, reversing the native Codex scalar picker. The native client's Plan-mode preset is a
+separate concern; catalog ordering does not override an effort selected for an inference request.
+
+Validation: regression cases cover a descending standard ladder, custom tiers, and uploaded-record precedence. Live
+client refresh and native Plan-mode effort preservation must be verified separately.
+
 ## Synthetic paid hops have separate billing identities - 2026-10-10
 
 Each DeepSeek paid hop owns a separate internal billing request id derived from the client request id and provider.

@@ -28,10 +28,10 @@ const catalogue = {
 
 const jsonResponse = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-const withServedCatalogue = async (fn: () => Promise<void> | void): Promise<void> => {
+const withServedCatalogue = async (fn: () => Promise<void> | void, payload: unknown = catalogue): Promise<void> => {
   resetOpenRouterModelsCacheForTest();
   Deno.env.set("OPENROUTER_API_KEY", "fixture-openrouter-key");
-  setOpenRouterModelsFetchForTest((() => Promise.resolve(jsonResponse(catalogue))) as typeof fetch);
+  setOpenRouterModelsFetchForTest((() => Promise.resolve(jsonResponse(payload))) as typeof fetch);
   try {
     await fetchOpenRouterModels();
     await fn();
@@ -526,4 +526,182 @@ Deno.test("openrouter resolves a served id from a cold catalogue and stays cache
     resetOpenRouterModelsCacheForTest();
     Deno.env.delete("OPENROUTER_API_KEY");
   }
+});
+
+const claudeCacheModels = ["~anthropic/claude-opus-latest", "anthropic/claude-sonnet-4"] as const;
+const cacheCatalogue = { data: [...claudeCacheModels.map((id) => ({ id })), { id: "vendor/alpha" }] };
+
+const cacheUsageFor = (path: string, details?: Record<string, number>): Record<string, unknown> =>
+  path === "/v1/responses"
+    ? { input_tokens: 1_000, output_tokens: 20, total_tokens: 1_020, ...(details === undefined ? {} : { input_tokens_details: details }) }
+    : { prompt_tokens: 1_000, completion_tokens: 20, total_tokens: 1_020, ...(details === undefined ? {} : { prompt_tokens_details: details }) };
+
+const cacheResponseFor = (
+  path: string,
+  stream: boolean,
+  usage: Record<string, unknown>
+): Readonly<{ response: Response; payload: Record<string, unknown> }> => {
+  const payload: Record<string, unknown> =
+    path === "/v1/responses"
+      ? {
+          id: "resp_cache_fixture",
+          object: "response",
+          status: "completed",
+          output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "cached reply" }] }],
+          usage,
+        }
+      : {
+          id: "gen_cache_fixture",
+          object: "chat.completion",
+          choices: [{ index: 0, message: { role: "assistant", content: "cached reply" }, finish_reason: "stop" }],
+          usage,
+        };
+  if (!stream) return { response: jsonResponse(payload), payload };
+  const frames =
+    path === "/v1/responses"
+      ? [
+          { type: "response.created", response: { id: payload.id } },
+          { type: "response.output_text.delta", delta: "cached reply" },
+          { type: "response.completed", response: payload },
+        ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+      : [
+          `data: ${JSON.stringify({ id: payload.id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "cached reply" }, finish_reason: "stop" }] })}\n\n`,
+          `data: ${JSON.stringify({ id: payload.id, object: "chat.completion.chunk", choices: [], usage })}\n\n`,
+          "data: [DONE]\n\n",
+        ];
+  return { response: sseResponse(frames), payload };
+};
+
+Deno.test("openrouter Claude caching keeps native request and response shapes on both streamed and buffered wires", async () => {
+  await withServedCatalogue(async () => {
+    for (const scenario of dispatchCases) {
+      for (const model of claudeCacheModels) {
+        for (const stream of [false, true]) {
+          const telemetry = createResponseTelemetryState();
+          const rawRecord = {
+            model,
+            ...scenario.body,
+            stream,
+            prompt_cache_key: "stable-session-key",
+            ...(scenario.path === "/v1/responses"
+              ? { instructions: "Stable developer instructions", reasoning: { effort: "max" } }
+              : { reasoning_effort: "max" }),
+            tools: [{ type: "function", name: "lookup", parameters: { type: "object", properties: { cache_control: { type: "string" } } } }],
+          };
+          const original = JSON.stringify(rawRecord);
+          const usage = cacheUsageFor(scenario.path, { cached_tokens: 200, cache_write_tokens: 300 });
+          const fixture = cacheResponseFor(scenario.path, stream, usage);
+          let calls = 0;
+          const transport = (body: Readonly<Record<string, unknown>>): Promise<Response> => {
+            calls += 1;
+            const expected: Record<string, unknown> = { ...rawRecord, cache_control: { type: "ephemeral" } };
+            if (scenario.path === "/v1/chat/completions" && stream) expected.stream_options = { include_usage: true };
+            assert.deepEqual(body, expected);
+            assert.equal(JSON.stringify(rawRecord), original, "upstream cache hints must not mutate captured client input");
+            return Promise.resolve(fixture.response);
+          };
+          const response = await scenario.handle(
+            new Request(`https://ai.ubq.fi${scenario.path}`, { method: "POST" }),
+            rawRecord,
+            model,
+            streamUsageContext(telemetry),
+            { fetchChat: transport, fetchResponses: transport }
+          );
+          assert.equal(calls, 1);
+          assert.equal(response.status, 200);
+          if (stream) {
+            const text = await response.text();
+            assert.ok(text.includes(JSON.stringify(usage)), "upstream usage stays in the native SSE payload");
+            assert.match(text, /cached reply/);
+          } else {
+            assert.deepEqual(await response.json(), fixture.payload);
+          }
+          assert.equal(telemetry.promptCacheMode, "implicit");
+          assert.equal(telemetry.reasoning, "max");
+          assert.equal(telemetry.promptCacheKeyPresent, true);
+          assert.equal(telemetry.explicitBreakpointCount, 0);
+          assert.equal(telemetry.cachedInputTokens, 200);
+          assert.equal(telemetry.cacheWriteInputTokens, 300);
+          assert.equal(telemetry.usageTelemetryStatus, "reported");
+        }
+      }
+    }
+  }, cacheCatalogue);
+});
+
+Deno.test("openrouter preserves explicit cache controls and records their mode and count", async () => {
+  await withServedCatalogue(async () => {
+    for (const scenario of dispatchCases) {
+      const contentType = scenario.path === "/v1/responses" ? "input_text" : "text";
+      const inputsKey = scenario.path === "/v1/responses" ? "input" : "messages";
+      const controls = [
+        { body: { cache_control: { type: "ephemeral", ttl: "1h" } }, mode: "implicit", count: 0 },
+        {
+          body: { [inputsKey]: [{ role: "user", content: [{ type: contentType, text: "static prefix", cache_control: { type: "ephemeral", ttl: "1h" } }] }] },
+          mode: "explicit",
+          count: 1,
+        },
+        {
+          body: { [inputsKey]: [{ role: "user", content: [{ type: contentType, text: "static prefix", prompt_cache_breakpoint: { mode: "explicit" } }] }] },
+          mode: "explicit",
+          count: 1,
+        },
+        { body: { tools: [{ type: "function", name: "lookup", cache_control: { type: "ephemeral" } }] }, mode: "explicit", count: 1 },
+        { body: { prompt_cache_options: { mode: "explicit" } }, mode: "explicit", count: 0 },
+      ];
+      for (const control of controls) {
+        const model = claudeCacheModels[0];
+        const rawRecord = { model, ...scenario.body, ...control.body };
+        const original = JSON.stringify(rawRecord);
+        const telemetry = createResponseTelemetryState();
+        const transport = (body: Readonly<Record<string, unknown>>): Promise<Response> => {
+          assert.deepEqual(body, scenario.path === "/v1/chat/completions" ? { ...rawRecord, stream: false } : rawRecord);
+          return Promise.resolve(cacheResponseFor(scenario.path, false, cacheUsageFor(scenario.path)).response);
+        };
+        const response = await scenario.handle(
+          new Request(`https://ai.ubq.fi${scenario.path}`, { method: "POST" }),
+          rawRecord,
+          model,
+          streamUsageContext(telemetry),
+          { fetchChat: transport, fetchResponses: transport }
+        );
+        await response.json();
+        assert.equal(JSON.stringify(rawRecord), original);
+        assert.equal(telemetry.promptCacheMode, control.mode);
+        assert.equal(telemetry.explicitBreakpointCount, control.count);
+        assert.equal(telemetry.promptCacheKeyPresent, false);
+      }
+    }
+  }, cacheCatalogue);
+});
+
+Deno.test("openrouter leaves other models unchanged and missing cache counters unknown", async () => {
+  await withServedCatalogue(async () => {
+    for (const scenario of dispatchCases) {
+      for (const stream of [false, true]) {
+        for (const details of [undefined, { cached_tokens: 0 }]) {
+          const rawRecord = { model: "vendor/alpha", ...scenario.body, stream };
+          const telemetry = createResponseTelemetryState();
+          const transport = (body: Readonly<Record<string, unknown>>): Promise<Response> => {
+            const expected: Record<string, unknown> = { ...rawRecord };
+            if (scenario.path === "/v1/chat/completions" && stream) expected.stream_options = { include_usage: true };
+            assert.deepEqual(body, expected);
+            return Promise.resolve(cacheResponseFor(scenario.path, stream, cacheUsageFor(scenario.path, details)).response);
+          };
+          const response = await scenario.handle(
+            new Request(`https://ai.ubq.fi${scenario.path}`, { method: "POST" }),
+            rawRecord,
+            "vendor/alpha",
+            streamUsageContext(telemetry),
+            { fetchChat: transport, fetchResponses: transport }
+          );
+          await response.text();
+          assert.equal(telemetry.promptCacheMode, "unspecified");
+          assert.equal(telemetry.cachedInputTokens, details === undefined ? null : 0);
+          assert.equal(telemetry.cacheWriteInputTokens, null);
+          assert.equal(telemetry.usageTelemetryStatus, details === undefined ? "partial" : "reported");
+        }
+      }
+    }
+  }, cacheCatalogue);
 });

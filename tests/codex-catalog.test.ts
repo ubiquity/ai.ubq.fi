@@ -1400,8 +1400,8 @@ Deno.test("codex catalog: third-party enrichment fills rows no first-party sourc
     assert.ok(deepseek, "the discovery-only id is still advertised");
     assert.deepEqual(
       (deepseek.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
-      ["max", "high", "low"],
-      "the advertised tiers pass through verbatim"
+      ["low", "high", "max"],
+      "external tiers retain their strings in ascending native picker order"
     );
     assert.equal(deepseek.default_reasoning_level, "high");
     assert.equal(deepseek.context_window, 1_048_576);
