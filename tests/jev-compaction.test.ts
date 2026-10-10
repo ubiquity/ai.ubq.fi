@@ -135,6 +135,26 @@ Deno.test("renderer applies Jev decisions verbatim and degrades dropped content 
   assert.ok((parsed.output?.[0]?.content?.[0]?.text ?? "").includes(KEPT_MARKER));
 });
 
+Deno.test("compaction fails closed when rendering outweighs the dropped pair", async () => {
+  const tinyTranscript = [
+    text("user", "goal"),
+    call("tiny", "echo x"),
+    output("tiny", "x"),
+    text("assistant", "recent one"),
+    text("user", "recent two"),
+    text("assistant", "recent three"),
+    text("user", "recent four"),
+    text("assistant", "recent five"),
+    text("user", "recent six"),
+    text("user", COMPACTION_PROMPT),
+  ];
+
+  await assert.rejects(
+    () => buildCompactionResponse(body(tinyTranscript), decisionAsker({ t1: { keepCall: 0.1, keepResult: 0.1 } }), { stream: true }),
+    (error: unknown) => error instanceof CompactionUnavailable && error.kind === "no-reduction"
+  );
+});
+
 Deno.test("renderer marks kept calls and never rewrites kept text", () => {
   const parsed = parseCodexInput(transcript());
   assert.ok(parsed, "the synthetic transcript must parse");
