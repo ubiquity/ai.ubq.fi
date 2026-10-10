@@ -98,6 +98,15 @@ Deno.test("chat falls back to the loopback development principal without a token
   assert.match(chatScript, /const authHeaders = \(token = ""\) => \{/);
 });
 
+Deno.test("chat cancels pending debounced auth check when probing empty token", () => {
+  assert.match(chatScript, /let authCheckTimer = null;/);
+  assert.match(chatScript, /clearTimeout\(authCheckTimer\)/);
+  assert.match(chatScript, /if \(!token\) \{[\s\S]*?cancelAuthCheck\(\);[\s\S]*?initializeLocalDevelopmentAuth\(\);/);
+  assert.match(chatScript, /const cancelAuthCheck = \(\) => \{[\s\S]*?clearTimeout\(authCheckTimer\);[\s\S]*?authCheckTimer = null;[\s\S]*?\};/);
+  assert.match(chatScript, /const initializeLocalDevelopmentAuth = async \(\) => \{[\s\S]*?cancelAuthCheck\(\);/);
+  assert.match(chatScript, /if \(!token\) \{[\s\S]*?if \(localDevelopmentAuth\) return;/);
+});
+
 Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);

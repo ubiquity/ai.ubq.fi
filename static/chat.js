@@ -395,6 +395,7 @@ let authCheckId = 0;
 const checkAuthToken = async () => {
   const token = tokenInput.value.trim();
   if (!token) {
+    if (localDevelopmentAuth) return;
     setAuthBadge("bad", "Missing token");
     setSignedInState(false);
     resetModelCatalog();
@@ -468,7 +469,16 @@ const applyLocalDevelopmentAuth = (auth) => {
   void loadModels("");
 };
 
+let authCheckTimer = null;
+const cancelAuthCheck = () => {
+  if (authCheckTimer !== null) {
+    clearTimeout(authCheckTimer);
+    authCheckTimer = null;
+  }
+};
+
 const initializeLocalDevelopmentAuth = async () => {
+  cancelAuthCheck();
   if (tokenInput.value.trim()) return;
   const requestId = ++authCheckId;
   const auth = await probeLocalDevelopmentAuth();
@@ -483,9 +493,13 @@ const initializeLocalDevelopmentAuth = async () => {
   applyLocalDevelopmentAuth(auth);
 };
 
-const scheduleAuthCheck = debounce(() => {
-  void checkAuthToken();
-}, 500);
+const scheduleAuthCheck = () => {
+  cancelAuthCheck();
+  authCheckTimer = setTimeout(() => {
+    authCheckTimer = null;
+    void checkAuthToken();
+  }, 500);
+};
 
 const persistTokenIfEnabled = () => {
   if (!rememberTokenInput.checked) return;
@@ -588,6 +602,7 @@ tokenInput.addEventListener("input", () => {
   scheduleTokenPersist();
   const token = tokenInput.value.trim();
   if (!token) {
+    cancelAuthCheck();
     clearLocalDevelopmentAuth();
     setAuthBadge("unknown", "Checking...");
     setSignedInState(false);
@@ -618,6 +633,7 @@ passkeyHandleInput.addEventListener("input", () => {
 });
 
 const applySignedInToken = (token, options = {}) => {
+  cancelAuthCheck();
   tokenInput.value = token;
   rememberTokenInput.checked = true;
   storage.set(STORAGE_KEYS.rememberToken, "1");
@@ -680,6 +696,7 @@ signOutBtn.addEventListener("click", async () => {
   try {
     await signOut({ token, baseUrl: getActiveBackendBase() });
   } finally {
+    cancelAuthCheck();
     tokenInput.value = "";
     rememberTokenInput.checked = false;
     authCheckId += 1;
@@ -708,6 +725,7 @@ globalThis.addEventListener("storage", (event) => {
   }
   if (event.key !== STORAGE_KEYS.token) return;
   if (event.newValue === null) {
+    cancelAuthCheck();
     tokenInput.value = "";
     authCheckId += 1;
     modelsRequestId += 1;
