@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { persistEncryptedSentinelReplay } from "../src/sentinel/replay-store.ts";
 import { decryptExportedSentinelReplay, listEncryptedSentinelReplaysByRequestId } from "../src/sentinel/replay-read.ts";
+import { runBootstrapBatch } from "../src/sentinel/replay-retention-bootstrap.ts";
 import {
   SENTINEL_REPLAY_CHUNK_PREFIX,
   SENTINEL_REPLAY_TTL_MS,
@@ -332,6 +333,65 @@ Deno.test({
       } finally {
         kv.close();
       }
+    }
+  },
+});
+
+Deno.test({
+  name: "live capture chunks are preserved when publication interleaves with bootstrap sweep",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    const requestId = "staging-bootstrap-race";
+    const captureId = `capture-${requestId}`;
+    const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+    const orphanKey = [...SENTINEL_REPLAY_CHUNK_PREFIX, "genuine-orphan", 0] as Deno.KvKey;
+
+    try {
+      // Seed a genuine orphan chunk row with no owner
+      await kv.set(orphanKey, new Uint8Array([1, 2, 3]));
+
+      let bootstrapRan = false;
+      const observation = observationFor(
+        () => Promise.resolve(),
+        async (batch) => {
+          // Interleave bootstrap after the first batch of chunks has been staged
+          if (batch.number === 1 && !bootstrapRan) {
+            bootstrapRan = true;
+            const snapshot = await readSentinelReplayLedgerSnapshot(kv, BUDGET_BYTES);
+            assert.ok(snapshot);
+            // Run bootstrap sweep concurrently while publication is in-flight
+            let ledger = snapshot.ledger;
+            let versionstamp: string | null = snapshot.versionstamp;
+            for (let pass = 0; pass < 20; pass += 1) {
+              ledger = await runBootstrapBatch(kv, ledger, versionstamp, BUDGET_BYTES, NOW);
+              const reread = await readSentinelReplayLedgerSnapshot(kv, BUDGET_BYTES);
+              versionstamp = reread ? reread.versionstamp : null;
+              if (ledger.bootstrap_cursor === null) break;
+            }
+          }
+        }
+      );
+
+      const result = await persist(observedKv(kv, observation), requestId, keyBytes);
+      assert.equal(result.status, "stored");
+      assert.equal(bootstrapRan, true);
+
+      // Verify that genuine orphan chunk was deleted by bootstrap
+      assert.equal((await kv.get(orphanKey)).value, null);
+
+      // Verify that live capture chunks were preserved and decrypt intact
+      const liveChunks = await chunkCount(kv, captureId);
+      assert.equal(liveChunks, result.manifest.chunk_count);
+
+      const exported = await listEncryptedSentinelReplaysByRequestId(kv, requestId, NOW);
+      assert.equal(exported.captures.length, 1);
+      const decrypted = await decryptExportedSentinelReplay(exported.captures[0], keyBytes);
+      assert.deepEqual(decrypted.body, inputBody());
+    } finally {
+      kv.close();
     }
   },
 });
