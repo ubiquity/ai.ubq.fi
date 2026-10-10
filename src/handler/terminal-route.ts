@@ -508,8 +508,9 @@ const handleTerminalRoute = async (
     // provider before any of them can dispatch.
     const response = await executeInference(async () => {
       if (isJevCompactionRequest(req)) {
-        const compaction = await handleJevResponsesCompaction(req.clone(), { signal: callerSignal });
-        if (compaction.ok || callerSignal.aborted) return compaction;
+        const compactionSignal = usageContext.downstreamSignal ?? callerSignal;
+        const compaction = await handleJevResponsesCompaction(req.clone(), { signal: compactionSignal });
+        if (compaction.ok || compactionSignal.aborted) return compaction;
         await compaction.body?.cancel();
         console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: compaction.status }));
       }

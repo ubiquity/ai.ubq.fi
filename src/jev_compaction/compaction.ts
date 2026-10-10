@@ -641,6 +641,10 @@ export async function handleJevResponsesCompaction(req: Request, deps: JevCompac
     logCompaction({ outcome: "failed", kind, detail: failureLogDetail(kind, detail) });
     return failureResponse(kind);
   }
+  if (deps.signal?.aborted) {
+    logCompaction({ outcome: "failed", kind: "cancelled" });
+    return cancelledResponse();
+  }
   // Completion telemetry goes on the success path only: the terminal wrapper's
   // normal completion decision then detects this local answer and settles the
   // admitted request as completed, instead of releasing it as a stream that
