@@ -1,8 +1,8 @@
 // Direct OpenRouter serving: Chat Completions and Responses.
 //
 // OpenRouter exposes both OpenAI-compatible wires, so this route forwards the
-// client's own body with the model swapped and relays the upstream payload —
-// no translation layer is involved. The catalogue, capabilities, and dispatch
+// client's own body with the model swapped and default web tools for OpenAI
+// models, then relays the upstream payload. The catalogue, capabilities, and dispatch
 // all read `openRouterServableModelIds()`, so the offered set and the served
 // set can never disagree, and a new upstream model becomes callable as soon as
 // the cached public list refreshes.
@@ -26,6 +26,7 @@ import {
 } from "../openai-telemetry.ts";
 import { chatCompletionHasAnswerBearingOutput, providerRequestIdFromResponse, toOpenAiUpstreamErrorResponse } from "../upstream-wire.ts";
 import { recordOpenRouterProviderHealth } from "./health.ts";
+import { withOpenRouterOpenAiWebTools } from "./openrouter-web-tools.ts";
 import { recordOpenRouterResponseHealth, streamOpenRouterChatCompletion, streamOpenRouterResponses } from "./openrouter-streams.ts";
 import {
   fetchOpenRouterChatCompletions,
@@ -110,7 +111,7 @@ export const handleOpenRouterChatCompletions = async (
     return openaiError(400, "The requested model is not served by OpenRouter.", "openrouter_request_invalid", { param: "model" });
   }
   const clientWantsStream = rawRecord.stream === true;
-  const body: Record<string, unknown> = { ...rawRecord, model: upstreamModel, stream: clientWantsStream };
+  const body = withOpenRouterOpenAiWebTools({ ...rawRecord, model: upstreamModel, stream: clientWantsStream }, upstreamModel);
   if (clientWantsStream) {
     // The gateway needs the upstream usage frame to meter the call.
     if (body.stream_options === undefined) body.stream_options = { include_usage: true };
@@ -168,7 +169,7 @@ export const handleOpenRouterResponses = async (
     return openaiError(400, "The requested model is not served by OpenRouter.", "openrouter_request_invalid", { param: "model" });
   }
   const clientWantsStream = rawRecord.stream === true;
-  const body: Record<string, unknown> = { ...rawRecord, model: upstreamModel };
+  const body = withOpenRouterOpenAiWebTools({ ...rawRecord, model: upstreamModel }, upstreamModel);
   if (usageContext?.responseTelemetry) {
     usageContext.responseTelemetry.provider = OPENROUTER_UPSTREAM_LABEL;
   }
