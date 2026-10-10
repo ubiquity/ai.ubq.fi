@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { assertPublicRelease, PUBLIC_HEALTH_URL, reloadCaddyIngress } from "../ops/deploy.ts";
+import { assertPublicRelease, PUBLIC_HEALTH_URL, type Release, reloadCaddyIngress, verifySelectedOnly } from "../ops/deploy.ts";
 
 const REVISION = "a1b2c3d4".repeat(5);
 const OTHER_REVISION = "b".repeat(40);
@@ -108,4 +108,69 @@ Deno.test("the Caddy reload applies the validated configuration and a reload fai
   });
   assert.deepEqual(calls, [{ program: "sudo", args: ["-n", "systemctl", "reload", "caddy"] }]);
   await assert.rejects(() => reloadCaddyIngress(() => Promise.reject(new Error("caddy reload refused"))), /caddy reload refused/);
+});
+
+Deno.test("public verification fails after candidate installation and a second invocation verifies that same candidate after the fault clears", async () => {
+  const candidate: Release = {
+    sha: REVISION,
+    path: `.data/releases/${REVISION}`,
+    archive: "0".repeat(64),
+    tree: "0".repeat(64),
+  };
+  let failureActive = true;
+  await withLoopbackServer(
+    () => (failureActive ? releaseResponse({ status: 503 }) : releaseResponse()),
+    async (url) => {
+      // Unselected release cannot be verified without deployment-owned recovery receipt
+      await assert.rejects(
+        () =>
+          verifySelectedOnly(
+            candidate,
+            false,
+            url,
+            () => Promise.resolve(true),
+            () => Promise.resolve()
+          ),
+        /Existing unselected release/
+      );
+
+      // Selected release that is not ready must fail closed
+      await assert.rejects(
+        () =>
+          verifySelectedOnly(
+            candidate,
+            true,
+            url,
+            () => Promise.resolve(false),
+            () => Promise.resolve()
+          ),
+        /Selected immutable release is not ready/
+      );
+
+      // First invocation fails when public verification fails
+      await assert.rejects(
+        () =>
+          verifySelectedOnly(
+            candidate,
+            true,
+            url,
+            () => Promise.resolve(true),
+            () => Promise.resolve()
+          ),
+        /did not serve release/
+      );
+
+      // The fault clears
+      failureActive = false;
+
+      // Second invocation verifies that same candidate cleanly
+      await verifySelectedOnly(
+        candidate,
+        true,
+        url,
+        () => Promise.resolve(true),
+        () => Promise.resolve()
+      );
+    }
+  );
 });

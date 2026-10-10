@@ -132,7 +132,7 @@ async function ensureCaddyIngressReady(): Promise<void> {
 const recoveryPath = ".data/deploy-recovery.json";
 const unitFingerprint = "6563f11090766cc784361bc71a0c9c244bfa41c0f0e2163355a1f558000d3d44";
 const launcherFingerprint = "50435a214d34cb7fbae3735a0a0502f8d96aaa3257dc502edc01bd64a8429ca7";
-type Release = { sha: string; path: string; archive: string; tree: string };
+export type Release = { sha: string; path: string; archive: string; tree: string };
 type Previous = Release & { selector: string; port: number; profile: string };
 type Phase = "prepared" | "selected" | "candidate_ready" | "ingress_applied" | "rolled_back";
 type Recovery = { schema: 1; candidate: Release; previous: Previous | null; phase: Phase };
@@ -394,11 +394,17 @@ async function restorePrevious(receipt: Recovery, restartAttempted: boolean): Pr
   }
 }
 
-async function verifySelectedOnly(candidate: Release, selected: boolean): Promise<void> {
+export async function verifySelectedOnly(
+  candidate: Release,
+  selected: boolean,
+  url: string = PUBLIC_HEALTH_URL,
+  readyCheck: (sha: string, port: number, attempts?: number) => Promise<boolean> = ready,
+  reloadIngress: () => Promise<void> = reloadCaddyIngress
+): Promise<void> {
   if (!selected) throw new Error("Existing unselected release has no deployment-owned recovery receipt");
-  if (!(await ready(candidate.sha, 7999, 1))) throw new Error("Selected immutable release is not ready; refusing a guessed restart or rollback");
-  await reloadCaddyIngress();
-  await assertPublicRelease(candidate.sha);
+  if (!(await readyCheck(candidate.sha, 7999, 1))) throw new Error("Selected immutable release is not ready; refusing a guessed restart or rollback");
+  await reloadIngress();
+  await assertPublicRelease(candidate.sha, url);
 }
 
 async function recoverFailedActivation(receipt: Recovery, restartAttempted: boolean): Promise<void> {
