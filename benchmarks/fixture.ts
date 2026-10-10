@@ -232,7 +232,15 @@ export class FixtureWorkspace {
 
   /** Delete the disposable working tree. */
   async remove(): Promise<void> {
-    await Deno.remove(this.root, { recursive: true });
+    try {
+      await Deno.remove(this.root, { recursive: true });
+    } catch (err) {
+      if (!(err instanceof Deno.errors.PermissionDenied)) throw err;
+      // An allowed command may intentionally leave a directory read-only.
+      // Recover owner access for cleanup without following workspace links.
+      makeWorkspaceRemovable(this.root);
+      await Deno.remove(this.root, { recursive: true });
+    }
   }
 
   read(rel: string): string {
@@ -361,13 +369,22 @@ export class FixtureWorkspace {
    * symlinked ancestor is rebuilt as a real directory before any write.
    */
   private _enforceWriteScope(before: WorkspaceSnapshot): void {
-    const after = snapshotWorkspace(this.root);
+    const after = snapshotWorkspace(this.root, before);
     const changed = changedWorkspacePaths(before, after);
     const unauthorized = changed.filter((rel) => !this._isAllowedShellChange(rel, changed, before, after));
     if (unauthorized.length === 0) return;
 
     const directoryModes: { abs: string; mode: number | null }[] = [];
-    for (const rel of unauthorized) this._restoreWorkspaceEntry(rel, before, directoryModes);
+    const unauthorizedSet = new Set(unauthorized);
+    // Restore descendants first. Removing a directory recursively requires
+    // write access to every nested directory, not just the top-level entry.
+    // Each descendant restoration grants access to its own ancestors before
+    // it is removed, so a non-root runner can unwind a read-only created tree.
+    const restoreOrder = [...unauthorized].sort((a, b) => {
+      const depth = (path: string): number => path.split("/").length;
+      return depth(b) - depth(a) || compareCodeUnits(a, b);
+    });
+    for (const rel of restoreOrder) this._restoreWorkspaceEntry(rel, before, directoryModes, unauthorizedSet);
     // Directory modes are applied last, deepest first, so a read-only restored
     // directory cannot block the restoration of the entries inside it. A null
     // mode means the platform does not report permission bits for the entry.
@@ -400,9 +417,15 @@ export class FixtureWorkspace {
     return descendants.length > 0 && descendants.every((path) => this._isAllowedShellChange(path, changed, before, after));
   }
 
-  private _restoreWorkspaceEntry(rel: string, before: WorkspaceSnapshot, directoryModes: { abs: string; mode: number | null }[]): void {
+  private _restoreWorkspaceEntry(
+    rel: string,
+    before: WorkspaceSnapshot,
+    directoryModes: { abs: string; mode: number | null }[],
+    unauthorized: ReadonlySet<string>
+  ): void {
     const abs = this._assertPath(rel);
     const expected = before.get(rel);
+    this._restoreDirectoryAccess(rel, before, directoryModes, unauthorized);
     if (expected === undefined) {
       // An unauthorized creation is removed only while every ancestor is a
       // real directory inside the workspace: recreating missing ancestors here
@@ -432,6 +455,43 @@ export class FixtureWorkspace {
     }
     // Sockets and fifos ("other") cannot be recreated portably; the violation
     // is still reported and the rest of the workspace is restored.
+  }
+
+  /** Make directory ancestors writable while restoring an entry. */
+  private _restoreDirectoryAccess(
+    rel: string,
+    before: WorkspaceSnapshot,
+    directoryModes: { abs: string; mode: number | null }[],
+    unauthorized: ReadonlySet<string>
+  ): void {
+    const parts = rel.split("/");
+    for (let i = 1; i <= parts.length; i++) {
+      const ancestor = parts.slice(0, i).join("/");
+      const expected = before.get(ancestor);
+      const abs = this._assertPath(ancestor);
+      const current = lstatIfExists(abs);
+      if (current?.isDirectory !== true) continue;
+      const currentMode = snapshotMode(current);
+      if (currentMode === null) continue;
+      // A directory being removed has no saved directory metadata (or is
+      // replacing a non-directory), but it may have been made read-only after
+      // its children were written. Make it removable before rolling it back.
+      if (expected?.kind !== "directory") {
+        const accessMode = currentMode | 0o700;
+        if (currentMode !== accessMode) {
+          Deno.chmodSync(abs, accessMode);
+          // This ancestor is not being rolled back itself, so retain the
+          // command's mode after granting temporary access to its children.
+          if (!unauthorized.has(ancestor)) directoryModes.push({ abs, mode: currentMode });
+        }
+        continue;
+      }
+      if (expected.mode === null) continue;
+      const accessMode = expected.mode | 0o700;
+      if (currentMode === accessMode) continue;
+      Deno.chmodSync(abs, accessMode);
+      directoryModes.push({ abs, mode: unauthorized.has(ancestor) ? expected.mode : currentMode });
+    }
   }
 
   /** True when every ancestor of `rel` is a real directory inside the workspace. */
@@ -568,7 +628,7 @@ type WorkspaceSnapshot = Map<string, WorkspaceSnapshotEntry>;
  * stored as links and the walk never descends through them, so the snapshot
  * only ever describes objects physically inside the disposable workspace.
  */
-function snapshotWorkspace(root: string): WorkspaceSnapshot {
+function snapshotWorkspace(root: string, saved?: WorkspaceSnapshot): WorkspaceSnapshot {
   const snapshot: WorkspaceSnapshot = new Map();
   const walk = (dir: string, prefix: string): void => {
     for (const entry of [...Deno.readDirSync(dir)].sort((a, b) => a.name.localeCompare(b.name))) {
@@ -576,7 +636,7 @@ function snapshotWorkspace(root: string): WorkspaceSnapshot {
       const abs = `${dir}/${entry.name}`;
       recordSnapshotEntry(snapshot, rel, abs, () => {
         walk(abs, rel);
-      });
+      }, saved);
     }
   };
   walk(root, "");
@@ -588,7 +648,7 @@ function snapshotWorkspace(root: string): WorkspaceSnapshot {
  * disappeared between `readDir` and its own read is skipped rather than
  * reported as a change.
  */
-function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: string, walkBelow: () => void): void {
+function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: string, walkBelow: () => void, saved?: WorkspaceSnapshot): void {
   const info = lstatIfExists(abs);
   if (info === null) return; // the entry vanished while the snapshot was taken
   if (info.isSymlink) {
@@ -597,13 +657,25 @@ function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: stri
     return;
   }
   if (info.isDirectory) {
-    snapshot.set(rel, { kind: "directory", mode: snapshotMode(info) });
-    walkBelow();
+    const mode = snapshotMode(info);
+    snapshot.set(rel, { kind: "directory", mode });
+    const grantedMode = grantSnapshotAccess(abs, mode, saved?.get(rel), "directory");
+    try {
+      walkBelow();
+    } finally {
+      restoreSnapshotAccess(abs, mode, grantedMode);
+    }
     return;
   }
   if (info.isFile) {
-    const content = snapshotFileContent(abs);
-    if (content !== null) snapshot.set(rel, { kind: "file", content, mode: snapshotMode(info) });
+    const mode = snapshotMode(info);
+    const grantedMode = grantSnapshotAccess(abs, mode, saved?.get(rel), "file");
+    try {
+      const content = snapshotFileContent(abs);
+      if (content !== null) snapshot.set(rel, { kind: "file", content, mode });
+    } finally {
+      restoreSnapshotAccess(abs, mode, grantedMode);
+    }
     return;
   }
   snapshot.set(rel, { kind: "other", mode: snapshotMode(info) });
@@ -639,6 +711,26 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
  */
 function snapshotMode(info: Deno.FileInfo): number | null {
   return info.mode === null ? null : info.mode & 0o7777;
+}
+
+/** Temporarily grant owner access while reading a post-command snapshot. */
+function grantSnapshotAccess(abs: string, mode: number | null, saved: WorkspaceSnapshotEntry | undefined, kind: "directory" | "file"): number | null {
+  if (mode === null) return null;
+  const savedMode = saved?.kind === kind && saved.mode !== null ? saved.mode : mode;
+  const accessMode = savedMode | (kind === "directory" ? 0o700 : 0o600);
+  if (accessMode === mode) return null;
+  Deno.chmodSync(abs, accessMode);
+  return accessMode;
+}
+
+/** Restore the mode captured before temporary snapshot access was granted. */
+function restoreSnapshotAccess(abs: string, mode: number | null, grantedMode: number | null): void {
+  if (mode === null || grantedMode === null) return;
+  try {
+    Deno.chmodSync(abs, mode);
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
 }
 
 /** File bytes, or `null` only when the file genuinely vanished mid-walk. */
@@ -680,8 +772,28 @@ function removeWorkspaceEntry(abs: string): void {
   try {
     Deno.removeSync(abs, { recursive: true });
   } catch (err) {
+    if (err instanceof Deno.errors.PermissionDenied) {
+      // A removable tree can contain allowed descendants with restrictive
+      // modes; make the whole tree accessible before retrying the removal.
+      makeWorkspaceRemovable(abs);
+      try {
+        Deno.removeSync(abs, { recursive: true });
+      } catch (retryErr) {
+        if (!(retryErr instanceof Deno.errors.NotFound)) throw retryErr;
+      }
+      return;
+    }
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
+}
+
+/** Grant owner directory access needed to remove a disposable workspace. */
+function makeWorkspaceRemovable(abs: string): void {
+  const info = lstatIfExists(abs);
+  if (info?.isDirectory !== true) return;
+  const mode = snapshotMode(info);
+  if (mode !== null) Deno.chmodSync(abs, mode | 0o700);
+  for (const entry of Deno.readDirSync(abs)) makeWorkspaceRemovable(`${abs}/${entry.name}`);
 }
 
 function sandboxString(value: string): string {
