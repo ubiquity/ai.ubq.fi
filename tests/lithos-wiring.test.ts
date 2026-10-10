@@ -15,6 +15,9 @@ import { handleChatCompletions } from "../src/chat/envelope.ts";
 import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
 import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
+import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
+import { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } from "../src/runtime-config.ts";
+import { CODEX_MODELS_KV_KEY } from "../src/codex/auth.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps this suite on the credential-gated providers it owns, and keeps the
@@ -1495,5 +1498,48 @@ Deno.test("lithos wiring: a refusal on a tier with no configured sibling opens n
       () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-scope-ultra"))
     );
     assert.equal(ultra.calls[0].body.model, LITHOS_MODEL, "no window leaked onto the Ultra tier");
+  });
+});
+
+Deno.test("lithos wiring: Responses route leaves disabled Lithos provider to ordinary availability check", async () => {
+  await withLithosKey(async () => {
+    // Exclude 'lithos' from provider selection
+    const snapshot = {
+      source: "chatgpt_codex",
+      client_version: "0.150.0",
+      updated_at_ms: Date.now(),
+      models: [{ slug: "gpt-5.6-fixture" }],
+    };
+    kvStore.set(keyOf(PROVIDER_SELECTION_KV_KEY), { provider_ids: ["codex"], updated_at_ms: Date.now() });
+    kvStore.set(keyOf(CODEX_MODELS_KV_KEY), snapshot);
+    kvStore.set(keyOf(RUNTIME_CONFIG_V2_KEY), {
+      version: 2,
+      default_model: "gpt-5.6-fixture",
+      default_reasoning_effort: "medium",
+      codex_models: snapshot,
+      updated_at_ms: Date.now(),
+    });
+    resetProviderSelectionCacheForTest();
+    resetRuntimeConfigCacheForTest();
+
+    try {
+      const { result, calls } = await withUpstream(
+        () => Response.json(lithosCompletion({ role: "assistant", content: "should not be reached" })),
+        () => handleResponses(responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: false }), usageContext("lithos-disabled-responses"))
+      );
+
+      // Must not dispatch to Lithos upstream when provider is excluded
+      assert.equal(calls.length, 0, "must not dispatch to Lithos upstream when lithos is switched off");
+      // The model falls through to ordinary tail / availability check, resulting in 404 model not found
+      assert.equal(result.status, 404);
+      const payload = (await result.json()) as { error?: { code?: string; message?: string } };
+      assert.equal(payload.error?.code, "model_not_found");
+    } finally {
+      kvStore.delete(keyOf(PROVIDER_SELECTION_KV_KEY));
+      kvStore.delete(keyOf(CODEX_MODELS_KV_KEY));
+      kvStore.delete(keyOf(RUNTIME_CONFIG_V2_KEY));
+      resetProviderSelectionCacheForTest();
+      resetRuntimeConfigCacheForTest();
+    }
   });
 });
