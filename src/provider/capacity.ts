@@ -266,15 +266,18 @@ const captureProviderCapacitySnapshot = async (
   const codexPromise = Promise.all(
     ([1, 2] as const).map(async (slot) => {
       const account = accounts.find((candidate) => candidate.slot === slot);
-      return account
-        ? await fetchCodexCapacitySource(
-            account,
-            await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${account.account_id}`),
-            snapshotAtMs,
-            fetcher,
-            signal
-          )
-        : unavailableCodexSource(slot, snapshotAtMs);
+      if (!account) return unavailableCodexSource(slot, snapshotAtMs);
+      try {
+        return await fetchCodexCapacitySource(
+          account,
+          await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${account.account_id}`),
+          snapshotAtMs,
+          fetcher,
+          signal
+        );
+      } catch {
+        return unavailableCodexSource(slot, snapshotAtMs, "unreachable", null, true, codexAccountLabel(account.slot, account.email));
+      }
     })
   );
   const meteredPromise = getConfiguredMeteredQuotaSnapshot({

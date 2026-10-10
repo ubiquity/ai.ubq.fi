@@ -204,7 +204,7 @@ const logTerminalRequest = async (
       git_sha: terminal.git_sha,
       deno_revision: terminal.deno_revision,
     });
-    await Promise.all([telemetryWrite, cacheAnalyticsWrite, replayWrite, degradationWrite, adminErrorWrite, usageRollupWrite]);
+    await Promise.allSettled([telemetryWrite, cacheAnalyticsWrite, replayWrite, degradationWrite, adminErrorWrite, usageRollupWrite]);
   } finally {
     zeroSentinelReplayInput(input.sentinelReplayInput);
   }
