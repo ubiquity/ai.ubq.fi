@@ -13,12 +13,12 @@ metadata. This is a permutation of advertised values: omitted tiers stay omitted
 and uploaded Codex records retain their own order and defaults. Raw external snapshots and official unversioned model
 responses remain unchanged.
 
-Reason: the Claude alias advertised `max,xhigh,high,medium,low`, reversing the Codex iOS scalar picker. The separate
-native Codex Plan preset still explicitly selects `medium`; gateway ordering does not repair that preset or justify
-overriding a requested effort at inference time.
+Reason: external provider metadata can advertise standard tiers in descending order, for example
+`max,xhigh,high,medium,low`, reversing the native Codex scalar picker. The native client's Plan-mode preset is a
+separate concern; catalog ordering does not override an effort selected for an inference request.
 
-Validation: regression cases cover the observed Claude ladder, custom tiers, and uploaded-record precedence. Live iOS
-refresh and native Plan preservation must be verified separately.
+Validation: regression cases cover a descending standard ladder, custom tiers, and uploaded-record precedence. Live
+client refresh and native Plan-mode effort preservation must be verified separately.
 
 ## Synthetic paid hops have separate billing identities - 2026-10-10
 

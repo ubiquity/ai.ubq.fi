@@ -528,19 +528,19 @@ counts without inventing zeros for absent counters.
 
 ### Why
 
-Three existing generations in session `01a126e0-7f98-7373-ac0a-48e3e2dcdf62` each sent 187,725–193,800 native input
-tokens with zero cached input. Their OpenRouter receipts charged $0.84045060, $0.77250888, and $0.77560560;
-approximately 95.3% of the combined charge came from input. They served `anthropic/claude-opus-5.5-20260921` on Claude
-Platform on AWS. No paid inference probes were needed to establish the misses.
+The gateway's native OpenRouter handlers forwarded Claude requests without a default automatic-cache policy. The public
+OpenAI request allowlists reject provider-specific root `cache_control`, so ordinary accepted client requests could not
+enable that policy. Adding the hint on the upstream payload makes the default effective while leaving request input and
+explicit controls intact.
 
-Current OpenRouter documentation supports request-root automatic caching on both native wires, including Claude Platform
-on AWS: https://openrouter.ai/docs/guides/best-practices/prompt-caching. Use its default five-minute TTL: initial writes
-cost 1.25 times input, versus two times for one hour. Reads refresh the TTL. Longer TTLs remain explicit choices; cache
-hits require a matching prefix and do not discount generated output.
+OpenRouter documents request-root automatic caching for both native Responses and Chat Completions:
+https://openrouter.ai/docs/guides/best-practices/prompt-caching. The default TTL is five minutes, and cache reads
+refresh it. Hits require matching input prefixes and do not discount generated output. Longer TTLs remain explicit
+choices.
 
 ### Status and reversal risk
 
-Implemented with mock transport regressions for streamed and buffered native requests, explicit controls, unrelated
-models, and missing usage counters. Production deployment and observed cache-hit acceptance are tracked separately from
-these deterministic tests. Removing the hint restores uncached Claude input; forcing an automatic policy over explicit
-breakpoints can change user intent and provider costs.
+Mock transport regressions cover streamed and buffered native requests, explicit controls, unrelated models, and missing
+usage counters. These tests verify payload preservation and cache accounting; they do not establish production cache
+hits or cost savings. Live cache acceptance remains a separate validation step. Removing the default leaves caching
+dependent on client controls; overriding explicit breakpoints could change the selected cache behavior.
