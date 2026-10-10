@@ -46,6 +46,7 @@ import {
   activeSelectionForAccount,
   evaluateSerialRoutingAccounts,
   readStrongCodexRoutingRows,
+  selectedCodexSubscriptionPool,
   selectSerialCodexRoutingAccounts,
   withCodexAdmission,
 } from "./routing-serial.ts";
@@ -165,9 +166,12 @@ const prepareCodexResetRecoveryElection = async (
   const accountIdHash = currentSlot.account_id_hash;
   if (accountIdHash === null) return null;
   const observations = parseStoredCapacityObservationStore(rows.capacityEntry.value);
-  const evaluations = await evaluateSerialRoutingAccounts(normalized, pool, account.requestedModel ?? null, observations, Date.now());
+  const routingPool = await selectedCodexSubscriptionPool(pool);
+  if (!routingPool.accounts.some((auth) => auth.account_id === currentAuth.account_id)) return null;
+  const evaluations = await evaluateSerialRoutingAccounts(normalized, routingPool, account.requestedModel ?? null, observations, Date.now(), pool);
   const fullCohortExhausted =
-    pool.accounts.length > 0 && pool.accounts.every((auth) => evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason === "quota_exhausted");
+    routingPool.accounts.length > 0 &&
+    routingPool.accounts.every((auth) => evaluations.byAccountId.get(auth.account_id)?.activeTransitionReason === "quota_exhausted");
   if (!fullCohortExhausted) return null;
   const routedCandidate: RoutingAccount = {
     ...account,

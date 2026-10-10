@@ -432,4 +432,11 @@ const selectSerialCodexRoutingAccounts = async (
 
 /** Exact value binding to the active row one strong read observed. */
 
-export { activeSelectionForAccount, evaluateSerialRoutingAccounts, readStrongCodexRoutingRows, selectSerialCodexRoutingAccounts, withCodexAdmission };
+export {
+  activeSelectionForAccount,
+  evaluateSerialRoutingAccounts,
+  readStrongCodexRoutingRows,
+  selectedCodexSubscriptionPool,
+  selectSerialCodexRoutingAccounts,
+  withCodexAdmission,
+};

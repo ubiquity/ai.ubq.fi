@@ -162,6 +162,7 @@ export {
   CODEX_HALF_OPEN_LEASE_MS,
   CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
   codexCredentialVersion,
+  electCodexResetRecoveryAccount,
   getCodexQuotaBlockFence,
   markCodexCredentialInvalid,
   markCodexQuotaBlocked,

@@ -12,6 +12,7 @@ import {
   PROVIDER_SELECTION_KV_KEY,
   RoutingKv,
   claimCodexRoutingProbe,
+  electCodexResetRecoveryAccount,
   fetchCodexResponses,
   getCodexQuotaBlockFence,
   getCodexRoutingError,
@@ -1014,6 +1015,56 @@ Deno.test("a selection that names no configured subscription leaves no eligible 
     await seedSubscriptionSelection(kv, ["retired-account"]);
     const selected = await selectCodexRoutingAccountsStrong(authPool, authPool.accounts, now);
     assert.notEqual(selected.kind, "eligible", "an unknown subscription hash never falls back to an unselected account");
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+    resetProviderSelectionCacheForTest();
+  }
+});
+
+Deno.test("a narrowed exhausted cohort elects its reset recovery account with a healthy unselected account", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  resetProviderSelectionCacheForTest();
+  try {
+    const now = Date.now();
+    const authPool: CodexAuthPoolState = { accounts: pool.accounts.map((account) => ({ ...account, updated_at_ms: now })), updated_at_ms: now };
+    await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
+
+    // Operator selects only slot 0 ("one"), leaving slot 1 ("two") unselected but healthy.
+    await seedSubscriptionSelection(kv, ["one"]);
+
+    const initial = await selectCodexRoutingAccountsStrong(authPool, authPool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    assert.equal(initial.accounts[0].auth.account_id, "one");
+    assert.equal(initial.accounts[0].slot, 0);
+
+    // Durably block slot 0 with a stable reset deadline (second resolution matching HTTP-Date).
+    const resetAtMs = Math.floor((now + 60_000) / 1_000) * 1_000;
+    await markCodexQuotaBlocked(initial.accounts[0], httpDateQuotaResponse(resetAtMs), now);
+
+    // Admission evaluates the narrowed cohort: slot 0 is exhausted and no other selected account exists.
+    const blocked = await selectCodexRoutingAccountsStrong(authPool, authPool.accounts, now + 1);
+    assert.equal(blocked.kind, "quota_blocked");
+    assert.equal(blocked.fullCohortExhausted, true, "narrowed cohort is fully exhausted");
+    assert.equal(blocked.blockedAccounts.length, 1);
+    assert.equal(blocked.blockedAccounts[0].auth.account_id, "one");
+    assert.equal(blocked.blockedAccounts[0].slot, 0);
+    assert.equal(blocked.blockedAccounts[0].quotaResetAtMs, resetAtMs);
+
+    // Reset recovery election must evaluate the same narrowed cohort and successfully elect slot 0.
+    const candidate = blocked.blockedAccounts[0];
+    const elected = await electCodexResetRecoveryAccount(candidate, blocked.activeSnapshot, candidate.quotaResetAtMs);
+    assert.ok(elected, "election must evaluate the same narrowed cohort and succeed");
+    assert.equal(elected.auth.account_id, "one");
+    assert.equal(elected.slot, 0);
+    assert.equal(elected.routingGeneration, candidate.routingGeneration);
+
+    // If operator changes selection away from slot 0, election refuses.
+    await seedSubscriptionSelection(kv, ["two"]);
+    const refused = await electCodexResetRecoveryAccount(candidate, blocked.activeSnapshot, candidate.quotaResetAtMs);
+    assert.equal(refused, null, "unselected subscription cannot be elected");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
