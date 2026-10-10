@@ -62,8 +62,11 @@ Deno.test("deepseek responses: maps Responses input onto Chat messages", () => {
   ]);
 });
 
-Deno.test("deepseek responses: rejects input shapes it cannot translate", () => {
-  const badRole = toDeepSeekChatMessages([{ type: "message", role: "system", content: "x" }], null);
+Deno.test("deepseek responses: accepts system role and rejects input shapes it cannot translate", () => {
+  const systemRole = toDeepSeekChatMessages([{ type: "message", role: "system", content: "x" }], null);
+  assert.equal(systemRole.ok, true);
+  assert.deepEqual(systemRole.value, [{ role: "system", content: "x" }]);
+  const badRole = toDeepSeekChatMessages([{ type: "message", role: "tool", content: "x" }], null);
   assert.equal(badRole.ok, false);
   const badType = toDeepSeekChatMessages([{ type: "computer_call", call_id: "c" }], null);
   assert.equal(badType.ok, false);

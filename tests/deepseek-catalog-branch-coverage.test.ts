@@ -58,9 +58,10 @@ Deno.test("chat projection: instructions and string inputs produce the plain use
 
 Deno.test("chat projection: a message item normalizes its role and content shapes", () => {
   assert.deepEqual(messagesOf([{ type: "message", role: "user", content: "hello" }]), [{ role: "user", content: "hello" }]);
-  // A missing role defaults to user, and the developer role becomes system.
+  // A missing role defaults to user, and the developer/system roles become system.
   assert.deepEqual(messagesOf([{ content: "hello" }]), [{ role: "user", content: "hello" }]);
   assert.deepEqual(messagesOf([{ type: "message", role: "developer", content: "rules" }]), [{ role: "system", content: "rules" }]);
+  assert.deepEqual(messagesOf([{ type: "message", role: "system", content: "system prompt" }]), [{ role: "system", content: "system prompt" }]);
   // A plain string item is a user turn.
   assert.deepEqual(messagesOf(["raw text"]), [{ role: "user", content: "raw text" }]);
   // Array content with only text collapses to the string form.
@@ -107,10 +108,10 @@ Deno.test("chat projection: a message item normalizes its role and content shape
 
 Deno.test("chat projection: every malformed content shape is rejected with its param", () => {
   assert.deepEqual(rejectionOf([42]), { ok: false, param: "input", message: "input items must be objects" });
-  assert.deepEqual(rejectionOf([{ type: "message", role: "system", content: "x" }]), {
+  assert.deepEqual(rejectionOf([{ type: "message", role: "tool", content: "x" }]), {
     ok: false,
     param: "input.role",
-    message: "input role 'system' is not supported",
+    message: "input role 'tool' is not supported",
   });
   assert.deepEqual(rejectionOf([{ type: "message", role: "user", content: 42 }]), {
     ok: false,

@@ -343,15 +343,17 @@ const appendMessageItem = (
   elisions: ForwardedPayloadElision[]
 ): DeepSeekResponsesResult<void> => {
   const role = getString(item.role) ?? "user";
-  if (role !== "user" && role !== "assistant" && role !== "developer") return failure("input.role", `input role '${role}' is not supported`);
+  if (role !== "user" && role !== "assistant" && role !== "developer" && role !== "system") {
+    return failure("input.role", `input role '${role}' is not supported`);
+  }
   const content = chatContentFromResponseParts(item.content, role, reduction, path, elisions);
   if (!content.ok) return content;
-  const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
+  const message: Record<string, unknown> = { role: role === "developer" || role === "system" ? "system" : role, content: content.value };
   if (role === "assistant" && pending.reasoning) {
     message.reasoning_content = pending.reasoning;
     pending.reasoning = "";
   }
-  // DeepSeek, like OpenAI Chat, has no developer role.
+  // DeepSeek, like OpenAI Chat, has no developer role, so developer and system map to system.
   messages.push(message);
   return { ok: true, value: undefined };
 };
