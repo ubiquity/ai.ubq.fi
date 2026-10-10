@@ -4,6 +4,7 @@ import {
   type DeepSeekFinishDisposition,
   deepSeekFinishDisposition,
   deepSeekReasoningTokens,
+  deepSeekThinkingModeActive,
   deepSeekThinkingToolChoiceConflict,
   deepSeekToolChoiceThinkingConflictMessage,
   deepSeekUpstreamModelFor,
@@ -85,6 +86,8 @@ export type ChatOnlyResponsesProfile = Readonly<{
   requireApiKey: () => void;
   /** True when the provider reports stream usage only behind `stream_options.include_usage`. */
   requiresStreamUsageOption: boolean;
+  /** True when the resolved mode permits sampling controls (temperature, top_p). */
+  allowsSamplingControls: (reasoningEffort: unknown, thinking: unknown) => boolean;
 }>;
 
 /** The provider's own key check, mirroring `requireDeepSeekApiKey` in `./deepseek.ts`. */
@@ -106,6 +109,7 @@ export const DEEPSEEK_RESPONSES_PROFILE: ChatOnlyResponsesProfile = {
   // DeepSeek reports usage on its final content chunk only when the request
   // asks for it, so the streaming body carries `stream_options.include_usage`.
   requiresStreamUsageOption: true,
+  allowsSamplingControls: (reasoningEffort: unknown, thinking: unknown): boolean => !deepSeekThinkingModeActive(reasoningEffort, thinking),
 };
 
 /** The seven tiers this provider accepted on 2026-09-23, as a membership set. */
@@ -162,6 +166,7 @@ export const LITHOS_RESPONSES_PROFILE: ChatOnlyResponsesProfile = {
   // Usage arrives unconditionally on every streaming call and is never gated
   // on `stream_options.include_usage`, which this provider's wire does not use.
   requiresStreamUsageOption: false,
+  allowsSamplingControls: (reasoningEffort: unknown, thinking: unknown): boolean => !deepSeekThinkingModeActive(reasoningEffort, thinking),
 };
 
 /** The provider's own key check, mirroring `requireCerebrasApiKey` in `../provider/cerebras.ts`. */
@@ -232,6 +237,7 @@ export const CEREBRAS_RESPONSES_PROFILE: ChatOnlyResponsesProfile = {
   // This route buffers the provider's non-streaming answer and replays it, so
   // there is no upstream stream that could carry `stream_options`.
   requiresStreamUsageOption: false,
+  allowsSamplingControls: (reasoningEffort: unknown, thinking: unknown): boolean => !deepSeekThinkingModeActive(reasoningEffort, thinking),
 };
 
 /** The Responses identity a flattened Chat tool name was derived from. */

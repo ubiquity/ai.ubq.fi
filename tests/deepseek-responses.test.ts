@@ -1088,6 +1088,55 @@ Deno.test("deepseek responses: accepts required tool_choice once thinking mode i
   }
 });
 
+Deno.test("deepseek responses: forwards sampling controls when thinking is disabled", () => {
+  // reasoning.effort: "none" forwards temperature (including 0) and top_p
+  const zeroTemp = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, temperature: 0 }, "deepseek-flash", false);
+  assert.equal(zeroTemp.ok, true);
+  assert.equal(zeroTemp.value.body.temperature, 0);
+  assert.equal(zeroTemp.value.body.reasoning_effort, "none");
+  assert.deepEqual(zeroTemp.value.warnings, []);
+
+  const topP = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, top_p: 0.8 }, "deepseek-flash", false);
+  assert.equal(topP.ok, true);
+  assert.equal(topP.value.body.top_p, 0.8);
+  assert.deepEqual(topP.value.warnings, []);
+
+  // thinking: { type: "disabled" } also enables sampling controls
+  const thinkingDisabled = toDeepSeekResponsesChatBody({ input: "hi", thinking: { type: "disabled" }, temperature: 0.5, top_p: 0.95 }, "deepseek-flash", false);
+  assert.equal(thinkingDisabled.ok, true);
+  assert.equal(thinkingDisabled.value.body.temperature, 0.5);
+  assert.equal(thinkingDisabled.value.body.top_p, 0.95);
+  assert.deepEqual(thinkingDisabled.value.warnings, []);
+});
+
+Deno.test("deepseek responses: raises ignored warning when thinking mode drops sampling controls", () => {
+  // Thinking active (effort "high" or omitted): temperature and top_p are not forwarded and warnings are raised
+  const activeEffort = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "high" }, temperature: 0, top_p: 0.5 }, "deepseek-flash", false);
+  assert.equal(activeEffort.ok, true);
+  assert.equal("temperature" in activeEffort.value.body, false);
+  assert.equal("top_p" in activeEffort.value.body, false);
+  assert.deepEqual(activeEffort.value.warnings, ["temperature_ignored", "top_p_ignored"]);
+
+  const defaultThinking = toDeepSeekResponsesChatBody({ input: "hi", temperature: 0.7 }, "deepseek-flash", false);
+  assert.equal(defaultThinking.ok, true);
+  assert.equal("temperature" in defaultThinking.value.body, false);
+  assert.deepEqual(defaultThinking.value.warnings, ["temperature_ignored"]);
+});
+
+Deno.test("deepseek responses: rejects invalid sampling controls", () => {
+  const invalidTemp = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, temperature: -0.1 }, "deepseek-flash", false);
+  assert.equal(invalidTemp.ok, false);
+  assert.equal(invalidTemp.param, "temperature");
+
+  const invalidTempHigh = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, temperature: 2.5 }, "deepseek-flash", false);
+  assert.equal(invalidTempHigh.ok, false);
+  assert.equal(invalidTempHigh.param, "temperature");
+
+  const invalidTopP = toDeepSeekResponsesChatBody({ input: "hi", reasoning: { effort: "none" }, top_p: 1.2 }, "deepseek-flash", false);
+  assert.equal(invalidTopP.ok, false);
+  assert.equal(invalidTopP.param, "top_p");
+});
+
 Deno.test("deepseek responses: the thinking-mode tool_choice rule has one shared expression", () => {
   // The rule is consumed by both DeepSeek request seams, so it is asserted at
   // its own seam as well as through the Responses translation.

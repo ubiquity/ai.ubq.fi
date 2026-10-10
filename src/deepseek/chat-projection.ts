@@ -10,6 +10,7 @@ import {
   originalToolName,
 } from "./responses.ts";
 import { FORWARDED_PAYLOAD_POLICY, type ForwardedPayloadElision, type ForwardedPayloadReduction } from "./forwarded-payload-policy.ts";
+import { deepSeekThinkingModeActive } from "./index.ts";
 import { getString, isRecord } from "../utils.ts";
 
 type ChatContentPart = Record<string, unknown>;
@@ -693,6 +694,40 @@ const applyReasoning = (
   return { ok: true, value: undefined };
 };
 
+const isValidTemperature = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 2;
+
+const isValidTopP = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+
+const applySamplingControls = (
+  body: Record<string, unknown>,
+  rawRecord: Record<string, unknown>,
+  profile: ChatOnlyResponsesProfile,
+  warnings: string[]
+): DeepSeekResponsesResult<void> => {
+  const hasTemperature = rawRecord.temperature !== undefined && rawRecord.temperature !== null;
+  if (hasTemperature && !isValidTemperature(rawRecord.temperature)) {
+    return failure("temperature", "temperature must be a number between 0 and 2");
+  }
+  const hasTopP = rawRecord.top_p !== undefined && rawRecord.top_p !== null;
+  if (hasTopP && !isValidTopP(rawRecord.top_p)) {
+    return failure("top_p", "top_p must be a number between 0 and 1");
+  }
+  if (!hasTemperature && !hasTopP) return { ok: true, value: undefined };
+
+  const allowsSampling = profile.allowsSamplingControls
+    ? profile.allowsSamplingControls(body.reasoning_effort, rawRecord.thinking)
+    : !deepSeekThinkingModeActive(body.reasoning_effort, rawRecord.thinking);
+
+  if (allowsSampling) {
+    if (hasTemperature) body.temperature = rawRecord.temperature;
+    if (hasTopP) body.top_p = rawRecord.top_p;
+  } else {
+    if (hasTemperature) warnings.push("temperature_ignored");
+    if (hasTopP) warnings.push("top_p_ignored");
+  }
+  return { ok: true, value: undefined };
+};
+
 const applyTools = (
   body: Record<string, unknown>,
   rawRecord: Record<string, unknown>,
@@ -784,6 +819,7 @@ export const toDeepSeekResponsesChatBody = (
     toolNames: ReadonlyMap<string, OriginalToolName>;
     customToolNames: ReadonlySet<string>;
     elisions: readonly ForwardedPayloadElision[];
+    warnings: readonly string[];
   }>
 > => {
   const canonical = profile.upstreamModelFor(requestedModel);
@@ -804,6 +840,9 @@ export const toDeepSeekResponsesChatBody = (
   if (!outputLimit.ok) return outputLimit;
   const reasoning = applyReasoning(body, rawRecord, profile);
   if (!reasoning.ok) return reasoning;
+  const warnings: string[] = [];
+  const sampling = applySamplingControls(body, rawRecord, profile, warnings);
+  if (!sampling.ok) return sampling;
   const toolNames = applyTools(body, rawRecord, profile);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
@@ -816,7 +855,7 @@ export const toDeepSeekResponsesChatBody = (
     }
     ensureTrailingAssistantReasoning(messages.value);
   }
-  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions } };
+  return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions, warnings } };
 };
 
 /**
