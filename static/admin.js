@@ -9237,16 +9237,37 @@ const providersRoutingWarnings = () => {
   const warnings = [];
   if (providersSelectionIsEmpty()) return warnings;
   const missing = providersMissingSelectionIds();
-  if (missing.length) {
-    warnings.push(
-      `${formatNumber(missing.length)} saved ${
-        missing.length === 1 ? "subscription is" : "subscriptions are"
-      } no longer configured, so ${
-        missing.length === 1 ? "it" : "they"
-      } cannot serve; remove the missing entries to keep the selection honest.`,
-    );
-  }
   const codex = providerCodexSelection();
+  const missingCodex = missing.filter((id) => id.startsWith("codex:"));
+  const allCodexMissing = !providerSelection.has("codex") && missingCodex.length > 0 && codex.selected === 0;
+
+  if (missing.length) {
+    if (allCodexMissing) {
+      warnings.push(
+        `${formatNumber(missingCodex.length)} selected Codex ${
+          missingCodex.length === 1 ? "subscription hash is" : "subscription hashes are"
+        } no longer configured; Codex-model inference will fail with invalid credentials without paid fallback until configured accounts are checked.`,
+      );
+      const otherMissing = missing.filter((id) => !id.startsWith("codex:"));
+      if (otherMissing.length) {
+        warnings.push(
+          `${formatNumber(otherMissing.length)} saved ${
+            otherMissing.length === 1 ? "entry is" : "entries are"
+          } no longer configured, so ${
+            otherMissing.length === 1 ? "it" : "they"
+          } cannot serve; remove the missing entries to keep the selection honest.`,
+        );
+      }
+    } else {
+      warnings.push(
+        `${formatNumber(missing.length)} saved ${
+          missing.length === 1 ? "subscription is" : "subscriptions are"
+        } no longer configured, so ${
+          missing.length === 1 ? "it" : "they"
+        } cannot serve; remove the missing entries to keep the selection honest.`,
+      );
+    }
+  }
   if (!providerSelection.has("codex") && codex.total && codex.selected > 0) {
     warnings.push(
       `Codex is limited to ${formatNumber(codex.selected)} of ${
@@ -9254,7 +9275,7 @@ const providersRoutingWarnings = () => {
       } subscriptions; the other accounts stay unused.`,
     );
   }
-  if (!isProviderChecked("codex")) {
+  if (!isProviderChecked("codex") && !allCodexMissing) {
     warnings.push("Codex is off, so requests start at the paid tiers and the subscription capacity stays unused.");
   }
   if (!providerSelection.has("surplus") && !providerSelection.has("openlux")) {

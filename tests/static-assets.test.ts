@@ -835,3 +835,57 @@ Deno.test("admin paid-provider wallet display never claims a balance the token e
   assert.match(adminScript, /appendProviderFact\(facts, "Inference", status\.health \? providerStateLabel\(status\.health\) : "Not observed"\)/);
   assert.match(adminScript, /appendProviderFact\(facts, "Last response", formatDate\(status\.health\?\.last_observed_at_ms\)\)/);
 });
+
+Deno.test("providersRoutingWarnings warns of credentials failure instead of promising paid fallback when all selected subscription hashes are missing", () => {
+  const removedHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const removedId = `codex:${removedHash}`;
+
+  const providerRoster = [{ id: "codex", subscriptions: [{ id: "codex:active1" }] }, { id: "surplus" }, { id: "openlux" }];
+  const providersRosterIds = () => providerRoster.map((entry) => entry.id);
+  const providerSubscriptions = () => providerRoster.find((entry) => entry.id === "codex")?.subscriptions ?? [];
+
+  // All selected Codex subscriptions are unconfigured, and Surplus is selected:
+  const providerSelection = new Set([removedId, "surplus"]);
+
+  const evaluateWarnings = new Function(
+    "providerRoster",
+    "providerSelection",
+    "providersRosterIds",
+    "providerSubscriptions",
+    `
+    const formatNumber = (n) => String(n);
+    const providerSubscriptionSelected = (subscriptionId) =>
+      providerSelection.has("codex") || providerSelection.has(subscriptionId);
+    const providerCodexSelection = () => {
+      const subscriptions = providerSubscriptions();
+      const selected = subscriptions.filter((subscription) => providerSubscriptionSelected(subscription.id)).length;
+      return { subscriptions, selected, total: subscriptions.length, all: providerSelection.has("codex") };
+    };
+    const isProviderChecked = (providerId) =>
+      providerId === "codex"
+        ? providerSelection.has("codex") || providerCodexSelection().selected > 0
+        : providerSelection.has(providerId);
+    const providersMissingSelectionIds = () => {
+      const known = new Set([...providersRosterIds(), ...providerSubscriptions().map((s) => s.id)]);
+      return [...providerSelection].filter((id) => !known.has(id)).sort();
+    };
+    const providersSelectionIsEmpty = () => providerSelection.size === 0;
+    ${adminScript.slice(adminScript.indexOf("const providersRoutingWarnings = () => {"), adminScript.indexOf("const providersHealthWarning = () => {"))}
+    return providersRoutingWarnings();
+    `
+  );
+
+  const warnings = evaluateWarnings(providerRoster, providerSelection, providersRosterIds, providerSubscriptions) as string[];
+
+  // Must not promise that requests start at paid tiers:
+  assert.ok(
+    !warnings.some((w) => w.includes("requests start at the paid tiers")),
+    "must not promise requests start at paid tiers when empty eligible pool yields credentials_invalid"
+  );
+
+  // Must warn that Codex-model inference fails with invalid credentials without paid fallback:
+  assert.ok(
+    warnings.some((w) => w.includes("Codex-model inference will fail with invalid credentials without paid fallback")),
+    "must accurately warn that Codex inference fails without paid fallback"
+  );
+});
