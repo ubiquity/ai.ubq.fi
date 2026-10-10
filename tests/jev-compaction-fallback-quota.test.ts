@@ -16,6 +16,8 @@ import handler from "../src/handler/index.ts";
 import { createServeHandler } from "../src/handler/serve-handler.ts";
 import { createInferenceAdmissionController } from "../src/inference-admission.ts";
 import { setJevCompactionAskerForTest } from "../src/jev_compaction/compaction.ts";
+import { reloadKernelPublicKeys } from "../src/kernel/attestation.ts";
+import { KERNEL_QUOTA_RESERVATION_LEASE_MS, kernelRepoPolicyKey } from "../src/kernel/quota-v2.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/provider/lithos.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
@@ -27,7 +29,53 @@ const METADATA = JSON.stringify({ request_kind: "compaction", compaction: { impl
 const KEEP_MARKER = "retain_compaction_fallback_artifact";
 const OLD_RESULT = "Obsolete tool result with its original evidence. ".repeat(100);
 const ENV_KEYS = ["LITHOSAI_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "SURPLUS_API_KEY", "METERED_API_KEY"] as const;
+const KERNEL_OWNER = "compaction-owner";
+const KERNEL_REPO = "compaction-repo";
 const loopbackPermission = await Deno.permissions.query({ name: "net", host: "127.0.0.1" });
+
+const TEXT_ENCODER = new TextEncoder();
+
+const encodeBase64 = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+};
+
+const encodeBase64Url = (bytes: Uint8Array): string => encodeBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+
+const encodeJsonBase64Url = (value: unknown): string => encodeBase64Url(TEXT_ENCODER.encode(JSON.stringify(value)));
+
+const toPublicKeyPem = (spki: Uint8Array): string => {
+  const lines = encodeBase64(spki).match(/.{1,64}/g) ?? [];
+  return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
+};
+
+const installKernelPublicKey = async (kv: CountingKv, token: string): Promise<string> => {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([0x01, 0x00, 0x01]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", keyPair.publicKey));
+  kv.seed(["uos_ai", "kernel_pubkeys"], [{ pem: toPublicKeyPem(spki) }]);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const header = encodeJsonBase64Url({ alg: "RS256", typ: "JWT" });
+  const payload = encodeJsonBase64Url({
+    iss: "ubiquity-os-kernel",
+    aud: "ai.ubq.fi",
+    iat: nowSeconds,
+    exp: nowSeconds + 600,
+    jti: `jti_${crypto.randomUUID()}`,
+    owner: KERNEL_OWNER,
+    repo: KERNEL_REPO,
+    installation_id: null,
+    auth_token_sha256: await sha256Base64Url(token),
+    state_id: `state_${crypto.randomUUID()}`,
+  });
+  const signingInput = `${header}.${payload}`;
+  const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, TEXT_ENCODER.encode(signingInput)));
+  return `${signingInput}.${encodeBase64Url(signature)}`;
+};
 
 const message = (role: string, text: string) => ({ type: "message", role, content: [{ type: "input_text", text }] });
 
@@ -74,10 +122,40 @@ const waitFor = async (predicate: () => boolean, label: string): Promise<void> =
   }
 };
 
+const armKernelLeaseExpiry = (): Readonly<{ expire: () => void; restore: () => void }> => {
+  const originalNow = Date.now;
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let expired = false;
+  let leaseExpiry: (() => void) | null = null;
+  let leaseTimer: ReturnType<typeof setTimeout> | undefined;
+  Date.now = () => originalNow() + (expired ? KERNEL_QUOTA_RESERVATION_LEASE_MS + 1 : 0);
+  globalThis.setTimeout = ((handler: () => void, timeout?: number): ReturnType<typeof setTimeout> => {
+    if (timeout !== undefined && timeout >= KERNEL_QUOTA_RESERVATION_LEASE_MS - 1_000) {
+      leaseExpiry = handler;
+      leaseTimer = originalSetTimeout(() => {}, timeout);
+      return leaseTimer;
+    }
+    return originalSetTimeout(handler, timeout);
+  }) as typeof globalThis.setTimeout;
+  return {
+    expire(): void {
+      expired = true;
+      leaseExpiry?.();
+    },
+    restore(): void {
+      if (leaseTimer !== undefined) originalClearTimeout(leaseTimer);
+      Date.now = originalNow;
+      globalThis.setTimeout = originalSetTimeout;
+    },
+  };
+};
+
 type ProviderCall = Readonly<{ provider: string; body: Record<string, unknown> }>;
+type HarnessOptions = Readonly<{ kernel?: boolean }>;
 
 /** Real HTTP ingress, real authentication/admission/quota, memory-only KV and blocked external fetches. */
-const startHarness = async (asker: JevAsker) => {
+const startHarness = async (asker: JevAsker, options: HarnessOptions = {}) => {
   const kv = new CountingKv();
   const token = `u_${"a".repeat(64)}`;
   const hash = await sha256Base64Url(token);
@@ -124,7 +202,23 @@ const startHarness = async (asker: JevAsker) => {
   setKvForTest(kv as unknown as Deno.Kv);
   resetApiKeyPolicyCacheForTest();
   resetProviderSelectionCacheForTest();
+  if (options.kernel) {
+    const policyNow = Date.now();
+    kv.seed(kernelRepoPolicyKey(KERNEL_OWNER, KERNEL_REPO), {
+      v: 2,
+      scope: "repo",
+      owner: KERNEL_OWNER,
+      repo: KERNEL_REPO,
+      usage_limit_requests: 1,
+      window_ms: 60 * 60_000,
+      expires_at_ms: -1,
+      created_at_ms: policyNow,
+      updated_at_ms: policyNow,
+    });
+  }
   setJevCompactionAskerForTest(asker);
+  const kernelToken = options.kernel ? await installKernelPublicKey(kv, token) : null;
+  if (kernelToken) await reloadKernelPublicKeys();
 
   const calls: ProviderCall[] = [];
   const terminals: Record<string, unknown>[] = [];
@@ -175,6 +269,7 @@ const startHarness = async (asker: JevAsker) => {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "x-codex-turn-metadata": METADATA,
+        ...(kernelToken ? { "X-Ubiquity-Kernel-Token": kernelToken } : {}),
       },
       body: JSON.stringify(body),
       signal,
@@ -324,6 +419,52 @@ Deno.test({
     } finally {
       abort.abort();
       rejectAsker(new Error("settle controlled Jev cancellation"));
+      await harness.stop();
+    }
+  },
+});
+
+Deno.test({
+  name: "marked repository compaction: kernel reservation cancellation stops Jev before completion",
+  ignore: loopbackPermission.state !== "granted",
+  async fn() {
+    let jevCalls = 0;
+    let questions: JevQuestions = {};
+    let resolveDecision: (response: JevResponse) => void = () => {};
+    const decision = new Promise<JevResponse>((resolve) => {
+      resolveDecision = resolve;
+    });
+    const harness = await startHarness(
+      {
+        ask(_state, askedQuestions: JevQuestions): Promise<JevResponse> {
+          jevCalls += 1;
+          questions = askedQuestions;
+          return decision;
+        },
+      },
+      { kernel: true }
+    );
+    const lease = armKernelLeaseExpiry();
+    try {
+      const pending = harness.post(requestBody());
+      await waitFor(() => jevCalls === 1, "the injected Jev decision");
+      lease.expire();
+      resolveDecision({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { noul: 0.1 }])) });
+      const response = await pending;
+      assert.equal(response.status, 499, "an expired kernel reservation must cancel local compaction");
+      await response.text();
+      assert.equal(harness.calls.length, 0, "an expired kernel reservation must not dispatch a fallback provider");
+      const requestId = response.headers.get("x-uos-request-id");
+      assert.ok(requestId);
+      const terminal = await settledTerminal(harness, requestId);
+      assert.equal(terminal.status, 499);
+      const ledger = await quota(harness, requestId);
+      assert.equal(ledger.window.committed_requests, 0);
+      assert.equal(ledger.window.reserved_requests, 0);
+      assert.equal(ledger.request.state, "released");
+    } finally {
+      lease.restore();
+      resolveDecision({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { noul: 0.1 }])) });
       await harness.stop();
     }
   },
