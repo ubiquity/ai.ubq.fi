@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 
+import denoJson from "../deno.json" with { type: "json" };
 import { authenticateAdmin, authenticateClient, handleV1Auth } from "../src/auth/index.ts";
 import {
   configureAdminAuthForListener,
@@ -40,11 +41,11 @@ Deno.test("disable-admin-auth is rejected in Deno Deploy", () => {
 });
 
 Deno.test("loopback detection accepts local TCP hostnames only", () => {
-  for (const hostname of ["localhost", "LOCALHOST", "127.0.0.1", "127.42.9.3", "::1", "[::1]"]) {
+  for (const hostname of ["localhost", "LOCALHOST", "127.0.0.1", "127.42.9.3", "::1", "[::1]", "0:0:0:0:0:0:0:1", "[0:0:0:0:0:0:0:1]"]) {
     assert.equal(isLoopbackHostname(hostname), true, hostname);
   }
   // RFC 5737 documentation addresses stand in for non-loopback peers.
-  for (const hostname of ["0.0.0.0", "::", "192.0.2.10", "198.51.100.1", "ai.ubq.fi", "127.0.0.1.example"]) {
+  for (const hostname of ["0.0.0.0", "::", "192.0.2.10", "198.51.100.1", "ai.ubq.fi", "127.0.0.1.example", "localhost.example.com", "127.0.0.1.example.com"]) {
     assert.equal(isLoopbackHostname(hostname), false, hostname);
   }
 });
@@ -251,4 +252,60 @@ Deno.test("a concurrent LAN request cannot inherit a loopback peer", async () =>
   } finally {
     configureAdminAuthForListener(disabledOptions, tcpAddress("127.0.0.1"));
   }
+});
+
+Deno.test("admin:models tasks classify loopback by parsed hostname rejecting non-loopback hosts without tokens", async () => {
+  const adminModelsTask = (denoJson as { tasks: Record<string, string> }).tasks["admin:models"];
+  const adminModelsSparkTask = (denoJson as { tasks: Record<string, string> }).tasks["admin:models:spark"];
+  assert.ok(adminModelsTask);
+  assert.ok(adminModelsSparkTask);
+  assert.match(adminModelsTask, /isLoopbackHostname/);
+  assert.match(adminModelsSparkTask, /isLoopbackHostname/);
+
+  const runTask = async (taskCommand: string, baseUrl: string, token?: string): Promise<{ code: number; stdout: string; stderr: string }> => {
+    const env: Record<string, string> = {
+      PATH: Deno.env.get("PATH") ?? "",
+      BASE_URL: baseUrl,
+    };
+    if (token !== undefined) {
+      env.DENO_DEPLOY_TOKEN = token;
+    }
+    const command = new Deno.Command("sh", {
+      args: ["-c", taskCommand],
+      env,
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const output = await command.output();
+    return {
+      code: output.code,
+      stdout: new TextDecoder().decode(output.stdout),
+      stderr: new TextDecoder().decode(output.stderr),
+    };
+  };
+
+  // 1. Non-loopback host (localhost.example.com) without token is rejected with exit 1
+  const nonLoopback = await runTask(adminModelsTask, "http://localhost.example.com");
+  assert.equal(nonLoopback.code, 1);
+  assert.match(nonLoopback.stderr, /is required for non-loopback admin endpoints/);
+
+  // 2. 127.0.0.1.example.com without token is rejected with exit 1
+  const fakeIp = await runTask(adminModelsTask, "http://127.0.0.1.example.com");
+  assert.equal(fakeIp.code, 1);
+  assert.match(fakeIp.stderr, /is required for non-loopback admin endpoints/);
+
+  // 3. Uppercase LOCALHOST is classified as loopback (attempts curl, fails connect on loopback rather than token rejection)
+  const upperLocal = await runTask(adminModelsTask, "http://LOCALHOST:8000");
+  assert.notEqual(upperLocal.code, 1);
+  assert.doesNotMatch(upperLocal.stderr, /is required for non-loopback admin endpoints/);
+
+  // 4. Expanded IPv6 loopback is classified as loopback
+  const expandedIpv6 = await runTask(adminModelsTask, "http://[0:0:0:0:0:0:0:1]:8000");
+  assert.notEqual(expandedIpv6.code, 1);
+  assert.doesNotMatch(expandedIpv6.stderr, /is required for non-loopback admin endpoints/);
+
+  // 5. admin:models:spark also rejects non-loopback host
+  const sparkNonLoopback = await runTask(adminModelsSparkTask, "http://localhost.example.com");
+  assert.equal(sparkNonLoopback.code, 1);
+  assert.match(sparkNonLoopback.stderr, /is required for non-loopback admin endpoints/);
 });
