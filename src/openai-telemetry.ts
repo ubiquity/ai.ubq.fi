@@ -28,6 +28,8 @@ export type UsageContext = Readonly<{
   paidFallbackEnabled?: boolean;
   idempotencyPrincipal?: string | null;
   requestId?: string;
+  /** Internal paid-attempt ledger identity; client correlation and request quota retain requestId. */
+  paidFallbackRequestId?: string;
   startedAtMs?: number;
   startedAtMonotonicMs?: number;
   downstreamSignal?: AbortSignal;
@@ -219,6 +221,7 @@ const withResponseTelemetryContext = (context: UsageContext | undefined, state: 
   paidFallbackEnabled: context?.paidFallbackEnabled,
   idempotencyPrincipal: context?.idempotencyPrincipal,
   requestId: context?.requestId,
+  paidFallbackRequestId: context?.paidFallbackRequestId,
   startedAtMs: context?.startedAtMs,
   startedAtMonotonicMs: context?.startedAtMonotonicMs,
   downstreamSignal: context?.downstreamSignal,
