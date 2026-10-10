@@ -471,6 +471,10 @@ Deno.test("waterfall: the verified OpenLux hop dispatches through paid admission
   const requestId = "waterfall-openlux-native-request";
   const calls: string[] = [];
   const dispatched: string[] = [];
+  const beforeProviderDispatch: UsageContext["beforeProviderDispatch"] = (provider) => {
+    dispatched.push(provider);
+    return Promise.resolve(undefined);
+  };
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
   seedPaidFallbackKey(keyId, { modelIds: [DEEPSEEK_WATERFALL_PAID_MODEL_ID] });
@@ -504,10 +508,7 @@ Deno.test("waterfall: the verified OpenLux hop dispatches through paid admission
               requestId,
               startedAtMs: Date.now(),
               paidFallbackEnabled: true,
-              beforeProviderDispatch: (provider) => {
-                dispatched.push(provider);
-                return Promise.resolve(undefined);
-              },
+              beforeProviderDispatch,
             };
             const response = await handleResponses(
               responsesRequest({ model: DEEPSEEK_WATERFALL_MODEL_ID, reasoning: { effort: "max" }, stream: false }),

@@ -298,7 +298,7 @@ Deno.test({
       // Deno HTTP does not signal a disconnect before response headers here.
       // Exercise the real handler's explicit caller signal at its boundary.
       const pending = handler(
-        new Request("http://compaction-fixture.example.invalid/v1/responses", {
+        new Request("https://compaction-fixture.example.invalid/v1/responses", {
           method: "POST",
           headers: { Authorization: `Bearer ${harness.token}`, "Content-Type": "application/json", "x-codex-turn-metadata": METADATA },
           body: JSON.stringify(requestBody()),

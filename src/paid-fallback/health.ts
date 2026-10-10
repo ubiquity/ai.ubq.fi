@@ -330,12 +330,13 @@ export const resolvePaidRoutingState = (
   meteredOnly: boolean;
   codexEnabled: boolean;
 }> => {
+  const waterfallPinnedProvider = input.deepSeekWaterfallPaidHop === "openlux" ? "metered" : "surplus";
   const waterfallPaidHop =
     input.model === DEEPSEEK_WATERFALL_PAID_MODEL_ID &&
     input.endpointType === "openai-response" &&
     isProviderEnabled("ubiquity", input.selection) &&
     input.allowedPaidProviders?.length === 1 &&
-    input.allowedPaidProviders[0] === (input.deepSeekWaterfallPaidHop === "openlux" ? "metered" : "surplus")
+    input.allowedPaidProviders[0] === waterfallPinnedProvider
       ? (input.deepSeekWaterfallPaidHop ?? null)
       : null;
   // OpenLux served this exact native Responses hop on 2026-10-10 despite its
