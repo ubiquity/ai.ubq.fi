@@ -441,7 +441,7 @@ export class FixtureWorkspace {
     // is still reported and the rest of the workspace is restored.
   }
 
-  /** Make saved directory ancestors writable while restoring an entry. */
+  /** Make directory ancestors writable while restoring an entry. */
   private _restoreDirectoryAccess(
     rel: string,
     before: WorkspaceSnapshot,
@@ -452,12 +452,20 @@ export class FixtureWorkspace {
     for (let i = 1; i <= parts.length; i++) {
       const ancestor = parts.slice(0, i).join("/");
       const expected = before.get(ancestor);
-      if (expected?.kind !== "directory" || expected.mode === null) continue;
       const abs = this._assertPath(ancestor);
       const current = lstatIfExists(abs);
       if (current?.isDirectory !== true) continue;
       const currentMode = snapshotMode(current);
       if (currentMode === null) continue;
+      // A directory being removed has no saved directory metadata (or is
+      // replacing a non-directory), but it may have been made read-only after
+      // its children were written. Make it removable before rolling it back.
+      if (expected?.kind !== "directory") {
+        const accessMode = currentMode | 0o700;
+        if (currentMode !== accessMode) Deno.chmodSync(abs, accessMode);
+        continue;
+      }
+      if (expected.mode === null) continue;
       const accessMode = expected.mode | 0o700;
       if (currentMode === accessMode) continue;
       Deno.chmodSync(abs, accessMode);
