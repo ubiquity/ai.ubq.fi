@@ -276,6 +276,53 @@ const archivePrevious = async (f: Fixture, sha: string): Promise<void> => {
   await Deno.remove(archive);
 };
 
+/**
+ * Activation fixture cleanup must not stop at the first failure: every helper
+ * shutdown is settled and the fixture release (temporary-root removal) always
+ * runs, so one rejecting shutdown cannot leak the remaining helpers or the
+ * root. Cleanup failures are still surfaced, together when there are several.
+ */
+const disposeActivationHelpers = async (
+  closeReservations: () => void,
+  servers: { shutdown(): Promise<void> }[],
+  releaseFixture: () => Promise<void>
+): Promise<void> => {
+  const errors: unknown[] = [];
+  try {
+    closeReservations();
+    const shutdowns = servers.splice(0).map((server) => Promise.resolve().then(() => server.shutdown()));
+    for (const result of await Promise.allSettled(shutdowns)) {
+      if (result.status === "rejected") errors.push(result.reason);
+    }
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    await releaseFixture().catch((error: unknown) => errors.push(error));
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "VPS activation fixture cleanup failed");
+};
+
+/**
+ * Runs `body` and then `cleanup`. A cleanup failure after a failing body is
+ * reported alongside the body's error instead of replacing it.
+ */
+const runThenCleanup = async <T>(body: () => Promise<T>, cleanup: () => Promise<void>): Promise<T> => {
+  let result: T;
+  try {
+    result = await body();
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Test failed and fixture cleanup also failed");
+    }
+    throw error;
+  }
+  await cleanup();
+  return result;
+};
+
 const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"): Promise<Active> => {
   const root = f.root;
   for (const dir of ["bin", "ops", "scripts", "src", ".data/releases"]) await Deno.mkdir(root + "/" + dir, { recursive: true });
@@ -344,11 +391,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   };
   const helperServers: Deno.HttpServer[] = [];
   const releaseFixture = f.dispose;
-  f.dispose = async () => {
-    closeReservations();
-    for (const server of helperServers.splice(0)) await server.shutdown();
-    await releaseFixture();
-  };
+  f.dispose = () => disposeActivationHelpers(closeReservations, helperServers, releaseFixture);
   assert.notEqual(ports[0], ports[1]);
   assert.ok(!ports.includes(7999) && !ports.includes(8001));
   const record = (event: string): Promise<void> =>
@@ -526,8 +569,7 @@ const prepareActivationFixture = async (f: Fixture, profile: Profile = "current"
   try {
     await start(profile === "legacy");
   } catch (error) {
-    await f.dispose();
-    throw error;
+    await runThenCleanup(() => Promise.reject(error), f.dispose);
   }
   const prefix = "#!/bin/sh\nset -eu\nfixture_root=" + quote(root) + "\nfixture_log=" + quote(root + "/.data/trace") + "\n";
   const scripts = {
@@ -668,11 +710,7 @@ const withLauncher = (name: string, test: (f: Fixture, active: Active) => Promis
     ignore: ingressFixtureIgnored,
     fn: async () => {
       const f = await createFixture({ branch: "development", tracking: "match", relocate: true });
-      try {
-        await test(f, await prepareActivationFixture(f, profile));
-      } finally {
-        await f.dispose();
-      }
+      await runThenCleanup(async () => test(f, await prepareActivationFixture(f, profile)), f.dispose);
     },
   });
 };
@@ -1032,4 +1070,69 @@ Deno.test({
       await fixture.dispose();
     }
   },
+});
+
+Deno.test("VPS activation fixture cleanup settles every helper and still releases the root when a shutdown rejects", async () => {
+  const events: string[] = [];
+  const failure = new Error("helper shutdown failed");
+  const servers = [
+    { shutdown: () => Promise.resolve().then(() => void events.push("first")) },
+    { shutdown: () => Promise.reject(failure).finally(() => events.push("failing")) },
+    { shutdown: () => Promise.resolve().then(() => void events.push("last")) },
+  ];
+  await assert.rejects(
+    disposeActivationHelpers(
+      () => void events.push("reservations"),
+      servers,
+      () => Promise.resolve().then(() => void events.push("root"))
+    ),
+    (error) => error === failure
+  );
+  assert.deepEqual([...events].sort(), ["failing", "first", "last", "reservations", "root"]);
+  assert.equal(events.at(-1), "root", "the root is released after every helper shutdown settles");
+  assert.equal(servers.length, 0, "helpers are not shut down twice");
+});
+
+Deno.test("VPS activation fixture cleanup reports every failure together", async () => {
+  const shutdownError = new Error("helper shutdown failed");
+  const releaseError = new Error("root release failed");
+  await assert.rejects(
+    disposeActivationHelpers(
+      () => {},
+      [{ shutdown: () => Promise.reject(shutdownError) }],
+      () => Promise.reject(releaseError)
+    ),
+    (error) => error instanceof AggregateError && error.errors[0] === shutdownError && error.errors[1] === releaseError
+  );
+});
+
+Deno.test("VPS fixture cleanup failure does not hide the primary test failure", async () => {
+  const testError = new Error("primary test failure");
+  const cleanupError = new Error("helper shutdown failed");
+  let cleaned = false;
+  await assert.rejects(
+    runThenCleanup(
+      () => Promise.reject(testError),
+      () => {
+        cleaned = true;
+        return Promise.reject(cleanupError);
+      }
+    ),
+    (error) => error instanceof AggregateError && error.errors[0] === testError && error.errors[1] === cleanupError
+  );
+  assert.ok(cleaned);
+  await assert.rejects(
+    runThenCleanup(
+      () => Promise.reject(testError),
+      () => Promise.resolve()
+    ),
+    (error) => error === testError
+  );
+  await assert.rejects(
+    runThenCleanup(
+      () => Promise.resolve(),
+      () => Promise.reject(cleanupError)
+    ),
+    (error) => error === cleanupError
+  );
 });
