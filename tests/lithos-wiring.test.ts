@@ -14,7 +14,7 @@ import { handleResponses } from "../src/responses-handler.ts";
 import { handleChatCompletions } from "../src/chat/envelope.ts";
 import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
-import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
+import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts"; 
 import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
@@ -546,6 +546,39 @@ Deno.test("lithos wiring: serves /v1/responses through the shared profile transl
     assert.equal(rejectedBody.error?.type, "invalid_request_error");
     assert.equal(rejectedBody.error.param, "reasoning.effort");
     assert.match(rejectedBody.error.message ?? "", /not supported by LithosAI/);
+  });
+
+});
+Deno.test("lithos wiring: a switched-off lithos provider leaves its ids to the ordinary availability check", async () => {
+  await withLithosKey(async () => {
+    // Seed a saved provider selection that excludes lithos, exactly as the
+    // admin picker persists it, then drop the cached read so the handler
+    // picks up the fresh selection.
+    kvStore.set(keyOf([...PROVIDER_SELECTION_KV_KEY]), {
+      provider_ids: ["deepseek", "cerebras"],
+      updated_at_ms: 1_700_000_000_000,
+    });
+    resetProviderSelectionCacheForTest();
+    try {
+      const { result: response, calls } = await withUpstream(
+        () => {
+          throw new Error("a switched-off lithos provider must never reach the vendor");
+        },
+        () =>
+          handleResponses(
+            responsesRequest({ model: LITHOS_MODEL, input: "hi", stream: false }),
+            usageContext("lithos-responses-switched-off")
+          )
+      );
+      // No upstream dispatch happens for the disabled provider id.
+      assert.equal(calls.length, 0);
+      // The id falls through to the ordinary availability check instead of
+      // the Lithos branch, so the response is not a Lithos translation.
+      assert.notEqual(response.headers.get("x-uos-upstream"), "lithos");
+    } finally {
+      kvStore.delete(keyOf([...PROVIDER_SELECTION_KV_KEY]));
+      resetProviderSelectionCacheForTest();
+    }
   });
 });
 
