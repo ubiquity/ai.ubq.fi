@@ -15,6 +15,7 @@ import { handleChatCompletions } from "../src/chat/envelope.ts";
 import { buildModelCatalogSnapshot, handleModelCapabilities, handleModels } from "../src/models/catalog.ts";
 import { getResponseTelemetry } from "../src/openai-telemetry.ts";
 import { DEEPSEEK_WATERFALL_MODEL_ID } from "../src/deepseek/waterfall.ts";
+import { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps this suite on the credential-gated providers it owns, and keeps the
