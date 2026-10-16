@@ -9479,6 +9479,7 @@ const saveModelsWhitelist = async () => {
     return;
   }
   if (modelsSaving || !modelsHasUnsavedChanges()) return;
+  const saveId = modelsLoadId;
   modelsSaving = true;
   modelsSaveError = "";
   updateModelsStatus();
@@ -9489,6 +9490,7 @@ const saveModelsWhitelist = async () => {
       body: JSON.stringify({ model_ids: modelsSelectedIds() }),
     });
     const payload = await response.json().catch(() => null);
+    if (saveId !== modelsLoadId) return;
     if (!response.ok) {
       modelsSaving = false;
       modelsSaveError = "Failed to save";
@@ -9512,6 +9514,7 @@ const saveModelsWhitelist = async () => {
       }
     );
   } catch (error) {
+    if (saveId !== modelsLoadId) return;
     modelsSaving = false;
     modelsSaveError = "Save error";
     toast.error("Save failed", { description: "Offline" });
