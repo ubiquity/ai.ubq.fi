@@ -9519,7 +9519,6 @@ const saveModelsWhitelist = async () => {
     modelsSaving = false;
     modelsSaveError = "";
     modelsSavedSelection = modelsSelectionFromIds(payload?.model_ids ?? modelsSelectedIds());
-    modelsSelection = new Set(modelsSavedSelection);
     modelsLoadedAt = Date.now();
     renderModelsPicker();
     toast.success(
