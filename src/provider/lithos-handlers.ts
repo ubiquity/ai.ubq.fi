@@ -532,7 +532,7 @@ const runLithosDispatch = async (
 const dispatchLithosUpstreamResult = async (
   req: Request,
   body: Record<string, unknown>,
-  modelRaw: string,
+  canonicalModel: string,
   usageContext: UsageContext | undefined,
   streamed: boolean
 ): Promise<LithosDispatchResult> => {
@@ -542,21 +542,21 @@ const dispatchLithosUpstreamResult = async (
   // without asking the saturated tier again, and that decision is announced
   // exactly like a per-request failover. A deeper target resumes mid-ladder, so
   // its own refusal advances further down rather than restarting at the top.
-  const ladder = lithosFailoverLadderFor(modelRaw);
-  const stickyTarget = lithosFailoverTargetAt(modelRaw, Date.now());
+  const ladder = lithosFailoverLadderFor(canonicalModel);
+  const stickyTarget = lithosFailoverTargetAt(canonicalModel, Date.now());
   const stickyIndex = stickyTarget === null ? -1 : ladder.indexOf(stickyTarget);
   if (stickyTarget !== null) {
     logLithosRateLimitFailover({
       request_id: usageContext?.requestId ?? null,
-      model: modelRaw,
+      model: canonicalModel,
       sibling_model: stickyTarget,
       attempt: 1,
     });
     recordLithosFailoverModel(usageContext, stickyTarget);
   }
   return await runLithosDispatch(
-    { body, modelRaw, requestSignal, downstreamSignal, usageContext },
-    { attempt: 0, attemptModel: stickyTarget ?? modelRaw, ladderIndex: stickyIndex + 1, noRetryModels: new Set(), waitedMs: 0, waits: 0 },
+    { body, modelRaw: canonicalModel, requestSignal, downstreamSignal, usageContext },
+    { attempt: 0, attemptModel: stickyTarget ?? canonicalModel, ladderIndex: stickyIndex + 1, noRetryModels: new Set(), waitedMs: 0, waits: 0 },
     streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
     streamed
   );
@@ -615,7 +615,7 @@ export const handleLithosChatCompletions = async (
     reasoning,
   });
 
-  const dispatched = await dispatchLithosUpstreamResult(req, lithosBody, modelRaw, usageContext, clientWantsStream);
+  const dispatched = await dispatchLithosUpstreamResult(req, lithosBody, upstreamModel, usageContext, clientWantsStream);
   if ("pending" in dispatched) {
     // Same deferred absorb as the Responses route: the Chat stream opens now,
     // keepalives hold the client, and the vendor's window is spent behind it.
@@ -853,7 +853,7 @@ export const handleLithosResponses = async (
   });
 
   const createdAtSeconds = Math.floor(Date.now() / 1000);
-  const dispatched = await dispatchLithosUpstreamResult(req, chatBody, modelRaw, usageContext, clientWantsStream);
+  const dispatched = await dispatchLithosUpstreamResult(req, chatBody, upstreamModel, usageContext, clientWantsStream);
   if ("pending" in dispatched) {
     // The streamed route opens its SSE response now and its keepalive frames
     // hold the client while the vendor's own window passes behind it. The

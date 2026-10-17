@@ -34,6 +34,7 @@ const KIMI_MODEL = "moonshotai/Kimi-K3";
 const LITHOS_BASE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash";
 /** The Ultra tier's sibling: same weights, its own rate-limit bucket, and the long-context-safe target. */
 const LITHOS_SIBLING_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-fast";
+const LITHOS_MIXED_CASE_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-ULTRA";
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
 
@@ -1423,7 +1424,7 @@ test("lithos wiring: only the mapped sibling may answer an Ultra request with a 
   });
 });
 
-test("lithos wiring: a refused Ultra tier serves from the sibling until the vendor's reset instant passes", async () => {
+test("lithos wiring: a differently-cased refused Ultra id serves from the sibling until reset", async () => {
   await withLithosKey(async () => {
     clearLithosFailoverWindows();
     try {
@@ -1438,7 +1439,7 @@ test("lithos wiring: a refused Ultra tier serves from the sibling until the vend
       const first = await withUpstream(
         (_call, calls) =>
           calls.length === 1 ? refusal() : Response.json(lithosCompletion({ role: "assistant", content: "sibling-served" }, LITHOS_SIBLING_MODEL)),
-        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-first"))
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MIXED_CASE_MODEL, messages: message, stream: false }), usageContext("lithos-window-first"))
       );
       assert.equal(first.calls.length, 2);
       assert.equal(first.calls[0].body.model, LITHOS_MODEL);
@@ -1447,7 +1448,7 @@ test("lithos wiring: a refused Ultra tier serves from the sibling until the vend
       // While the window is open the sibling answers directly: ultra is not asked again.
       const second = await withUpstream(
         () => Response.json(lithosCompletion({ role: "assistant", content: "sibling-direct" }, LITHOS_SIBLING_MODEL)),
-        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-second"))
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MIXED_CASE_MODEL, messages: message, stream: false }), usageContext("lithos-window-second"))
       );
       assert.equal(second.calls.length, 1, "one dispatch, straight to the sibling");
       assert.equal(second.calls[0].body.model, LITHOS_SIBLING_MODEL);
@@ -1461,10 +1462,13 @@ test("lithos wiring: a refused Ultra tier serves from the sibling until the vend
       await new Promise((resolve) => setTimeout(resolve, 420));
       const third = await withUpstream(
         () => Response.json(lithosCompletion({ role: "assistant", content: "ultra-again" })),
-        () => handleChatCompletions(chatRequest({ model: LITHOS_MODEL, messages: message, stream: false }), usageContext("lithos-window-third"))
+        () => handleChatCompletions(chatRequest({ model: LITHOS_MIXED_CASE_MODEL, messages: message, stream: false }), usageContext("lithos-window-third"))
       );
       assert.equal(third.calls.length, 1);
       assert.equal(third.calls[0].body.model, LITHOS_MODEL, "the window closed and ultra is asked again");
+      const thirdTelemetry = getResponseTelemetry(third.result);
+      if (thirdTelemetry === null) throw new Error("the chat terminal carries no telemetry");
+      assert.equal(thirdTelemetry.rateLimitFailoverModel, null, "the canonical requested tier served after reset");
     } finally {
       clearLithosFailoverWindows();
     }
