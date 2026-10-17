@@ -119,7 +119,8 @@ export const relayChatCompletionStream = (
   usageContext: UsageContext | undefined,
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
-  upstreamModel: string
+  upstreamModel: string,
+  cancelPending?: (reason?: unknown) => void
 ): Response => {
   const encoder = new TextEncoder();
   const headers = new Headers(adapter.responseHeaders(providerRequestId));
@@ -139,6 +140,23 @@ export const relayChatCompletionStream = (
   let terminalSettled = false;
   let semantic = false;
   let usage: UsageTokens | null = null;
+  let cancellationReason: unknown;
+  let pendingCancelled = false;
+  const cancelPendingOnce = (reason?: unknown): void => {
+    if (pendingCancelled) return;
+    pendingCancelled = true;
+    cancelPending?.(reason);
+  };
+  const cancelPendingOnDownstreamAbort = (): void => cancelPendingOnce(downstreamSignal.reason);
+  if (downstreamSignal.aborted) cancelPendingOnDownstreamAbort();
+  else downstreamSignal.addEventListener("abort", cancelPendingOnDownstreamAbort, { once: true });
+  const cancelledResponses = new WeakSet<Response>();
+  const cancelResponse = (response: Response): void => {
+    if (cancelledResponses.has(response)) return;
+    cancelledResponses.add(response);
+    const body = response.body;
+    if (body && !body.locked) void body.cancel(cancellationReason).catch(() => {});
+  };
 
   const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
     if (terminalSettled) return;
@@ -201,6 +219,17 @@ export const relayChatCompletionStream = (
   /** Whether the stream already closed; re-read after every await. */
   const streamClosed = (): boolean => closed;
 
+  // Keep ownership of a deferred response even when the client cancels before
+  // the first downstream pull starts waiting on it.
+  if (pendingUpstream !== null) {
+    void pendingUpstream
+      .then((source) => {
+        upstream ??= source;
+        if (streamClosed()) cancelResponse(source);
+      })
+      .catch(() => {});
+  }
+
   /** Resolves the provider attempt once (awaiting a pending source), or null when the stream ended. */
   const ensureIterator = async (
     controller: ReadableStreamDefaultController<Uint8Array>
@@ -210,7 +239,11 @@ export const relayChatCompletionStream = (
     const source = upstream ?? (pendingUpstream === null ? null : await pendingUpstream);
     // A pending source resolves asynchronously: the client may have cancelled
     // while it was awaited, so the state is re-read rather than remembered.
-    if (source === null || streamClosed()) return null;
+    if (source === null) return null;
+    if (streamClosed()) {
+      cancelResponse(source);
+      return null;
+    }
     upstream = source;
     if (!source.ok) {
       await refuseStream(controller, source);
@@ -263,6 +296,7 @@ export const relayChatCompletionStream = (
     cancel(reason) {
       if (closed) return;
       closed = true;
+      cancellationReason = reason;
       settleTerminal("cancelled");
       adapter.recordCancellation(usageContext);
       // Usage observed before the disconnect is real evidence: record it with
@@ -274,8 +308,8 @@ export const relayChatCompletionStream = (
       // uninterruptible `return()` can block teardown. A consumer can cancel
       // before the first read, so an untouched source is cancelled directly.
       if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream?.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      cancelPendingOnce(reason);
+      if (upstream !== null) cancelResponse(upstream);
       // Cleanup is best effort and never surfaces as a provider error.
       if (iterator !== null) void iterator.return().catch(() => {});
     },
@@ -310,6 +344,7 @@ export const relayResponsesStream = (
     downstreamSignal: AbortSignal;
     requestSignal: AbortSignal;
     upstreamModel: string;
+    cancelPending?: (reason?: unknown) => void;
   }>
 ): Response => {
   const {
@@ -325,6 +360,7 @@ export const relayResponsesStream = (
     downstreamSignal,
     requestSignal,
     upstreamModel,
+    cancelPending,
   } = options;
   const encoder = new TextEncoder();
   const headers = new Headers(adapter.responseHeaders(providerRequestId));
@@ -354,6 +390,23 @@ export const relayResponsesStream = (
     cancelled: false,
     semantic: false,
     usage: null as UsageTokens | null,
+  };
+  let cancellationReason: unknown;
+  let pendingCancelled = false;
+  const cancelPendingOnce = (reason?: unknown): void => {
+    if (pendingCancelled) return;
+    pendingCancelled = true;
+    cancelPending?.(reason);
+  };
+  const cancelPendingOnDownstreamAbort = (): void => cancelPendingOnce(downstreamSignal.reason);
+  if (downstreamSignal.aborted) cancelPendingOnDownstreamAbort();
+  else downstreamSignal.addEventListener("abort", cancelPendingOnDownstreamAbort, { once: true });
+  const cancelledResponses = new WeakSet<Response>();
+  const cancelResponse = (response: Response): void => {
+    if (cancelledResponses.has(response)) return;
+    cancelledResponses.add(response);
+    const body = response.body;
+    if (body && !body.locked) void body.cancel(cancellationReason).catch(() => {});
   };
   /** The next `sequence_number` this response's SSE stream will emit. */
   let sequenceNumber = 0;
@@ -480,6 +533,17 @@ export const relayResponsesStream = (
   /** Whether the stream already settled or was cancelled; re-read after every await. */
   const streamEnded = (): boolean => state.settled || state.cancelled;
 
+  // Keep ownership of a deferred response even when the client cancels before
+  // the first downstream pull starts waiting on it.
+  if (pendingUpstream !== null) {
+    void pendingUpstream
+      .then((source) => {
+        upstream ??= source;
+        if (streamEnded()) cancelResponse(source);
+      })
+      .catch(() => {});
+  }
+
   /** Resolves the provider attempt once (awaiting a pending source), or null when the stream ended. */
   const ensureIterator = async (
     controller: ReadableStreamDefaultController<Uint8Array>
@@ -489,7 +553,11 @@ export const relayResponsesStream = (
     const source = upstream ?? (pendingUpstream === null ? null : await pendingUpstream);
     // A pending source resolves asynchronously: the client may have cancelled
     // while it was awaited, so the state is re-read rather than remembered.
-    if (source === null || streamEnded()) return null;
+    if (source === null) return null;
+    if (streamEnded()) {
+      cancelResponse(source);
+      return null;
+    }
     upstream = source;
     if (!source.ok) {
       await refuseStream(controller, source);
@@ -579,6 +647,7 @@ export const relayResponsesStream = (
     cancel(reason) {
       if (state.cancelled) return;
       state.cancelled = true;
+      cancellationReason = reason;
       settleTerminal("cancelled");
       adapter.recordCancellation(usageContext);
       // Usage observed before the disconnect is real evidence: record it with
@@ -590,8 +659,8 @@ export const relayResponsesStream = (
       // uninterruptible `return()` can block teardown. A consumer can cancel
       // before the first read, so an untouched source is cancelled directly.
       if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream?.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      cancelPendingOnce(reason);
+      if (upstream !== null) cancelResponse(upstream);
       // Cleanup is best effort and never surfaces as a provider error.
       if (iterator !== null) void iterator.return().catch(() => {});
     },
