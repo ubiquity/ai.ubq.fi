@@ -139,18 +139,35 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
   providersCard.append(providersHeader, providersBody);
   section.append(providersCard);
 
+  let providersHasRendered = false;
+
   const providerStateLabel = (health) => {
     const state = typeof health?.state === "string" && health.state ? health.state : "unknown";
     return health?.stale === true ? `${state} · stale` : state;
   };
 
-  const renderProviders = (selection, healthSnapshot) => {
+  const markProvidersUnavailable = () => {
+    const item = document.createElement("div");
+    item.dataset.providerUnavailable = "";
+    item.setAttribute("role", "listitem");
+    item.textContent = providersHasRendered
+      ? "Provider health unavailable; previous observations cleared."
+      : "Provider health unavailable; no observations available.";
+    providersList.replaceChildren(item);
+  };
+
+  const renderProviders = (selection, healthSnapshot, healthUnavailable = false) => {
     const entries = Array.isArray(selection?.data?.providers) ? selection.data.providers : [];
-    if (entries.length === 0) return;
+    if (entries.length === 0) {
+      markProvidersUnavailable();
+      return;
+    }
     const rows = entries.map((entry) => {
       const health =
         typeof entry?.health_key === "string" && entry.health_key ? healthSnapshot?.[entry.health_key] : null;
-      const configured = health ? health.configured !== false : entry.configured === true;
+      let configured = entry.configured === true;
+      if (health) configured = health.configured !== false;
+      else if (healthUnavailable) configured = entry.configured !== false;
       const state = health ? (typeof health.state === "string" ? health.state : health.health?.state) : null;
       const row = document.createElement("div");
       row.dataset.providerEntry = "";
@@ -168,9 +185,14 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       tier.textContent = entry.tier_label ?? entry.tier;
       const badge = document.createElement("span");
       badge.dataset.providerHealthBadge = configured ? (state ?? "unknown") : "unknown";
-      badge.textContent = configured
-        ? `Health ${providerStateLabel({ state: state ?? "unknown", stale: health?.health?.stale === true })}`
-        : "Not configured";
+      if (!configured) badge.textContent = "Not configured";
+      else if (healthUnavailable) badge.textContent = "Health unknown · refresh failed";
+      else {
+        badge.textContent = `Health ${providerStateLabel({
+          state: state ?? "unknown",
+          stale: health?.health?.stale === true,
+        })}`;
+      }
       badges.append(tier, badge);
       body.append(name, badges);
       const detail = document.createElement("span");
@@ -185,32 +207,61 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
       return row;
     });
     providersList.replaceChildren(...rows);
-  };
-
-  const markProvidersUnavailable = () => {
-    providersList.textContent = "Provider health unavailable; previous observations cleared.";
+    providersHasRendered = true;
   };
 
   const loadProviders = async () => {
     if (!active) return;
+    const id = ++providersLoadId;
+    if (providersController) providersController.abort();
+    const request = new AbortController();
+    providersController = request;
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(REFRESH_MS - 1000)]);
     const token = typeof getToken === "function" ? getToken() : "";
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     try {
       const [selectionResponse, healthResponse] = await Promise.all([
-        fetch(apiUrl("/admin/providers/selection"), { headers, credentials: "include", cache: "no-store" }),
-        fetch(apiUrl("/admin/providers"), { headers, credentials: "include", cache: "no-store" }),
+        fetch(apiUrl("/admin/providers/selection"), {
+          headers,
+          credentials: "include",
+          cache: "no-store",
+          signal,
+        }),
+        fetch(apiUrl("/admin/providers"), { headers, credentials: "include", cache: "no-store", signal }),
       ]);
+      if (id !== providersLoadId || !active) return;
+      if (signal.aborted) {
+        markProvidersUnavailable();
+        return;
+      }
       const selection = selectionResponse.ok ? await selectionResponse.json().catch(() => null) : null;
+      if (id !== providersLoadId || !active) return;
+      if (signal.aborted) {
+        markProvidersUnavailable();
+        return;
+      }
       const healthSnapshot = healthResponse.ok ? await healthResponse.json().catch(() => null) : null;
+      if (id !== providersLoadId || !active) return;
+      if (signal.aborted) {
+        markProvidersUnavailable();
+        return;
+      }
       if (selection && healthSnapshot) renderProviders(selection, healthSnapshot);
+      else if (selection) renderProviders(selection, null, true);
       else markProvidersUnavailable();
     } catch {
+      if (id !== providersLoadId || !active) return;
+      request.abort();
       markProvidersUnavailable();
+    } finally {
+      if (providersController === request) providersController = null;
     }
   };
 
   let active = false;
   let timer = 0;
+  let providersLoadId = 0;
+  let providersController = null;
   let controller = null;
   let snapshot = null;
   const rows = new Map();
@@ -877,6 +928,9 @@ export const createSupervisorView = ({ section, getToken, apiUrl }) => {
     if (!active) {
       if (timer) globalThis.clearInterval(timer);
       timer = 0;
+      providersLoadId += 1;
+      if (providersController) providersController.abort();
+      providersController = null;
       if (controller) controller.abort();
       controller = null;
       stopFollow();
