@@ -357,6 +357,8 @@ const appendMessageItem = (
   if (role === "assistant" && pending.reasoning) {
     message.reasoning_content = pending.reasoning;
     pending.reasoning = "";
+  } else if (role === "user") {
+    pending.reasoning = "";
   }
   // DeepSeek, like OpenAI Chat, has no developer role.
   messages.push(message);
@@ -440,6 +442,7 @@ const appendInputItem = (
   if (typeof rawItem === "string") {
     const content = boundedForwardedText(rawItem, path, reduction, elisions);
     if (!content.ok) return content;
+    pending.reasoning = "";
     messages.push({ role: "user", content: content.value });
     return { ok: true, value: undefined };
   }
@@ -468,6 +471,7 @@ const appendInputItem = (
     case "agent_message": {
       const agentMessage = chatAgentMessageItem(rawItem, reduction, `${path}.content`, elisions);
       if (!agentMessage.ok) return agentMessage;
+      pending.reasoning = "";
       messages.push(agentMessage.value);
       return { ok: true, value: undefined };
     }

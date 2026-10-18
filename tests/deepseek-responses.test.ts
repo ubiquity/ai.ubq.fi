@@ -480,6 +480,44 @@ test("deepseek responses: a reasoning item also rides a plain assistant message"
   assert.equal(messages[1].reasoning_content, "Because.");
 });
 
+test("deepseek responses: pending reasoning is cleared at a user-turn boundary", () => {
+  // Reasoning produced with empty completion text must not survive a following
+  // user turn and re-attach to a subsequent assistant or tool turn.
+  const payload = toDeepSeekResponsesPayload(
+    chatCompletion({
+      role: "assistant",
+      content: "",
+      reasoning_content: "thought without completion",
+    }),
+    "deepseek-flash",
+    "resp_empty_text",
+    echo
+  );
+  // outputItemsForChoice emits only the reasoning item when completion text is empty.
+  const output = payload.output as Record<string, unknown>[];
+  assert.equal(output.length, 1);
+  assert.equal(output[0].type, "reasoning");
+
+  const projected = toDeepSeekResponsesChatBody(
+    {
+      input: [
+        ...output,
+        { type: "message", role: "user", content: "follow-up question" },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer" }] },
+      ],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(projected.ok, true);
+  const messages = projected.value.body.messages as Record<string, unknown>[];
+  assert.deepEqual(messages, [
+    { role: "user", content: "follow-up question" },
+    { role: "assistant", content: "answer" },
+  ]);
+  assert.equal("reasoning_content" in messages[1], false);
+});
+
 test("deepseek responses: reasoning is never invented without tools", () => {
   const withoutTools = toDeepSeekResponsesChatBody(
     {

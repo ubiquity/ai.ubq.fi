@@ -266,6 +266,49 @@ test("chat projection: replayed reasoning is carried onto the following assistan
 
   // A reasoning item on its own leaves no message behind.
   assert.deepEqual(messagesOf([{ type: "reasoning", summary: [{ text: "orphan" }] }]), []);
+
+  // Pending reasoning does not survive a user-turn boundary to attach to a later assistant or tool turn.
+  assert.deepEqual(
+    messagesOf([
+      { type: "reasoning", summary: [{ text: "orphan" }] },
+      { type: "message", role: "user", content: "hello" },
+      { type: "message", role: "assistant", content: "answer" },
+    ]),
+    [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "answer" },
+    ]
+  );
+  assert.deepEqual(
+    messagesOf([
+      { type: "reasoning", summary: [{ text: "orphan" }] },
+      { type: "message", role: "user", content: "hello" },
+      { type: "function_call", call_id: "call-1", name: "lookup", arguments: "{}" },
+    ]),
+    [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "call-1", type: "function", function: { name: "lookup", arguments: "{}" } }],
+      },
+    ]
+  );
+  assert.deepEqual(messagesOf([{ type: "reasoning", summary: [{ text: "orphan" }] }, "hello", { type: "message", role: "assistant", content: "answer" }]), [
+    { role: "user", content: "hello" },
+    { role: "assistant", content: "answer" },
+  ]);
+  assert.deepEqual(
+    messagesOf([
+      { type: "reasoning", summary: [{ text: "orphan" }] },
+      { type: "agent_message", author: "worker", recipient: "root", content: [{ text: "hello" }] },
+      { type: "message", role: "assistant", content: "answer" },
+    ]),
+    [
+      { role: "user", content: "[agent message] worker -> root:\nhello" },
+      { role: "assistant", content: "answer" },
+    ]
+  );
 });
 
 test("chat projection: the request body carries the official model and the optional fields", () => {
