@@ -23,6 +23,8 @@ const originalFetch = globalThis.fetch;
 let exchangedToken = "";
 let exchanges: Record<string, unknown>[] = [];
 let jwksStatus = 200;
+let exchangeStatus = 200;
+let exchangeFailure: Error | null = null;
 
 const sign = async (overrides: Record<string, unknown> = {}, headerOverrides: Record<string, unknown> = {}): Promise<string> => {
   const now = Math.floor(Date.now() / 1000);
@@ -58,6 +60,8 @@ beforeEach(() => {
   resetPassportCacheForTest();
   exchanges = [];
   jwksStatus = 200;
+  exchangeStatus = 200;
+  exchangeFailure = null;
   globalThis.fetch = createFetchMock(async (input, init) => {
     const url = urlOf(input);
     if (url === `${ISSUER}/api/auth/jwks`)
@@ -65,6 +69,8 @@ beforeEach(() => {
     if (url === `${ISSUER}/api/auth/sso/exchange`) {
       assert.equal(init?.method, "POST");
       assert.equal(init.redirect, "error");
+      if (exchangeFailure) throw exchangeFailure;
+      if (exchangeStatus !== 200) return new Response("{}", { status: exchangeStatus, headers: { "Content-Type": "application/json" } });
       exchanges.push(JSON.parse(await new Response(init.body).text()) as Record<string, unknown>);
       return Response.json({ accessToken: exchangedToken });
     }
@@ -74,6 +80,8 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  exchangeFailure = null;
+  exchangeStatus = 200;
   resetPassportCacheForTest();
   cleanupHarness();
 });
@@ -207,4 +215,34 @@ test("Passport unavailable keys fail closed, proxy origin stays fixed and logout
   assert.deepEqual(logout.headers.getSetCookie(), [`${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`]);
   setKvForTest(kvStub);
   assert.equal((await handler(request("/admin/api-keys"))).status, 401);
+});
+
+test("Passport callback maps transport and timeout failures to 502 passport_unavailable and clears state cookie", async () => {
+  exchangeFailure = new TypeError("fetch failed: network error");
+  const { state, stateCookie } = await begin();
+  const response = await handler(request(`/auth/callback?state=${state}&code=single-use-code`, "", { headers: { Cookie: stateCookie } }));
+  assert.equal(response.status, 502);
+  const payload = await response.json();
+  assert.equal(payload.error.code, "passport_unavailable");
+  assert.equal(payload.error.message, "Passport verification is unavailable.");
+  assert(response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+});
+
+test("Passport callback maps 4xx exchange rejection to 401 and 5xx to 502, clearing state cookie", async () => {
+  for (const [status, expectedStatus, expectedCode] of [
+    [400, 401, "invalid_api_key"],
+    [401, 401, "invalid_api_key"],
+    [403, 401, "invalid_api_key"],
+    [500, 502, "passport_unavailable"],
+    [502, 502, "passport_unavailable"],
+    [503, 502, "passport_unavailable"],
+  ] as const) {
+    exchangeStatus = status;
+    const { state, stateCookie } = await begin();
+    const response = await handler(request(`/auth/callback?state=${state}&code=code`, "", { headers: { Cookie: stateCookie } }));
+    assert.equal(response.status, expectedStatus);
+    const payload = await response.json();
+    assert.equal(payload.error.code, expectedCode);
+    assert(response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+  }
 });
