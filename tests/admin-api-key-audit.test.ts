@@ -58,6 +58,20 @@ const sharedContext = (requestId = "req-shared-1"): ApiKeyAuditContext => ({
   request_id: requestId,
 });
 
+const passportContext = (sub = "passport-sub-1", handle = "passport-admin"): ApiKeyAuditContext => ({
+  auth: {
+    ok: true,
+    token: "unused-test-token",
+    is_super_admin: false,
+    method: {
+      kind: "passport_session",
+      principal: `passport-user:${sub}`,
+      user: { sub, handle, is_admin: true, scopes: [], auth: "sso", exp: 1_900_000_000, jti: "fixture-jti", agent_token_id: null },
+    },
+  },
+  request_id: "req-passport-1",
+});
+
 const jsonRequest = (path: string, body: Record<string, unknown>, method = "POST"): Request =>
   new Request(`https://ai.ubq.fi${path}`, {
     method,
@@ -154,6 +168,23 @@ test("key lifecycle writes ordered audit events with safe fields and actor attri
   const serialized = JSON.stringify(body);
   assert.equal(serialized.includes(createdToken), false);
   assert.equal(/authorization|bearer|token_hash|prompt|"hash"|"error"/i.test(serialized), false);
+});
+
+test("Passport-admin mutations retain the Passport identity in the audit actor without persisting the session credential", async () => {
+  kvStore.clear();
+
+  const id = await createKey({ name: "Passport key", usage_limit_requests: -1, expires_at_ms: -1 }, passportContext());
+
+  const { status, body } = await listAudit();
+  assert.equal(status, 200);
+  const createEvent = (body.data ?? []).find((event) => event.action === "create" && event.target_key_id === id);
+  assert.ok(createEvent);
+  assert.equal(createEvent.actor.kind, "passport_user");
+  assert.equal(createEvent.actor.principal_id, "passport-sub-1");
+  assert.equal(createEvent.actor.principal_label, "passport-admin");
+  assert.equal(createEvent.actor.is_super_admin, false);
+  assert.equal(createEvent.request_id, "req-passport-1");
+  assert.equal(JSON.stringify(body).includes("unused-test-token"), false);
 });
 
 test("finite and unlimited wire values round-trip through create, update and persisted readback", async () => {
