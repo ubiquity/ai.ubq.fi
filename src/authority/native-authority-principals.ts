@@ -503,7 +503,7 @@ export class NativeAuthorityPrincipals {
     receipt: NativeControlReceipt
   ): Promise<void> {
     if (!receipt.cleanup) return;
-    const ownerKey = nativeCommandBytes({ key, cleanup: receipt.cleanup });
+    const ownerKey = nativeCommandBytes(receipt.cleanup);
     let work = this._cleaning.get(ownerKey);
     if (!work) {
       work = this._cleanupOwned(binding, command, verified, intentDigest, key, receipt);
@@ -517,6 +517,10 @@ export class NativeAuthorityPrincipals {
     // Every waiting caller needs current authority before its own acknowledgment.
     this._sql.transaction(() => {
       this._authorize(binding, command, verified, intentDigest);
+      const current = this._sql.read("key_control_receipt", key, this._clock()).value;
+      if (current?.cleanup) {
+        this._sql.write("key_control_receipt", key, { ...current, cleanup: null });
+      }
     });
   }
   private async _preparedCommit(
