@@ -4,12 +4,12 @@
   "private": true,
   "description": "Pinned quality tooling for the Bun gateway, invoked by the repository scripts.",
   "scripts": {
-    "format": "sh ../../scripts/format.sh",
-    "format:check": "sh ../../scripts/format.sh --check",
-    "knip": "sh ../../scripts/knip.sh",
-    "lint": "sh ../../scripts/lint.sh",
-    "lint:fix": "sh ../../scripts/lint.sh --fix",
-    "verify": "sh ../../scripts/verify.sh"
+    "format": "cd ../.. && sh scripts/format.sh",
+    "format:check": "cd ../.. && sh scripts/format.sh --check",
+    "knip": "cd ../.. && sh scripts/knip.sh",
+    "lint": "cd ../.. && sh scripts/lint.sh",
+    "lint:fix": "cd ../.. && sh scripts/lint.sh --fix",
+    "verify": "cd ../.. && sh scripts/verify.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
