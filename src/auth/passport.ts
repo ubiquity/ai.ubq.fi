@@ -89,12 +89,17 @@ const boundedJson = async (response: Response, maxBytes: number): Promise<unknow
   let total = 0;
   let text = "";
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) throw new PassportError(502);
-      text += decoder.decode(value, { stream: true });
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) throw new PassportError(502);
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch (error) {
+      if (error instanceof PassportError) throw error;
+      throw new PassportError(502);
     }
     return JSON.parse(text + decoder.decode()) as unknown;
   } finally {
@@ -265,13 +270,18 @@ const callback = async (req: Request): Promise<Response> => {
       params.getAll("code").length !== 1
     )
       throw new PassportError();
-    const response = await fetch(`${ISSUER}/api/auth/sso/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ code, clientId: "ai", audience: "ai", origin: ORIGIN, redirectUri: CALLBACK }),
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${ISSUER}/api/auth/sso/exchange`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ code, clientId: "ai", audience: "ai", origin: ORIGIN, redirectUri: CALLBACK }),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new PassportError(502);
+    }
     const body = await boundedJson(response, 65_536);
     if (!isRecord(body) || typeof body.accessToken !== "string") throw new PassportError();
     const claims = await verifyToken(body.accessToken);
