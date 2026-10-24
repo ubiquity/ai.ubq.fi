@@ -51,18 +51,30 @@ const activeGrant = (value: unknown): value is NativeKeyControlGrant =>
   (value.targetKeyIds === null || (Array.isArray(value.targetKeyIds) && value.targetKeyIds.every((id) => typeof id === "string" && id.length > 0)));
 const digest = async (value: string): Promise<string> =>
   Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), (byte) => byte.toString(16).padStart(2, "0")).join("");
+// Cleanup is shared by authority instances in one runtime and keyed by the deletion owner, not its replay receipt.
+const cleanupWorkBySource = new WeakMap<object, Map<string, Promise<void>>>();
+const cleanupWorkFor = (source: object): Map<string, Promise<void>> => {
+  let work = cleanupWorkBySource.get(source);
+  if (!work) {
+    work = new Map<string, Promise<void>>();
+    cleanupWorkBySource.set(source, work);
+  }
+  return work;
+};
 
 /** Private source-control SPI. Every effect and historical acknowledgment rechecks its durable grant. */
 export class NativeAuthorityPrincipals {
   private readonly _creating = new Map<string, CreateFlight>();
-  private readonly _cleaning = new Map<string, Promise<void>>();
+  private readonly _cleaning: Map<string, Promise<void>>;
   constructor(
     private readonly _sql: NativeAuthoritySql,
     private readonly _api: NativeAuthorityApi,
     private readonly _paid: NativeAuthorityPaid,
     private readonly _initial: NativePrincipalControlInitial,
     private readonly _clock: () => number
-  ) {}
+  ) {
+    this._cleaning = cleanupWorkFor(_initial.sources);
+  }
   initialize(): void {
     for (const grant of this._initial.grants) {
       if (grant.epoch !== this._sql.epoch) throw new NativeAuthorityError("control_initial_grant_epoch_mismatch", 500);
@@ -503,7 +515,7 @@ export class NativeAuthorityPrincipals {
     receipt: NativeControlReceipt
   ): Promise<void> {
     if (!receipt.cleanup) return;
-    const ownerKey = nativeCommandBytes({ key, cleanup: receipt.cleanup });
+    const ownerKey = nativeCommandBytes({ keyId: receipt.cleanup.keyId, localOwner: receipt.cleanup.localOwner });
     let work = this._cleaning.get(ownerKey);
     if (!work) {
       work = this._cleanupOwned(binding, command, verified, intentDigest, key, receipt);
