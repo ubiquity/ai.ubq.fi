@@ -1225,6 +1225,33 @@ fn audit_never_persists_credential_material() {
     let shared = audit::actor(&actor());
     assert_eq!(shared.kind, "shared_admin_credential");
     assert_eq!(shared.principal_id, None);
+
+    let passport_principal = AuthPrincipal {
+        token: Some(Secret::new("private-jwt".into())),
+        method: AuthMethod::PassportSession {
+            claims: gateway_auth::passport::PassportClaims {
+                iss: "https://passport.ubq.fi".into(),
+                sub: "sub-passport-user-99".into(),
+                handle: "passport-alice".into(),
+                is_admin: true,
+                scopes: vec![],
+                aud: "ai".into(),
+                client_id: "ai".into(),
+                auth: "sso".into(),
+                iat: 1_800_000_000,
+                exp: 1_800_003_600,
+                jti: "fixture-jti".into(),
+                agent_token_id: None,
+            },
+        },
+        is_admin: true,
+        is_super_admin: false,
+    };
+    let passport_actor = audit::actor(&passport_principal);
+    assert_eq!(passport_actor.kind, "passport_user");
+    assert_eq!(passport_actor.principal_id, Some("sub-passport-user-99".into()));
+    assert_eq!(passport_actor.principal_label, Some("passport-alice".into()));
+    assert_eq!(passport_actor.is_super_admin, false);
 }
 
 #[test]

@@ -32,9 +32,8 @@ pub struct KeyChange {
 
 pub fn actor(principal: &AuthPrincipal) -> ChangeActor {
     let (kind, id, label) = match &principal.method {
-        AuthMethod::PasskeySession {
-            user_id, handle, ..
-        } => ("passkey_user", Some(user_id.clone()), Some(handle.clone())),
+        AuthMethod::PasskeySession { user_id, handle, .. } => ("passkey_user", Some(user_id.clone()), Some(handle.clone())),
+        AuthMethod::PassportSession { claims, .. } => ("passport_user", Some(claims.sub.clone()), Some(claims.handle.clone())),
         AuthMethod::Disabled => ("local_admin", None, None),
         _ => ("shared_admin_credential", None, None),
     };
@@ -301,3 +300,4 @@ pub fn page(events: &[SourceJson], next_cursor: Option<&str>) -> Result<SourceJs
 fn js_whitespace(value: char) -> bool {
     matches!(value, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
 }
+
