@@ -208,3 +208,18 @@ test("Passport unavailable keys fail closed, proxy origin stays fixed and logout
   setKvForTest(kvStub);
   assert.equal((await handler(request("/admin/api-keys"))).status, 401);
 });
+
+test("Passport callback maps exchange transport failures and timeouts to 502 passport_unavailable", async () => {
+  exchangedToken = await sign();
+  const { state, stateCookie } = await begin();
+  for (const failure of [new TypeError("fetch failed"), new DOMException("The operation timed out.", "TimeoutError")]) {
+    globalThis.fetch = createFetchMock((input) => {
+      if (urlOf(input) === `${ISSUER}/api/auth/sso/exchange`) return Promise.reject(failure);
+      return Promise.reject(new Error(`Unexpected fetch: ${urlOf(input)}`));
+    });
+    const response = await handler(request(`/auth/callback?state=${state}&code=single-use-code`, "", { headers: { Cookie: stateCookie } }));
+    assert.equal(response.status, 502);
+    assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "passport_unavailable");
+    assert(response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${STATE_COOKIE}=; Max-Age=0;`)));
+  }
+});
