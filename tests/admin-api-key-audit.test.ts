@@ -58,6 +58,29 @@ const sharedContext = (requestId = "req-shared-1"): ApiKeyAuditContext => ({
   request_id: requestId,
 });
 
+const passportContext = (sub = "sub-1", handle = "charlie"): ApiKeyAuditContext => ({
+  auth: {
+    ok: true,
+    token: "",
+    is_super_admin: false,
+    method: {
+      kind: "passport_session",
+      principal: `passport-user:${sub}`,
+      user: {
+        sub,
+        handle,
+        is_admin: true,
+        scopes: [],
+        auth: "sso",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+        jti: "jti-1",
+        agent_token_id: null,
+      },
+    },
+  },
+  request_id: "req-passport-1",
+});
+
 const jsonRequest = (path: string, body: Record<string, unknown>, method = "POST"): Request =>
   new Request(`https://ai.ubq.fi${path}`, {
     method,
@@ -424,4 +447,28 @@ test("the change-history route is authenticated and fails closed without KV", as
   const unavailable = await handleAdminApiKeyChanges(new Request("https://ai.ubq.fi/admin/api-keys/changes"), null);
   assert.equal(unavailable.status, 500);
   assert.equal(((await unavailable.json()) as { error?: { message?: string } }).error?.message, "Deno KV is not available; cannot load key change history");
+});
+
+test("Passport-authenticated admin preserves subject and handle in audit events without persisting JWT (#1283)", async () => {
+  kvStore.clear();
+
+  const id = await createKey({ name: "Passport audit key", usage_limit_requests: -1 }, passportContext("usr-passport-99", "admin_charlie"));
+  await tick();
+  assert.equal((await handleAdminApiKeysUpdate(patchRequest({ id, name: "Passport key renamed" }), passportContext("usr-passport-99", "admin_charlie"))).status, 200);
+
+  const { status, body } = await listAudit();
+  assert.equal(status, 200);
+  const events = body.data ?? [];
+  assert.equal(events.length, 2);
+
+  for (const event of events) {
+    assert.equal(event.actor.kind, "passport_user");
+    assert.equal(event.actor.principal_id, "usr-passport-99");
+    assert.equal(event.actor.principal_label, "admin_charlie");
+    assert.equal(event.actor.is_super_admin, false);
+  }
+
+  const serialized = JSON.stringify(body);
+  assert.equal(serialized.includes("unused-test-token"), false);
+  assert.equal(/authorization|bearer|token_hash/i.test(serialized), false);
 });
