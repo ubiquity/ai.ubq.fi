@@ -597,7 +597,13 @@ export class NativeAuthorityPrincipals {
         this._authorize(binding, command, verified, intentDigest);
       },
     });
-    commit.prepare?.();
+    try {
+      commit.prepare?.();
+    } catch (error) {
+      const active = this._creating.get(operationKey);
+      if (active) active.work = undefined;
+      throw error;
+    }
     const apply = () =>
       this._sql.transaction(() => {
         this._authorize(binding, command, verified, intentDigest);
