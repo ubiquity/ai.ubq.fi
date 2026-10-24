@@ -503,7 +503,7 @@ export class NativeAuthorityPrincipals {
     receipt: NativeControlReceipt
   ): Promise<void> {
     if (!receipt.cleanup) return;
-    const ownerKey = nativeCommandBytes({ key, cleanup: receipt.cleanup });
+    const ownerKey = receipt.cleanup.localOwner !== null ? `owner:${receipt.cleanup.localOwner}` : `key:${receipt.cleanup.keyId}`;
     let work = this._cleaning.get(ownerKey);
     if (!work) {
       work = this._cleanupOwned(binding, command, verified, intentDigest, key, receipt);
