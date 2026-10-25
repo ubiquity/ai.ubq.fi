@@ -536,9 +536,13 @@ impl Inference<'_> {
         owner: &mut gateway_admission::handoff::Pending<stream::PendingLifetime>,
         error: RoutingError,
     ) -> ResponseResult {
-        let lifetime = owner
-            .take()
-            .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?;
+        let Some(lifetime) = owner.take() else {
+            return crate::inference_source::error_response(
+                crate::inference_local_lifecycle::wrapper_error(),
+                self.capture,
+            )
+            .await;
+        };
         gateway_admission::handoff::enqueue(
             lifetime.cleanup(error, self.capture.clone(), self.host.cancellation.clone()),
             |task| self.context.wait_until(task),
@@ -567,9 +571,14 @@ impl Inference<'_> {
                 if owner.armed() {
                     return self.cleanup_pending(&mut owner, error).await;
                 }
-                owner
-                    .get()
-                    .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?
+                let Some(lifetime) = owner.get() else {
+                    return crate::inference_source::error_response(
+                        crate::inference_local_lifecycle::wrapper_error(),
+                        self.capture,
+                    )
+                    .await;
+                };
+                lifetime
                     .session
                     .finish(Default::default())
                     .await
@@ -590,12 +599,15 @@ impl Inference<'_> {
         let provider = attempt.request.decode().provider;
         let prepared = attempt.request.clone();
         self.capture.correlate(correlation(provider, &headers));
+        let Some(lifetime) = owner.get() else {
+            return crate::inference_source::error_response(
+                crate::inference_local_lifecycle::wrapper_error(),
+                self.capture,
+            )
+            .await;
+        };
         let pricing = match crate::inference_source::pricing_metadata(
-            owner
-                .get()
-                .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?
-                .session
-                .surplus_billing(),
+            lifetime.session.surplus_billing(),
             prepared.url().ends_with("/messages"),
         ) {
             Ok(value) => value,
@@ -608,14 +620,19 @@ impl Inference<'_> {
         };
         let event_stream = gateway_providers::response::is_event_stream(provider, status, &headers);
         // Everything fallible has finished before this synchronous owner transfer.
-        let stream::PendingLifetime {
+        let Some(stream::PendingLifetime {
             session,
             currentness,
             permit,
             deadline,
-        } = owner
-            .take()
-            .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?;
+        }) = owner.take()
+        else {
+            return crate::inference_source::error_response(
+                crate::inference_local_lifecycle::wrapper_error(),
+                self.capture,
+            )
+            .await;
+        };
         let lifecycle = Rc::new(Lifecycle {
             session,
             currentness,
@@ -669,7 +686,10 @@ impl Inference<'_> {
             provider,
         };
         match ready {
-            Some(ready) => reply.streaming_from(ready),
+            Some(ready) => match reply.streaming_from(ready) {
+                Ok(response) => Ok(response),
+                Err(error) => crate::inference_source::error_response(error, self.capture).await,
+            },
             None => reply.send().await,
         }
     }

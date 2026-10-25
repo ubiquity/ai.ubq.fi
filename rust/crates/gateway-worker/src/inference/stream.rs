@@ -159,7 +159,7 @@ impl ReplyFinish {
     fn take_hook(
         &mut self,
         capture: &Rc<crate::inference_capture::Capture>,
-    ) -> Result<FinishHook, GatewayError> {
+    ) -> Result<FinishHook, RoutingError> {
         match self {
             Self::Ordinary(hook) => hook
                 .take()
@@ -219,25 +219,26 @@ impl Reply<'_> {
         match self.materialize().await {
             Err(error) if self.finish.selected_armed() => {
                 let ReplyFinish::Selected(owner) = &mut self.finish else {
-                    return Err(error);
+                    return crate::inference_source::error_response(error, self.capture).await;
                 };
-                let value = owner
-                    .take()
-                    .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?;
+                let Some(value) = owner.take() else {
+                    return crate::inference_source::error_response(
+                        crate::inference_local_lifecycle::wrapper_error(),
+                        self.capture,
+                    )
+                    .await;
+                };
                 enqueue(
-                    value.cleanup(
-                        error.into(),
-                        self.capture.clone(),
-                        self.host.cancellation.clone(),
-                    ),
+                    value.cleanup(error, self.capture.clone(), self.host.cancellation.clone()),
                     |task| self.context.wait_until(task),
                 )
                 .await
             }
-            result => result,
+            Err(error) => crate::inference_source::error_response(error, self.capture).await,
+            Ok(response) => Ok(response),
         }
     }
-    async fn materialize(&mut self) -> ResponseResult {
+    async fn materialize(&mut self) -> Result<Response, RoutingError> {
         if self.status >= 400 {
             self.capture.configure(
                 self.status,
@@ -258,7 +259,7 @@ impl Reply<'_> {
         }
         self.buffered().await
     }
-    async fn lithos_refusal(&mut self) -> ResponseResult {
+    async fn lithos_refusal(&mut self) -> Result<Response, RoutingError> {
         let probe = body::refusal_probe(
             &mut self.upstream,
             &self.host.cancellation,
@@ -268,7 +269,7 @@ impl Reply<'_> {
         body::discard_response(&mut self.upstream);
         let decoded = decode_response(&self.decode_plan, self.status, &self.headers, &probe.bytes)?;
         if decoded.status != 200 || decoded.events.is_empty() {
-            return Err(invalid("Lithos stream refusal could not be translated."));
+            return Err(invalid("Lithos stream refusal could not be translated.").into());
         }
         self.observation
             .semantic_terminal(decoded.terminal.unwrap_or(SemanticTerminal::Failed));
@@ -292,7 +293,7 @@ impl Reply<'_> {
         }
         Ok(response)
     }
-    async fn cerebras_refusal(&mut self) -> ResponseResult {
+    async fn cerebras_refusal(&mut self) -> Result<Response, RoutingError> {
         let probe = body::refusal_probe(
             &mut self.upstream,
             &self.host.cancellation,
@@ -333,7 +334,7 @@ impl Reply<'_> {
         provider_correlation(&mut response, self.provider, &self.headers)?;
         Ok(response)
     }
-    fn refusal(&mut self) -> ResponseResult {
+    fn refusal(&mut self) -> Result<Response, RoutingError> {
         let observation = ObservationHandle::default();
         let upstream = std::mem::replace(
             &mut self.upstream,
@@ -356,7 +357,7 @@ impl Reply<'_> {
         apply_warnings(&mut response, self.prepared.warnings())?;
         Ok(response)
     }
-    fn streaming(&mut self) -> ResponseResult {
+    fn streaming(&mut self) -> Result<Response, RoutingError> {
         let source = self
             .upstream
             .stream()
@@ -375,10 +376,13 @@ impl Reply<'_> {
     pub(super) fn streaming_from(
         mut self,
         prepared: PreparedRelay<Cancellation>,
-    ) -> ResponseResult {
+    ) -> Result<Response, RoutingError> {
         self.streaming_ready(prepared)
     }
-    fn streaming_ready(&mut self, prepared: PreparedRelay<Cancellation>) -> ResponseResult {
+    fn streaming_ready(
+        &mut self,
+        prepared: PreparedRelay<Cancellation>,
+    ) -> Result<Response, RoutingError> {
         self.capture
             .configure(self.status, true, self.responses, self.provider);
         let relay = prepared.attach(self.lifecycle.clone());
@@ -406,7 +410,7 @@ impl Reply<'_> {
         Ok(response)
     }
 
-    async fn buffered(&mut self) -> ResponseResult {
+    async fn buffered(&mut self) -> Result<Response, RoutingError> {
         let bytes = match body::response_bytes(
             &mut self.upstream,
             body::INFERENCE_JSON_MAX_BYTES,
@@ -419,7 +423,7 @@ impl Reply<'_> {
                 if !self.finish.selected_armed() {
                     self.lifecycle.finish(Default::default(), None).await?;
                 }
-                return Err(error);
+                return Err(error.into());
             }
         };
         let decoded = match decode_response(&self.decode_plan, self.status, &self.headers, &bytes) {
@@ -428,7 +432,7 @@ impl Reply<'_> {
                 if !self.finish.selected_armed() {
                     self.lifecycle.finish(Default::default(), None).await?;
                 }
-                return Err(error);
+                return Err(error.into());
             }
         };
         if let Some(terminal) = decoded.terminal {
@@ -504,7 +508,7 @@ impl Reply<'_> {
         source: S,
         observation: ObservationHandle,
         include_deadline: bool,
-    ) -> Result<ObservedStream<S, Cancellation>, GatewayError> {
+    ) -> Result<ObservedStream<S, Cancellation>, RoutingError> {
         let deadline = if include_deadline {
             self.take_deadline()
         } else {
