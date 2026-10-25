@@ -3,13 +3,13 @@ use crate::{
     authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     routing_host,
-    transport::stream::FinishHook,
 };
 use gateway_core::error::GatewayError;
 use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptUsage, PreparedAttempt},
 };
+use gateway_worker_stream::observed::FinishHook;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 pub(crate) type Usage = Rc<RefCell<Option<Value>>>;

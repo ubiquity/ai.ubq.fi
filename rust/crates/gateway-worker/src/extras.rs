@@ -7,10 +7,7 @@ use crate::{
     inference::RequestResources,
     routing_host,
     storage::now_ms,
-    transport::{
-        body,
-        stream::{FinishHook, ObservationHandle, ObservedStream},
-    },
+    transport::body,
 };
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_authority::kernel::KernelTerminal;
@@ -27,6 +24,7 @@ use gateway_extras_runtime::{
 };
 use gateway_providers::types::ClientSurface;
 use gateway_routing_runtime::{extras::ExtrasFamily, session::RoutingSession, types::RoutingInput};
+use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use std::rc::Rc;
 use worker::{Method, Request, Response};
 

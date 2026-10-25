@@ -12,7 +12,6 @@ use crate::{
             Cancellation, DispatchAttempt, DispatchFailure, DispatchOrigin, PinnedDestination,
             send_constructed, send_http,
         },
-        stream::ObservationHandle,
     },
 };
 use crate::{
@@ -26,7 +25,7 @@ use gateway_core::{
     provider::UpstreamProvider,
 };
 use gateway_observability::replay_trace::{AttemptTrace, TraceTerminal};
-use gateway_providers::types::{Headers, ProviderEvent};
+use gateway_providers::types::Headers;
 use gateway_routing_runtime::{
     local_work::LocalRequestMetadata,
     session::RoutingSession,
@@ -46,7 +45,7 @@ use worker::{Context, Method, Request, Response};
 
 mod stream;
 
-const ATTEMPT_DEADLINE_MS: i32 = 1_800_000;
+use gateway_worker_stream::control::ATTEMPT_DEADLINE_MS;
 type ResponseResult = Result<Response, GatewayError>;
 
 pub struct RequestResources {
@@ -277,13 +276,13 @@ impl Dispatch<'_> {
 }
 async fn dispatch_attempts(
     session: Rc<Session>,
-    routing: routing_host::Host,
+    routing: &routing_host::Host,
     cancellation: Rc<Cancellation>,
     capture: Rc<Capture>,
 ) -> Result<(Response, PreparedAttempt), RoutingError> {
     let dispatch = Dispatch {
         session: &session,
-        routing: &routing,
+        routing,
         cancellation: &cancellation,
         capture: &capture,
     };
@@ -532,6 +531,21 @@ impl Inference<'_> {
             Ok(Start::Ordinary(Rc::new(session)))
         }
     }
+    async fn cleanup_pending(
+        &self,
+        owner: &mut gateway_admission::handoff::Pending<stream::PendingLifetime>,
+        error: RoutingError,
+    ) -> ResponseResult {
+        let lifetime = owner
+            .take()
+            .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?;
+        gateway_admission::handoff::enqueue(
+            lifetime.cleanup(error, self.capture.clone(), self.host.cancellation.clone()),
+            |task| self.context.wait_until(task),
+        )
+        .await
+    }
+
     async fn deliver(
         self,
         permit: Option<gateway_admission::Permit>,
@@ -541,34 +555,67 @@ impl Inference<'_> {
         client_stream: bool,
     ) -> ResponseResult {
         let deadline = self.host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
-        let (upstream, attempt) = match dispatch_attempts(
-            session.clone(),
-            routing,
-            self.host.cancellation.clone(),
-            self.capture.clone(),
-        )
-        .await
-        {
-            Ok(dispatched) => dispatched,
+        let mut owner = gateway_admission::handoff::Pending::new(stream::PendingLifetime {
+            session,
+            currentness,
+            permit,
+            deadline: Some(deadline),
+        });
+        let selected = match self.select(&mut owner, &routing).await {
+            Ok(value) => value,
             Err(error) => {
-                session
+                if owner.armed() {
+                    return self.cleanup_pending(&mut owner, error).await;
+                }
+                owner
+                    .get()
+                    .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?
+                    .session
                     .finish(Default::default())
                     .await
                     .map_err(|error| *error.error)?;
                 return crate::inference_source::error_response(error, self.capture).await;
             }
         };
-
+        let stream::Selected {
+            upstream,
+            attempt,
+            headers,
+            plan: decode_plan,
+            prepared: ready,
+            observation,
+            usage,
+        } = selected;
         let status = upstream.status_code();
         let provider = attempt.request.decode().provider;
         let prepared = attempt.request.clone();
-        let headers = upstream.headers().entries().collect::<Headers>();
-        let decode_plan = gateway_providers::response::response_plan(prepared.decode(), &headers);
         self.capture.correlate(correlation(provider, &headers));
-        let pricing = crate::inference_source::pricing_metadata(
-            session.surplus_billing(),
+        let pricing = match crate::inference_source::pricing_metadata(
+            owner
+                .get()
+                .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?
+                .session
+                .surplus_billing(),
             prepared.url().ends_with("/messages"),
-        )?;
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                if owner.armed() {
+                    return self.cleanup_pending(&mut owner, error.into()).await;
+                }
+                return Err(error);
+            }
+        };
+        let event_stream = gateway_providers::response::is_event_stream(provider, status, &headers);
+        // Everything fallible has finished before this synchronous owner transfer.
+        let stream::PendingLifetime {
+            session,
+            currentness,
+            permit,
+            deadline,
+        } = owner
+            .take()
+            .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?;
         let lifecycle = Rc::new(Lifecycle {
             session,
             currentness,
@@ -579,17 +626,29 @@ impl Inference<'_> {
             store: self.store.clone(),
             pricing,
         });
-        let event_stream = gateway_providers::response::is_event_stream(provider, status, &headers);
-        let observation = ObservationHandle::default();
-        let usage = Rc::new(RefCell::new(None));
-        let finish = finish_hook(
-            lifecycle.clone(),
-            usage.clone(),
-            permit,
-            self.capture.clone(),
-        );
-
-        stream::Reply {
+        let mut deadline = deadline;
+        let finish = if owner.armed() {
+            stream::ReplyFinish::selected(
+                stream::SelectedLifetime {
+                    lifecycle: lifecycle.clone(),
+                    permit,
+                    observation: observation.clone(),
+                    usage: usage.clone(),
+                    deadline: deadline.take(),
+                },
+                self.context.clone(),
+                self.capture.clone(),
+                self.host.cancellation.clone(),
+            )
+        } else {
+            stream::ReplyFinish::Ordinary(Some(finish_hook(
+                lifecycle.clone(),
+                usage.clone(),
+                permit,
+                self.capture.clone(),
+            )))
+        };
+        let reply = stream::Reply {
             finish,
             usage,
             observation,
@@ -608,9 +667,11 @@ impl Inference<'_> {
             event_stream,
             status,
             provider,
+        };
+        match ready {
+            Some(ready) => reply.streaming_from(ready),
+            None => reply.send().await,
         }
-        .send()
-        .await
     }
 }
 
@@ -714,12 +775,6 @@ fn apply_warnings(response: &mut Response, warnings: &[String]) -> Result<(), Ga
         .map_err(|_| invalid("Invalid provider warning header."))
 }
 
-fn observe_event(observation: &ObservationHandle, event: &ProviderEvent) {
-    if let Some(terminal) = event.terminal() {
-        observation.semantic_terminal(terminal);
-    }
-}
-
 fn copy_headers(
     response: &mut Response,
     headers: &gateway_providers::types::Headers,
@@ -798,6 +853,23 @@ fn provider_correlation(
     Ok(())
 }
 
+fn interrupted() -> GatewayError {
+    crate::transport::platform_error(
+        "The upstream request was interrupted.",
+        "upstream_request_interrupted",
+    )
+}
+fn stream_failure(provider: UpstreamProvider) -> GatewayError {
+    GatewayError::new(
+        502,
+        format!(
+            "DeepSeek waterfall provider '{}' ended its stream before producing output.",
+            gateway_providers::policy::direct_provider_label(provider)
+        ),
+        Some("deepseek_waterfall_stream_failure"),
+    )
+    .with_type("server_error")
+}
 fn invalid(message: &str) -> GatewayError {
     GatewayError::new(502, message, Some("upstream_transport_error"))
 }
@@ -854,3 +926,6 @@ mod tests {
         assert!(!body.contains(&"c".repeat(201)));
     }
 }
+
+#[cfg(test)]
+mod pending_tests;

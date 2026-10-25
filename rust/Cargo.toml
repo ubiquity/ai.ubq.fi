@@ -27,6 +27,7 @@ members = [
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
+  "crates/gateway-worker-stream",
   "crates/gateway-capacity-recovery",
   "crates/gateway-worker-fixture",
   "crates/gateway-worker-fixture-setup",
@@ -75,6 +76,7 @@ gateway-publication-test-support = { path = "crates/gateway-publication-test-sup
 gateway-native = { path = "crates/gateway-native" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
+gateway-worker-stream = { path = "crates/gateway-worker-stream" }
 gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }
 gateway-observability-test-support = { path = "crates/gateway-observability-test-support" }
 gateway-admin-test-support = { path = "crates/gateway-admin-test-support" }

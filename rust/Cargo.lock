@@ -896,6 +896,8 @@ name = "gateway-admission"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-routing-runtime",
+ "serde_json",
 ]
 
 [[package]]
@@ -1316,9 +1318,21 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-worker-stream",
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-stream"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-core",
+ "gateway-providers",
+ "serde_json",
  "worker",
 ]
 

@@ -10,6 +10,7 @@ export const PRECOMMIT_CASE_NAMES = [
   "matrix_synthetic_semantic_output_prevents_next_hop",
   "matrix_direct_presemantic_eof_does_not_enter_synthetic_chain",
   "matrix_synthetic_presemantic_caller_abort_never_advances",
+  "matrix_actual_rust_future_drop_at_presemantic_phase_retains_cleanup_without_caller_abort",
   "matrix_synthetic_direct_failure_preserves_existing_surplus_admission",
   "matrix_synthetic_authoritative_paid_capacity_allows_openlux",
   "matrix_synthetic_paid_presemantic_eof_stays_unknown_without_openlux",
@@ -152,6 +153,63 @@ export async function precommitCases(context: MatrixContext): Promise<void> {
   await committedOrDirect(context, true);
   await committedOrDirect(context, false);
   await abortBeforeOutput(context);
+  await rustFutureDrop(context);
+}
+
+async function rustFutureDrop(context: MatrixContext): Promise<void> {
+  const key = await createClient(context);
+  const client = { ...context, clientToken: key.token };
+  const marker = "fixture:matrix:precommit:rust-drop";
+  const response = await post(client, "/v1/responses", { model: DEEPSEEK_WATERFALL_MODEL_ID, input: marker, stream: true });
+  assert.equal(response.status, 200);
+  const phase = object(await response.json());
+  assert.equal(phase.phase, "presemantic-prefix-pending");
+  assert.equal(phase.rust_future_dropped, true);
+  assert.equal(phase.caller_aborted_before, false);
+  assert.equal(phase.caller_aborted_after, false);
+  const id = phase.request_id;
+  assert(typeof id === "string");
+  const state = await oneOriginal(client, id, key.id, ["lithos"]);
+  const terminal = object(state.terminal_intent);
+  assert.equal(terminal.semantic_terminal, null);
+  assert.equal(terminal.reader_termination, null);
+  assert.equal(terminal.body, null);
+  assert.equal(terminal.delivery, "unobserved");
+  const deadline = Date.now() + 4000;
+  let cancelled = 0;
+  let captured = false;
+  while (Date.now() < deadline) {
+    cancelled = (await context.events()).filter((event) => object(event).kind === "matrix_cancelled" && object(event).marker === marker).length;
+    const page = object(
+      await (
+        await fetch(context.url(`/admin/sentinel/replay-captures?request_id=${encodeURIComponent(id)}`), {
+          headers: { authorization: `Bearer ${context.adminToken ?? "fixture-admin"}`, connection: "close" },
+        })
+      ).json()
+    );
+    assert(Array.isArray(page.data));
+    assert(page.data.length <= 1);
+    if (page.data.length === 1) {
+      const capture = object(page.data[0]);
+      const manifest = object(capture.manifest);
+      assert(Array.isArray(capture.chunks) && capture.chunks.length > 0);
+      assert.equal(manifest.chunk_count, capture.chunks.length);
+      assert.equal(object(page.capture_status).request_id, id);
+      captured = true;
+    }
+    if (cancelled === 1 && captured) break;
+    await Bun.sleep(10);
+  }
+  assert.equal(cancelled, 1, "Actual Rust future Drop must release its still-open upstream exactly once");
+  assert(captured, "A server-side Rust future Drop must retain its real failure capture; caller cancellation suppression is a separate rail");
+  assert.deepEqual(
+    dispatches(await context.events(), marker).map((call) => call.provider),
+    ["lithos"]
+  );
+  const next = await post(client, "/v1/responses", { model: DEEPSEEK_WATERFALL_MODEL_ID, input: "fixture:matrix:after-rust-drop", stream: false });
+  assert.equal((await responseObject(next)).status, "completed");
+  assert.deepEqual(object(await context.lifecycle(id)).terminal_intent, state.terminal_intent);
+  context.cases.push("matrix_actual_rust_future_drop_at_presemantic_phase_retains_cleanup_without_caller_abort");
 }
 
 async function paidRows(context: MatrixContext, state: Record<string, unknown>): Promise<Record<string, unknown>[]> {

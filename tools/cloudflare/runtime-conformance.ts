@@ -948,6 +948,7 @@ async function inner(): Promise<void> {
       await catalogRestartCases({ ...fixture, ...harness }, cases);
     });
     await runProviderMatrixCases({ ...matrixContext, withScenario });
+    assert.equal(cases.filter((name) => name === "matrix_actual_rust_future_drop_at_presemantic_phase_retains_cleanup_without_caller_abort").length, 1);
     await withScenario("codex", replayProviderCases);
     await withScenario("codex", unicodeForwardingCases);
     await withScenario("direct", compactionFallbackCases);
