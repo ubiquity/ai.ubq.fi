@@ -150,12 +150,48 @@ fn moved_complete_audit_retains_expired_typed_metadata_and_rejects_orphan_coupli
     );
 }
 
+fn add_expired_and_utf16_entries(
+    capture: &mut NativeCapture,
+) -> Result<(gateway_core::tuple_key::TupleKey, i64), Box<dyn std::error::Error>> {
+    use gateway_core::tuple_key::{KeyPart, TupleKey};
+    let expired_key = TupleKey::from_parts(&[
+        KeyPart::String("default".into()),
+        KeyPart::String("expired-native-replay".into()),
+    ])?;
+    let expiry = capture.captured_at_ms - 1;
+    capture.entries.insert(
+        1,
+        NativeEntry {
+            raw_key: expired_key.sort_bytes().to_vec(),
+            value: NativeValue::CounterLe64(u64::MAX.to_le_bytes().to_vec()),
+            revision: capture.data_revision.clone(),
+            expiration_ms: expiry,
+        },
+    );
+    capture.entries.push(NativeEntry {
+        raw_key: TupleKey::from_parts(&[
+            KeyPart::String("default".into()),
+            KeyPart::String("native-frame-utf16".into()),
+        ])?
+        .sort_bytes()
+        .to_vec(),
+        value: NativeValue::SourceGraphV1(graph_transport::to_source_graph(
+            &gateway_core::source_graph::SourceGraph {
+                root: gateway_core::source_graph::GraphAtom::String(
+                    gateway_core::js_string::JsString16::from_units(vec![0xd800, 0, 0xdc00]),
+                ),
+                nodes: vec![],
+            },
+        )?),
+        revision: capture.data_revision.clone(),
+        expiration_ms: -1,
+    });
+    Ok((expired_key, expiry))
+}
 #[test]
-fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_document() {
-    use gateway_core::{
-        tuple_key::{KeyPart, TupleKey},
-        value::PortableValue,
-    };
+fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_document()
+-> Result<(), Box<dyn std::error::Error>> {
+    use gateway_core::{tuple_key::TupleKey, value::PortableValue};
     struct Host;
     impl NativeCustody for Host {
         async fn observe(
@@ -171,92 +207,48 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
     let directory = Directory::new();
     let mut capture = fixture();
     let mut corrupt = capture.clone();
-    corrupt.entries.retain(|entry| {
-        TupleKey::from_sort_bytes(entry.raw_key.clone())
-            .unwrap()
-            .to_record_key()
+    let mut retained = Vec::new();
+    for entry in corrupt.entries {
+        if TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key()
             != gateway_auth::api_keys::id_key("offline-key")
-    });
-    let corrupt_dir = native_stage::directory(&std::env::temp_dir()).unwrap();
+        {
+            retained.push(entry);
+        }
+    }
+    corrupt.entries = retained;
+    let corrupt_dir = native_stage::directory(&std::env::temp_dir())?;
     assert!(
-        run(native_stage::Captured::owned(corrupt, &corrupt_dir)
-            .unwrap()
-            .prepare(&Host))
-        .is_err(),
+        run(native_stage::Captured::owned(corrupt, &corrupt_dir)?.prepare(&Host)).is_err(),
         "sealed native replay must retain the complete orphan-pair audit"
     );
-    std::fs::remove_dir_all(corrupt_dir).unwrap();
-    let expired_key = TupleKey::from_parts(&[
-        KeyPart::String("default".into()),
-        KeyPart::String("expired-native-replay".into()),
-    ])
-    .unwrap();
-    let expiry = capture.captured_at_ms - 1;
-    capture.entries.insert(
-        1,
-        NativeEntry {
-            raw_key: expired_key.sort_bytes().to_vec(),
-            value: NativeValue::CounterLe64(u64::MAX.to_le_bytes().to_vec()),
-            revision: capture.data_revision.clone(),
-            expiration_ms: expiry,
-        },
-    );
-    capture.entries.push(NativeEntry {
-        raw_key: TupleKey::from_parts(&[
-            KeyPart::String("default".into()),
-            KeyPart::String("native-frame-utf16".into()),
-        ])
-        .unwrap()
-        .sort_bytes()
-        .to_vec(),
-        value: NativeValue::SourceGraphV1(
-            graph_transport::to_source_graph(&gateway_core::source_graph::SourceGraph {
-                root: gateway_core::source_graph::GraphAtom::String(
-                    gateway_core::js_string::JsString16::from_units(vec![0xd800, 0, 0xdc00]),
-                ),
-                nodes: vec![],
-            })
-            .unwrap(),
-        ),
-        revision: capture.data_revision.clone(),
-        expiration_ms: -1,
-    });
-    let dir = native_stage::directory(&std::env::temp_dir()).unwrap();
-    let mut plan = run(native_stage::Captured::owned(capture.clone(), &dir)
-        .unwrap()
-        .prepare(&Host))
-    .unwrap();
-    let wire_dir = native_stage::directory(&std::env::temp_dir()).unwrap();
-    let mut wire_plan = run(native_stage::Captured::owned(capture.clone(), &wire_dir)
-        .unwrap()
-        .prepare(&Host))
-    .unwrap();
+    std::fs::remove_dir_all(corrupt_dir)?;
+    let (expired_key, expiry) = add_expired_and_utf16_entries(&mut capture)?;
+    let dir = native_stage::directory(&std::env::temp_dir())?;
+    let mut plan = run(native_stage::Captured::owned(capture.clone(), &dir)?.prepare(&Host))?;
+    let wire_dir = native_stage::directory(&std::env::temp_dir())?;
+    let mut wire_plan =
+        run(native_stage::Captured::owned(capture.clone(), &wire_dir)?.prepare(&Host))?;
     assert_eq!(
-        serde_json::to_vec(&wire_plan.begin()).unwrap(),
-        serde_json::to_vec(&plan.begin()).unwrap()
+        serde_json::to_vec(&wire_plan.begin())?,
+        serde_json::to_vec(&plan.begin())?
     );
     let store = SqliteStore::open(&directory.file("spooled.sqlite3"));
-    run(execute_staged(&store, plan.begin())).unwrap();
-    while let Some(batch) = plan.next_batch().unwrap() {
+    run(execute_staged(&store, plan.begin()))?;
+    while let Some(batch) = plan.next_batch()? {
         let mut bytes = Vec::new();
-        assert!(wire_plan.write_next_batch(&mut bytes).unwrap());
-        assert_eq!(bytes, serde_json::to_vec(&batch).unwrap());
+        assert!(wire_plan.write_next_batch(&mut bytes)?);
+        assert_eq!(bytes, serde_json::to_vec(&batch)?);
         assert!(bytes.len() <= STAGED_BATCH_MAX_BYTES);
-        run(execute_staged(
-            &store,
-            decode_stage_request(&bytes).unwrap(),
-        ))
-        .unwrap();
+        run(execute_staged(&store, decode_stage_request(&bytes)?))?;
     }
-    assert!(!wire_plan.write_next_batch(&mut Vec::new()).unwrap());
+    assert!(!wire_plan.write_next_batch(&mut Vec::new())?);
     assert_eq!(
-        serde_json::to_vec(&wire_plan.seal()).unwrap(),
-        serde_json::to_vec(&plan.seal()).unwrap()
+        serde_json::to_vec(&wire_plan.seal())?,
+        serde_json::to_vec(&plan.seal())?
     );
-    run(execute_staged(&store, plan.seal())).unwrap();
-    let retained = run(store.read(&expired_key.to_record_key()))
-        .unwrap()
-        .unwrap();
+    run(execute_staged(&store, plan.seal()))?;
+    let retained =
+        run(store.read(&expired_key.to_record_key()))?.ok_or("Expected retained fixture row")?;
     assert_eq!(
         retained.revision,
         format!(
@@ -266,17 +258,14 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
     );
     assert_eq!(retained.expires_at_ms, Some(expiry));
     assert_eq!(
-        retained.portable_value().unwrap(),
+        retained.portable_value()?,
         PortableValue::KvU64(u64::MAX.to_string())
     );
-    let latest = run(export_native_latest(&store, 2300)).unwrap();
+    let latest = run(export_native_latest(&store, 2300))?;
     let ordinary = SqliteStore::open(&directory.file("ordinary.sqlite3"));
-    run(adopt_empty(&ordinary, &prepare_native(&capture).unwrap())).unwrap();
-    let expected = run(export_native_latest(&ordinary, 2300)).unwrap();
-    assert_eq!(
-        serde_json::to_vec(&latest).unwrap(),
-        serde_json::to_vec(&expected).unwrap()
-    );
+    run(adopt_empty(&ordinary, &prepare_native(&capture)?))?;
+    let expected = run(export_native_latest(&ordinary, 2300))?;
+    assert_eq!(serde_json::to_vec(&latest)?, serde_json::to_vec(&expected)?);
     let artifacts = ArtifactContext {
         rust_git_sha: "1".repeat(40),
         rust_git_tree: "2".repeat(40),
@@ -288,8 +277,7 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
         &store,
         2300,
         artifacts.clone(),
-    ))
-    .unwrap();
+    ))?;
     let mut source_sink = Vec::new();
     let mut custody_sink = Vec::new();
     let count = run(native_operator::write_private_latest(
@@ -299,27 +287,28 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
         artifacts,
         &mut source_sink,
         &mut custody_sink,
-    ))
-    .unwrap();
+    ))?;
     assert_eq!(count, bundle.source.entries.len());
-    assert_eq!(source_sink, serde_json::to_vec(&bundle.source).unwrap());
+    assert_eq!(source_sink, serde_json::to_vec(&bundle.source)?);
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&custody_sink).unwrap(),
+        serde_json::from_slice::<serde_json::Value>(&custody_sink)?,
         serde_json::json!({"rust_controls":bundle.rust_controls,"artifacts":bundle.artifacts})
     );
     let path = directory.file("native.json");
-    std::fs::write(&path, b"{\"entries\":[").unwrap();
+    std::fs::write(&path, b"{\"entries\":[")?;
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let second = native_stage::directory(&std::env::temp_dir()).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let second = native_stage::directory(&std::env::temp_dir())?;
     assert!(native_stage::Captured::read(&path, &second).is_err());
-    std::fs::remove_dir_all(dir).unwrap();
-    std::fs::remove_dir_all(wire_dir).unwrap();
-    std::fs::remove_dir_all(second).unwrap();
+    std::fs::remove_dir_all(dir)?;
+    std::fs::remove_dir_all(wire_dir)?;
+    std::fs::remove_dir_all(second)?;
+    Ok(())
 }
 
 #[test]
-fn sealed_native_frame_emitter_refuses_spool_and_sink_faults() {
+fn sealed_native_frame_emitter_refuses_spool_and_sink_faults()
+-> Result<(), Box<dyn std::error::Error>> {
     use std::{
         io::{Seek, SeekFrom, Write},
         os::unix::fs::PermissionsExt,
@@ -336,52 +325,44 @@ fn sealed_native_frame_emitter_refuses_spool_and_sink_faults() {
             ))
         }
     }
-    let plan = || {
-        let directory = native_stage::directory(&std::env::temp_dir()).unwrap();
-        let plan = run(native_stage::Captured::owned(fixture(), &directory)
-            .unwrap()
-            .prepare(&Host))
-        .unwrap();
-        (directory, plan)
+    let plan = || -> Result<_, Box<dyn std::error::Error>> {
+        let directory = native_stage::directory(&std::env::temp_dir())?;
+        let plan = run(native_stage::Captured::owned(fixture(), &directory)?.prepare(&Host))?;
+        Ok((directory, plan))
     };
     for fault in 0..4 {
-        let (directory, mut plan) = plan();
+        let (directory, mut plan) = plan()?;
         let path = directory.join("canonical-rows.spool");
-        let original = std::fs::read(&path).unwrap();
+        let original = std::fs::read(&path)?;
         match fault {
             0 => {
-                let mut file = std::fs::OpenOptions::new()
-                    .append(true)
-                    .open(&path)
-                    .unwrap();
-                file.write_all(b" ").unwrap();
-                file.sync_all().unwrap();
+                let mut file = std::fs::OpenOptions::new().append(true).open(&path)?;
+                file.write_all(b" ")?;
+                file.sync_all()?;
             }
             1 => {
-                let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-                file.seek(SeekFrom::Start(0)).unwrap();
-                file.write_all(b"[").unwrap();
-                file.sync_all().unwrap();
+                let mut file = std::fs::OpenOptions::new().write(true).open(&path)?;
+                file.seek(SeekFrom::Start(0))?;
+                file.write_all(b"[")?;
+                file.sync_all()?;
             }
             2 => {
                 std::fs::OpenOptions::new()
                     .write(true)
-                    .open(&path)
-                    .unwrap()
-                    .set_len(original.len() as u64 - 1)
-                    .unwrap();
+                    .open(&path)?
+                    .set_len(original.len() as u64 - 1)?;
             }
             _ => {
-                std::fs::rename(&path, directory.join("original.spool")).unwrap();
-                std::fs::write(&path, original).unwrap();
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+                std::fs::rename(&path, directory.join("original.spool"))?;
+                std::fs::write(&path, original)?;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
             }
         }
         let mut sink = Vec::new();
         assert!(plan.write_next_batch(&mut sink).is_err());
         assert!(sink.is_empty());
         assert!(plan.next_batch().is_err());
-        std::fs::remove_dir_all(directory).unwrap();
+        std::fs::remove_dir_all(directory)?;
     }
     struct PartialSink(bool);
     impl Write for PartialSink {
@@ -396,9 +377,10 @@ fn sealed_native_frame_emitter_refuses_spool_and_sink_faults() {
             Ok(())
         }
     }
-    let (directory, mut plan) = plan();
+    let (directory, mut plan) = plan()?;
     assert!(plan.write_next_batch(&mut PartialSink(false)).is_err());
     assert!(plan.write_next_batch(&mut Vec::new()).is_err());
     assert!(plan.next_batch().is_err());
-    std::fs::remove_dir_all(directory).unwrap();
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
 }

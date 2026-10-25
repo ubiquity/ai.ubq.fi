@@ -1,7 +1,8 @@
 use gateway_admin::operations::{AdminHost, AdminInput};
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_admin::routes::AdminOperation;
 use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::*};
-use gateway_admin_test_support::runtime_host::Host;
+use gateway_admin_test_support::runtime_host::{Host, run};
 use gateway_auth::{
     native::NativeReadRequest,
     types::{
@@ -20,8 +21,6 @@ use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
-    future::Future,
-    task::{Context as TaskContext, Poll, Waker},
 };
 
 mod manual_reset;
@@ -36,16 +35,6 @@ impl WireBody for AuthResponseBody {
     }
 }
 
-fn run<F: Future>(future: F) -> F::Output {
-    let mut cx = TaskContext::from_waker(Waker::noop());
-    let mut future = std::pin::pin!(future);
-    loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
-            return value;
-        }
-        std::thread::yield_now();
-    }
-}
 #[derive(Default)]
 struct Store {
     rows: RefCell<BTreeMap<String, StoredRecord>>,
@@ -620,8 +609,11 @@ fn errors_limit_does_not_truncate_five_xx_buckets() {
 }
 
 #[test]
-fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
-    use gateway_admin_runtime::claude::{source_secret::ClaudeSourceSecret, *};
+fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() -> TestResult {
+    use gateway_admin_runtime::claude::{
+        AccountUpdate, Bootstrap, current_binding, parse_credential,
+        source_secret::ClaudeSourceSecret, update_account,
+    };
     let store = Store::default();
     let host = Host::default();
     let seed = Bootstrap::default();
@@ -629,7 +621,7 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
         &json!({"secret":"sk-ant-api-test-secret","kind":"api_key","updated_at_ms":900000}),
         "kv",
     )
-    .unwrap();
+    .ok_or("fixture credential missing")?;
     let first = run(update_account(
         &store,
         &host,
@@ -642,13 +634,8 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
             activate: false,
             expected: None,
         },
-    ))
-    .unwrap();
-    assert!(
-        run(current_binding(&store, &first, host.now_ms()))
-            .unwrap()
-            .is_some()
-    );
+    ))?;
+    assert!(run(current_binding(&store, &first, host.now_ms()))?.is_some());
     let mut renamed = credential.clone();
     renamed.label = Some("renamed".into());
     let same = run(update_account(
@@ -663,8 +650,7 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
             activate: false,
             expected: Some(first.clone()),
         },
-    ))
-    .unwrap();
+    ))?;
     assert_eq!(first.account_cohort_id, same.account_cohort_id);
     assert_eq!(first.evidence_generation, same.evidence_generation);
     let mut rotated = credential;
@@ -683,23 +669,15 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() {
             activate: false,
             expected: Some(first.clone()),
         },
-    ))
-    .unwrap();
+    ))?;
     assert_eq!(first.account_id, next.account_id);
     assert_ne!(first.account_cohort_id, next.account_cohort_id);
     assert_ne!(first.evidence_generation, next.evidence_generation);
-    assert!(
-        run(current_binding(&store, &first, host.now_ms()))
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        run(current_binding(&store, &next, host.now_ms()))
-            .unwrap()
-            .is_some()
-    );
+    assert!(run(current_binding(&store, &first, host.now_ms()))?.is_none());
+    assert!(run(current_binding(&store, &next, host.now_ms()))?.is_some());
     let debug = format!("{next:?}");
     assert!(!debug.contains("sk-ant-api-rotated-secret"));
+    Ok(())
 }
 
 #[test]
@@ -792,7 +770,7 @@ fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
 }
 
 #[test]
-fn supervisor_follow_dispatches_only_validated_finite_identifiers() {
+fn supervisor_follow_dispatches_only_validated_finite_identifiers() -> TestResult {
     struct Follow(RefCell<Option<(String, String, String)>>);
     impl RuntimeCapabilities for Follow {
         async fn native(
@@ -834,7 +812,9 @@ fn supervisor_follow_dispatches_only_validated_finite_identifiers() {
     request
         .query
         .insert("cursor".into(), vec![format!(" {} ", "a".repeat(250))]);
-    let error = run(service.execute(AdminOperation::SupervisorOutput, request)).unwrap_err();
+    let error = run(service.execute(AdminOperation::SupervisorOutput, request))
+        .err()
+        .ok_or("expected native source failure")?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("fixture_native_source_offline")
@@ -843,6 +823,7 @@ fn supervisor_follow_dispatches_only_validated_finite_identifiers() {
         *follow.0.borrow(),
         Some(("trusted-source".into(), "thread-1".into(), "a".repeat(240)))
     );
+    Ok(())
 }
 
 #[test]
@@ -1070,7 +1051,7 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
 }
 
 #[test]
-fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
+fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() -> TestResult {
     let store = Store::default();
     let host = Host::default();
     let config = RuntimeConfig::default();
@@ -1092,29 +1073,27 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
         headers: BTreeMap::from([("authorization".into(), "Bearer fixture-admin".into())]),
         body: serde_json::to_vec(
             &json!({"name":"source lifecycle","expires_at_ms":-1,"usage_limit_requests":-1}),
-        )
-        .unwrap(),
+        )?,
         ..AuthRequest::default()
     };
-    let created = run(admin.handle_route(&request, "create-key"))
-        .unwrap()
-        .unwrap();
-    let id = created.body.wire_json()["id"].as_str().unwrap().to_owned();
+    let created =
+        run(admin.handle_route(&request, "create-key"))?.ok_or("expected matched admin route")?;
+    let id = created.body.wire_json()["id"]
+        .as_str()
+        .ok_or("expected created key ID")?
+        .to_owned();
     assert_eq!(created.status, 200);
     request.url = "https://ai.ubq.fi/admin/api-keys/revoke".into();
-    request.body = serde_json::to_vec(&json!({"id":id})).unwrap();
-    run(admin.handle_route(&request, "revoke-key"))
-        .unwrap()
-        .unwrap();
+    request.body = serde_json::to_vec(&json!({"id":id}))?;
+    run(admin.handle_route(&request, "revoke-key"))?.ok_or("expected matched admin route")?;
     store.put(
         json!(["uos_ai", "paid_fallback", "ledger", id, 900000, "record"]),
         json!({"retained":true}),
     );
     request.method = "DELETE".into();
     request.url = "https://ai.ubq.fi/admin/api-keys".into();
-    let deleted = run(admin.handle_route(&request, "delete-key"))
-        .unwrap()
-        .unwrap();
+    let deleted =
+        run(admin.handle_route(&request, "delete-key"))?.ok_or("expected matched admin route")?;
     assert_eq!(deleted.status, 200);
     assert!(store.get(json!(["ubq_ai", "api_keys", "id", id])).is_none());
     assert!(
@@ -1144,15 +1123,17 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() {
     request.headers.clear();
     assert_eq!(
         run(admin.handle_route(&request, "unauthorized-delete"))
-            .unwrap_err()
+            .err()
+            .ok_or("expected authentication failure")?
             .status,
         401
     );
     assert_eq!(*store.rows.borrow(), before);
+    Ok(())
 }
 
 #[test]
-fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() {
+fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() -> TestResult {
     use gateway_auth::native::AuthStream;
     enum Reply {
         Prepared,
@@ -1210,7 +1191,7 @@ fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() {
         let result = run(service.execute(AdminOperation::SupervisorOutput, request));
         if prepared {
             assert_eq!(
-                result.unwrap().stream,
+                result?.stream,
                 Some(AuthStream::SupervisorFollow {
                     source_id: "trusted-source".into(),
                     thread_id: "thread".into(),
@@ -1219,11 +1200,18 @@ fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() {
             );
         } else {
             assert_eq!(
-                result.unwrap_err().envelope.error.code.as_deref(),
+                result
+                    .err()
+                    .ok_or("expected invalid native protocol response")?
+                    .envelope
+                    .error
+                    .code
+                    .as_deref(),
                 Some("native_protocol_invalid")
             );
         }
     }
+    Ok(())
 }
 
 #[test]

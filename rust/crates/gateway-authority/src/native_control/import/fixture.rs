@@ -1,11 +1,11 @@
 //! Default-off compile-only trust preparation, not an import permission issuer.
-use super::{NativeRenewalCancellation, RemoteImportAuthority, remote_tls::Roots, unavailable};
+use super::remote::RemoteImportAuthority;
+use super::{NativeRenewalCancellation, remote_tls::Roots, unavailable};
 use gateway_auth::native_auth::NativeTransportIdentity;
 use gateway_core::error::GatewayError;
-use std::{
-    net::{SocketAddr, TcpStream},
-    time::Instant,
-};
+use std::net::SocketAddr;
+use std::net::TcpStream;
+use std::time::Instant;
 const CA: &[u8] = include_bytes!("../../../../gateway-native/tests/fixtures/import-tls/ca.der");
 fn verify_addresses(peer: SocketAddr, local: SocketAddr) -> Result<(), GatewayError> {
     if !peer.ip().is_loopback() || !local.ip().is_loopback() {

@@ -1,20 +1,28 @@
 //! Private offline operator data, never an HTTP/admin capability. The host must
 //! hold a NEW empty target unpublished and quiescent until seal and reconciliation.
-use crate::{engine::PreparedAdoption, *};
+use crate::{decode, engine::PreparedAdoption, invalid, json, key};
 use gateway_authority::{
     initial_control_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts},
     paid_control::PaidControlOwner,
 };
+use gateway_core::error::GatewayError;
+use gateway_core::state::RecordKey;
+use gateway_core::state::StoredRecord;
+use gateway_core::tuple_key::TupleKey;
 use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck},
 };
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::{BTreeSet, VecDeque};
 
 pub const STAGED_BATCH_MAX_BYTES: usize = crate::operational::PRIVATE_WIRE_MAX_BYTES;
 const PREFERRED_BATCH_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) mod record_key_wire {
-    use super::*;
+    use gateway_core::state::RecordKey;
+    use gateway_core::tuple_key::TupleKey;
+    use serde::Deserialize;
     pub fn serialize<S: serde::Serializer>(
         key: &RecordKey,
         serializer: S,

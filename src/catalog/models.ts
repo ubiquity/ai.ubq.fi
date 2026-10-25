@@ -30,7 +30,7 @@ import {
   readLithosApiKey,
 } from "../provider/lithos.ts";
 import { codexSnapshotMetadataHint, codexSubscriptionMetadataHint, resolveModelMetadata } from "../models/metadata.ts";
-import { openRouterModelsSnapshot } from "../models/openrouter-models.ts";
+import { openRouterModelSupportsText, openRouterModelsSnapshot } from "../models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "../provider/openrouter.ts";
 import { CODEX_CATALOG_AUTH_GENERATION_KEY } from "./types.ts";
 import { claudeCodeReasoningLevels, type ClaudeCodeModel } from "../provider/claude-code-models.ts";
@@ -516,7 +516,7 @@ const withCerebrasModels = (models: readonly Record<string, unknown>[]): Record<
  */
 const openRouterCodexModels = (): Record<string, unknown>[] => {
   if (readOpenRouterApiKey() === null) return [];
-  return (openRouterModelsSnapshot()?.models ?? []).map((model) => {
+  return (openRouterModelsSnapshot()?.models ?? []).filter(openRouterModelSupportsText).map((model) => {
     const resolved = resolveModelMetadata(model.id);
     const levels = ascendingExternalReasoningLevels(resolved.supported_reasoning_levels);
     return {

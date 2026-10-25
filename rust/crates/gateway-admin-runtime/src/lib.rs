@@ -67,61 +67,209 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
             }
             Errors => self.errors(&input).await,
             PromptsPurge => self.purge_prompts(input.now_ms).await,
-            CodexModelsGet => {
-                self.capabilities
-                    .catalog(CatalogRequest::CodexModelsGet, context)
+            CodexModelsGet | CodexModelsSet | ModelsWhitelistGet | ModelsWhitelistSet
+            | ModelsCatalog | ModelsRefresh => {
+                let request = match operation {
+                    CodexModelsGet => CatalogRequest::CodexModelsGet,
+                    CodexModelsSet => CatalogRequest::CodexModelsSet {
+                        document: input.body,
+                    },
+                    ModelsWhitelistGet => CatalogRequest::WhitelistGet,
+                    ModelsWhitelistSet => CatalogRequest::WhitelistSet {
+                        document: input.body,
+                    },
+                    ModelsCatalog => CatalogRequest::Catalog,
+                    ModelsRefresh => CatalogRequest::Refresh,
+                    _ => return Err(gateway_admin::operations::missing_capability(operation)),
+                };
+                self.capabilities.catalog(request, context).await
+            }
+            CodexAuthUpload | CodexResetGet | CodexResetConsume | CodexResetUpdate
+            | CodexOverageUpdate | CodexOverageGet | CodexResetShadowList | CodexRecheck
+            | CacheExperimentGet | CacheExperimentSet => {
+                self.dispatch_codex(operation, input, context).await
+            }
+            Providers | HealthProviders | HealthUpstream | Capacity | CapacityObservations
+            | CapacityRollups => {
+                let request = match operation {
+                    Providers => ProviderRequest::Inventory,
+                    HealthProviders => ProviderRequest::PassiveHealth,
+                    HealthUpstream => ProviderRequest::UpstreamHealth,
+                    Capacity => ProviderRequest::Capacity {
+                        live: parse::first(&input.query, "refresh") == Some("live"),
+                    },
+                    CapacityObservations => ProviderRequest::Observations {
+                        document: input.body,
+                    },
+                    CapacityRollups => ProviderRequest::Rollups { query: input.query },
+                    _ => return Err(gateway_admin::operations::missing_capability(operation)),
+                };
+                self.capabilities.provider(request, context).await
+            }
+            ClaudeAuthGet | ClaudeAuthSet | ClaudeAuthDelete | ClaudeAccountSelect
+            | ClaudeQuotaClear => {
+                let request = match operation {
+                    ClaudeAuthGet => ClaudeRequest::State,
+                    ClaudeAuthSet => {
+                        ClaudeRequest::SetCredential(parse::claude_source(&input.body)?)
+                    }
+                    ClaudeAuthDelete => ClaudeRequest::DeleteAccount {
+                        account_id: parse::first(&input.query, "account_id")
+                            .map(gateway_core::js_string::JsString16::from_utf8),
+                    },
+                    ClaudeAccountSelect => {
+                        let id = source_body::member(&input.body, "account_id")
+                            .as_ref()
+                            .and_then(source_body::text)
+                            .ok_or_else(|| invalid("account_id is required"))?;
+                        ClaudeRequest::SelectAccount { account_id: id }
+                    }
+                    ClaudeQuotaClear => {
+                        let account_value = source_body::member(&input.body, "account_id");
+                        if account_value
+                            .as_ref()
+                            .is_some_and(|value| source_body::text(value).is_none())
+                        {
+                            return Err(invalid("account_id must be a string"));
+                        }
+                        let account_id = account_value.as_ref().and_then(source_body::text);
+                        let cohort_id = source_body::member(&input.body, "account_cohort_id");
+                        // Account lookup and the targeted-cohort check belong to the
+                        // actual owner in this source order; no early UUID/scalar gate.
+                        ClaudeRequest::ClearQuota {
+                            account_id,
+                            cohort_id,
+                        }
+                    }
+                    _ => return Err(gateway_admin::operations::missing_capability(operation)),
+                };
+                self.capabilities.claude(request, context).await
+            }
+            ReplayCaptures
+            | SentinelIncidents
+            | KvMigrationImport
+            | KvMigrationValidate
+            | PromptCacheAnalytics
+            | QuotaProjection
+            | QuotaProjectionBackfill
+            | ApiKeyPaidFallbacks => self.dispatch_reporting(operation, input, context).await,
+            SupervisorSessions => {
+                self.native_response(NativeReadRequest::SupervisorSessions, context)
                     .await
             }
-            CodexModelsSet => {
-                self.capabilities
-                    .catalog(
-                        CatalogRequest::CodexModelsSet {
-                            document: input.body,
-                        },
-                        context,
-                    )
-                    .await
+            SupervisorOutput | SupervisorBrief => {
+                self.dispatch_supervisor(operation, input, context).await
             }
-            ModelsWhitelistGet => {
-                self.capabilities
-                    .catalog(CatalogRequest::WhitelistGet, context)
-                    .await
-            }
-            ModelsWhitelistSet => {
-                self.capabilities
-                    .catalog(
-                        CatalogRequest::WhitelistSet {
-                            document: input.body,
-                        },
-                        context,
-                    )
-                    .await
-            }
-            ModelsCatalog => {
-                self.capabilities
-                    .catalog(CatalogRequest::Catalog, context)
-                    .await
-            }
-            ModelsRefresh => {
-                self.capabilities
-                    .catalog(CatalogRequest::Refresh, context)
-                    .await
-            }
-            CodexAuthUpload => {
-                self.capabilities
-                    .codex(
-                        CodexRequest::ImportCredentials {
-                            document: input.body,
-                        },
-                        context,
-                    )
-                    .await
-            }
-            CodexResetGet => {
-                self.capabilities
-                    .codex(CodexRequest::ResetSettings, context)
-                    .await
-            }
+            // AdminService owns these operations; never duplicate key/passkey/public-key writers.
+            _ => Err(gateway_admin::operations::missing_capability(operation)),
+        }
+    }
+    async fn prepare_key_deletion(&self, key_id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
+        self.prepare_deletion(key_id).await
+    }
+    async fn finish_key_deletion(
+        &self,
+        key_id: &str,
+        prepared_checks: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        self.finish_deletion(key_id, prepared_checks).await
+    }
+    async fn abort_key_deletion(
+        &self,
+        key_id: &str,
+        prepared_checks: &[RevisionCheck],
+    ) -> Result<(), GatewayError> {
+        self.abort_deletion(key_id, prepared_checks).await
+    }
+    async fn paid_key_policy(
+        &self,
+        body: &gateway_core::source_json::SourceJson,
+    ) -> Result<PaidKeyFields, GatewayError> {
+        self.paid_policy(body).await
+    }
+}
+
+fn supervisor_target(
+    operation: AdminOperation,
+    input: &AdminInput,
+) -> Result<SupervisorBriefTarget, GatewayError> {
+    use AdminOperation::SupervisorOutput;
+    let (source_id, thread_id) = if operation == SupervisorOutput {
+        (
+            parse::first(&input.query, "source")
+                .unwrap_or("")
+                .trim_matches(gateway_schema::util::js_whitespace)
+                .to_owned(),
+            parse::first(&input.query, "id")
+                .unwrap_or("")
+                .trim_matches(gateway_schema::util::js_whitespace)
+                .to_owned(),
+        )
+    } else {
+        (
+            source_body::member(&input.body, "source")
+                .as_ref()
+                .and_then(source_body::text)
+                .map(|value| source_body::trim(&value))
+                .and_then(|value| value.try_utf8().ok())
+                .unwrap_or_default(),
+            source_body::member(&input.body, "id")
+                .as_ref()
+                .and_then(source_body::text)
+                .map(|value| source_body::trim(&value))
+                .and_then(|value| value.try_utf8().ok())
+                .unwrap_or_default(),
+        )
+    };
+    if source_id.is_empty()
+        || source_id.len() > 32
+        || !source_id.as_bytes()[0].is_ascii_lowercase()
+            && !source_id.as_bytes()[0].is_ascii_digit()
+        || !source_id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-".contains(&b))
+    {
+        return Err(invalid("Invalid supervisor source id"));
+    }
+    if thread_id.is_empty()
+        || thread_id.len() > 200
+        || !thread_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+    {
+        return Err(invalid("Invalid thread id"));
+    }
+    Ok(SupervisorBriefTarget {
+        source_id,
+        thread_id,
+    })
+}
+
+fn parse_int_prefix(value: Option<&str>) -> Option<i64> {
+    let value = value?.trim_start_matches(gateway_schema::util::js_whitespace);
+    let end = value
+        .char_indices()
+        .take_while(|(i, c)| c.is_ascii_digit() || *i == 0 && (*c == '-' || *c == '+'))
+        .last()
+        .map(|(i, c)| i + c.len_utf8())?;
+    value[..end].parse().ok()
+}
+
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
+    async fn dispatch_codex(
+        &self,
+        operation: AdminOperation,
+        input: AdminInput,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        use AdminOperation::*;
+        let request = match operation {
+            CodexAuthUpload => CodexRequest::ImportCredentials {
+                document: input.body,
+            },
+            CodexResetGet => CodexRequest::ResetSettings,
+            CodexOverageGet => CodexRequest::OverageSettings,
+            CodexResetShadowList => CodexRequest::ShadowDecisions,
             CodexResetConsume => {
                 let fields = gateway_core::source_serialization::entries(&input.body)
                     .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
@@ -138,10 +286,8 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .filter(|_| fields.len() == 1)
                     .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
                 let account_id_hash = String::from_utf16(hash.as_units())
-                    .expect("closed lowercase ASCII account hash");
-                self.capabilities
-                    .codex(CodexRequest::ConsumeReset { account_id_hash }, context)
-                    .await
+                    .map_err(|_| invalid("Only account_id_hash is accepted."))?;
+                CodexRequest::ConsumeReset { account_id_hash }
             }
             CodexResetUpdate | CodexOverageUpdate => {
                 let name = if operation == CodexResetUpdate {
@@ -162,7 +308,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         "account_id_hash and boolean {name} are required"
                     )));
                 }
-                let request = if operation == CodexResetUpdate {
+                if operation == CodexResetUpdate {
                     CodexRequest::SetResetSettings {
                         document: input.body,
                     }
@@ -170,18 +316,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     CodexRequest::SetOverageSettings {
                         document: input.body,
                     }
-                };
-                self.capabilities.codex(request, context).await
-            }
-            CodexOverageGet => {
-                self.capabilities
-                    .codex(CodexRequest::OverageSettings, context)
-                    .await
-            }
-            CodexResetShadowList => {
-                self.capabilities
-                    .codex(CodexRequest::ShadowDecisions, context)
-                    .await
+                }
             }
             CodexRecheck => {
                 let slot = input
@@ -192,15 +327,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     .ok_or_else(|| {
                         GatewayError::new(404, "Codex account slot not found", Some("not_found"))
                     })?;
-                self.capabilities
-                    .codex(CodexRequest::Recheck { slot }, context)
-                    .await
+                CodexRequest::Recheck { slot }
             }
-            CacheExperimentGet => {
-                self.capabilities
-                    .codex(CodexRequest::CacheExperimentBaseline, context)
-                    .await
-            }
+            CacheExperimentGet => CodexRequest::CacheExperimentBaseline,
             CacheExperimentSet => {
                 let body: String = input.body.deserialize().map_err(|_| {
                     GatewayError::unavailable(
@@ -216,105 +345,21 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         "Prompt-cache scope experiment does not accept request fields",
                     ));
                 }
-                self.capabilities
-                    .codex(CodexRequest::RunCacheExperiment, context)
-                    .await
+                CodexRequest::RunCacheExperiment
             }
-            Providers => {
-                self.capabilities
-                    .provider(ProviderRequest::Inventory, context)
-                    .await
-            }
-            HealthProviders => {
-                self.capabilities
-                    .provider(ProviderRequest::PassiveHealth, context)
-                    .await
-            }
-            HealthUpstream => {
-                self.capabilities
-                    .provider(ProviderRequest::UpstreamHealth, context)
-                    .await
-            }
-            Capacity => {
-                self.capabilities
-                    .provider(
-                        ProviderRequest::Capacity {
-                            live: parse::first(&input.query, "refresh") == Some("live"),
-                        },
-                        context,
-                    )
-                    .await
-            }
-            CapacityObservations => {
-                self.capabilities
-                    .provider(
-                        ProviderRequest::Observations {
-                            document: input.body,
-                        },
-                        context,
-                    )
-                    .await
-            }
-            CapacityRollups => {
-                self.capabilities
-                    .provider(ProviderRequest::Rollups { query: input.query }, context)
-                    .await
-            }
-            ClaudeAuthGet => {
-                self.capabilities
-                    .claude(ClaudeRequest::State, context)
-                    .await
-            }
-            ClaudeAuthSet => {
-                self.capabilities
-                    .claude(
-                        ClaudeRequest::SetCredential(parse::claude_source(&input.body)?),
-                        context,
-                    )
-                    .await
-            }
-            ClaudeAuthDelete => {
-                self.capabilities
-                    .claude(
-                        ClaudeRequest::DeleteAccount {
-                            account_id: parse::first(&input.query, "account_id")
-                                .map(gateway_core::js_string::JsString16::from_utf8),
-                        },
-                        context,
-                    )
-                    .await
-            }
-            ClaudeAccountSelect => {
-                let id = source_body::member(&input.body, "account_id")
-                    .as_ref()
-                    .and_then(source_body::text)
-                    .ok_or_else(|| invalid("account_id is required"))?;
-                self.capabilities
-                    .claude(ClaudeRequest::SelectAccount { account_id: id }, context)
-                    .await
-            }
-            ClaudeQuotaClear => {
-                let account_value = source_body::member(&input.body, "account_id");
-                if account_value
-                    .as_ref()
-                    .is_some_and(|value| source_body::text(value).is_none())
-                {
-                    return Err(invalid("account_id must be a string"));
-                }
-                let account_id = account_value.as_ref().and_then(source_body::text);
-                let cohort_id = source_body::member(&input.body, "account_cohort_id");
-                // Account lookup and the targeted-cohort check belong to the
-                // actual owner in this source order; no early UUID/scalar gate.
-                self.capabilities
-                    .claude(
-                        ClaudeRequest::ClearQuota {
-                            account_id,
-                            cohort_id,
-                        },
-                        context,
-                    )
-                    .await
-            }
+            _ => return Err(gateway_admin::operations::missing_capability(operation)),
+        };
+        self.capabilities.codex(request, context).await
+    }
+
+    async fn dispatch_reporting(
+        &self,
+        operation: AdminOperation,
+        input: AdminInput,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        use AdminOperation::*;
+        match operation {
             ReplayCaptures | SentinelIncidents => {
                 self.capabilities
                     .capture(
@@ -402,67 +447,26 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     )
                     .await
             }
-            SupervisorSessions => {
-                self.native_response(NativeReadRequest::SupervisorSessions, context)
-                    .await
-            }
+            _ => Err(gateway_admin::operations::missing_capability(operation)),
+        }
+    }
+    async fn dispatch_supervisor(
+        &self,
+        operation: AdminOperation,
+        input: AdminInput,
+        context: Context,
+    ) -> Result<AuthResponse, GatewayError> {
+        use AdminOperation::*;
+        match operation {
             SupervisorOutput | SupervisorBrief => {
-                let (source_id, thread_id) = if operation == SupervisorOutput {
-                    (
-                        parse::first(&input.query, "source")
-                            .unwrap_or("")
-                            .trim_matches(gateway_schema::util::js_whitespace)
-                            .to_owned(),
-                        parse::first(&input.query, "id")
-                            .unwrap_or("")
-                            .trim_matches(gateway_schema::util::js_whitespace)
-                            .to_owned(),
-                    )
-                } else {
-                    (
-                        source_body::member(&input.body, "source")
-                            .as_ref()
-                            .and_then(source_body::text)
-                            .map(|value| source_body::trim(&value))
-                            .and_then(|value| value.try_utf8().ok())
-                            .unwrap_or_default(),
-                        source_body::member(&input.body, "id")
-                            .as_ref()
-                            .and_then(source_body::text)
-                            .map(|value| source_body::trim(&value))
-                            .and_then(|value| value.try_utf8().ok())
-                            .unwrap_or_default(),
-                    )
-                };
-                if source_id.is_empty()
-                    || source_id.len() > 32
-                    || !source_id.as_bytes()[0].is_ascii_lowercase()
-                        && !source_id.as_bytes()[0].is_ascii_digit()
-                    || !source_id
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-".contains(&b))
-                {
-                    return Err(invalid("Invalid supervisor source id"));
-                }
-                if thread_id.is_empty()
-                    || thread_id.len() > 200
-                    || !thread_id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
-                {
-                    return Err(invalid("Invalid thread id"));
-                }
+                let target = supervisor_target(operation, &input)?;
                 if operation == SupervisorBrief {
-                    return self
-                        .supervisor_brief_response(
-                            SupervisorBriefTarget {
-                                source_id,
-                                thread_id,
-                            },
-                            context,
-                        )
-                        .await;
+                    return self.supervisor_brief_response(target, context).await;
                 }
+                let SupervisorBriefTarget {
+                    source_id,
+                    thread_id,
+                } = target;
                 let request = {
                     let cursor: String = parse::first(&input.query, "cursor")
                         .unwrap_or("")
@@ -478,46 +482,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 };
                 self.native_response(request, context).await
             }
-            // AdminService owns these operations; never duplicate key/passkey/public-key writers.
             _ => Err(gateway_admin::operations::missing_capability(operation)),
         }
     }
-    async fn prepare_key_deletion(&self, key_id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
-        self.prepare_deletion(key_id).await
-    }
-    async fn finish_key_deletion(
-        &self,
-        key_id: &str,
-        prepared_checks: &[RevisionCheck],
-    ) -> Result<(), GatewayError> {
-        self.finish_deletion(key_id, prepared_checks).await
-    }
-    async fn abort_key_deletion(
-        &self,
-        key_id: &str,
-        prepared_checks: &[RevisionCheck],
-    ) -> Result<(), GatewayError> {
-        self.abort_deletion(key_id, prepared_checks).await
-    }
-    async fn paid_key_policy(
-        &self,
-        body: &gateway_core::source_json::SourceJson,
-    ) -> Result<PaidKeyFields, GatewayError> {
-        self.paid_policy(body).await
-    }
-}
-
-fn parse_int_prefix(value: Option<&str>) -> Option<i64> {
-    let value = value?.trim_start_matches(gateway_schema::util::js_whitespace);
-    let end = value
-        .char_indices()
-        .take_while(|(i, c)| c.is_ascii_digit() || *i == 0 && (*c == '-' || *c == '+'))
-        .last()
-        .map(|(i, c)| i + c.len_utf8())?;
-    value[..end].parse().ok()
-}
-
-impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
     async fn supervisor_brief_response(
         &self,
         target: SupervisorBriefTarget,

@@ -338,7 +338,8 @@ pub(super) fn physical_request(
 mod physical_tests {
     use gateway_core::js_string::JsString16;
     #[test]
-    fn actual_prepared_body_kind_rejects_wrong_binding_before_any_host_header() {
+    fn actual_prepared_body_kind_rejects_wrong_binding_before_any_host_header()
+    -> Result<(), Box<dyn std::error::Error>> {
         use gateway_admin_runtime::claude::{
             AccountBinding, Credential, CredentialKind, source_secret::ClaudeSourceSecret,
         };
@@ -365,13 +366,14 @@ mod physical_tests {
         };
         let body = PreparedClaudeBody::prepare(
             ClientSurface::Responses,
-            &SourceJson::parse(r#"{"model":"claude-fixture","input":"hello"}"#).unwrap(),
+            &SourceJson::parse(r#"{"model":"claude-fixture","input":"hello"}"#)?,
             &"claude-fixture".into(),
             &ClaudeBodyOptions::new(ClaudeCredentialKind::ApiKey),
         )
-        .unwrap();
+        .map_err(|error| error.diagnostic().clone())?;
         // This executes the real closed helper guard; calling host Headers on native would panic.
         assert!(super::physical_request(&binding, &body).is_err());
+        Ok(())
     }
     #[test]
     fn workspace_source_trim_retains_lone_units_until_late_field_projection() {

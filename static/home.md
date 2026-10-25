@@ -2,13 +2,13 @@
 
 UbiquityOS AI Gateway, available at [AI.UBQ.FI](https://ai.ubq.fi/), is an OpenAI-compatible AI inference service for
 the UbiquityOS ecosystem. It gives approved applications and agents one stable base URL for model discovery, Chat
-Completions, and the Responses API. The gateway is not the public OpenAI API and it requires a UbiquityOS gateway token
+Completions, the Responses API, and typed OpenRouter Decisions. The gateway is not the public OpenAI API and it requires a UbiquityOS gateway token
 for inference requests.
 
 ## When to use this service
 
 Use this gateway when an approved UbiquityOS application or autonomous agent needs OpenAI-compatible text inference,
-streaming Responses or Chat Completions, runtime model discovery, or documented function tools. Before an inference
+streaming Responses or Chat Completions, typed Decisions, runtime model discovery, or documented function tools. Before an inference
 request, query `GET /v1/models` and choose a returned model instead of assuming a public OpenAI model alias exists. Use
 the `/v1` base URL in an OpenAI-compatible SDK and pass the approved token as its API key.
 
@@ -22,7 +22,8 @@ browser URL, or an agent transcript.
 - [OpenAPI contract](https://ai.ubq.fi/openapi.json) — machine-readable endpoint and function-tool schemas.
 - [Agent instructions](https://ai.ubq.fi/llms.txt) and [full guide](https://ai.ubq.fi/llms-full.txt).
 - `GET https://ai.ubq.fi/v1/models` — authenticated model discovery.
-- `POST https://ai.ubq.fi/v1/responses` or `POST https://ai.ubq.fi/v1/chat/completions` — inference.
+- `POST https://ai.ubq.fi/v1/responses` or `POST https://ai.ubq.fi/v1/chat/completions` — text inference.
+- `POST https://ai.ubq.fi/v1/decisions` — typed OpenRouter decision models.
 
 The gateway does not forward client bearer tokens upstream. See the developer portal and full guide for authentication,
 error envelopes, streaming, and rate-limit behavior.

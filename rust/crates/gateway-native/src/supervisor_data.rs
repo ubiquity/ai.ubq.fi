@@ -2,12 +2,14 @@
 use crate::{
     supervisor::{InventoryScope, KnownThread, SourceId},
     supervisor_brief::{self, SupervisorBriefContext},
-    supervisor_inventory::{self as inventory, SessionParts, ThreadProbe, text},
-    supervisor_metadata::{self, MetadataRead},
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
 };
 use gateway_core::{error::GatewayError, redaction::redact};
+use gateway_native_supervisor_read::{
+    inventory::{self, SessionParts, ThreadProbe, text},
+    metadata::{self as supervisor_metadata, MetadataRead},
+};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},

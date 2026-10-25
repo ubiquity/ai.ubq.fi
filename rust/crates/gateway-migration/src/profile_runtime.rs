@@ -1,13 +1,18 @@
 //! Existing public profile import, distinct from stopped complete-state adoption.
-use crate::{capture::SourceEntry, *};
+use crate::{Mapping, Row, Transform, capture::SourceEntry, invalid, starts};
 use gateway_admin_data::migration::{self, ImportOptions, NormalizedEntry, Profile};
 use gateway_admin_data::profile::{SourceDateHost, source::normalize_source_import_line_with_host};
 use gateway_admin_runtime::capabilities::{Context, MigrationProfile, MigrationRequest};
 use gateway_auth::types::AuthResponse;
+use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
+use gateway_core::source_json::SourceJson;
+use gateway_core::state::RecordKey;
+use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
 use gateway_core::value::PortableValue;
 use serde::Serialize;
+use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -1,13 +1,22 @@
 use crate::{
+    Mapping, Transform,
     capture::{PrivateCapture, SourceEntry},
+    decode, digest,
     engine::{Manifest, manifest_key, mapping_key},
     error::MigrationError,
-    *,
+    invalid, key, parts, starts, unavailable,
 };
 use gateway_admin_data::profile::{encode_base64, source::to_source_profile as to_profile};
+use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
+use gateway_core::source_json::SourceJson;
+use gateway_core::state::RecordKey;
+use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::DecodedKeyPart;
+use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::PortableValue;
+use serde::Deserialize;
+use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 mod native_import_custody;
@@ -206,18 +215,156 @@ pub(crate) struct LatestRow {
     pub record: StoredRecord,
     pub mapping: Option<Mapping>,
 }
-pub(crate) async fn export_rows<S: QueryStore>(
+fn control_row(key: &RecordKey, p: &[Value], record: &StoredRecord) -> Result<bool, GatewayError> {
+    if starts(p, &["uos_ai", "native_live"]) {
+        record.validate_version()?;
+        if p.len() != 5 || p[2] != "v1" || record.expires_at_ms.is_some() {
+            return Err(invalid(
+                "Native live custody key or permanent retention is invalid",
+            ));
+        }
+        gateway_authority::native_live::validate_live_custody(
+            p[3].as_str()
+                .ok_or_else(|| invalid("Native live custody kind is invalid"))?,
+            p[4].as_str()
+                .ok_or_else(|| invalid("Native live custody reference is invalid"))?,
+            record.json_value()?,
+        )?;
+        return Ok(true);
+    }
+    if starts(p, &["uos_ai", "routing_runtime"]) {
+        return Ok(true);
+    }
+    if starts(
+        p,
+        &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
+    ) || starts(p, &["uos_ai", "auth", "session_revision_index"])
+    {
+        record.validate_version()?;
+        if starts(p, &["uos_ai", "auth", "session_revision_index"]) {
+            gateway_auth::session_index::validate_custody_record(key, record)?;
+        }
+        if starts(
+            p,
+            &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
+        ) {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Retirement {
+                schema_version: u8,
+                call_id: String,
+                upstream_status: u16,
+                created_at_ms: i64,
+            }
+            let marker: Retirement = decode(record.json_value()?)?;
+            if p.len() != 5
+                || p[4] != marker.call_id
+                || marker.schema_version != 1
+                || ![404, 410].contains(&marker.upstream_status)
+                || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&marker.created_at_ms)
+                || record.expires_at_ms.is_some()
+            {
+                return Err(invalid("Pending live-call retirement custody is malformed"));
+            }
+        }
+        return Ok(true);
+    }
+    if *key == gateway_auth::native_replay::native_nonce_key() {
+        record.validate_version()?;
+        return Ok(true);
+    }
+    if starts(p, &["uos_ai", "authority", "native_owner_renewal"]) {
+        gateway_authority::native_control::custody::validate_native_control_custody(key, record)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn authority_control(
+    all: &BTreeMap<String, StoredRecord>,
+    key: &RecordKey,
+    p: &[Value],
+    record: &StoredRecord,
+    now_ms: i64,
+) -> Result<bool, GatewayError> {
+    if *key == gateway_authority::keys::kernel_defaults() {
+        let mut expected = gateway_authority::kernel::KernelDefaults::default();
+        if let Some(source) =
+            all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)
+        {
+            expected.usage_limit_requests =
+                gateway_admin_runtime::parse::limit(source.json_value()?).unwrap_or(-1);
+        }
+        if let Some(source) = all.get(&crate::key(json!(["default", "kernel_policy_window_ms"])).0)
+        {
+            expected.window_ms =
+                gateway_admin_runtime::parse::positive(source.json_value()?).unwrap_or(604800000);
+        }
+        let actual: gateway_authority::kernel::KernelDefaults = decode(record.json_value()?)?;
+        if actual != expected {
+            return Err(invalid(
+                "Latest derived Kernel defaults differ from source defaults; inverse would lose policy",
+            ));
+        }
+    }
+    if p.get(3).and_then(Value::as_str) == Some("api_policy") {
+        let id = p
+            .get(4)
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("Derived API policy ID is missing"))?;
+        let source = all
+            .get(&gateway_auth::api_keys::id_key(id).0)
+            .ok_or_else(|| invalid("Derived API policy has no source ID"))?;
+        let source: gateway_admin::keys::ApiKeyRecord = decode(source.json_value()?)?;
+        let mut expected = gateway_admin::keys::authority_policy(&source, now_ms);
+        let actual: gateway_authority::quota::ApiKeyPolicy = decode(record.json_value()?)?;
+        if source.policy.revoked_at_ms.is_some() && actual.expires_at_ms <= now_ms {
+            expected.expires_at_ms = actual.expires_at_ms;
+        }
+        if actual != expected {
+            return Err(invalid(
+                "Latest derived API policy differs from the source ID; inverse would lose policy",
+            ));
+        }
+    }
+    if p.get(3).and_then(Value::as_str).is_some_and(|s| {
+        [
+            "codex_pool",
+            "paid_routing",
+            "paid_control_owner",
+            "paid_control_config",
+            "paid_control_observation",
+            "codex_reset_config",
+        ]
+        .contains(&s)
+    }) {
+        record.validate_version()?;
+        return Ok(true);
+    }
+    if p.get(3).and_then(Value::as_str).is_some_and(|s| {
+        [
+            "api_policy",
+            "codex_pool",
+            "kernel_defaults",
+            "paid_routing",
+            "paid_control_owner",
+            "paid_control_config",
+            "paid_control_observation",
+            "codex_reset_config",
+        ]
+        .contains(&s)
+    }) {
+        return Ok(false);
+    }
+    Err(unavailable(
+        "Unknown normalized authority state cannot be silently omitted from inverse",
+    ))
+}
+
+async fn collect_rows<S: QueryStore>(
     store: &S,
     now_ms: i64,
-) -> Result<(Manifest, Vec<LatestRow>, Vec<CustodyRecord>), GatewayError> {
-    let manifest = store
-        .read(&manifest_key())
-        .await?
-        .ok_or_else(|| invalid("No adopted capture manifest"))?;
-    let manifest: Manifest = decode(manifest.json_value()?)?;
-    if manifest.v != 4 || now_ms < manifest.captured_at_ms {
-        return Err(invalid("Inverse capture clock/version invalid"));
-    }
+) -> Result<BTreeMap<String, StoredRecord>, GatewayError> {
     let mut all = BTreeMap::new();
     let mut cursor = None;
     let mut seen = BTreeSet::new();
@@ -249,6 +396,13 @@ pub(crate) async fn export_rows<S: QueryStore>(
             break;
         }
     }
+    Ok(all)
+}
+
+fn validate_inventory(
+    all: &BTreeMap<String, StoredRecord>,
+    manifest: &Manifest,
+) -> Result<(), GatewayError> {
     let mapping_prefix = key(json!([
         "uos_ai",
         "migration",
@@ -272,7 +426,7 @@ pub(crate) async fn export_rows<S: QueryStore>(
         return Err(invalid("Inverse mapping inventory is missing or modified"));
     }
     let mut routing_rows = Vec::new();
-    for (name, record) in &all {
+    for (name, record) in all {
         let key = RecordKey(name.clone());
         if starts(&parts(&key)?, &["uos_ai", "routing_runtime"]) {
             routing_rows.push((key, record));
@@ -281,6 +435,23 @@ pub(crate) async fn export_rows<S: QueryStore>(
     gateway_routing_runtime::custody::validate_journal_rows(
         routing_rows.iter().map(|(key, record)| (key, *record)),
     )?;
+    Ok(())
+}
+
+pub(crate) async fn export_rows<S: QueryStore>(
+    store: &S,
+    now_ms: i64,
+) -> Result<(Manifest, Vec<LatestRow>, Vec<CustodyRecord>), GatewayError> {
+    let manifest = store
+        .read(&manifest_key())
+        .await?
+        .ok_or_else(|| invalid("No adopted capture manifest"))?;
+    let manifest: Manifest = decode(manifest.json_value()?)?;
+    if manifest.v != 4 || now_ms < manifest.captured_at_ms {
+        return Err(invalid("Inverse capture clock/version invalid"));
+    }
+    let mut all = collect_rows(store, now_ms).await?;
+    validate_inventory(&all, &manifest)?;
     let mut entries = Vec::new();
     let mut controls = Vec::new();
     for (k, record) in &all {
@@ -312,152 +483,15 @@ pub(crate) async fn export_rows<S: QueryStore>(
         if starts(&p, &["uos_ai", "migration"]) {
             continue;
         }
-        if starts(&p, &["uos_ai", "native_live"]) {
-            record.validate_version()?;
-            if p.len() != 5 || p[2] != "v1" || record.expires_at_ms.is_some() {
-                return Err(invalid(
-                    "Native live custody key or permanent retention is invalid",
-                ));
-            }
-            gateway_authority::native_live::validate_live_custody(
-                p[3].as_str()
-                    .ok_or_else(|| invalid("Native live custody kind is invalid"))?,
-                p[4].as_str()
-                    .ok_or_else(|| invalid("Native live custody reference is invalid"))?,
-                record.json_value()?,
-            )?;
-            controls.push(k.clone());
-            continue;
-        }
-        if starts(&p, &["uos_ai", "routing_runtime"]) {
-            controls.push(k.clone());
-            continue;
-        }
-        if starts(
-            &p,
-            &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
-        ) || starts(&p, &["uos_ai", "auth", "session_revision_index"])
-        {
-            record.validate_version()?;
-            if starts(&p, &["uos_ai", "auth", "session_revision_index"]) {
-                gateway_auth::session_index::validate_custody_record(&key, record)?;
-            }
-            if starts(
-                &p,
-                &["uos_ai", "codex_live_calls", "v1", "pending_retirement"],
-            ) {
-                #[derive(Deserialize)]
-                #[serde(deny_unknown_fields)]
-                struct Retirement {
-                    schema_version: u8,
-                    call_id: String,
-                    upstream_status: u16,
-                    created_at_ms: i64,
-                }
-                let marker: Retirement = decode(record.json_value()?)?;
-                if p.len() != 5
-                    || p[4] != marker.call_id
-                    || marker.schema_version != 1
-                    || ![404, 410].contains(&marker.upstream_status)
-                    || !(0..=gateway_core::identity::MAX_SAFE_INTEGER)
-                        .contains(&marker.created_at_ms)
-                    || record.expires_at_ms.is_some()
-                {
-                    return Err(invalid("Pending live-call retirement custody is malformed"));
-                }
-            }
-            controls.push(k.clone());
-            continue;
-        }
-        if key == gateway_auth::native_replay::native_nonce_key() {
-            record.validate_version()?;
-            controls.push(k.clone());
-            continue;
-        }
-        if starts(&p, &["uos_ai", "authority", "native_owner_renewal"]) {
-            gateway_authority::native_control::custody::validate_native_control_custody(
-                &key, record,
-            )?;
+        if control_row(&key, &p, record)? {
             controls.push(k.clone());
             continue;
         }
         if starts(&p, &["uos_ai", "authority"]) {
-            if key == gateway_authority::keys::kernel_defaults() {
-                let mut expected = gateway_authority::kernel::KernelDefaults::default();
-                if let Some(source) =
-                    all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)
-                {
-                    expected.usage_limit_requests =
-                        gateway_admin_runtime::parse::limit(source.json_value()?).unwrap_or(-1);
-                }
-                if let Some(source) =
-                    all.get(&crate::key(json!(["default", "kernel_policy_window_ms"])).0)
-                {
-                    expected.window_ms =
-                        gateway_admin_runtime::parse::positive(source.json_value()?)
-                            .unwrap_or(604800000);
-                }
-                let actual: gateway_authority::kernel::KernelDefaults =
-                    decode(record.json_value()?)?;
-                if actual != expected {
-                    return Err(invalid(
-                        "Latest derived Kernel defaults differ from source defaults; inverse would lose policy",
-                    ));
-                }
-            }
-            if p.get(3).and_then(Value::as_str) == Some("api_policy") {
-                let id = p
-                    .get(4)
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| invalid("Derived API policy ID is missing"))?;
-                let source = all
-                    .get(&gateway_auth::api_keys::id_key(id).0)
-                    .ok_or_else(|| invalid("Derived API policy has no source ID"))?;
-                let source: gateway_admin::keys::ApiKeyRecord = decode(source.json_value()?)?;
-                let mut expected = gateway_admin::keys::authority_policy(&source, now_ms);
-                let actual: gateway_authority::quota::ApiKeyPolicy = decode(record.json_value()?)?;
-                if source.policy.revoked_at_ms.is_some() && actual.expires_at_ms <= now_ms {
-                    expected.expires_at_ms = actual.expires_at_ms;
-                }
-                if actual != expected {
-                    return Err(invalid(
-                        "Latest derived API policy differs from the source ID; inverse would lose policy",
-                    ));
-                }
-            }
-            if p.get(3).and_then(Value::as_str).is_some_and(|s| {
-                [
-                    "codex_pool",
-                    "paid_routing",
-                    "paid_control_owner",
-                    "paid_control_config",
-                    "paid_control_observation",
-                    "codex_reset_config",
-                ]
-                .contains(&s)
-            }) {
-                record.validate_version()?;
+            if authority_control(&all, &key, &p, record, now_ms)? {
                 controls.push(k.clone());
-                continue;
             }
-            if p.get(3).and_then(Value::as_str).is_some_and(|s| {
-                [
-                    "api_policy",
-                    "codex_pool",
-                    "kernel_defaults",
-                    "paid_routing",
-                    "paid_control_owner",
-                    "paid_control_config",
-                    "paid_control_observation",
-                    "codex_reset_config",
-                ]
-                .contains(&s)
-            }) {
-                continue;
-            }
-            return Err(unavailable(
-                "Unknown normalized authority state cannot be silently omitted from inverse",
-            ));
+            continue;
         }
         if let Some(expected) = manifest.derived.get(k)
             && digest(record)? == *expected
@@ -478,21 +512,25 @@ pub(crate) async fn export_rows<S: QueryStore>(
         .map(|(key, mapping)| {
             let record = all
                 .remove(&key.0)
-                .expect("validated current inverse source");
-            LatestRow {
+                .ok_or_else(|| invalid("Current inverse record is missing"))?;
+            Ok(LatestRow {
                 key,
                 record,
                 mapping,
-            }
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, GatewayError>>()?;
     let controls = controls
         .into_iter()
-        .map(|key| CustodyRecord {
-            record: all.remove(&key).expect("validated current inverse custody"),
-            key,
+        .map(|key| {
+            Ok(CustodyRecord {
+                record: all
+                    .remove(&key)
+                    .ok_or_else(|| invalid("Current inverse record is missing"))?,
+                key,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, GatewayError>>()?;
     Ok((manifest, entries, controls))
 }
 

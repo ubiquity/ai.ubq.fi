@@ -79,34 +79,8 @@ pub(crate) async fn images<H: ExtrasHost>(
     request: &ExtrasRequest<'_>,
     kind: ImageKind,
 ) -> Result<ExtrasResponse, GatewayError> {
-    if request.multipart.is_some() && kind == ImageKind::Generations {
-        return Ok(ExtrasResponse::error(invalid(
-            "Image generation requests must use a JSON object body.",
-            None,
-        )));
-    }
-    if request.multipart.is_some() && request.raw_body_bytes > 64 * 1024 * 1024 {
-        return Ok(ExtrasResponse::error(invalid(
-            "Multipart image edits must be no larger than 64 MiB.",
-            Some("image"),
-        )));
-    }
-    if request.body.as_str() == "null"
-        || request.raw_body_bytes
-            > if kind == ImageKind::Edits {
-                JSON_BYTES
-            } else {
-                32 * 1024 * 1024
-            }
-    {
-        return Ok(ExtrasResponse::error(invalid(
-            if kind == ImageKind::Edits {
-                "Image edits must use a JSON object or multipart form-data body."
-            } else {
-                "Image generation requests must use a JSON object body."
-            },
-            None,
-        )));
+    if let Some(error) = invalid_request(request, kind) {
+        return Ok(ExtrasResponse::error(error));
     }
     let parsed = if let Some(files) = &request.multipart {
         extras::parse_source_multipart_image(&request.body, files)
@@ -189,117 +163,136 @@ pub(crate) async fn images<H: ExtrasHost>(
                 .then_some(first.semantic_terminal)
         })
         .flatten();
-    let mut response = if let Some((Err(failure), _)) = results.first() {
-        let mut r = ExtrasResponse::error(failure.error.as_ref().clone());
-        r.headers.extend(failure.headers.clone());
-        r.upstream_errors.push(failure.clone());
-        r
-    } else {
-        let mut images = Vec::new();
-        let mut created = None;
-        let mut format = None;
-        let mut consistent = true;
-        let mut failure = None;
-        for (result, _) in &results {
-            let result = match result {
-                Ok(r) => r,
-                Err(e) => {
-                    failure = Some(ExtrasResponse::error(e.error.as_ref().clone()));
-                    break;
-                }
-            };
-            let payload = if result.body.is_empty() {
-                SourceValue::Null
-            } else {
-                match SourceJson::parse_bytes(&result.body).map(SourceValue::from_source) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        let mut r = ExtrasResponse::error(GatewayError::new(
-                            502,
-                            "Image upstream returned a non-JSON response.",
-                            Some("upstream_invalid"),
-                        ));
-                        r.headers.extend(headers(&[result]));
-                        failure = Some(r);
-                        break;
-                    }
-                }
-            };
-            if !(200..300).contains(&result.status) {
-                let mut r = ExtrasResponse::source_json(
-                    result.status,
-                    payload.source().expect("actual source image response"),
-                );
-                r.headers.extend(headers(&[result]));
-                failure = Some(r);
-                break;
-            }
-            let generated = extras::extract_source_images(
-                &payload.source().expect("actual source image payload"),
-            );
-            let Some(image) = generated.first() else {
-                let mut r = ExtrasResponse::error(GatewayError::new(
-                    502,
-                    "The model did not return an image for this request.",
-                    Some("image_generation_failed"),
-                ));
-                r.headers.extend(headers(&successful));
-                failure = Some(r);
-                break;
-            };
-            images.push(image.clone());
-            let next = payload["output"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|v| {
-                    v["type"].as_str() == Some("image_generation_call")
-                        && v["result"].as_str().is_some_and(|s| !s.is_empty())
-                })
-                .and_then(|v| v["output_format"].as_str())
-                .filter(|s| ["png", "jpeg", "webp"].contains(s));
-            if let Some(next) = next {
-                if let Some(current) = &format {
-                    if current != next {
-                        consistent = false
-                    }
-                } else {
-                    format = Some(next.to_owned())
-                }
-            } else {
-                consistent = false
-            }
-            if created.is_none() {
-                created = payload["created_at"].as_f64();
-            }
-        }
-        if let Some(r) = failure {
-            r
-        } else {
-            #[derive(serde::Serialize)]
-            struct Body {
-                created: f64,
-                data: Vec<SourceJson>,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                output_format: Option<String>,
-            }
-            let body = SourceJson::from_serializable(&Body {
-                created: created.unwrap_or_else(|| (host.now_ms() / 1000) as f64),
-                data: images,
-                output_format: if consistent { format } else { None },
-            })
-            .expect("source generated image response");
-            let mut r = ExtrasResponse::source_json(
-                200,
-                source::canonical(&body).expect("source image serialization"),
-            );
-            r.headers.extend(headers(&successful));
-            r
-        }
-    };
+    let mut response = image_response(host, &results, &successful)?;
     response.usage = usage;
     if response.status < 400 && successful.len() == results.len() {
         response.semantic_terminal = semantic;
     }
     Ok(response)
+}
+
+fn invalid_request(request: &ExtrasRequest<'_>, kind: ImageKind) -> Option<GatewayError> {
+    if request.multipart.is_some() && kind == ImageKind::Generations {
+        return Some(invalid(
+            "Image generation requests must use a JSON object body.",
+            None,
+        ));
+    }
+    if request.multipart.is_some() && request.raw_body_bytes > 64 * 1024 * 1024 {
+        return Some(invalid(
+            "Multipart image edits must be no larger than 64 MiB.",
+            Some("image"),
+        ));
+    }
+    if request.body.as_str() == "null"
+        || request.raw_body_bytes
+            > if kind == ImageKind::Edits {
+                JSON_BYTES
+            } else {
+                32 * 1024 * 1024
+            }
+    {
+        return Some(invalid(
+            if kind == ImageKind::Edits {
+                "Image edits must use a JSON object or multipart form-data body."
+            } else {
+                "Image generation requests must use a JSON object body."
+            },
+            None,
+        ));
+    }
+    None
+}
+
+type ImageResult = (
+    Result<UpstreamResponse, DispatchFailure>,
+    Result<(), GatewayError>,
+);
+fn image_response(
+    host: &impl ExtrasHost,
+    results: &[ImageResult],
+    successful: &[&UpstreamResponse],
+) -> Result<ExtrasResponse, GatewayError> {
+    if let Some((Err(failure), _)) = results.first() {
+        let mut r = ExtrasResponse::error(failure.error.as_ref().clone());
+        r.headers.extend(failure.headers.clone());
+        r.upstream_errors.push(failure.clone());
+        return Ok(r);
+    }
+    let mut images = Vec::new();
+    let mut created = None;
+    let mut format = None;
+    let mut consistent = true;
+    for (result, _) in results {
+        let result = match result {
+            Ok(r) => r,
+            Err(e) => return Ok(ExtrasResponse::error(e.error.as_ref().clone())),
+        };
+        let payload = if result.body.is_empty() {
+            SourceValue::Null
+        } else {
+            match SourceJson::parse_bytes(&result.body).map(SourceValue::from_source) {
+                Ok(v) => v,
+                Err(_) => {
+                    let mut r = ExtrasResponse::error(GatewayError::new(
+                        502,
+                        "Image upstream returned a non-JSON response.",
+                        Some("upstream_invalid"),
+                    ));
+                    r.headers.extend(headers(&[result]));
+                    return Ok(r);
+                }
+            }
+        };
+        if !(200..300).contains(&result.status) {
+            let mut r = ExtrasResponse::source_json(result.status, payload.source()?);
+            r.headers.extend(headers(&[result]));
+            return Ok(r);
+        }
+        let generated = extras::extract_source_images(&payload.source()?);
+        let Some(image) = generated.first() else {
+            let mut r = ExtrasResponse::error(GatewayError::new(
+                502,
+                "The model did not return an image for this request.",
+                Some("image_generation_failed"),
+            ));
+            r.headers.extend(headers(successful));
+            return Ok(r);
+        };
+        images.push(image.clone());
+        let next = payload["output"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|v| {
+                v["type"].as_str() == Some("image_generation_call")
+                    && v["result"].as_str().is_some_and(|s| !s.is_empty())
+            })
+            .and_then(|v| v["output_format"].as_str())
+            .filter(|s| ["png", "jpeg", "webp"].contains(s));
+        match (&format, next) {
+            (Some(current), Some(next)) if current != next => consistent = false,
+            (None, Some(next)) => format = Some(next.to_owned()),
+            (_, None) => consistent = false,
+            _ => {}
+        }
+        if created.is_none() {
+            created = payload["created_at"].as_f64();
+        }
+    }
+    #[derive(serde::Serialize)]
+    struct Body {
+        created: f64,
+        data: Vec<SourceJson>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_format: Option<String>,
+    }
+    let body = SourceJson::from_serializable(&Body {
+        created: created.unwrap_or_else(|| (host.now_ms() / 1000) as f64),
+        data: images,
+        output_format: if consistent { format } else { None },
+    })?;
+    let mut r = ExtrasResponse::source_json(200, source::canonical(&body)?);
+    r.headers.extend(headers(successful));
+    Ok(r)
 }

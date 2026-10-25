@@ -1,9 +1,5 @@
 //! Managed-source publication is separate from external access_publish v1.
 //! Only an access projection is encoded; physical refresh material stays native.
-use crate::transport::{
-    NativePublicationSender, OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest,
-};
-use crate::wire::{PreparedPublicationCommand, PublicationDisposition, invalid};
 use gateway_auth::crypto::{Secret, base64url};
 use gateway_auth::managed_access::ManagedAccessProjection;
 use gateway_auth::native::{
@@ -14,6 +10,11 @@ use gateway_auth::native_auth::NativeTransportIdentity;
 use gateway_auth::native_credentials::native_refresh_time_ns;
 use gateway_auth::provider_credentials::{codex_credential_identity, valid_native_generation};
 use gateway_core::error::GatewayError;
+use gateway_publication::wire::PublicationDisposition;
+use gateway_publication_policy::protocol::{
+    OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest, decode_response_error, invalid,
+    unverified,
+};
 use serde::{Deserialize, Serialize};
 
 pub const MANAGED_PUBLICATION_MAX_BYTES: usize = 65_536;
@@ -125,11 +126,11 @@ fn validate(w: &ManagedAccessWire) -> Result<(), GatewayError> {
     Ok(())
 }
 
-impl PreparedPublicationCommand {
+impl PreparedManagedAccessCommand {
     pub fn managed_access_from_registered(
         expected: ExpectedManagedAccessPublication,
         projection: &ManagedAccessProjection,
-    ) -> Result<PreparedManagedAccessCommand, GatewayError> {
+    ) -> Result<Self, GatewayError> {
         let command = PreparedManagedAccessCommand(ManagedAccessWire {
             v: 2,
             action_ref: expected.action_ref,
@@ -209,7 +210,7 @@ impl ManagedPublicationReceipt {
     }
 }
 
-pub(crate) async fn send_managed<C: PublicationCarrier>(
+pub async fn send_managed<C: PublicationCarrier>(
     identity: &NativeTransportIdentity,
     carrier: &C,
     command: &PreparedManagedAccessCommand,
@@ -253,32 +254,18 @@ pub(crate) async fn send_managed<C: PublicationCarrier>(
             )
             .is_err()
     {
-        return Err(crate::transport::unverified());
+        return Err(unverified());
     }
     if response.status != 200 {
         if response.raw_body.len() > 4096 {
-            return Err(crate::transport::unverified());
+            return Err(unverified());
         }
-        return Err(crate::transport::decode_response_error(
-            response.status,
-            &response.raw_body,
-        )?);
+        return Err(decode_response_error(response.status, &response.raw_body)?);
     }
     let receipt: ManagedPublicationReceipt =
-        serde_json::from_slice(&response.raw_body).map_err(|_| crate::transport::unverified())?;
+        serde_json::from_slice(&response.raw_body).map_err(|_| unverified())?;
     if !receipt.matches(&command.0, identity) {
-        return Err(crate::transport::unverified());
+        return Err(unverified());
     }
     Ok(receipt)
-}
-
-impl<C: PublicationCarrier> NativePublicationSender<'_, C> {
-    pub async fn send_managed(
-        &self,
-        command: &PreparedManagedAccessCommand,
-        nonce_bytes: [u8; 32],
-        now_ms: i64,
-    ) -> Result<ManagedPublicationReceipt, GatewayError> {
-        send_managed(self.identity, self.carrier, command, nonce_bytes, now_ms).await
-    }
 }

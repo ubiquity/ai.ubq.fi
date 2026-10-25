@@ -14,6 +14,17 @@ use std::{
     time::Duration,
 };
 
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Debug)]
+struct FixtureThreadFailure(Box<dyn std::any::Any + Send>);
+impl std::fmt::Display for FixtureThreadFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:?}", self.0)
+    }
+}
+impl std::error::Error for FixtureThreadFailure {}
+
 fn identity() -> NativeTransportIdentity {
     NativeTransportIdentity::new(
         "publication-fixture".into(),
@@ -118,11 +129,11 @@ struct Peer {
     listener: TcpListener,
 }
 impl Peer {
-    fn start(command: &ImportPublicationCommandData, response: Response) -> Self {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let socket = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let server = listener.try_clone().unwrap();
-        let expected = command.bytes().unwrap();
+    fn start(command: &ImportPublicationCommandData, response: Response) -> FixtureResult<Self> {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let socket = TcpStream::connect(listener.local_addr()?)?;
+        let server = listener.try_clone()?;
+        let expected = command.bytes()?;
         let mut publication = reply(command);
         if matches!(response, Response::LargeValid) {
             assert!(matches!(
@@ -135,9 +146,8 @@ impl Peer {
             publication.publication.auth_generation_revision = Some(retained.clone());
             publication.publication.paid_control_config_revision = Some(retained);
         }
-        let valid_reply = serde_json::to_vec(&publication).unwrap();
-        NativeImportPublication::parse_for(&valid_reply, &expected)
-            .expect("Canonical source-bound synthetic reply");
+        let valid_reply = serde_json::to_vec(&publication)?;
+        NativeImportPublication::parse_for(&valid_reply, &expected)?;
         if matches!(response, Response::LargeValid) {
             assert!(valid_reply.len() > 65_536);
         }
@@ -157,36 +167,7 @@ impl Peer {
                 )
                 .ok()?;
             let mut tls = StreamOwned::new(ServerConnection::new(Arc::new(config)).ok()?, socket);
-            let mut bytes = Vec::new();
-            let (line, headers, body) = loop {
-                if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                    let header = std::str::from_utf8(&bytes[..end]).ok()?;
-                    let mut lines = header.split("\r\n");
-                    let line = lines.next()?.to_owned();
-                    let headers: BTreeMap<_, _> = lines
-                        .map(|line| line.split_once(':'))
-                        .collect::<Option<Vec<_>>>()?
-                        .into_iter()
-                        .map(|(name, value)| (name.to_ascii_lowercase(), value.trim().to_owned()))
-                        .collect();
-                    let length: usize = headers.get("content-length")?.parse().ok()?;
-                    if bytes.len() >= end + 4 + length {
-                        break (line, headers, bytes[end + 4..end + 4 + length].to_vec());
-                    }
-                }
-                if bytes.len()
-                    > gateway_auth::native_import::publication::command::import_publication_max_bytes()
-                        + 16_384
-                {
-                    return None;
-                }
-                let mut chunk = [0; 8192];
-                let n = tls.read(&mut chunk).ok()?;
-                if n == 0 {
-                    return None;
-                }
-                bytes.extend_from_slice(&chunk[..n]);
-            };
+            let (line, headers, body) = read_request(&mut tls)?;
             if body != expected {
                 return None;
             }
@@ -242,15 +223,51 @@ impl Peer {
                 .and_then(|_| tls.flush());
             Some(observed)
         });
-        Self {
+        Ok(Self {
             socket,
             task,
             listener,
+        })
+    }
+}
+
+fn read_request(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+) -> Option<(String, BTreeMap<String, String>, Vec<u8>)> {
+    let mut bytes = Vec::new();
+    loop {
+        if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+            let header = std::str::from_utf8(&bytes[..end]).ok()?;
+            let mut lines = header.split("\r\n");
+            let line = lines.next()?.to_owned();
+            let headers: BTreeMap<_, _> = lines
+                .map(|line| line.split_once(':'))
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .map(|(name, value)| (name.to_ascii_lowercase(), value.trim().to_owned()))
+                .collect();
+            let length: usize = headers.get("content-length")?.parse().ok()?;
+            if bytes.len() >= end + 4 + length {
+                return Some((line, headers, bytes[end + 4..end + 4 + length].to_vec()));
+            }
         }
+        if bytes.len()
+            > gateway_auth::native_import::publication::command::import_publication_max_bytes()
+                + 16_384
+        {
+            return None;
+        }
+        let mut chunk = [0; 8192];
+        let n = tls.read(&mut chunk).ok()?;
+        if n == 0 {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk[..n]);
     }
 }
 #[test]
-fn actual_signed_publication_reply_matches_original_bytes_and_retains_old_limits() {
+fn actual_signed_publication_reply_matches_original_bytes_and_retains_old_limits()
+-> FixtureResult<()> {
     for (limited, response) in [
         (false, Response::Valid),
         (true, Response::Valid),
@@ -261,29 +278,26 @@ fn actual_signed_publication_reply_matches_original_bytes_and_retains_old_limits
             socket,
             task,
             listener,
-        } = Peer::start(&command, response);
+        } = Peer::start(&command, response)?;
         let sender = ImportPublicationHttp::fixture(
             "https://localhost/uos/native/publication",
             socket,
             identity(),
             include_bytes!("../../../tests/fixtures/native-tls/ca.der"),
-        )
-        .unwrap();
-        let result = sender
-            .exchange_data(&command, Instant::now() + Duration::from_secs(3))
-            .unwrap();
-        assert_eq!(
-            result.request_digest(),
-            sha256_hex(&command.bytes().unwrap())
-        );
+        )?;
+        let result = sender.exchange_data(&command, Instant::now() + Duration::from_secs(3))?;
+        assert_eq!(result.request_digest(), sha256_hex(&command.bytes()?));
         assert_eq!(
             result.publication().publication.native_receipt_ref,
             command.native_receipt_ref
         );
-        let observed = task.join().unwrap().unwrap();
+        let observed = task
+            .join()
+            .map_err(FixtureThreadFailure)?
+            .ok_or("Peer ended without an observation")?;
         assert_eq!(observed.sni, "localhost");
         assert_eq!(observed.line, "POST /uos/native/publication HTTP/1.1");
-        assert_eq!(observed.body, command.bytes().unwrap());
+        assert_eq!(observed.body, command.bytes()?);
         assert_eq!(
             observed.headers.get(NATIVE_KEY_HEADER).map(String::as_str),
             Some("publication-fixture")
@@ -293,14 +307,16 @@ fn actual_signed_publication_reply_matches_original_bytes_and_retains_old_limits
                 .exchange_data(&command, Instant::now() + Duration::from_millis(100))
                 .is_err()
         );
-        listener.set_nonblocking(true).unwrap();
+        listener.set_nonblocking(true)?;
         assert!(
             matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
         );
     }
+    Ok(())
 }
 #[test]
-fn actual_unsigned_dropped_redirect_and_oversized_error_never_issue_authenticated_reply() {
+fn actual_unsigned_dropped_redirect_and_oversized_error_never_issue_authenticated_reply()
+-> FixtureResult<()> {
     for response in [
         Response::ForgedMac,
         Response::Dropped,
@@ -312,41 +328,42 @@ fn actual_unsigned_dropped_redirect_and_oversized_error_never_issue_authenticate
             socket,
             task,
             listener,
-        } = Peer::start(&command, response);
+        } = Peer::start(&command, response)?;
         let sender = ImportPublicationHttp::fixture(
             "https://localhost/uos/native/publication",
             socket,
             identity(),
             include_bytes!("../../../tests/fixtures/native-tls/ca.der"),
-        )
-        .unwrap();
+        )?;
         assert!(
             sender
                 .exchange_data(&command, Instant::now() + Duration::from_secs(3))
                 .is_err()
         );
-        assert!(task.join().unwrap().is_some());
+        assert!(task.join().map_err(FixtureThreadFailure)?.is_some());
         assert!(
             sender
                 .exchange_data(&command, Instant::now() + Duration::from_millis(100))
                 .is_err()
         );
-        listener.set_nonblocking(true).unwrap();
+        listener.set_nonblocking(true)?;
         assert!(
             matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
         );
     }
+    Ok(())
 }
 
 #[test]
-fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body() {
+fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body() -> FixtureResult<()>
+{
     let command = command(true);
-    let body = command.bytes().unwrap();
+    let body = command.bytes()?;
     let Peer {
         socket,
         task,
         listener: _,
-    } = Peer::start(&command, Response::LargeValid);
+    } = Peer::start(&command, Response::LargeValid)?;
     let transport = PrivateHttps::from_connected(
         "https://localhost/uos/native/publication",
         NATIVE_PUBLICATION_PATH,
@@ -355,10 +372,9 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
             "../../../tests/fixtures/native-tls/ca.der"
         ))
         .to_owned()]),
-    )
-    .unwrap();
+    )?;
     let nonce = base64url(&[7; 32]);
-    let now = crate::http_server::now_ms().unwrap();
+    let now = crate::http_server::now_ms()?;
     let id = identity();
     let headers = vec![
         (NATIVE_VERSION_HEADER.into(), "1".into()),
@@ -367,8 +383,7 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
         (NATIVE_NONCE_HEADER.into(), nonce.clone()),
         (
             NATIVE_MAC_HEADER.into(),
-            id.sign(NATIVE_PUBLICATION_PATH, now, &nonce, &body)
-                .unwrap(),
+            id.sign(NATIVE_PUBLICATION_PATH, now, &nonce, &body)?,
         ),
     ];
     assert!(
@@ -381,5 +396,6 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
             )
             .is_err()
     );
-    assert!(task.join().unwrap().is_some());
+    assert!(task.join().map_err(FixtureThreadFailure)?.is_some());
+    Ok(())
 }

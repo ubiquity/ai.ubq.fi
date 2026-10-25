@@ -115,15 +115,36 @@ fn write_frame(
         .ok_or_else(|| failure("Private stage frame byte count overflows"))?;
     Ok(())
 }
-fn main() -> Result<(), gateway_migration::error::MigrationError> {
-    assert_eq!(std::env::args_os().len(), 1, "Private input is stdin only");
-    let mut raw = Vec::new();
-    std::io::stdin()
-        .take(1024 * 1024)
-        .read_to_end(&mut raw)
-        .map_err(|_| failure("Private input cannot be read"))?;
-    let input: Input =
-        serde_json::from_slice(&raw).map_err(|_| failure("Private input is invalid"))?;
+fn registrations(
+    entries: Vec<Registration>,
+) -> Result<Vec<NativeCustodyRegistration>, gateway_core::error::GatewayError> {
+    entries
+        .into_iter()
+        .map(|registration| {
+            NativeCustodyRegistration::existing(
+                registration.home,
+                OwnerFence {
+                    owner: NativeOwnerId(registration.fence.owner),
+                    account_id: registration.fence.account_id,
+                    generation_hash: registration.fence.generation_hash,
+                    authority_revision: registration.fence.authority_revision,
+                },
+            )
+        })
+        .collect()
+}
+fn poll_ready<F: std::future::Future>(
+    mut future: std::pin::Pin<&mut F>,
+    context: &mut std::task::Context<'_>,
+) -> F::Output {
+    loop {
+        if let std::task::Poll::Ready(value) = future.as_mut().poll(context) {
+            return value;
+        }
+        std::thread::yield_now();
+    }
+}
+fn validate_input(input: &Input) -> Result<(), gateway_migration::error::MigrationError> {
     if input.v != 1
         || !input.capture.is_absolute()
         || !input.directory.is_absolute()
@@ -134,6 +155,18 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
     {
         return Err(failure("Private stage frame options are invalid"));
     }
+    Ok(())
+}
+fn main() -> Result<(), gateway_migration::error::MigrationError> {
+    assert_eq!(std::env::args_os().len(), 1, "Private input is stdin only");
+    let mut raw = Vec::new();
+    std::io::stdin()
+        .take(1024 * 1024)
+        .read_to_end(&mut raw)
+        .map_err(|_| failure("Private input cannot be read"))?;
+    let input: Input =
+        serde_json::from_slice(&raw).map_err(|_| failure("Private input is invalid"))?;
+    validate_input(&input)?;
     let parent = std::fs::metadata(&input.directory)
         .map_err(|_| failure("Private stage parent is unavailable"))?;
     if !parent.is_dir() || parent.permissions().mode() & 0o077 != 0 {
@@ -148,21 +181,7 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
             "Private capture hash differs from its producer receipt",
         ));
     }
-    let registrations = input
-        .registrations
-        .into_iter()
-        .map(|registration| {
-            NativeCustodyRegistration::existing(
-                registration.home,
-                OwnerFence {
-                    owner: NativeOwnerId(registration.fence.owner),
-                    account_id: registration.fence.account_id,
-                    generation_hash: registration.fence.generation_hash,
-                    authority_revision: registration.fence.authority_revision,
-                },
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let registrations = registrations(input.registrations)?;
     let custody = ConfiguredNativeCustody::new(registrations)?;
     let directory = gateway_migration::native_stage::directory(&input.directory)?;
     let source = Captured::read(&input.capture, &directory)?;
@@ -175,22 +194,11 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
     {
         let verify = source.verify_configured(&custody);
         let mut verify = std::pin::pin!(verify);
-        loop {
-            if let std::task::Poll::Ready(value) = verify.as_mut().poll(&mut context) {
-                value?;
-                break;
-            }
-            std::thread::yield_now();
-        }
+        poll_ready(verify.as_mut(), &mut context)?;
     }
     let prepare = source.prepare(&custody);
     let mut prepare = std::pin::pin!(prepare);
-    let mut plan: StagePlan = loop {
-        if let std::task::Poll::Ready(value) = prepare.as_mut().poll(&mut context) {
-            break value?;
-        }
-        std::thread::yield_now();
-    };
+    let mut plan: StagePlan = poll_ready(prepare.as_mut(), &mut context)?;
     let summary = plan.summary();
     if summary.source_git_sha != input.source_git_sha {
         return Err(failure(

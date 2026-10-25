@@ -2,9 +2,10 @@
 //! alternate URL, refresh material or unauthenticated receipt acceptance.
 use gateway_auth::native::{NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH};
 use gateway_core::error::GatewayError;
-use gateway_publication::transport::{PublicationCarrier, PublicationRequest, PublicationResponse};
 use std::time::Duration;
 
+type Request = gateway_publication_policy::protocol::PublicationRequest;
+type Response = gateway_publication_policy::protocol::PublicationResponse;
 pub struct HttpsPublicationCarrier {
     target: String,
     agent: ureq::Agent,
@@ -39,8 +40,8 @@ fn configured_agent(roots: ureq::tls::RootCerts) -> ureq::Agent {
         .build();
     ureq::Agent::new_with_config(config)
 }
-impl PublicationCarrier for HttpsPublicationCarrier {
-    async fn send(&self, request: PublicationRequest) -> Result<PublicationResponse, GatewayError> {
+impl gateway_publication_policy::protocol::PublicationCarrier for HttpsPublicationCarrier {
+    async fn send(&self, request: Request) -> Result<Response, GatewayError> {
         if request.method != "POST"
             || request.path != NATIVE_PUBLICATION_PATH
             || request.raw_body.len() > NATIVE_MAX_BODY_BYTES
@@ -75,7 +76,7 @@ impl PublicationCarrier for HttpsPublicationCarrier {
             .limit(65_536)
             .read_to_vec()
             .map_err(|_| unknown())?;
-        Ok(PublicationResponse {
+        Ok(gateway_publication_policy::protocol::PublicationResponse {
             status,
             headers,
             raw_body,

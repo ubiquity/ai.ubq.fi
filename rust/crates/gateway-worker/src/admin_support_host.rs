@@ -176,7 +176,8 @@ mod catalogue_tests {
     use gateway_core::error::GatewayError;
 
     #[test]
-    fn catalogue_lift_preserves_the_exact_original_gateway_error() {
+    fn catalogue_lift_preserves_the_exact_original_gateway_error()
+    -> Result<(), Box<dyn std::error::Error>> {
         let original = GatewayError::new(409, "original catalog error", Some("catalog_fixture"))
             .with_type("server_error")
             .with_param(None);
@@ -187,10 +188,9 @@ mod catalogue_tests {
         let actual = super::catalogue_error(source);
         assert_eq!(actual, original);
         assert_eq!(
-            gateway_core::source_json::SourceJson::from_serializable(&actual.envelope)
-                .unwrap()
-                .as_bytes(),
+            gateway_core::source_json::SourceJson::from_serializable(&actual.envelope)?.as_bytes(),
             expected
         );
+        Ok(())
     }
 }

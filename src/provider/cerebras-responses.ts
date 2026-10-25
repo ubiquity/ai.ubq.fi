@@ -6,7 +6,13 @@ import { json, openaiError } from "../http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "../inference-deadline.ts";
 import { isRecord } from "../utils.ts";
 import { cerebrasProviderHint, parseStreamField } from "../request-policy.ts";
-import { cerebrasUpstreamModelFor, fetchCerebrasChatCompletions, getCerebrasProviderRequestId, normalizeCerebrasProviderRequestId } from "./cerebras.ts";
+import {
+  cerebrasUpstreamModelFor,
+  fetchCerebrasChatCompletions,
+  getCerebrasProviderRequestId,
+  normalizeCerebrasProviderRequestId,
+  projectCerebrasRequest,
+} from "./cerebras.ts";
 import {
   cerebrasReasoningEffortRefusal,
   readCerebrasChatCompletion,
@@ -20,6 +26,7 @@ import {
 import { recordCerebrasProviderHealth } from "./health.ts";
 import { readBoundedResponseBody } from "../bounded-response-body.ts";
 import { logForwardedPayloadElisions, toDeepSeekResponsesChatBody } from "../deepseek/chat-projection.ts";
+import { logForwardedPayloadExemptions } from "../deepseek/forwarded-payload-policy.ts";
 import { CEREBRAS_RESPONSES_PROFILE, type OriginalToolName } from "../deepseek/responses.ts";
 import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../deepseek/responses-payload.ts";
 import { createDeepSeekResponsesStreamTranslator, encodeResponsesEvent } from "../deepseek/responses-stream.ts";
@@ -308,7 +315,7 @@ export const handleCerebrasResponses = async (
 
   // The upstream answers a buffered completion, so the translation never asks
   // for a stream: a client's `stream: true` is answered by the replay below.
-  const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, false, CEREBRAS_RESPONSES_PROFILE);
+  const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, false, CEREBRAS_RESPONSES_PROFILE, projectCerebrasRequest);
   if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
   // The Cerebras transport projects and collapses the translated messages in
   // its final JSON-encoding step, shared with the Chat wire. That is also where
@@ -316,6 +323,12 @@ export const handleCerebrasResponses = async (
   const chatBody: Record<string, unknown> = { ...translated.value.body };
   const { toolNames, customToolNames } = translated.value;
   if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
+  if (translated.value.exemptions.length)
+    logForwardedPayloadExemptions(translated.value.exemptions, {
+      requestId: usageContext?.requestId,
+      model: modelRaw,
+      promptAdmission: translated.value.promptAdmission,
+    });
   // The provider's tier contract is per id, and it is the route's own decision:
   // `none` is refused for gpt-oss-120b while qwen-3.8-27b accepts it. The same
   // helper the Chat route uses answers for both wires.

@@ -112,3 +112,12 @@ test("the Caddy reload applies the validated configuration and a reload failure 
   assert.deepEqual(calls, [{ program: "sudo", args: ["-n", "systemctl", "reload", "caddy"] }]);
   await assert.rejects(() => reloadCaddyIngress(() => Promise.reject(new Error("caddy reload refused"))), /caddy reload refused/);
 });
+
+test("the Caddy ingress holds new requests through a gateway restart without replaying a sent POST", async () => {
+  const caddyfile = await Bun.file(new URL("../ops/Caddyfile", import.meta.url)).text();
+  assert.match(caddyfile, /reverse_proxy 127\.0\.0\.1:7999 \{/);
+  assert.match(caddyfile, /flush_interval -1/);
+  assert.match(caddyfile, /lb_try_duration 25s/);
+  assert.match(caddyfile, /lb_try_interval 250ms/);
+  assert.doesNotMatch(caddyfile, /lb_retry_match/, "a request that reached the gateway must not have its POST body replayed");
+});

@@ -107,6 +107,7 @@ export const isRustPath = (path: string): boolean => path.startsWith("rust/") &&
 export const isRustGatePath = (path: string): boolean => isRustPath(path) || /^scripts\/rust-verify(?:\.test)?\.ts$/.test(path);
 export const RUST_NATIVE_ONLY_PACKAGES = [
   "gateway-native",
+  "gateway-native-supervisor-read",
   "gateway-quality",
   "gateway-quality-syntax",
   "gateway-claude-runtime-test-support",

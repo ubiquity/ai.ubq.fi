@@ -22,6 +22,10 @@ use gateway_schema::aliases::SourceStringCollator;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use support::{Host, Memory, run};
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+fn required<T>(value: Option<T>) -> TestResult<T> {
+    value.ok_or_else(|| "required fixture value missing".into())
+}
 struct ProjectionHost {
     base: Host,
     collator: Arc<dyn SourceStringCollator>,
@@ -65,8 +69,10 @@ fn units(row: &SourceJson, name: &str) -> Vec<u16> {
         .unwrap()
         .into_units()
 }
-fn response_source(response: &gateway_auth::types::AuthResponse) -> SourceJson {
-    SourceJson::parse_bytes(&response.body.to_bytes().unwrap()).unwrap()
+fn response_source(
+    response: &gateway_auth::types::AuthResponse,
+) -> Result<SourceJson, GatewayError> {
+    SourceJson::parse_bytes(&response.body.to_bytes()?)
 }
 fn model_rows(body: &SourceJson) -> Vec<SourceJson> {
     source::member(body, "models")
@@ -95,7 +101,8 @@ fn write<S: QueryStore, H: ObservabilityHost>(
     );
 }
 #[test]
-fn actual_terminal_writer_first_label_profile_survives_named_reader_restart_and_response_bytes() {
+fn actual_terminal_writer_first_label_profile_survives_named_reader_restart_and_response_bytes()
+-> TestResult {
     let memory = Memory::default();
     let runtime = ObservabilityRuntime::new(memory.clone(), host(1000));
     for label in [vec![0xfeff, 0xd800, 32], vec![0xdc00], vec![0xfffd]] {
@@ -104,25 +111,24 @@ fn actual_terminal_writer_first_label_profile_survives_named_reader_restart_and_
     let (key, before) = {
         let rows = memory.rows.borrow();
         assert_eq!(rows.len(), 1);
-        let (key, row) = rows.iter().next().unwrap();
+        let (key, row) = required(rows.iter().next())?;
         (key.clone(), row.clone())
     };
     assert_eq!(before.value_encoding, ValueEncoding::ProfileV2);
     assert_eq!(before.expires_at_ms, None);
-    let restored: StoredRecord =
-        serde_json::from_slice(&serde_json::to_vec(&before).unwrap()).unwrap();
+    let restored: StoredRecord = serde_json::from_slice(&serde_json::to_vec(&before)?)?;
     memory.rows.borrow_mut().insert(key.clone(), restored);
     let runtime = ObservabilityRuntime::new(memory.clone(), host(1000));
-    let rows = run(runtime.paid_usage_rollups(0, 1000)).unwrap();
+    let rows = run(runtime.paid_usage_rollups(0, 1000))?;
     assert_eq!(rows.len(), 1);
     assert_eq!(units(&rows[0], "model"), [0xd800]);
-    let response = run(runtime.quota_projection_response(30, 365)).unwrap();
+    let response = run(runtime.quota_projection_response(30, 365))?;
     assert_eq!(response.status, 200);
     assert_eq!(response.headers["cache-control"], "no-store");
     assert!(response.body.as_json().is_none());
-    let wire = response.body.to_bytes().unwrap();
+    let wire = response.body.to_bytes()?;
     assert!(serde_json::from_slice::<Value>(&wire).is_err());
-    let body = response_source(&response);
+    let body = response_source(&response)?;
     let models = model_rows(&body);
     assert_eq!(models.len(), 1);
     assert_eq!(units(&models[0], "model"), [0xd800]);
@@ -130,30 +136,26 @@ fn actual_terminal_writer_first_label_profile_survives_named_reader_restart_and_
         units(&models[0], "provider"),
         "chatgpt_codex".encode_utf16().collect::<Vec<_>>()
     );
-    let usage = source::member(&models[0], "usage")
-        .unwrap()
-        .array_items()
-        .unwrap();
+    let usage = required(source::member(&models[0], "usage"))?.array_items()?;
     assert_eq!(
-        source::number(&source::member(&usage[0], "request_count").unwrap()),
+        source::number(&required(source::member(&usage[0], "request_count"))?),
         Some(3.0)
     );
     assert_eq!(
-        source::number(&source::member(&usage[0], "input_tokens").unwrap()),
+        source::number(&required(source::member(&usage[0], "input_tokens"))?),
         Some(30.0)
     );
     assert!(
-        source::member(&models[0], "estimates")
-            .unwrap()
-            .array_items()
-            .unwrap()
+        required(source::member(&models[0], "estimates"))?
+            .array_items()?
             .is_empty()
     );
     assert_eq!(memory.rows.borrow().get(&key), Some(&before));
     println!(
         "M41_TERMINAL_PROJECTION_WIRE_FIXTURE={}",
-        serde_json::to_string(&(key, before, wire)).unwrap()
+        serde_json::to_string(&(key, before, wire))?
     );
+    Ok(())
 }
 fn key(bucket: i64, model: &JsString16, provider: &JsString16, shard: u8) -> RecordKey {
     TupleKey::from_parts(&[
@@ -170,7 +172,8 @@ fn key(bucket: i64, model: &JsString16, provider: &JsString16, shard: u8) -> Rec
     .to_record_key()
 }
 #[test]
-fn named_reader_skips_bad_shape_codec_and_expired_rows_but_keeps_scan_failure_unknown() {
+fn named_reader_skips_bad_shape_codec_and_expired_rows_but_keeps_scan_failure_unknown() -> TestResult
+{
     let memory = Memory::default();
     let runtime = ObservabilityRuntime::new(memory.clone(), host(1000));
     write(
@@ -181,20 +184,18 @@ fn named_reader_skips_bad_shape_codec_and_expired_rows_but_keeps_scan_failure_un
     write(&runtime, &JsString16::from_utf8("expired"), "expired");
     let expired = {
         let rows = memory.rows.borrow();
-        rows.iter()
-            .find_map(|(key, row)| {
-                (units(&usage_rollup_record_source(row).unwrap(), "model")
-                    == "expired".encode_utf16().collect::<Vec<_>>())
-                .then_some(key.clone())
-            })
-            .unwrap()
+        let mut expired = None;
+        for (key, row) in rows.iter() {
+            if units(&usage_rollup_record_source(row)?, "model")
+                == "expired".encode_utf16().collect::<Vec<_>>()
+            {
+                expired = Some(key.clone());
+                break;
+            }
+        }
+        required(expired)?
     };
-    memory
-        .rows
-        .borrow_mut()
-        .get_mut(&expired)
-        .unwrap()
-        .expires_at_ms = Some(999);
+    required(memory.rows.borrow_mut().get_mut(&expired))?.expires_at_ms = Some(999);
     let bad = key(0, &"bad".into(), &"custom".into(), 0);
     memory.rows.borrow_mut().insert(
         bad.0,
@@ -203,78 +204,63 @@ fn named_reader_skips_bad_shape_codec_and_expired_rows_but_keeps_scan_failure_un
     let bad = key(0, &"bad-codec".into(), &"custom".into(), 0);
     memory.rows.borrow_mut().insert(
         bad.0,
-        StoredRecord::profile("bad-codec", PortableValue::Null, None).unwrap(),
+        StoredRecord::profile("bad-codec", PortableValue::Null, None)?,
     );
-    let rows = run(runtime.paid_usage_rollups(0, 1000)).unwrap();
+    let rows = run(runtime.paid_usage_rollups(0, 1000))?;
     assert_eq!(rows.len(), 1);
     assert_eq!(units(&rows[0], "model"), [0xd800]);
     assert_eq!(memory.rows.borrow()[&expired].expires_at_ms, Some(999));
-    let body = response_source(&run(runtime.quota_projection_response(30, 365)).unwrap());
+    let body = response_source(&run(runtime.quota_projection_response(30, 365))?)?;
     assert_eq!(
-        source::member(&body, "rollup_scan")
-            .unwrap()
-            .deserialize::<String>()
-            .unwrap(),
+        required(source::member(&body, "rollup_scan"))?.deserialize::<String>()?,
         "ok"
     );
     assert_eq!(model_rows(&body).len(), 1);
     memory.unavailable.set(true);
-    let body = response_source(&run(runtime.quota_projection_response(30, 365)).unwrap());
+    let body = response_source(&run(runtime.quota_projection_response(30, 365))?)?;
     assert_eq!(
-        source::member(&body, "rollup_scan")
-            .unwrap()
-            .deserialize::<String>()
-            .unwrap(),
+        required(source::member(&body, "rollup_scan"))?.deserialize::<String>()?,
         "unavailable"
     );
     assert_eq!(
-        source::member(&body, "balance_history_scan")
-            .unwrap()
-            .deserialize::<String>()
-            .unwrap(),
+        required(source::member(&body, "balance_history_scan"))?.deserialize::<String>()?,
         "unavailable"
     );
     assert!(model_rows(&body).is_empty());
+    Ok(())
 }
 #[test]
-fn source_reader_and_projection_preserve_all_oracle_labels_without_global_value_interpretation() {
+fn source_reader_and_projection_preserve_all_oracle_labels_without_global_value_interpretation()
+-> TestResult {
     let data = fixture();
-    let rows = source::member(&data, "rows")
-        .unwrap()
-        .array_items()
-        .unwrap();
-    let now = source::member(&data, "now")
-        .unwrap()
-        .deserialize::<i64>()
-        .unwrap();
+    let rows = required(source::member(&data, "rows"))?.array_items()?;
+    let now = required(source::member(&data, "now"))?.deserialize::<i64>()?;
     let memory = Memory::default();
     for (i, row) in rows.iter().enumerate() {
         let model = row_field(row, "model");
         let provider = row_field(row, "provider");
-        let bucket = source::member(row, "bucket_start_at_ms")
-            .unwrap()
-            .deserialize::<i64>()
-            .unwrap();
+        let bucket = required(source::member(row, "bucket_start_at_ms"))?.deserialize::<i64>()?;
         let key = key(bucket, &model, &provider, 0);
         memory.rows.borrow_mut().insert(
             key.0,
-            encode_source_control_record(format!("fixture-{i}"), row, None).unwrap(),
+            encode_source_control_record(format!("fixture-{i}"), row, None)?,
         );
     }
     let mut host = host(now);
     host.collator = Arc::new(CapturedCollator::new());
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
-    let read = run(runtime.paid_usage_rollups(now - 30 * 86400000, now)).unwrap();
+    let read = run(runtime.paid_usage_rollups(now - 30 * 86400000, now))?;
     assert_eq!(read.len(), rows.len());
-    let response = run(runtime.quota_projection_response(30, 7)).unwrap();
-    let actual = response_source(&response);
-    let expected = source::member(&data, "expected").unwrap();
+    let response = run(runtime.quota_projection_response(30, 7))?;
+    let actual = response_source(&response)?;
+    let expected = required(source::member(&data, "expected"))?;
     // Compare whole source model outputs; numeric engine/source oracle prove the same labels,
     // windows and unknown-provider behavior, with no Value roundtrip.
     assert_source_eq(
-        &source::member(&actual, "models").unwrap(),
-        &source::member(&expected, "models").unwrap(),
+        &required(source::member(&actual, "models"))?,
+        &required(source::member(&expected, "models"))?,
     );
+    Ok(())
 }
 fn row_field(row: &SourceJson, name: &str) -> JsString16 {
     source::member(row, name).unwrap().deserialize().unwrap()

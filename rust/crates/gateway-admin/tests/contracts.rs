@@ -852,7 +852,7 @@ async fn prepare_paid_fixture_custody(
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
     use gateway_authority::{keys, paid_control, paid_types::PaidRoutingPolicy};
     use gateway_core::provider::PaidProvider;
-    use gateway_publication::control_publication::{
+    use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
         fixture_owner_statement,
     };

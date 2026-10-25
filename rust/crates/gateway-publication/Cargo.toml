@@ -9,8 +9,13 @@ publish.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
+gateway-publication-policy = { path = "../gateway-publication-policy" }
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+gateway-publication-test-support = { path = "../gateway-publication-test-support" }
+gateway-publication-transport = { path = "../gateway-publication-transport" }
 
 [lints]
 workspace = true

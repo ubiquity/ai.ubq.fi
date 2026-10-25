@@ -1,4 +1,5 @@
-use crate::{host::*, persistence, pool::ClaudePoolSession};
+use crate::host::{ClaudePoolHost, SelectedAccount, SelectionInput};
+use crate::{persistence, pool::ClaudePoolSession};
 use gateway_admin_runtime::claude::{self, AccountUpdate, Workspace};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, js_string_case::lowercase_source,

@@ -160,6 +160,7 @@ const POST_TERMINAL_ROUTES: Readonly<Record<string, string>> = Object.freeze({
   "/uos/embedding-jobs": "embeddings.jobs.create",
   "/v1/chat/completions": "chat.completions",
   "/v1/responses": "responses",
+  "/v1/decisions": "decisions",
   "/v1/systemone": "systemone",
   "/v1/images/generations": "images.generations",
   "/v1/images/edits": "images.edits",

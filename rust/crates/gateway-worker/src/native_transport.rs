@@ -9,7 +9,11 @@ use crate::{
 };
 use gateway_auth::{
     crypto::base64url,
-    native::*,
+    native::{
+        NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,
+        NATIVE_MAX_BODY_BYTES, NATIVE_NONCE_HEADER, NATIVE_RPC_PATH, NATIVE_TIME_HEADER,
+        NATIVE_VERSION_HEADER,
+    },
     native_auth::NativeTransportIdentity,
     native_control::{NATIVE_CONTROL_MAX_BYTES, unverified},
 };

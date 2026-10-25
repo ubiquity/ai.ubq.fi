@@ -10,7 +10,7 @@ use gateway_migration::{
     native_capture::{NativeCapture, NativeEntry, NativeValue},
     native_inverse::export_native_latest,
     native_operator, native_stage, operational,
-    staged::*,
+    staged::{StageRequest, decode_stage_request, execute_staged},
 };
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt, path::Path};

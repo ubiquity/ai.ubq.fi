@@ -1,4 +1,5 @@
 use gateway_catalog_runtime::CatalogRuntime;
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_catalog_runtime::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
     CatalogProvider, CodexAccount, CredentialPublication, ProviderBinding,
@@ -67,7 +68,7 @@ impl Store {
             .filter(|r| r.expires_at_ms.is_none_or(|at| at > self.now.get()))
             .cloned()
     }
-    fn seed(&self, version: &str, fetched: i64, body: &str, upstream_etag: Option<&str>) {
+    fn seed(&self, version: &str, fetched: i64, body: &str, etag: Option<&str>) -> TestResult {
         self.put(catalog_store::auth_generation_key(), "g", "g".into());
         let prepared = catalog_cache::prepare_catalog(
             catalog_cache::CatalogIdentity {
@@ -76,13 +77,13 @@ impl Store {
                 body_generation: &format!("seed-{version}-{fetched}"),
             },
             body,
-            upstream_etag,
+            etag,
             None,
             fetched,
             &BTreeMap::new(),
-        )
-        .unwrap();
-        assert!(run(catalog_store::publish_catalog(self, &prepared)).unwrap());
+        )?;
+        assert!(run(catalog_store::publish_catalog(self, &prepared))?);
+        Ok(())
     }
 }
 impl AuthorityStore for Store {
@@ -172,8 +173,11 @@ struct Outcome {
 }
 impl Outcome {
     fn json(body: Value) -> Self {
+        Self::response(200, body.to_string())
+    }
+    fn response(status: u16, body: impl Into<String>) -> Self {
         Self {
-            response: Ok(CatalogFetchResponse::json(200, body.to_string())),
+            response: Ok(CatalogFetchResponse::json(status, body)),
             ticks: 0,
             callback: None,
         }
@@ -373,20 +377,15 @@ fn invalid_or_duplicate_version_never_dispatches() {
     assert!(host.requests.borrow().is_empty());
 }
 #[test]
-fn single_account_304_revalidates_source_and_hashes_final_client_bytes() {
+fn single_account_304_revalidates_source_and_hashes_final_client_bytes() -> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
     let old_time = store.now.get() - catalog_cache::FRESH_MS - 1;
     let source = catalog("one").to_string();
-    store.seed("0.163.0", old_time, &source, Some("\"upstream\""));
-    host.queue(Outcome {
-        response: Ok(CatalogFetchResponse::json(304, "")),
-        ticks: 0,
-        callback: None,
-    });
-    let response =
-        run(runtime.versioned_models(&store, &host, "0.163.0", Some("\"upstream\""))).unwrap();
+    store.seed("0.163.0", old_time, &source, Some("\"upstream\""))?;
+    host.queue(Outcome::response(304, ""));
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", Some("\"upstream\"")))?;
     assert_eq!(response.status, 200);
     assert_eq!(response.headers["x-uos-cache"], "revalidated");
     assert_ne!(response.headers["ETag"], "\"upstream\"");
@@ -398,11 +397,11 @@ fn single_account_304_revalidates_source_and_hashes_final_client_bytes() {
         "0.163.0",
         "g",
         store.now.get(),
-    ))
-    .unwrap()
-    .unwrap();
+    ))?
+    .ok_or("expected seeded catalog")?;
     assert!(loaded.metadata.fresh(store.now.get()));
     assert_eq!(loaded.source_body, Some(source));
+    Ok(())
 }
 #[test]
 fn pool_union_keeps_first_metadata_and_never_sends_one_accounts_etag() {
@@ -475,7 +474,7 @@ fn union_survives_one_account_transport_failure_without_quota_writes() {
     );
 }
 #[test]
-fn failed_refresh_serves_retained_stale_body_and_releases_lease() {
+fn failed_refresh_serves_retained_stale_body_and_releases_lease() -> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
@@ -484,45 +483,41 @@ fn failed_refresh_serves_retained_stale_body_and_releases_lease() {
         store.now.get() - catalog_cache::FRESH_MS - 1,
         &catalog("stale").to_string(),
         None,
-    );
-    host.queue(Outcome {
-        response: Ok(CatalogFetchResponse::json(503, "{}")),
-        ticks: 0,
-        callback: None,
-    });
-    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    )?;
+    host.queue(Outcome::response(503, "{}"));
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None))?;
     assert_eq!(ids(&response), ["stale"]);
     assert_eq!(response.headers["x-uos-cache"], "stale");
     assert!(store.live(&catalog_store::lease_key("0.163.0")).is_none());
+    Ok(())
 }
 #[test]
-fn cold_wait_observes_existing_refresh_without_duplicate_fetch() {
+fn cold_wait_observes_existing_refresh_without_duplicate_fetch() -> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
     store.put(catalog_store::auth_generation_key(), "g", json!("g"));
-    assert!(
-        run(catalog_store::acquire_refresh_lease(
-            &store,
-            "0.163.0",
-            "other",
-            store.now.get()
-        ))
-        .unwrap()
-    );
+    assert!(run(catalog_store::acquire_refresh_lease(
+        &store,
+        "0.163.0",
+        "other",
+        store.now.get()
+    ))?);
     let shared = store.clone();
     host.on_wait.replace(Some(Rc::new(move || {
-        shared.seed(
+        let seeded = shared.seed(
             "0.163.0",
             shared.now.get(),
             &catalog("shared").to_string(),
             None,
-        )
+        );
+        assert!(seeded.is_ok());
     })));
-    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None))?;
     assert_eq!(response.headers["x-uos-cache"], "wait");
     assert_eq!(ids(&response), ["shared"]);
     assert!(host.requests.borrow().is_empty());
+    Ok(())
 }
 #[test]
 fn lost_lease_cannot_publish_or_delete_successors_lease() {
@@ -663,7 +658,7 @@ fn cold_failure_uses_configured_static_fallback_without_inventing_codex_rows() {
     assert!(host.requests.borrow().is_empty());
 }
 #[test]
-fn expired_catalog_from_another_version_is_not_fallback() {
+fn expired_catalog_from_another_version_is_not_fallback() -> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
@@ -672,13 +667,10 @@ fn expired_catalog_from_another_version_is_not_fallback() {
         store.now.get(),
         &catalog("other-version").to_string(),
         None,
-    );
-    host.queue(Outcome {
-        response: Ok(CatalogFetchResponse::json(500, "{}")),
-        ticks: 0,
-        callback: None,
-    });
+    )?;
+    host.queue(Outcome::response(500, "{}"));
     assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err());
+    Ok(())
 }
 #[test]
 fn claude_failure_retains_ids_and_withdraws_reasoning_permissions() {
@@ -995,24 +987,25 @@ fn validation_publication_cannot_be_overwritten_by_an_older_inflight_refresh() {
     );
 }
 #[test]
-fn public_openrouter_enrichment_does_not_require_routing_credentials() {
+fn public_openrouter_enrichment_does_not_require_routing_credentials() -> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
     host.queue(Outcome::json(json!({"data":[{"id":"vendor/model","context_length":123456,"top_provider":{"context_length":200000},"reasoning":{"supported_efforts":["custom","none"],"default_effort":"custom"}}]})));
-    run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, false)).unwrap();
+    run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, false))?;
     store.seed(
         "0.163.0",
         store.now.get(),
         &catalog("vendor/model").to_string(),
         None,
-    );
-    let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
+    )?;
+    let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get()))?;
     assert!(!state.input.configured("openrouter"));
     assert_eq!(
         state.input.enrichment[&"vendor/model".into()].max_context_window_tokens,
         Some(200000)
     );
+    Ok(())
 }
 #[test]
 fn openrouter_empty_failure_retains_cache_and_ambiguous_matches_are_unknown() {
@@ -1121,7 +1114,7 @@ fn logical_lease_expiry_between_chunk_and_metadata_publication_fails_closed() {
 }
 
 #[test]
-fn wrong_version_metadata_never_serves_another_versions_rows() {
+fn wrong_version_metadata_never_serves_another_versions_rows() -> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();
@@ -1130,8 +1123,10 @@ fn wrong_version_metadata_never_serves_another_versions_rows() {
         store.now.get(),
         &catalog("other").to_string(),
         None,
-    );
-    let other = store.live(&catalog_store::metadata_key("0.162.0")).unwrap();
+    )?;
+    let other = store
+        .live(&catalog_store::metadata_key("0.162.0"))
+        .ok_or("expected seeded metadata")?;
     store.put(
         catalog_store::metadata_key("0.163.0"),
         "corrupt",
@@ -1139,6 +1134,7 @@ fn wrong_version_metadata_never_serves_another_versions_rows() {
     );
     assert!(run(runtime.versioned_models(&store, &host, "0.163.0", None)).is_err());
     assert!(host.requests.borrow().is_empty());
+    Ok(())
 }
 
 #[test]
@@ -1254,7 +1250,7 @@ fn optional_health_persistence_failure_does_not_fail_a_valid_catalog() {
 // Source ba5ef05e: catalog/models.ts withDeepSeekOfficialModels replaces a matching
 // trimmed slug (or id when the slug is blank), without moving the original slot.
 #[test]
-fn exact_version_response_replaces_stale_same_id_official_deepseek_rows() {
+fn exact_version_response_replaces_stale_same_id_official_deepseek_rows() -> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     host.provider(CatalogProvider::Deepseek, "configured-deepseek");
@@ -1267,9 +1263,9 @@ fn exact_version_response_replaces_stale_same_id_official_deepseek_rows() {
         {"slug":"unrelated-before","future":"retained"},
         {"slug":"  deepseek-v4-flash  ","owned_by":"stale-discovery","supported_reasoning_levels":["third-party"],"default_reasoning_level":"third-party"},
         {"id":" \u{feff}deepseek-flash ","owned_by":"stale-discovery","future":"replaced"}
-    ],"future_envelope":"retained"}).to_string(), None);
+    ],"future_envelope":"retained"}).to_string(), None)?;
     let runtime = CatalogRuntime::new();
-    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None)).unwrap();
+    let response = run(runtime.versioned_models(&store, &host, "0.163.0", None))?;
     let result = body(&response);
     assert_eq!(result["future_envelope"], "retained");
     assert_eq!(result["models"][0]["future"], "retained");
@@ -1279,21 +1275,26 @@ fn exact_version_response_replaces_stale_same_id_official_deepseek_rows() {
         assert_eq!(row["owned_by"], "deepseek");
         let efforts = row["supported_reasoning_levels"]
             .as_array()
-            .unwrap()
+            .ok_or("missing levels")?
             .iter()
-            .map(|level| level["effort"].as_str().unwrap())
+            .map(|level| level["effort"].as_str())
             .collect::<Vec<_>>();
-        assert_eq!(efforts, ["none", "low", "high", "max"]);
+        assert_eq!(
+            efforts,
+            [Some("none"), Some("low"), Some("high"), Some("max")]
+        );
         assert_eq!(row["default_reasoning_level"], "high");
         assert!(row.get("future").is_none());
     }
     assert!(host.requests.borrow().is_empty());
+    Ok(())
 }
 
 // Source ba5ef05e admin-models-catalog.test.ts: paid discovery is encountered
 // before the official declaration; the latter describes this gateway route.
 #[test]
-fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_its_route() {
+fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_its_route()
+-> TestResult {
     let store = Store::new();
     let host = Host::new(&store);
     host.provider(CatalogProvider::Surplus, "configured-surplus");
@@ -1303,31 +1304,29 @@ fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_i
         {"id":"deepseek-v4-flash","created":1_800_000_000i64,"provider":"surplus"},
         {"id":"unrelated-discovery","provider":"surplus"}
     ]})));
-    run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, true)).unwrap();
+    run(runtime.refresh_provider(&store, &host, CatalogProvider::Surplus, true))?;
     host.queue(Outcome::json(json!({"data":[
         {"id":"deepseek-v4-flash","context_length":1_048_576,"top_provider":{"context_length":1_048_576},"reasoning":{"supported_efforts":["third-party"],"default_effort":"third-party"}},
         {"id":"unrelated-discovery","context_length":123_456,"reasoning":{"supported_efforts":["retained-custom"],"default_effort":"retained-custom"}}
     ]})));
-    run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, true)).unwrap();
-    let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get())).unwrap();
+    run(runtime.refresh_provider(&store, &host, CatalogProvider::Openrouter, true))?;
+    let state = run(runtime.load_state(&store, &host.published.borrow(), store.now.get()))?;
     let catalog =
-        gateway_schema::catalog_views::build_catalog_snapshot(&state.input, &loader_fixture())
-            .unwrap()
-            .deserialize::<Value>()
-            .unwrap();
-    let rows = catalog["models"].as_array().unwrap();
+        gateway_schema::catalog_views::build_catalog_snapshot(&state.input, &loader_fixture())?
+            .deserialize::<Value>()?;
+    let rows = catalog["models"].as_array().ok_or("missing rows")?;
     let official = rows
         .iter()
         .find(|row| row["id"] == "deepseek-v4-flash")
-        .unwrap();
+        .ok_or("missing model")?;
     assert_eq!(
         official["providers"]
             .as_array()
-            .unwrap()
+            .ok_or("missing providers")?
             .iter()
-            .map(|provider| provider["id"].as_str().unwrap())
+            .map(|provider| provider["id"].as_str())
             .collect::<Vec<_>>(),
-        ["surplus", "deepseek"]
+        [Some("surplus"), Some("deepseek")]
     );
     assert_eq!(official["created"], 1_800_000_000i64);
     assert_eq!(official["context_window_tokens"], 1_000_000);
@@ -1342,13 +1341,14 @@ fn later_official_deepseek_public_metadata_overwrites_paid_enrichment_only_for_i
     let unrelated = rows
         .iter()
         .find(|row| row["id"] == "unrelated-discovery")
-        .unwrap();
+        .ok_or("missing model")?;
     assert_eq!(unrelated["context_window_tokens"], 123_456);
     assert_eq!(
         unrelated["supported_reasoning_levels"],
         json!(["retained-custom"])
     );
     assert_eq!(unrelated["context_source"], "openrouter");
+    Ok(())
 }
 
 struct SelectionReads {

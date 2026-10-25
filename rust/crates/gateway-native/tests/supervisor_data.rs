@@ -2,8 +2,9 @@ use gateway_core::redaction;
 use gateway_native::{
     supervisor::SourceId,
     supervisor_data::{SupervisorData, SupervisorSourceConfig},
-    supervisor_metadata, supervisor_rollout,
+    supervisor_rollout,
 };
+use gateway_native_supervisor_read::metadata as supervisor_metadata;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::{
@@ -17,6 +18,17 @@ use std::{
     thread,
     time::Duration,
 };
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Debug)]
+struct FixtureThreadFailure(Box<dyn std::any::Any + Send>);
+impl std::fmt::Display for FixtureThreadFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:?}", self.0)
+    }
+}
+impl std::error::Error for FixtureThreadFailure {}
+
 struct Fixture {
     root: PathBuf,
 }
@@ -182,40 +194,27 @@ fn real_readonly_sqlite_and_missing_corrupt_schema_cases_are_bounded() {
     assert!(old.exists());
 }
 #[test]
-fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() {
+fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() -> FixtureResult<()> {
     let fixture = Fixture::new();
     let home = fixture.home();
     let db = database(&home, 12);
-    let before = fs::read(&db).unwrap();
-    fs::create_dir(home.join("sessions")).unwrap();
+    let before = fs::read(&db)?;
+    fs::create_dir(home.join("sessions"))?;
     let rollout = home.join("sessions/rollout-thread-a.jsonl");
-    fs::write(&rollout,[json!({"timestamp":"2026-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"analysis","content":[{"type":"output_text","text":"zqPRIVATE_ROLLOUT"}]}}).to_string(),json!({"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Fresh visible rollout result"}]}}).to_string()].join("\n")).unwrap();
+    fs::write(&rollout,[json!({"timestamp":"2026-01-01T00:00:00Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"analysis","content":[{"type":"output_text","text":"zqPRIVATE_ROLLOUT"}]}}).to_string(),json!({"timestamp":"2026-01-01T00:00:01Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Fresh visible rollout result"}]}}).to_string()].join("\n"))?;
     let socket = fixture.root.join("source.sock");
     let server = Server::start(socket.clone(), Some(rollout.clone()));
     let config = SupervisorSourceConfig::configured(
-        SourceId::parse("fixture").unwrap(),
+        SourceId::parse("fixture")?,
         "Fixture Machine".into(),
         socket,
         Some(home.clone()),
-    )
-    .unwrap();
+    )?;
     let data = Arc::new(
-        SupervisorData::configured(vec![config])
-            .unwrap()
+        SupervisorData::configured(vec![config])?
             .with_metadata(Some("fixture-host".into()), vec![]),
     );
-    let snapshots = thread::scope(|scope| {
-        let tasks = (0..4)
-            .map(|_| {
-                let data = &data;
-                scope.spawn(move || data.snapshot(1700000000000).unwrap())
-            })
-            .collect::<Vec<_>>();
-        tasks
-            .into_iter()
-            .map(|task| task.join().unwrap())
-            .collect::<Vec<_>>()
-    });
+    let snapshots = concurrent_snapshots(&data)?;
     assert!(snapshots.windows(2).all(|v| v[0] == v[1]));
     assert_eq!(server.lists.load(Ordering::Relaxed), 1);
     let snapshot = &snapshots[0];
@@ -225,42 +224,50 @@ fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() {
     assert!(!snapshot.to_string().contains("ZQ_SYNTHETIC_VALUE"));
     assert_eq!(
         data.select("fixture", "not-listed", 1700000000000)
-            .unwrap_err()
+            .err()
+            .ok_or("Expected supervisor refusal")?
             .status,
         409
     );
     assert_eq!(
         data.select("fixture", "../private", 1700000000000)
-            .unwrap_err()
+            .err()
+            .ok_or("Expected supervisor refusal")?
             .status,
         400
     );
-    let selected = data.select("fixture", "thread-a", 1700000000000).unwrap();
+    let selected = data.select("fixture", "thread-a", 1700000000000)?;
     assert_eq!(
         selected.sampled_at_ms(),
-        snapshot["sampledAtMs"].as_i64().unwrap()
+        snapshot["sampledAtMs"]
+            .as_i64()
+            .ok_or("Snapshot sampledAtMs is not an integer")?
     );
-    let context = data.brief_context(&selected, 1700000000000).unwrap();
+    let context = data.brief_context(&selected, 1700000000000)?;
     assert!(context.transcript_available);
     assert_eq!(context.state.as_deref(), Some("active"));
     assert_eq!(context.title.as_deref(), Some("[redacted]"));
     assert!(context.rollout_tail_events > 0);
-    let mut actual = serde_json::to_value(&context).unwrap();
+    let mut actual = serde_json::to_value(&context)?;
     actual["rolloutPath"] = json!("/fixture/home/sessions/rollout-thread-a.jsonl");
     let golden: Value =
-        serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json"))?;
     assert_eq!(actual, golden["collection"]["expected"]);
-    let wire = serde_json::to_string(&context).unwrap();
+    let wire = serde_json::to_string(&context)?;
     assert!(!wire.contains("zqfirst") && !wire.contains("zqsecond") && !wire.contains("zqPRIVATE"));
     assert!(wire.contains("Fresh visible rollout result"));
-    assert_eq!(before, fs::read(&db).unwrap());
+    assert_eq!(before, fs::read(&db)?);
     assert_eq!(
         gateway_native::transport::SupervisorMethod::parse("turn/start")
-            .unwrap_err()
+            .err()
+            .ok_or("Expected supervisor refusal")?
             .status,
         403
     );
-    let methods = server.methods.lock().unwrap();
+    let methods = server
+        .methods
+        .lock()
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     assert!(methods.iter().all(|m| matches!(
         m.as_str(),
         "initialize"
@@ -273,9 +280,9 @@ fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() {
     )));
     drop(methods);
     let outside = fixture.root.join("outside-thread-a.jsonl");
-    fs::write(&outside, b"outside").unwrap();
+    fs::write(&outside, b"outside")?;
     let escape = home.join("sessions/link-thread-a.jsonl");
-    std::os::unix::fs::symlink(&outside, &escape).unwrap();
+    std::os::unix::fs::symlink(&outside, &escape)?;
     assert!(
         supervisor_rollout::read_rollout_tail(
             Some(&home),
@@ -300,7 +307,20 @@ fn actual_uds_inventory_selection_cache_brief_and_rollout_are_read_only() {
         )
         .is_empty()
     );
+    Ok(())
 }
+fn concurrent_snapshots(data: &Arc<SupervisorData>) -> FixtureResult<Vec<Value>> {
+    thread::scope(|scope| {
+        let tasks = (0..4)
+            .map(|_| scope.spawn(move || data.snapshot(1700000000000)))
+            .collect::<Vec<_>>();
+        tasks
+            .into_iter()
+            .map(|task| -> FixtureResult<_> { Ok(task.join().map_err(FixtureThreadFailure)??) })
+            .collect()
+    })
+}
+
 #[test]
 fn raw_follow_redaction_precedes_clipping_and_preserves_indices() {
     let items = json!([{"type":"userMessage","text":"private user ignored"},{"type":"agentMessage","id":"m","text":format!("{}password:\"zqfirst","x".repeat(3990))},{"type":"commandExecution","id":"c","command":"zqsecond\"","aggregatedOutput":"token=ZQ_SYNTHETIC_CREDENTIAL_12345","status":"completed"}]);

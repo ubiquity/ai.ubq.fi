@@ -2,12 +2,10 @@ use gateway_core::{
     error::GatewayError,
     health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, ReleaseIdentity},
 };
-use native_host::NativeBindings;
-use response::GatewayResponse;
-use std::rc::Rc;
 #[cfg(feature = "entrypoint")]
 use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
+use {native_host::NativeBindings, response::GatewayResponse, std::rc::Rc};
 
 mod admin_host;
 mod admin_support_host;
@@ -21,7 +19,6 @@ mod catalog;
 mod catalog_host;
 mod claude_host;
 mod codex_admin_host;
-mod codex_capacity_recovery;
 mod compaction_host;
 mod cors;
 mod extras;
@@ -90,7 +87,7 @@ pub async fn fetch_with_publication(
     request: Request,
     env: Env,
     context: Context,
-    receiver: Option<&gateway_publication::transport::PublicationReceiver>,
+    receiver: Option<&gateway_publication_transport::transport::PublicationReceiver>,
 ) -> Result<GatewayResponse> {
     fetch_with_bindings(request, env, context, receiver, NativeBindings::default()).await
 }
@@ -101,7 +98,7 @@ pub async fn fetch_with_bindings(
     request: Request,
     env: Env,
     context: Context,
-    receiver: Option<&gateway_publication::transport::PublicationReceiver>,
+    receiver: Option<&gateway_publication_transport::transport::PublicationReceiver>,
     native: NativeBindings,
 ) -> Result<GatewayResponse> {
     let identity = match ReleaseIdentity::cloudflare(

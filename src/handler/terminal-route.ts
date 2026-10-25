@@ -30,6 +30,7 @@ import { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } from "../embeddings
 import { getResponseTelemetry } from "../openai-telemetry.ts";
 import { handleImages } from "../images.ts";
 import { handleModels } from "../models/catalog.ts";
+import { handleDecisions } from "../decisions/handlers.ts";
 import { handleSystemOne } from "../systemone/handlers.ts";
 import {
   type AcceptedSentinelReplayInput,
@@ -546,6 +547,15 @@ const handleTerminalRoute = async (
     });
     return await finishTerminalResponse(response, "responses", true, true);
   };
+  const runDecisionsRoute = async (): Promise<Response> => {
+    const response = await executeInference(() => handleDecisions(req, usageContext));
+    if (response.ok) {
+      await bestEffortSettleKernelQuota("completed");
+    } else {
+      await bestEffortSettleKernelQuota("incomplete", "decisions_failed");
+    }
+    return await finishTerminalResponse(response, "decisions", true, true);
+  };
   const runSystemOneRoute = async (): Promise<Response> => {
     const response = await executeInference(() => handleSystemOne(req, usageContext));
     if (response.ok) {
@@ -568,6 +578,7 @@ const handleTerminalRoute = async (
       [req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits"), runImagesRoute],
       [req.method === "POST" && path === "/v1/chat/completions", runChatCompletionsRoute],
       [req.method === "POST" && path === "/v1/responses", runResponsesRoute],
+      [req.method === "POST" && path === "/v1/decisions", runDecisionsRoute],
       [req.method === "POST" && path === "/v1/systemone", runSystemOneRoute],
     ];
     for (const [matches, run] of terminalRoutes) {

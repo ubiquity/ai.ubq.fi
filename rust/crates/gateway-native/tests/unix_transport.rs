@@ -249,9 +249,21 @@ fn expired_renewal_deadline_refuses_before_opening_registered_socket() {
     );
 }
 
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
+type PeerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+#[derive(Debug)]
+struct FixtureThreadFailure(Box<dyn std::any::Any + Send>);
+impl std::fmt::Display for FixtureThreadFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:?}", self.0)
+    }
+}
+impl std::error::Error for FixtureThreadFailure {}
+
 fn renewal_fixture(
     persist_generation: bool,
-) -> Result<NativeGeneration, gateway_core::error::GatewayError> {
+) -> FixtureResult<Result<NativeGeneration, gateway_core::error::GatewayError>> {
     renewal_with_guard(persist_generation, GuardPolicy::Allow)
 }
 
@@ -275,7 +287,17 @@ impl gateway_native::owner_control::NativeRenewalGuard for FixtureGuard {
     }
     async fn ensure_current(&self) -> Result<(), gateway_core::error::GatewayError> {
         if self.policy == GuardPolicy::RevokeAfterIdentity
-            && self.observed.lock().unwrap().len() >= 3
+            && self
+                .observed
+                .lock()
+                .map_err(|error| {
+                    gateway_core::error::GatewayError::unavailable(
+                        error.to_string(),
+                        "fixture_observation_poisoned",
+                    )
+                })?
+                .len()
+                >= 3
         {
             return Err(gateway_core::error::GatewayError::new(
                 409,
@@ -299,12 +321,12 @@ impl gateway_native::owner_control::NativeRenewalGuard for FixtureGuard {
 fn renewal_with_guard(
     persist_generation: bool,
     policy: GuardPolicy,
-) -> Result<NativeGeneration, gateway_core::error::GatewayError> {
+) -> FixtureResult<Result<NativeGeneration, gateway_core::error::GatewayError>> {
     run(async {
         let home = FixtureHome::new();
         let old = document("fixture-refresh-a", "2026-10-18T12:00:00.000000001Z");
-        fs::write(home.0.join("auth.json"), serde_json::to_vec(&old).unwrap()).unwrap();
-        let current = parse_native_document(&old).unwrap();
+        fs::write(home.0.join("auth.json"), serde_json::to_vec(&old)?)?;
+        let current = parse_native_document(&old)?;
         let owner = NativeOwnerId("fixture-primary".into());
         let fence = OwnerFence {
             owner: owner.clone(),
@@ -312,125 +334,154 @@ fn renewal_with_guard(
             generation_hash: current.generation_hash(),
             authority_revision: "fixture-authority-revision".into(),
         };
-        let listener = UnixListener::bind(home.socket()).unwrap();
+        let listener = UnixListener::bind(home.socket())?;
         let server_home = home.0.clone();
         let observed = Arc::new(Mutex::new(Vec::new()));
         let seen = observed.clone();
         let server = thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            stream
-                .set_write_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            let mut socket = tungstenite::accept(stream).unwrap();
-            while let Ok(message) = socket.read() {
-                if matches!(message, Message::Close(_)) {
-                    break;
-                }
-                let Message::Text(text) = message else {
-                    continue;
-                };
-                let value: Value = serde_json::from_str(&text).unwrap();
-                let method = value["method"].as_str().unwrap();
-                seen.lock()
-                    .unwrap()
-                    .push((method.to_owned(), value.get("params").cloned()));
-                let Some(id) = value.get("id") else {
-                    continue;
-                };
-                let result = match method {
-                    "initialize" => json!({"codexHome":server_home}),
-                    "account/read" => {
-                        if persist_generation
-                            && (value["params"]["refreshToken"] == true
-                                || policy == GuardPolicy::AdoptDuringHandshake)
-                        {
-                            let next =
-                                document("fixture-refresh-b", "2026-10-18T12:00:00.000000002Z");
-                            fs::write(
-                                server_home.join("auth.json"),
-                                serde_json::to_vec(&next).unwrap(),
-                            )
-                            .unwrap();
-                        }
-                        json!({"account":{"type":"chatgpt","email":"fixture@example.invalid"},"workspaceRouting":{"chatgptAccountId":"workspace"}})
-                    }
-                    _ => panic!("unexpected native method"),
-                };
-                socket
-                    .send(Message::Text(
-                        json!({"id":id,"result":result}).to_string().into(),
-                    ))
-                    .unwrap();
-            }
+            serve_renewal(listener, server_home, seen, persist_generation, policy)
         });
-        let transport = UnixOwnerTransport::new(vec![
-            NativeOwnerLocation::configured(owner, home.0.clone()).unwrap(),
-        ])
-        .unwrap();
+        let transport = UnixOwnerTransport::new(vec![NativeOwnerLocation::configured(
+            owner,
+            home.0.clone(),
+        )?])?;
         let guard = FixtureGuard {
             observed: observed.clone(),
             policy,
         };
         let result = renew_owned_guarded(&transport, &guard, fence, &current).await;
-        server.join().unwrap();
-        let observed = observed.lock().unwrap();
+        server
+            .join()
+            .map_err(FixtureThreadFailure)?
+            .map_err(|error| error as Box<dyn std::error::Error>)?;
+        let observed = observed
+            .lock()
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
         assert_eq!(
             observed.len(),
             if policy == GuardPolicy::Allow { 4 } else { 3 }
         );
         assert_eq!(observed[0].0, "initialize");
         assert_eq!(observed[1].0, "initialized");
-        assert_eq!(observed[2].1.as_ref().unwrap()["refreshToken"], false);
+        assert_eq!(
+            observed[2]
+                .1
+                .as_ref()
+                .ok_or("Identity request params are missing")?["refreshToken"],
+            false
+        );
         if policy == GuardPolicy::Allow {
-            assert_eq!(observed[3].1.as_ref().unwrap()["refreshToken"], true);
+            assert_eq!(
+                observed[3]
+                    .1
+                    .as_ref()
+                    .ok_or("Refresh request params are missing")?["refreshToken"],
+                true
+            );
         }
-        result
+        Ok(result)
     })
 }
 
+fn serve_renewal(
+    listener: UnixListener,
+    server_home: PathBuf,
+    seen: Arc<Mutex<ObservedRequests>>,
+    persist_generation: bool,
+    policy: GuardPolicy,
+) -> PeerResult<()> {
+    let (stream, _) = listener.accept()?;
+    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+    let mut socket = tungstenite::accept(stream)?;
+    while let Ok(message) = socket.read() {
+        if matches!(message, Message::Close(_)) {
+            break;
+        }
+        let Message::Text(text) = message else {
+            continue;
+        };
+        let value: Value = serde_json::from_str(&text)?;
+        let method = value["method"]
+            .as_str()
+            .ok_or("Fixture request method is not a string")?;
+        seen.lock()
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+            .push((method.to_owned(), value.get("params").cloned()));
+        let Some(id) = value.get("id") else {
+            continue;
+        };
+        let result = match method {
+            "initialize" => json!({"codexHome":server_home}),
+            "account/read" => {
+                if persist_generation
+                    && (value["params"]["refreshToken"] == true
+                        || policy == GuardPolicy::AdoptDuringHandshake)
+                {
+                    let next = document("fixture-refresh-b", "2026-10-18T12:00:00.000000002Z");
+                    fs::write(server_home.join("auth.json"), serde_json::to_vec(&next)?)?;
+                }
+                json!({"account":{"type":"chatgpt","email":"fixture@example.invalid"},"workspaceRouting":{"chatgptAccountId":"workspace"}})
+            }
+            _ => panic!("unexpected native method"),
+        };
+        socket.send(Message::Text(
+            json!({"id":id,"result":result}).to_string().into(),
+        ))?;
+    }
+    Ok(())
+}
+
 #[test]
-fn current_authority_replacement_or_replayed_start_prevents_actual_refresh_rpc() {
+fn current_authority_replacement_or_replayed_start_prevents_actual_refresh_rpc() -> FixtureResult<()>
+{
     assert_eq!(
-        renewal_with_guard(true, GuardPolicy::RevokeAfterIdentity)
-            .unwrap_err()
+        renewal_with_guard(true, GuardPolicy::RevokeAfterIdentity)?
+            .err()
+            .ok_or("Expected current-authority replacement refusal")?
             .status,
         409
     );
     assert_eq!(
-        renewal_with_guard(true, GuardPolicy::RefuseStart)
-            .unwrap_err()
+        renewal_with_guard(true, GuardPolicy::RefuseStart)?
+            .err()
+            .ok_or("Expected replayed-start refusal")?
             .envelope
             .error
             .code
             .as_deref(),
         Some("native_control_outcome_unknown")
     );
+    Ok(())
 }
 
 #[test]
-fn newer_fixed_file_during_identity_handshake_is_adopted_without_refresh_rpc() {
-    let result = renewal_with_guard(true, GuardPolicy::AdoptDuringHandshake).unwrap();
+fn newer_fixed_file_during_identity_handshake_is_adopted_without_refresh_rpc() -> FixtureResult<()>
+{
+    let result = renewal_with_guard(true, GuardPolicy::AdoptDuringHandshake)??;
     assert_eq!(
         result.credentials.refresh_token.expose(),
         "fixture-refresh-b"
     );
+    Ok(())
 }
 
 #[test]
-fn actual_renewal_requires_a_persisted_generation_after_fixed_identity_handshake() {
-    let result = renewal_fixture(true).unwrap();
+fn actual_renewal_requires_a_persisted_generation_after_fixed_identity_handshake()
+-> FixtureResult<()> {
+    let result = renewal_fixture(true)??;
     assert_eq!(
         result.credentials.refresh_token.expose(),
         "fixture-refresh-b"
     );
-    let error = renewal_fixture(false).unwrap_err();
+    let error = renewal_fixture(false)?
+        .err()
+        .ok_or("Expected persisted-generation refusal")?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("codex_auth_refresh_failed")
     );
+    Ok(())
 }
 
 #[test]

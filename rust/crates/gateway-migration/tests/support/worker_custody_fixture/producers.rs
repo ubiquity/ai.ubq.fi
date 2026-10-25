@@ -4,23 +4,19 @@ use super::{port, support_run};
 use gateway_admin::operations::{AdminHost, AdminInput};
 use gateway_admin::routes::AdminOperation;
 use gateway_auth::{store::key, types::AuthHost};
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, RequestId},
-    source_graph::GraphNode,
-    state::*,
+use gateway_authority::keys::{api_request, api_window};
+use gateway_authority::store::Authority;
+use gateway_core::error::GatewayError;
+use gateway_core::identity::{ApiKeyId, RequestId};
+use gateway_core::source_graph::GraphNode;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
+    StoredRecord,
 };
-use serde::Serialize;
+use gateway_migration_test_support::fixture::{RUNTIME_CASES, Receipt};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Serialize)]
-pub struct Receipt {
-    pub operation: &'static str,
-    pub cases: Vec<&'static str>,
-    pub changed_keys: Vec<String>,
-    pub deleted_keys: Vec<String>,
-}
 // A reference to the SAME wire port, not a second store, row mirror or id counter.
 impl AuthorityStore for &port::Store {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
@@ -85,11 +81,11 @@ impl AuthHost for Host {
 }
 struct Capabilities;
 impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
-fn admin(body: Value, now_ms: i64) -> AdminInput {
-    AdminInput {
+fn admin(body: Value, now_ms: i64) -> Result<AdminInput, GatewayError> {
+    Ok(AdminInput {
         parameter: None,
         query: Default::default(),
-        body: gateway_core::source_json::SourceJson::from_serializable(&body).unwrap(),
+        body: gateway_core::source_json::SourceJson::from_serializable(&body)?,
         actor: gateway_auth::types::AuthPrincipal {
             token: None,
             method: gateway_auth::types::AuthMethod::AdminAllowlist,
@@ -98,7 +94,7 @@ fn admin(body: Value, now_ms: i64) -> AdminInput {
         },
         request_id: "isolated-admin".into(),
         now_ms,
-    }
+    })
 }
 pub fn exercise(
     store: &port::Store,
@@ -111,11 +107,7 @@ pub fn exercise(
     if policy.key_id != "offline-key" {
         return Err(port::error("Original offline API-key fixture differs"));
     }
-    let authority = gateway_authority::store::Authority::with_clock(
-        store,
-        Tokens(AtomicU64::new(1)),
-        Clock(now),
-    );
+    let authority = Authority::with_clock(store, Tokens(AtomicU64::new(1)), Clock(now));
     let reservation = support_run(authority.reserve_api_key(
         &ApiKeyId("offline-key".into()),
         &RequestId("native-post-restart-admission".into()),
@@ -125,12 +117,10 @@ pub fn exercise(
     if reservation.request_id.0 != "native-post-restart-admission" {
         return Err(port::error("Actual admission receipt differs"));
     }
-    let request_key = gateway_authority::keys::api_request(
-        &reservation.key_id.0,
-        &reservation.policy_version,
-        reservation.window_start_ms,
-        &reservation.request_id.0,
-    );
+    let key_id = &reservation.key_id.0;
+    let version = &reservation.policy_version;
+    let request_id = &reservation.request_id.0;
+    let request_key = api_request(key_id, version, reservation.window_start_ms, request_id);
     let request = support_run(store.read(&request_key))?
         .ok_or_else(|| port::error("Actual admission row missing"))?;
     if request.json_value()?["state"] != "reserved" {
@@ -143,7 +133,7 @@ pub fn exercise(
         capabilities: &Capabilities,
         config: &Default::default(),
     };
-    let before = support_run(runtime.execute(AdminOperation::DebugGet, admin(Value::Null, now)))?;
+    let before = support_run(runtime.execute(AdminOperation::DebugGet, admin(Value::Null, now)?))?;
     if before
         .body
         .as_json()
@@ -153,7 +143,7 @@ pub fn exercise(
     }
     support_run(runtime.execute(
         AdminOperation::DebugSet,
-        admin(json!({"scenario":"normal","duration_ms":0}), now),
+        admin(json!({"scenario":"normal","duration_ms":0}), now)?,
     ))?;
     let debug = key(json!(["uos_ai", "debug_routing", "v1"]));
     let updated = support_run(store.read(&debug))?
@@ -209,24 +199,14 @@ pub fn exercise(
         return Err(port::error("Actual graph write was not retained"));
     }
     // Read the actual durable product window, not a controller-injected quota row.
-    let window = gateway_authority::keys::api_window(
-        &reservation.key_id.0,
-        &reservation.policy_version,
-        reservation.window_start_ms,
-    );
+    let window = api_window(key_id, version, reservation.window_start_ms);
     if support_run(store.read(&window))?.is_none() {
         return Err(port::error("Actual quota window missing"));
     }
     time.check()?;
     Ok(Receipt {
         operation: "runtime_exercised",
-        cases: vec![
-            "actual_adopted_api_authentication",
-            "actual_post_restart_admission",
-            "actual_admin_read_write",
-            "actual_adopted_row_delete",
-            "actual_latest_shared_graph_write",
-        ],
+        cases: Vec::from(RUNTIME_CASES),
         changed_keys: vec![request_key.0, window.0, graph_key.0],
         deleted_keys: vec![debug.0],
     })

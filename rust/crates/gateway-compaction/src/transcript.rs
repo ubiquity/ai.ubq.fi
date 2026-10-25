@@ -1,7 +1,7 @@
 //! Codex item mapping and source verbatim/bounded-provenance renderer.
 use crate::{
     engine::truncated_result,
-    model::*,
+    model::{Action, Decision, Json, Message, Role, ToolCall, ToolResult, ToolUse},
     text::{self, Text},
     types::{CompactionFailure, CompactionStats},
 };

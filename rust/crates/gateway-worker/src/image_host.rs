@@ -202,19 +202,7 @@ impl Images {
                     if failure.attempt == DispatchAttempt::Started {
                         self.mark_started(&child, ticket).await?;
                     }
-                    return Err(DispatchFailure {
-                        origin: match failure.origin {
-                            outbound::DispatchOrigin::Gateway => DispatchFailureOrigin::Gateway,
-                            outbound::DispatchOrigin::Transport => DispatchFailureOrigin::Transport,
-                        },
-                        error: Box::new(failure.error),
-                        headers: Default::default(),
-                        quota_refusal: false,
-                        upstream_status: None,
-                        retry_after_ms: None,
-                        before_transport: failure.attempt == DispatchAttempt::NotStarted,
-                        raw_error_body: None,
-                    });
+                    return Err(transport_failure(failure));
                 }
             };
             let status = response.status_code();
@@ -277,21 +265,46 @@ impl Images {
                     usage: None,
                 });
             }
-            let decoded = decode_response(&attempt.request.decode, status, &headers, &bytes)
-                .map_err(DispatchFailure::transport)?;
-            if !attempt.request.warnings.is_empty() {
-                headers.insert("x-uos-warning".into(), attempt.request.warnings.join(", "));
-            }
-            return Ok(UpstreamResponse {
-                status: decoded.status,
-                headers,
-                body: decoded.body.as_bytes().to_vec(),
-                semantic_terminal: decoded.terminal,
-                usage: decoded.usage,
-            });
+            return image_response(&attempt.request, status, headers, &bytes);
         }
     }
 }
+fn transport_failure(failure: outbound::DispatchFailure) -> DispatchFailure {
+    DispatchFailure {
+        origin: match failure.origin {
+            outbound::DispatchOrigin::Gateway => DispatchFailureOrigin::Gateway,
+            outbound::DispatchOrigin::Transport => DispatchFailureOrigin::Transport,
+        },
+        error: Box::new(failure.error),
+        headers: Default::default(),
+        quota_refusal: false,
+        upstream_status: None,
+        retry_after_ms: None,
+        before_transport: failure.attempt == DispatchAttempt::NotStarted,
+        raw_error_body: None,
+    }
+}
+
+fn image_response(
+    request: &gateway_providers::types::PreparedRequest,
+    status: u16,
+    mut headers: gateway_providers::types::Headers,
+    bytes: &[u8],
+) -> Result<UpstreamResponse, DispatchFailure> {
+    let decoded = decode_response(&request.decode, status, &headers, bytes)
+        .map_err(DispatchFailure::transport)?;
+    if !request.warnings.is_empty() {
+        headers.insert("x-uos-warning".into(), request.warnings.join(", "));
+    }
+    Ok(UpstreamResponse {
+        status: decoded.status,
+        headers,
+        body: decoded.body.as_bytes().to_vec(),
+        semantic_terminal: decoded.terminal,
+        usage: decoded.usage,
+    })
+}
+
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
         "The original image child capability is unavailable.",

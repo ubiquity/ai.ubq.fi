@@ -14,6 +14,7 @@ Authentication: Authorization: Bearer <UOS_AI_TOKEN>
 - Supported models: GET https://ai.ubq.fi/v1/models
 - Responses: POST https://ai.ubq.fi/v1/responses
 - Chat completions: POST https://ai.ubq.fi/v1/chat/completions
+- Decisions: POST https://ai.ubq.fi/v1/decisions
 
 ## When to use this service
 
@@ -32,7 +33,8 @@ it is not a self-service key issuer. If no approved token is available, stop and
 2. Obtain `UOS_AI_TOKEN` from the environment or an approved secret manager.
 3. Configure an OpenAI-compatible client with base URL `https://ai.ubq.fi/v1` and the token as its API key.
 4. Query `/v1/models` and select a returned model. Do not assume that an OpenAI public model alias is available.
-5. Use `/v1/responses` or `/v1/chat/completions` with the official OpenAI request shape.
+5. Use `/v1/responses` or `/v1/chat/completions` with the official OpenAI request shape. Use `/v1/decisions` only for a
+   model whose advertised `supported_endpoints` includes it.
 6. On a `429`, parse the JSON error and honor `Retry-After` when present; use `RateLimit` fields when they are present.
 
 Never print, log, persist, transmit elsewhere, or commit the token. If no token is available, tell the user that service

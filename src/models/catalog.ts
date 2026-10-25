@@ -29,7 +29,7 @@ import {
   type ModelMetadataSource,
   type ModelMetadataSources,
 } from "./metadata.ts";
-import { warmOpenRouterModels, openRouterModelsSnapshot } from "./openrouter-models.ts";
+import { openRouterModelEndpointPaths, warmOpenRouterModels, openRouterModelsSnapshot } from "./openrouter-models.ts";
 import { getString, isRecord } from "../utils.ts";
 import { fetchMeteredModels } from "../provider/metered.ts";
 import { fetchSurplusModels } from "../provider/surplus.ts";
@@ -383,6 +383,30 @@ const addDeepSeekWaterfallCatalogEntries = (models: Map<string, PublicModelCatal
   }
 };
 
+/** Add every OpenRouter row this gateway serves: text wires and decisions. */
+const addOpenRouterCatalogEntries = (models: Map<string, PublicModelCatalogEntry>): number => {
+  if (readOpenRouterApiKey() === null) return 0;
+  let served = 0;
+  for (const model of openRouterModelsSnapshot()?.models ?? []) {
+    const supportedEndpoints = openRouterModelEndpointPaths(model);
+    if (supportedEndpoints.length === 0) continue;
+    addPublicModelCatalogEntry(
+      models,
+      model.id,
+      { id: "openrouter", owned_by: model.id.split("/", 1)[0] || "openrouter", supported_endpoints: supportedEndpoints },
+      0
+    );
+    served += 1;
+  }
+  addPublicModelCatalogEntry(
+    models,
+    OPENROUTER_SERVED_MODEL_ID,
+    { id: "openrouter", owned_by: "typesafe", supported_endpoints: ["/v1/decisions", "/v1/systemone"] },
+    0
+  );
+  return served + 1;
+};
+
 export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot> => {
   // Enrichment is cache-only and never awaited, so a slow third party cannot
   // delay the catalog; the first load after a cold start simply shows less.
@@ -461,22 +485,10 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
   // so the admin picker and the public catalog must list it too: one provider
   // row per usable hop, attributed to the gateway itself.
   addDeepSeekWaterfallCatalogEntries(models);
-  // OpenRouter serves its cached public catalogue on the OpenAI-compatible
-  // wires and the Typesafe System One model behind /v1/systemone.
-  let openrouterServed = 0;
-  if (readOpenRouterApiKey() !== null) {
-    for (const model of openRouterModelsSnapshot()?.models ?? []) {
-      addPublicModelCatalogEntry(
-        models,
-        model.id,
-        { id: "openrouter", owned_by: model.id.split("/", 1)[0] || "openrouter", supported_endpoints: ["/v1/responses", "/v1/chat/completions"] },
-        0
-      );
-      openrouterServed += 1;
-    }
-    addPublicModelCatalogEntry(models, OPENROUTER_SERVED_MODEL_ID, { id: "openrouter", owned_by: "typesafe", supported_endpoints: ["/v1/systemone"] }, 0);
-    openrouterServed += 1;
-  }
+  // OpenRouter serves text rows on the OpenAI-compatible wires and decision
+  // rows on /v1/decisions. The alias row keeps its /v1/systemone compatibility
+  // route for existing Jev callers.
+  const openrouterServed = addOpenRouterCatalogEntries(models);
 
   return {
     models: [...models.values()].sort((left, right) => left.id.localeCompare(right.id)),

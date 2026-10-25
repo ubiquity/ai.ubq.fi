@@ -10,7 +10,7 @@ use crate::{
 use gateway_admin::service::AdminService;
 use gateway_auth::{
     resolve::AuthService,
-    types::{AuthPrincipal, AuthRequest, AuthResponse},
+    types::{AuthConfig, AuthPrincipal, AuthRequest, AuthResponse},
 };
 use gateway_core::{
     error::GatewayError, identity::RequestId, source_json::SourceJson, state::AuthorityStore,
@@ -49,22 +49,7 @@ pub async fn route(
     let store = RemoteAuthorityStore::from_env(&env)?;
     let cancellation = Rc::new(Cancellation::from_request(&request)?);
     let config = auth_config(&env);
-    let mut auth_url = request.url().map_err(|_| invalid_url())?;
-    auth_url.set_path(&path);
-    let mut auth_request = AuthRequest {
-        method: request.method().to_string(),
-        url: auth_url.to_string(),
-        headers: bounded_headers(
-            &request,
-            HeaderLimits {
-                total_bytes: 16_384,
-                value_bytes: 16_384,
-                fields: 2000,
-            },
-        )?,
-        body: Vec::new(),
-        native_peer: None,
-    };
+    let (_auth_url, mut auth_request) = original_auth_request(&request, &path)?;
     let host = PlatformHost {
         cancellation,
         store: store.clone(),
@@ -74,97 +59,20 @@ pub async fn route(
         request_id: request_id.clone(),
     };
     let auth = AuthService::new(&store, &host, &config);
-    if path.starts_with("/api/auth/") || path.starts_with("/auth/") || path == "/uos/auth" {
-        if request.method() == Method::Post {
-            // Source authenticates this admin before the registration handler
-            // reads its body. Keep the handler's own check intact below.
-            if path == "/api/auth/register/start" {
-                auth.authenticate_admin(&auth_request).await?;
-            }
-            auth_request.body =
-                body::request_bytes(&mut request, body::PASSKEY_BODY_MAX_BYTES).await?;
-        }
-        if let Some(response) = auth.handle_auth_route(&auth_request).await? {
-            return auth_response(response).map(Into::into);
-        }
+    if let Some(response) =
+        authentication_route(&mut request, &path, &auth, &mut auth_request).await?
+    {
+        return Ok(response);
     }
     if path.starts_with("/admin/") {
-        // Source authenticates an administrative route before its handler can
-        // read a body. Resolve the route first so unmatched or wrong-method
-        // paths, including the source paid-fallbacks 405, stay body-free.
-        let admin_route = gateway_admin::routes::match_route(request.method().as_ref(), &path);
-        if admin_route.is_some() && !matches!(request.method(), Method::Get | Method::Head) {
-            auth.authenticate_admin(&auth_request).await?;
-            auth_request.body = body::inference_bytes(&mut request).await?;
-        }
-        // Custody is minted at the original authenticated boundary, never from
-        // the administrative module's normalized Context or a later timestamp.
-        let principal = auth.authenticate_admin(&auth_request).await?;
-        let original_context = gateway_core::identity::RequestContext {
-            request_id: request_id.clone(),
-            principal: gateway_core::identity::PrincipalId(
-                gateway_authority::native_control::actor::principal_id(&principal),
-            ),
-            key_id: match &principal.method {
-                gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => {
-                    Some(gateway_core::identity::ApiKeyId(key_id.clone()))
-                }
-                _ => None,
-            },
-            route: path.clone(),
-            started_at_ms,
-        };
-        let authority = gateway_authority::store::Authority::with_clock(
-            store.clone(),
-            crate::host::PlatformTokens,
-            crate::host::PlatformClock,
-        );
-        let actor = Rc::new(
-            gateway_authority::native_control::actor::authenticate_admin_actor(
-                &authority,
-                &host,
-                &config,
-                &auth_request,
-                &original_context,
-            )
-            .await?,
-        );
-        // Retain a measured receipt from this exact raw request before the
-        // administrative service parses JSON into its finite operation DTO.
-        let bindings = crate::admin_host::Capabilities::new(
-            &request_id,
-            &auth_request.body,
-            &auth_request,
-            store.clone(),
-            &host,
-            context.clone(),
-            actor,
-        )?;
-        let runtime_config = crate::admin_host::config(&env);
-        let capabilities = gateway_admin_runtime::AdminRuntime {
-            store: &store,
-            host: &host,
-            capabilities: &bindings,
-            config: &runtime_config,
-        };
-        let admin = AdminService {
-            store: &store,
-            host: &host,
-            capabilities: &capabilities,
-            config: &config,
-            release,
-        };
-        if let Some(response) = admin.handle_route(&auth_request, &request_id.0).await? {
-            return auth_response_with_native(response, &host, context.clone())
-                .await
-                .map(Into::into);
-        }
-        auth.authenticate_admin(&auth_request).await?;
-        return Err(GatewayError::new(
-            404,
-            "Administrative route not found.",
-            Some("not_found"),
-        ));
+        return administrative_route(
+            &mut request,
+            &mut auth_request,
+            &auth,
+            &context,
+            (&request_id, &path, release, started_at_ms, &env),
+        )
+        .await;
     }
     if path == "/uos/models/catalog" && request.method() == Method::Get {
         return auth_response(
@@ -173,34 +81,7 @@ pub async fn route(
         .map(Into::into);
     }
     if path == "/health/providers" || path == "/health/upstream" {
-        if request.method() != Method::Get {
-            return Err(public_not_found());
-        }
-        auth.authenticate_admin(&auth_request).await?;
-        let observations = crate::observability_host::bind(
-            &request_id,
-            &[],
-            store.clone(),
-            &host,
-            context.clone(),
-        );
-        let operation = if path == "/health/providers" {
-            gateway_admin_runtime::capabilities::ProviderRequest::PassiveHealth
-        } else {
-            gateway_admin_runtime::capabilities::ProviderRequest::UpstreamHealth
-        };
-        return auth_response(
-            observations
-                .provider(
-                    operation,
-                    gateway_admin_runtime::capabilities::Context {
-                        request_id: request_id.0.clone(),
-                        now_ms: now_ms()?,
-                    },
-                )
-                .await?,
-        )
-        .map(Into::into);
+        return provider_health(&path, &request, &auth_request, &auth, &context, &request_id).await;
     }
     let principal = if is_terminal_inference_path(&path)
         || path == "/uos/models/capabilities"
@@ -212,98 +93,19 @@ pub async fn route(
     };
     if let Some(route) = live_route(&auth_request.method, &path) {
         let principal = principal.ok_or_else(gateway_auth::types::unauthorized)?;
-        let live = crate::live_host::WorkerLiveHost::bind(
-            host.clone(),
-            context.clone(),
+        return live_response(
+            request,
+            route,
+            principal,
             auth_request,
-            config.clone(),
-            principal.clone(),
+            (&host, &config, store),
+            context,
             request_id,
         )
-        .await?;
-        let runtime = LiveRuntime::new(
-            Rc::new(store),
-            Rc::new(crate::transport::random::opaque_token),
-        );
-        return match route {
-            LiveRoute::Create => {
-                let headers = request
-                    .headers()
-                    .entries()
-                    .map(|(name, value)| (name.to_ascii_lowercase(), value))
-                    .collect();
-                let input =
-                    crate::live_http::parse_create(&mut request, &host.cancellation, headers)
-                        .await?;
-                let response = runtime
-                    .create_call(&principal, input, &live, host.cancellation.as_ref())
-                    .await;
-                crate::live_host::body::into_response(response, context)
-            }
-            LiveRoute::Sideband(call_id) => {
-                let upgrade = request
-                    .headers()
-                    .get("upgrade")
-                    .map_err(|_| invalid_url())?
-                    .unwrap_or_default();
-                match runtime
-                    .prepare_sideband(&principal, &call_id, &upgrade, &live)
-                    .await
-                {
-                    Ok(prepared) => live.upgrade(prepared).await,
-                    Err(response) => crate::live_host::body::into_response(response, context),
-                }
-            }
-        };
+        .await;
     }
     if path == "/v1/models" && request.method() == Method::Get {
-        let url = request.url().map_err(|_| invalid_url())?;
-        let versions = url
-            .query_pairs()
-            .filter(|(key, _)| key == "client_version")
-            .map(|(_, value)| value.into_owned())
-            .collect::<Vec<_>>();
-        let version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
-        let requested = gateway_schema::catalog_cache::requested_client_version(&version_refs);
-        if let Some(raw_version) = requested {
-            let version = gateway_schema::catalog_cache::validate_client_version(raw_version)?;
-            let version = version.as_str();
-            let now = now_ms()?;
-            let conditional = request.headers().get("if-none-match").map_err(|_| {
-                GatewayError::new(
-                    400,
-                    "Invalid conditional catalog header.",
-                    Some("invalid_request_error"),
-                )
-            })?;
-            // Read the durable exact catalog before any provider discovery.
-            // A retained answer is always assembled by the normal catalog
-            // stack from hydrated durable observations, never a cached body.
-            if let Some(cached) = durable_catalog(&store, version, now).await? {
-                let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
-                if !cached.metadata.fresh(now) {
-                    crate::catalog::schedule_warm(&store, &env, &host, context.clone(), version);
-                }
-                let cache_state = if cached.metadata.fresh(now) {
-                    CacheState::Hit
-                } else {
-                    CacheState::Stale
-                };
-                let response = gateway_schema::catalog_cache::catalog_response(
-                    &cached,
-                    conditional.as_deref(),
-                    cache_state,
-                    &state.input,
-                );
-                return catalog_response(response).map(Into::into);
-            }
-            let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
-            let response = state.native_models(&store, &request, version, now).await?;
-            return catalog_response(response).map(Into::into);
-        }
-        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
-        return json_response(gateway_schema::catalog_views::ordinary_models(&state.input))
-            .map(Into::into);
+        return models_response(&request, &store, &env, &host, &context).await;
     }
     if path == "/uos/models/capabilities" && request.method() == Method::Get {
         let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
@@ -319,62 +121,18 @@ pub async fn route(
         .await
         .map(Into::into);
     }
-    if let Some(route) = crate::extras::route(&path, request.method())? {
+    if let Some(target) = terminal_target(&path, &request)? {
         let principal = principal.ok_or_else(gateway_auth::types::unauthorized)?;
-        let permit = crate::admission::acquire(
-            &principal,
-            &request_id.0,
-            route.label(),
-            host.cancellation.clone(),
-        )
-        .await?;
-        let catalog = CatalogState::load(&store, &env, &host, context.clone()).await?;
-        let mut response = crate::extras::run(
+        return terminal_response(
             request,
-            crate::extras::Target { route, request_id },
-            inference::RequestResources { context, permit },
-            &principal,
+            principal,
             store,
-            catalog,
-            &host,
-        )
-        .await?;
-        decorate_api_policy(&mut response, &principal)?;
-        return Ok(response.into());
-    }
-    if ["/v1/responses", "/v1/chat/completions"].contains(&path.as_str()) {
-        if request.method() != Method::Post {
-            return Err(GatewayError::new(
-                405,
-                "Method not allowed",
-                Some("method_not_allowed"),
-            ));
-        }
-        let principal = principal.ok_or_else(gateway_auth::types::unauthorized)?;
-        let permit = crate::admission::acquire(
-            &principal,
-            &request_id.0,
-            if path == "/v1/responses" {
-                "responses"
-            } else {
-                "chat.completions"
-            },
-            host.cancellation.clone(),
-        )
-        .await?;
-        let state = CatalogState::load(&store, &env, &host, context.clone()).await?;
-        let mut response = inference::run(
-            request,
-            inference::RequestResources { context, permit },
-            &principal,
-            store,
-            state,
-            &host,
+            (&host, &env),
+            context,
             request_id,
+            target,
         )
-        .await?;
-        decorate_api_policy(&mut response, &principal)?;
-        return Ok(response.into());
+        .await;
     }
     if is_terminal_inference_path(&path) {
         // Terminal inference dispatch answers an authenticated unknown route
@@ -452,6 +210,356 @@ async fn durable_catalog(
         return Ok(None);
     };
     catalog_store::load_catalog(store, version, generation, now).await
+}
+
+fn original_auth_request(
+    request: &Request,
+    path: &str,
+) -> Result<(worker::Url, AuthRequest), GatewayError> {
+    let mut auth_url = request.url().map_err(|_| invalid_url())?;
+    auth_url.set_path(path);
+    let auth_request = AuthRequest {
+        method: request.method().to_string(),
+        url: auth_url.to_string(),
+        headers: bounded_headers(
+            request,
+            HeaderLimits {
+                total_bytes: 16_384,
+                value_bytes: 16_384,
+                fields: 2000,
+            },
+        )?,
+        body: Vec::new(),
+        native_peer: None,
+    };
+    Ok((auth_url, auth_request))
+}
+
+async fn authentication_route(
+    request: &mut Request,
+    path: &str,
+    auth: &AuthService<'_, RemoteAuthorityStore, PlatformHost>,
+    auth_request: &mut AuthRequest,
+) -> Result<Option<crate::response::GatewayResponse>, GatewayError> {
+    if path.starts_with("/api/auth/") || path.starts_with("/auth/") || path == "/uos/auth" {
+        if request.method() == Method::Post {
+            // Source authenticates this admin before the registration handler
+            // reads its body. Keep the handler's own check intact below.
+            if path == "/api/auth/register/start" {
+                auth.authenticate_admin(auth_request).await?;
+            }
+            auth_request.body = body::request_bytes(request, body::PASSKEY_BODY_MAX_BYTES).await?;
+        }
+        if let Some(response) = auth.handle_auth_route(auth_request).await? {
+            return auth_response(response).map(|response| Some(response.into()));
+        }
+    }
+    Ok(None)
+}
+
+async fn administrative_route(
+    request: &mut Request,
+    auth_request: &mut AuthRequest,
+    auth: &AuthService<'_, RemoteAuthorityStore, PlatformHost>,
+    context: &Rc<Context>,
+    original: (&RequestId, &str, &str, i64, &Env),
+) -> Result<crate::response::GatewayResponse, GatewayError> {
+    let (store, host, config) = (auth.store, auth.host, auth.config);
+    let (request_id, path, release, started_at_ms, env) = original;
+    // Source authenticates an administrative route before its handler can
+    // read a body. Resolve the route first so unmatched or wrong-method
+    // paths, including the source paid-fallbacks 405, stay body-free.
+    let admin_route = gateway_admin::routes::match_route(request.method().as_ref(), path);
+    if admin_route.is_some() && !matches!(request.method(), Method::Get | Method::Head) {
+        auth.authenticate_admin(auth_request).await?;
+        auth_request.body = body::inference_bytes(request).await?;
+    }
+    // Custody is minted at the original authenticated boundary, never from
+    // the administrative module's normalized Context or a later timestamp.
+    let principal = auth.authenticate_admin(auth_request).await?;
+    let original_context = gateway_core::identity::RequestContext {
+        request_id: request_id.clone(),
+        principal: gateway_core::identity::PrincipalId(
+            gateway_authority::native_control::actor::principal_id(&principal),
+        ),
+        key_id: match &principal.method {
+            gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => {
+                Some(gateway_core::identity::ApiKeyId(key_id.clone()))
+            }
+            _ => None,
+        },
+        route: path.to_owned(),
+        started_at_ms,
+    };
+    let authority = gateway_authority::store::Authority::with_clock(
+        RemoteAuthorityStore::clone(store),
+        crate::host::PlatformTokens,
+        crate::host::PlatformClock,
+    );
+    let actor = Rc::new(
+        gateway_authority::native_control::actor::authenticate_admin_actor(
+            &authority,
+            host,
+            config,
+            auth_request,
+            &original_context,
+        )
+        .await?,
+    );
+    // Retain a measured receipt from this exact raw request before the
+    // administrative service parses JSON into its finite operation DTO.
+    let bindings = crate::admin_host::Capabilities::new(
+        request_id,
+        &auth_request.body,
+        auth_request,
+        RemoteAuthorityStore::clone(store),
+        host,
+        Rc::clone(context),
+        actor,
+    )?;
+    let runtime_config = crate::admin_host::config(env);
+    let capabilities = gateway_admin_runtime::AdminRuntime {
+        store,
+        host,
+        capabilities: &bindings,
+        config: &runtime_config,
+    };
+    let admin = AdminService {
+        store,
+        host,
+        capabilities: &capabilities,
+        config,
+        release,
+    };
+    if let Some(response) = admin.handle_route(auth_request, &request_id.0).await? {
+        return auth_response_with_native(response, host, Rc::clone(context))
+            .await
+            .map(Into::into);
+    }
+    auth.authenticate_admin(auth_request).await?;
+    Err(GatewayError::new(
+        404,
+        "Administrative route not found.",
+        Some("not_found"),
+    ))
+}
+
+async fn provider_health(
+    path: &str,
+    request: &Request,
+    auth_request: &AuthRequest,
+    auth: &AuthService<'_, RemoteAuthorityStore, PlatformHost>,
+    context: &Rc<Context>,
+    request_id: &RequestId,
+) -> Result<crate::response::GatewayResponse, GatewayError> {
+    let (store, host) = (auth.store, auth.host);
+    if request.method() != Method::Get {
+        return Err(public_not_found());
+    }
+    auth.authenticate_admin(auth_request).await?;
+    let observations = crate::observability_host::bind(
+        request_id,
+        &[],
+        RemoteAuthorityStore::clone(store),
+        host,
+        Rc::clone(context),
+    );
+    let operation = if path == "/health/providers" {
+        gateway_admin_runtime::capabilities::ProviderRequest::PassiveHealth
+    } else {
+        gateway_admin_runtime::capabilities::ProviderRequest::UpstreamHealth
+    };
+    auth_response(
+        observations
+            .provider(
+                operation,
+                gateway_admin_runtime::capabilities::Context {
+                    request_id: request_id.0.clone(),
+                    now_ms: now_ms()?,
+                },
+            )
+            .await?,
+    )
+    .map(Into::into)
+}
+
+async fn live_response(
+    mut request: Request,
+    route: LiveRoute,
+    principal: AuthPrincipal,
+    auth_request: AuthRequest,
+    platform: (&PlatformHost, &AuthConfig, RemoteAuthorityStore),
+    context: Rc<Context>,
+    request_id: RequestId,
+) -> Result<crate::response::GatewayResponse, GatewayError> {
+    let (host, config, store) = platform;
+    let live = crate::live_host::WorkerLiveHost::bind(
+        PlatformHost::clone(host),
+        context.clone(),
+        auth_request,
+        AuthConfig::clone(config),
+        principal.clone(),
+        request_id,
+    )
+    .await?;
+    let runtime = LiveRuntime::new(
+        Rc::new(store),
+        Rc::new(crate::transport::random::opaque_token),
+    );
+    match route {
+        LiveRoute::Create => {
+            let headers = request
+                .headers()
+                .entries()
+                .map(|(name, value)| (name.to_ascii_lowercase(), value))
+                .collect();
+            let input =
+                crate::live_http::parse_create(&mut request, &host.cancellation, headers).await?;
+            let response = runtime
+                .create_call(&principal, input, &live, host.cancellation.as_ref())
+                .await;
+            crate::live_host::body::into_response(response, context)
+        }
+        LiveRoute::Sideband(call_id) => {
+            let upgrade = request
+                .headers()
+                .get("upgrade")
+                .map_err(|_| invalid_url())?
+                .unwrap_or_default();
+            match runtime
+                .prepare_sideband(&principal, &call_id, &upgrade, &live)
+                .await
+            {
+                Ok(prepared) => live.upgrade(prepared).await,
+                Err(response) => crate::live_host::body::into_response(response, context),
+            }
+        }
+    }
+}
+
+async fn models_response(
+    request: &Request,
+    store: &RemoteAuthorityStore,
+    env: &Env,
+    host: &PlatformHost,
+    context: &Rc<Context>,
+) -> Result<crate::response::GatewayResponse, GatewayError> {
+    let url = request.url().map_err(|_| invalid_url())?;
+    let versions = url
+        .query_pairs()
+        .filter(|(key, _)| key == "client_version")
+        .map(|(_, value)| value.into_owned())
+        .collect::<Vec<_>>();
+    let version_refs = versions.iter().map(String::as_str).collect::<Vec<_>>();
+    let requested = gateway_schema::catalog_cache::requested_client_version(&version_refs);
+    if let Some(raw_version) = requested {
+        let version = gateway_schema::catalog_cache::validate_client_version(raw_version)?;
+        let version = version.as_str();
+        let now = now_ms()?;
+        let conditional = request.headers().get("if-none-match").map_err(|_| {
+            GatewayError::new(
+                400,
+                "Invalid conditional catalog header.",
+                Some("invalid_request_error"),
+            )
+        })?;
+        // Read the durable exact catalog before any provider discovery.
+        // A retained answer is always assembled by the normal catalog
+        // stack from hydrated durable observations, never a cached body.
+        if let Some(cached) = durable_catalog(store, version, now).await? {
+            let state = CatalogState::load(store, env, host, Rc::clone(context)).await?;
+            if !cached.metadata.fresh(now) {
+                crate::catalog::schedule_warm(store, env, host, Rc::clone(context), version);
+            }
+            let cache_state = if cached.metadata.fresh(now) {
+                CacheState::Hit
+            } else {
+                CacheState::Stale
+            };
+            let response = gateway_schema::catalog_cache::catalog_response(
+                &cached,
+                conditional.as_deref(),
+                cache_state,
+                &state.input,
+            );
+            return catalog_response(response).map(Into::into);
+        }
+        let state = CatalogState::load(store, env, host, Rc::clone(context)).await?;
+        let response = state.native_models(store, request, version, now).await?;
+        return catalog_response(response).map(Into::into);
+    }
+    let state = CatalogState::load(store, env, host, Rc::clone(context)).await?;
+    json_response(gateway_schema::catalog_views::ordinary_models(&state.input)).map(Into::into)
+}
+
+enum TerminalRoute {
+    Extras(gateway_extras_runtime::types::ExtrasRoute),
+    Inference(bool),
+}
+fn terminal_target(path: &str, request: &Request) -> Result<Option<TerminalRoute>, GatewayError> {
+    if let Some(route) = crate::extras::route(path, request.method())? {
+        return Ok(Some(TerminalRoute::Extras(route)));
+    }
+    if !["/v1/responses", "/v1/chat/completions"].contains(&path) {
+        return Ok(None);
+    }
+    if request.method() != Method::Post {
+        return Err(GatewayError::new(
+            405,
+            "Method not allowed",
+            Some("method_not_allowed"),
+        ));
+    }
+    Ok(Some(TerminalRoute::Inference(path == "/v1/responses")))
+}
+
+async fn terminal_response(
+    request: Request,
+    principal: AuthPrincipal,
+    store: RemoteAuthorityStore,
+    platform: (&PlatformHost, &Env),
+    context: Rc<Context>,
+    request_id: RequestId,
+    target: TerminalRoute,
+) -> Result<crate::response::GatewayResponse, GatewayError> {
+    let (host, env) = platform;
+    let label = match &target {
+        TerminalRoute::Extras(route) => route.label(),
+        TerminalRoute::Inference(true) => "responses",
+        TerminalRoute::Inference(false) => "chat.completions",
+    };
+    let permit =
+        crate::admission::acquire(&principal, &request_id.0, label, host.cancellation.clone())
+            .await?;
+    let catalog = CatalogState::load(&store, env, host, context.clone()).await?;
+    let mut response = match target {
+        TerminalRoute::Extras(route) => {
+            crate::extras::run(
+                request,
+                crate::extras::Target { route, request_id },
+                inference::RequestResources { context, permit },
+                &principal,
+                store,
+                catalog,
+                host,
+            )
+            .await?
+        }
+        TerminalRoute::Inference(_) => {
+            inference::run(
+                request,
+                inference::RequestResources { context, permit },
+                &principal,
+                store,
+                catalog,
+                host,
+                request_id,
+            )
+            .await?
+        }
+    };
+    decorate_api_policy(&mut response, &principal)?;
+    Ok(response.into())
 }
 
 fn json_response(value: SourceJson) -> Result<Response, GatewayError> {

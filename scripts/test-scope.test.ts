@@ -706,20 +706,24 @@ describe("Rust changed-path CI selection", () => {
   });
 });
 
-test.each(["gateway-native", "gateway-quality", "gateway-quality-syntax", "gateway-claude-runtime-test-support", "gateway-migration-test-support"])(
-  "native-only %s source does not schedule WASM compilation on ordinary PRs",
-  (name) => {
-    const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, `rust/crates/${name}/src/lib.rs`);
-    expect(ci.status).toBe(0);
-    expect(JSON.parse(ci.stdout)).toMatchObject({
-      affectedTests: [],
-      needsRustNative: true,
-      needsRustWasm: false,
-      needsRustBuild: false,
-      needsTypeScriptValidate: false,
-    });
-  }
-);
+test.each([
+  "gateway-native",
+  "gateway-native-supervisor-read",
+  "gateway-quality",
+  "gateway-quality-syntax",
+  "gateway-claude-runtime-test-support",
+  "gateway-migration-test-support",
+])("native-only %s source does not schedule WASM compilation on ordinary PRs", (name) => {
+  const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, `rust/crates/${name}/src/lib.rs`);
+  expect(ci.status).toBe(0);
+  expect(JSON.parse(ci.stdout)).toMatchObject({
+    affectedTests: [],
+    needsRustNative: true,
+    needsRustWasm: false,
+    needsRustBuild: false,
+    needsTypeScriptValidate: false,
+  });
+});
 
 test.each(["gateway-admin-test-support", "gateway-extras-runtime-test-support"])(
   "portable %s fixture source keeps WASM compilation on ordinary PRs",

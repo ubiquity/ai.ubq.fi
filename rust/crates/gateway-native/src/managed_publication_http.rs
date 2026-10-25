@@ -15,14 +15,12 @@ use gateway_auth::{
 };
 use gateway_authority::native_control::NativeRenewalFence;
 use gateway_core::error::GatewayError;
-use gateway_publication::{
-    managed::ExpectedManagedAccessPublication,
-    transport::{
-        NativePublicationSender, PublicationCarrier, PublicationRequest, PublicationResponse,
-    },
-    wire::{ExpectedAccessPublication, PreparedPublicationCommand, PublicationDisposition},
-};
+use gateway_publication::{sender, wire};
+use gateway_publication_transport::managed;
 use std::{net::TcpStream, time::Instant};
+
+type Request = gateway_publication_policy::protocol::PublicationRequest;
+type Response = gateway_publication_policy::protocol::PublicationResponse;
 
 pub struct NativeAccessPublicationHttp {
     identity: NativeTransportIdentity,
@@ -58,8 +56,8 @@ struct BoundPublication<'a> {
     transport: &'a PrivateHttps,
     deadline: Instant,
 }
-impl PublicationCarrier for BoundPublication<'_> {
-    async fn send(&self, request: PublicationRequest) -> Result<PublicationResponse, GatewayError> {
+impl gateway_publication_policy::protocol::PublicationCarrier for BoundPublication<'_> {
+    async fn send(&self, request: Request) -> Result<Response, GatewayError> {
         if request.method != "POST"
             || request.path != NATIVE_PUBLICATION_PATH
             || request.raw_body.len() > NATIVE_MAX_BODY_BYTES
@@ -72,7 +70,7 @@ impl PublicationCarrier for BoundPublication<'_> {
             self.deadline,
             65_536,
         )?;
-        Ok(PublicationResponse {
+        Ok(gateway_publication_policy::protocol::PublicationResponse {
             status: response.status,
             headers: response.headers,
             raw_body: response.body,
@@ -90,8 +88,8 @@ impl NativeAccessPublisher for NativeAccessPublicationHttp {
         require_current_fence(fence)?;
         context.check()?;
         let NativeControlRequest::CodexRenewAccess { action_ref } = &request.request;
-        let command = PreparedPublicationCommand::managed_access_from_registered(
-            ExpectedManagedAccessPublication {
+        let command = managed::PreparedManagedAccessCommand::managed_access_from_registered(
+            managed::ExpectedManagedAccessPublication {
                 action_ref: action_ref.clone(),
                 operation_id: request.operation_id.clone(),
                 native_owner_id: fence.native_owner_id.clone(),
@@ -108,17 +106,17 @@ impl NativeAccessPublisher for NativeAccessPublicationHttp {
             transport: &self.transport,
             deadline: context.deadline(),
         };
-        let receipt = futures_executor::block_on(
-            NativePublicationSender::configured(&self.identity, &carrier).send_managed(
-                &command,
-                nonce()?,
-                context.now_ms()?,
-            ),
-        )?;
+        let receipt = futures_executor::block_on(managed::send_managed(
+            &self.identity,
+            &carrier,
+            &command,
+            nonce()?,
+            context.now_ms()?,
+        ))?;
         context.check()?;
         Ok(PublishedAccess {
             publication_revision: receipt.publication_revision,
-            already_current: receipt.disposition == PublicationDisposition::AlreadyCurrent,
+            already_current: receipt.disposition == wire::PublicationDisposition::AlreadyCurrent,
         })
     }
     fn external(
@@ -129,8 +127,8 @@ impl NativeAccessPublisher for NativeAccessPublicationHttp {
     ) -> Result<PublishedAccess, GatewayError> {
         require_current_fence(fence)?;
         context.check()?;
-        let command = PreparedPublicationCommand::access_from_registered(
-            ExpectedAccessPublication {
+        let command = wire::PreparedPublicationCommand::access_from_registered(
+            wire::ExpectedAccessPublication {
                 native_owner_id: fence.native_owner_id.clone(),
                 owner_revision: fence.owner_revision.clone(),
                 source_revision: fence.source_revision.clone(),
@@ -150,7 +148,7 @@ impl NativeAccessPublisher for NativeAccessPublicationHttp {
             deadline: context.deadline(),
         };
         let receipt = futures_executor::block_on(
-            NativePublicationSender::configured(&self.identity, &carrier).send(
+            sender::NativePublicationSender::configured(&self.identity, &carrier).send(
                 &command,
                 nonce()?,
                 context.now_ms()?,
@@ -161,7 +159,7 @@ impl NativeAccessPublisher for NativeAccessPublicationHttp {
             // V1 AlreadyCurrent can retain an older actual raw revision while
             // acknowledging the new request's publication identifier.
             publication_revision: receipt.source_revision.ok_or_else(unverified)?,
-            already_current: receipt.disposition == PublicationDisposition::AlreadyCurrent,
+            already_current: receipt.disposition == wire::PublicationDisposition::AlreadyCurrent,
         })
     }
 }

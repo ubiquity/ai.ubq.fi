@@ -7,7 +7,11 @@ use crate::{
 };
 use gateway_auth::{
     crypto::{base64url, decode_base64url},
-    native::*,
+    native::{
+        AuthStream, NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES,
+        NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH, NATIVE_WIRE_VERSION, NativeReadRequest,
+        NativeRpcEnvelope, NativeRpcResponse,
+    },
     native_auth::{NativeCapability, NativeTransportIdentity},
     native_control::{
         NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope,

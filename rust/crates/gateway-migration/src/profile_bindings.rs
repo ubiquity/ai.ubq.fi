@@ -1,9 +1,13 @@
 //! Source-profile writes and their secretless derived indexes share one CAS.
-use crate::*;
+use crate::{invalid, key, starts};
+use gateway_core::error::GatewayError;
+use gateway_core::state::RecordKey;
+use gateway_core::state::StoredRecord;
 use gateway_core::{
     query::QueryStore,
     state::{AtomicTransition, RecordMutation, RevisionCheck},
 };
+use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -33,6 +37,77 @@ pub(crate) struct Write<'a> {
     pub now: i64,
     pub revision: &'a str,
 }
+async fn bind_api<S: QueryStore>(
+    store: &S,
+    input: &Write<'_>,
+    transition: &mut AtomicTransition,
+) -> Result<(), GatewayError> {
+    let Write {
+        key: written,
+        parts: p,
+        record,
+        previous,
+        now,
+        revision,
+    } = *input;
+    let mut ids = BTreeSet::new();
+    if p.len() == 4
+        && p[2] == "id"
+        && let Some(id) = p[3].as_str()
+    {
+        ids.insert(id.to_owned());
+    }
+    for row in [previous, Some(record)].into_iter().flatten() {
+        if let Ok(value) = row.json_value()
+            && gateway_admin_data::migration::audit::api_id(value.get("id"))
+            && let Some(id) = value.get("id").and_then(Value::as_str)
+        {
+            ids.insert(id.into());
+        }
+    }
+    for id in ids {
+        let derived = gateway_authority::keys::api_policy(&id);
+        let id_key = gateway_auth::api_keys::id_key(&id);
+        let row = prospective(store, written, record, &id_key, &mut transition.checks).await?;
+        let parsed = row
+            .as_ref()
+            .and_then(|r| r.json_value().ok())
+            .and_then(|v| {
+                serde_json::from_value::<gateway_admin::keys::ApiKeyRecord>(v.clone()).ok()
+            })
+            .filter(|r| r.policy.id == id && r.policy.usage_quota_version == 3);
+        let mut policy = None;
+        if let Some(parsed) = parsed {
+            let hash_key = gateway_auth::api_keys::hash_key(&parsed.hash);
+            let hash =
+                prospective(store, written, record, &hash_key, &mut transition.checks).await?;
+            if let Some(hash) = hash
+                .and_then(|r| r.json_value().ok().cloned())
+                .and_then(|v| {
+                    serde_json::from_value::<gateway_auth::api_keys::ApiKeyHashRecord>(v).ok()
+                })
+                && hash == parsed.policy
+                && row.as_ref().is_some_and(|r| {
+                    r.json_value().is_ok_and(|v| {
+                        gateway_admin_data::migration::audit::keys::valid_key_policy(v, true)
+                    })
+                })
+            {
+                policy = Some(gateway_admin::keys::authority_policy(&parsed, now));
+            }
+        }
+        transition.mutations.push(if let Some(policy) = policy {
+            RecordMutation::Put {
+                key: derived,
+                record: StoredRecord::json(revision, json!(policy), None),
+            }
+        } else {
+            RecordMutation::Delete { key: derived }
+        });
+    }
+    Ok(())
+}
+
 pub(crate) async fn bind<S: QueryStore>(
     store: &S,
     input: Write<'_>,
@@ -43,9 +118,8 @@ pub(crate) async fn bind<S: QueryStore>(
         key: written,
         parts: p,
         record,
-        previous,
-        now,
         revision,
+        ..
     } = input;
     if p.len() == 2
         && p[0] == "default"
@@ -75,61 +149,7 @@ pub(crate) async fn bind<S: QueryStore>(
         });
     }
     if starts(p, &["ubq_ai", "api_keys", "id"]) || starts(p, &["ubq_ai", "api_keys", "hash"]) {
-        let mut ids = BTreeSet::new();
-        if p.len() == 4
-            && p[2] == "id"
-            && let Some(id) = p[3].as_str()
-        {
-            ids.insert(id.to_owned());
-        }
-        for row in [previous, Some(record)].into_iter().flatten() {
-            if let Ok(value) = row.json_value()
-                && gateway_admin_data::migration::audit::api_id(value.get("id"))
-                && let Some(id) = value.get("id").and_then(Value::as_str)
-            {
-                ids.insert(id.into());
-            }
-        }
-        for id in ids {
-            let derived = gateway_authority::keys::api_policy(&id);
-            let id_key = gateway_auth::api_keys::id_key(&id);
-            let row = prospective(store, written, record, &id_key, &mut transition.checks).await?;
-            let parsed = row
-                .as_ref()
-                .and_then(|r| r.json_value().ok())
-                .and_then(|v| {
-                    serde_json::from_value::<gateway_admin::keys::ApiKeyRecord>(v.clone()).ok()
-                })
-                .filter(|r| r.policy.id == id && r.policy.usage_quota_version == 3);
-            let mut policy = None;
-            if let Some(parsed) = parsed {
-                let hash_key = gateway_auth::api_keys::hash_key(&parsed.hash);
-                let hash =
-                    prospective(store, written, record, &hash_key, &mut transition.checks).await?;
-                if let Some(hash) = hash
-                    .and_then(|r| r.json_value().ok().cloned())
-                    .and_then(|v| {
-                        serde_json::from_value::<gateway_auth::api_keys::ApiKeyHashRecord>(v).ok()
-                    })
-                    && hash == parsed.policy
-                    && row.as_ref().is_some_and(|r| {
-                        r.json_value().is_ok_and(|v| {
-                            gateway_admin_data::migration::audit::keys::valid_key_policy(v, true)
-                        })
-                    })
-                {
-                    policy = Some(gateway_admin::keys::authority_policy(&parsed, now));
-                }
-            }
-            transition.mutations.push(if let Some(policy) = policy {
-                RecordMutation::Put {
-                    key: derived,
-                    record: StoredRecord::json(revision, json!(policy), None),
-                }
-            } else {
-                RecordMutation::Delete { key: derived }
-            });
-        }
+        bind_api(store, &input, transition).await?;
     }
     if starts(p, &["uos_ai", "auth", "sessions"])
         && p.len() == 4

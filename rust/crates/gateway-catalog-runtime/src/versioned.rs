@@ -525,11 +525,7 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         Ok(fetched) => fetched,
         Err(error) => {
             if degraded(&error) {
-                let _ = host
-                    .observe(CatalogObservation::ProviderDegradation {
-                        client_version: lease.version.into(),
-                    })
-                    .await;
+                observe_degradation(host, lease.version).await;
             }
             if error.status == 499 {
                 return Err(error);
@@ -538,11 +534,7 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         }
     };
     if fetched.degraded {
-        let _ = host
-            .observe(CatalogObservation::ProviderDegradation {
-                client_version: lease.version.into(),
-            })
-            .await;
+        observe_degradation(host, lease.version).await;
     }
     if !state::generation_current(store, lease.generation).await?
         || !state::checks_current(store, &fetched.publication.source_checks).await?
@@ -576,20 +568,16 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         .load_state(store, &fetched.publication, host.now_ms())
         .await?;
     let revision = host.unique_id();
-    let (etag, content_type) = if revalidated {
-        cached
-            .map(|c| {
-                (
-                    c.metadata.etag.as_deref(),
-                    Some(c.metadata.content_type.as_str()),
-                )
-            })
-            .unwrap_or((None, None))
-    } else {
-        (
+    let (etag, content_type) = match (revalidated, cached) {
+        (true, Some(c)) => (
+            c.metadata.etag.as_deref(),
+            Some(c.metadata.content_type.as_str()),
+        ),
+        (true, None) => (None, None),
+        (false, _) => (
             fetched.response.etag.as_deref(),
             fetched.response.content_type.as_deref(),
-        )
+        ),
     };
     let prepared = catalog_cache::prepare_catalog(
         catalog_cache::CatalogIdentity {
@@ -614,39 +602,42 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
     {
         return recover(runtime, store, host, lease, None, conditional, true).await;
     }
-    if !revalidated {
-        let context = state::PublicationContext {
-            version: lease.version,
-            generation: lease.generation,
-            publication: &fetched.publication,
-            revision: &revision,
-            now: started,
-        };
+    let context = state::PublicationContext {
+        version: lease.version,
+        generation: lease.generation,
+        publication: &fetched.publication,
+        revision: &revision,
+        now: started,
+    };
+    let body = (!revalidated).then_some(body.as_str());
+    finish_refresh(runtime, store, host, lease, conditional, context, body).await
+}
+
+async fn finish_refresh<S: QueryStore, H: CatalogHost>(
+    runtime: &CatalogRuntime,
+    store: &S,
+    host: &H,
+    lease: &Lease<'_>,
+    conditional: Option<&str>,
+    context: state::PublicationContext<'_>,
+    body: Option<&str>,
+) -> Result<CatalogResponse, GatewayError> {
+    if let Some(body) = body {
         // The optional full snapshot cannot turn a successfully cached exact-version answer into a guessed schema.
         if let Err(error) = state::publish_snapshot(
             store,
-            &SourceJson::parse(&body).map_err(|_| unavailable("Catalog parsing failed"))?,
+            &SourceJson::parse(body).map_err(|_| unavailable("Catalog parsing failed"))?,
             &context,
         )
         .await
         {
-            let _ = host
-                .observe(CatalogObservation::MaintenanceFailure {
-                    operation: CatalogMaintenance::SnapshotPublication,
-                    code: error.envelope.error.code,
-                })
-                .await;
+            maintenance(host, CatalogMaintenance::SnapshotPublication, error).await;
         }
     }
     if let Err(error) =
         catalog_store::prune_stored_catalog_versions(store, lease.version, host.now_ms()).await
     {
-        let _ = host
-            .observe(CatalogObservation::MaintenanceFailure {
-                operation: CatalogMaintenance::VersionPruning,
-                code: error.envelope.error.code,
-            })
-            .await;
+        maintenance(host, CatalogMaintenance::VersionPruning, error).await;
     }
     if !state::generation_current(store, lease.generation).await? {
         return recover(runtime, store, host, lease, None, conditional, true).await;
@@ -654,19 +645,25 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
     let catalog = state::load_exact_catalog(store, lease.version, lease.generation, host.now_ms())
         .await?
         .ok_or_else(|| unavailable("Codex model catalog could not be read after caching"))?;
-    response(
-        runtime,
-        store,
-        host,
-        &catalog,
-        conditional,
-        if revalidated {
-            CacheState::Revalidated
-        } else {
-            CacheState::Miss
-        },
-    )
-    .await
+    let cache = body.map_or(CacheState::Revalidated, |_| CacheState::Miss);
+    response(runtime, store, host, &catalog, conditional, cache).await
+}
+
+async fn observe_degradation<H: CatalogHost>(host: &H, version: &str) {
+    let _ = host
+        .observe(CatalogObservation::ProviderDegradation {
+            client_version: version.into(),
+        })
+        .await;
+}
+
+async fn maintenance<H: CatalogHost>(host: &H, operation: CatalogMaintenance, error: GatewayError) {
+    let _ = host
+        .observe(CatalogObservation::MaintenanceFailure {
+            operation,
+            code: error.envelope.error.code,
+        })
+        .await;
 }
 
 #[cfg(test)]

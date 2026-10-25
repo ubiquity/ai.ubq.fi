@@ -22,5 +22,5 @@ workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 gateway-auth.workspace = true
 gateway-native.workspace = true
-gateway-publication.workspace = true
+gateway-publication-policy.workspace = true
 gateway-routing-runtime-test-support.workspace = true

@@ -81,10 +81,10 @@ fn replace(value: &SourceJson, name: &str, replacement: SourceJson) -> SourceJso
 fn rows(value: &SourceJson) -> Vec<SourceJson> {
     member(value, "points").array_items().unwrap()
 }
-fn response(value: gateway_auth::types::AuthResponse) -> SourceJson {
+fn response(value: gateway_auth::types::AuthResponse) -> Result<SourceJson, GatewayError> {
     assert_eq!(value.status, 200);
     assert_eq!(value.headers["cache-control"], "no-store");
-    SourceJson::parse_bytes(&value.body.to_bytes().unwrap()).unwrap()
+    SourceJson::parse_bytes(&value.body.to_bytes()?)
 }
 fn snapshot(memory: &Memory) -> Vec<(String, StoredRecord)> {
     memory
@@ -584,7 +584,7 @@ fn context() -> Context {
 }
 #[test]
 fn passive_response_preserves_actual_source_masked_hint_labels_workspace_allowlist_and_stale_quota_fence()
- {
+-> Result<(), GatewayError> {
     for current in [true, false] {
         let memory = Memory::default();
         let host = inventory(&memory, current);
@@ -592,9 +592,9 @@ fn passive_response_preserves_actual_source_masked_hint_labels_workspace_allowli
         assert_eq!(hint.as_units()[13], 0xd83d);
         let runtime = ObservabilityRuntime::new(memory.clone(), host);
         let before = snapshot(&memory);
-        let body = response(run(runtime.passive_provider_response(false, context())).unwrap());
+        let body = response(run(runtime.passive_provider_response(false, context()))?)?;
         let claude = member(&body, "claude_code");
-        let account = &member(&claude, "accounts").array_items().unwrap()[0];
+        let account = &member(&claude, "accounts").array_items()?[0];
         assert_eq!(text(&member(account, "credential"), "hint"), hint);
         assert_eq!(text(account, "label").as_units().last(), Some(&0xdc00));
         assert_eq!(
@@ -603,11 +603,8 @@ fn passive_response_preserves_actual_source_masked_hint_labels_workspace_allowli
         );
         assert_eq!(text(&claude, "active_reason").as_units(), [0xd800]);
         assert_eq!(
-            member(&member(&claude, "access"), "allowed_key_ids")
-                .array_items()
-                .unwrap()[0]
-                .deserialize::<JsString16>()
-                .unwrap()
+            member(&member(&claude, "access"), "allowed_key_ids").array_items()?[0]
+                .deserialize::<JsString16>()?
                 .as_units(),
             [0xdc00]
         );
@@ -635,19 +632,21 @@ fn passive_response_preserves_actual_source_masked_hint_labels_workspace_allowli
         }
         assert_eq!(snapshot(&memory), before);
     }
+    Ok(())
 }
 #[test]
-fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_document_rail() {
+fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_document_rail()
+-> Result<(), GatewayError> {
     let memory = Memory::default();
     let host = inventory(&memory, true);
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
-    assert!(run(runtime.record_claude_capacity_observation(&event(1))).unwrap());
+    assert!(run(runtime.record_claude_capacity_observation(&event(1)))?);
     memory.rows.borrow_mut().insert(
         key(json!(["uos_ai", "provider_capacity", "v1", "snapshot"])).0,
         StoredRecord::json("cached-synthetic", unavailable_snapshot(AT), None),
     );
     let before = snapshot(&memory);
-    let body = response(run(runtime.capacity_response(false, context())).unwrap());
+    let body = response(run(runtime.capacity_response(false, context()))?)?;
     let claude = member(&body, "claude");
     assert_eq!(text(&claude, "workspace_id").as_units(), [0xd800]);
     assert_eq!(
@@ -665,19 +664,13 @@ fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_d
     assert_eq!(rows(&member(&body, "claude_history")).len(), 1);
     assert!(!body.as_str().contains("pool_proofs"));
     assert!(!body.as_str().contains("synthetic-hidden-middle"));
-    let rollups = response(run(runtime.capacity_rollups_response(90)).unwrap());
-    assert_eq!(
-        member(&rollups, "claude_rollups")
-            .array_items()
-            .unwrap()
-            .len(),
-        2
-    );
+    let rollups = response(run(runtime.capacity_rollups_response(90))?)?;
+    assert_eq!(member(&rollups, "claude_rollups").array_items()?.len(), 2);
     assert_eq!(
         text(&rollups, "claude_rollup_scan"),
         JsString16::from_utf8("ok")
     );
-    let health = response(run(runtime.upstream_health_response()).unwrap());
+    let health = response(run(runtime.upstream_health_response())?)?;
     assert_eq!(
         text(
             &member(&member(&health, "probes"), "claude_workspace"),
@@ -687,4 +680,5 @@ fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_d
         [0xd800]
     );
     assert_eq!(snapshot(&memory), before);
+    Ok(())
 }

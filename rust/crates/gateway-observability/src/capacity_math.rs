@@ -180,19 +180,18 @@ pub fn merge_remote_history(
         }
         let i = ordered
             .partition_point(|p| crate::store::safe_i64(&p["sampled_at_ms"]).unwrap_or(0) < sample);
+        let identity = |p: &Value, slot| {
+            let s = source(p, slot)?;
+            Some(if s["failure_kind"] == "not_configured" {
+                json!("not_configured")
+            } else {
+                s["account_cohort_id"].clone()
+            })
+        };
         let matches = |p: &Value| {
             [1, 2].into_iter().all(|slot| {
-                let identity = |p: &Value| {
-                    source(p, slot).map(|s| {
-                        if s["failure_kind"] == "not_configured" {
-                            json!("not_configured")
-                        } else {
-                            s["account_cohort_id"].clone()
-                        }
-                    })
-                };
-                let a = identity(p);
-                a.is_some() && a != Some(Value::Null) && a == identity(point)
+                let a = identity(p, slot);
+                a.is_some() && a != Some(Value::Null) && a == identity(point, slot)
             })
         };
         if !i

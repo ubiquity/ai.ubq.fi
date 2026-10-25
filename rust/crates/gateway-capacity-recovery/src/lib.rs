@@ -46,7 +46,7 @@ async fn current<S: AuthorityStore>(
 
 /// Existing observation ports retain actual clock/GET/parse/atomic publication
 /// ownership. No stored observation is restamped as a new upstream result.
-pub(super) async fn observe<S, I, H, F, C>(
+pub async fn observe<S, I, H, F, C>(
     store: &S,
     authority: &Authority<S, I>,
     host: &H,

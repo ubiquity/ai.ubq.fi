@@ -1,7 +1,16 @@
-use crate::{capture::PrivateCapture, error::MigrationError, *};
+use crate::{
+    Row, Transform, capture::PrivateCapture, digest, error::MigrationError, invalid, json, key,
+};
 use gateway_admin_data::profile::SourceDateHost;
+use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
+use gateway_core::source_json::SourceJson;
+use gateway_core::state::RecordKey;
+use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
+use gateway_core::tuple_key::TupleKey;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 
