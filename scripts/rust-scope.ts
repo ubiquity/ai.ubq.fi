@@ -229,7 +229,11 @@ const snapshotInputOwners = (snapshot: RustSnapshot | null, path: string, tests:
 const inputOwners = (inputs: RustChangeInputs, path: string, tests: boolean): readonly string[] =>
   rustUnique([...snapshotInputOwners(inputs.base, path, tests), ...snapshotInputOwners(inputs.head, path, tests)]);
 const actionInputPath = (inputs: RustChangeInputs, path: string): boolean =>
-  isRustGateInput(path) || inputOwners(inputs, path, false).length > 0 || inputOwners(inputs, path, true).length > 0;
+  inputs.head.uncertainInputs.length > 0 ||
+  (inputs.base?.uncertainInputs.length ?? 0) > 0 ||
+  isRustGateInput(path) ||
+  inputOwners(inputs, path, false).length > 0 ||
+  inputOwners(inputs, path, true).length > 0;
 const seedChangedPath = (path: string, inputs: RustChangeInputs, graph: readonly RustPackage[], seeds: ScopeSeeds): void => {
   if (manifestPath(path)) return;
   const production = inputOwners(inputs, path, false);
@@ -330,7 +334,9 @@ export const selectRustScope = (inputs: RustChangeInputs, complete = false): Rus
     inputPaths: changed,
     base: base?.identity ?? null,
     head: head.identity,
-    inputsHash: rustHash(rustCanonical({ base: base?.hashes ?? null, head: head.hashes, paths })),
+    inputsHash: rustHash(
+      rustCanonical({ baseSource: base?.identity ?? null, headSource: head.identity, base: base?.hashes ?? null, head: head.hashes, paths })
+    ),
     reasons: scopeReasons(seeds, actions),
     policyActions: scopePolicyActions(actions, complete, changed.length > 0),
     ...actions,

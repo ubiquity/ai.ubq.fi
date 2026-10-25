@@ -226,3 +226,20 @@ test("unreviewed committed Cargo config keeps full fallback on later Rust change
   assert.equal(scoped.mode, "selected");
   assert.deepEqual(scoped.nativePackages, ["gateway-worker"]);
 });
+
+test("unresolved include syntax cannot skip external TS, JSON or markdown changes", () => {
+  const source = fixture({
+    extraFiles: {
+      "rust/crates/gateway-core/src/lib.rs": 'pub const DATA: &str = include_str!(concat!(env!("ROOT"), "/input"));',
+      "src/external.ts": "export const value = 1;",
+      "fixtures/external.json": "{}",
+      "docs/external.md": "possible dynamic input",
+    },
+  });
+  for (const path of ["src/external.ts", "fixtures/external.json", "docs/external.md"]) {
+    const scope = select(source, source, [path]);
+    assert.equal(scope.mode, "full");
+    assert.deepEqual(scope.inputPaths, [path]);
+    assert.equal(scope.shippingWorkerBuild, true);
+  }
+});
