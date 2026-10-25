@@ -1,8 +1,6 @@
-use crate::{
-    host::*,
-    persistence, quota,
-    response::{self, ResponseKind},
-};
+use crate::host::{self, ClaudePoolHost, OutcomeDecision, SelectedAccount, SelectionInput};
+use crate::response::{self, ResponseKind};
+use crate::{persistence, quota};
 use gateway_admin_runtime::{
     claude::{self, AccountBinding, CredentialKind},
     claude_access,
@@ -27,12 +25,12 @@ use std::{
 };
 
 pub struct ClaudePoolSession {
-    pub(crate) config: PoolConfig,
+    pub(crate) config: host::PoolConfig,
     turns: Cell<u8>,
     attempted: RefCell<BTreeSet<String>>,
 }
 impl ClaudePoolSession {
-    pub fn new(config: PoolConfig) -> Self {
+    pub fn new(config: host::PoolConfig) -> Self {
         Self {
             config,
             turns: Cell::new(0),
@@ -50,7 +48,7 @@ impl ClaudePoolSession {
         self.turns.set(self.turns.get() + 1);
         Ok(())
     }
-    pub(crate) async fn access<S: AuthorityStore, H: ClaudePoolHost>(
+    pub(crate) async fn access<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -63,19 +61,19 @@ impl ClaudePoolSession {
             .await?;
         Ok(access.policy.allows_scalar(key).then_some(access.check))
     }
-    pub async fn select<S: AuthorityStore, H: ClaudePoolHost>(
+    pub async fn select<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
-        input: SelectionInput<'_>,
-    ) -> Result<PoolSelection, GatewayError> {
+        input: host::SelectionInput<'_>,
+    ) -> Result<host::PoolSelection, GatewayError> {
         if !gateway_providers::anthropic::is_claude_model(input.model)
             || !ProviderSelection::enabled(input.selection, "claude_code")
         {
-            return Ok(PoolSelection::NotApplicable);
+            return Ok(host::PoolSelection::NotApplicable);
         }
         if self.access(store, host, input.key_id).await?.is_none() {
-            return Ok(PoolSelection::NotApplicable);
+            return Ok(host::PoolSelection::NotApplicable);
         }
         if gateway_schema::util::js_trim(&self.config.replay_scope).is_empty() {
             return Err(crate::unavailable(
@@ -92,7 +90,7 @@ impl ClaudePoolSession {
             let Some((active, quota)) = view.accounts.iter().find(|(a, _)| {
                 Some(&a.account_id) == view.roster.roster.active_account_id.as_ref()
             }) else {
-                return Ok(PoolSelection::NotApplicable);
+                return Ok(host::PoolSelection::NotApplicable);
             };
             let now = persistence::now(host)?;
             if quota::applicable_proof(quota.as_ref(), active, input.model, now).is_some() {
@@ -100,7 +98,7 @@ impl ClaudePoolSession {
                     quota::applicable_proof(q.as_ref(), a, input.model, host.now_ms()).is_none()
                 });
                 let Some((next, _)) = next else {
-                    return Ok(PoolSelection::Unavailable);
+                    return Ok(host::PoolSelection::Unavailable);
                 };
                 persistence::rotate(store, host, &view, active, &next.account_id, input.model)
                     .await?;
@@ -120,7 +118,7 @@ impl ClaudePoolSession {
                 let error = quota.as_ref().and_then(|q| q.last_error.as_ref());
                 let status = error.and_then(|e| e.status).unwrap_or(429.0).trunc();
                 if !(200.0..=599.0).contains(&status) {
-                    return Ok(PoolSelection::InternalServerError);
+                    return Ok(host::PoolSelection::InternalServerError);
                 }
                 let status = status as u16;
                 let message = error.and_then(|e| e.message.clone()).unwrap_or_else(|| {
@@ -128,7 +126,7 @@ impl ClaudePoolSession {
                         "The Claude subscription is cooling down after an upstream rejection.",
                     )
                 });
-                return Ok(PoolSelection::Refused {
+                return Ok(host::PoolSelection::Refused {
                     status,
                     headers: Headers::from([("Content-Type".into(), "application/json".into())]),
                     body: cooldown_body(&message)?,
@@ -137,7 +135,7 @@ impl ClaudePoolSession {
             let selected = self
                 .prepare(store, host, active.clone(), generation, &input, None)
                 .await?;
-            return Ok(PoolSelection::Eligible(Box::new(selected)));
+            return Ok(host::PoolSelection::Eligible(Box::new(selected)));
         }
     }
     pub(crate) async fn prepare<S: AuthorityStore, H: ClaudePoolHost>(
@@ -270,11 +268,11 @@ impl ClaudePoolSession {
             workspace_continuation: retained.is_some(),
         })
     }
-    pub async fn ensure_current<S: AuthorityStore, H: ClaudePoolHost>(
+    pub async fn ensure_current<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
-        selected: &SelectedAccount,
+        selected: &host::SelectedAccount,
         key_id: &str,
         model: &ModelId,
         raw: &SourceJson,
@@ -286,7 +284,7 @@ impl ClaudePoolSession {
         {
             return Err(crate::invalid("Claude request or catalog binding changed."));
         }
-        let input = SelectionInput {
+        let input = host::SelectionInput {
             key_id,
             model,
             raw,
@@ -312,13 +310,13 @@ impl ClaudePoolSession {
         }
         Ok(())
     }
-    pub async fn observe_response<S: AuthorityStore, H: ClaudePoolHost>(
+    pub async fn observe_response<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
-        selected: &SelectedAccount,
-        response: ResponseObservation,
-    ) -> Result<AcceptedHead, GatewayError> {
+        selected: &host::SelectedAccount,
+        response: host::ResponseObservation,
+    ) -> Result<host::AcceptedHead, GatewayError> {
         if !(100..=599).contains(&response.status)
             || !(1..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&response.observed_at_ms)
         {
@@ -332,7 +330,7 @@ impl ClaudePoolSession {
         );
         let observation = response::observe_headers(&response.headers, response.observed_at_ms);
         let success = classification.kind == ResponseKind::Ok;
-        let mut head = AcceptedHead {
+        let mut head = host::AcceptedHead {
             selected: selected.clone(),
             model: selected.model.clone(),
             response,
@@ -346,11 +344,11 @@ impl ClaudePoolSession {
         }
         Ok(head)
     }
-    pub async fn after_outcome<S: AuthorityStore, H: ClaudePoolHost>(
+    pub async fn after_outcome<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
-        mut head: AcceptedHead,
+        mut head: host::AcceptedHead,
         evidence: ErrorEvidence,
     ) -> Result<OutcomeDecision, GatewayError> {
         if head.success_recorded {
@@ -412,11 +410,11 @@ impl ClaudePoolSession {
         }
         Ok(OutcomeDecision::Preserve)
     }
-    async fn record<S: AuthorityStore, H: ClaudePoolHost>(
+    async fn record<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
-        head: &AcceptedHead,
+        head: &host::AcceptedHead,
     ) {
         let committed = persistence::persist(
             store,
@@ -437,7 +435,7 @@ impl ClaudePoolSession {
         {
             let now = host.now_ms();
             let binding = &head.selected.binding;
-            let event = AcceptedObservation {
+            let event = host::AcceptedObservation {
                 v: 1,
                 observation_id,
                 account_id: binding.account_id.clone(),
@@ -474,17 +472,17 @@ impl ClaudePoolSession {
         )
         .await;
     }
-    pub async fn observe_transport_failure<S: AuthorityStore, H: ClaudePoolHost>(
+    pub async fn observe_transport_failure<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
-        selected: &SelectedAccount,
+        selected: &host::SelectedAccount,
     ) -> Result<(), GatewayError> {
         self.health(store, host, &selected.binding, "upstream_error", None, None)
             .await;
         Ok(())
     }
-    async fn health<S: AuthorityStore, H: ClaudePoolHost>(
+    async fn health<S: AuthorityStore, H: host::ClaudePoolHost>(
         &self,
         store: &S,
         host: &H,
@@ -502,7 +500,7 @@ impl ClaudePoolSession {
                         && !id.chars().any(|c| (c as u32) < 0x20 || c == '\x7f')
                 });
             let _ = host
-                .health_observation(&HealthObservation {
+                .health_observation(&host::HealthObservation {
                     identity: format!(
                         "{}:{}:{}",
                         binding.account_id, binding.account_cohort_id, binding.evidence_generation

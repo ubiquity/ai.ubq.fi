@@ -23,6 +23,7 @@ members = [
   "crates/gateway-native",
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
+  "crates/gateway-capacity-recovery",
   "crates/gateway-worker-fixture",
   "crates/gateway-worker-fixture-setup",
   "crates/gateway-observability-test-support",
@@ -52,6 +53,7 @@ gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
 gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
+gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }

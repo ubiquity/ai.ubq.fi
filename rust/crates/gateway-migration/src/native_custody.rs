@@ -1,12 +1,14 @@
 //! Trusted offline/native preparation only; the common candidate never receives refresh material.
 use crate::inverse::{ArtifactContext, CustodyRecord};
 use crate::native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native};
-use crate::{engine::PreparedAdoption, error::MigrationError, *};
+use crate::{engine::PreparedAdoption, error::MigrationError, invalid, parts, starts, unavailable};
 use gateway_auth::managed_access::ManagedAccessProjection;
 use gateway_auth::native_credentials::{NativeGeneration, OwnerFence, verify_fence};
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, CodexSourcePool, ManagedNativeSource, parse_codex_source_pool,
 };
+use gateway_core::error::GatewayError;
+use gateway_core::tuple_key::TupleKey;
 use gateway_core::{query::QueryStore, value::PortableValue};
 use std::future::Future;
 

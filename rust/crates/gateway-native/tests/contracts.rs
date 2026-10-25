@@ -259,6 +259,7 @@ fn capped_follow_entries_remain_eligible_until_their_revision_is_emitted() {
 struct FollowFixture {
     replies: std::collections::VecDeque<Result<serde_json::Value, GatewayError>>,
     closed: bool,
+    exhausted: bool,
 }
 #[cfg(unix)]
 impl SupervisorTransport for FollowFixture {
@@ -268,7 +269,14 @@ impl SupervisorTransport for FollowFixture {
         _: serde_json::Value,
     ) -> Result<serde_json::Value, GatewayError> {
         assert_eq!(method, SupervisorMethod::ThreadTurnsList);
-        self.replies.pop_front().unwrap()
+        let Some(reply) = self.replies.pop_front() else {
+            self.exhausted = true;
+            return Err(GatewayError::unavailable(
+                "Fixture reply queue exhausted",
+                "fixture_unavailable",
+            ));
+        };
+        reply
     }
     async fn close(&mut self) -> Result<(), GatewayError> {
         self.closed = true;
@@ -289,7 +297,8 @@ fn follow_thread() -> KnownThread {
 
 #[cfg(unix)]
 #[test]
-fn follow_masks_full_fields_before_clipping_and_retains_the_raw_source_revision() {
+fn follow_masks_full_fields_before_clipping_and_retains_the_raw_source_revision()
+-> Result<(), GatewayError> {
     let text = format!("{}password=\"fixture-hidden-value\"", "x".repeat(3990));
     let items = json!([{"type":"commandExecution","id":"command","command":"password=\"fixture-cross-left","aggregatedOutput":"fixture-cross-right\" done"},{"type":"agentMessage","id":"message","text":text}]);
     let raw_revisions: std::collections::BTreeMap<_, _> = extract_follow("turn", &items)
@@ -301,15 +310,16 @@ fn follow_masks_full_fields_before_clipping_and_retains_the_raw_source_revision(
             json!({"data":[{"id":"turn","status":"inProgress","items":items}]}),
         )]),
         closed: false,
+        exhausted: false,
     };
     let update = futures_executor::block_on(follow_update(
         &mut transport,
         &follow_thread(),
         "",
         &mut std::collections::BTreeMap::new(),
-    ))
-    .unwrap();
+    ))?;
     assert!(transport.closed);
+    assert!(!transport.exhausted);
     assert_eq!(update.entries.len(), 2);
     for entry in &update.entries {
         assert_eq!(entry.revision, raw_revisions[&entry.key]);
@@ -322,11 +332,13 @@ fn follow_masks_full_fields_before_clipping_and_retains_the_raw_source_revision(
                 .is_none_or(|command| !command.contains("fixture-cross"))
         );
     }
+    Ok(())
 }
 
 #[cfg(unix)]
 #[test]
-fn failed_full_follow_read_keeps_the_cursor_of_the_last_recorded_summary_item() {
+fn failed_full_follow_read_keeps_the_cursor_of_the_last_recorded_summary_item()
+-> Result<(), GatewayError> {
     let summary = json!({"data":[{"id":"turn","items":[{"type":"agentMessage","id":"visible","text":"visible"},{"type":"agentMessage","id":"blank","text":""}]}]});
     let mut transport = FollowFixture {
         replies: std::collections::VecDeque::from([
@@ -337,6 +349,7 @@ fn failed_full_follow_read_keeps_the_cursor_of_the_last_recorded_summary_item() 
             )),
         ]),
         closed: false,
+        exhausted: false,
     };
     let mut revisions = std::collections::BTreeMap::new();
     let update = futures_executor::block_on(follow_update(
@@ -344,10 +357,11 @@ fn failed_full_follow_read_keeps_the_cursor_of_the_last_recorded_summary_item() 
         &follow_thread(),
         "",
         &mut revisions,
-    ))
-    .unwrap();
+    ))?;
     assert!(transport.closed);
+    assert!(!transport.exhausted);
     assert_eq!(update.cursor, "turn:1");
     assert_eq!(update.entries.len(), 1);
     assert!(!revisions.contains_key("turn:blank"));
+    Ok(())
 }

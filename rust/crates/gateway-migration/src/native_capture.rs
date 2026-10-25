@@ -1,7 +1,17 @@
 //! Closed native interchange; no runtime VM bytes or source database are opened here.
-use crate::{capture::SourceEntry, engine::PreparedAdoption, error::MigrationError, *};
+use crate::{
+    Mapping, Row, Transform, capture::SourceEntry, engine::PreparedAdoption, error::MigrationError,
+    invalid, parts, private_source_key, unavailable,
+};
+use gateway_core::error::GatewayError;
 use gateway_core::source_graph::SourceGraph;
+use gateway_core::source_json::SourceJson;
+use gateway_core::state::StoredRecord;
+use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::{PortableValue, ValueEncoding};
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

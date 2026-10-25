@@ -21,7 +21,6 @@ mod catalog;
 mod catalog_host;
 mod claude_host;
 mod codex_admin_host;
-mod codex_capacity_recovery;
 mod compaction_host;
 mod cors;
 mod extras;

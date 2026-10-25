@@ -58,7 +58,7 @@ impl<S: AuthorityStore> LiveRuntime<S> {
         };
         let mut attempted = Vec::new();
         let mut captured = None;
-        for attempt in 0..2 {
+        loop {
             let account = match host.select_account(model.as_ref(), &attempted, cancel).await {
                 Ok(account) if !attempted.iter().any(|id| id == account.account_id()) => account,
                 Ok(_) => return captured.unwrap_or_else(|| response_error(host, GatewayError::unavailable("Codex routing state exposed no account for this realtime call; retry the request.", "codex_auth_missing"))),
@@ -81,7 +81,7 @@ impl<S: AuthorityStore> LiveRuntime<S> {
                 return response_error(host, error);
             }
             host.response_health(&account, &upstream).await;
-            if !credential_failure || attempt == 1 {
+            if !credential_failure || attempted.len() == 2 {
                 return self
                     .relay(
                         upstream,
@@ -94,7 +94,6 @@ impl<S: AuthorityStore> LiveRuntime<S> {
             host.await_routing_transition().await;
             captured = Some(host.capture_retry(upstream, cancel).await);
         }
-        captured.expect("two attempts either returned a response or captured the first failure")
     }
 
     async fn relay<B>(

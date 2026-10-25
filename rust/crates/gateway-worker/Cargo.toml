@@ -23,6 +23,7 @@ gateway-admin.workspace = true
 gateway-admin-data.workspace = true
 gateway-admission.workspace = true
 gateway-catalog-runtime.workspace = true
+gateway-capacity-recovery.workspace = true
 gateway-claude-runtime.workspace = true
 gateway-admin-runtime.workspace = true
 gateway-routing-runtime.workspace = true

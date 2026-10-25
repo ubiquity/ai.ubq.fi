@@ -1,10 +1,12 @@
-use crate::*;
+use crate::{Row, Transform, decode, invalid, starts, unavailable};
 use gateway_authority::{
     kernel::{KernelPolicy, KernelReservation, KernelWindow},
     paid_types::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate},
-    quota::*,
+    quota::{ApiUsageRequest, ApiUsageWindow},
 };
+use gateway_core::error::GatewayError;
 use gateway_core::{lifecycle::BillingState, value::PortableValue};
+use serde_json::Value;
 use serde_json::json;
 
 pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
@@ -58,129 +60,11 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         ));
     }
     let v = row.record.json_value()?.clone();
-    if starts(p, &["ubq_ai", "api_keys", "id"]) {
-        let record: gateway_admin::keys::ApiKeyRecord = decode(&v)?;
-        if p.len() != 4
-            || p[3] != record.policy.id
-            || record.policy.usage_quota_version != 3
-            || !gateway_admin_data::migration::audit::keys::valid_key_policy(&v, true)
-        {
-            return Err(invalid(
-                "API key ID policy is malformed or requires legacy migration",
-            ));
-        }
-    } else if starts(p, &["ubq_ai", "api_keys", "hash"]) {
-        let _: gateway_auth::api_keys::ApiKeyHashRecord = decode(&v)?;
-        if p.len() != 4 || !gateway_admin_data::migration::audit::keys::valid_key_policy(&v, false)
-        {
-            return Err(invalid("API key hash policy is malformed"));
-        }
-    } else if starts(p, &["uos_ai", "api_key_usage", "v3", "window"]) {
-        let mut projected = v.clone();
-        projected["reservations"] = json!({});
-        let window: ApiUsageWindow = decode(&projected)?;
-        if window.v != 3
-            || p.len() != 7
-            || p[4] != window.key_id.0
-            || p[5] != window.policy_version
-            || p[6].as_f64() != Some(window.window_start_ms as f64)
-            || window.reserved_requests < 0
-            || window.committed_requests < 0
-        {
-            return Err(invalid("API window identity/counters conflict"));
-        }
-        row.record.value = projected;
-        row.mapping.transform = Transform::ApiWindow;
-    } else if starts(p, &["uos_ai", "api_key_usage", "v3", "request"]) {
-        let mut projected = v.clone();
-        projected["transport_started"] = json!(false);
-        let request: ApiUsageRequest = decode(&projected)?;
-        if request.v != 3
-            || p.len() != 8
-            || p[4] != request.key_id.0
-            || p[7] != request.request_id.0
-        {
-            return Err(invalid("API request identity conflicts"));
-        }
-        // This is an absent marker, NOT known-before-transport evidence. Source state remains exact.
-        row.record.value = projected;
-        row.mapping.transform = Transform::ApiRequest;
-    } else if starts(p, &["uos_ai", "kernel_quota", "v2"]) {
-        let kind = p
-            .get(3)
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid("Kernel tuple missing kind"))?;
-        if matches!(kind, "repo_window" | "org_window") {
-            let (scope, owner, repo) = gateway_admin_data::migration::kernel::identity(p, "window")
-                .ok_or_else(|| invalid("Kernel source window identity is malformed"))?;
-            if gateway_admin_data::migration::kernel::normalize_window(
-                &v,
-                &scope,
-                &owner,
-                repo.as_deref(),
-            )
-            .is_none()
-            {
-                return Err(invalid("Kernel source window is malformed"));
-            }
-            // This is still source data, not a live window. The complete
-            // reservation inventory binds its exact index in indexes.rs.
-            row.mapping.transform = Transform::KernelWindow;
-        } else if kind.ends_with("_window") {
-            let mut projected = v.clone();
-            projected["reservations"] = json!({});
-            let _: KernelWindow = decode(&projected)?;
-            row.record.value = projected;
-            row.mapping.transform = Transform::KernelWindow;
-        } else if kind.ends_with("_reservation") {
-            let mut projected = v.clone();
-            let state = v["state"]
-                .as_str()
-                .ok_or_else(|| invalid("Kernel state missing"))?;
-            projected["state"] = if state == "reserved" {
-                Value::Null
-            } else {
-                json!(state)
-            };
-            projected["terminal_at_ms"] = match state {
-                "reserved" => Value::Null,
-                "committed" => v["committed_at_ms"].clone(),
-                "released" => v["released_at_ms"].clone(),
-                _ => return Err(invalid("Kernel terminal state invalid")),
-            };
-            let _: KernelReservation = decode(&projected)?;
-            row.record.value = projected;
-            row.mapping.transform = Transform::KernelRequest;
-        } else if kind.ends_with("_policy") {
-            let _: KernelPolicy = decode(&v)?;
-        }
-    } else if starts(p, &["uos_ai", "paid_fallback", "v3", "pending"]) {
-        if p.len() != 6 {
-            return Err(invalid("Paid pending identity malformed"));
-        }
-        let mut projected = v.clone();
-        projected["key_id"] = p[4].clone();
-        projected["attempt_id"] = p[5].clone();
-        let _: PendingPaid = decode(&projected)?;
-        row.record.value = projected;
-        row.mapping.transform = Transform::PaidPending;
-    } else if starts(p, &["uos_ai", "paid_fallback", "v3", "reconciliation_gate"]) {
-        let mut projected = v.clone();
-        projected["pending"] = json!({});
-        let _: ReconciliationGate = decode(&projected)?;
-        row.record.value = projected;
-        row.mapping.transform = Transform::PaidGate;
-    } else if starts(p, &["uos_ai", "paid_fallback", "v3", "window"]) {
-        let window: PaidWindow = decode(&v)?;
-        if p.len() != 6
-            || p[4] != window.key_id.0
-            || p[5].as_f64() != Some(window.window_reset_at_ms as f64)
-            || window.reserved_microcredits < 0
-            || window.pending_count < 0
-        {
-            return Err(invalid("Paid window identity/counters malformed"));
-        }
-    } else if starts(p, &["ubq_ai", "codex_auth"]) {
+    if project_api(row, &v)? || project_kernel(row, &v)? || project_paid(row, &v)? {
+        return Ok(());
+    }
+    let p = &row.parts;
+    if starts(p, &["ubq_ai", "codex_auth"]) {
         let pool = gateway_auth::provider_credentials::parse_codex_source_pool(&v)?
             .ok_or_else(|| invalid("Source Codex pool is malformed"))?;
         if pool
@@ -238,6 +122,151 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
         ));
     }
     Ok(())
+}
+
+fn project_api(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
+    let p = &row.parts;
+    if starts(p, &["ubq_ai", "api_keys", "id"]) {
+        let record: gateway_admin::keys::ApiKeyRecord = decode(v)?;
+        if p.len() != 4
+            || p[3] != record.policy.id
+            || record.policy.usage_quota_version != 3
+            || !gateway_admin_data::migration::audit::keys::valid_key_policy(v, true)
+        {
+            return Err(invalid(
+                "API key ID policy is malformed or requires legacy migration",
+            ));
+        }
+    } else if starts(p, &["ubq_ai", "api_keys", "hash"]) {
+        let _: gateway_auth::api_keys::ApiKeyHashRecord = decode(v)?;
+        if p.len() != 4 || !gateway_admin_data::migration::audit::keys::valid_key_policy(v, false) {
+            return Err(invalid("API key hash policy is malformed"));
+        }
+    } else if starts(p, &["uos_ai", "api_key_usage", "v3", "window"]) {
+        let mut projected = v.clone();
+        projected["reservations"] = json!({});
+        let window: ApiUsageWindow = decode(&projected)?;
+        if window.v != 3
+            || p.len() != 7
+            || p[4] != window.key_id.0
+            || p[5] != window.policy_version
+            || p[6].as_f64() != Some(window.window_start_ms as f64)
+            || window.reserved_requests < 0
+            || window.committed_requests < 0
+        {
+            return Err(invalid("API window identity/counters conflict"));
+        }
+        row.record.value = projected;
+        row.mapping.transform = Transform::ApiWindow;
+    } else if starts(p, &["uos_ai", "api_key_usage", "v3", "request"]) {
+        let mut projected = v.clone();
+        projected["transport_started"] = json!(false);
+        let request: ApiUsageRequest = decode(&projected)?;
+        if request.v != 3
+            || p.len() != 8
+            || p[4] != request.key_id.0
+            || p[7] != request.request_id.0
+        {
+            return Err(invalid("API request identity conflicts"));
+        }
+        // This is an absent marker, NOT known-before-transport evidence. Source state remains exact.
+        row.record.value = projected;
+        row.mapping.transform = Transform::ApiRequest;
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn project_kernel(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
+    let p = &row.parts;
+    if starts(p, &["uos_ai", "kernel_quota", "v2"]) {
+        let kind = p
+            .get(3)
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("Kernel tuple missing kind"))?;
+        if matches!(kind, "repo_window" | "org_window") {
+            let (scope, owner, repo) = gateway_admin_data::migration::kernel::identity(p, "window")
+                .ok_or_else(|| invalid("Kernel source window identity is malformed"))?;
+            if gateway_admin_data::migration::kernel::normalize_window(
+                v,
+                &scope,
+                &owner,
+                repo.as_deref(),
+            )
+            .is_none()
+            {
+                return Err(invalid("Kernel source window is malformed"));
+            }
+            // This is still source data, not a live window. The complete
+            // reservation inventory binds its exact index in indexes.rs.
+            row.mapping.transform = Transform::KernelWindow;
+        } else if kind.ends_with("_window") {
+            let mut projected = v.clone();
+            projected["reservations"] = json!({});
+            let _: KernelWindow = decode(&projected)?;
+            row.record.value = projected;
+            row.mapping.transform = Transform::KernelWindow;
+        } else if kind.ends_with("_reservation") {
+            let mut projected = v.clone();
+            let state = v["state"]
+                .as_str()
+                .ok_or_else(|| invalid("Kernel state missing"))?;
+            projected["state"] = if state == "reserved" {
+                Value::Null
+            } else {
+                json!(state)
+            };
+            projected["terminal_at_ms"] = match state {
+                "reserved" => Value::Null,
+                "committed" => v["committed_at_ms"].clone(),
+                "released" => v["released_at_ms"].clone(),
+                _ => return Err(invalid("Kernel terminal state invalid")),
+            };
+            let _: KernelReservation = decode(&projected)?;
+            row.record.value = projected;
+            row.mapping.transform = Transform::KernelRequest;
+        } else if kind.ends_with("_policy") {
+            let _: KernelPolicy = decode(v)?;
+        }
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn project_paid(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
+    let p = &row.parts;
+    if starts(p, &["uos_ai", "paid_fallback", "v3", "pending"]) {
+        if p.len() != 6 {
+            return Err(invalid("Paid pending identity malformed"));
+        }
+        let mut projected = v.clone();
+        projected["key_id"] = p[4].clone();
+        projected["attempt_id"] = p[5].clone();
+        let _: PendingPaid = decode(&projected)?;
+        row.record.value = projected;
+        row.mapping.transform = Transform::PaidPending;
+    } else if starts(p, &["uos_ai", "paid_fallback", "v3", "reconciliation_gate"]) {
+        let mut projected = v.clone();
+        projected["pending"] = json!({});
+        let _: ReconciliationGate = decode(&projected)?;
+        row.record.value = projected;
+        row.mapping.transform = Transform::PaidGate;
+    } else if starts(p, &["uos_ai", "paid_fallback", "v3", "window"]) {
+        let window: PaidWindow = decode(v)?;
+        if p.len() != 6
+            || p[4] != window.key_id.0
+            || p[5].as_f64() != Some(window.window_reset_at_ms as f64)
+            || window.reserved_microcredits < 0
+            || window.pending_count < 0
+        {
+            return Err(invalid("Paid window identity/counters malformed"));
+        }
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 pub fn known_source_family(p: &[Value]) -> bool {

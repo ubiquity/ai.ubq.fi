@@ -17,7 +17,6 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     time::{Duration, Instant},
 };
-const SANDBOX_SHA: &str = "e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Bootstrap {
@@ -126,6 +125,13 @@ pub(super) struct OwnedImportChildChannel {
 impl OwnedImportChildChannel {
     // Fixed role only: no caller arguments, executable choice, environment or arbitrary profile API.
     // The sole trusted supervisor passes its hash-bound adjacent actor and generated exact policy.
+    // The fixed-role sandbox helper consumes the same three reviewed
+    // /usr/bin/sandbox-exec identities as the owner-runtime fixture.
+    // Every candidate still passes descriptor, NOFOLLOW, regular-file,
+    // ownership and exact-hash verification before launch.
+    // Caller, environment or OS version input cannot add an identity.
+    // Unknown values fail closed before any socket or child is created.
+    // The reviewed path and root ownership checks remain mandatory.
     pub(super) fn launch(
         artifact: (&Path, &str),
         client: TcpStream,
@@ -154,7 +160,7 @@ impl OwnedImportChildChannel {
         }
         endpoints.require_origin(registry.authority_origin())?;
         let actor = PinnedExecutable::verify(binary, digest)?;
-        let sandbox = PinnedExecutable::verify(Path::new("/usr/bin/sandbox-exec"), SANDBOX_SHA)?;
+        let sandbox = super::owner_runtime::sandbox_executable()?;
         let listener =
             TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|_| unavailable())?;
         let actor_socket = TcpStream::connect(listener.local_addr().map_err(|_| unavailable())?)
@@ -206,9 +212,7 @@ impl OwnedImportChildChannel {
             );
         }
         client.set_nonblocking(false).map_err(|_| unavailable())?;
-        actor_socket
-            .set_nonblocking(false)
-            .map_err(|_| unavailable())?;
+        TcpStream::set_nonblocking(&actor_socket, false).map_err(|_| unavailable())?;
         if rustix::fs::fcntl_getfl(&client)
             .map_err(|_| unavailable())?
             .contains(rustix::fs::OFlags::NONBLOCK)
@@ -248,13 +252,8 @@ impl OwnedImportChildChannel {
         }
         let input = this.input.as_mut().ok_or_else(unavailable)?;
         for bytes in [daemon_config, bootstrap.as_slice()] {
-            input
-                .write_all(
-                    &u32::try_from(bytes.len())
-                        .map_err(|_| unavailable())?
-                        .to_be_bytes(),
-                )
-                .map_err(|_| unavailable())?;
+            let length = u32::try_from(bytes.len()).map_err(|_| unavailable())?;
+            Write::write_all(input, &length.to_be_bytes()).map_err(|_| unavailable())?;
             input.write_all(bytes).map_err(|_| unavailable())?;
         }
         this.check_live()?;

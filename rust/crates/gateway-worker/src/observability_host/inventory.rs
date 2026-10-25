@@ -116,6 +116,82 @@ impl RequestHost {
             .flatten()
             .filter(|r| r.expires_at_ms.is_none_or(|t| t > at))
             .and_then(|r| r.json_value().ok().and_then(ProviderSelection::normalize));
+        let (accounts, active_id, active_reason) = self.claude_accounts(at).await?;
+        let access = match self.store.read(&claude_access::policy_key()).await? {
+            Some(row) if row.expires_at_ms.is_none_or(|t| t > at) => {
+                claude_access::decode_policy_record(&row, at, &|a, b| {
+                    crate::source_collator::shared().compare(a, b)
+                })?
+                .map(|policy| ClaudeAccessReadback {
+                    source: match policy.source {
+                        claude_access::PolicySource::Env => "env",
+                        claude_access::PolicySource::Kv => "kv",
+                    }
+                    .into(),
+                    allowed_key_ids: policy.allowed_key_ids,
+                    updated_at_ms: Some(policy.updated_at_ms),
+                })
+            }
+            _ => {
+                let ids = crate::admin_host::config(&self.platform.env).claude_allowed_key_ids;
+                if ids.is_empty() {
+                    None
+                } else {
+                    Some(ClaudeAccessReadback {
+                        source: "env".into(),
+                        allowed_key_ids: ids
+                            .into_iter()
+                            .map(|id| gateway_core::js_string::JsString16::from_utf8(&id))
+                            .collect(),
+                        updated_at_ms: None,
+                    })
+                }
+            }
+        };
+        let monitoring = monitoring_key(&self.platform.env).is_some();
+        let metered = if monitoring {
+            gateway_observability::metered::cached_snapshot(&self.store, at)
+                .await
+                .unwrap_or(None)
+        } else {
+            None
+        };
+        let any_hop = [
+            "DEEPSEEK_API_KEY",
+            "OPENROUTER_API_KEY",
+            "LITHOSAI_API_KEY",
+            "SURPLUS_API_KEY",
+            "OPENLUX_API_KEY",
+            "METERED_API_KEY",
+        ]
+        .iter()
+        .any(|name| crate::host::provider_secret(&self.platform.env, name).is_some());
+        Ok(ProviderInventory {
+            codex,
+            configured,
+            claude: ClaudeRosterReadback {
+                accounts,
+                active_account_id: active_id,
+                active_reason,
+                access,
+                enabled: ProviderSelection::enabled(selection.as_ref(), "claude_code"),
+            },
+            metered_quota: metered,
+            quota_monitoring_configured: monitoring,
+            ubiquity_configured: any_hop,
+        })
+    }
+    async fn claude_accounts(
+        &self,
+        at: i64,
+    ) -> Result<
+        (
+            Vec<ClaudeAccountReadback>,
+            Option<String>,
+            Option<gateway_core::js_string::JsString16>,
+        ),
+        GatewayError,
+    > {
         let roster = claude::read_roster(&self.store, at).await?;
         let mut accounts = Vec::new();
         let mut active_id = None;
@@ -184,68 +260,6 @@ impl RequestHost {
                 });
             }
         }
-        let access = match self.store.read(&claude_access::policy_key()).await? {
-            Some(row) if row.expires_at_ms.is_none_or(|t| t > at) => {
-                claude_access::decode_policy_record(&row, at, &|a, b| {
-                    crate::source_collator::shared().compare(a, b)
-                })?
-                .map(|policy| ClaudeAccessReadback {
-                    source: match policy.source {
-                        claude_access::PolicySource::Env => "env",
-                        claude_access::PolicySource::Kv => "kv",
-                    }
-                    .into(),
-                    allowed_key_ids: policy.allowed_key_ids,
-                    updated_at_ms: Some(policy.updated_at_ms),
-                })
-            }
-            _ => {
-                let ids = crate::admin_host::config(&self.platform.env).claude_allowed_key_ids;
-                if ids.is_empty() {
-                    None
-                } else {
-                    Some(ClaudeAccessReadback {
-                        source: "env".into(),
-                        allowed_key_ids: ids
-                            .into_iter()
-                            .map(|id| gateway_core::js_string::JsString16::from_utf8(&id))
-                            .collect(),
-                        updated_at_ms: None,
-                    })
-                }
-            }
-        };
-        let monitoring = monitoring_key(&self.platform.env).is_some();
-        let metered = if monitoring {
-            gateway_observability::metered::cached_snapshot(&self.store, at)
-                .await
-                .unwrap_or(None)
-        } else {
-            None
-        };
-        let any_hop = [
-            "DEEPSEEK_API_KEY",
-            "OPENROUTER_API_KEY",
-            "LITHOSAI_API_KEY",
-            "SURPLUS_API_KEY",
-            "OPENLUX_API_KEY",
-            "METERED_API_KEY",
-        ]
-        .iter()
-        .any(|name| crate::host::provider_secret(&self.platform.env, name).is_some());
-        Ok(ProviderInventory {
-            codex,
-            configured,
-            claude: ClaudeRosterReadback {
-                accounts,
-                active_account_id: active_id,
-                active_reason,
-                access,
-                enabled: ProviderSelection::enabled(selection.as_ref(), "claude_code"),
-            },
-            metered_quota: metered,
-            quota_monitoring_configured: monitoring,
-            ubiquity_configured: any_hop,
-        })
+        Ok((accounts, active_id, active_reason))
     }
 }

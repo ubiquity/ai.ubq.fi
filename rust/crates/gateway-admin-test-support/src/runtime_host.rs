@@ -2,7 +2,11 @@ use gateway_auth::types::AuthHost;
 use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
 use gateway_auth::webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto};
 use gateway_core::error::GatewayError;
-use std::cell::Cell;
+use std::{
+    cell::Cell,
+    future::Future,
+    task::{Context as TaskContext, Poll, Waker},
+};
 
 pub struct Host {
     pub now: Cell<i64>,
@@ -59,5 +63,16 @@ impl AuthHost for Host {
             "No kernel fixture",
             "fixture_missing",
         ))
+    }
+}
+
+pub fn run<F: Future>(future: F) -> F::Output {
+    let mut cx = TaskContext::from_waker(Waker::noop());
+    let mut future = std::pin::pin!(future);
+    loop {
+        if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+            return value;
+        }
+        std::thread::yield_now();
     }
 }

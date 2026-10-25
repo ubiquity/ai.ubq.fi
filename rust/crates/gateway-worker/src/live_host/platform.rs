@@ -331,23 +331,22 @@ fn model_unavailable(
 #[cfg(test)]
 mod source_detail_tests {
     #[test]
-    fn unavailable_model_and_detail_keep_source_units() {
+    fn unavailable_model_and_detail_keep_source_units() -> Result<(), Box<dyn std::error::Error>> {
         let model = gateway_core::js_string::JsString16::from_units(vec![109, 0xd800]);
         let detail = gateway_core::js_string::JsString16::from_units(vec![100, 0xdc00]);
-        let response = super::model_unavailable(Some(&model), Some(&detail)).unwrap();
+        let response = super::model_unavailable(Some(&model), Some(&detail))?;
         let crate::live_host::body::Body::Bytes(bytes) = response.body else {
             panic!("model refusal is bytes");
         };
-        let value =
-            gateway_core::source_json::SourceJson::parse(std::str::from_utf8(&bytes).unwrap())
-                .unwrap();
+        let value = gateway_core::source_json::SourceJson::parse(std::str::from_utf8(&bytes)?)?;
         let message = gateway_core::source_serialization::member(&value, "error")
             .and_then(|value| gateway_core::source_serialization::member(&value, "message"))
             .as_ref()
             .and_then(gateway_core::source_serialization::string)
-            .unwrap();
+            .ok_or("source refusal message is missing")?;
         assert!(message.as_units().contains(&0xd800));
         assert!(message.as_units().contains(&0xdc00));
         assert_eq!(response.status, 404);
+        Ok(())
     }
 }

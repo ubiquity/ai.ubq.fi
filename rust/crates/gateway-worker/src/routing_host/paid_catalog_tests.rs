@@ -246,8 +246,8 @@ impl TokenSource for Tokens {
         Ok("synthetic-authority-token".into())
     }
 }
-fn request() -> (PaidRequest, PaidRequestContext) {
-    (
+fn request() -> Result<(PaidRequest, PaidRequestContext), GatewayError> {
+    Ok((
         PaidRequest {
             key_id: ApiKeyId("key".into()),
             request_id: RequestId("request".into()),
@@ -262,40 +262,41 @@ fn request() -> (PaidRequest, PaidRequestContext) {
         },
         PaidRequestContext {
             original_model: "gpt-known".into(),
-            body: SourceJson::parse(r#"{"model":"gpt-known","input":"test"}"#).unwrap(),
+            body: SourceJson::parse(r#"{"model":"gpt-known","input":"test"}"#)?,
             surface: gateway_providers::types::ClientSurface::Responses,
             synthetic_hop: None,
         },
-    )
+    ))
 }
 #[test]
-fn selected_paid_credential_publishes_real_fenced_catalog_once_before_authority_receipt() {
+fn selected_paid_credential_publishes_real_fenced_catalog_once_before_authority_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let inputs = install(&store).await;
         let host = Host::new(Some(&inputs));
         let authority = Authority::with_clock(store.clone(), Tokens, Clock)
             .with_source_string_collator(Arc::new(source_catalog::Collator::captured()));
-        let (request, context) = request();
+        let (request, context) = request()?;
         let missing = authority
             .authorize_paid_route(&request, &context, NOW)
             .await
-            .unwrap_err();
+            .err()
+            .ok_or("paid route unexpectedly authorized")?;
         assert_eq!(
             missing.envelope.error.message,
             "Paid routing projection is missing."
         );
         assert_eq!(store.projections.get(), 0);
-        prepare_credential_catalog(UpstreamProvider::Surplus, &store, &host)
-            .await
-            .unwrap();
+        prepare_credential_catalog(UpstreamProvider::Surplus, &store, &host).await?;
         assert_eq!(host.requests.borrow().len(), 1);
         assert_eq!(store.projections.get(), 1);
-        let row = store.read(&keys::paid_routing()).await.unwrap().unwrap();
-        let projection: PaidRoutingProjection = decode_source_control_record(&row)
-            .unwrap()
-            .deserialize()
-            .unwrap();
+        let row = store
+            .read(&keys::paid_routing())
+            .await?
+            .ok_or("paid projection missing")?;
+        let projection: PaidRoutingProjection =
+            decode_source_control_record(&row)?.deserialize()?;
         for key in paid_projection_source_keys() {
             assert!(
                 projection
@@ -308,15 +309,13 @@ fn selected_paid_credential_publishes_real_fenced_catalog_once_before_authority_
         for _ in 0..3 {
             authority
                 .authorize_paid_route(&request, &context, NOW)
-                .await
-                .unwrap();
+                .await?;
         }
         assert_eq!(
             store
                 .read(&keys::paid_routing())
-                .await
-                .unwrap()
-                .unwrap()
+                .await?
+                .ok_or("paid projection missing")?
                 .revision,
             row.revision
         );
@@ -340,7 +339,8 @@ fn selected_paid_credential_publishes_real_fenced_catalog_once_before_authority_
         );
         assert_eq!(store.projections.get(), 1);
         assert_eq!(host.requests.borrow().len(), 1);
-    });
+        Ok(())
+    })
 }
 #[test]
 fn primary_credentials_do_not_publish_or_discover_paid_catalogs() {
@@ -403,7 +403,8 @@ fn missing_owner_wrong_binding_and_projection_cas_conflict_refuse() {
 }
 
 #[test]
-fn failed_discovery_does_not_invent_an_observation_or_paid_authority() {
+fn failed_discovery_does_not_invent_an_observation_or_paid_authority()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let inputs = install(&store).await;
@@ -412,7 +413,7 @@ fn failed_discovery_does_not_invent_an_observation_or_paid_authority() {
         let _ = prepare_credential_catalog(UpstreamProvider::Surplus, &store, &host).await;
         let authority = Authority::with_clock(store.clone(), Tokens, Clock)
             .with_source_string_collator(Arc::new(source_catalog::Collator::captured()));
-        let (request, context) = request();
+        let (request, context) = request()?;
         assert!(
             authority
                 .authorize_paid_route(&request, &context, NOW)
@@ -423,9 +424,9 @@ fn failed_discovery_does_not_invent_an_observation_or_paid_authority() {
         assert!(
             store
                 .read(&keys::paid_control_observation(PaidProvider::Surplus))
-                .await
-                .unwrap()
+                .await?
                 .is_none()
         );
-    });
+        Ok(())
+    })
 }

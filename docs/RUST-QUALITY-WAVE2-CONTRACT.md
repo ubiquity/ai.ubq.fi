@@ -1,6 +1,6 @@
 # Rust quality cleanup contract
 
-Version: 8, genuine staged-context remediation authorized 2026-10-25; earlier version sections below retain their historical provenance. Controller: active goal thread `01a16a00-7860-7440-8727-61bb36ebeefa`. Resume source: `/Users/nv/repos/ubiquity/ai.ubq.fi/docs/HANDOFF-2026-10-23-rust-quality-wave2.md`.
+Version: 9, source-candidate assembly and atomic Worker scope recorded 2026-10-25; earlier version sections below retain their historical provenance. Controller: active goal thread `01a16a00-7860-7440-8727-61bb36ebeefa`. Resume source: `/Users/nv/repos/ubiquity/ai.ubq.fi/docs/HANDOFF-2026-10-23-rust-quality-wave2.md`.
 
 ## Outcome and invariants
 
@@ -287,3 +287,73 @@ After all repair writers and the reserved functional contexts settle, freeze one
 Every remediated changed context must produce zero new/unallowlisted findings before the final baseline update. Only the supported downward-only structural and complete-stage Clippy updaters may then tighten recorded debt, preserving historical adoption identities and all prior evidence. A subset, partial stream, stale context or owned-only pass cannot update a complete stage. Journal terminal phase/status, exit and artifact reference before a future helper hands back, so a completed failure cannot look like a live compiler phase.
 
 The latest parser report on `08431133cc0758c4c215f7ecf7ac4569ca36101a` measured 18 oversized production crates, 13 oversized test targets and zero include/path/pubUse/suppression constructs, with no structural growth; that report alone is not a passed strict check. Full crate-size and remaining lint debt cleanup remains the goal after PR #1301. The preserved successor proposals are read-only planning evidence until separately assigned; this V8 repair contract does not authorize their implementation. Production release profiles, credentials, live data, provider spend, services, remote push/PR mutation and workflow enable/dispatch/rerun remain outside worker authority.
+
+## Version 9 source-candidate assembly and scoped transfers
+
+This checkpoint records source-candidate admission from the exact V8 base `50675dcd1af199e49de01a57151b92502ea5def5`, tree `a2aca253b5833f3b034ad17b3dd0c92669fa07f8`. The controller independently inspected each admitted clean tip, scope, ancestry, diff and terminal static handback. Source-candidate admission is not Rust compilation, strict comparator, runtime, actual Worker or final acceptance. No per-lane cold gate was substituted for the required frozen canonical gates, and no baseline or source-context finding was waived.
+
+| Module | Exact source tip                           | Tree                                       | Disposition                                                  |
+| ------ | ------------------------------------------ | ------------------------------------------ | ------------------------------------------------------------ |
+| M31    | `bca241dd04eceed3d9e519a2618b4e3d4a818928` | `c12e996b7b44dd5d73c7fcd3edaeb3a87023d60a` | Migration production source candidate                        |
+| M34    | `5577bea7d8f94f38ddfd08b3450cec5b30497e33` | `f15146640970a3e679f2bf805dcb749b41ceb6ed` | Native and Live source candidate                             |
+| M36    | `666126c405e1f64e90b742cac5e87c4890323a5a` | `e6c8eb168dfa8d31edf3ee45fc35dcd593be1aa0` | Runtime projection source candidate                          |
+| M35    | `5012d0c367a564b30e2645956cd1ae835c51a5f2` | `22e18eac7db5e36a818c1e923685f2bc7d5da388` | Admin and Catalog unit-v2 source candidate                   |
+| M33    | `f0cec8d8392a2cd38f07bb932a9e4c21e3e85a3b` | `d480becfc9ca1036a7c0046e9d15601a2ec0a374` | Worker unit-v2 source candidate; atomic M37 integration only |
+
+M31, M34, M36 and M35 were integrated with separate no-fast-forward merges. M36's actual owner is the external controller's existing `quality_fixtures` worker, as bound by the assigned manifest SHA-256 `f0c475dbf9c8ea8815a876fdc5c275446df435c05c201b8305344723f15b9d20`; the earlier planned `new_worker` slot remains historical. All original lane identities and admitted ancestry are preserved.
+
+M35 unit-v2 permits the seven existing seed-caller tests in its already owned file to use the approved private seed conversion. The controller inspected that exact scope and terminal handback; this transfer adds no production visibility, replacement capability, assertion deletion or unrelated caller authority.
+
+### Atomic M33 and M37 Worker unit
+
+M33 unit-v2 owns the exact capacity-recovery extraction and corresponding workspace, Worker dependency and frozen root lockfile edges. The existing Worker capacity implementation and unchanged tests move into the conventional `gateway-capacity-recovery` crate; the new crate measures 637 owned production lines and remains below 1000. M33's terminal candidate changes 23 paths from the 25 granted paths, including the conventional moves. No package version upgrade, lockfile regeneration or unrelated dependency change is authorized.
+
+The controller accepted M37 only as an uncommitted pure quality fragment from the same V8 source: `inference.rs` and its conventional private child `inference/stream.rs`. Its immutable patch SHA-256 is `20a6fe8522a273bce81eb2f2a5f48cba150f54920bb271062c69218a24d22f65`; terminal handback SHA-256 is `5fd4983494f54a981ccb3a4b2a702de206b18fffc9a05f972a04bc0bf6cff1a9`. The frozen fragment preserves exact original tests and private `RequestResources`, original literal values, clone counts and source-only effect-order checks. It contains no H4 behavior or fixture ancestry. The dirty M37 lane remains preserved without an accepted standalone tip.
+
+M37 alone would grow Worker by 143 lines and is never committed or admitted alone. Canonical first merged exact M33 with `--no-ff --no-commit`, retained its `MERGE_HEAD`, then applied only those two exact M37 patch paths. The combined Worker was independently remeasured at 20516 lines, below the V8 ceiling 20784 by 268; the new capacity crate remained 637. Baseline bytes remained unchanged. One normal direct commit with its ordinary hooks produced ancestry-preserving merge `641152c5b013a573f5ca7ed4b6db7d1a42475f2e`; its parents retain the previous source candidate and exact M33 tip. This atomic non-growing tree is the acceptance unit, with M37 patch/source hashes bound in custody. It is still uncompiled source evidence.
+
+### M32 admission and source-freeze verification
+
+M32 unit-v2 was separately admitted at exact `0c75ffc2571ef59ff7d3d24c4b9d57d090261936`, tree `f58b3719d28b6ea577cf5cae2463ce6f3c71c536`, with its original V8 ancestry retained by a separate no-fast-forward merge. Scalar `Receipt` and case definitions move into existing `gateway-migration-test-support/src/fixture.rs`, with only `serde.workspace = true` added to that helper's `Cargo.toml`. Static source evidence retains 46 cases/305 assertions, the scalar DTO/list/schema order and fixture closure 1922 below the V8 ceiling 1928; the helper measures 218 lines. After exact admission, the integration writer added only the existing pinned `serde` dependency name to `gateway-migration-test-support` in root `Cargo.lock`. A semantic lock-graph comparison and read-only locked offline Cargo metadata bind that one edge; no lockfile regeneration, version or unrelated edge change is authorized.
+
+The supported plan generator is rerun after exact M32 and the capacity member integrate; native 31 packages/24 test packages/52 commands and WASM 26 packages/five commands including the actual Worker build replace the stale native 30/WASM 25 composition. These are selection plans, not executed Rust gates. The full selected native/WASM CLI, strict comparator, affected tests and actual source-bound Worker/native artifacts remain required on a newly frozen clean canonical commit and tree. Native fixture prerequisites, the existing Darwin boundaries, manifest line-table profiles, shared compiler lock and source-owner cache guards remain unchanged. M64's separately owned synthetic native-example sequence retains its reserved compiler slot; this assembly queues no quality compiler.
+
+No baseline updater runs until a complete strict capture passes with zero unallowlisted changed contexts, and updates remain downward-only through supported tools. Preserve every original failure, static log, handback and source identity in ignored canonical custody. The clean source-candidate checkpoint after these edits is frozen only when the controller accepts its exact head/tree; it remains separate from the final post-baseline independent acceptance tree. Full remaining crate-size and staged lint debt cleanup continues beyond PR #1301; no component admission closes that goal.
+
+## 2026-10-25 complete diagnostic and downward-baseline checkpoint
+
+All six admitted V8 cleanup tips retain ancestry, including the atomic M33/M37 unit and the exact M32 fixture/dependency integration recorded above. Subsequent canonical corrections were scoped source work with normal hooks; every changed source invalidated its earlier receipt. The final diagnostic source is `1a000e6ace8cc4a870b6438b952d91f504b2d5c4`, tree `3de370238533ec533435075db5e4ca1e95c98f49`.
+
+| Source commit                              | Scoped correction                                                                                                                                        |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `4ca4cd2bd12b6de7f24e4fd03b4f68332d2e267a` | Use the existing ControlFlow Break variant for the lossless defaults response rail.                                                                      |
+| `0e899d723dde4afa061eb253061bb72fbffdf205` | Remove exactly two unused Migration imports and nine redundant reference layers.                                                                         |
+| `7671575d0f04337d6b25144b85cf0c37039849ee` | Preserve the explicit fixture missing-row error and the original administrative-observation boolean return.                                              |
+| `9cf420990c2f7bf5c7e5ab2503167d281eeae3e4` | Pass the already borrowed Worker request directly.                                                                                                       |
+| `a66a3936814140e1feae83b4d8f4ad9023b2c6c1` | Retain the Claude fixture Bootstrap and credential failure rail; relocate the exact shared test executor into the existing defining test-support module. |
+| `1a000e6ace8cc4a870b6438b952d91f504b2d5c4` | Preserve the expected kernel-quota GatewayError/status assertion through an explicit negative-fixture error rail.                                        |
+
+The first literal Claude fixture correction formatted to 1521 reachable lines and stopped before commit because its current ceiling was 1520. The separately approved real executor relocation retained its algorithm bytes, all call sites/case names/assertions/literal values, and the two original fixture corrections; the resulting contracts target is 1509 lines and the existing helper crate is 167 lines. No blank/comment/assertion offset, new dependency or production API was used. The kernel refusal fixture measures 1191 reachable lines against the independently measured V8 source ceiling 1209; its larger historical adoption allowance was not used to justify growth.
+
+Complete native 31-package and WASM 26-package Clippy captures both compiled and passed the unchanged strict staged comparator with zero new contexts. The fresh executed receipt is `591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/0ca008a8-ea40-4f5e-bdaa-aa4a5cdcc1ad`. Its native JSONL SHA-256 is `373d64d3d43bf431e0166fb2e781f974174c948a2e117c4f4aa9f04ff611bf2d`, WASM JSONL SHA-256 is `68b5fa9cc0d1639601194a2040169c2aa3eb5049eae4cdc429107c2d5d18affe`, and both saved source-context inventories have SHA-256 `a00996c7c20838617a44e9db1c413d133851b1eb477ece386ed5eb9a6ee069fa`. Actual compiler argv, terminal phase/exit, source/driver/environment bindings and complete raw outputs remain in canonical custody. These captures ran no behavior tests or Worker build.
+
+Only after both full strict stages passed, the controller approved the supported structural updater and the complete native/WASM staged updaters. All three commands exited 0; receipt `591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/880b0300-021b-4f05-8b3c-54b9547d24e8` retains their exact commands and outputs. Every count/key only fell or disappeared, adoption metadata remained decoded-equal, and all 807 independently bound Rust source/manifest inputs stayed byte-identical. No manual allowance, old fingerprint transfer, partial capture, source suppression or update initialization was used.
+
+| Baseline surface                                  | Before | After  |
+| ------------------------------------------------- | ------ | ------ |
+| Oversized production crates                       | 18     | 18     |
+| Recorded oversized production lines               | 164580 | 164064 |
+| Oversized separate targets                        | 14     | 13     |
+| Recorded oversized target lines                   | 23815  | 21272  |
+| Visible re-exports                                | 131    | 0      |
+| Path attributes                                   | 27     | 0      |
+| Source suppressions                               | 1      | 0      |
+| Include macros                                    | 0      | 0      |
+| Native staged keys, including context bookkeeping | 4940   | 4017   |
+| WASM staged keys, including context bookkeeping   | 991    | 616    |
+
+Remaining staged lint occurrences are native 153 excessive-nesting, 261 expect-used, 101 too-many-lines, 6840 unwrap-used and 82 wildcard-imports; WASM has 130, 196, 82, 31 and 77 respectively. Context occurrence bookkeeping is 2097 native and 380 WASM; it is not a separate defect count. The 18 oversized production crates, 13 oversized targets and this remaining staged debt keep the full Rust quality goal open. No paired compile-performance improvement is claimed from validation timings.
+
+Local review is unavailable, and no verified review findings were ingested. Hosted CI was not manually enabled, dispatched or rerun. The independent final selected CLI, affected tests, actual source-bound native/Worker artifacts and exact final commit/tree acceptance remain pending after this baseline/documentation commit. The successful pre-update captures and updater receipt are preparation evidence, not final acceptance or deployment authority.
+
+The custody ledger at canonical `.data/rust-quality-wave2-20261025/LATEST.json` binds the original baseline, all successful/failed captures, typed correction proofs, the no-growth contradiction and relocation, raw outputs, source contexts, tool/native-KV preparation and terminal records. The previously disclosed failed-bootstrap ancillary observer gap stays explicit; its original raw streams and exact restored journals remain separately verifiable. Separate M60/M61/M63/M64 functional work remains with its controller and does not enter this quality graph or acceptance implicitly.

@@ -1,4 +1,5 @@
 mod original_request_fixture;
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 use gateway_routing_runtime_test_support::source_catalog;
 type MemoryStore = Store;
@@ -803,20 +804,20 @@ fn set_source_field(body: &mut SourceJson, key: &str, value: SourceJson) {
     }
     *body = gateway_core::source_serialization::object_keys(fields).unwrap();
 }
-fn context(model: &str) -> PaidRequestContext {
-    PaidRequestContext {
+fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
+    Ok(PaidRequestContext {
         original_model: model.into(),
         body: SourceJson::from_serializable(
             &json!({"model":model,"input":"controlled fixture","stream":false,"tools":[]}),
-        )
-        .unwrap(),
+        )?,
         surface: gateway_providers::types::ClientSurface::Responses,
         synthetic_hop: None,
-    }
+    })
 }
 
 #[test]
-fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale_existing() {
+fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale_existing()
+-> TestResult {
     use gateway_authority::{
         paid_types::{PaidAdmission, PaidAuthorization},
         quota::ApiKeyPolicy,
@@ -827,7 +828,7 @@ fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("paid-only"));
-    run(runtime.publish_paid_routing(&store, &host)).unwrap();
+    run(runtime.publish_paid_routing(&store, &host))?;
     let request = paid_request(&store, PaidProvider::Surplus, "paid-only");
     store.put(
         keys::api_policy(&request.key_id.0),
@@ -852,30 +853,25 @@ fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale
     let receipt = run(original_request_fixture::authorize(
         &authority,
         &request,
-        &context("paid-only"),
+        &context("paid-only")?,
         store.now.get(),
-    ))
-    .unwrap();
-    assert!(matches!(
-        run(authority.reserve_paid(
-            &request,
-            &PaidAuthorization::DirectPaidModel,
-            &receipt,
-            store.now.get()
-        ))
-        .unwrap(),
-        PaidAdmission::Reserved(_)
-    ));
-    assert!(matches!(
-        run(authority.reserve_paid(
-            &request,
-            &PaidAuthorization::DirectPaidModel,
-            &receipt,
-            store.now.get()
-        ))
-        .unwrap(),
-        PaidAdmission::Existing(_)
-    ));
+    ))?;
+    let reserved = run(authority.reserve_paid(
+        &request,
+        &PaidAuthorization::DirectPaidModel,
+        &receipt,
+        store.now.get(),
+    ))?;
+    assert!(matches!(reserved, PaidAdmission::Reserved(_)));
+    drop(reserved);
+    let existing = run(authority.reserve_paid(
+        &request,
+        &PaidAuthorization::DirectPaidModel,
+        &receipt,
+        store.now.get(),
+    ))?;
+    assert!(matches!(existing, PaidAdmission::Existing(_)));
+    drop(existing);
     store.put(
         state::selection_key(),
         "changed-after-reservation",
@@ -898,17 +894,18 @@ fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale
             ))
             .is_some()
     );
+    Ok(())
 }
 
 #[test]
-fn coarse_union_never_authorizes_the_wrong_client_endpoint() {
+fn coarse_union_never_authorizes_the_wrong_client_endpoint() -> TestResult {
     use gateway_authority::store::Authority;
     let store = Store::new();
     store.install(false, true);
     let host = Host::new(&store, false, true);
     let runtime = CatalogRuntime::new();
     host.queue(json!({"data":[{"id":"paid-only","supported_endpoint_types":["openai"]}]}));
-    run(runtime.publish_paid_routing(&store, &host)).unwrap();
+    run(runtime.publish_paid_routing(&store, &host))?;
     assert!(
         store
             .projection()
@@ -920,13 +917,14 @@ fn coarse_union_never_authorizes_the_wrong_client_endpoint() {
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
     assert!(
-        run(authority.authorize_paid_route(&request, &context("paid-only"), store.now.get()))
+        run(authority.authorize_paid_route(&request, &context("paid-only")?, store.now.get()))
             .is_err()
     );
+    Ok(())
 }
 
 #[test]
-fn ordinary_tool_request_cannot_use_a_coarse_non_tool_surplus_permission() {
+fn ordinary_tool_request_cannot_use_a_coarse_non_tool_surplus_permission() -> TestResult {
     use gateway_authority::store::Authority;
     let store = Store::new();
     store.install(true, false);
@@ -935,7 +933,7 @@ fn ordinary_tool_request_cannot_use_a_coarse_non_tool_surplus_permission() {
     let mut response = surplus("paid-only");
     response["data"][0]["supported_features"] = json!([]);
     host.queue(response);
-    run(runtime.publish_paid_routing(&store, &host)).unwrap();
+    run(runtime.publish_paid_routing(&store, &host))?;
     assert!(
         store
             .projection()
@@ -946,17 +944,18 @@ fn ordinary_tool_request_cannot_use_a_coarse_non_tool_surplus_permission() {
     let request = paid_request(&store, PaidProvider::Surplus, "paid-only");
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
-    let mut context = context("paid-only");
+    let mut context = context("paid-only")?;
     set_source_field(
         &mut context.body,
         "tools",
         source_catalog::json(&json!([{"type":"function","name":"actual-tool"}])),
     );
     assert!(run(authority.authorize_paid_route(&request, &context, store.now.get())).is_err());
+    Ok(())
 }
 
 #[test]
-fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() {
+fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() -> TestResult {
     use gateway_authority::store::Authority;
     let store = Store::new();
     store.install(true, false);
@@ -968,20 +967,21 @@ fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() {
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("deepseek-v4.1-flash"));
-    run(runtime.publish_paid_routing(&store, &host)).unwrap();
+    run(runtime.publish_paid_routing(&store, &host))?;
     let request = paid_request(&store, PaidProvider::Surplus, "deepseek-v4.1-flash");
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
-    let mut ordinary = context("deepseek-v4.1-flash");
+    let mut ordinary = context("deepseek-v4.1-flash")?;
     set_source_field(
         &mut ordinary.body,
         "synthetic_hop",
         source_catalog::json("surplus"),
     );
     assert!(run(authority.authorize_paid_route(&request, &ordinary, store.now.get())).is_err());
-    let mut synthetic = context("ubiquity/deepseek-flash");
+    let mut synthetic = context("ubiquity/deepseek-flash")?;
     synthetic.synthetic_hop = Some(PaidSyntheticHop::Surplus);
     assert!(run(authority.authorize_paid_route(&request, &synthetic, store.now.get())).is_ok());
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -1,6 +1,6 @@
 //! Mechanical source state fitting ladder and calibrated UTF16 token estimator.
 use crate::{
-    model::*,
+    model::{Fitted, HistoryCall, HistoryCalls, HistoryEntry, Message, Resolved, State, ToolCall},
     text::{self, Text},
     types::{CompactionFailure, FailureKind},
 };
@@ -174,7 +174,7 @@ fn goal(messages: &[Message]) -> Text {
     let values = messages
         .iter()
         .filter(|m| {
-            m.role == Role::User
+            m.role == crate::model::Role::User
                 && !m.text.blank()
                 && m.tool_results.as_ref().is_none_or(Vec::is_empty)
         })

@@ -237,51 +237,16 @@ impl Capture {
                 error.envelope.error.message
             );
         }
-        let error_observation = async {
-            let at = now_ms()?;
-            let terminal = observation
-                .semantic_terminal
-                .map(|terminal| {
-                    match terminal {
-                        SemanticTerminal::Completed => "response.completed",
-                        SemanticTerminal::Failed => "response.failed",
-                        SemanticTerminal::Incomplete => "response.incomplete",
-                        SemanticTerminal::Error => "error",
-                    }
-                    .to_owned()
-                })
-                .or(observed_terminal)
-                .or_else(|| match observation.reader_termination {
-                    Some(ReaderTermination::ReadError) => Some("error".into()),
-                    Some(ReaderTermination::Deadline) => Some("deadline".into()),
-                    Some(ReaderTermination::Eof) if stream => Some("eof".into()),
-                    _ => None,
-                });
-            let failure_kind = match observation.reader_termination {
-                Some(ReaderTermination::ReadError) => Some("gateway_stream_read_error".into()),
-                Some(ReaderTermination::Deadline) => Some("gateway_timeout".into()),
-                _ => None,
-            };
-            self.runtime
-                .record_admin_error(&gateway_observability::ledger::ErrorObservation {
-                    request_id: self.request_id.clone(),
-                    route: request.context.route.clone(),
-                    status,
-                    provider: provider.clone(),
-                    model: request.model.clone(),
-                    reasoning: request.reasoning.clone(),
-                    stream: Some(stream),
-                    terminal_type: terminal,
-                    failure_kind,
-                    delivery_outcome: observation.delivery,
-                    created_at_ms: at,
-                    latency_ms: at.saturating_sub(request.context.started_at_ms).max(0),
-                    git_sha: Some(env!("UOS_RUST_BUILD_GIT_SHA").into()),
-                    deno_revision: Some(env!("UOS_RUST_BUILD_DEPLOYMENT_ID").into()),
-                })
-                .await
-        }
-        .await;
+        let error_observation = self
+            .terminal_error(
+                &request,
+                observation,
+                status,
+                &provider,
+                stream,
+                observed_terminal,
+            )
+            .await;
         if let Err(error) = error_observation {
             worker::console_error!(
                 "Administrative error observation remains unavailable: {}",
@@ -315,6 +280,59 @@ impl Capture {
                 );
             }
         }
+    }
+
+    async fn terminal_error(
+        &self,
+        request: &TerminalRequest,
+        observation: TransportObservation,
+        status: u16,
+        provider: &str,
+        stream: bool,
+        observed_terminal: Option<String>,
+    ) -> Result<bool, GatewayError> {
+        let at = now_ms()?;
+        let terminal = observation
+            .semantic_terminal
+            .map(|terminal| {
+                match terminal {
+                    SemanticTerminal::Completed => "response.completed",
+                    SemanticTerminal::Failed => "response.failed",
+                    SemanticTerminal::Incomplete => "response.incomplete",
+                    SemanticTerminal::Error => "error",
+                }
+                .to_owned()
+            })
+            .or(observed_terminal)
+            .or_else(|| match observation.reader_termination {
+                Some(ReaderTermination::ReadError) => Some("error".into()),
+                Some(ReaderTermination::Deadline) => Some("deadline".into()),
+                Some(ReaderTermination::Eof) if stream => Some("eof".into()),
+                _ => None,
+            });
+        let failure_kind = match observation.reader_termination {
+            Some(ReaderTermination::ReadError) => Some("gateway_stream_read_error".into()),
+            Some(ReaderTermination::Deadline) => Some("gateway_timeout".into()),
+            _ => None,
+        };
+        self.runtime
+            .record_admin_error(&gateway_observability::ledger::ErrorObservation {
+                request_id: self.request_id.clone(),
+                route: request.context.route.clone(),
+                status,
+                provider: provider.to_owned(),
+                model: request.model.clone(),
+                reasoning: request.reasoning.clone(),
+                stream: Some(stream),
+                terminal_type: terminal,
+                failure_kind,
+                delivery_outcome: observation.delivery,
+                created_at_ms: at,
+                latency_ms: at.saturating_sub(request.context.started_at_ms).max(0),
+                git_sha: Some(env!("UOS_RUST_BUILD_GIT_SHA").into()),
+                deno_revision: Some(env!("UOS_RUST_BUILD_DEPLOYMENT_ID").into()),
+            })
+            .await
     }
 
     pub fn correlate(&self, provider_request_id: Option<&str>) {

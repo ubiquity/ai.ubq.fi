@@ -281,7 +281,7 @@ impl RoutingHost for Host {
             &self.platform,
             self.context.clone(),
         );
-        let selection = crate::codex_capacity_recovery::observe(
+        let selection = gateway_capacity_recovery::observe(
             &self.store,
             &authority,
             observations.host(),

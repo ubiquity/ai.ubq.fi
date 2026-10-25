@@ -415,7 +415,8 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
 }
 
 #[test]
-fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
+fn configured_operator_composes_access_only_request_and_empty_store_adoption()
+-> Result<(), Box<dyn std::error::Error>> {
     use gateway_migration::{
         native_operator::{NativeCustodyRegistration, prepare_local_bootstrap},
         operational::{NativeMigrationRequest, NativeOperation, execute_native},
@@ -423,22 +424,18 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("actual-configured-operator");
-    std::fs::create_dir(&home).unwrap();
+    std::fs::create_dir(&home)?;
     let mut doc = document("managed-operator", 1);
-    let expiry = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        + 3600;
+    let expiry = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 3600;
     let access = format!(
         "e30.{}.synthetic",
         base64url(json!({"exp":expiry}).to_string().as_bytes())
     );
     doc["tokens"]["access_token"] = json!(access);
     doc["tokens"]["id_token"] = doc["tokens"]["access_token"].clone();
-    let original = serde_json::to_vec(&doc).unwrap();
-    std::fs::write(home.join("auth.json"), &original).unwrap();
-    let credentials = parse_native_document(&doc).unwrap();
+    let original = serde_json::to_vec(&doc)?;
+    std::fs::write(home.join("auth.json"), &original)?;
+    let credentials = parse_native_document(&doc)?;
     let registration = NativeCustodyRegistration::existing(
         home.clone(),
         OwnerFence {
@@ -447,50 +444,44 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
             generation_hash: credentials.generation_hash(),
             authority_revision: "native-v1:14:0".into(),
         },
-    )
-    .unwrap();
+    )?;
     let mut capture: NativeCapture =
-        serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/native-source.json"))?;
     capture.entries.push(NativeEntry {
-        raw_key: TupleKey::from_record_key(&codex_source_pool_key()).unwrap().sort_bytes().to_vec(),
-        value: wire(&json!({"accounts":[{"account_id":credentials.account_id,"access_token":credentials.access_token.expose(),"refresh_token":credentials.refresh_token.expose(),"updated_at_ms":2200,"native_owner":{"codex_home":home.to_str().unwrap(),"generation_hash":credentials.generation_hash(),"native_refreshed_at":credentials.native_refreshed_at}}],"updated_at_ms":2200})),
+        raw_key: TupleKey::from_record_key(&codex_source_pool_key())?.sort_bytes().to_vec(),
+        value: wire(&json!({"accounts":[{"account_id":credentials.account_id,"access_token":credentials.access_token.expose(),"refresh_token":credentials.refresh_token.expose(),"updated_at_ms":2200,"native_owner":{"codex_home":home.to_str().ok_or("Expected scalar fixture path")?,"generation_hash":credentials.generation_hash(),"native_refreshed_at":credentials.native_refreshed_at}}],"updated_at_ms":2200})),
         revision: NativeRevision {version:"14".into(),sequence:"0".into()},
         expiration_ms:-1,
     });
     assert!(prepare_native(&capture).is_err());
     assert!(run(prepare_local_bootstrap(&capture, vec![])).is_err());
-    let candidate = run(prepare_local_bootstrap(&capture, vec![registration])).unwrap();
-    let bytes = serde_json::to_vec(&candidate).unwrap();
+    let candidate = run(prepare_local_bootstrap(&capture, vec![registration]))?;
+    let bytes = serde_json::to_vec(&candidate)?;
     assert!(!String::from_utf8_lossy(&bytes).contains(credentials.refresh_token.expose()));
     assert!(String::from_utf8_lossy(&bytes).contains(credentials.access_token.expose()));
     let store = SqliteStore::open(&directory.file("operator-common.sqlite3"));
-    let decode = || NativeMigrationRequest {
-        v: 1,
-        request: NativeOperation::AdoptNative {
-            capture: serde_json::from_slice::<NativeCapture>(&bytes).unwrap(),
-        },
+    let decode = || -> Result<_, serde_json::Error> {
+        Ok(NativeMigrationRequest {
+            v: 1,
+            request: NativeOperation::AdoptNative {
+                capture: serde_json::from_slice::<NativeCapture>(&bytes)?,
+            },
+        })
     };
-    assert_eq!(
-        serde_json::from_slice::<NativeCapture>(&bytes).unwrap().v,
-        2
-    );
-    let adopted = run(execute_native(&store, decode())).unwrap();
-    assert!(
-        serde_json::to_string(&adopted)
-            .unwrap()
-            .contains("atomic_committed\":true")
-    );
-    assert!(run(execute_native(&store, decode())).is_err());
-    let snapshot = run(read_codex_source_pool(&store, 2300)).unwrap().unwrap();
+    assert_eq!(serde_json::from_slice::<NativeCapture>(&bytes)?.v, 2);
+    let adopted = run(execute_native(&store, decode()?))?;
+    assert!(serde_json::to_string(&adopted)?.contains("atomic_committed\":true"));
+    assert!(run(execute_native(&store, decode()?)).is_err());
+    let snapshot =
+        run(read_codex_source_pool(&store, 2300))?.ok_or("Expected retained fixture row")?;
     assert_eq!(snapshot.pool.accounts[0].account_id, credentials.account_id);
     assert!(snapshot.pool.accounts[0].refresh_token.expose().is_empty());
-    assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), original);
+    assert_eq!(std::fs::read(home.join("auth.json"))?, original);
     let expected = snapshot.pool.accounts[0].identity();
-    let normalized = run(store.read(&gateway_authority::keys::pool()))
-        .unwrap()
-        .unwrap();
+    let normalized = run(store.read(&gateway_authority::keys::pool()))?
+        .ok_or("Expected retained fixture row")?;
     let normalized: gateway_authority::routing_types::SubscriptionPool =
-        serde_json::from_value(normalized.value).unwrap();
+        serde_json::from_value(normalized.value)?;
     assert_eq!(normalized.pool_versionstamp.0, snapshot.revision);
     assert_eq!(normalized.accounts.len(), 1);
     assert_eq!(
@@ -526,8 +517,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
         &model,
         gateway_authority::routing::model_quota_class(&model),
         2300,
-    ))
-    .unwrap();
+    ))?;
     let gateway_authority::routing_types::RouteSelection::Eligible(selected) = selected else {
         panic!("The adopted real routing projection did not select the source account");
     };
@@ -540,6 +530,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption() {
         expected.credential_version
     );
     assert_eq!(selected.binding.pool_versionstamp.0, snapshot.revision);
+    Ok(())
 }
 
 #[test]

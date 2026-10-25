@@ -561,7 +561,8 @@ mod tests {
     }
 
     #[test]
-    fn only_missing_selector_uses_active_account_not_explicit_empty_or_lone_unit() {
+    fn only_missing_selector_uses_active_account_not_explicit_empty_or_lone_unit()
+    -> Result<(), Box<dyn std::error::Error>> {
         let credential = claude::submitted_credential(
             std::sync::Arc::new(claude::source_secret::ClaudeSourceSecret::from_source(
                 JsString16::from_utf8("sk-ant-api03-synthetic"),
@@ -569,7 +570,7 @@ mod tests {
             None,
             10,
         )
-        .unwrap();
+        .ok_or("fixture credential is missing")?;
         let account = AccountBinding {
             account_id: "00000000-0000-0000-0000-000000000001".into(),
             account_cohort_id: "00000000-0000-0000-0000-000000000002".into(),
@@ -588,6 +589,7 @@ mod tests {
         assert!(matching_target(&roster, None).is_some());
         assert!(matching_target(&roster, Some(&JsString16::from_utf8(""))).is_none());
         assert!(matching_target(&roster, Some(&JsString16::from_units(vec![0xd800]))).is_none());
+        Ok(())
     }
 
     #[test]

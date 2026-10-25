@@ -139,17 +139,18 @@ impl gateway_authority::store::AuthorityClock for Clock {
 }
 
 #[test]
-fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse() {
+fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let path = directory.file("one-authority.sqlite3");
     let (original, token) = fixture();
-    let prepared = prepare(&original, &CanonicalDates).unwrap();
+    let prepared = prepare(&original, &CanonicalDates)?;
     let store = SqliteStore::open(&path);
-    let receipt = run(adopt_empty(&store, &prepared)).unwrap();
+    let receipt = run(adopt_empty(&store, &prepared))?;
     assert_eq!(receipt.source_rows, 6);
     drop(store);
     let store = SqliteStore::open(&path);
-    let policy = run(gateway_auth::api_keys::authenticate(&store, &token, 2300)).unwrap();
+    let policy = run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?;
     assert_eq!(policy.key_id, "fixture-key");
     let authority = gateway_authority::store::Authority::with_clock(
         store.clone(),
@@ -174,19 +175,20 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse() {
         window_reset_at_ms: 3000,
         deferred: false,
     };
-    assert!(
-        !run(authority.release_api_key(&consumed, false, "unknown source transport", 2300))
-            .unwrap()
-    );
+    assert!(!run(authority.release_api_key(
+        &consumed,
+        false,
+        "unknown source transport",
+        2300
+    ))?);
     assert_eq!(
         run(store.read(&gateway_authority::keys::api_request(
             "fixture-key",
             "v3:1000",
             2000,
             "old-dispatched"
-        )))
-        .unwrap()
-        .unwrap()
+        )))?
+        .ok_or("Expected retained fixture row")?
         .value["state"],
         "dispatched"
     );
@@ -195,40 +197,36 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse() {
         &RequestId("new-request".into()),
         "responses",
         2300,
-    ))
-    .unwrap();
+    ))?;
     let old = run(store.read(&gateway_authority::keys::api_request(
         "fixture-key",
         "v3:1000",
         2000,
         "old-reserved",
-    )))
-    .unwrap()
-    .unwrap();
+    )))?
+    .ok_or("Expected retained fixture row")?;
     assert_eq!(old.value["state"], "released");
     let current = run(store.read(&gateway_authority::keys::api_request(
         "fixture-key",
         "v3:1000",
         2000,
         "new-request",
-    )))
-    .unwrap()
-    .unwrap();
+    )))?
+    .ok_or("Expected retained fixture row")?;
     assert_eq!(current.value["state"], "reserved");
     assert_eq!(reservation.request_id.0, "new-request");
     drop(authority);
     // Real same-authority write after restart; deleting an adopted row must not resurrect it.
     let debug = key(json!(["uos_ai", "debug_routing", "v1"]));
-    let old = run(store.read(&debug)).unwrap().unwrap();
+    let old = run(store.read(&debug))?.ok_or("Expected retained fixture row")?;
     run(store.commit(AtomicTransition {
         checks: vec![RevisionCheck {
             key: debug.clone(),
             expected_revision: Some(old.revision),
         }],
         mutations: vec![RecordMutation::Delete { key: debug }],
-    }))
-    .unwrap();
-    let exported = run(export_latest(&store, 2300)).unwrap();
+    }))?;
+    let exported = run(export_latest(&store, 2300))?;
     assert!(
         !exported
             .entries
@@ -239,29 +237,29 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse() {
         .entries
         .iter()
         .find(|e| e.key.last() == Some(&raw(json!({"type":"string","value":"new-request"}))))
-        .unwrap();
-    let value = from_profile(&request.value)
-        .unwrap()
+        .ok_or("Expected latest request source entry")?;
+    let value = from_profile(&request.value)?
         .to_json_lossless()
-        .unwrap();
+        .ok_or("Expected lossless fixture JSON")?;
     assert_eq!(value["request_id"], "new-request");
     assert!(value.get("transport_started").is_none());
     assert_eq!(request.expires_at_ms, current.expires_at_ms);
     assert_ne!(request.versionstamp, "reserved-original");
     let rollback = SqliteStore::open(&directory.file("inverse-new-destination.sqlite3"));
-    let replay = prepare(&exported, &CanonicalDates).unwrap();
-    run(adopt_empty(&rollback, &replay)).unwrap();
+    let replay = prepare(&exported, &CanonicalDates)?;
+    run(adopt_empty(&rollback, &replay))?;
     assert!(
         run(gateway_auth::api_keys::authenticate(
             &rollback, &token, 2300
         ))
         .is_ok()
     );
-    let again = run(export_latest(&rollback, 2300)).unwrap();
+    let again = run(export_latest(&rollback, 2300))?;
     assert_eq!(
-        serde_json::to_value(&exported).unwrap(),
-        serde_json::to_value(&again).unwrap()
+        serde_json::to_value(&exported)?,
+        serde_json::to_value(&again)?
     );
+    Ok(())
 }
 
 #[test]
@@ -348,12 +346,9 @@ fn wrong_indexes_unknown_state_and_duplicates_refuse_before_writes() {
     assert!(prepare(&input, &CanonicalDates).is_err());
 }
 
-#[test]
-fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse() {
-    let directory = Directory::new();
-    let path = directory.file("paid.sqlite3");
+fn paid_exposure_capture() -> PrivateCapture {
     let attempt = |id: &str, pending: bool| json!({"v":3,"key_id":"fixture-key","request_id":id,"policy_version":"paid:v3","route":"responses","path":"/v1/responses","model":"gpt-fixture","stream":false,"reasoning":null,"provider":"surplus","window_reset_at_ms":3000,"reserved_microcredits":100,"quota_per_credit":1000,"provider_request_id":if pending{Value::Null}else{json!("provider-settled")},"provider_quota":if pending{Value::Null}else{json!(0.05)},"input_tokens":if pending{Value::Null}else{json!(10)},"cached_input_tokens":null,"output_tokens":if pending{Value::Null}else{json!(20)},"dispatch_state":"dispatched","terminal_state":if pending{"ambiguous"}else{"completed"},"spend_microcredits":if pending{Value::Null}else{json!(50)},"billing_state":if pending{"unresolved"}else{"settled"},"reconciliation_attempts":0,"last_reconciliation_at_ms":null,"dispatched_at_ms":2005,"terminal_at_ms":2100,"settled_at_ms":if pending{Value::Null}else{json!(2100)},"created_at_ms":2000,"updated_at_ms":2100,"usage_rollup_at_ms":if pending{Value::Null}else{json!(2100)}});
-    let input = capture(vec![
+    capture(vec![
         source(
             json!([
                 "uos_ai",
@@ -412,16 +407,20 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
             "gate-source",
             None,
         ),
-    ]);
+    ])
+}
+
+#[test]
+fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = Directory::new();
+    let path = directory.file("paid.sqlite3");
+    let input = paid_exposure_capture();
     let mut input = input;
     let (keys, _) = fixture();
     input.entries.extend(keys.entries.into_iter().take(2));
     let store = SqliteStore::open(&path);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
     let authority = gateway_authority::store::Authority::with_clock(
@@ -429,43 +428,41 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
         Tokens(AtomicU64::new(1)),
         Clock,
     );
-    let due = run(authority.due_paid(2300, 10)).unwrap();
+    let due = run(authority.due_paid(2300, 10))?;
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].attempt_id.0, "pending-attempt");
     let row = run(store.read(&gateway_authority::keys::paid_attempt(
         "fixture-key",
         "pending-attempt",
-    )))
-    .unwrap()
-    .unwrap();
-    let row: gateway_authority::paid_types::PaidAttempt =
-        serde_json::from_value(row.value).unwrap();
+    )))?
+    .ok_or("Expected retained fixture row")?;
+    let row: gateway_authority::paid_types::PaidAttempt = serde_json::from_value(row.value)?;
     assert_eq!(row.reservation.request_id.0, "pending-attempt");
     assert_eq!(row.reservation.attempt_id.0, "pending-attempt");
     assert!(row.spend_microcredits.is_none());
     assert!(!row.transport_started);
     assert_eq!(
-        run(authority.defer_paid(&row.reservation, 2300)).unwrap(),
+        run(authority.defer_paid(&row.reservation, 2300))?,
         Some(5000)
     );
-    let result = run(export_latest(&store, 2300)).unwrap();
-    let next = result
-        .entries
-        .iter()
-        .find(|e| {
-            e.key.last() == Some(&raw(json!({"type":"string","value":"pending-attempt"})))
-                && from_profile(&e.value)
-                    .unwrap()
-                    .to_json_lossless()
-                    .unwrap()
-                    .get("billing_state")
-                    .is_some()
-        })
-        .unwrap();
-    let next_value = from_profile(&next.value)
-        .unwrap()
+    let result = run(export_latest(&store, 2300))?;
+    let mut next = None;
+    for e in &result.entries {
+        if e.key.last() == Some(&raw(json!({"type":"string","value":"pending-attempt"})))
+            && from_profile(&e.value)?
+                .to_json_lossless()
+                .ok_or("Expected lossless fixture JSON")?
+                .get("billing_state")
+                .is_some()
+        {
+            next = Some(e);
+            break;
+        }
+    }
+    let next = next.ok_or("Expected pending paid source row")?;
+    let next_value = from_profile(&next.value)?
         .to_json_lossless()
-        .unwrap();
+        .ok_or("Expected lossless fixture JSON")?;
     assert_eq!(next_value["billing_state"], "unresolved");
     assert_eq!(next_value["spend_microcredits"], Value::Null);
     assert_eq!(next_value["reconciliation_attempts"], 1);
@@ -474,25 +471,22 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
         .entries
         .iter()
         .find(|e| e.versionstamp == "settled-attempt-source")
-        .unwrap();
+        .ok_or("Expected settled source entry")?;
     assert_eq!(settled.value, input.entries[2].value);
     let rollback = SqliteStore::open(&directory.file("paid-inverse.sqlite3"));
-    run(adopt_empty(
-        &rollback,
-        &prepare(&result, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&rollback, &prepare(&result, &CanonicalDates)?))?;
     let next = run(rollback.read(&gateway_authority::keys::paid_pending(
         "fixture-key",
         "pending-attempt",
-    )))
-    .unwrap()
-    .unwrap();
+    )))?
+    .ok_or("Expected retained fixture row")?;
     assert_eq!(next.value["next_reconciliation_at_ms"], 7300);
+    Ok(())
 }
 
 #[test]
-fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly() {
+fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly()
+-> Result<(), Box<dyn std::error::Error>> {
     use gateway_schema::{
         catalog_cache::prepare_catalog,
         catalog_store::{chunk_key, load_catalog, metadata_key},
@@ -510,32 +504,29 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly() {
         Some("application/json"),
         2100,
         &Default::default(),
-    )
-    .unwrap();
+    )?;
     let mut rows = vec![source(
         json!(["ubq_ai", "codex_catalog", "0.163.0"]),
-        serde_json::to_value(&catalog.metadata).unwrap(),
+        serde_json::to_value(&catalog.metadata)?,
         "catalog-meta-source",
         Some(9999),
     )];
     for (is_source, chunks) in [(false, &catalog.chunks), (true, &catalog.source_chunks)] {
         for (index, bytes) in chunks.iter().enumerate() {
             let key = chunk_key("0.163.0", "body-fixture", index, is_source);
-            let decoded = gateway_core::tuple_key::TupleKey::from_record_key(&key)
-                .unwrap()
-                .decoded_parts()
-                .unwrap();
+            let decoded =
+                gateway_core::tuple_key::TupleKey::from_record_key(&key)?.decoded_parts()?;
             let parts = Value::Array(
                 decoded
                     .into_iter()
                     .map(|p| match p {
                         gateway_core::tuple_key::DecodedKeyPart::String(v) => {
-                            json!(String::from_utf8(v).unwrap())
+                            String::from_utf8(v).map(|v| json!(v))
                         }
-                        gateway_core::tuple_key::DecodedKeyPart::Number(v) => json!(v),
+                        gateway_core::tuple_key::DecodedKeyPart::Number(v) => Ok(json!(v)),
                         _ => panic!("fixture key"),
                     })
-                    .collect(),
+                    .collect::<Result<Vec<_>, _>>()?,
             );
             let mut row = source(
                 parts,
@@ -548,24 +539,18 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly() {
                 bytes: bytes.clone(),
                 byte_offset: 0,
                 byte_length: bytes.len() as u64,
-            })
-            .unwrap();
+            })?;
             rows.push(row);
         }
     }
     let input = capture(rows);
     let store = SqliteStore::open(&path);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
-    let loaded = run(load_catalog(&store, "0.163.0", "auth-fixture", 2300))
-        .unwrap()
-        .unwrap();
-    let parsed: Value = loaded.parsed.deserialize().expect("scalar catalog fixture");
+    let loaded = run(load_catalog(&store, "0.163.0", "auth-fixture", 2300))?
+        .ok_or("Expected retained fixture row")?;
+    let parsed: Value = loaded.parsed.deserialize()?;
     assert_eq!(parsed["models"][0]["slug"], "gpt-fixture");
     assert!(loaded.source_body.is_some());
     assert!(
@@ -574,23 +559,24 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly() {
             "0.163.0",
             "wrong-current-auth-generation",
             2300
-        ))
-        .unwrap()
+        ))?
         .is_none()
     );
-    let metadata = run(store.read(&metadata_key("0.163.0"))).unwrap().unwrap();
+    let metadata =
+        run(store.read(&metadata_key("0.163.0")))?.ok_or("Expected retained fixture row")?;
     assert_eq!(metadata.revision, "catalog-meta-source");
-    let result = run(export_latest(&store, 2300)).unwrap();
+    let result = run(export_latest(&store, 2300))?;
     for original in &input.entries {
         let restored = result
             .entries
             .iter()
             .find(|e| e.key == original.key)
-            .unwrap();
+            .ok_or("Expected original catalog entry")?;
         assert_eq!(restored.value, original.value);
         assert_eq!(restored.expires_at_ms, original.expires_at_ms);
         assert_eq!(restored.versionstamp, original.versionstamp);
     }
+    Ok(())
 }
 
 struct AdminHost;
@@ -642,11 +628,11 @@ impl gateway_auth::types::AuthHost for AdminHost {
 }
 struct Capabilities;
 impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
-fn admin_input(body: Value) -> gateway_admin::operations::AdminInput {
-    gateway_admin::operations::AdminInput {
+fn admin_input(body: Value) -> Result<gateway_admin::operations::AdminInput, GatewayError> {
+    Ok(gateway_admin::operations::AdminInput {
         parameter: None,
         query: Default::default(),
-        body: gateway_core::source_json::SourceJson::from_serializable(&body).unwrap(),
+        body: gateway_core::source_json::SourceJson::from_serializable(&body)?,
         actor: gateway_auth::types::AuthPrincipal {
             token: None,
             method: gateway_auth::types::AuthMethod::AdminAllowlist,
@@ -655,20 +641,17 @@ fn admin_input(body: Value) -> gateway_admin::operations::AdminInput {
         },
         request_id: "isolated-admin".into(),
         now_ms: 2300,
-    }
+    })
 }
 #[test]
-fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision() {
+fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
+-> Result<(), Box<dyn std::error::Error>> {
     use gateway_admin::operations::AdminHost;
     let directory = Directory::new();
     let path = directory.file("admin.sqlite3");
     let (input, _) = fixture();
     let store = SqliteStore::open(&path);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
     let host = crate::AdminHost;
@@ -682,32 +665,33 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision() 
     };
     let response = run(runtime.execute(
         gateway_admin::routes::AdminOperation::DebugGet,
-        admin_input(Value::Null),
-    ))
-    .unwrap();
+        admin_input(Value::Null)?,
+    ))?;
     assert_eq!(
-        response.body.as_json().unwrap()["routing"]["scenario"],
+        response
+            .body
+            .as_json()
+            .ok_or("Expected fixture JSON body")?["routing"]["scenario"],
         "codex_429"
     );
     run(runtime.execute(
         gateway_admin::routes::AdminOperation::DebugSet,
-        admin_input(json!({"scenario":"normal","duration_ms":0})),
-    ))
-    .unwrap();
-    let inverse = run(export_latest(&store, 2300)).unwrap();
+        admin_input(json!({"scenario":"normal","duration_ms":0}))?,
+    ))?;
+    let inverse = run(export_latest(&store, 2300))?;
     let row = inverse
         .entries
         .iter()
         .find(|e| e.key == input.entries[5].key)
-        .unwrap();
+        .ok_or("Expected admin source entry")?;
     assert_ne!(row.versionstamp, "debug-original");
     assert_eq!(
-        from_profile(&row.value)
-            .unwrap()
+        from_profile(&row.value)?
             .to_json_lossless()
-            .unwrap()["scenario"],
+            .ok_or("Expected lossless fixture JSON")?["scenario"],
         "normal"
     );
+    Ok(())
 }
 
 #[test]
@@ -916,7 +900,8 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
 }
 
 #[test]
-fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
+fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("kernel-defaults.sqlite3"));
     let input = capture(vec![
@@ -933,11 +918,7 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
             None,
         ),
     ]);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     let authority = gateway_authority::store::Authority::with_clock(
         store.clone(),
         Tokens(AtomicU64::new(1)),
@@ -949,8 +930,7 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
         &RequestId("one-kernel-request".into()),
         "responses",
         2300,
-    ))
-    .unwrap();
+    ))?;
     assert!(reservation.repo.is_none());
     assert_eq!(
         run(authority.reserve_kernel(
@@ -960,29 +940,34 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
             "responses",
             2300
         ))
-        .unwrap_err()
+        .err()
+        .ok_or("Expected kernel quota refusal")?
         .status,
         429
     );
     let generated_window = run(store.read(&gateway_authority::keys::kernel_window(
         "fixture-owner",
         None,
-    )))
-    .unwrap()
-    .unwrap();
-    let generated = generated_window.json_value().unwrap();
+    )))?
+    .ok_or("Expected retained fixture row")?;
+    let generated = generated_window.json_value()?;
     assert_eq!(generated["reserved_requests"], 1);
-    assert_eq!(generated["reservations"].as_object().unwrap().len(), 1);
-    let inverse = run(export_latest(&store, 2300)).unwrap();
+    assert_eq!(
+        generated["reservations"]
+            .as_object()
+            .ok_or("Expected fixture object")?
+            .len(),
+        1
+    );
+    let inverse = run(export_latest(&store, 2300))?;
     let window = inverse
         .entries
         .iter()
         .find(|e| e.key.get(3) == Some(&raw(json!({"type":"string","value":"org_window"}))))
-        .unwrap();
-    let value = from_profile(&window.value)
-        .unwrap()
+        .ok_or("Expected org window source entry")?;
+    let value = from_profile(&window.value)?
         .to_json_lossless()
-        .unwrap();
+        .ok_or("Expected lossless fixture JSON")?;
     assert_eq!(value["scope"], "org");
     assert!(value.get("repo").is_none());
     assert_eq!(value["reserved_requests"], 1);
@@ -998,11 +983,8 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert() {
         Err(MigrationError::SourceInventory(_))
     ));
     let rollback = SqliteStore::open(&directory.file("kernel-inverse-new.sqlite3"));
-    run(adopt_empty(
-        &rollback,
-        &prepare(&inverse, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&rollback, &prepare(&inverse, &CanonicalDates)?))?;
+    Ok(())
 }
 
 #[test]

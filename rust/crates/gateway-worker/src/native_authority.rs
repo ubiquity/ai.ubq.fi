@@ -8,7 +8,11 @@ use crate::{
     transport::{HeaderLimits, body::request_bytes, bounded_headers, outbound::Cancellation},
 };
 use gateway_auth::{
-    native::*,
+    native::{
+        NATIVE_CONTROL_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER,
+        NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER,
+        NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+    },
     native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeCapability},
     native_replay::StoreNonceAuthority,
 };

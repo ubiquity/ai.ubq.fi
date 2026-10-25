@@ -27,20 +27,19 @@ use std::{
 const EPOCH: &str = ".uos-owner-runtime";
 const EPOCH_TEMP: &str = ".uos-owner-runtime.next";
 const EPOCH_LIMIT: u64 = 2048;
-#[cfg(all(test, target_os = "macos"))]
-const SANDBOX_SHA256S: [&str; 2] = [
+const SANDBOX_SHA256S: [&str; 3] = [
     "e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f",
     "abc5bb136d6b5cce8fa85d789f78e3326c51ca60cae637b2064adfb67a1dcd9a",
+    "58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8",
 ];
-#[cfg(all(test, target_os = "macos"))]
-fn fixture_sandbox_executable() -> Result<PinnedExecutable, GatewayError> {
-    SANDBOX_SHA256S
-        .iter()
-        .find_map(|digest| {
-            PinnedExecutable::verify(Path::new("/usr/bin/sandbox-exec"), digest).ok()
-        })
-        .filter(|binary| binary.facts.uid == 0)
+pub(super) fn verified_tool(path: &Path, ds: &[&str]) -> Result<PinnedExecutable, GatewayError> {
+    ds.iter()
+        .find_map(|digest| PinnedExecutable::verify(path, digest).ok())
         .ok_or_else(fail)
+}
+pub(super) fn sandbox_executable() -> Result<PinnedExecutable, GatewayError> {
+    let binary = verified_tool(Path::new("/usr/bin/sandbox-exec"), &SANDBOX_SHA256S)?;
+    (binary.facts.uid == 0).then_some(binary).ok_or_else(fail)
 }
 const CODEX_SHA: &str = "8813367285524ac798dd96d1b071aea30d58708c7226fd236cd275cf1cfdee31";
 #[derive(Serialize, Deserialize)]
@@ -245,7 +244,7 @@ impl OwnedRuntime {
             return Err(fail());
         }
         self.owner.recheck(deadline)?;
-        let sandbox = fixture_sandbox_executable()?;
+        let sandbox = sandbox_executable()?;
         let mut random = [0u8; 32];
         getrandom::fill(&mut random).map_err(|_| fail())?;
         let root = Facts::read(self.owner.directory()?)?;
@@ -523,6 +522,7 @@ fn fixture_sandbox_keeps_two_exact_identities_and_full_fixed_executable_verifica
         [
             "e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f",
             "abc5bb136d6b5cce8fa85d789f78e3326c51ca60cae637b2064adfb67a1dcd9a",
+            "58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8",
         ]
     );
     for approved in SANDBOX_SHA256S {
@@ -532,9 +532,11 @@ fn fixture_sandbox_keeps_two_exact_identities_and_full_fixed_executable_verifica
         assert!(!SANDBOX_SHA256S.contains(&modified.as_str()));
     }
     assert!(!SANDBOX_SHA256S.contains(&"0".repeat(64).as_str()));
-    let binary = fixture_sandbox_executable().unwrap();
+    let Ok(binary) = sandbox_executable() else {
+        panic!("reviewed sandbox executable must verify");
+    };
     assert_eq!(binary.path(), Path::new("/usr/bin/sandbox-exec"));
     assert_eq!(binary.facts.uid, 0);
-    binary.recheck().unwrap();
+    assert!(binary.recheck().is_ok());
     assert!(PinnedExecutable::verify(Path::new("/usr/bin/sandbox-exec"), &"0".repeat(64)).is_err());
 }

@@ -1,15 +1,24 @@
 //! Fixed two-account registry for the controlled fixture only.
-use super::port::error;
-use gateway_auth::{
-    native_credentials::{NativeOwnerId, OwnerFence},
-    provider_credentials::{CodexSourcePool, codex_source_pool_key, parse_codex_source_pool},
+use super::{port::error, support_run};
+use gateway_auth::crypto::Secret;
+use gateway_auth::managed_access::ManagedAccessProjection;
+use gateway_auth::native_credentials::{NativeGeneration, NativeOwnerId, OwnerFence};
+use gateway_auth::provider_credentials::{
+    CodexSourceAccount, CodexSourcePool, ManagedNativeSource, codex_source_pool_key,
+    parse_codex_source_pool, read_codex_source_pool,
 };
-use gateway_core::{
-    error::GatewayError, identity::MAX_SAFE_INTEGER, state::StoredRecord, tuple_key::TupleKey,
+use gateway_core::error::GatewayError;
+use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
+use gateway_core::tuple_key::TupleKey;
 use gateway_migration::native_capture::{NativeCapture, NativeValue};
-use gateway_migration::native_custody::{NativeCustody, OwnedNativeSnapshot};
+use gateway_migration::native_custody::{
+    NativeCustody, OwnedNativeSnapshot, export_native_rollback_with_custody,
+};
 use gateway_migration::native_operator::{ConfiguredNativeCustody, NativeCustodyRegistration};
+use gateway_migration_test_support::fixture::{MANAGED_A_CASES, Receipt};
 use gateway_native::transport::NativeOwnerTransport;
 use gateway_native::unix::{NativeOwnerLocation, UnixOwnerTransport};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -122,21 +131,12 @@ impl Host {
         store: &super::port::Store,
         time: super::inputs::FixtureTime,
         artifacts: &gateway_migration::inverse::ArtifactContext,
-    ) -> Result<(Self, super::producers::Receipt), gateway_migration::error::MigrationError> {
-        use gateway_auth::{
-            crypto::Secret,
-            managed_access::ManagedAccessProjection,
-            native_credentials::NativeGeneration,
-            provider_credentials::{ManagedNativeSource, read_codex_source_pool},
-        };
-        use gateway_core::state::{
-            AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
-        };
+    ) -> Result<(Self, Receipt), gateway_migration::error::MigrationError> {
         time.check()?;
         if self.now_ms != time.runtime() {
             return Err(error("Fixture managed owner clock differs").into());
         }
-        let snapshot = super::support_run(read_codex_source_pool(store, time.runtime()))?
+        let snapshot = support_run(read_codex_source_pool(store, time.runtime()))?
             .ok_or_else(|| error("Current source pool is missing"))?;
         if snapshot.pool.accounts.len() != 2
             || snapshot.pool.accounts[0].account_id != "managed-a"
@@ -164,14 +164,12 @@ impl Host {
             serde_json::json!("synthetic-native-managed-a-2-refresh");
         document["last_refresh"] = serde_json::json!("2026-10-19T00:00:00.000000002Z");
         std::fs::write(&path, serde_json::to_vec(&document).map_err(error)?).map_err(error)?;
-        if super::support_run(
-            gateway_migration::native_custody::export_native_rollback_with_custody(
-                store,
-                time.runtime(),
-                &self,
-                artifacts.clone(),
-            ),
-        )
+        if support_run(export_native_rollback_with_custody(
+            store,
+            time.runtime(),
+            &self,
+            artifacts.clone(),
+        ))
         .is_ok()
         {
             return Err(error("Stale native generation was accepted").into());
@@ -180,7 +178,7 @@ impl Host {
             old_fence.owner.clone(),
             home.clone(),
         )?])?;
-        let credentials = super::support_run(transport.read_credentials(&old_fence.owner))?;
+        let credentials = support_run(transport.read_credentials(&old_fence.owner))?;
         let generation = NativeGeneration {
             fence: OwnerFence {
                 generation_hash: credentials.generation_hash(),
@@ -191,18 +189,7 @@ impl Host {
             observed_at_ms: time.runtime(),
         };
         let projection = ManagedAccessProjection::from_native(&generation)?;
-        if projection.access_generation()
-            != snapshot.pool.accounts[0].identity().native_generation_hash
-            || projection.native_source_generation()
-                == snapshot.pool.accounts[0]
-                    .native_owner
-                    .as_ref()
-                    .and_then(|o| o.managed_source.as_ref())
-                    .ok_or_else(|| error("Managed source missing"))?
-                    .generation_hash
-        {
-            return Err(error("Original refresh-only generation distinction differs").into());
-        }
+        verify_refresh_only_projection(&projection, &snapshot.pool.accounts[0])?;
         let mut pool = snapshot.pool;
         let account = &mut pool.accounts[0];
         account.access_token = projection.access_token().clone();
@@ -221,7 +208,7 @@ impl Host {
             return Err(error("Sibling projection changed").into());
         }
         let pool_key = codex_source_pool_key();
-        if super::support_run(store.commit(AtomicTransition {
+        if support_run(store.commit(AtomicTransition {
             checks: vec![RevisionCheck {
                 key: pool_key.clone(),
                 expected_revision: Some(snapshot.revision),
@@ -238,31 +225,24 @@ impl Host {
         {
             return Err(error("Current owner publication conflicted").into());
         }
-        let current = super::support_run(store.read(&pool_key))?
+        let current = support_run(store.read(&pool_key))?
             .ok_or_else(|| error("Published source is missing"))?;
         let fixed = self.with_current_pool(&current, time.export())?;
-        super::support_run(
-            gateway_migration::native_custody::export_native_rollback_with_custody(
-                store,
-                time.export(),
-                &fixed,
-                artifacts.clone(),
-            ),
-        )?;
+        support_run(export_native_rollback_with_custody(
+            store,
+            time.export(),
+            &fixed,
+            artifacts.clone(),
+        ))?;
         if std::fs::read(sibling_path).map_err(error)? != sibling_bytes {
             return Err(error("Sibling physical auth changed").into());
         }
         time.check()?;
         Ok((
             fixed,
-            super::producers::Receipt {
+            Receipt {
                 operation: "managed_a_advanced",
-                cases: vec![
-                    "stale_owner_generation_refused",
-                    "actual_managed_a_current_projection",
-                    "unchanged_managed_b_physical_and_projection",
-                    "current_owner_inverse_accepted",
-                ],
+                cases: Vec::from(MANAGED_A_CASES),
                 changed_keys: vec![pool_key.0],
                 deleted_keys: vec![],
             },
@@ -390,4 +370,24 @@ mod tests {
             assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), bytes);
         }
     }
+}
+
+fn verify_refresh_only_projection(
+    projection: &ManagedAccessProjection,
+    original_account: &CodexSourceAccount,
+) -> Result<(), GatewayError> {
+    if projection.access_generation() != original_account.identity().native_generation_hash
+        || projection.native_source_generation()
+            == original_account
+                .native_owner
+                .as_ref()
+                .and_then(|o| o.managed_source.as_ref())
+                .ok_or_else(|| error("Managed source missing"))?
+                .generation_hash
+    {
+        return Err(error(
+            "Original refresh-only generation distinction differs",
+        ));
+    }
+    Ok(())
 }

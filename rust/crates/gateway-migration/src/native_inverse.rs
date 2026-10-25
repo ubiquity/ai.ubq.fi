@@ -4,9 +4,12 @@ use crate::native_capture::NativeKind;
 use crate::native_capture::{
     NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native,
 };
-use crate::{error::MigrationError, *};
+use crate::{digest, error::MigrationError, invalid, parts, unavailable};
+use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
+use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::{PortableValue, ValueEncoding};
+use serde::Serialize;
 
 pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {
     if row.record.value_encoding == ValueEncoding::SourceGraphV1 {

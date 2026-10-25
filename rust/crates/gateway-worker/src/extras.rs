@@ -23,7 +23,7 @@ use gateway_core::{
 };
 use gateway_extras_runtime::{
     ExtrasRuntime,
-    types::{ExtrasRequest, ExtrasRoute, ImageKind, KernelDisposition},
+    types::{ExtrasRequest, ExtrasResponse, ExtrasRoute, ImageKind, KernelDisposition},
 };
 use gateway_providers::types::ClientSurface;
 use gateway_routing_runtime::{extras::ExtrasFamily, session::RoutingSession, types::RoutingInput};
@@ -71,67 +71,10 @@ pub async fn run(
     let Target { route, request_id } = target;
     let RequestResources { context, permit } = resources;
     let image = matches!(route, ExtrasRoute::Images(_));
-    let edit = route == ExtrasRoute::Images(ImageKind::Edits);
-    let multipart = image
-        && request
-            .headers()
-            .get("content-type")
-            .map_err(|_| invalid())?
-            .is_some_and(|value| {
-                value
-                    .to_ascii_lowercase()
-                    .starts_with("multipart/form-data")
-            });
-    if multipart && !edit {
-        return Err(GatewayError::new(
-            400,
-            "Image generation requests must use a JSON object body.",
-            Some("invalid_request_error"),
-        ));
-    }
-    let bytes = if matches!(route, ExtrasRoute::JobGet(_)) {
-        Vec::new()
-    } else {
-        body::request_bytes(
-            &mut request,
-            if multipart {
-                crate::multipart::MULTIPART_BYTES
-            } else if edit {
-                crate::multipart::IMAGE_JSON_BYTES
-            } else if route == ExtrasRoute::SystemOne {
-                body::SYSTEM_ONE_BODY_MAX_BYTES
-            } else {
-                body::INFERENCE_JSON_MAX_BYTES
-            },
-        )
-        .await?
+    let (raw, multipart, raw_body_bytes) = match request_body(&mut request, &route, image).await? {
+        ExtrasBody::Parsed(raw, multipart, len) => (raw, multipart, len),
+        ExtrasBody::Rejected(response, _bytes) => return crate::runtime::auth_response(response),
     };
-    let (raw, multipart) = if multipart {
-        let (raw, files) = crate::multipart::parse(&request, &bytes).await?;
-        (raw, Some(files))
-    } else if matches!(route, ExtrasRoute::JobGet(_)) {
-        (
-            SourceJson::parse("null").expect("null is source JSON"),
-            None,
-        )
-    } else if edit {
-        (crate::multipart::image_json(&bytes)?, None)
-    } else {
-        let raw = match gateway_schema::source_request::parse_http_body(&bytes) {
-            Ok(raw) => raw,
-            Err(error) => {
-                return crate::runtime::auth_response(
-                    gateway_auth::types::AuthResponse::source_json(
-                        error.status,
-                        error.body().clone(),
-                    ),
-                );
-            }
-        };
-        (raw, None)
-    };
-    let raw_body_bytes = bytes.len();
-    drop(bytes);
     let original = RequestContext {
         request_id,
         principal: PrincipalId(crate::lifecycle::principal_id(principal)),
@@ -150,16 +93,7 @@ pub async fn run(
         ExtrasRoute::Images(ImageKind::Generations) => ExtrasFamily::ImageGenerations,
         ExtrasRoute::Images(ImageKind::Edits) => ExtrasFamily::ImageEdits,
     };
-    let default_model = catalog
-        .runtime
-        .as_ref()
-        .and_then(runtime_default_model)
-        .or_else(|| {
-            catalog
-                .input
-                .codex()
-                .and_then(|snapshot| snapshot.default_model())
-        });
+    let default_model = catalog_default_model(&catalog);
     let session = RoutingSession::begin_extras(
         RoutingInput {
             context: original.clone(),
@@ -208,33 +142,8 @@ pub async fn run(
         })
         .await;
     runtime.host().settle_child().await?;
-    let result = match result {
-        Ok(result) => result,
-        Err(error) => {
-            runtime
-                .host()
-                .admission
-                .finish(
-                    Default::default(),
-                    KernelTerminal::Released,
-                    "extras_gateway_failure",
-                )
-                .await
-                .map_err(|error| *error.error)?;
-            return Err(error);
-        }
-    };
-    let (kernel, reason) = match result.kernel {
-        KernelDisposition::Completed => (KernelTerminal::Committed, "extras_source_completed"),
-        KernelDisposition::Incomplete(reason) => (KernelTerminal::Released, reason),
-        KernelDisposition::FromAggregate
-            if result.semantic_terminal
-                == Some(gateway_core::lifecycle::SemanticTerminal::Completed) =>
-        {
-            (KernelTerminal::Committed, "images_source_completed")
-        }
-        KernelDisposition::FromAggregate => (KernelTerminal::Released, "images_source_incomplete"),
-    };
+    let result = completed_result(&runtime, result).await?;
+    let (kernel, reason) = completion(result.kernel, result.semantic_terminal);
     let observation = ObservationHandle::default();
     if let Some(terminal) = result.semantic_terminal {
         observation.semantic_terminal(terminal);
@@ -255,7 +164,150 @@ pub async fn run(
             drop(permit);
         })
     });
-    let bytes = result.body.as_bytes().to_vec();
+    render_response(
+        (result.body, result.status, result.headers),
+        observation,
+        context,
+        platform,
+        finish,
+    )
+}
+
+fn catalog_default_model(catalog: &CatalogState) -> Option<ModelId> {
+    catalog
+        .runtime
+        .as_ref()
+        .and_then(runtime_default_model)
+        .or_else(|| {
+            catalog
+                .input
+                .codex()
+                .and_then(|snapshot| snapshot.default_model())
+        })
+}
+
+async fn completed_result(
+    runtime: &ExtrasRuntime<RemoteAuthorityStore, Host>,
+    result: Result<ExtrasResponse, GatewayError>,
+) -> Result<ExtrasResponse, GatewayError> {
+    match result {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            runtime
+                .host()
+                .admission
+                .finish(
+                    Default::default(),
+                    KernelTerminal::Released,
+                    "extras_gateway_failure",
+                )
+                .await
+                .map_err(|error| *error.error)?;
+            Err(error)
+        }
+    }
+}
+
+fn completion(
+    kernel: KernelDisposition,
+    terminal: Option<gateway_core::lifecycle::SemanticTerminal>,
+) -> (KernelTerminal, &'static str) {
+    match kernel {
+        KernelDisposition::Completed => (KernelTerminal::Committed, "extras_source_completed"),
+        KernelDisposition::Incomplete(reason) => (KernelTerminal::Released, reason),
+        KernelDisposition::FromAggregate
+            if terminal == Some(gateway_core::lifecycle::SemanticTerminal::Completed) =>
+        {
+            (KernelTerminal::Committed, "images_source_completed")
+        }
+        KernelDisposition::FromAggregate => (KernelTerminal::Released, "images_source_incomplete"),
+    }
+}
+
+enum ExtrasBody {
+    Parsed(
+        SourceJson,
+        Option<Vec<gateway_providers::extras::MultipartFile>>,
+        usize,
+    ),
+    Rejected(gateway_auth::types::AuthResponse, Vec<u8>),
+}
+async fn request_body(
+    request: &mut Request,
+    route: &ExtrasRoute,
+    image: bool,
+) -> Result<ExtrasBody, GatewayError> {
+    let edit = *route == ExtrasRoute::Images(ImageKind::Edits);
+    let multipart = image
+        && request
+            .headers()
+            .get("content-type")
+            .map_err(|_| invalid())?
+            .is_some_and(|value| {
+                value
+                    .to_ascii_lowercase()
+                    .starts_with("multipart/form-data")
+            });
+    if multipart && !edit {
+        return Err(GatewayError::new(
+            400,
+            "Image generation requests must use a JSON object body.",
+            Some("invalid_request_error"),
+        ));
+    }
+    let bytes = if matches!(route, ExtrasRoute::JobGet(_)) {
+        Vec::new()
+    } else {
+        body::request_bytes(
+            request,
+            if multipart {
+                crate::multipart::MULTIPART_BYTES
+            } else if edit {
+                crate::multipart::IMAGE_JSON_BYTES
+            } else if *route == ExtrasRoute::SystemOne {
+                body::SYSTEM_ONE_BODY_MAX_BYTES
+            } else {
+                body::INFERENCE_JSON_MAX_BYTES
+            },
+        )
+        .await?
+    };
+    let (raw, multipart) = if multipart {
+        let (raw, files) = crate::multipart::parse(request, &bytes).await?;
+        (raw, Some(files))
+    } else if matches!(route, ExtrasRoute::JobGet(_)) {
+        (SourceJson::parse("null")?, None)
+    } else if edit {
+        (crate::multipart::image_json(&bytes)?, None)
+    } else {
+        let raw = match gateway_schema::source_request::parse_http_body(&bytes) {
+            Ok(raw) => raw,
+            Err(error) => {
+                return Ok(ExtrasBody::Rejected(
+                    gateway_auth::types::AuthResponse::source_json(
+                        error.status,
+                        error.body().clone(),
+                    ),
+                    bytes,
+                ));
+            }
+        };
+        (raw, None)
+    };
+    let raw_body_bytes = bytes.len();
+    drop(bytes);
+    Ok(ExtrasBody::Parsed(raw, multipart, raw_body_bytes))
+}
+
+fn render_response(
+    result: (SourceJson, u16, gateway_extras_runtime::types::Headers),
+    observation: ObservationHandle,
+    context: Rc<worker::Context>,
+    platform: &PlatformHost,
+    finish: FinishHook,
+) -> Result<Response, GatewayError> {
+    let (body, status, headers) = result;
+    let bytes = body.as_bytes().to_vec();
     let source = Box::pin(futures_util::stream::iter([Ok::<_, worker::Error>(bytes)]));
     let mut response = ObservedStream::new(
         source,
@@ -267,8 +319,8 @@ pub async fn run(
     )
     .into_response()
     .map_err(|_| invalid())?
-    .with_status(result.status);
-    for (name, value) in result.headers {
+    .with_status(status);
+    for (name, value) in headers {
         response
             .headers_mut()
             .set(&name, &value)

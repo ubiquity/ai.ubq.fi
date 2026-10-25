@@ -5,7 +5,7 @@ use gateway_migration_test_support::fixture;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::sqlite_store;
 #[cfg(not(target_arch = "wasm32"))]
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(
         std::env::args_os().len(),
         1,
@@ -36,18 +36,16 @@ fn main() {
         }
     }
     let source: NativeCapture =
-        serde_json::from_str(include_str!("../fixtures/native-source.json")).unwrap();
+        serde_json::from_str(include_str!("../fixtures/native-source.json"))?;
     let directory = Directory::new();
     let path = directory.file("source-candidate.sqlite3");
     let store = SqliteStore::open(&path);
-    run(adopt_empty(&store, &prepare_native(&source).unwrap())).unwrap();
+    run(adopt_empty(&store, &prepare_native(&source)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
     let token = format!("u_{}", "1".repeat(64));
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))
-            .unwrap()
-            .key_id,
+        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?.key_id,
         "offline-key"
     );
     let authority = gateway_authority::store::Authority::with_clock(
@@ -60,12 +58,11 @@ fn main() {
         &gateway_core::identity::RequestId("native-post-restart-admission".into()),
         "responses",
         2300,
-    ))
-    .unwrap();
+    ))?;
     drop(authority);
     let key = key(serde_json::json!(["default", "native-graph", 0]));
-    let original = run(store.read(&key)).unwrap().unwrap();
-    let mut graph = original.source_graph_value().unwrap();
+    let original = run(store.read(&key))?.ok_or("Expected retained fixture row")?;
+    let mut graph = original.source_graph_value()?;
     for node in &mut graph.nodes {
         if let GraphNode::ArrayBuffer { bytes } = node {
             bytes[4] = 99;
@@ -73,14 +70,15 @@ fn main() {
     }
     store.put(
         key,
-        StoredRecord::source_graph("latest-alias-write", graph, Some(9500)).unwrap(),
+        StoredRecord::source_graph("latest-alias-write", graph, Some(9500))?,
     );
     drop(store);
     let store = SqliteStore::open(&path);
-    let latest = run(export_native_latest(&store, 2300)).unwrap();
+    let latest = run(export_native_latest(&store, 2300))?;
     let inverse = SqliteStore::open(&directory.file("new-inverse.sqlite3"));
-    run(adopt_empty(&inverse, &prepare_native(&latest).unwrap())).unwrap();
-    println!("{}", serde_json::to_string(&latest).unwrap());
+    run(adopt_empty(&inverse, &prepare_native(&latest)?))?;
+    println!("{}", serde_json::to_string(&latest)?);
+    Ok(())
 }
 #[cfg(target_arch = "wasm32")]
 fn main() {}

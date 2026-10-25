@@ -2,6 +2,7 @@
 
 import { LITHOS_RESPONSES_PROFILE, type OriginalToolName } from "../deepseek/responses.ts";
 import { logForwardedPayloadElisions, toDeepSeekResponsesChatBody } from "../deepseek/chat-projection.ts";
+import { logForwardedPayloadExemptions } from "../deepseek/forwarded-payload-policy.ts";
 import { type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../deepseek/responses-payload.ts";
 import {
   fetchLithosChatCompletions,
@@ -862,6 +863,12 @@ export const handleLithosResponses = async (
   if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
   const { body: chatBody, toolNames, customToolNames } = translated.value;
   if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
+  if (translated.value.exemptions.length)
+    logForwardedPayloadExemptions(translated.value.exemptions, {
+      requestId: usageContext?.requestId,
+      model: modelRaw,
+      promptAdmission: translated.value.promptAdmission,
+    });
 
   const echo: DeepSeekResponsesEcho = {
     tools: rawRecord.tools,

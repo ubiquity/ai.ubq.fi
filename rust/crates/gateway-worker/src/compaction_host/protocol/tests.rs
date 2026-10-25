@@ -18,8 +18,9 @@ struct WireCase {
 }
 
 #[test]
-fn compaction_host_jev_wire_matches_frozen_source_sdk_without_route_restrictions() {
-    let fixture: Golden = serde_json::from_str(include_str!("../source_golden.json")).unwrap();
+fn compaction_host_jev_wire_matches_frozen_source_sdk_without_route_restrictions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture: Golden = serde_json::from_str(include_str!("../source_golden.json"))?;
     assert_eq!(
         fixture.source_blob,
         "f2cf7a41e7c59e73bf5db9604027c4c42a0b15cb"
@@ -27,21 +28,16 @@ fn compaction_host_jev_wire_matches_frozen_source_sdk_without_route_restrictions
     assert_eq!(fixture.cases.len(), 4);
     for case in fixture.cases {
         let actual = jev_request(
-            &SourceJson::parse(&case.state).unwrap(),
-            &SourceJson::parse(&case.questions).unwrap(),
+            &SourceJson::parse(&case.state)?,
+            &SourceJson::parse(&case.questions)?,
             "fixture-key",
-        )
-        .unwrap();
+        )?;
         assert_eq!(actual.url, case.url, "{}", case.name);
         assert_eq!(actual.headers, case.headers, "{}", case.name);
-        assert_eq!(
-            String::from_utf8(actual.body).unwrap(),
-            case.body,
-            "{}",
-            case.name
-        );
+        assert_eq!(String::from_utf8(actual.body)?, case.body, "{}", case.name);
         assert!(!actual.headers.contains_key("accept"));
     }
+    Ok(())
 }
 
 fn residue() -> SourceJson {

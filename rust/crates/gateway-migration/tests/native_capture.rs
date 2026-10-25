@@ -36,20 +36,19 @@ impl gateway_authority::store::AuthorityClock for Clock {
 }
 
 #[test]
-fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse() {
+fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let path = directory.file("one-native-authority.sqlite3");
     let input = fixture();
     let store = SqliteStore::open(&path);
-    let receipt = run(adopt_empty(&store, &prepare_native(&input).unwrap())).unwrap();
+    let receipt = run(adopt_empty(&store, &prepare_native(&input)?))?;
     assert_eq!(receipt.source_rows, 10);
     drop(store);
     let store = SqliteStore::open(&path);
     let token = format!("u_{}", "1".repeat(64));
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))
-            .unwrap()
-            .key_id,
+        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?.key_id,
         "offline-key"
     );
     let authority = gateway_authority::store::Authority::with_clock(
@@ -62,19 +61,18 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse() {
         &gateway_core::identity::RequestId("native-post-restart-admission".into()),
         "responses",
         2300,
-    ))
-    .unwrap();
+    ))?;
     assert_eq!(admission.request_id.0, "native-post-restart-admission");
     drop(authority);
-    let original = run(store.read(&graph_key(0))).unwrap().unwrap();
-    let mut graph = original.source_graph_value().unwrap();
+    let original = run(store.read(&graph_key(0)))?.ok_or("Expected retained fixture row")?;
+    let mut graph = original.source_graph_value()?;
     for node in &mut graph.nodes {
         if let GraphNode::ArrayBuffer { bytes } = node {
             bytes[4] = 99;
         }
     }
     let current =
-        StoredRecord::source_graph("post-restart-alias-write", graph.clone(), Some(9500)).unwrap();
+        StoredRecord::source_graph("post-restart-alias-write", graph.clone(), Some(9500))?;
     assert_eq!(
         run(store.commit(AtomicTransition {
             checks: vec![RevisionCheck {
@@ -88,8 +86,7 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse() {
                 },
                 RecordMutation::Delete { key: graph_key(1) }
             ]
-        }))
-        .unwrap(),
+        }))?,
         CommitOutcome::Committed
     );
     let page = run(store.query(QueryRequest {
@@ -102,56 +99,50 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse() {
         limit: 10,
         cursor: None,
         now_ms: 2300,
-    }))
-    .unwrap();
+    }))?;
     assert_eq!(page.entries.len(), 3);
-    assert_eq!(page.entries[0].record.source_graph_value().unwrap(), graph);
+    assert_eq!(page.entries[0].record.source_graph_value()?, graph);
     drop(store);
     let store = SqliteStore::open(&path);
     assert!(run(export_latest(&store, 2300)).is_err());
-    let latest = run(export_native_latest(&store, 2300)).unwrap();
+    let latest = run(export_native_latest(&store, 2300))?;
     assert_eq!(latest.entries.len(), input.entries.len());
     assert_eq!(latest.data_revision.version, "51");
-    let changed = latest
-        .entries
-        .iter()
-        .find(|e| {
-            TupleKey::from_sort_bytes(e.raw_key.clone())
-                .unwrap()
-                .to_record_key()
-                == graph_key(0)
-        })
-        .unwrap();
+    let mut changed = None;
+    for e in &latest.entries {
+        if TupleKey::from_sort_bytes(e.raw_key.clone())?.to_record_key() == graph_key(0) {
+            changed = Some(e);
+            break;
+        }
+    }
+    let changed = changed.ok_or("Expected changed graph source entry")?;
     assert_eq!(changed.expiration_ms, 9500);
     assert_eq!(changed.revision.version, "51");
     let NativeValue::SourceGraphV1(value) = &changed.value else {
         panic!("graph encoding erased")
     };
-    assert_eq!(graph_transport::from_source_graph(value).unwrap(), graph);
-    let opaque = input.entries.last().unwrap();
+    assert_eq!(graph_transport::from_source_graph(value)?, graph);
+    let opaque = input.entries.last().ok_or("Expected opaque source entry")?;
     let exported = latest
         .entries
         .iter()
         .find(|e| e.raw_key == opaque.raw_key)
-        .unwrap();
+        .ok_or("Expected retained opaque source entry")?;
     assert_eq!(exported.revision, opaque.revision);
     let inverse = SqliteStore::open(&directory.file("new-inverse.sqlite3"));
-    run(adopt_empty(&inverse, &prepare_native(&latest).unwrap())).unwrap();
+    run(adopt_empty(&inverse, &prepare_native(&latest)?))?;
     assert_eq!(
-        run(inverse.read(&graph_key(0)))
-            .unwrap()
-            .unwrap()
-            .source_graph_value()
-            .unwrap(),
+        run(inverse.read(&graph_key(0)))?
+            .ok_or("Expected retained fixture row")?
+            .source_graph_value()?,
         graph
     );
-    assert!(run(inverse.read(&graph_key(1))).unwrap().is_none());
+    assert!(run(inverse.read(&graph_key(1)))?.is_none());
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&inverse, &token, 2400))
-            .unwrap()
-            .key_id,
+        run(gateway_auth::api_keys::authenticate(&inverse, &token, 2400))?.key_id,
         "offline-key"
     );
+    Ok(())
 }
 
 #[test]

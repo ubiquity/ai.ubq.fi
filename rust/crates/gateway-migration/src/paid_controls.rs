@@ -1,6 +1,10 @@
 //! Only the actual paid source/runtime families opt into this finite codec.
 //! Complete runtime DTO/key validation remains owned by gateway-authority.
-use crate::{capture::SourceEntry, *};
+use crate::{Row, Transform, capture::SourceEntry, invalid, starts};
+use gateway_core::error::GatewayError;
+use gateway_core::source_json::SourceJson;
+use gateway_core::state::RecordKey;
+use gateway_core::state::StoredRecord;
 use gateway_core::{
     js_string::JsString16,
     source_control::{
@@ -9,6 +13,7 @@ use gateway_core::{
     source_serialization as source,
     value::PortableValue,
 };
+use serde_json::Value;
 
 fn required(value: &SourceJson, field: &str) -> Result<SourceJson, GatewayError> {
     source::member(value, field)

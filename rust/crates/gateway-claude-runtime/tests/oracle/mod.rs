@@ -26,31 +26,30 @@ fn headers(value: &Value) -> Headers {
         .map(|(key, value)| (key, value.trim_matches([' ', '\t']).into()))
         .collect()
 }
-fn evidence(case: &Value) -> ErrorEvidence {
-    ErrorEvidence::from_prefix(
-        serde_json::from_value(case["body_units"].clone()).unwrap(),
+fn evidence(case: &Value) -> super::TestResult<ErrorEvidence> {
+    Ok(ErrorEvidence::from_prefix(
+        serde_json::from_value(case["body_units"].clone())?,
         case["complete"].as_bool().unwrap_or(true),
-    )
-    .unwrap()
+    )?)
 }
 
 #[test]
-fn exact_bun_source_classification_vectors_preserve_all_detail_units() {
+fn exact_bun_source_classification_vectors_preserve_all_detail_units() -> super::TestResult {
     let fixture = fixture();
-    let cases = fixture["classes"].as_array().unwrap();
+    let cases = super::required(fixture["classes"].as_array())?;
     assert_eq!(cases.len(), 83);
     for (index, case) in cases.iter().enumerate() {
         let classified = response::classify_headers(
-            case["status"].as_u64().unwrap() as u16,
+            super::required(case["status"].as_u64())? as u16,
             &headers(&case["headers"]),
             NOW,
             &|date| (date == "Wed, 18 Nov 2026 00:00:00 GMT").then_some(1_794_960_000_000),
         );
-        let actual = response::refine_error(classified, &evidence(case)).unwrap();
+        let actual = response::refine_error(classified, &evidence(case)?)?;
         let expected = &case["expected"];
         assert_eq!(
             actual.kind.id(),
-            expected["kind"].as_str().unwrap(),
+            super::required(expected["kind"].as_str())?,
             "classification {index}"
         );
         assert_eq!(
@@ -69,13 +68,14 @@ fn exact_bun_source_classification_vectors_preserve_all_detail_units() {
             "reset {index}"
         );
         let expected_units: Option<Vec<u16>> =
-            serde_json::from_value(expected["detail_units"].clone()).unwrap();
+            serde_json::from_value(expected["detail_units"].clone())?;
         assert_eq!(
             actual.detail.as_ref().map(|s| s.as_units().to_vec()),
             expected_units,
             "detail {index}"
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -107,9 +107,9 @@ fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior() 
 }
 
 #[test]
-fn exact_bun_source_outcomes_match_real_same_store_publication() {
+fn exact_bun_source_outcomes_match_real_same_store_publication() -> super::TestResult {
     let fixture = fixture();
-    let cases = fixture["outcomes"].as_array().unwrap();
+    let cases = super::required(fixture["outcomes"].as_array())?;
     assert_eq!(cases.len(), 4);
     for (index, case) in cases.iter().enumerate() {
         let store = Store::new();
@@ -128,19 +128,19 @@ fn exact_bun_source_outcomes_match_real_same_store_publication() {
             &host,
             &selected,
             head(
-                case["status"].as_u64().unwrap() as u16,
+                super::required(case["status"].as_u64())? as u16,
                 headers(&case["headers"]),
                 NOW,
             ),
-        ))
-        .unwrap();
-        run(session.after_outcome(&store, &host, head, evidence(case))).unwrap();
+        ))?;
+        run(session.after_outcome(&store, &host, head, evidence(case)?))?;
         let expected: quota::QuotaState =
-            serde_json::from_str(case["expected_raw"].as_str().unwrap()).unwrap();
+            serde_json::from_str(super::required(case["expected_raw"].as_str())?)?;
         assert_eq!(
-            store.quota(&account).unwrap(),
+            super::required(store.quota(&account))?,
             expected,
             "persisted outcome {index}"
         );
     }
+    Ok(())
 }
