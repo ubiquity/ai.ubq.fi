@@ -180,3 +180,36 @@ test("lock identity ambiguity and incomplete local inventories are errors rather
   const ambiguous = fixture({ lockExtra: '\n[[package]]\nname="gateway-core"\nversion="2.0.0"\nsource="registry+fixture"\n' });
   assert.throws(() => select(source, ambiguous, ["rust/Cargo.lock"]), /Ambiguous/);
 });
+
+test("root Cargo config additions, edits and deletions retain complete relevant stages", () => {
+  for (const path of [".cargo/config", ".cargo/config.toml"]) {
+    const absent = fixture();
+    const first = fixture({ extraFiles: { [path]: "[build]\njobs=1\n" } });
+    const second = fixture({ extraFiles: { [path]: "[build]\njobs=2\n" } });
+    for (const [base, head] of [
+      [absent, first],
+      [first, second],
+      [second, absent],
+    ]) {
+      const scope = select(base, head, [path]);
+      assert.equal(scope.mode, "full");
+      assert.deepEqual(scope.inputPaths, [path]);
+      assert.deepEqual(scope.nativePackages, ["gateway-core", "gateway-native", "gateway-worker"]);
+      assert.equal(scope.shippingWorkerBuild, true);
+    }
+  }
+});
+
+test("a shared external input preserves both production and test owners", () => {
+  const source = fixture({
+    extraFiles: {
+      "fixtures/shared.json": "{}",
+      "rust/crates/gateway-worker/src/lib.rs": 'pub const DATA: &str = include_str!("../../../../fixtures/shared.json");',
+      "rust/crates/gateway-core/tests/contracts.rs": '#[test] fn fixture() { let _ = include_str!("../../../../fixtures/shared.json"); }',
+    },
+  });
+  const scope = select(source, source, ["fixtures/shared.json"]);
+  assert.deepEqual(scope.nativePackages, ["gateway-core", "gateway-worker"]);
+  assert.deepEqual(scope.wasmPackages, ["gateway-worker"]);
+  assert.equal(scope.shippingWorkerBuild, true);
+});

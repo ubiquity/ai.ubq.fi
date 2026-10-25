@@ -222,6 +222,8 @@ test("CLI and pre-install CI consume the same production, test, asset and fallba
     ["rust/Cargo.lock"],
     ["favicon.png"],
     ["rust/.cargo/config.toml"],
+    [".cargo/config"],
+    [".cargo/config.toml"],
   ]) {
     const ci = ciScopeForSelection({ paths, affectedTests: [], documentationOnly: false, runAll: false, reason: "selected" }, root, {});
     const native = planRustVerification(root, paths, "native");
@@ -240,6 +242,51 @@ test("CLI and pre-install CI consume the same production, test, asset and fallba
       );
     }
   }
+});
+
+test("the real admin contract TS include schedules only its owning native tests", () => {
+  const root = fixture();
+  const names = ["gateway-core", "gateway-worker", "gateway-native", "gateway-admin"];
+  writeFileSync(join(root, "rust/Cargo.toml"), `[workspace]\nmembers=${JSON.stringify(names.map((name) => "crates/" + name))}\n`);
+  const admin = join(root, "rust/crates/gateway-admin");
+  mkdirSync(join(admin, "tests"), { recursive: true });
+  writeFileSync(join(admin, "Cargo.toml"), '[package]\nname="gateway-admin"\n');
+  const actual = readFileSync(join(import.meta.dir, "../rust/crates/gateway-admin/tests/contracts.rs"), "utf8");
+  const include = actual.split("\n").find((line) => line.includes('let source = include_str!("../../../../src/handler/index.ts");'));
+  assert.ok(include, "the actual admin source-contract include must remain represented");
+  writeFileSync(
+    join(admin, "tests/contracts.rs"),
+    `#[test] fn fixture() { ${include} let _ = include_str!("../../../../fixtures/source.md"); assert!(!source.is_empty()); }`
+  );
+  mkdirSync(join(root, "src/handler"), { recursive: true });
+  writeFileSync(join(root, "src/handler/index.ts"), "export const ADMIN_ROUTES = [];\n");
+  mkdirSync(join(root, "fixtures"));
+  writeFileSync(join(root, "fixtures/source.md"), "test data");
+  writeFileSync(
+    join(root, "rust/crates/gateway-worker/Cargo.toml"),
+    '[package]\nname="gateway-worker"\n[dependencies]\ngateway-admin={path="../gateway-admin"}\n'
+  );
+  for (const path of ["src/handler/index.ts", "fixtures/source.md"]) {
+    const markdown = path.endsWith(".md");
+    const reason = markdown ? "documentation-only" : "selected";
+    const selection = { paths: [path], affectedTests: [], documentationOnly: markdown, runAll: false, reason } as const;
+    const ci = ciScopeForSelection(selection, root, {});
+    const native = planRustVerification(root, [path], "native");
+    assert.deepEqual(native.packages, ["gateway-admin"]);
+    assert.deepEqual(native.testPackages, ["gateway-admin"]);
+    assert.deepEqual(native.scope, ci.rustScope);
+    assert.equal(ci.docsOnly, false);
+    assert.equal(ci.needsRustNative, true);
+    assert.equal(ci.needsRustWasm, false);
+    assert.equal(ci.needsRustBuild, false);
+  }
+  const docs = { paths: ["docs/unrelated.md"], affectedTests: [], documentationOnly: true, runAll: false, reason: "documentation-only" } as const;
+  const ordinary = ciScopeForSelection(docs, root, {});
+  assert.equal(ordinary.docsOnly, true);
+  assert.equal(ordinary.needsRustNative, false);
+  const complete = ciScopeForSelection(docs, root, { GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/development" });
+  assert.equal(complete.docsOnly, true);
+  assert.equal(complete.needsRustNative, true);
 });
 
 test("portable runtime crates outside the Worker closure receive scoped native tests and WASM checks", () => {

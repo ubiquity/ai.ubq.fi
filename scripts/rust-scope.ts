@@ -17,6 +17,7 @@ export type RustScope = Readonly<{
   version: 1;
   mode: "selected" | "full" | "not-required";
   paths: readonly string[];
+  inputPaths: readonly string[];
   base: string | null;
   head: string | null;
   inputsHash: string;
@@ -220,9 +221,21 @@ const seedOwnedInput = (path: string, owner: RustPackage, seeds: ScopeSeeds): vo
 const workerInputPath = (path: string): boolean =>
   /^(?:favicon(?:-32)?\.png|entrypoint\.mjs|cloudflare\.config\.ts|wrangler\.config\.ts|package\.json|bun\.lock|ops\/rust-worker-build\.sh)$/.test(path) ||
   path.startsWith("static/");
+const snapshotInputOwners = (snapshot: RustSnapshot | null, path: string, tests: boolean): readonly string[] => {
+  if (!snapshot) return [];
+  const ownership = tests ? snapshot.testInputOwners : snapshot.compiledOwners;
+  return Object.hasOwn(ownership, path) ? ownership[path] : [];
+};
+const inputOwners = (inputs: RustChangeInputs, path: string, tests: boolean): readonly string[] =>
+  rustUnique([...snapshotInputOwners(inputs.base, path, tests), ...snapshotInputOwners(inputs.head, path, tests)]);
+const actionInputPath = (inputs: RustChangeInputs, path: string): boolean =>
+  isRustGateInput(path) || inputOwners(inputs, path, false).length > 0 || inputOwners(inputs, path, true).length > 0;
 const seedChangedPath = (path: string, inputs: RustChangeInputs, graph: readonly RustPackage[], seeds: ScopeSeeds): void => {
   if (manifestPath(path)) return;
-  for (const name of [...(inputs.base?.compiledOwners[path] ?? []), ...(inputs.head.compiledOwners[path] ?? [])]) seeds.production.add(name);
+  const production = inputOwners(inputs, path, false);
+  const tests = inputOwners(inputs, path, true);
+  for (const name of production) seeds.production.add(name);
+  for (const name of tests) seeds.tests.add(name);
   const owner = graph.find((item) => path.startsWith(`${item.directory}/`));
   if (owner) {
     seedOwnedInput(path, owner, seeds);
@@ -234,8 +247,9 @@ const seedChangedPath = (path: string, inputs: RustChangeInputs, graph: readonly
     seeds.workerInput = true;
     return;
   }
-  seeds.reasons.push(`Rust policy or unclassified input changed: ${path}`);
+  if (!production.length && !tests.length) seeds.reasons.push(`Rust policy or unclassified input changed: ${path}`);
 };
+
 const nativeOnlyPackages = (inputs: RustChangeInputs, graph: readonly RustPackage[]): Set<string> => {
   const nativeOnly = new Set<string>(RUST_NATIVE_PACKAGES);
   const base = inputs.base;
@@ -296,7 +310,7 @@ const scopePolicyActions = (actions: ScopeActions, complete: boolean, hasChanges
 };
 export const selectRustScope = (inputs: RustChangeInputs, complete = false): RustScope => {
   const { base, head, paths } = inputs;
-  const changed = paths.filter(isRustGateInput);
+  const changed = paths.filter((path) => actionInputPath(inputs, path));
   const graph = [...(base?.packages ?? []), ...head.packages];
   const seeds: ScopeSeeds = { production: new Set(), tests: new Set(), reasons: [], workerInput: false };
   const worker = workerClosure(graph);
@@ -313,6 +327,7 @@ export const selectRustScope = (inputs: RustChangeInputs, complete = false): Rus
     version: 1,
     mode: scopeMode(seeds, actions),
     paths,
+    inputPaths: changed,
     base: base?.identity ?? null,
     head: head.identity,
     inputsHash: rustHash(rustCanonical({ base: base?.hashes ?? null, head: head.hashes, paths })),

@@ -37,6 +37,7 @@ export const RUST_NATIVE_PACKAGES = [
 export const isRustDocumentation = (path: string): boolean =>
   /\.(?:md|mdx|markdown)$/i.test(path) && !path.startsWith("static/") && !/^rust\/crates\/[^/]+\/(?:tests|fixtures|examples|src)\//.test(path);
 export const isRustGateInput = (path: string): boolean =>
+  path.startsWith(".cargo/") ||
   (path.startsWith("rust/") && !isRustDocumentation(path)) ||
   /^scripts\/rust-(?:verify(?:-plan)?|inputs|scope|target-owner|quality(?:-[a-z-]+)?)(?:\.test)?\.ts$/.test(path) ||
   /^(?:favicon(?:-32)?\.png|entrypoint\.mjs|cloudflare\.config\.ts|wrangler\.config\.ts|package\.json|bun\.lock|ops\/rust-worker-build\.sh)$/.test(path) ||
@@ -51,9 +52,10 @@ export type RustSnapshot = Readonly<{
   packages: readonly RustPackage[];
   hashes: Readonly<Record<string, string>>;
   compiledOwners: Readonly<Record<string, readonly string[]>>;
+  testInputOwners: Readonly<Record<string, readonly string[]>>;
   uncertainInputs: readonly string[];
 }>;
-export type RustInputReader = Readonly<{ identity: string | null; files: readonly string[]; read: (path: string) => Uint8Array }>;
+export type RustInputReader = Readonly<{ identity: string | null; files: readonly string[]; links?: readonly string[]; read: (path: string) => Uint8Array }>;
 export type RustChangeInputs = Readonly<{ paths: readonly string[]; base: RustSnapshot | null; head: RustSnapshot; immutable: boolean }>;
 
 type QuotedInput = Readonly<{ end: number; value: string | null; uncertain: boolean }>;
@@ -196,17 +198,28 @@ const manifestEdges = (manifest: Table, workspace: Table, directory: string, mem
   const targets = Object.entries(optionalTable(manifest.target)).flatMap(([selector, value]) => configurationEdges(rustTable(value), selector, context));
   return [...configurationEdges(manifest, "", context), ...targets];
 };
-type SnapshotAccess = Readonly<{ files: ReadonlySet<string>; hashes: Record<string, string>; text: (path: string) => string; parse: (path: string) => Table }>;
+type SnapshotAccess = Readonly<{
+  files: ReadonlySet<string>;
+  hashes: Record<string, string>;
+  validate: (path: string) => void;
+  text: (path: string) => string;
+  parse: (path: string) => Table;
+}>;
 const snapshotAccess = (reader: RustInputReader): SnapshotAccess => {
   const files = new Set(reader.files.map(rustPath));
   const hashes: Record<string, string> = {};
+  const validate = (path: string): void => {
+    rustPath(path);
+    if (reader.links?.some((link) => path === link || path.startsWith(`${link}/`))) throw new Error(`Linked Rust input: ${path}`);
+  };
   const text = (path: string): string => {
+    validate(path);
     if (!files.has(path)) throw new Error(`Required Rust input is missing: ${path}`);
     const bytes = reader.read(path);
     hashes[path] = rustHash(bytes);
     return new TextDecoder().decode(bytes);
   };
-  return { files, hashes, text, parse: (path) => rustTable(Bun.TOML.parse(text(path))) };
+  return { files, hashes, validate, text, parse: (path) => rustTable(Bun.TOML.parse(text(path))) };
 };
 const packageVersion = (data: Table, workspace: Table): string => {
   if (data.version === undefined) return "";
@@ -235,19 +248,27 @@ const snapshotMembers = (workspace: Table, access: SnapshotAccess): readonly Mem
 };
 const packageHasTests = (directory: string, access: SnapshotAccess): boolean =>
   [...access.files].some((path) => path.startsWith(`${directory}/`) && path.endsWith(".rs") && /#\s*\[\s*(?:test|tokio::test)\s*\]/.test(access.text(path)));
-type CompiledInputs = { compiledOwners: Record<string, string[]>; uncertainInputs: string[] };
-const bindCompiledInput = (path: string, included: string, owner: string, access: SnapshotAccess, inputs: CompiledInputs): void => {
+type InputKind = "production" | "tests";
+type CompiledInputs = { compiledOwners: Record<string, string[]>; testInputOwners: Record<string, string[]>; uncertainInputs: string[] };
+const sourceInputKind = (path: string, owner: RustPackage): InputKind =>
+  /^(?:tests|fixtures|examples|benches)\//.test(path.slice(owner.directory.length + 1)) ? "tests" : "production";
+const addInputOwner = (input: string, owner: string, kind: InputKind, inputs: CompiledInputs): void => {
+  const ownership = kind === "tests" ? inputs.testInputOwners : inputs.compiledOwners;
+  const owners = Object.hasOwn(ownership, input) ? ownership[input] : [];
+  owners.push(owner);
+  ownership[input] = owners;
+};
+const bindCompiledInput = (path: string, included: string, owner: string, kind: InputKind, access: SnapshotAccess, inputs: CompiledInputs): void => {
   const input = rustPath(posix.normalize(posix.join(posix.dirname(path), included)));
+  access.validate(input);
+  addInputOwner(input, owner, kind, inputs);
   if (!access.files.has(input)) {
     inputs.uncertainInputs.push(path);
     return;
   }
   access.text(input);
-  const owners = inputs.compiledOwners[input] ?? [];
-  owners.push(owner);
-  inputs.compiledOwners[input] = owners;
 };
-const compiledFileInputs = (path: string, owner: string, access: SnapshotAccess, inputs: CompiledInputs): void => {
+const compiledFileInputs = (path: string, owner: RustPackage, access: SnapshotAccess, inputs: CompiledInputs): void => {
   const candidates = literalRustIncludes(access.text(path));
   const audited =
     path === "rust/crates/gateway-routing-runtime-test-support/src/source_catalog.rs" &&
@@ -255,14 +276,15 @@ const compiledFileInputs = (path: string, owner: string, access: SnapshotAccess,
   if (candidates.uncertain && !audited) inputs.uncertainInputs.push(path);
   const includes = [...candidates.paths];
   if (audited) includes.push("../../gateway-schema/tests/fixtures/source-catalog-sort-v1.json");
-  for (const included of includes) bindCompiledInput(path, included, owner, access, inputs);
+  const kind = sourceInputKind(path, owner);
+  for (const included of includes) bindCompiledInput(path, included, owner.name, kind, access, inputs);
 };
 const compiledInputOwners = (packages: readonly RustPackage[], access: SnapshotAccess): CompiledInputs => {
-  const inputs: CompiledInputs = { compiledOwners: {}, uncertainInputs: [] };
+  const inputs: CompiledInputs = { compiledOwners: {}, testInputOwners: {}, uncertainInputs: [] };
   for (const path of access.files) {
     if (!path.endsWith(".rs")) continue;
-    const owner = packages.find((item) => path.startsWith(`${item.directory}/src/`) || path === `${item.directory}/build.rs`);
-    if (owner) compiledFileInputs(path, owner.name, access, inputs);
+    const owner = packages.find((item) => path.startsWith(`${item.directory}/`));
+    if (owner) compiledFileInputs(path, owner, access, inputs);
   }
   return inputs;
 };
@@ -295,6 +317,7 @@ export const readRustSnapshot = (reader: RustInputReader): RustSnapshot => {
     packages,
     hashes: access.hashes,
     compiledOwners: inputs.compiledOwners,
+    testInputOwners: inputs.testInputOwners,
     uncertainInputs: rustUnique(inputs.uncertainInputs),
   };
 };
@@ -317,7 +340,12 @@ const rustGitTreeEntry = (entry: string): readonly RustGitEntry[] => {
 const gitReader = (root: string, sha: string): RustInputReader => {
   const listing = git(root, ["ls-tree", "-r", "-z", sha]);
   if (listing === null) throw new Error("Cannot read immutable Rust Git tree");
-  const entries = listing.split("\0").filter(Boolean).flatMap(rustGitTreeEntry);
+  const rawEntries = listing.split("\0").filter(Boolean);
+  const entries = rawEntries.flatMap(rustGitTreeEntry);
+  const links = rawEntries.flatMap((entry) => {
+    const link = /^(?:120000 blob|160000 commit) [a-f0-9]{40}\t([\s\S]+)$/.exec(entry);
+    return link ? [rustPath(link[1])] : [];
+  });
   const byPath = new Map(entries.map((entry) => [entry.path, entry]));
   const cached = new Map<string, Uint8Array>();
   const blobs = rustUnique(
@@ -344,6 +372,7 @@ const gitReader = (root: string, sha: string): RustInputReader => {
   return {
     identity: sha,
     files: entries.map((entry) => entry.path),
+    links,
     read: (path) => {
       const entry = byPath.get(rustPath(path));
       if (!entry || !["100644", "100755"].includes(entry.mode)) throw new Error(`Missing or linked Rust input: ${path}`);
@@ -357,25 +386,33 @@ const gitReader = (root: string, sha: string): RustInputReader => {
     },
   };
 };
+const ignoredInputDirectory = (path: string, name: string): boolean =>
+  (name.startsWith(".") && name !== ".cargo") || ["target", "node_modules", "logs", "benchmark-runs"].includes(name) || path === "lib/codex";
 export const workingRustReader = (root: string): RustInputReader => {
   const files: string[] = [];
+  const links: string[] = [];
   const walk = (path: string): void => {
     const absolute = join(root, path);
     const stat = lstatSync(absolute);
-    if (stat.isSymbolicLink()) throw new Error(`Linked Rust input: ${path}`);
-    if (stat.isDirectory())
+    if (stat.isSymbolicLink()) {
+      if (authoredRustInput(path)) throw new Error(`Linked Rust input: ${path}`);
+      links.push(rustPath(path));
+      files.push(path);
+      return;
+    }
+    if (stat.isDirectory()) {
       for (const child of readdirSync(absolute)) {
-        if (!child.startsWith(".") && child !== "target" && child !== "node_modules") walk(`${path}/${child}`);
+        const nested = path ? `${path}/${child}` : child;
+        if (!ignoredInputDirectory(nested, child)) walk(nested);
       }
-    else if (stat.isFile()) files.push(rustPath(path));
+    } else if (stat.isFile()) files.push(rustPath(path));
   };
   if (!existsSync(join(root, "rust/Cargo.lock"))) throw new Error("Committed rust/Cargo.lock is required; verification never generates it");
-  walk("rust");
-  for (const path of ["favicon.png", "favicon-32.png", "entrypoint.mjs", "cloudflare.config.ts", "wrangler.config.ts", "package.json", "bun.lock", "static"])
-    if (existsSync(join(root, path))) walk(path);
+  walk("");
   return {
     identity: null,
     files,
+    links,
     read: (path) => {
       rustPath(path);
       let prefix = root;
@@ -391,6 +428,26 @@ export const workingRustReader = (root: string): RustInputReader => {
       return bytes;
     },
   };
+};
+const cargoConfigPaths = [".cargo/config", ".cargo/config.toml", "rust/.cargo/config", "rust/.cargo/config.toml"];
+export const untrackedCargoConfigurations = (root: string): readonly string[] =>
+  cargoConfigPaths.filter((path) => existsSync(join(root, path)) && git(root, ["ls-files", "--error-unmatch", "--", path]) === null);
+
+const snapshotOwnsInput = (snapshot: RustSnapshot, path: string): boolean =>
+  Object.hasOwn(snapshot.compiledOwners, path) || Object.hasOwn(snapshot.testInputOwners, path);
+const declaredInputs = (snapshot: RustSnapshot): readonly string[] =>
+  rustUnique([...Object.keys(snapshot.compiledOwners), ...Object.keys(snapshot.testInputOwners)]);
+const frozenRustHead = (
+  root: string,
+  sha: string,
+  changes: readonly string[]
+): Readonly<{ snapshot: RustSnapshot; immutable: boolean; additionalPaths: readonly string[] }> => {
+  const staticImmutable = !changes.some(isRustGateInput);
+  const snapshot = readRustSnapshot(staticImmutable ? gitReader(root, sha) : workingRustReader(root));
+  const additionalPaths = declaredInputs(snapshot).filter((path) => !Object.hasOwn(snapshot.hashes, path) && existsSync(join(root, path)));
+  const immutable = staticImmutable && !changes.some((path) => snapshotOwnsInput(snapshot, path)) && additionalPaths.length === 0;
+  if (staticImmutable && !immutable) return { snapshot: readRustSnapshot(workingRustReader(root)), immutable, additionalPaths };
+  return { snapshot, immutable, additionalPaths };
 };
 export const loadRustChangeInputs = (root: string, paths: readonly string[], environment: NodeJS.ProcessEnv = process.env): RustChangeInputs => {
   paths.forEach(rustPath);
@@ -413,7 +470,10 @@ export const loadRustChangeInputs = (root: string, paths: readonly string[], env
     }
   }
   const dirty = git(root, ["diff", "--name-only", "-z", "HEAD"])?.split("\0").filter(Boolean) ?? [];
-  const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z"])?.split("\0").filter(Boolean) ?? [];
+  const untracked = rustUnique([
+    ...(git(root, ["ls-files", "--others", "--exclude-standard", "-z"])?.split("\0").filter(Boolean) ?? []),
+    ...untrackedCargoConfigurations(root),
+  ]);
   const completePaths = rustUnique([
     ...paths,
     ...(base ? (git(root, ["diff", "--no-renames", "--name-only", "-z", base, head])?.split("\0").filter(Boolean) ?? []) : []),
@@ -421,11 +481,11 @@ export const loadRustChangeInputs = (root: string, paths: readonly string[], env
     ...untracked.filter((path) => isRustGateInput(path)),
   ]);
   completePaths.forEach(rustPath);
-  const immutable = ![...dirty, ...untracked].some(isRustGateInput);
+  const frozen = frozenRustHead(root, head, [...dirty, ...untracked]);
   return {
-    paths: completePaths,
-    base: base && immutable ? readRustSnapshot(gitReader(root, base)) : null,
-    head: readRustSnapshot(immutable ? gitReader(root, head) : workingRustReader(root)),
-    immutable,
+    paths: rustUnique([...completePaths, ...frozen.additionalPaths]),
+    base: base && frozen.immutable ? readRustSnapshot(gitReader(root, base)) : null,
+    head: frozen.snapshot,
+    immutable: frozen.immutable,
   };
 };

@@ -86,6 +86,27 @@ test("literal compiled fixture ownership overrides its documentation extension",
   assert.deepEqual(snapshot(contents).uncertainInputs, ["rust/crates/core/src/lib.rs"]);
 });
 
+test("integration, example, bench and support-module includes retain test ownership", () => {
+  const contents = files();
+  contents["fixtures/corpus.md"] = "external test input";
+  for (const directory of ["tests", "examples", "benches"])
+    contents[`rust/crates/consumer/${directory}/fixture.rs`] = 'fn fixture() { let _ = include_str!("../../../../fixtures/corpus.md"); }';
+  contents["rust/crates/consumer/tests/support/mod.rs"] = 'fn fixture() { let _ = include_str!("../../../../../fixtures/corpus.md"); }';
+  const result = snapshot(contents);
+  assert.deepEqual([...new Set(result.testInputOwners["fixtures/corpus.md"])], ["consumer"]);
+  assert.equal(Object.hasOwn(result.compiledOwners, "fixtures/corpus.md"), false);
+  assert.match(result.hashes["fixtures/corpus.md"], /^[a-f0-9]{64}$/);
+});
+
+test("an external include cannot cross a linked directory", () => {
+  const contents = files();
+  contents["data/fixture.json"] = "{}";
+  contents["rust/crates/consumer/tests/contract.rs"] = 'fn fixture() { let _ = include_str!("../../../../linked/fixture.json"); }';
+  const root = materialize(contents);
+  symlinkSync(join(root, "data"), join(root, "linked"));
+  assert.throws(() => readRustSnapshot(workingRustReader(root)), /Linked Rust input/);
+});
+
 test("literal input discovery ignores Rust source strings and nested comments", () => {
   const source =
     'const SOURCE: &str = r###"include_str!("fake.md")"###; /* include_str!("comment.md") /* nested */ */\nconst REAL: &str = include_str!(r#"real.md"#);\nconst DATA: &[u8] = include_bytes!("real.bin");';
@@ -119,4 +140,30 @@ test("Git snapshots include root deltas and deleted paths even if an explicit pa
   assert.equal(dirty.immutable, false);
   assert.equal(dirty.base, null);
   assert.equal(dirty.head.identity, null);
+});
+
+test("dirty external includes and ignored Cargo configs invalidate immutable source proof", () => {
+  const contents = files();
+  contents["data/fixture.json"] = "{}";
+  contents["rust/crates/consumer/tests/contract.rs"] = '#[test] fn fixture() { let _ = include_str!("../../../../data/fixture.json"); }';
+  const root = materialize(contents);
+  git(root, "init", "--initial-branch=development");
+  git(root, "config", "user.name", "Rust scope fixture");
+  git(root, "config", "user.email", "scope-fixture@example.invalid");
+  git(root, "add", ".");
+  git(root, "commit", "-m", "external input fixture");
+  const base = git(root, "rev-parse", "HEAD");
+  writeFileSync(join(root, "data/fixture.json"), '{"changed":true}');
+  const dirty = loadRustChangeInputs(root, [], { TEST_SCOPE_BASE: base });
+  assert.equal(dirty.immutable, false);
+  assert.equal(dirty.head.identity, null);
+  assert.ok(dirty.paths.includes("data/fixture.json"));
+  writeFileSync(join(root, "data/fixture.json"), "{}");
+  writeFileSync(join(root, ".git/info/exclude"), ".cargo/\n");
+  mkdirSync(join(root, ".cargo"));
+  writeFileSync(join(root, ".cargo/config.toml"), "[build]\njobs=1\n");
+  const ignored = loadRustChangeInputs(root, [], { TEST_SCOPE_BASE: base });
+  assert.equal(ignored.immutable, false);
+  assert.equal(ignored.head.identity, null);
+  assert.ok(ignored.paths.includes(".cargo/config.toml"));
 });
