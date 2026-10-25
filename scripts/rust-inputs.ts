@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, posix, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { join, posix } from "node:path";
 
 type Table = Record<string, unknown>;
 export const rustTable = (value: unknown): Table => {
@@ -463,7 +463,8 @@ export const loadRustChangeInputs = (root: string, paths: readonly string[], env
   paths.forEach(rustPath);
   const head = git(root, ["rev-parse", "--verify", "HEAD"])?.trim();
   const top = git(root, ["rev-parse", "--show-toplevel"])?.trim();
-  if (!head || top !== resolve(root)) return { paths: rustUnique(paths), base: null, head: readRustSnapshot(workingRustReader(root)), immutable: false };
+  if (!head || !top || realpathSync(top) !== realpathSync(root))
+    return { paths: rustUnique(paths), base: null, head: readRustSnapshot(workingRustReader(root)), immutable: false };
   const candidates = [
     environment.TEST_SCOPE_BASE,
     environment.GITHUB_BASE_REF ? `origin/${environment.GITHUB_BASE_REF}` : undefined,
