@@ -29,6 +29,7 @@ const ADMISSION_ROUTES: ReadonlySet<string> = new Set([
   "embeddings.jobs.get",
   "chat.completions",
   "responses",
+  "decisions",
   "systemone",
   "images.generations",
   "images.edits",

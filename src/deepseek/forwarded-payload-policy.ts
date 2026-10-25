@@ -65,7 +65,7 @@ export const FORWARDED_PAYLOAD_POLICY = {
  * because a provider must fit both prompt and completion inside its window.
  */
 export const PROMPT_ADMISSION_POLICY = {
-  version: "chat-prompt-admission/v1",
+  version: "chat-prompt-admission/v2",
   minimumOutputReserveTokens: 16_384,
   requestStructuralOverheadTokens: 256,
   messageStructuralOverheadTokens: 16,
@@ -154,7 +154,7 @@ export type ForwardedPayloadReduction = "reduce" | "reject";
 export type ForwardedPayloadElision = Readonly<{
   path: string;
   callId: string | null;
-  kind: "tool_output" | "tool_arguments" | "image" | "agent_message" | "message" | "reasoning";
+  kind: "tool_output" | "tool_arguments" | "image" | "agent_message" | "message" | "reasoning" | "history";
   originalBytes: number;
   forwardedBytes: number;
   omittedBytes: number;

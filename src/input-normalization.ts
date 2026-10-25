@@ -29,7 +29,7 @@ import {
   DEEPSEEK_WATERFALL_REASONING_LEVELS,
   deepSeekWaterfallProviderConfigured,
 } from "./deepseek/waterfall.ts";
-import { openRouterModelsSnapshot } from "./models/openrouter-models.ts";
+import { openRouterModelEndpointPaths, openRouterModelsSnapshot } from "./models/openrouter-models.ts";
 import { readOpenRouterApiKey } from "./provider/openrouter.ts";
 import { normalizePromptCacheCapabilities } from "./models/codex-models.ts";
 import { codexSnapshotMetadataHint, codexSubscriptionMetadataHint, resolveModelMetadata } from "./models/metadata.ts";
@@ -554,14 +554,20 @@ export const OPENROUTER_SERVED_MODEL_ID = "typesafe/jev-latest";
  */
 const openRouterServedModels = (): readonly { id: string; endpoints: readonly string[]; ownedBy: string }[] => {
   if (readOpenRouterApiKey() === null) return [];
-  const catalogue: { id: string; endpoints: readonly string[]; ownedBy: string }[] = (openRouterModelsSnapshot()?.models ?? []).map((model) => ({
-    id: model.id,
-    endpoints: ["/v1/responses", "/v1/chat/completions"] as const,
-    ownedBy: model.id.split("/", 1)[0] || "openrouter",
-  }));
+  const catalogue: { id: string; endpoints: readonly string[]; ownedBy: string }[] = (openRouterModelsSnapshot()?.models ?? [])
+    .map((model) => ({
+      id: model.id,
+      endpoints: openRouterModelEndpointPaths(model),
+      ownedBy: model.id.split("/", 1)[0] || "openrouter",
+    }))
+    .filter((model) => model.endpoints.length > 0);
   const seen = new Set(catalogue.map((model) => model.id));
   if (!seen.has(OPENROUTER_SERVED_MODEL_ID)) {
-    catalogue.push({ id: OPENROUTER_SERVED_MODEL_ID, endpoints: ["/v1/systemone"] as const, ownedBy: "typesafe" });
+    catalogue.push({
+      id: OPENROUTER_SERVED_MODEL_ID,
+      endpoints: ["/v1/decisions", "/v1/systemone"] as const,
+      ownedBy: "typesafe",
+    });
   }
   return catalogue;
 };

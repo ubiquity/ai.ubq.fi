@@ -1,6 +1,6 @@
 //! Pure source inventory projection and finite read-only sampling.
-use crate::supervisor::classify_state;
-use crate::supervisor_metadata::ThreadMetadata;
+use crate::metadata::ThreadMetadata;
+use crate::state::classify_state;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -179,7 +179,7 @@ pub fn session_from_parts(input: SessionParts<'_>) -> Value {
                 input.loaded,
             )
         })
-        .unwrap_or(crate::supervisor::SupervisorState::Unknown);
+        .unwrap_or(crate::state::SupervisorState::Unknown);
     let tokens = m.and_then(|v| v.tokens_used.clone());
     json!({"id":input.id,"sourceId":input.source_id,"machine":input.machine,"title":live_title.or(metadata_title),"titleSource":title_source,"cwd":l.and_then(|v|v.cwd.clone()).or_else(||m.and_then(|v|v.cwd.clone())),"branch":m.and_then(|v|v.git_branch.clone()),"model":l.and_then(|v|v.model.clone()).or_else(||m.and_then(|v|v.model.clone())),"effort":l.and_then(|v|v.effort.clone()).or_else(||m.and_then(|v|v.effort.clone())),"provider":l.and_then(|v|v.model_provider.clone()),"sourceKind":l.and_then(|v|v.source_kind.clone()).or_else(||m.and_then(|v|v.thread_source.clone())),"parentThreadId":l.and_then(|v|v.parent_thread_id.clone()).or_else(||m.and_then(|v|v.parent_thread_id.clone())),"lastActivityAtMs":l.and_then(|v|v.updated_at_ms).or_else(||m.and_then(|v|v.updated_at_ms)),"tokensUsed":tokens,"usageSource":tokens.as_ref().map(|_|"state_db"),"state":state,"activeFlags":flags,"loaded":input.loaded,"waitingOnApproval":approval,"waitingOnUserInput":user,"childIds":input.child_ids,"lastSampledAtMs":input.sampled_at_ms,"sampled":input.probe.is_some_and(|p|p.sampled),"unavailable":input.unavailable})
 }

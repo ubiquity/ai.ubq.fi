@@ -123,6 +123,13 @@ const render = () => {
         providers.append(badge);
       }
       article.append(heading, providers);
+      const endpoints = new Set(model.providers.flatMap((provider) => provider.supported_endpoints ?? []));
+      if (endpoints.has("/v1/decisions")) {
+        const decisions = document.createElement("div");
+        decisions.dataset.decisions = "";
+        decisions.textContent = "Decisions · POST /v1/decisions";
+        article.append(decisions);
+      }
 
       // Coverage is part of the page: a row states which source described it, and
       // a row no source described says so instead of quietly showing nothing.

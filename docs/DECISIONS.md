@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Decision models use their own first-class wire - 2026-10-25
+
+OpenRouter's decision models are discovered with `output_modalities=text,decisions` and served through `POST /v1/decisions`, which mirrors the upstream Decisions API's `state`, typed `questions` (`noul`, `choice`, `score`, `box`), optional provider routing, trace, session, and user fields, and returns the typed `answers` envelope unchanged. Text models remain limited to Chat Completions and Responses; decision models remain limited to `/v1/decisions`. `/v1/systemone` stays as the bounded Jev compatibility route. Every listing surface attributes decision rows to `/v1/decisions`, while the Codex-native versioned catalog excludes them because Codex cannot select a non-text decision response.
+
+Reason: OpenRouter's default model list omits decision models, so the admin picker and public catalog silently missed newly listed rows such as `baseten/elephant-1:free`; merely widening discovery without a matching request wire would have advertised models that no gateway route could serve.
+
+Reversal risk: returning to the default text-only discovery hides every decision model again. Advertising decision rows on Chat Completions or Responses, or accepting text rows on `/v1/decisions`, would produce guaranteed upstream failures and break the gateway's listed-equals-servable contract.
+
 ## Bun serves the Passport browser sign-in advertised by its admin page - 2026-10-23
 
 The production Bun gateway implements the existing Passport `ai` registration at `/auth/login`, `/auth/callback`, and `/auth/logout`, matching the fixed issuer, audience, origin, callback, RS256/JWKS verification, host-only secure cookies, and cookie-only admin authority used by the Rust implementation. An administrator claim is required for admin access; agent tokens never become admin sessions, and foreign-origin cookie mutations are rejected. The admin button requests `/admin` as its return destination; that fixed choice is bound into the random login state, while ordinary chat login returns to `/chat`.
@@ -2470,3 +2478,19 @@ The source-only compatibility update adds exactly two reviewed utility identitie
 The existing `/bin/ls` identities `a1cb6fd856f9414ada4cc9682f137c343261d777b8374df1abac7a931fb66f7a` and `24752389e1d97c9555dd153b644902fadd460dfbe1a166251876c67bbacb0810` remain accepted, as do the existing `/usr/bin/sandbox-exec` identities `e3d7a792c58a5d3783d2f7274c82d70062393830d8cb1ded713ca554a470bd2f` and `abc5bb136d6b5cce8fa85d789f78e3326c51ca60cae637b2064adfb67a1dcd9a`.
 
 No OS version, caller value or environment value authorizes another digest, and unknown identities still fail closed. The private inspector, owner-runtime fixture and fixed-role actor channel consume the same exact literals; the disabled Darwin CI preflight parses the three-entry inspector and fixture-sandbox sets without changing workflow triggers or activation. Fixed paths, root ownership, NOFOLLOW and regular-file metadata checks, exact hash rechecks, ACL parsing, process, network and write constraints, and every negative case remain unchanged. This compatibility correction adds no credential, provider, service, deployment or other operational authority.
+
+## Caddy holds new requests through a gateway restart - 2026-10-25
+
+The `ai.ubq.fi` Caddy site retries a refused gateway connection for 25 seconds at 250-millisecond intervals. This is below the roughly 30-second iOS steer discard window and above the observed 19.6-second stop-plus-start interval. Caddy retries only the failed connection attempt; it does not set `lb_retry_match`, so a POST body is never replayed after an upstream round trip has begun. The 15-second gateway stop bound, active-handler drain, and delivery and accounting settlement rules are unchanged.
+
+Reason: the live deploy at 06:39 UTC took 19.6 seconds. The gateway stopped accepting at 06:39:28, systemd killed it at 06:39:43, and the new listener did not become ready until 06:39:47. The previous 15-second bound only matched the app-server's final retry edge after release verification was added; it did not prevent the listener blackout. With Caddy retrying refused connections, a request issued during that blackout remains connected and reaches the restarted gateway instead of becoming a transport failure. A real Caddy 2.11.7 fixture held a POST for 2.23 seconds while its backend was absent and returned the backend's 200 response once it appeared.
+
+Reversal risk: removing the retry window or lowering it below the restart interval restores dropped mobile steers. Raising it beyond the client's discard window wastes the wait without preserving the request. Enabling `lb_retry_match` for POST routes could duplicate a non-idempotent inference request after an ambiguous round-trip failure and is not authorized by this decision.
+
+## An adopted compaction summary replaces older steer history - 2026-10-25
+
+`chat-prompt-admission/v2` first estimates the complete projected prompt. If it overflows and the request permits reduction, the gateway finds the one exact adopted Codex compaction summary already validated by `codex-compaction-summary/v1`, keeps the leading system instructions and the summary, and replaces every earlier message with one visible history-elision notice. It then re-estimates the complete body. The summary itself is never changed, and `truncation: "disabled"` still fails closed. If the reduced body remains over budget, the gateway still returns HTTP 400 `context_length_exceeded` before dispatch.
+
+Reason: a live iOS steer reached a `1,032,954`-token estimate against the LithosAI `1,032,192`-token budget, only 762 tokens over, and could not be sent. The request carried a 961,798-byte adopted compaction summary plus 2,730,984 serialized bytes of history. Messages before that summary are redundant after Codex has adopted it; retaining them made a long thread unusable on DeepSeek while the same client could continue with GPT. The reduction preserves the adopted summary, the current steer, the complete tool schema, and all post-summary messages.
+
+Reversal risk: removing this reduction restores the hard steer failure for long adopted summaries. Dropping post-summary messages, rewriting the summary, applying this to `truncation: "disabled"`, or admitting a still-over-budget projection would lose current work or dispatch an oversized request. The version bump distinguishes this aggregate behavior from v1 in logs and tests.

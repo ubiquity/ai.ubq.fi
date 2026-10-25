@@ -189,6 +189,31 @@ curl -sS https://ai.ubq.fi/v1/responses \
   }'
 ```
 
+Decisions (typed OpenRouter decision models):
+
+```bash
+curl -sS https://ai.ubq.fi/v1/decisions \
+  -H "Authorization: Bearer $UOS_AI_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "model": "baseten/elephant-1:free",
+    "state": "The export button returns a 500 error every time.",
+    "questions": {
+      "is_bug": {
+        "type": "noul",
+        "instructions": "Is the customer reporting a software defect?"
+      },
+      "team": {
+        "type": "choice",
+        "instructions": "Which team should own this?",
+        "criteria": {"payments": "Checkout or billing.", "frontend": "Rendering or browser issues."}
+      }
+    }
+  }'
+```
+
+`/v1/decisions` accepts `noul`, `choice`, `score`, and `box` questions, provider routing preferences, trace metadata, session ids, and text or JSON `state` (including OpenRouter's image/audio/video parts). The response is OpenRouter's typed `answers` envelope with usage. Decision models are listed on `/v1/models`, `/uos/models/catalog`, `/uos/models/capabilities`, and the admin model picker with `/v1/decisions` as their supported endpoint. The older `/v1/systemone` route remains as a Jev-compatible alias.
+
 ## Codex quota reporting
 
 Successful inference responses let unmodified Codex terminal and GUI clients show the Metered wallet in `/status` and
@@ -699,6 +724,8 @@ bun run ubq-ai admin keys revoke --id "<id>"
 - `GET /v1/models`
 - `POST /v1/chat/completions` (streaming and non-streaming)
 - `POST /v1/responses` (streaming and non-streaming; non-streaming buffers upstream SSE)
+- `POST /v1/decisions` (typed OpenRouter decision models)
+- `POST /v1/systemone` (Jev compatibility alias)
 
 ## Local dev
 

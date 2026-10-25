@@ -1,5 +1,5 @@
 //! Fixed-schema, read-only metadata. No general SQL or request-selected path API.
-use crate::supervisor_inventory::{epoch_ms, finite, text};
+use crate::inventory::{epoch_ms, finite, text};
 use rusqlite::{Connection, OpenFlags, params_from_iter, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

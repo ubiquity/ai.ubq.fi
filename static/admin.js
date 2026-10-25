@@ -9345,6 +9345,8 @@ const buildModelOption = (entry) => {
   if (providers.childElementCount) body.append(providers);
 
   const facts = [];
+  const endpoints = new Set((entry.providers ?? []).flatMap((provider) => provider.supported_endpoints ?? []));
+  if (endpoints.has("/v1/decisions")) facts.push("Decisions");
   const contextWindow = modelsPositiveTokenCount(entry.context_window_tokens);
   if (contextWindow) facts.push(`Context ${MODEL_TOKEN_FORMAT.format(contextWindow)}`);
   const reasoning = modelsReasoningFor(entry);

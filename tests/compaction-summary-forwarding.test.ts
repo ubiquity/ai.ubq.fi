@@ -254,6 +254,38 @@ test("compaction summary: truncation disabled accepts an exempt summary only ins
   assert.equal(refused.message.includes("no payload was dispatched"), true);
 });
 
+test("aggregate admission: a steer drops redundant history before an adopted summary", () => {
+  const old = Array.from({ length: 100 }, (_, index) => ({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: `old message ${index} ${"x".repeat(60 * 1024)}` }],
+  }));
+  const summary = summaryText(720 * 1024);
+  const steer = { type: "message", role: "user", content: [{ type: "input_text", text: "steer now" }] };
+  const input = [...old, summaryMessage(summary), steer];
+
+  const reduced = toDeepSeekResponsesChatBody(request(input), "deepseek-flash", true, DEEPSEEK_RESPONSES_PROFILE);
+  if (!reduced.ok) throw new Error(reduced.message);
+  const messages = reduced.value.body.messages as Record<string, unknown>[];
+  assert.equal(messages.length, 3);
+  assert.equal(messages[0].role, "system");
+  assert.match(String(messages[0].content), /omitted 100 earlier messages before the compaction summary/);
+  assert.equal(messages[1].role, "user");
+  assert.equal(messages[1].content, summary);
+  assert.equal(messages[2].role, "user");
+  assert.equal(messages[2].content, "steer now");
+  assert.equal(reduced.value.elisions.length, 1);
+  assert.equal(reduced.value.elisions[0].kind, "history");
+  assert.equal(reduced.value.elisions[0].path, "messages[0..99]");
+  assert.equal(reduced.value.elisions[0].omittedBytes > 2_000_000, true);
+  assert.equal(reduced.value.promptAdmission.admitted, true);
+  assert.equal(reduced.value.promptAdmission.policy, "chat-prompt-admission/v2");
+
+  const refused = expectedFailure(toDeepSeekResponsesChatBody(request(input, { truncation: "disabled" }), "deepseek-flash", true, DEEPSEEK_RESPONSES_PROFILE));
+  assert.equal(refused.code, "context_length_exceeded");
+  assert.equal(refused.param, "input");
+});
+
 test("aggregate admission: instructions, tools, and images count beyond the summary envelope", () => {
   const image = `data:image/png;base64,${"A".repeat(55 * 1024)}`;
   const cases: readonly Record<string, unknown>[] = [
