@@ -1,13 +1,12 @@
+use crate::TestResult;
 mod live_selection;
 use super::support::*;
 use gateway_authority::capacity_rules::*;
 use gateway_authority::routing_codec::*;
 use gateway_authority::routing_rules::*;
 use gateway_authority::routing_types::*;
-use gateway_core::identity::{
-    CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash,
-};
-use serde_json::{Value, json};
+use gateway_core::identity::{PoolVersionstamp, SubscriptionSelectionHash};
+use serde_json::{Value, from_value, json};
 fn packet() -> Value {
     serde_json::from_str(include_str!("../fixtures/codex-capacity-source-v1.json")).unwrap()
 }
@@ -54,21 +53,21 @@ fn source_row_normalizers_preserve_legacy_fields_and_refuse_unknown_circuits() {
     }
 }
 #[test]
-fn source_pool_reorder_refresh_timeout_retirement_and_legacy_reset_fences_match() {
-    for (i, case) in packet()["normCases"].as_array().unwrap().iter().enumerate() {
-        let accounts = case["identities"]
-            .as_array()
-            .unwrap()
+fn source_pool_reorder_refresh_timeout_retirement_and_legacy_reset_fences_match() -> TestResult {
+    let cases: Vec<Value> = from_value(packet()["normCases"].clone())?;
+    for (i, case) in cases.iter().enumerate() {
+        let identities: Vec<Value> = from_value(case["identities"].clone())?;
+        let accounts = identities
             .iter()
-            .map(|id| PoolAccount {
-                account_id_hash: RoutingAccountHash(id["accountIdHash"].as_str().unwrap().into()),
-                admin_account_hash: SubscriptionSelectionHash("irrelevant-admin-hash".into()),
-                credential_version: CredentialVersion(
-                    id["credentialVersion"].as_str().unwrap().into(),
-                ),
-                enabled: true,
+            .map(|id| {
+                Ok(PoolAccount {
+                    account_id_hash: from_value(id["accountIdHash"].clone())?,
+                    admin_account_hash: SubscriptionSelectionHash("irrelevant-admin-hash".into()),
+                    credential_version: from_value(id["credentialVersion"].clone())?,
+                    enabled: true,
+                })
             })
-            .collect();
+            .collect::<TestResult<_>>()?;
         let pool = SubscriptionPool {
             v: 1,
             pool_versionstamp: PoolVersionstamp("source-pool".into()),
@@ -76,16 +75,16 @@ fn source_pool_reorder_refresh_timeout_retirement_and_legacy_reset_fences_match(
         };
         let actual = normalize(
             &pool,
-            Some(parse_routing_state(&case["raw"]).unwrap()),
-            case["now"].as_i64().unwrap(),
-        )
-        .unwrap();
+            Some(parse_routing_state(&case["raw"])?),
+            case["now"].as_i64().ok_or("expected fixture timestamp")?,
+        )?;
         equal(
-            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(actual)?,
             &case["expected"],
             &format!("normalize-{i}"),
         );
     }
+    Ok(())
 }
 #[test]
 fn named_limit_applicability_and_ordered_capacity_reconciliation_match_source() {

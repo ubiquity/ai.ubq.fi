@@ -27,13 +27,21 @@ use gateway_authority::{
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, PoolVersionstamp, RequestId};
 use gateway_core::lifecycle::{BillingState, PaidTerminalState};
 use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
-use gateway_core::state::AuthorityStore;
+use gateway_core::state::{AuthorityStore, RecordKey, StoredRecord};
 use gateway_routing_runtime_test_support::authority::{
     MemoryStore, NOW, TestAuthority, Tokens, admin_hash, admitted, authority, block, policy, pool,
     routing_hash, run, seed_pool, source_account,
 };
+use serde::de::DeserializeOwned;
 use std::sync::atomic::Ordering;
 
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+fn fixture_row(store: &MemoryStore, key: &RecordKey) -> TestResult<StoredRecord> {
+    store.row(key).ok_or_else(|| "expected fixture row".into())
+}
+fn fixture_json<T: DeserializeOwned>(store: &MemoryStore, key: &RecordKey) -> TestResult<T> {
+    Ok(serde_json::from_value(fixture_row(store, key)?.value)?)
+}
 fn id(value: &str) -> RequestId {
     RequestId(value.to_owned())
 }
@@ -75,17 +83,15 @@ async fn reserve_paid(
 fn paid_reservation(
     authority: &TestAuthority,
     input: &PaidRequest,
-) -> gateway_authority::paid_types::PaidReservation {
+) -> TestResult<gateway_authority::paid_types::PaidReservation> {
     match run(reserve_paid(
         authority,
         input,
         &PaidAuthorization::DirectPaidModel,
         NOW,
-    ))
-    .unwrap()
-    {
-        PaidAdmission::Reserved(reservation) => reservation,
-        _ => panic!("expected fresh reservation"),
+    ))? {
+        PaidAdmission::Reserved(reservation) => Ok(reservation),
+        _ => Err("expected fresh reservation".into()),
     }
 }
 
@@ -272,7 +278,7 @@ fn full_quota_allows_deferred_local_work_but_still_blocks_provider_dispatch() {
 }
 
 #[test]
-fn concurrent_api_admissions_never_exceed_limit_and_cas_conflicts_retry() {
+fn concurrent_api_admissions_never_exceed_limit_and_cas_conflicts_retry() -> TestResult {
     let store = MemoryStore::default();
     seed_policy(&store);
     store.conflicts.store(1, Ordering::SeqCst);
@@ -293,12 +299,13 @@ fn concurrent_api_admissions_never_exceed_limit_and_cas_conflicts_retry() {
             })
         })
         .collect();
-    let admitted = handles
+    let admissions = handles
         .into_iter()
-        .map(|handle| handle.join().unwrap())
-        .filter(|admitted| *admitted)
-        .count();
+        .map(|handle| handle.join().map_err(|_| "admission worker panicked"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let admitted = admissions.into_iter().filter(|admitted| *admitted).count();
     assert_eq!(admitted, 2);
+    Ok(())
 }
 
 #[test]
@@ -345,14 +352,14 @@ fn kernel_terminal_intent_survives_restart_and_never_changes_new_window_counts()
 }
 
 #[test]
-fn paid_usage_records_actual_overshoot_once_without_fabricating_a_terminal() {
+fn paid_usage_records_actual_overshoot_once_without_fabricating_a_terminal() -> TestResult {
     let store = MemoryStore::default();
     paid_setup(&store);
     let authority = authority(&store);
     let input = paid_request("paid-one", PaidProvider::Metered);
-    let reservation = paid_reservation(&authority, &input);
-    run(authority.mark_paid_transport_started(&reservation, NOW)).unwrap();
-    run(authority.record_paid_lifecycle(&reservation, Some("provider-one"), None, NOW)).unwrap();
+    let reservation = paid_reservation(&authority, &input)?;
+    run(authority.mark_paid_transport_started(&reservation, NOW))?;
+    run(authority.record_paid_lifecycle(&reservation, Some("provider-one"), None, NOW))?;
     let usage = PaidUsage {
         provider_quota: 2500.0,
         input_tokens: 10,
@@ -360,25 +367,16 @@ fn paid_usage_records_actual_overshoot_once_without_fabricating_a_terminal() {
         output_tokens: 20,
         correlation: PaidCorrelation::ProviderRequestId("provider-one".to_owned()),
     };
-    assert!(run(authority.settle_paid(&reservation, &usage, NOW)).unwrap());
-    assert!(!run(authority.settle_paid(&reservation, &usage, NOW)).unwrap());
+    assert!(run(authority.settle_paid(&reservation, &usage, NOW))?);
+    assert!(!run(authority.settle_paid(&reservation, &usage, NOW))?);
+    let stored = fixture_row(&store, &keys::paid_attempt("key-a", "paid-one"))?;
     let row: gateway_authority::paid_types::PaidAttempt =
-        gateway_core::source_control::decode_source_control_record(
-            &store.row(&keys::paid_attempt("key-a", "paid-one")).unwrap(),
-        )
-        .unwrap()
-        .deserialize()
-        .unwrap();
+        gateway_core::source_control::decode_source_control_record(&stored)?.deserialize()?;
     assert_eq!(row.spend_microcredits, Some(2500));
     assert_eq!(row.terminal_state, PaidTerminalState::Pending);
     assert_eq!(row.billing_state, BillingState::Settled);
-    let window: PaidWindow = serde_json::from_value(
-        store
-            .row(&keys::paid_window("key-a", reservation.window_reset_at_ms))
-            .unwrap()
-            .value,
-    )
-    .unwrap();
+    let window_key = keys::paid_window("key-a", reservation.window_reset_at_ms);
+    let window: PaidWindow = fixture_json(&store, &window_key)?;
     assert_eq!(
         (
             window.settled_microcredits,
@@ -387,18 +385,13 @@ fn paid_usage_records_actual_overshoot_once_without_fabricating_a_terminal() {
         ),
         (2500, 0, 0)
     );
-    assert_eq!(
-        store
-            .row(&keys::paid_attempt("key-a", "paid-one"))
-            .unwrap()
-            .expires_at_ms,
-        Some(NOW + PAID_RETENTION_MS)
-    );
-    assert!(run(authority.due_paid(NOW, 10)).unwrap().is_empty());
+    assert_eq!(stored.expires_at_ms, Some(NOW + PAID_RETENTION_MS));
+    assert!(run(authority.due_paid(NOW, 10))?.is_empty());
+    Ok(())
 }
 
 #[test]
-fn surplus_exact_cost_preserves_odd_microcredits_and_unlimited_has_no_window() {
+fn surplus_exact_cost_preserves_odd_microcredits_and_unlimited_has_no_window() -> TestResult {
     let store = MemoryStore::default();
     paid_setup(&store);
     let mut unlimited = policy();
@@ -406,7 +399,7 @@ fn surplus_exact_cost_preserves_odd_microcredits_and_unlimited_has_no_window() {
     store.seed(keys::api_policy("key-a"), &unlimited);
     let authority = authority(&store);
     let input = paid_request("surplus-one", PaidProvider::Surplus);
-    let reservation = paid_reservation(&authority, &input);
+    let reservation = paid_reservation(&authority, &input)?;
     assert_eq!(reservation.reserved_microcredits, 0);
     assert!(
         store
@@ -423,18 +416,17 @@ fn surplus_exact_cost_preserves_odd_microcredits_and_unlimited_has_no_window() {
             buyer_cost_micro: Some(101),
         },
     };
-    assert!(run(authority.settle_paid(&reservation, &usage, NOW)).unwrap());
+    assert!(run(authority.settle_paid(&reservation, &usage, NOW))?);
     assert_eq!(
-        store
-            .row(&keys::paid_attempt("key-a", "surplus-one"))
-            .unwrap()
-            .value["spend_microcredits"],
+        fixture_row(&store, &keys::paid_attempt("key-a", "surplus-one"))?.value["spend_microcredits"],
         101
     );
+    Ok(())
 }
 
 #[test]
-fn paid_disable_racing_admission_prevents_exposure_and_transient_failures_retain_it() {
+fn paid_disable_racing_admission_prevents_exposure_and_transient_failures_retain_it() -> TestResult
+{
     let store = MemoryStore::default();
     paid_setup(&store);
     let authority = authority(&store);
@@ -459,14 +451,14 @@ fn paid_disable_racing_admission_prevents_exposure_and_transient_failures_retain
     let reservation = paid_reservation(
         &authority,
         &paid_request("ambiguous", PaidProvider::Surplus),
-    );
-    run(authority.mark_paid_transport_started(&reservation, NOW)).unwrap();
-    assert!(!run(authority.release_paid_before_transport(&reservation, NOW)).unwrap());
+    )?;
+    run(authority.mark_paid_transport_started(&reservation, NOW))?;
+    assert!(!run(
+        authority.release_paid_before_transport(&reservation, NOW)
+    )?);
     store.clock(NOW + DAY_MS + 1);
-    run(authority.defer_paid(&reservation, NOW + DAY_MS + 1)).unwrap();
-    let row = store
-        .row(&keys::paid_attempt("key-a", "ambiguous"))
-        .unwrap();
+    run(authority.defer_paid(&reservation, NOW + DAY_MS + 1))?;
+    let row = fixture_row(&store, &keys::paid_attempt("key-a", "ambiguous"))?;
     assert_eq!(row.value["billing_state"], "unresolved");
     assert_eq!(row.value["terminal_state"], "pending");
     assert_eq!(row.expires_at_ms, Some(NOW + PAID_RETENTION_MS));
@@ -475,6 +467,7 @@ fn paid_disable_racing_admission_prevents_exposure_and_transient_failures_retain
             .row(&keys::paid_pending("key-a", "ambiguous"))
             .is_some()
     );
+    Ok(())
 }
 
 fn reset_candidate(store: &MemoryStore, authority: &TestAuthority) -> ResetCandidate {
@@ -510,7 +503,7 @@ fn reset_candidate(store: &MemoryStore, authority: &TestAuthority) -> ResetCandi
 fn armed_reset(
     store: &MemoryStore,
     authority: &TestAuthority,
-) -> (ResetCandidate, gateway_authority::reset_types::ResetRecord) {
+) -> TestResult<(ResetCandidate, gateway_authority::reset_types::ResetRecord)> {
     let candidate = reset_candidate(store, authority);
     let credit = ResetCredit {
         credit_id: "synthetic-credit".to_owned(),
@@ -519,35 +512,32 @@ fn armed_reset(
         eligible: true,
     };
     store.clock(NOW + 1);
-    run(authority.record_reset_shadow(&candidate, &credit, NOW + 1)).unwrap();
+    run(authority.record_reset_shadow(&candidate, &credit, NOW + 1))?;
     store.clock(NOW + 2);
-    assert!(run(authority.arm_reset_live(&candidate, NOW + 2)).unwrap());
+    assert!(run(authority.arm_reset_live(&candidate, NOW + 2))?);
     store.clock(NOW + 11);
-    let ResetClaim::Submit { record, .. } =
-        run(authority.claim_reset(&candidate, NOW + 11)).unwrap()
+    let ResetClaim::Submit { record, .. } = run(authority.claim_reset(&candidate, NOW + 11))?
     else {
-        panic!("claim missing")
+        return Err("claim missing".into());
     };
-    (candidate, record)
+    Ok((candidate, record))
 }
 
 #[test]
-fn reset_unknown_is_lookup_only_after_owner_takeover_even_when_disabled() {
+fn reset_unknown_is_lookup_only_after_owner_takeover_even_when_disabled() -> TestResult {
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
-    let (candidate, claimed) = armed_reset(&store, &authority);
+    let (candidate, claimed) = armed_reset(&store, &authority)?;
     store.clock(NOW + 12);
-    let submitted =
-        run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12)).unwrap();
+    let submitted = run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12))?;
     let unknown = run(authority.record_reset_outcome(
         &submitted,
         ResetState::Unknown,
         None,
         Some("provider_timeout"),
         NOW + 13,
-    ))
-    .unwrap();
+    ))?;
     store.seed(
         keys::reset_config(),
         &ResetConfig {
@@ -557,7 +547,7 @@ fn reset_unknown_is_lookup_only_after_owner_takeover_even_when_disabled() {
     );
     store.clock(NOW + 40_000);
     let ResetClaim::Reconcile { record, .. } =
-        run(authority.claim_reset(&candidate, NOW + 40_000)).unwrap()
+        run(authority.claim_reset(&candidate, NOW + 40_000))?
     else {
         panic!("lookup-only recovery missing")
     };
@@ -572,26 +562,20 @@ fn reset_unknown_is_lookup_only_after_owner_takeover_even_when_disabled() {
         ))
         .is_err()
     );
-    let budget: AccountDayBudget = serde_json::from_value(
-        store
-            .row(&keys::reset_day(
-                &record.identity.account_id_hash,
-                &utc_day(NOW).unwrap(),
-            ))
-            .unwrap()
-            .value,
-    )
-    .unwrap();
+    let day = utc_day(NOW)?;
+    let day_key = keys::reset_day(&record.identity.account_id_hash, &day);
+    let budget: AccountDayBudget = fixture_json(&store, &day_key)?;
     assert_eq!(budget.submission_count, 1);
+    Ok(())
 }
 
 #[test]
-fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() {
+fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() -> TestResult {
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
-    let (candidate, claimed) = armed_reset(&store, &authority);
-    let day = utc_day(NOW).unwrap();
+    let (candidate, claimed) = armed_reset(&store, &authority)?;
+    let day = utc_day(NOW)?;
     store.seed(
         keys::reset_day(&claimed.identity.account_id_hash, &day),
         &AccountDayBudget {
@@ -601,8 +585,9 @@ fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() 
             updated_at_ms: NOW,
         },
     );
-    let error =
-        run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12)).unwrap_err();
+    let error = run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12))
+        .err()
+        .ok_or("expected controlled rejection")?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("account_day_limit_reached")
@@ -611,16 +596,15 @@ fn account_day_budget_and_stale_cohort_stop_submission_without_changing_claim() 
     changed.pool_versionstamp = PoolVersionstamp("changed".to_owned());
     seed_pool(&store, &changed);
     assert!(run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12)).is_err());
+    let redemption_key = keys::reset_redemption(
+        &claimed.identity.account_id_hash,
+        &claimed.identity.quota_generation,
+    );
     assert_eq!(
-        store
-            .row(&keys::reset_redemption(
-                &claimed.identity.account_id_hash,
-                &claimed.identity.quota_generation
-            ))
-            .unwrap()
-            .value["state"],
+        fixture_row(&store, &redemption_key)?.value["state"],
         "claimed"
     );
+    Ok(())
 }
 
 #[test]
@@ -721,18 +705,19 @@ fn bad_stored_versions_are_not_replaced_with_empty_state() {
 }
 
 #[test]
-fn reset_deadline_crossing_during_async_fence_reads_consumes_no_daily_budget() {
+fn reset_deadline_crossing_during_async_fence_reads_consumes_no_daily_budget() -> TestResult {
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
-    let (candidate, claimed) = armed_reset(&store, &authority);
-    let day = utc_day(NOW).unwrap();
+    let (candidate, claimed) = armed_reset(&store, &authority)?;
+    let day = utc_day(NOW)?;
     store.jump_on_read(
         keys::reset_day(&claimed.identity.account_id_hash, &day),
         candidate.quota_reset_at_ms,
     );
-    let error =
-        run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12)).unwrap_err();
+    let error = run(authority.prepare_reset_submission(&candidate, &claimed, NOW + 12))
+        .err()
+        .ok_or("expected controlled rejection")?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("quota_window_expired")
@@ -743,15 +728,17 @@ fn reset_deadline_crossing_during_async_fence_reads_consumes_no_daily_budget() {
             .is_none()
     );
     assert_eq!(
-        store
-            .row(&keys::reset_redemption(
+        fixture_row(
+            &store,
+            &keys::reset_redemption(
                 &claimed.identity.account_id_hash,
                 &claimed.identity.quota_generation
-            ))
-            .unwrap()
-            .value["state"],
+            )
+        )?
+        .value["state"],
         "claimed"
     );
+    Ok(())
 }
 
 #[test]
@@ -799,46 +786,46 @@ fn kernel_source_drift_rejects_temporal_contradictions_and_cross_window_reservat
 }
 
 #[test]
-fn expired_paid_detail_clears_its_marker_without_refunding_retained_exposure() {
+fn expired_paid_detail_clears_its_marker_without_refunding_retained_exposure() -> TestResult {
     let store = MemoryStore::default();
     paid_setup(&store);
     let authority = authority(&store);
     let reservation = paid_reservation(
         &authority,
         &paid_request("aged-evidence", PaidProvider::Metered),
-    );
-    run(authority.mark_paid_transport_started(&reservation, NOW)).unwrap();
+    )?;
+    run(authority.mark_paid_transport_started(&reservation, NOW))?;
     let window_key = keys::paid_window("key-a", reservation.window_reset_at_ms);
-    let before = store.row(&window_key).unwrap();
+    let before = fixture_row(&store, &window_key)?;
     let later = NOW + PAID_RETENTION_MS + 1;
     store.clock(later);
-    assert!(
-        run(authority.reconcile_paid_marker(&reservation.key_id, &reservation.attempt_id, later))
-            .unwrap()
-    );
+    assert!(run(authority.reconcile_paid_marker(
+        &reservation.key_id,
+        &reservation.attempt_id,
+        later
+    ))?);
     assert!(
         store
             .row(&keys::paid_pending("key-a", "aged-evidence"))
             .is_none()
     );
-    assert!(run(authority.due_paid(later, 10)).unwrap().is_empty());
-    assert_eq!(store.row(&window_key).unwrap(), before);
+    assert!(run(authority.due_paid(later, 10))?.is_empty());
+    assert_eq!(fixture_row(&store, &window_key)?, before);
+    Ok(())
 }
 
 #[test]
-fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
+fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() -> TestResult {
     use gateway_core::{
         state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord},
         value::PortableValue,
     };
-
     let store = MemoryStore::default();
     let typed = StoredRecord::profile(
         "typed-import",
-        PortableValue::from_json(&serde_json::to_value(pool()).unwrap()),
+        PortableValue::from_json(&serde_json::to_value(pool())?),
         None,
-    )
-    .unwrap();
+    )?;
     run(store.commit(AtomicTransition {
         checks: vec![RevisionCheck {
             key: keys::pool(),
@@ -848,11 +835,11 @@ fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
             key: keys::pool(),
             record: typed.clone(),
         }],
-    }))
-    .unwrap();
+    }))?;
     let error =
         run(authority(&store).select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW))
-            .unwrap_err();
+            .err()
+            .ok_or("expected controlled rejection")?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("incompatible_value_encoding")
@@ -861,7 +848,7 @@ fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
     assert!(store.row(&keys::active()).is_none());
 
     let json_store = MemoryStore::default();
-    let mut lookalike = serde_json::to_value(pool()).unwrap();
+    let mut lookalike = serde_json::to_value(pool())?;
     lookalike["type"] = serde_json::json!("binary");
     lookalike["value"] = serde_json::json!([1, 2, 3]);
     seed_pool(&json_store, &pool());
@@ -870,4 +857,5 @@ fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() {
         admitted(&authority(&json_store)).binding.account_id_hash.0,
         routing_hash("a").0
     );
+    Ok(())
 }

@@ -404,6 +404,7 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
     use super::*;
     use gateway_authority::store::TokenSource;
     use gateway_core::{
@@ -472,13 +473,12 @@ mod tests {
         }
     }
 
-    fn writer_rows(version: u32) -> (Writer, Vec<(RecordKey, StoredRecord)>) {
+    fn writer_rows(version: u32) -> TestResult<(Writer, Vec<(RecordKey, StoredRecord)>)> {
         let writer = Writer::default();
-        let (_, record) = row(false);
+        let (_, record) = row(false)?;
         let mut model = Journal::decode(
-            &gateway_core::source_json::SourceJson::from_serializable(&record.value).unwrap(),
-        )
-        .unwrap();
+            &gateway_core::source_json::SourceJson::from_serializable(&record.value)?,
+        )?;
         model.v = version;
         if version == 2 {
             model.local_work = Some(LocalWorkRecord {
@@ -489,79 +489,62 @@ mod tests {
                 terminal: None,
             });
         }
-        run(journal::create(&writer, &writer, &model)).unwrap();
+        run(journal::create(&writer, &writer, &model))?;
         let records = writer
             .rows
             .borrow()
             .iter()
             .map(|(key, value)| (RecordKey(key.clone()), value.clone()))
             .collect();
-        (writer, records)
+        Ok((writer, records))
     }
 
-    fn row(finished: bool) -> (RecordKey, StoredRecord) {
-        let journal = Journal {
-            v: 1,
-            context: RequestContext {
+    fn row(finished: bool) -> TestResult<(RecordKey, StoredRecord)> {
+        let mut journal = Journal::empty(
+            1,
+            RequestContext {
                 request_id: RequestId("custody-request".into()),
                 principal: PrincipalId("fixture-principal".into()),
                 key_id: None,
                 route: "responses".into(),
                 started_at_ms: 1_800_000_000_000,
             },
-            input_digest: gateway_auth::crypto::sha256_hex(b"{}"),
-            api: None,
-            kernel: None,
-            cursor: 0,
-            attempts: vec![],
-            active: None,
-            model_sibling_retries: 0,
-            refreshed_versions: vec![],
-            recovery_attempted: false,
-            claude_unavailable: false,
-            semantic_committed: false,
-            terminal_intent: finished.then(Default::default),
-            finished,
-            recovering: false,
-            lease_expires_at_ms: 1_800_000_060_000,
-            updated_at_ms: 1_800_000_000_000,
-            extras_family: None,
-            extras_child_count: None,
-            extras_dispatch: None,
-            children: vec![],
-            kernel_override: None,
-            local_work: None,
-        };
+            gateway_auth::crypto::sha256_hex(b"{}"),
+            1_800_000_060_000,
+            1_800_000_000_000,
+        );
+        journal.terminal_intent = finished.then(Default::default);
+        journal.finished = finished;
         let expiry = finished
             .then_some(journal.context.started_at_ms + gateway_authority::PAID_RETENTION_MS);
-        (
+        Ok((
             journal::key(&journal.context.request_id.0),
-            StoredRecord::json(
-                "fixture-revision",
-                serde_json::to_value(journal).unwrap(),
-                expiry,
-            ),
-        )
+            StoredRecord::json("fixture-revision", serde_json::to_value(journal)?, expiry),
+        ))
     }
 
     #[test]
-    fn exact_current_writer_shape_and_absolute_retention_roundtrip() {
+    fn exact_current_writer_shape_and_absolute_retention_roundtrip() -> TestResult {
         for finished in [false, true] {
-            let (key, record) = row(finished);
+            let (key, record) = row(finished)?;
             let original = record.clone();
-            validate_journal_row(&key, &record).unwrap();
+            validate_journal_row(&key, &record)?;
             assert_eq!(record, original);
         }
+        Ok(())
     }
 
     #[test]
-    fn partial_unknown_or_mismatched_journal_is_not_silently_rewritten() {
-        let (key, record) = row(false);
+    fn partial_unknown_or_mismatched_journal_is_not_silently_rewritten() -> TestResult {
+        let (key, record) = row(false)?;
         for mutation in ["missing", "unknown", "nested", "digest", "identity"] {
             let mut bad = record.clone();
             match mutation {
                 "missing" => {
-                    bad.value.as_object_mut().unwrap().remove("api");
+                    bad.value
+                        .as_object_mut()
+                        .ok_or("missing fixture value")?
+                        .remove("api");
                 }
                 "unknown" => {
                     bad.value["caller_permission"] = json!(true);
@@ -579,12 +562,13 @@ mod tests {
             assert!(validate_journal_row(&key, &bad).is_err(), "{mutation}");
         }
         assert!(validate_journal_row(&journal::key("other"), &record).is_err());
+        Ok(())
     }
 
     #[test]
-    fn custody_never_refreshes_or_accepts_wrong_finished_expiry() {
+    fn custody_never_refreshes_or_accepts_wrong_finished_expiry() -> TestResult {
         for finished in [false, true] {
-            let (key, mut record) = row(finished);
+            let (key, mut record) = row(finished)?;
             record.expires_at_ms = if finished {
                 record.expires_at_ms.map(|at| at + 1)
             } else {
@@ -592,15 +576,16 @@ mod tests {
             };
             assert!(validate_journal_row(&key, &record).is_err());
         }
+        Ok(())
     }
 
     #[test]
-    fn actual_writer_emits_coupled_pending_pairs_and_deletes_them_at_finish() {
+    fn actual_writer_emits_coupled_pending_pairs_and_deletes_them_at_finish() -> TestResult {
         assert!(validate_journal_rows(std::iter::empty()).is_ok());
         for version in [1, 2] {
-            let (writer, records) = writer_rows(version);
+            let (writer, records) = writer_rows(version)?;
             assert_eq!(records.len(), 2);
-            validate_journal_rows(records.iter().map(|(key, record)| (key, record))).unwrap();
+            validate_journal_rows(records.iter().map(|(key, record)| (key, record)))?;
             println!(
                 "ROUTING_WRITER_CUSTODY_FIXTURE={}",
                 json!({"v": version, "rows": records.iter().map(|(key, record)| json!({"key":key.0,"record":record})).collect::<Vec<_>>()})
@@ -626,15 +611,16 @@ mod tests {
                     }
                     Ok(())
                 },
-            ))
-            .unwrap();
+            ))?;
             let finished = writer.rows.borrow();
             assert_eq!(finished.len(), 1);
             println!(
                 "ROUTING_WRITER_CUSTODY_FIXTURE={}",
                 json!({"v": version, "phase": "finished", "rows": finished.iter().map(|(key, record)| json!({"key":key,"record":record})).collect::<Vec<_>>()})
             );
-            let session = finished.get(&journal::key("custody-request").0).unwrap();
+            let session = finished
+                .get(&journal::key("custody-request").0)
+                .ok_or("missing finished session row")?;
             assert_eq!(
                 session.expires_at_ms,
                 Some(1_800_000_000_000 + gateway_authority::PAID_RETENTION_MS)
@@ -646,24 +632,24 @@ mod tests {
                     .collect::<Vec<_>>()
                     .iter()
                     .map(|(key, record)| (key, record)),
-            )
-            .unwrap();
+            )?;
         }
+        Ok(())
     }
 
     #[test]
-    fn full_set_custody_refuses_malformed_missing_duplicate_and_orphan_pending() {
+    fn full_set_custody_refuses_malformed_missing_duplicate_and_orphan_pending() -> TestResult {
         for version in [1, 2] {
-            let (_, records) = writer_rows(version);
+            let (_, records) = writer_rows(version)?;
             let session = records
                 .iter()
                 .find(|(key, _)| *key == journal::key("custody-request"))
-                .unwrap()
+                .ok_or("missing session row")?
                 .clone();
             let pending = records
                 .iter()
                 .find(|(key, _)| *key == journal::pending_key("custody-request"))
-                .unwrap()
+                .ok_or("missing pending row")?
                 .clone();
             for mutation in [
                 "revision",
@@ -683,7 +669,10 @@ mod tests {
                     "ttl" => b.1.expires_at_ms = Some(1_800_000_060_000),
                     "unknown" => b.1.value["permission"] = json!(true),
                     "missing_id" => {
-                        b.1.value.as_object_mut().unwrap().remove("request_id");
+                        b.1.value
+                            .as_object_mut()
+                            .ok_or("missing fixture value")?
+                            .remove("request_id");
                     }
                     "wrong_id" => b.1.value["request_id"] = json!("other"),
                     "wrong_key" => b.0 = journal::pending_key("other"),
@@ -692,7 +681,7 @@ mod tests {
                     }
                     "wrong_schema" => b.1.schema_version += 1,
                     _ => {
-                        let (key, record) = row(true);
+                        let (key, record) = row(true)?;
                         a = (key, record);
                     }
                 }
@@ -722,5 +711,6 @@ mod tests {
             .to_record_key();
             assert!(validate_journal_rows([(&unknown, &pending.1)]).is_err());
         }
+        Ok(())
     }
 }

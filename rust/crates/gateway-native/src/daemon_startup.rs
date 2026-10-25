@@ -20,16 +20,7 @@ pub(crate) fn source_policy(
     for source in &config.sources {
         let socket = source.socket_path().to_owned();
         unix_sockets.push(socket.clone());
-        if let Some(home) = source.codex_home() {
-            if !home.is_dir() {
-                sources.push(SupervisorSourceConfig::configured(
-                    SourceId::parse(source.id())?,
-                    source.name().into(),
-                    socket,
-                    source.codex_home().map(PathBuf::from),
-                )?);
-                continue;
-            }
+        if let Some(home) = source.codex_home().filter(|home| home.is_dir()) {
             let canonical_home = std::fs::canonicalize(home).map_err(|_| {
                 GatewayError::unavailable(
                     "Configured source home is unavailable",
@@ -51,34 +42,32 @@ pub(crate) fn source_policy(
                 })?;
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
-                if matches!(name.as_ref(), "sessions" | "archived_sessions")
+                if !(matches!(name.as_ref(), "sessions" | "archived_sessions")
                     || name
                         .strip_prefix("state_")
                         .and_then(|name| name.strip_suffix(".sqlite"))
                         .is_some_and(|number| {
                             !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
-                        })
+                        }))
                 {
-                    let canonical = std::fs::canonicalize(entry.path()).map_err(|_| {
-                        GatewayError::unavailable(
-                            "Configured source path is unavailable",
-                            "native_source_unavailable",
-                        )
-                    })?;
-                    if !canonical.starts_with(&canonical_home) {
-                        return Err(GatewayError::unavailable(
-                            "Configured source path escapes its home",
-                            "native_source_unavailable",
-                        ));
-                    }
-                    readonly_paths.push(canonical);
-                    for suffix in ["-wal", "-shm"] {
-                        let companion =
-                            PathBuf::from(format!("{}{suffix}", entry.path().display()));
-                        if companion.is_file() {
-                            readonly_paths.push(companion);
-                        }
-                    }
+                    continue;
+                }
+                let canonical = std::fs::canonicalize(entry.path()).map_err(|_| {
+                    GatewayError::unavailable(
+                        "Configured source path is unavailable",
+                        "native_source_unavailable",
+                    )
+                })?;
+                if !canonical.starts_with(&canonical_home) {
+                    return Err(GatewayError::unavailable(
+                        "Configured source path escapes its home",
+                        "native_source_unavailable",
+                    ));
+                }
+                readonly_paths.push(canonical);
+                for suffix in ["-wal", "-shm"] {
+                    let companion = PathBuf::from(format!("{}{suffix}", entry.path().display()));
+                    readonly_paths.extend(companion.is_file().then_some(companion));
                 }
             }
         }

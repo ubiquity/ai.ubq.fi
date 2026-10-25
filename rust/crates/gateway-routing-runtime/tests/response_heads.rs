@@ -10,6 +10,7 @@ use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, 
 use serde_json::json;
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn publication(workspace: Option<&str>) -> PublishedCredential {
     PublishedCredential::Claude {
         fence: CredentialFence::Claude {
@@ -298,7 +299,7 @@ fn disabled_thinking_keeps_first_refusal_and_does_not_adopt_workspace() {
 }
 
 #[test]
-fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() {
+fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() -> TestResult {
     run(async {
         for (id, family, provider) in [
             (
@@ -318,27 +319,24 @@ fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() {
                 store.clone(),
                 family,
             )
-            .await
-            .unwrap();
+            .await?;
             let handle = session.admission_handle();
-            let children = handle.children(1).await.unwrap();
+            let children = handle.children(1).await?;
             let child = &children[0];
-            let ticket = handle.before_dispatch(child).await.unwrap();
-            handle.transport_started(child, &ticket).await.unwrap();
-            let ticket = handle.before_dispatch(child).await.unwrap();
-            handle.transport_started(child, &ticket).await.unwrap();
+            let ticket = handle.before_dispatch(child).await?;
+            handle.transport_started(child, &ticket).await?;
+            let ticket = handle.before_dispatch(child).await?;
+            handle.transport_started(child, &ticket).await?;
             handle
                 .child_finished(child, TransportState::Started)
-                .await
-                .unwrap();
+                .await?;
             handle
                 .finish(
                     TransportObservation::default(),
                     gateway_authority::kernel::KernelTerminal::Released,
                     "source-read-or-failure",
                 )
-                .await
-                .unwrap();
+                .await?;
             assert_eq!(window(&store)["committed_requests"], 1);
             assert_eq!(
                 store.value(gateway_authority::keys::api_request(
@@ -350,7 +348,8 @@ fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() {
                 provider
             );
         }
-    });
+        Ok(())
+    })
 }
 
 #[test]
@@ -420,7 +419,7 @@ fn malformed_stored_claude_status_keeps_exact_plain_internal_error_without_dispa
 }
 
 #[test]
-fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch() {
+fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch() -> TestResult {
     run(async {
         let store = Store::new();
         seed_key(&store);
@@ -432,10 +431,9 @@ fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch
             store.clone(),
             ExtrasFamily::ImageEdits,
         )
-        .await
-        .unwrap();
+        .await?;
         let handle = session.admission_handle();
-        assert!(handle.children(0).await.unwrap().is_empty());
+        assert!(handle.children(0).await?.is_empty());
         assert!(
             handle
                 .finish(
@@ -452,11 +450,11 @@ fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch
                 gateway_authority::kernel::KernelTerminal::Released,
                 "invalid-image",
             )
-            .await
-            .unwrap();
+            .await?;
         assert!(finished.settled);
         assert_eq!(window(&store)["committed_requests"], 0);
-    });
+        Ok(())
+    })
 }
 
 #[test]

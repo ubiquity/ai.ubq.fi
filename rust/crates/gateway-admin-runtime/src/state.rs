@@ -240,8 +240,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         // roster/hash grammar above; only that proven field becomes scalar.
         let ids = ids
             .iter()
-            .map(|id| id.try_utf8().expect("validated closed provider label"))
-            .collect::<Vec<_>>();
+            .map(JsString16::try_utf8)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| invalid("provider_ids must contain only strings"))?;
         let ids = normalize_ids(&ids);
         let selected = json!({"provider_ids":ids,"updated_at_ms":input.now_ms});
         let row = self.store.read(&key).await?;

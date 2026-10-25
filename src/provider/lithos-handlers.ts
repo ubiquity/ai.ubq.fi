@@ -556,7 +556,8 @@ const dispatchLithosUpstreamResult = async (
   body: Record<string, unknown>,
   modelRaw: string,
   usageContext: UsageContext | undefined,
-  streamed: boolean
+  streamed: boolean,
+  refusalWaitPolicy?: LithosRefusalWaitPolicy
 ): Promise<LithosDispatchResult> => {
   const downstreamSignal = downstreamSignalFor(req, usageContext);
   const requestSignal = inferenceSignal(req, usageContext);
@@ -590,7 +591,7 @@ const dispatchLithosUpstreamResult = async (
       elapsedWaitMs: 0,
       waits: 0,
     },
-    streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY,
+    refusalWaitPolicy ?? (streamed ? LITHOS_STREAMED_REFUSAL_WAIT_POLICY : LITHOS_BUFFERED_REFUSAL_WAIT_POLICY),
     streamed
   );
 };
@@ -846,7 +847,8 @@ export const handleLithosResponses = async (
   req: Request,
   rawRecord: Record<string, unknown>,
   modelRaw: string,
-  usageContext?: UsageContext
+  usageContext?: UsageContext,
+  options: Readonly<{ refusalWaitPolicy?: LithosRefusalWaitPolicy }> = {}
 ): Promise<Response> => {
   const parsedStream = parseStreamField(rawRecord.stream);
   if (!parsedStream.ok) return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
@@ -887,7 +889,7 @@ export const handleLithosResponses = async (
   });
 
   const createdAtSeconds = Math.floor(Date.now() / 1000);
-  const dispatched = await dispatchLithosUpstreamResult(req, chatBody, modelRaw, usageContext, clientWantsStream);
+  const dispatched = await dispatchLithosUpstreamResult(req, chatBody, modelRaw, usageContext, clientWantsStream, options.refusalWaitPolicy);
   if ("pending" in dispatched) {
     // The streamed route opens its SSE response now and its keepalive frames
     // hold the client while the vendor's own window passes behind it. The

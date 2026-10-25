@@ -253,6 +253,60 @@ fn observed_bun_parser_matrix_reaches_the_same_create_phase() {
 }
 
 #[test]
+fn declared_json_length_keeps_decimal_domain_and_authentication_priority()
+-> Result<(), Box<dyn std::error::Error>> {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let caps = Caps::default();
+        let cfg = config();
+        let service = AdminService {
+            store: &store,
+            host: &host,
+            capabilities: &caps,
+            config: &cfg,
+            release: "fixture",
+        };
+        let name_phase = "name must be a non-empty string (<=80 chars)";
+        for (announced, message) in [
+            ("", "Invalid JSON body"),
+            ("+2", "Invalid JSON body"),
+            (" 2", "Invalid JSON body"),
+            ("2 ", "Invalid JSON body"),
+            ("02", "Invalid JSON body"),
+            ("-0", "Invalid JSON body"),
+            ("18446744073709551616", "Invalid JSON body"),
+            ("9007199254740992", "Invalid JSON body"),
+            ("9007199254740991", "Invalid JSON body"),
+            ("0", name_phase),
+            ("2", name_phase),
+        ] {
+            let mut req = request("POST", "/admin/api-keys", b"{}".to_vec());
+            req.headers
+                .insert("content-length".into(), announced.into());
+            let error = service
+                .handle_route(&req, "decimal-length")
+                .await
+                .err()
+                .ok_or("expected phase error")?;
+            assert_eq!(error.status, 400, "{announced:?}");
+            assert_eq!(error.envelope.error.message, message, "{announced:?}");
+        }
+        let mut req = request("POST", "/admin/api-keys", b"{}".to_vec());
+        req.headers.clear();
+        req.headers.insert("content-length".into(), "+2".into());
+        let error = service
+            .handle_route(&req, "auth-before-length")
+            .await
+            .err()
+            .ok_or("expected authentication error")?;
+        assert_eq!(error.status, 401);
+        assert!(caps.seen.borrow().is_empty());
+        Ok(())
+    })
+}
+
+#[test]
 fn single_source_body_retains_duplicates_opaque_unknown_fields_and_auth_order() {
     run(async {
         let store = Store::default();

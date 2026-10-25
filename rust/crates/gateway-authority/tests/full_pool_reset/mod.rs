@@ -1,4 +1,5 @@
 use crate::support::*;
+use crate::{TestResult, fixture_row};
 use gateway_authority::{
     full_pool_reset::types::*,
     keys,
@@ -45,40 +46,29 @@ fn original() -> RequestContext {
         started_at_ms: NOW,
     }
 }
-fn setup(
-    mode: ResetMode,
-) -> (
+type ResetSetup = (
     MemoryStore,
     TestAuthority,
     gateway_authority::routing_types::CohortProof,
-) {
+);
+fn setup(mode: ResetMode) -> TestResult<ResetSetup> {
     setup_with_config(Some(mode))
 }
-fn setup_without_reset_config() -> (
-    MemoryStore,
-    TestAuthority,
-    gateway_authority::routing_types::CohortProof,
-) {
+fn setup_without_reset_config() -> TestResult<ResetSetup> {
     setup_with_config(None)
 }
-fn setup_with_config(
-    mode: Option<ResetMode>,
-) -> (
-    MemoryStore,
-    TestAuthority,
-    gateway_authority::routing_types::CohortProof,
-) {
+fn setup_with_config(mode: Option<ResetMode>) -> TestResult<ResetSetup> {
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
     let first = admitted(&authority);
-    run(authority.record_quota_block(&first, block(), NOW)).unwrap();
+    run(authority.record_quota_block(&first, block(), NOW))?;
     let second = admitted(&authority);
-    run(authority.record_quota_block(&second, block(), NOW)).unwrap();
+    run(authority.record_quota_block(&second, block(), NOW))?;
     let RouteSelection::QuotaBlocked { proof, .. } =
-        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap()
+        run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW))?
     else {
-        panic!("actual exhausted cohort required")
+        return Err("actual exhausted cohort required".into());
     };
     if let Some(mode) = mode {
         store.seed(keys::reset_config(), &config(mode));
@@ -91,7 +81,7 @@ fn setup_with_config(
         ])),
         &json!({"completed_at_ms":NOW,"preserved_opt_out":false}),
     );
-    (store, authority, proof)
+    Ok((store, authority, proof))
 }
 fn assert_history_unchanged(store: &MemoryStore, key: &RecordKey, saved: &StoredRecord) {
     let current = store.row(key).expect("historical shadow row must remain");
@@ -107,13 +97,13 @@ fn assert_history_unchanged(store: &MemoryStore, key: &RecordKey, saved: &Stored
 fn plan(
     authority: &TestAuthority,
     proof: &gateway_authority::routing_types::CohortProof,
-) -> FullPoolResetPlan {
+) -> TestResult<FullPoolResetPlan> {
     let FullPoolPreparation::Observe(plan) =
-        run(authority.prepare_full_pool_reset(proof, &original())).unwrap()
+        run(authority.prepare_full_pool_reset(proof, &original()))?
     else {
-        panic!("expected source observation")
+        return Err("expected source observation".into());
     };
-    *plan
+    Ok(*plan)
 }
 fn observations(plan: &FullPoolResetPlan, credit: Option<JsString16>) -> Vec<SourceResetInventory> {
     plan.bindings()
@@ -144,27 +134,28 @@ fn observations(plan: &FullPoolResetPlan, credit: Option<JsString16>) -> Vec<Sou
 }
 
 #[test]
-fn absent_reset_config_uses_fail_closed_default_and_spends_nothing() {
+fn absent_reset_config_uses_fail_closed_default_and_spends_nothing() -> TestResult {
     let default = ResetConfig::default();
     assert!(default.enabled);
     assert_eq!(default.mode, ResetMode::Live);
     assert_eq!(default.max_per_account_per_day, 0);
     assert_eq!(default.max_per_account_per_window, 1);
 
-    let (store, authority, proof) = setup_without_reset_config();
+    let (store, authority, proof) = setup_without_reset_config()?;
     assert!(matches!(
-        run(authority.prepare_full_pool_reset(&proof, &original())).unwrap(),
+        run(authority.prepare_full_pool_reset(&proof, &original()))?,
         FullPoolPreparation::Declined { reason } if reason == "per_account_day_limit_invalid"
     ));
-    let day = utc_day(NOW).unwrap();
-    let reset = block().reset_at_ms.unwrap();
+    let day = utc_day(NOW)?;
+    let reset = block()
+        .reset_at_ms
+        .ok_or("missing fixture reset deadline")?;
     for account in pool().accounts {
         let invocation = reset_invocation(
             &account.admin_account_hash.0,
             &account.credential_version.0,
             reset,
-        )
-        .unwrap();
+        )?;
         assert!(
             store
                 .row(&keys::reset_redemption(
@@ -179,68 +170,66 @@ fn absent_reset_config_uses_fail_closed_default_and_spends_nothing() {
                 .is_none()
         );
     }
+    Ok(())
 }
 
 #[test]
-fn live_selection_preserves_selected_shadow_history_without_reading_it() {
-    let (store, authority, proof) = setup(ResetMode::Shadow);
-    let initial = plan(&authority, &proof);
+fn live_selection_preserves_selected_shadow_history_without_reading_it() -> TestResult {
+    let (store, authority, proof) = setup(ResetMode::Shadow)?;
+    let initial = plan(&authority, &proof)?;
     let rows = observations(&initial, Some(JsString16::from_utf8("shadow-credit")));
     let FullPoolEvaluation::Shadow { decision, .. } =
-        run(authority.finish_full_pool_reset(initial, &rows, &Collation)).unwrap()
+        run(authority.finish_full_pool_reset(initial, &rows, &Collation))?
     else {
         panic!("selected shadow decision required")
     };
     assert_eq!(decision.decision_reason, "selected");
     let key = keys::reset_shadow(&decision.episode_hash);
-    let saved = store.row(&key).unwrap();
+    let saved = fixture_row(&store, &key)?;
     store.seed(keys::reset_config(), &config(ResetMode::Live));
     // A live read of this historical key would consume the jump and expire the fresh inventory.
     store.jump_on_read(key.clone(), NOW + 30_001);
-    let next = plan(&authority, &proof);
+    let next = plan(&authority, &proof)?;
     let rows = observations(&next, Some(JsString16::from_utf8("new-credit")));
     let FullPoolEvaluation::Ready(permit) =
-        run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap()
+        run(authority.finish_full_pool_reset(next, &rows, &Collation))?
     else {
         panic!("live mode must use the fresh eligible credit")
     };
     assert_eq!(permit.credit_id(), &JsString16::from_utf8("new-credit"));
     assert_history_unchanged(&store, &key, &saved);
+    Ok(())
 }
 
 #[test]
-fn first_live_call_mints_opaque_permit_without_arming() {
-    let (store, authority, proof) = setup(ResetMode::Live);
-    let first = plan(&authority, &proof);
+fn first_live_call_mints_opaque_permit_without_arming() -> TestResult {
+    let (store, authority, proof) = setup(ResetMode::Live)?;
+    let first = plan(&authority, &proof)?;
     let rows = observations(
         &first,
         Some(JsString16::from_units(vec![b'c' as u16, 0xd800])),
     );
     let FullPoolEvaluation::Ready(permit) =
-        run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
+        run(authority.finish_full_pool_reset(first, &rows, &Collation))?
     else {
         panic!("first live call must mint the permit")
     };
-    let body = permit.consume_body().unwrap();
+    let body = permit.consume_body()?;
     assert!(body.as_str().contains("\\ud800"));
     assert!(!body.as_str().contains("[99,55296]"));
-    let raw = body
-        .object_entries()
-        .unwrap()
+    let entries = body.object_entries()?;
+    let (_, raw) = entries
         .into_iter()
         .find(|(key, _)| key.try_utf8().ok().as_deref() == Some("credit_id"))
-        .unwrap()
-        .1;
-    assert_eq!(
-        raw.deserialize::<JsString16>().unwrap().as_units(),
-        &[99, 0xd800]
-    );
+        .ok_or("missing source credit_id")?;
+    assert_eq!(raw.deserialize::<JsString16>()?.as_units(), &[99, 0xd800]);
     assert_eq!(permit.original().request_id, original().request_id);
     assert!(
         store
             .row(&keys::reset_shadow(permit.episode_hash()))
             .is_none()
     );
+    Ok(())
 }
 
 fn audit_value() -> Value {
@@ -274,37 +263,38 @@ fn strict_data_parser_keeps_required_nulls_key_and_storage_custody() {
 }
 
 #[test]
-fn unexpired_shadow_is_cached_without_requesting_new_inventory() {
-    let (_, authority, proof) = setup(ResetMode::Shadow);
-    let first = plan(&authority, &proof);
+fn unexpired_shadow_is_cached_without_requesting_new_inventory() -> TestResult {
+    let (_, authority, proof) = setup(ResetMode::Shadow)?;
+    let first = plan(&authority, &proof)?;
     let rows = observations(&first, None);
     let FullPoolEvaluation::Shadow {
         decision,
         duplicate: false,
-    } = run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
+    } = run(authority.finish_full_pool_reset(first, &rows, &Collation))?
     else {
         panic!("expected one source audit")
     };
     let FullPoolPreparation::Cached { decision: cached } =
-        run(authority.prepare_full_pool_reset(&proof, &original())).unwrap()
+        run(authority.prepare_full_pool_reset(&proof, &original()))?
     else {
         panic!("cached shadow must not request inventory")
     };
     assert_eq!(cached, decision);
+    Ok(())
 }
 
 #[test]
-fn cached_profile_audit_preserves_unrelated_utf16_source_leaves() {
+fn cached_profile_audit_preserves_unrelated_utf16_source_leaves() -> TestResult {
     use gateway_core::value::PortableValue;
-    let (store, authority, proof) = setup(ResetMode::Shadow);
-    let first = plan(&authority, &proof);
+    let (store, authority, proof) = setup(ResetMode::Shadow)?;
+    let first = plan(&authority, &proof)?;
     let rows = observations(&first, None);
     let FullPoolEvaluation::Shadow { decision, .. } =
-        run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
+        run(authority.finish_full_pool_reset(first, &rows, &Collation))?
     else {
         panic!("source audit required")
     };
-    let mut portable = PortableValue::from_json(&serde_json::to_value(&decision).unwrap());
+    let mut portable = PortableValue::from_json(&serde_json::to_value(&decision)?);
     let PortableValue::Object(fields) = &mut portable else {
         panic!("source object required")
     };
@@ -314,27 +304,28 @@ fn cached_profile_audit_preserves_unrelated_utf16_source_leaves() {
     ));
     store.seed_record(
         keys::reset_shadow(&decision.episode_hash),
-        StoredRecord::profile_v2("source-profile-audit", portable, None).unwrap(),
+        StoredRecord::profile_v2("source-profile-audit", portable, None)?,
     );
     let FullPoolPreparation::Cached { decision: cached } =
-        run(authority.prepare_full_pool_reset(&proof, &original())).unwrap()
+        run(authority.prepare_full_pool_reset(&proof, &original()))?
     else {
         panic!("typed source audit must remain readable without conversion")
     };
     assert_eq!(cached, decision);
+    Ok(())
 }
 
 #[test]
-fn extended_or_expired_shadow_history_never_blocks_or_overwrites_live() {
+fn extended_or_expired_shadow_history_never_blocks_or_overwrites_live() -> TestResult {
     for (label, created_at_ms, expires_at_ms) in [
         ("expired", NOW - 2, NOW - 1),
         ("extended", NOW - 1, NOW + 120_000),
     ] {
-        let (store, authority, proof) = setup(ResetMode::Shadow);
-        let first = plan(&authority, &proof);
+        let (store, authority, proof) = setup(ResetMode::Shadow)?;
+        let first = plan(&authority, &proof)?;
         let rows = observations(&first, None);
         let FullPoolEvaluation::Shadow { mut decision, .. } =
-            run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
+            run(authority.finish_full_pool_reset(first, &rows, &Collation))?
         else {
             panic!("source audit required")
         };
@@ -346,51 +337,53 @@ fn extended_or_expired_shadow_history_never_blocks_or_overwrites_live() {
             &decision,
             &format!("historical-shadow-{label}"),
         );
-        let saved = store.row(&key).unwrap();
+        let saved = fixture_row(&store, &key)?;
         store.seed(keys::reset_config(), &config(ResetMode::Live));
-        let next = plan(&authority, &proof);
+        let next = plan(&authority, &proof)?;
         let rows = observations(&next, Some(JsString16::from_utf8("fresh-credit")));
         let FullPoolEvaluation::Ready(permit) =
-            run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap()
+            run(authority.finish_full_pool_reset(next, &rows, &Collation))?
         else {
             panic!("{label} historical decision must not gate live")
         };
         assert_eq!(permit.credit_id(), &JsString16::from_utf8("fresh-credit"));
         assert_history_unchanged(&store, &key, &saved);
     }
+    Ok(())
 }
 
 #[test]
-fn complete_inventory_and_every_disabled_member_setting_remain_fenced() {
-    let (store, authority, proof) = setup(ResetMode::Shadow);
+fn complete_inventory_and_every_disabled_member_setting_remain_fenced() -> TestResult {
+    let (store, authority, proof) = setup(ResetMode::Shadow)?;
     let disabled = keys::reset_usage(&pool().accounts[1].admin_account_hash.0);
     store.seed(disabled.clone(), &json!({"enabled":false}));
-    let first = plan(&authority, &proof);
+    let first = plan(&authority, &proof)?;
     assert_eq!(first.bindings().count(), 1);
     assert!(
-        matches!(run(authority.finish_full_pool_reset(first, &[], &Collation)).unwrap(), FullPoolEvaluation::Declined { reason } if reason == "inventory_unavailable")
+        matches!(run(authority.finish_full_pool_reset(first, &[], &Collation))?, FullPoolEvaluation::Declined { reason } if reason == "inventory_unavailable")
     );
-    let next = plan(&authority, &proof);
+    let next = plan(&authority, &proof)?;
     let rows = observations(&next, None);
     // Even a semantically unchanged disabled setting has a different source
     // versionstamp and invalidates the complete episode while inventory is in flight.
     store.seed(disabled, &json!({"enabled":false}));
     assert!(
-        matches!(run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap(), FullPoolEvaluation::Declined { reason } if reason == "routing_fence_stale")
+        matches!(run(authority.finish_full_pool_reset(next, &rows, &Collation))?, FullPoolEvaluation::Declined { reason } if reason == "routing_fence_stale")
     );
-    let next = plan(&authority, &proof);
+    let next = plan(&authority, &proof)?;
     let rows = observations(&next, None);
     let FullPoolEvaluation::Shadow { decision, .. } =
-        run(authority.finish_full_pool_reset(next, &rows, &Collation)).unwrap()
+        run(authority.finish_full_pool_reset(next, &rows, &Collation))?
     else {
         panic!("complete source audit required")
     };
     assert_eq!(decision.fences.len(), 2);
     assert_eq!(decision.fences[1].slot, 1);
+    Ok(())
 }
 
 #[test]
-fn selection_requires_source_collation_for_an_exact_same_slot_expiry_tie() {
+fn selection_requires_source_collation_for_an_exact_same_slot_expiry_tie() -> TestResult {
     struct SourceOrder;
     impl SourceCreditCollation for SourceOrder {
         fn compare_credit_ids(
@@ -403,23 +396,24 @@ fn selection_requires_source_collation_for_an_exact_same_slot_expiry_tie() {
             Ok(right.as_units().cmp(left.as_units()))
         }
     }
-    let (_, authority, proof) = setup(ResetMode::Live);
-    let first = plan(&authority, &proof);
+    let (_, authority, proof) = setup(ResetMode::Live)?;
+    let first = plan(&authority, &proof)?;
     let mut rows = observations(&first, Some(JsString16::from_utf8("a")));
     let mut later = rows[0].credits[0].clone();
     later.credit_id = JsString16::from_units(vec![0xd800]);
     rows[0].credits.push(later);
     rows[0].available_count = 2;
     let FullPoolEvaluation::Ready(permit) =
-        run(authority.finish_full_pool_reset(first, &rows, &SourceOrder)).unwrap()
+        run(authority.finish_full_pool_reset(first, &rows, &SourceOrder))?
     else {
         panic!("same source-selected credit must mint the permit")
     };
     assert_eq!(permit.credit_id().as_units(), &[0xd800]);
+    Ok(())
 }
 
 #[test]
-fn source_golden_collation_controls_selection_and_utf16_credit_hashes() {
+fn source_golden_collation_controls_selection_and_utf16_credit_hashes() -> TestResult {
     #[derive(serde::Deserialize)]
     struct Case {
         ids: Vec<Vec<u16>>,
@@ -438,21 +432,18 @@ fn source_golden_collation_controls_selection_and_utf16_credit_hashes() {
             Ok(self.0.comparison.cmp(&0))
         }
     }
-    let source = SourceJson::parse(include_str!("../fixtures/full-pool-source-v1.json")).unwrap();
-    let rows = source
-        .object_entries()
-        .unwrap()
+    let source = SourceJson::parse(include_str!("../fixtures/full-pool-source-v1.json"))?;
+    let entries = source.object_entries()?;
+    let (_, collation) = entries
         .into_iter()
         .find(|(key, _)| key.try_utf8().ok().as_deref() == Some("collation_cases"))
-        .unwrap()
-        .1
-        .array_items()
-        .unwrap();
+        .ok_or("missing source collation_cases")?;
+    let rows = collation.array_items()?;
     assert_eq!(rows.len(), 5);
     for row in rows {
-        let case: Case = row.deserialize().unwrap();
-        let (_, authority, proof) = setup(ResetMode::Live);
-        let first = plan(&authority, &proof);
+        let case: Case = row.deserialize()?;
+        let (_, authority, proof) = setup(ResetMode::Live)?;
+        let first = plan(&authority, &proof)?;
         let mut rows = observations(&first, None);
         rows[0].credits = case
             .ids
@@ -466,21 +457,22 @@ fn source_golden_collation_controls_selection_and_utf16_credit_hashes() {
             .collect();
         rows[0].available_count = rows[0].credits.len() as i64;
         let FullPoolEvaluation::Ready(permit) =
-            run(authority.finish_full_pool_reset(first, &rows, &GoldenCollation(&case))).unwrap()
+            run(authority.finish_full_pool_reset(first, &rows, &GoldenCollation(&case)))?
         else {
             panic!("exact source-selected credit required")
         };
         assert_eq!(permit.credit_id().as_units(), case.selected);
     }
+    Ok(())
 }
 
 #[test]
-fn provider_accepted_overlong_id_invalidates_the_complete_pool_decision() {
-    let (_, authority, proof) = setup(ResetMode::Shadow);
-    let first = plan(&authority, &proof);
+fn provider_accepted_overlong_id_invalidates_the_complete_pool_decision() -> TestResult {
+    let (_, authority, proof) = setup(ResetMode::Shadow)?;
+    let first = plan(&authority, &proof)?;
     let rows = observations(&first, Some(JsString16::from_units(vec![b'x' as u16; 513])));
     let FullPoolEvaluation::Shadow { decision, .. } =
-        run(authority.finish_full_pool_reset(first, &rows, &Collation)).unwrap()
+        run(authority.finish_full_pool_reset(first, &rows, &Collation))?
     else {
         panic!("invalid source evaluator inventory must retain its no-selection audit")
     };
@@ -490,4 +482,5 @@ fn provider_accepted_overlong_id_invalidates_the_complete_pool_decision() {
     );
     assert!(decision.selected_account_id_hash.is_none());
     assert!(decision.selected_credit_id_hash.is_none());
+    Ok(())
 }

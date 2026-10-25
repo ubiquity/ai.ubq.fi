@@ -9,10 +9,11 @@ fn text(raw: &SourceJson, key: &str) -> JsString16 {
     source::string(&source::member(raw, key).unwrap()).unwrap()
 }
 #[test]
-fn image_source_prompt_user_model_default_and_unknown_key_error_remain_original() {
+fn image_source_prompt_user_model_default_and_unknown_key_error_remain_original()
+-> Result<(), String> {
     let raw =
         parse(r#"{"prompt":"p\ud800","user":"u\udc00","model":" m\ud801 ","size":"s\udc02"}"#);
-    let parsed = extras::parse_source_image(&raw, false).unwrap();
+    let parsed = extras::parse_source_image(&raw, false).map_err(|error| format!("{error:?}"))?;
     let default = ModelId::from_source(JsString16::from_units(vec![68, 0xd802]));
     let plan = extras::image::prepare_parsed_image(&parsed, &default, "original");
     assert_eq!(
@@ -21,18 +22,22 @@ fn image_source_prompt_user_model_default_and_unknown_key_error_remain_original(
     );
     assert_eq!(text(&plan.responses, "input"), text(&raw, "prompt"));
     assert_eq!(text(&plan.responses, "user"), text(&raw, "user"));
-    let tool = source::array(&source::member(&plan.responses, "tools").unwrap())
-        .unwrap()
-        .remove(0);
+    let tool =
+        source::array(&source::member(&plan.responses, "tools").ok_or("missing image tools")?)
+            .ok_or("missing image tools array")?
+            .remove(0);
     assert_eq!(
         text(&tool, "model"),
         JsString16::from_units(vec![109, 0xd801])
     );
     let bad = parse(r#"{"prompt":"","\ud800":true,"n":0}"#);
-    let error = extras::parse_source_image(&bad, false).unwrap_err();
-    let fields = source::member(error.body(), "error").unwrap();
+    let error = extras::parse_source_image(&bad, false)
+        .err()
+        .ok_or("expected source rejection")?;
+    let fields = source::member(error.body(), "error").ok_or("missing source error envelope")?;
     assert_eq!(text(&fields, "param"), JsString16::from_units(vec![0xd800]));
     assert!(text(&fields, "message").as_units().contains(&0xd800));
+    Ok(())
 }
 #[test]
 fn embedding_and_systemone_use_the_same_source_engine_without_scalar_payloads() {

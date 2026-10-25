@@ -25,8 +25,9 @@ export const LIVE_SIDEBAND_PREOPEN_MAX_FRAMES = 32;
 export const LIVE_SIDEBAND_HANDSHAKE_TIMEOUT_MS = 10_000;
 /** The sideband reconnects quickly; one hour outlives any call that can still be joined. */
 export const LIVE_CALL_ACCOUNT_TTL_MS = 60 * 60_000;
-/** A terminal sideband mapping is retried until KV accepts its retirement. */
+/** A terminal sideband mapping gets a short bounded window for KV retirement. */
 const LIVE_CALL_RETIRE_RETRY_MS = 250;
+const LIVE_CALL_RETIRE_MAX_ATTEMPTS = 4;
 /** The frameless (v3) alpha selector the client sends; forwarded, with this default. */
 export const LIVE_OPENAI_ALPHA_DEFAULT = "quicksilver=v2";
 
@@ -173,7 +174,7 @@ const waitForLiveCallRetirementRetry = (): Promise<void> => new Promise((resolve
 export const retireLiveCallMapping = async (callId: string): Promise<void> => {
   pendingLiveCallRetirements.add(callId);
   try {
-    for (;;) {
+    for (let attempt = 0; attempt < LIVE_CALL_RETIRE_MAX_ATTEMPTS; attempt += 1) {
       const kv = await getKv();
       if (kv) {
         try {
@@ -186,8 +187,9 @@ export const retireLiveCallMapping = async (callId: string): Promise<void> => {
           );
         }
       }
-      await waitForLiveCallRetirementRetry();
+      if (attempt + 1 < LIVE_CALL_RETIRE_MAX_ATTEMPTS) await waitForLiveCallRetirementRetry();
     }
+    console.warn("[ai.ubq.fi] live_call_account_mapping_retire_exhausted", JSON.stringify({ call_id: callId }));
   } finally {
     pendingLiveCallRetirements.delete(callId);
   }

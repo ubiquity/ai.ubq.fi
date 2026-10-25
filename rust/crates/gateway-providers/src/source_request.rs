@@ -3,7 +3,11 @@ use crate::{
     request::{bearer_headers, canonical_source_model, codex_user_agent},
     source as s, source_anthropic, source_chat, source_controls as controls,
     source_tools::ToolMap,
-    types::*,
+    types::{
+        AuthMaterial, ChatProfile, ClaudeBodyOptions, ClientSurface, DecodePlan,
+        OrdinaryPhaseOptions, PrepareOptions, PreparedClaudeBody, PreparedClaudeOrdinary,
+        PreparedRequest, ResponseDecode,
+    },
 };
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,

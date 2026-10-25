@@ -17,12 +17,15 @@ use gateway_auth::{
 use gateway_core::{
     error::GatewayError,
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation},
-    tuple_key::{ScalarKeyPart, TupleKey},
+    tuple_key::{ScalarKeyPart, ScalarKeyPart::String as Text, TupleKey},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub mod wire;
-use wire::*;
+use wire::{
+    NativeLiveAccess, NativeLiveAuthorityRequest, NativeLiveAuthorityResponse, NativeLiveFence,
+    NativeLiveRetirement,
+};
 
 /// Nonexpiring secretless control custody, NOT a second routing/accounting ledger.
 pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
@@ -35,16 +38,12 @@ pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
     ])
     .to_record_key()
 }
-fn mapping_key(call: &str, pending: bool) -> RecordKey {
-    let mut parts = vec![
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("codex_live_calls"),
-        ScalarKeyPart::String("v1"),
-    ];
+pub(crate) fn mapping_key(call: &str, pending: bool) -> RecordKey {
+    let mut parts = vec![Text("uos_ai"), Text("codex_live_calls"), Text("v1")];
     if pending {
-        parts.push(ScalarKeyPart::String("pending_retirement"));
+        parts.push(Text("pending_retirement"));
     }
-    parts.push(ScalarKeyPart::String(call));
+    parts.push(Text(call));
     TupleKey::from_scalar_parts(&parts).to_record_key()
 }
 #[derive(Clone, Deserialize, Serialize)]

@@ -22,6 +22,7 @@ import {
   isDeepSeekWaterfallRetryStatus,
 } from "../src/deepseek/waterfall.ts";
 import { DEEPSEEK_FLASH_FALLBACK_ALIASES, resolveDeepSeekFlashAliases } from "../src/deepseek/flash-aliases.ts";
+import { LITHOS_IMMEDIATE_FAILOVER_WAIT_POLICY } from "../src/provider/lithos-rate-limits.ts";
 import type { UsageContext } from "../src/openai-telemetry.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 
@@ -105,6 +106,10 @@ test("waterfall: each paid hop is pinned to its own paid tier", () => {
 test("waterfall: only infrastructure or serving statuses advance the chain", () => {
   for (const status of [402, 403, 429, 500, 502, 504]) assert.equal(isDeepSeekWaterfallRetryStatus(status), true, `${status} must advance`);
   for (const status of [200, 400, 404, 422]) assert.equal(isDeepSeekWaterfallRetryStatus(status), false, `${status} must not advance`);
+});
+
+test("waterfall: a Lithos refusal advances without spending the vendor reset window", () => {
+  assert.deepEqual(LITHOS_IMMEDIATE_FAILOVER_WAIT_POLICY, { maxWaits: 0, totalCapMs: 0 });
 });
 
 test("waterfall: the requested effort reads both wire fields and stays inside the advertised set", () => {

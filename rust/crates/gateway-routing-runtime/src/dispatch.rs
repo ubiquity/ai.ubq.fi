@@ -1,9 +1,13 @@
 use crate::{
     classify,
-    journal::{self, AttemptRecord, BillingUsage, Journal, Phase},
+    journal::{self, AttemptRecord, BillingUsage, Journal, Phase, unavailable},
     session::RoutingSession,
     settlement,
-    types::*,
+    types::{
+        AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin, PreparedAttempt,
+        RecoveredSession, RefreshOutcome, RefusalDecision, RevisionCheckWire, RoutingHost,
+        RoutingResult, TransportState,
+    },
 };
 use gateway_authority::kernel::KernelTerminal;
 use gateway_authority::store::{AuthorityClock, TokenSource};
@@ -48,11 +52,65 @@ impl<
         }
         let (row, record) = self.observed_attempt(attempt).await?;
         if record.phase != Phase::Prepared {
-            return Err(journal::unavailable(
-                "This attempt's dispatch intent is already consumed.",
-            )
-            .into());
+            return Err(unavailable("This attempt's dispatch intent is already consumed.").into());
         }
+        self.check_dispatch_credential(&record).await?;
+        self.check_paid_dispatch(&row, &record).await?;
+        let mut api = row.api.clone();
+        if let Some(reservation) = &api {
+            api = Some(
+                self.authority()
+                    .resolve_deferred_api(reservation, self.now()?)
+                    .await?,
+            );
+        }
+        if let Some(reservation) = &api {
+            self.authority()
+                .dispatch_api_key(reservation, record.provider, self.now()?)
+                .await?;
+        }
+        self.admission.capture_resolved_api(api.as_ref())?;
+        let checks = match &record.fence {
+            CredentialFence::Codex {
+                source_key,
+                source_revision,
+                ..
+            } => vec![RevisionCheckWire {
+                key: source_key.clone(),
+                expected_revision: Some(source_revision.clone()),
+            }],
+            CredentialFence::Claude { checks, .. } => checks.clone(),
+            _ => vec![],
+        };
+        journal::change(
+            &self.store,
+            &self.tokens,
+            self.id(),
+            self.now()?,
+            &checks,
+            |j| {
+                settlement::ensure_active(j)?;
+                let current = j
+                    .attempts
+                    .iter_mut()
+                    .find(|a| a.id == attempt.id)
+                    .ok_or_else(|| unavailable("Attempt disappeared."))?;
+                if current.phase != Phase::Prepared {
+                    return Err(unavailable("Duplicate attempt dispatch."));
+                }
+                current.phase = Phase::Intent;
+                j.api = api.clone();
+                Ok(())
+            },
+        )
+        .await?;
+        self.check_dispatch_credential(&record).await?;
+        if self.host.cancelled() {
+            return Err(self.host.cancellation_error().into());
+        }
+        Ok(())
+    }
+    async fn check_dispatch_credential(&self, record: &AttemptRecord) -> RoutingResult<()> {
         self.host
             .ensure_credential_current(&record.fence, &self.input.principal, &record.model)
             .await?;
@@ -61,6 +119,13 @@ impl<
                 .ensure_admission_current(admission, self.now()?)
                 .await?;
         }
+        Ok(())
+    }
+    async fn check_paid_dispatch(
+        &self,
+        row: &Journal,
+        record: &AttemptRecord,
+    ) -> RoutingResult<()> {
         if let Some(reservation) = &record.paid {
             let synthetic = match self.plan.hops.get(record.cursor) {
                 Some(crate::policy::RouteHop::Paid {
@@ -69,7 +134,7 @@ impl<
                     synthetic,
                 }) if provider == &reservation.provider && model == &record.model => *synthetic,
                 _ => {
-                    return Err(journal::unavailable(
+                    return Err(unavailable(
                         "Paid dispatch no longer matches the original pinned hop.",
                     )
                     .into());
@@ -110,7 +175,7 @@ impl<
             let authorization = if synthetic {
                 gateway_authority::paid_types::PaidAuthorization::DirectPaidModel
             } else {
-                self.paid_authorization(&row).await?
+                self.paid_authorization(row).await?
             };
             match self
                 .authority()
@@ -120,71 +185,9 @@ impl<
                 gateway_authority::paid_types::PaidAdmission::Existing(current)
                     if current == *reservation => {}
                 _ => {
-                    return Err(journal::unavailable(
-                        "The paid reservation changed before dispatch.",
-                    )
-                    .into());
+                    return Err(unavailable("The paid reservation changed before dispatch.").into());
                 }
             }
-        }
-        let mut api = row.api.clone();
-        if let Some(reservation) = &api {
-            api = Some(
-                self.authority()
-                    .resolve_deferred_api(reservation, self.now()?)
-                    .await?,
-            );
-        }
-        if let Some(reservation) = &api {
-            self.authority()
-                .dispatch_api_key(reservation, record.provider, self.now()?)
-                .await?;
-        }
-        self.admission.capture_resolved_api(api.as_ref())?;
-        let checks = match &record.fence {
-            CredentialFence::Codex {
-                source_key,
-                source_revision,
-                ..
-            } => vec![RevisionCheckWire {
-                key: source_key.clone(),
-                expected_revision: Some(source_revision.clone()),
-            }],
-            CredentialFence::Claude { checks, .. } => checks.clone(),
-            _ => vec![],
-        };
-        journal::change(
-            &self.store,
-            &self.tokens,
-            self.id(),
-            self.now()?,
-            &checks,
-            |j| {
-                settlement::ensure_active(j)?;
-                let current = j
-                    .attempts
-                    .iter_mut()
-                    .find(|a| a.id == attempt.id)
-                    .ok_or_else(|| journal::unavailable("Attempt disappeared."))?;
-                if current.phase != Phase::Prepared {
-                    return Err(journal::unavailable("Duplicate attempt dispatch."));
-                }
-                current.phase = Phase::Intent;
-                j.api = api.clone();
-                Ok(())
-            },
-        )
-        .await?;
-        self.host
-            .ensure_credential_current(&record.fence, &self.input.principal, &record.model)
-            .await?;
-        if let CredentialFence::Codex { admission, .. } = &record.fence {
-            self.authority()
-                .ensure_admission_current(admission, self.now()?)
-                .await?;
-        }
-        if self.host.cancelled() {
-            return Err(self.host.cancellation_error().into());
         }
         Ok(())
     }

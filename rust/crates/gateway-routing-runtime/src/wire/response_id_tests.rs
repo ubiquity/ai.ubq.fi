@@ -13,6 +13,7 @@ use gateway_providers::{
 use gateway_schema::catalog::CatalogInput;
 use serde_json::{Value, json};
 
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn parse(value: Value) -> SourceJson {
     SourceJson::from_serializable(&value).unwrap()
 }
@@ -77,17 +78,19 @@ fn decode(
     request: &PreparedWireRequest,
     response_headers: &Headers,
     value: &Value,
-) -> gateway_providers::types::DecodedResponse {
-    decode_response(
+) -> TestResult<gateway_providers::types::DecodedResponse> {
+    Ok(decode_response(
         request.decode(),
         200,
         response_headers,
-        &serde_json::to_vec(value).unwrap(),
-    )
-    .unwrap()
+        &serde_json::to_vec(value)?,
+    )?)
 }
-fn codex_replay(output: &Value) -> Value {
-    let mut history = output.as_array().unwrap().clone();
+fn codex_replay(output: &Value) -> TestResult<Value> {
+    let mut history = output
+        .as_array()
+        .ok_or("missing replay output array")?
+        .clone();
     history.extend([
         json!({"type":"function_call_output","call_id":"call_lookup","output":"lookup result é😀"}),
         json!({"type":"custom_tool_call_output","call_id":"call_patch","output":"patch result 😀"}),
@@ -110,9 +113,9 @@ fn codex_replay(output: &Value) -> Value {
             ..Default::default()
         },
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(original, snapshot);
-    scalar(&result.body)["input"].clone()
+    Ok(scalar(&result.body)["input"].clone())
 }
 
 #[test]
@@ -168,7 +171,7 @@ fn both_real_wire_factories_bound_and_clean_the_random_fallback() {
 }
 
 #[test]
-fn actual_producer_ids_round_trip_through_the_unchanged_codex_cleanup() {
+fn actual_producer_ids_round_trip_through_the_unchanged_codex_cleanup() -> TestResult {
     for (provider, model) in [
         (UpstreamProvider::Deepseek, "deepseek-flash"),
         (UpstreamProvider::Lithos, "deepseek-ai/DeepSeek-V4.1-Flash"),
@@ -179,29 +182,29 @@ fn actual_producer_ids_round_trip_through_the_unchanged_codex_cleanup() {
             &request,
             &headers(&[("x-request-id", "provider-request-123")]),
             &completion(&request, "completion-body-id"),
-        );
+        )?;
         let body = scalar(&response.body);
         let output = &body["output"];
         assert_eq!(
             output
                 .as_array()
-                .unwrap()
+                .ok_or("missing fixture value")?
                 .iter()
-                .map(|v| v["type"].as_str().unwrap())
-                .collect::<Vec<_>>(),
+                .map(|v| v["type"].as_str().ok_or("missing fixture value"))
+                .collect::<Result<Vec<_>, _>>()?,
             ["reasoning", "message", "function_call", "custom_tool_call"]
         );
-        for item in output.as_array().unwrap() {
-            let id = item["id"].as_str().unwrap();
-            assert!(id.contains(body["id"].as_str().unwrap()));
+        for item in output.as_array().ok_or("missing fixture value")? {
+            let id = item["id"].as_str().ok_or("missing fixture value")?;
+            assert!(id.contains(body["id"].as_str().ok_or("missing fixture value")?));
         }
-        let replay = codex_replay(output);
-        let replay = replay.as_array().unwrap();
+        let replay = codex_replay(output)?;
+        let replay = replay.as_array().ok_or("missing fixture value")?;
         assert_eq!(
             replay
                 .iter()
-                .map(|v| v["type"].as_str().unwrap())
-                .collect::<Vec<_>>(),
+                .map(|v| v["type"].as_str().ok_or("missing fixture value"))
+                .collect::<Result<Vec<_>, _>>()?,
             [
                 "message",
                 "function_call",
@@ -223,10 +226,11 @@ fn actual_producer_ids_round_trip_through_the_unchanged_codex_cleanup() {
         assert_eq!(replay[3]["output"], "lookup result é😀");
         assert_eq!(replay[4]["output"], "patch result 😀");
     }
+    Ok(())
 }
 
 #[test]
-fn literal_long_unrecognized_and_encrypted_reasoning_are_still_not_dropped() {
+fn literal_long_unrecognized_and_encrypted_reasoning_are_still_not_dropped() -> TestResult {
     let prefix = format!("resp_{}", "a".repeat(40));
     let output = json!([
         {"type":"reasoning","id":format!("rs_{prefix}_0"),"summary":[]},
@@ -234,12 +238,13 @@ fn literal_long_unrecognized_and_encrypted_reasoning_are_still_not_dropped() {
         {"type":"reasoning","id":format!("rs_resp_{}_0","b".repeat(64)),"summary":[]},
         {"type":"reasoning","id":"rs_genuine_abcdef","summary":[]}
     ]);
-    let replay = codex_replay(&output);
-    assert_eq!(replay.as_array().unwrap().len(), 6);
+    let replay = codex_replay(&output)?;
+    assert_eq!(replay.as_array().ok_or("missing fixture value")?.len(), 6);
     assert_eq!(replay[0]["encrypted_content"], "synthetic-opaque");
     assert!(replay[0].get("id").is_none());
     assert_eq!(replay[1]["id"], format!("rs_resp_{}_0", "b".repeat(64)));
     assert_eq!(replay[2]["id"], "rs_genuine_abcdef");
+    Ok(())
 }
 
 #[test]
@@ -317,10 +322,10 @@ fn first_present_provider_header_is_validated_before_any_fallback() {
 }
 
 #[test]
-fn buffered_completion_identity_precedence_matches_the_source() {
+fn buffered_completion_identity_precedence_matches_the_source() -> TestResult {
     let cerebras = prepared(UpstreamProvider::Cerebras, "qwen-3.8-27b", true);
     let body = completion(&cerebras, "completion-fallback-ABC");
-    let bound = decode(&cerebras, &Headers::new(), &body);
+    let bound = decode(&cerebras, &Headers::new(), &body)?;
     assert_eq!(scalar(&bound.body)["id"], "resp_completionfallbackABC");
     assert!(
         bound
@@ -334,7 +339,7 @@ fn buffered_completion_identity_precedence_matches_the_source() {
                 &cerebras,
                 &headers(&[("x-request-id", "header-wins")]),
                 &body
-            )
+            )?
             .body
         )["id"],
         "resp_headerwins"
@@ -346,7 +351,7 @@ fn buffered_completion_identity_precedence_matches_the_source() {
                 &deepseek,
                 &Headers::new(),
                 &completion(&deepseek, "body-must-not-win")
-            )
+            )?
             .body
         )["id"],
         deepseek.decode().response_id
@@ -360,18 +365,18 @@ fn buffered_completion_identity_precedence_matches_the_source() {
         &claude,
         200,
         &headers(&[("x-request-id", "header-not-buffered")]),
-        &serde_json::to_vec(&body).unwrap(),
-    )
-    .unwrap();
+        &serde_json::to_vec(&body)?,
+    )?;
     assert_eq!(scalar(&decoded.body)["id"], "resp_chatcmplnativeABC");
     assert_eq!(
         response_plan(&claude, &headers(&[("x-request-id", "header-streamed")])).response_id,
         "resp_headerstreamed"
     );
+    Ok(())
 }
 
 #[test]
-fn real_stream_and_buffer_translation_use_the_same_bound_plan_identity() {
+fn real_stream_and_buffer_translation_use_the_same_bound_plan_identity() -> TestResult {
     for (provider, model) in [
         (UpstreamProvider::Deepseek, "deepseek-flash"),
         (UpstreamProvider::Lithos, "deepseek-ai/DeepSeek-V4.1-Flash"),
@@ -379,13 +384,13 @@ fn real_stream_and_buffer_translation_use_the_same_bound_plan_identity() {
         let request = prepared(provider, model, true);
         let h = headers(&[("x-request-id", "same-header-ABC")]);
         let plan = response_plan(request.decode(), &h);
-        let buffered = decode(&request, &h, &completion(&request, "completion-id"));
+        let buffered = decode(&request, &h, &completion(&request, "completion-id"))?;
         let completion = completion(&request, "completion-id");
         let message = &completion["choices"][0]["message"];
         let mut delta = message.clone();
         for (index, call) in delta["tool_calls"]
             .as_array_mut()
-            .unwrap()
+            .ok_or("missing native tool-call array")?
             .iter_mut()
             .enumerate()
         {
@@ -394,12 +399,12 @@ fn real_stream_and_buffer_translation_use_the_same_bound_plan_identity() {
         let chunk = json!({"id":"chatcmpl_stream-ignored","choices":[{"index":0,"delta":delta,"finish_reason":"tool_calls"}],"usage":completion["usage"]});
         let frame = format!("data: {chunk}\n\ndata: [DONE]\n\n");
         let mut stream = StreamDecoder::new(plan.clone());
-        let mut events = stream.push(frame.as_bytes()).unwrap();
-        events.extend(stream.finish().unwrap());
+        let mut events = stream.push(frame.as_bytes())?;
+        events.extend(stream.finish()?);
         let terminal = events
             .iter()
             .find(|e| e.type_name().as_deref() == Some("response.completed"))
-            .unwrap();
+            .ok_or("missing completed response")?;
         let terminal = scalar(&terminal.data);
         assert_eq!(terminal["response"]["id"], scalar(&buffered.body)["id"]);
         for event in events {
@@ -409,6 +414,7 @@ fn real_stream_and_buffer_translation_use_the_same_bound_plan_identity() {
             }
         }
     }
+    Ok(())
 }
 
 #[test]

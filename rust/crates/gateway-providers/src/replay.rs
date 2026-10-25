@@ -246,86 +246,74 @@ fn safe_index(value: &SourceJson) -> bool {
 fn empty_string() -> JsString16 {
     JsString16::from_units(vec![])
 }
-fn native_matches(
-    native: &SourceJson,
-    output: &[SourceJson],
-    transport: ReplayTransport,
-    names: &ToolMap,
-) -> bool {
-    if transport == ReplayTransport::Messages {
-        let Some(blocks) = source::array(native) else {
-            return false;
-        };
-        let mut position = 0;
-        for block in blocks {
-            match s::control(&s::get(&block, "type")).as_deref().unwrap_or("") {
-                "redacted_thinking" => (),
-                "thinking" => {
-                    if output
-                        .get(position)
-                        .is_some_and(|item| s::is(&s::get(item, "type"), "reasoning"))
-                    {
-                        let expected = s::object(vec![
-                            ("type", s::text("summary_text")),
-                            ("text", s::get(&block, "thinking")),
-                        ]);
-                        if source::array(&s::get(&output[position], "summary"))
-                            .is_none_or(|summary| summary != [expected])
-                        {
-                            return false;
-                        }
-                        position += 1;
-                    }
-                }
-                "text" => {
-                    let Some(item) = output.get(position) else {
-                        return false;
-                    };
-                    let Some(content) = source::array(&s::get(item, "content")) else {
-                        return false;
-                    };
-                    if !s::is(&s::get(item, "type"), "message")
-                        || content.len() != 1
-                        || !s::is(&s::get(&content[0], "type"), "output_text")
-                        || s::string(&s::get(&content[0], "text"))
-                            != s::string(&s::get(&block, "text"))
-                    {
-                        return false;
-                    }
-                    position += 1;
-                }
-                "tool_use" => {
-                    let Some(item) = output.get(position) else {
-                        return false;
-                    };
-                    let Some(arguments) = s::string(&s::get(item, "arguments")) else {
-                        return false;
-                    };
-                    let Ok(arguments) =
-                        SourceJson::parse(&arguments.try_utf8().unwrap_or_default())
-                    else {
-                        return false;
-                    };
-                    if !s::is(&s::get(item, "type"), "function_call")
-                        || s::string(&s::get(item, "call_id")) != s::string(&s::get(&block, "id"))
-                        || s::string(&s::get(item, "name")) != s::string(&s::get(&block, "name"))
-                        || arguments != s::get(&block, "input")
-                    {
-                        return false;
-                    }
-                    position += 1;
-                }
-                _ => return false,
-            }
-        }
-        return position == output.len();
-    }
-    let text = s::string(&s::get(native, "content")).unwrap_or_else(empty_string);
-    let mut tools = vec![];
-    let Some(reasoning) = chat_readable_reasoning(native) else {
+fn parsed_arguments(value: &SourceJson) -> Option<SourceJson> {
+    SourceJson::parse(&s::string(value)?.try_utf8().unwrap_or_default()).ok()
+}
+fn native_messages_match(native: &SourceJson, output: &[SourceJson]) -> bool {
+    let Some(blocks) = source::array(native) else {
         return false;
     };
-    let thinking = reasoning;
+    let mut position = 0;
+    for block in blocks {
+        match s::control(&s::get(&block, "type")).as_deref().unwrap_or("") {
+            "redacted_thinking" => (),
+            "thinking" => {
+                if output
+                    .get(position)
+                    .is_some_and(|item| s::is(&s::get(item, "type"), "reasoning"))
+                {
+                    let expected = s::object(vec![
+                        ("type", s::text("summary_text")),
+                        ("text", s::get(&block, "thinking")),
+                    ]);
+                    if source::array(&s::get(&output[position], "summary"))
+                        .is_none_or(|summary| summary != [expected])
+                    {
+                        return false;
+                    }
+                    position += 1;
+                }
+            }
+            "text" => {
+                let Some(item) = output.get(position) else {
+                    return false;
+                };
+                let Some(content) = source::array(&s::get(item, "content")) else {
+                    return false;
+                };
+                if !s::is(&s::get(item, "type"), "message")
+                    || content.len() != 1
+                    || !s::is(&s::get(&content[0], "type"), "output_text")
+                    || s::string(&s::get(&content[0], "text")) != s::string(&s::get(&block, "text"))
+                {
+                    return false;
+                }
+                position += 1;
+            }
+            "tool_use" => {
+                let Some(item) = output.get(position) else {
+                    return false;
+                };
+                if !s::is(&s::get(item, "type"), "function_call")
+                    || s::string(&s::get(item, "call_id")) != s::string(&s::get(&block, "id"))
+                    || s::string(&s::get(item, "name")) != s::string(&s::get(&block, "name"))
+                    || parsed_arguments(&s::get(item, "arguments")) != Some(s::get(&block, "input"))
+                {
+                    return false;
+                }
+                position += 1;
+            }
+            _ => return false,
+        }
+    }
+    position == output.len()
+}
+fn native_chat_matches(native: &SourceJson, output: &[SourceJson], names: &ToolMap) -> bool {
+    let text = s::string(&s::get(native, "content")).unwrap_or_else(empty_string);
+    let mut tools = vec![];
+    let Some(thinking) = chat_readable_reasoning(native) else {
+        return false;
+    };
     for call in source::array(&s::get(native, "tool_calls"))
         .into_iter()
         .flatten()
@@ -338,10 +326,7 @@ fn native_matches(
             return false;
         };
         let identity = crate::tools::original(&wire, names);
-        let Some(arguments) = s::string(&s::get(&function, "arguments")) else {
-            return false;
-        };
-        let Ok(arguments) = SourceJson::parse(&arguments.try_utf8().unwrap_or_default()) else {
+        let Some(arguments) = parsed_arguments(&s::get(&function, "arguments")) else {
             return false;
         };
         let Some(id) = s::string(&s::get(&call, "id")) else {
@@ -384,11 +369,7 @@ fn native_matches(
                 let Some(name) = s::string(&s::get(item, "name")) else {
                     return false;
                 };
-                let Some(arguments) = s::string(&s::get(item, "arguments")) else {
-                    return false;
-                };
-                let Ok(arguments) = SourceJson::parse(&arguments.try_utf8().unwrap_or_default())
-                else {
+                let Some(arguments) = parsed_arguments(&s::get(item, "arguments")) else {
                     return false;
                 };
                 actual_tools.push((id, name, arguments));
@@ -439,7 +420,10 @@ impl ReplayStore {
             || output.is_empty()
             || output.len() > 256
             || !native_valid(&native, transport)
-            || !native_matches(&native, output, transport, names)
+            || !match transport {
+                ReplayTransport::Messages => native_messages_match(&native, output),
+                ReplayTransport::Chat => native_chat_matches(&native, output, names),
+            }
         {
             return false;
         }

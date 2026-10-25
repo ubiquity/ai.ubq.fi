@@ -744,6 +744,20 @@ test("GET /v1/live/<call_id> retires a terminal upstream mapping before closing 
   }
 }, 300_000);
 
+test("GET /v1/live/<call_id> closes when terminal mapping retirement keeps failing", async () => {
+  const fixture = await startSidebandFixture({ delayUpstreamOpen: true, upstreamRejectionStatus: 404, retireDeleteFailures: Number.POSITIVE_INFINITY });
+  let client: UpstreamClient | null = null;
+  try {
+    client = await connectSideband(`${fixture.gatewayWsBaseUrl}/${CALL_ID}`, { authorization: `Bearer ${fixture.token}` });
+    await fixture.waitForUpstreamHandshake();
+    fixture.releaseUpstreamHandshake();
+    assert.deepEqual(await nextClose(client), { code: 1011, reason: "realtime upstream rejected the sideband" });
+  } finally {
+    client?.terminate();
+    await fixture.close();
+  }
+}, 300_000);
+
 test("GET /v1/live/<call_id> answers 403 for a different valid principal without dialing upstream", async () => {
   const fixture = await startSidebandFixture();
   try {

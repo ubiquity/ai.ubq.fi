@@ -32,6 +32,7 @@ class FakeCheckbox {
 
 type Harness = {
   save: () => Promise<void>;
+  reload: () => Promise<void>;
   unsaved: () => boolean;
   switchTarget: () => void;
   seed: (saved: readonly string[], staged: readonly string[]) => void;
@@ -47,14 +48,20 @@ const loadHarness = () => {
   const requests: unknown[] = [];
   const notifications: string[] = [];
   let respond: ((response: SaveResponse) => void) | null = null;
+  let respondCatalog: ((response: SaveResponse) => void) | null = null;
   let rejectSave: ((error: Error) => void) | null = null;
   let changeListener: ((event: { target: FakeCheckbox }) => void) | null = null;
   const context = {
     HTMLInputElement: FakeCheckbox,
     apiUrl: (path: string) => path,
     console,
-    fetch: (_url: string, init: { body: string }) => {
-      requests.push(JSON.parse(init.body));
+    fetch: (_url: string, init: { body?: string; method?: string }) => {
+      if (init.method !== "POST") {
+        return new Promise<SaveResponse>((resolve) => {
+          respondCatalog = resolve;
+        });
+      }
+      requests.push(JSON.parse(init.body ?? ""));
       return new Promise<SaveResponse>((resolve, reject) => {
         respond = resolve;
         rejectSave = reject;
@@ -63,12 +70,15 @@ const loadHarness = () => {
     formatNumber: (value: number) => String(value),
     getAdminToken: () => "admin-token",
     hasAdminCredential: () => true,
+    loadProviderSelection: () => Promise.resolve(),
     modelsList: {
       addEventListener: (type: string, listener: (event: { target: FakeCheckbox }) => void) => {
         if (type === "change") changeListener = listener;
       },
     },
     modelsOnlySelectedInput: { checked: false },
+    providerRoster: [],
+    renderModelProviderFilters: () => {},
     setBadge: () => {},
     modelsWhitelistBadge: {},
     renderModelsMessage: () => {},
@@ -87,10 +97,12 @@ const loadHarness = () => {
     [
       shippedSlice("let modelsCatalog = [];", "const modelsPositiveTokenCount"),
       shippedSlice("const invalidateAdminModels =", "const modelsCatalogWarning ="),
+      shippedSlice("const loadModelsWhitelist =", "const saveModelsWhitelist ="),
       shippedSlice("const saveModelsWhitelist = async () => {", "const discardModelsChanges"),
       shippedSlice('modelsList.addEventListener("change"', 'modelsCheckAllBtn.addEventListener("click"'),
       "globalThis.harness = {",
       "  save: saveModelsWhitelist,",
+      "  reload: () => loadModelsWhitelist({ force: true }),",
       "  unsaved: modelsHasUnsavedChanges,",
       '  switchTarget: () => invalidateAdminModels("Target changed"),',
       "  seed: (saved, staged) => {",
@@ -112,12 +124,16 @@ const loadHarness = () => {
     assert.ok(respond, "a whitelist save request must be pending");
     respond({ ok: true, status: 200, json: () => Promise.resolve(body) });
   };
+  const loadCatalog = (body: unknown) => {
+    assert.ok(respondCatalog, "a model catalog request must be pending");
+    respondCatalog({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  };
   const fail = (transport: boolean) => {
     assert.ok(respond && rejectSave, "a whitelist save request must be pending");
     if (transport) rejectSave(new Error("offline"));
     else respond({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: "failed" } }) });
   };
-  return { harness, requests, notifications, toggle, succeed, fail };
+  return { harness, requests, notifications, toggle, succeed, loadCatalog, fail };
 };
 
 test("a model checked while the whitelist save is pending stays staged and unsaved", async () => {
@@ -177,6 +193,26 @@ test("a whitelist save with no later edit adopts the server's canonical ids and 
   assert.deepEqual(sorted(state.saved), ["a", "b"]);
   assert.deepEqual(sorted(state.staged), ["a", "b"]);
   assert.equal(harness.unsaved(), false);
+});
+
+test("a catalog reload settles a pending whitelist save before its fenced response", async () => {
+  const { harness, toggle, succeed, loadCatalog } = loadHarness();
+  harness.seed([], ["a"]);
+  const saving = harness.save();
+  const reloading = harness.reload();
+  assert.equal(harness.state().saving, false, "a catalog reload settles the superseded save immediately");
+
+  succeed({ ok: true, stored: true, model_ids: ["a"] });
+  await saving;
+  assert.equal(harness.state().saving, false);
+
+  loadCatalog({ data: { models: [{ id: "a" }, { id: "b" }], whitelist: { model_ids: ["a"] } } });
+  await reloading;
+  toggle("b", true);
+  const nextSaving = harness.save();
+  succeed({ ok: true, stored: true, model_ids: ["a", "b"] });
+  await nextSaving;
+  assert.equal(harness.state().saving, false);
 });
 
 for (const outcome of ["success", "http-error", "transport-error"]) {

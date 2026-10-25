@@ -98,6 +98,12 @@ impl SourceRefusalBody {
         }
     }
 }
+impl std::fmt::Display for RoutingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.error.as_ref(), formatter)
+    }
+}
+impl std::error::Error for RoutingError {}
 impl RoutingError {
     /// Cleanup is an internal diagnostic; the original wire status/body remain authoritative.
     pub(crate) fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {
@@ -520,7 +526,9 @@ mod source_cleanup_tests {
             &GatewayError::unavailable("cleanup detail", "cleanup_failed").into(),
         );
         assert_eq!(error.error.status, 400);
-        assert_eq!(error.source_body.unwrap().as_bytes(), body.as_bytes());
+        let actual = error.source_body.as_ref().map(|body| body.as_bytes());
+        assert_eq!(actual, Some(body.as_bytes()));
+        assert_eq!(error.to_string(), error.error.to_string());
         assert!(
             error
                 .error

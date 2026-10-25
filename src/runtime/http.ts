@@ -280,12 +280,26 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
       server.close();
     }
   });
+  /**
+   * Bun does not always release a keep-alive connection through
+   * `closeIdleConnections`, which leaves `server.close()` waiting until systemd
+   * kills the service. Close the remaining sockets once every active handler
+   * has settled; active streams still receive their normal drain window.
+   */
+  const closeLingeringConnections = (): void => {
+    if (active.size === 0) {
+      server.closeAllConnections();
+      return;
+    }
+    setTimeout(closeLingeringConnections, 25).unref();
+  };
   const shutdown = (): Promise<void> => {
     if (stopPromise) return stopPromise;
     stopPromise = (async () => {
       await ready;
       server.close();
       server.closeIdleConnections();
+      closeLingeringConnections();
       await upgrades.shutdown();
       await finished;
     })();

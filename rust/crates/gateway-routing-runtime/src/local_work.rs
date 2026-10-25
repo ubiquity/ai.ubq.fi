@@ -26,6 +26,7 @@ pub mod completion;
 mod coordination;
 
 /// Existing request metadata only. No caller supplies a replacement normalized body.
+#[derive(Clone)]
 pub struct LocalRequestMetadata {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
@@ -114,6 +115,46 @@ fn row_value<T: serde::de::DeserializeOwned>(row: &StoredRecord) -> Result<T, Ga
     serde_json::from_value(row.json_value()?.clone()).map_err(|_| invalid())
 }
 
+fn admitting_local_journal<I: TokenSource>(
+    input: &LocalAdmissionInput,
+    tokens: &I,
+    now: i64,
+) -> Result<(Journal, String), GatewayError> {
+    let context = &input.metadata.context;
+    let expected_key = match &input.metadata.principal.method {
+        gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => Some(key_id.as_str()),
+        _ => None,
+    };
+    if !(0..=MAX_SAFE_INTEGER).contains(&now)
+        || context.started_at_ms < 0
+        || now < context.started_at_ms
+        || context.request_id.0.trim().is_empty()
+        || context.principal.0.trim().is_empty()
+        || context.route.trim().is_empty()
+        || context.key_id.as_ref().map(|v| v.0.as_str()) != expected_key
+    {
+        return Err(invalid());
+    }
+    let digest = original_source_digest(input.original.original_source())?;
+    let nonce = tokens.next_token()?;
+    let mut row = Journal::empty(
+        2,
+        context.clone(),
+        digest,
+        now.checked_add(gateway_authority::REQUEST_LEASE_MS)
+            .ok_or_else(invalid)?,
+        now,
+    );
+    row.local_work = Some(LocalWorkRecord {
+        kind: LocalWorkKind::CodexResponsesCompaction,
+        owner_nonce: nonce.clone(),
+        binding_version: SOURCE_REQUEST_BINDING_VERSION,
+        phase: LocalWorkPhase::Admitting,
+        terminal: None,
+    });
+    Ok((row, nonce))
+}
+
 impl<
     S: QueryStore + Clone,
     I: TokenSource + Clone,
@@ -132,58 +173,9 @@ impl<
             return Err(host.cancellation_error().into());
         }
         let now = clock.now_ms()?;
+        let (mut row, nonce) = admitting_local_journal(&input, &tokens, now)?;
+        let digest = row.input_digest.clone();
         let context = &input.metadata.context;
-        let expected_key = match &input.metadata.principal.method {
-            gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => Some(key_id.as_str()),
-            _ => None,
-        };
-        if !(0..=MAX_SAFE_INTEGER).contains(&now)
-            || context.started_at_ms < 0
-            || now < context.started_at_ms
-            || context.request_id.0.trim().is_empty()
-            || context.principal.0.trim().is_empty()
-            || context.route.trim().is_empty()
-            || context.key_id.as_ref().map(|v| v.0.as_str()) != expected_key
-        {
-            return Err(invalid().into());
-        }
-        let digest = original_source_digest(input.original.original_source())?;
-        let nonce = tokens.next_token()?;
-        let local = LocalWorkRecord {
-            kind: LocalWorkKind::CodexResponsesCompaction,
-            owner_nonce: nonce.clone(),
-            binding_version: SOURCE_REQUEST_BINDING_VERSION,
-            phase: LocalWorkPhase::Admitting,
-            terminal: None,
-        };
-        let mut row = Journal {
-            v: 2,
-            context: context.clone(),
-            input_digest: digest.clone(),
-            api: None,
-            kernel: None,
-            cursor: 0,
-            attempts: vec![],
-            active: None,
-            model_sibling_retries: 0,
-            refreshed_versions: vec![],
-            recovery_attempted: false,
-            claude_unavailable: false,
-            semantic_committed: false,
-            terminal_intent: None,
-            finished: false,
-            recovering: false,
-            lease_expires_at_ms: now
-                .checked_add(gateway_authority::REQUEST_LEASE_MS)
-                .ok_or_else(invalid)?,
-            updated_at_ms: now,
-            extras_family: None,
-            extras_child_count: None,
-            extras_dispatch: None,
-            children: vec![],
-            kernel_override: None,
-            local_work: Some(local),
-        };
         journal::create(&store, &tokens, &row).await?;
         let admitted = reserve_original(
             &input.metadata.principal,

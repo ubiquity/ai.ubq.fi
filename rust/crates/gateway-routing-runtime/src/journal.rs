@@ -126,6 +126,40 @@ pub struct Journal {
     pub local_work: Option<LocalWorkRecord>,
 }
 impl Journal {
+    pub(crate) fn empty(
+        v: u32,
+        context: RequestContext,
+        input_digest: String,
+        lease_expires_at_ms: i64,
+        updated_at_ms: i64,
+    ) -> Self {
+        Self {
+            v,
+            context,
+            input_digest,
+            api: None,
+            kernel: None,
+            cursor: 0,
+            attempts: vec![],
+            active: None,
+            model_sibling_retries: 0,
+            refreshed_versions: vec![],
+            recovery_attempted: false,
+            claude_unavailable: false,
+            semantic_committed: false,
+            terminal_intent: None,
+            finished: false,
+            recovering: false,
+            lease_expires_at_ms,
+            updated_at_ms,
+            extras_family: None,
+            extras_child_count: None,
+            extras_dispatch: None,
+            children: vec![],
+            kernel_override: None,
+            local_work: None,
+        }
+    }
     pub(crate) fn decode(value: &SourceJson) -> Result<Self, GatewayError> {
         let local = journal_local_work(value)?;
         let row: Self = value

@@ -61,8 +61,11 @@ mod tests {
     use gateway_core::{js_string::JsString16, provider::UpstreamProvider};
 
     #[test]
-    fn instructions_tools_and_choice_never_cross_a_scalar_envelope() {
-        let request = SourceJson::parse(r#"{"instructions":"\ud800","tools":[{"type":"function","name":"f\udc00","parameters":{"\ud800":{"type":"string"}}}],"tool_choice":{"type":"function","name":"\udc00"}}"#).unwrap();
+    fn instructions_tools_and_choice_never_cross_a_scalar_envelope()
+    -> Result<(), gateway_core::error::GatewayError> {
+        let request = SourceJson::parse(
+            r#"{"instructions":"\ud800","tools":[{"type":"function","name":"f\udc00","parameters":{"\ud800":{"type":"string"}}}],"tool_choice":{"type":"function","name":"\udc00"}}"#,
+        )?;
         let plan = DecodePlan {
             provider: UpstreamProvider::Lithos,
             surface: ClientSurface::Responses,
@@ -78,8 +81,8 @@ mod tests {
         };
         let body = envelope(&plan, "completed");
         assert_eq!(
-            json::string(&s::get(&body, "instructions")).unwrap(),
-            JsString16::from_units(vec![0xd800])
+            json::string(&s::get(&body, "instructions")),
+            Some(JsString16::from_units(vec![0xd800]))
         );
         assert_eq!(s::get(&body, "tools"), s::get(&request, "tools"));
         assert_eq!(
@@ -91,5 +94,6 @@ mod tests {
         assert_eq!(event.field("response"), Some(body));
         assert!(event.encode_sse().contains("\\ud800"));
         assert_eq!(plan.request, request);
+        Ok(())
     }
 }

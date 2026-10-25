@@ -1,5 +1,9 @@
 //! Bounded incremental SSE parsing. Reader EOF never substitutes for a Responses terminal.
-use crate::{source_collector::ChatCollector, types::*, writer::ResponseWriter};
+use crate::{
+    source_collector::ChatCollector,
+    types::{ChatProfile, ClientSurface, DecodePlan, ProviderEvent, ResponseDecode, malformed},
+    writer::ResponseWriter,
+};
 use gateway_core::{error::GatewayError, provider::UpstreamProvider};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

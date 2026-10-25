@@ -1,3 +1,4 @@
+use crate::journal::unavailable;
 use crate::{
     journal::{self, Journal},
     policy::{self, RoutePlan},
@@ -17,6 +18,7 @@ use gateway_core::{
     query::QueryStore,
 };
 use gateway_providers::policy::{LithosWindows, WaitBudget};
+use gateway_providers::types::PreparedClaudeOrdinary;
 use std::{cell::RefCell, collections::BTreeSet};
 
 pub struct RoutingSession<S, I, C, H> {
@@ -30,8 +32,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) lithos: RefCell<LithosWindows>,
     pub(crate) lithos_no_retry: RefCell<BTreeSet<ModelId>>,
     pub(crate) lithos_attempted: RefCell<BTreeSet<ModelId>>,
-    pub(crate) claude_ordinary:
-        RefCell<Option<(ModelId, gateway_providers::types::PreparedClaudeOrdinary)>>,
+    pub(crate) claude_ordinary: RefCell<Option<(ModelId, PreparedClaudeOrdinary)>>,
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
     pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
@@ -69,7 +70,7 @@ impl<
     pub(crate) fn now(&self) -> Result<i64, GatewayError> {
         let now = self.clock.now_ms()?;
         if now < self.input.context.started_at_ms || now > 9_007_199_254_740_991 {
-            return Err(journal::unavailable(
+            return Err(unavailable(
                 "The routing clock moved backwards or overflowed.",
             ));
         }
@@ -104,7 +105,7 @@ impl<
             || now > 9_007_199_254_740_991
             || input.context.request_id.0.trim().is_empty()
         {
-            return Err(journal::unavailable("Invalid original request identity or clock.").into());
+            return Err(unavailable("Invalid original request identity or clock.").into());
         }
         let source_collator = host.source_string_collator();
         let plan = if family.is_some() {
@@ -113,43 +114,23 @@ impl<
             policy::plan(&input, now, source_collator.as_ref())?
         };
         let streamed = input.streamed();
-        let mut row = Journal {
-            // Fresh ordinary requests identify the new original-source binding explicitly.
-            // Existing generated extras keep their exact legacy scalar-serialized bytes.
-            v: if family.is_some() { 1 } else { 3 },
-            context: input.context.clone(),
-            input_digest: if family.is_some() {
+        // Fresh ordinary requests use source binding v3; generated extras keep v1 bytes.
+        let mut row = Journal::empty(
+            if family.is_some() { 1 } else { 3 },
+            input.context.clone(),
+            if family.is_some() {
                 gateway_auth::crypto::sha256_hex(input.original_source().as_bytes())
             } else {
                 crate::local_work::original_source_digest(input.original_source())?
             },
-            api: None,
-            kernel: None,
-            cursor: 0,
-            attempts: vec![],
-            active: None,
-            model_sibling_retries: 0,
-            refreshed_versions: vec![],
-            recovery_attempted: false,
-            claude_unavailable: false,
-            semantic_committed: false,
-            terminal_intent: None,
-            finished: false,
-            recovering: false,
-            lease_expires_at_ms: now
-                .checked_add(gateway_authority::REQUEST_LEASE_MS)
-                .ok_or_else(|| journal::unavailable("Lease overflow."))?,
-            updated_at_ms: now,
-            extras_family: family,
-            extras_child_count: None,
-            extras_dispatch: None,
-            children: Vec::new(),
-            kernel_override: None,
-            local_work: None,
-        };
+            now.checked_add(gateway_authority::REQUEST_LEASE_MS)
+                .ok_or_else(|| unavailable("Lease overflow."))?,
+            now,
+        );
+        row.extras_family = family;
         journal::create(&store, &tokens, &row).await?;
         let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
-        let admission = reserve_original(
+        if let Err(error) = reserve_original(
             &input.principal,
             &input.context,
             &mut row,
@@ -157,8 +138,8 @@ impl<
             &tokens,
             &clock,
         )
-        .await;
-        if let Err(error) = admission {
+        .await
+        {
             if let Some(api) = &row.api {
                 authority
                     .release_api_key(api, true, "routing_admission_failed", clock.now_ms()?)
@@ -223,17 +204,8 @@ impl<
     pub async fn from_local_admission(
         admission: crate::local_work::LocalProviderAdmission<S, I, C, H>,
     ) -> RoutingResult<Self> {
-        let metadata = admission.original_metadata();
         let input = RoutingInput::from_source_request(
-            crate::local_work::LocalRequestMetadata {
-                context: metadata.context.clone(),
-                principal: metadata.principal.clone(),
-                catalog: metadata.catalog.clone(),
-                runtime: metadata.runtime.clone(),
-                client_version: metadata.client_version.clone(),
-                native_session_id: metadata.native_session_id.clone(),
-                retry_prohibited: metadata.retry_prohibited,
-            },
+            admission.original_metadata().clone(),
             admission
                 .original
                 .input
@@ -247,13 +219,10 @@ impl<
             }
             let now = admission.original.clock.now_ms()?;
             if now < input.context.started_at_ms || now > 9_007_199_254_740_991 {
-                return Err(
-                    journal::unavailable("Invalid original request identity or clock.").into(),
-                );
+                return Err(unavailable("Invalid original request identity or clock.").into());
             }
             let plan = policy::plan(&input, now, source_collator.as_ref())?;
-            let conversation = admission.original.tokens.next_token()?;
-            Ok((plan, conversation))
+            Ok((plan, admission.original.tokens.next_token()?))
         })();
         let (plan, conversation_id) = match planned {
             Ok(planned) => planned,
@@ -334,15 +303,19 @@ impl<
             })
             .await?;
         let PublishedCredential::Scalar { material, .. } = &publication else {
-            return Err(journal::unavailable(
+            return Err(unavailable(
                 "Credential publication does not match the admitted provider/account.",
             ));
         };
         if material.secret.trim().is_empty() {
-            return Err(journal::unavailable(
+            return Err(unavailable(
                 "The selected provider credential is unavailable.",
             ));
         }
+        let paid_provider = matches!(
+            provider,
+            UpstreamProvider::Surplus | UpstreamProvider::Metered
+        );
         match (&codex, publication.fence()) {
             (
                 Some(expected),
@@ -356,23 +329,15 @@ impl<
                 && !source_revision.is_empty()
                 && !native_generation.is_empty() => {}
             (None, CredentialFence::Direct { provider: observed })
-                if provider == *observed
-                    && !matches!(
-                        provider,
-                        UpstreamProvider::Surplus | UpstreamProvider::Metered
-                    ) => {}
+                if provider == *observed && !paid_provider => {}
             (
                 None,
                 CredentialFence::Paid {
                     provider: observed, ..
                 },
-            ) if provider == *observed
-                && matches!(
-                    provider,
-                    UpstreamProvider::Surplus | UpstreamProvider::Metered
-                ) => {}
+            ) if provider == *observed && paid_provider => {}
             _ => {
-                return Err(journal::unavailable(
+                return Err(unavailable(
                     "Credential publication does not match the admitted provider/account.",
                 ));
             }
@@ -382,21 +347,19 @@ impl<
             .await?;
         Ok(publication)
     }
-    pub(crate) fn claude_ordinary(
-        &self,
-        model: &ModelId,
-    ) -> RoutingResult<gateway_providers::types::PreparedClaudeOrdinary> {
+    pub(crate) fn claude_ordinary(&self, model: &ModelId) -> RoutingResult<PreparedClaudeOrdinary> {
         let mut retained = self.claude_ordinary.borrow_mut();
-        if retained.is_none() {
-            let phase = crate::wire::claude_ordinary(&self.input, model, self.now()?)?;
-            *retained = Some((model.clone(), phase));
-        }
-        let (selected_model, phase) = retained.as_ref().expect("ordinary phase was initialized");
+        let (selected_model, phase) = match &mut *retained {
+            Some(retained) => retained,
+            slot @ None => {
+                let phase = crate::wire::claude_ordinary(&self.input, model, self.now()?)?;
+                slot.insert((model.clone(), phase))
+            }
+        };
         if selected_model != model || phase.surface() != self.input.surface {
-            return Err(journal::unavailable(
-                "Claude original model or surface association changed.",
-            )
-            .into());
+            return Err(
+                unavailable("Claude original model or surface association changed.").into(),
+            );
         }
         Ok(phase.clone())
     }
@@ -411,15 +374,13 @@ impl<
         if provider == UpstreamProvider::ClaudeCode {
             let phase = self.claude_ordinary.borrow();
             let Some((selected_model, phase)) = phase.as_ref() else {
-                return Err(journal::unavailable(
+                return Err(unavailable(
                     "Claude ordinary phase was not prepared before account selection.",
                 )
                 .into());
             };
             if selected_model != model {
-                return Err(
-                    journal::unavailable("Claude original model association changed.").into(),
-                );
+                return Err(unavailable("Claude original model association changed.").into());
             }
             return crate::wire::finalize_claude(
                 &self.input,
@@ -460,24 +421,15 @@ impl<
         fence: &CredentialFence,
         receipt: &PaidRoutingReceipt,
     ) -> Result<(), GatewayError> {
-        match fence {
-            CredentialFence::Paid {
-                owner_id,
-                owner_epoch,
-                configuration_generation,
-                credential_binding,
-                ..
-            } if owner_id == receipt.owner_id()
-                && owner_epoch == receipt.owner_epoch()
-                && configuration_generation == receipt.configuration_generation()
-                && credential_binding == receipt.credential_binding() =>
-            {
-                Ok(())
-            }
-            _ => Err(journal::unavailable(
-                "The paid credential does not match the current paid routing receipt.",
-            )),
-        }
+        matches!(fence, CredentialFence::Paid {
+            owner_id, owner_epoch, configuration_generation, credential_binding, ..
+        } if owner_id == receipt.owner_id() && owner_epoch == receipt.owner_epoch()
+            && configuration_generation == receipt.configuration_generation()
+            && credential_binding == receipt.credential_binding())
+        .then_some(())
+        .ok_or_else(|| {
+            unavailable("The paid credential does not match the current paid routing receipt.")
+        })
     }
     pub(crate) async fn paid_authorization(
         &self,
@@ -489,9 +441,7 @@ impl<
                 .prove_claude_unavailable(&self.plan.model, self.now()?)
                 .await?
                 .map(PaidAuthorization::ClaudeSubscriptionUnavailable)
-                .ok_or_else(|| {
-                    journal::unavailable("Claude full-cohort proof is unavailable or stale.")
-                });
+                .ok_or_else(|| unavailable("Claude full-cohort proof is unavailable or stale."));
         }
         if self.plan.paid.codex_enabled && !self.plan.paid.metered_only {
             match self
@@ -505,7 +455,7 @@ impl<
                 {
                     Ok(PaidAuthorization::SubscriptionUnavailable(proof))
                 }
-                _ => Err(journal::unavailable(
+                _ => Err(unavailable(
                     "Current full subscription-pool proof is required before paid dispatch.",
                 )),
             }
@@ -532,9 +482,7 @@ pub(crate) async fn reserve_original<
     if let AuthMethod::KvApiKey { key_id, .. } = &principal.method {
         let id = ApiKeyId(key_id.clone());
         if context.key_id.as_ref() != Some(&id) {
-            return Err(journal::unavailable(
-                "Principal and original key identity differ.",
-            ));
+            return Err(unavailable("Principal and original key identity differ."));
         }
         row.api = Some(
             authority

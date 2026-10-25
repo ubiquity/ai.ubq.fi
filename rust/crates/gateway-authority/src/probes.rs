@@ -1,6 +1,8 @@
 //! Bounded routing and scoped overage probe transitions.
 use crate::{
-    PROBE_LEASE_MS, add, invalid, keys, next_generation, nonnegative,
+    PROBE_LEASE_MS, add, invalid, keys,
+    native_control::actor::{self, NativeActorScope, NativeRenewalActor},
+    next_generation, nonnegative,
     routing::{class_name, read_view, validate_cohort},
     routing_types::{AdmittedAccount, CohortProof, ProbeLease, QuotaBlock, ScopedOverageProbe},
     store::{Authority, TokenSource},
@@ -12,7 +14,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Administrative R-only half-open transition, not provider reset proof or an election.
     pub async fn recheck_codex_slot(
         &self,
-        actor: &crate::native_control::actor::NativeRenewalActor,
+        actor: &NativeRenewalActor,
         config: &gateway_auth::types::AuthConfig,
         slot_number: u8,
     ) -> Result<bool, GatewayError> {
@@ -22,10 +24,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..3 {
             let now = self.fresh_time(0)?;
             let mut tx = self.transaction(now)?;
-            if crate::native_control::actor::read_current(&mut tx, actor.stored(), config)
+            if actor::read_current(&mut tx, actor.stored(), config)
                 .await?
                 .scope
-                != crate::native_control::actor::NativeActorScope::Admin
+                != NativeActorScope::Admin
             {
                 return Err(unavailable(
                     "admin_auth_required",
@@ -40,41 +42,31 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(false);
             };
             if slot.quota_blocked_until_ms.is_some_and(|v| v != 0) {
-                let prior_stable =
-                    slot.retained_reset_at_ms.is_some() && slot.reset_identity_stable;
-                if slot.quota_blocks.is_empty() {
-                    slot.quota_blocked_until_ms = Some(now);
-                } else {
-                    for block in slot.quota_blocks.values_mut() {
-                        block.blocked_until_ms = now;
-                        block.observed_at_ms = Some(now);
-                        block.reset_ambiguous = true;
-                    }
-                    let first = slot
-                        .quota_blocked_classes
-                        .iter()
-                        .find_map(|class| slot.quota_blocks.get(class))
-                        .or_else(|| slot.quota_blocks.values().next())
-                        .cloned();
-                    if let Some(block) = first {
-                        slot.quota_blocked_until_ms = Some(now);
-                        slot.quota_block_source = Some(block.source);
-                        slot.retained_reset_at_ms = block.reset_at_ms.or(slot.retained_reset_at_ms);
-                        slot.reset_identity_stable = block.reset_is_stable;
-                    }
+                for block in slot.quota_blocks.values_mut() {
+                    block.blocked_until_ms = now;
+                    block.observed_at_ms = Some(now);
+                    block.reset_ambiguous = true;
                 }
-                slot.reset_identity_ambiguous |=
-                    slot.quota_blocked_until_ms.is_some() || prior_stable;
+                let first = slot
+                    .quota_blocked_classes
+                    .iter()
+                    .find_map(|class| slot.quota_blocks.get(class))
+                    .or_else(|| slot.quota_blocks.values().next())
+                    .cloned();
+                slot.quota_blocked_until_ms = Some(now);
+                if let Some(block) = first {
+                    slot.quota_block_source = Some(block.source);
+                    slot.retained_reset_at_ms = block.reset_at_ms.or(slot.retained_reset_at_ms);
+                    slot.reset_identity_stable = block.reset_is_stable;
+                }
+                slot.reset_identity_ambiguous = true;
                 slot.quota_signal_observed_at_ms = Some(now);
                 slot.generation = next_generation(slot.generation)?;
                 slot.probe_lease = None;
                 state.updated_at_ms = now;
                 tx.put(&keys::routing(), &state, None)?;
             }
-            crate::native_control::actor::validate_current_time(
-                actor.stored(),
-                self.fresh_time(now)?,
-            )?;
+            actor::validate_current_time(actor.stored(), self.fresh_time(now)?)?;
             if tx.commit().await? {
                 return Ok(true);
             }
@@ -233,11 +225,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         .position(|account| account.enabled && &account.account_id_hash == hash)
                 })
                 .or_else(|| {
-                    view.active.as_ref().and_then(|active| {
-                        view.pool.accounts.iter().position(|account| {
-                            account.enabled
-                                && account.account_id_hash == active.binding.account_id_hash
-                        })
+                    let active = view.active.as_ref()?;
+                    view.pool.accounts.iter().position(|account| {
+                        account.enabled && account.account_id_hash == active.binding.account_id_hash
                     })
                 })
                 .or_else(|| {

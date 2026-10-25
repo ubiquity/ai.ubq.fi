@@ -9574,6 +9574,10 @@ const loadModelsWhitelist = async (options = {}) => {
     return;
   }
   const loadId = ++modelsLoadId;
+  if (modelsSaving) {
+    modelsSaving = false;
+    updateModelsStatus();
+  }
   setModelsWhitelistBadge("unknown", modelsLoadedAt ? "Cached · refreshing" : "Loading...");
   // The provider chips and labels come from the roster, so this tab asks for it
   // when the Providers prefetch has not already loaded the shared dictionary.
@@ -11053,7 +11057,7 @@ passkeyHandleInput.addEventListener("input", () => {
 });
 
 const openPassportLogin = () => {
-  globalThis.location.assign(buildBackendUrl("/auth/login", resolveBaseUrl()));
+  globalThis.location.assign(buildBackendUrl("/auth/login?return_to=%2Fadmin", resolveBaseUrl()));
 };
 passportLoginBtn.addEventListener("click", openPassportLogin);
 passportWidgetLoginBtn.addEventListener("click", openPassportLogin);

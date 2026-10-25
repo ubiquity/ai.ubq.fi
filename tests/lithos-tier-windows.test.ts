@@ -12,6 +12,7 @@ import {
   lithosFailoverTargetAt,
   lithosOpenFailoverWindow,
   lithosRefusalWait,
+  LITHOS_IMMEDIATE_FAILOVER_WAIT_POLICY,
   LITHOS_STREAMED_REFUSAL_WAIT_POLICY,
   waitForLithosRetry,
 } from "../src/provider/lithos-rate-limits.ts";
@@ -152,15 +153,34 @@ const withHttpFixture = async (run: (fixture: HttpFixture) => Promise<void>): Pr
   }
 };
 
-const dispatch = async (route: string, model: string, stream = false): Promise<Response> => {
+const dispatch = async (
+  route: string,
+  model: string,
+  stream = false,
+  options: Readonly<{ refusalWaitPolicy?: { maxWaits: number; totalCapMs: number } }> = {}
+): Promise<Response> => {
   const body = route === "chat" ? { model, messages: [{ role: "user", content: "hi" }], stream } : { model, input: "hi", stream };
   const request = new Request(`https://ai.ubq.fi/v1/${route === "chat" ? "chat/completions" : "responses"}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  return await (route === "chat" ? handleLithosChatCompletions(request, body, model) : handleLithosResponses(request, body, model));
+  return await (route === "chat" ? handleLithosChatCompletions(request, body, model) : handleLithosResponses(request, body, model, undefined, options));
 };
+
+test("a waterfall refusal returns immediately instead of spending the vendor reset window", async () =>
+  runSequence(async () => {
+    await withHttpFixture(async ({ models, setHandler }) => {
+      setHandler(() => refusal(60_000));
+      const started = performance.now();
+      const response = await dispatch("responses", BASE, false, { refusalWaitPolicy: LITHOS_IMMEDIATE_FAILOVER_WAIT_POLICY });
+      const elapsedMs = performance.now() - started;
+      assert.equal(response.status, 429, "the refusal is relayed to the waterfall");
+      assert.ok(elapsedMs < 2_000, `the hop must not wait; elapsed ${Math.round(elapsedMs)}ms`);
+      assert.deepEqual(models, [BASE], "the provider is asked once and the waterfall owns the next hop");
+      await response.body?.cancel();
+    });
+  }));
 
 test("real Lithos Chat and Responses HTTP dispatch returns to each recovered rung at its own reset", async () =>
   runSequence(async (step) => {

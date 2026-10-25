@@ -287,136 +287,133 @@ pub fn inspect_source_rows(
     audit.counts.insert("kernel_repo_limits".into(), repo);
     audit.counts.insert("kernel_org_limits".into(), org);
     if repo > 0 || org > 0 {
-        audit.errors.push(
-            format!("legacy combined kernel quota records remain: repo={repo} org={org}")
-                .as_str()
-                .into(),
-        );
+        audit.errors.push(JsString16::from_utf8(&format!(
+            "legacy combined kernel quota records remain: repo={repo} org={org}"
+        )));
     }
     for pair in pairs {
-        let record = &pair.id;
-        let hash = &pair.hash;
-        let id = pair.key_id.as_str();
-        if !source_fields::equals(record, "usage_quota_version", &json!(3))
-            || !source_fields::equals(hash, "usage_quota_version", &json!(3))
+        inspect_key_usage(rows, &pair, now, &mut audit)?;
+    }
+    Ok(audit)
+}
+fn inspect_key_usage(
+    rows: &[ObservedRow],
+    pair: &keys::AuditedKeyPair,
+    now: i64,
+    audit: &mut Audit,
+) -> Result<(), GatewayError> {
+    let record = &pair.id;
+    let hash = &pair.hash;
+    let id = pair.key_id.as_str();
+    if !source_fields::equals(record, "usage_quota_version", &json!(3))
+        || !source_fields::equals(hash, "usage_quota_version", &json!(3))
+    {
+        audit.errors.push(JsString16::from_utf8(&format!(
+            "api key quota ledger version is not V3: {id}"
+        )));
+        return Ok(());
+    }
+    if !source_fields::equals(record, "usage_limit_requests", &json!(-1)) {
+        // Same revoked-clock rule as counter::migration_policy_now, without
+        // converting the complete model-bearing source policy into Value.
+        let clock = if source_fields::member(record, "revoked_at_ms")
+            .is_some_and(|value| value.as_str() == "null")
         {
-            audit.errors.push(
-                format!("api key quota ledger version is not V3: {id}")
-                    .as_str()
-                    .into(),
-            );
-            continue;
+            now
+        } else {
+            source_fields::integer(record, "usage_reset_at_ms")
+                .map(|reset| (reset - 1).max(0))
+                .ok_or_else(|| crate::error("Invalid API-key migration clock."))?
+        };
+        let span = source_fields::integer(record, "window_ms")
+            .ok_or_else(|| crate::error("Invalid API-key window."))?;
+        let initial = source_fields::integer(record, "usage_reset_at_ms")
+            .ok_or_else(|| crate::error("Invalid API-key reset."))?
+            - span;
+        let start = if clock < initial + span {
+            initial
+        } else {
+            initial + (clock - initial).div_euclid(span) * span
+        };
+        let reset = start + span;
+        let version = format!("v3:{span}");
+        let wp = vec![
+            json!("uos_ai"),
+            json!("api_key_usage"),
+            json!("v3"),
+            json!("window"),
+            json!(id),
+            json!(version),
+            json!(start),
+        ];
+        let valid = rows
+            .iter()
+            .find(|r| r.parts == wp)
+            .map(ObservedRow::value)
+            .transpose()?
+            .is_some_and(|v| {
+                valid_api_window(v)
+                    && text(v, "key_id") == Some(id)
+                    && text(v, "policy_version") == Some(&version)
+                    && integer(v, "window_start_ms") == Some(start)
+                    && integer(v, "window_reset_at_ms") == Some(reset)
+            });
+        if !valid {
+            audit.errors.push(JsString16::from_utf8(&format!(
+                "bounded V3 aggregate is missing or invalid: {id}"
+            )));
         }
-        if !source_fields::equals(record, "usage_limit_requests", &json!(-1)) {
-            // Same revoked-clock rule as counter::migration_policy_now, without
-            // converting the complete model-bearing source policy into Value.
-            let clock = if source_fields::member(record, "revoked_at_ms")
-                .is_some_and(|value| value.as_str() == "null")
-            {
-                now
-            } else {
-                source_fields::integer(record, "usage_reset_at_ms")
-                    .map(|reset| (reset - 1).max(0))
-                    .ok_or_else(|| crate::error("Invalid API-key migration clock."))?
-            };
-            let span = source_fields::integer(record, "window_ms")
-                .ok_or_else(|| crate::error("Invalid API-key window."))?;
-            let initial = source_fields::integer(record, "usage_reset_at_ms")
-                .ok_or_else(|| crate::error("Invalid API-key reset."))?
-                - span;
-            let start = if clock < initial + span {
-                initial
-            } else {
-                initial + (clock - initial).div_euclid(span) * span
-            };
-            let reset = start + span;
-            let version = format!("v3:{span}");
-            let wp = vec![
-                json!("uos_ai"),
-                json!("api_key_usage"),
-                json!("v3"),
-                json!("window"),
-                json!(id),
-                json!(version),
-                json!(start),
-            ];
-            let valid = rows
-                .iter()
-                .find(|r| r.parts == wp)
-                .map(ObservedRow::value)
-                .transpose()?
-                .is_some_and(|v| {
-                    valid_api_window(v)
-                        && text(v, "key_id") == Some(id)
-                        && text(v, "policy_version") == Some(&version)
-                        && integer(v, "window_start_ms") == Some(start)
-                        && integer(v, "window_reset_at_ms") == Some(reset)
-                });
-            if !valid {
-                audit.errors.push(
-                    format!("bounded V3 aggregate is missing or invalid: {id}")
-                        .as_str()
-                        .into(),
-                );
-            }
-            let bp = vec![
-                json!("uos_ai"),
-                json!("migrations"),
-                json!("kv_read_incident_v2"),
-                json!("api_key_usage_baseline"),
-                json!(id),
-                json!(version),
-                json!(start),
-            ];
-            let valid = rows
-                .iter()
-                .find(|r| r.parts == bp)
-                .map(ObservedRow::value)
-                .transpose()?
-                .is_some_and(|v| {
-                    super::counter::valid_baseline(v)
-                        && text(v, "key_id") == Some(id)
-                        && text(v, "policy_version") == Some(&version)
-                        && integer(v, "window_start_ms") == Some(start)
-                });
-            if !valid {
-                audit.errors.push(
-                    format!(
-                        "bounded counter migration baseline is missing, stale, or invalid: {id}"
-                    )
-                    .as_str()
-                    .into(),
-                );
-            }
+        let bp = vec![
+            json!("uos_ai"),
+            json!("migrations"),
+            json!("kv_read_incident_v2"),
+            json!("api_key_usage_baseline"),
+            json!(id),
+            json!(version),
+            json!(start),
+        ];
+        let valid = rows
+            .iter()
+            .find(|r| r.parts == bp)
+            .map(ObservedRow::value)
+            .transpose()?
+            .is_some_and(|v| {
+                super::counter::valid_baseline(v)
+                    && text(v, "key_id") == Some(id)
+                    && text(v, "policy_version") == Some(&version)
+                    && integer(v, "window_start_ms") == Some(start)
+            });
+        if !valid {
+            audit.errors.push(JsString16::from_utf8(&format!(
+                "bounded counter migration baseline is missing, stale, or invalid: {id}"
+            )));
         }
-        if let Some(request) = source_fields::member(record, "paid_fallback_reservation_request_id")
-            .filter(|value| value.as_str() != "null")
-            && !rows.iter().any(|row| {
-                under(&row.parts, &["uos_ai", "paid_fallback", "ledger"])
-                    && gateway_core::source_control::decode_source_control_record(&row.record)
-                        .is_ok_and(|value| {
-                            source_fields::text(&value, "key_id").as_deref() == Some(id)
-                                && source_fields::member(&value, "id").is_some_and(|actual| {
-                                    source_fields::same_value(&actual, &request)
-                                })
-                                && (source_fields::equals(
-                                    &value,
-                                    "billing_status",
-                                    &json!("pending"),
-                                ) || source_fields::equals(
+    }
+    inspect_paid_reference(rows, record, id, audit);
+    Ok(())
+}
+
+fn inspect_paid_reference(rows: &[ObservedRow], record: &SourceJson, id: &str, audit: &mut Audit) {
+    if let Some(request) = source_fields::member(record, "paid_fallback_reservation_request_id")
+        .filter(|value| value.as_str() != "null")
+        && !rows.iter().any(|row| {
+            under(&row.parts, &["uos_ai", "paid_fallback", "ledger"])
+                && gateway_core::source_control::decode_source_control_record(&row.record)
+                    .is_ok_and(|value| {
+                        source_fields::text(&value, "key_id").as_deref() == Some(id)
+                            && source_fields::member(&value, "id")
+                                .is_some_and(|actual| source_fields::same_value(&actual, &request))
+                            && (source_fields::equals(&value, "billing_status", &json!("pending"))
+                                || source_fields::equals(
                                     &value,
                                     "billing_status",
                                     &json!("unresolved"),
                                 ))
-                        })
-            })
-        {
-            audit.errors.push(
-                format!("paid fallback reservation has no pending ledger record: {id}")
-                    .as_str()
-                    .into(),
-            );
-        }
+                    })
+        })
+    {
+        audit.errors.push(JsString16::from_utf8(&format!(
+            "paid fallback reservation has no pending ledger record: {id}"
+        )));
     }
-    Ok(audit)
 }

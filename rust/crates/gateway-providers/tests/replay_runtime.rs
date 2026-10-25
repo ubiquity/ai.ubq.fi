@@ -200,3 +200,113 @@ fn lone_surrogate_native_replay_survives_prepare_source_request() {
     );
     assert!(!body.contains("fffd"), "{body}");
 }
+
+#[test]
+fn native_replay_arguments_require_matching_valid_object_bytes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        ("missing", None, false),
+        ("null", Some(Value::Null), false),
+        ("number", Some(json!(0)), false),
+        ("empty", Some(json!("")), false),
+        ("malformed", Some(json!("{")), false),
+        ("json_null", Some(json!("null")), false),
+        (
+            "different_object",
+            Some(json!(r#"{"path":"other.txt"}"#)),
+            false,
+        ),
+        (
+            "different_object_bytes",
+            Some(json!(r#"{ "path": "a.txt" }"#)),
+            false,
+        ),
+        ("matching_object", Some(json!(r#"{"path":"a.txt"}"#)), true),
+    ];
+    for transport in [
+        replay::ReplayTransport::Messages,
+        replay::ReplayTransport::Chat,
+    ] {
+        let native = match transport {
+            replay::ReplayTransport::Messages => json!({"role":"assistant","content":[
+                {"type":"thinking","thinking":"thought","signature":"private-signature"},
+                {"type":"text","text":"answer"},
+                {"type":"tool_use","id":"call_1","name":"read_file","input":{"path":"a.txt"}}
+            ]}),
+            replay::ReplayTransport::Chat => {
+                json!({"role":"assistant","content":"answer","reasoning_content":"thought",
+                    "tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}}]
+                })
+            }
+        };
+        for (label, arguments, expected) in &cases {
+            let mut output = messages_output();
+            let fields = output[2]
+                .as_object_mut()
+                .ok_or("missing function-call fixture object")?;
+            if let Some(arguments) = arguments {
+                fields.insert("arguments".into(), arguments.clone());
+            } else {
+                assert!(fields.remove("arguments").is_some());
+            }
+            assert_eq!(
+                replay::ReplayStore::default().remember_decoded_native(
+                    context(),
+                    &sources(&output),
+                    source(&native),
+                    transport,
+                    &ToolMap::new(),
+                    1,
+                ),
+                *expected,
+                "output arguments: {transport:?}/{label}"
+            );
+        }
+        if transport == replay::ReplayTransport::Chat {
+            for (label, arguments, expected) in &cases {
+                let mut changed = native.clone();
+                let fields = changed["tool_calls"][0]["function"]
+                    .as_object_mut()
+                    .ok_or("missing native function fixture")?;
+                if let Some(arguments) = arguments {
+                    fields.insert("arguments".into(), arguments.clone());
+                } else {
+                    assert!(fields.remove("arguments").is_some());
+                }
+                assert_eq!(
+                    replay::ReplayStore::default().remember_decoded_native(
+                        context(),
+                        &sources(&messages_output()),
+                        source(&changed),
+                        transport,
+                        &ToolMap::new(),
+                        1,
+                    ),
+                    *expected,
+                    "native arguments: {label}"
+                );
+            }
+        } else {
+            for input in [None, Some(Value::Null)] {
+                let mut changed = native.clone();
+                let fields = changed["content"][2]
+                    .as_object_mut()
+                    .ok_or("missing native tool-use fixture")?;
+                if let Some(input) = input {
+                    fields.insert("input".into(), input);
+                } else {
+                    assert!(fields.remove("input").is_some());
+                }
+                assert!(!replay::ReplayStore::default().remember_decoded_native(
+                    context(),
+                    &sources(&messages_output()),
+                    source(&changed),
+                    transport,
+                    &ToolMap::new(),
+                    1,
+                ));
+            }
+        }
+    }
+    Ok(())
+}

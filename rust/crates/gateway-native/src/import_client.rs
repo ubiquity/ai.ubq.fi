@@ -1,15 +1,16 @@
 //! Same-host import preparation and signed request construction only.
 //! No sockets, document readers, Worker relay, refresh, response or completion.
-use gateway_auth::{
-    crypto::sha256_hex,
-    native::*,
-    native_auth::NativeTransportIdentity,
-    native_import::{
-        NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
-        NativeImportMetadata, NativeImportTarget,
-    },
-    types::AuthConfig,
+use gateway_auth::crypto::sha256_hex;
+use gateway_auth::native::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
+    NATIVE_VERSION_HEADER, NATIVE_WIRE_VERSION,
 };
+use gateway_auth::native_auth::NativeTransportIdentity;
+use gateway_auth::native_import::{
+    NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
+    NativeImportMetadata, NativeImportTarget,
+};
+use gateway_auth::types::AuthConfig;
 use gateway_authority::{
     native_control::{
         NativeRenewalCancellation,

@@ -407,8 +407,10 @@ fn systemone_default_and_exact_error_envelopes_follow_source() {
 }
 
 #[test]
-fn opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind() {
-    let parsed = extras::parse_image(&json!({"prompt":"image","n":2}), false).unwrap();
+fn opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind() -> Result<(), String>
+{
+    let parsed = extras::parse_image(&json!({"prompt":"image","n":2}), false)
+        .map_err(|error| format!("{error:?}"))?;
     assert_eq!(parsed.count(), 2);
     let plan = extras::image::prepare_parsed_image(&parsed, &"host".into(), "original");
     assert_eq!(
@@ -416,17 +418,19 @@ fn opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind() 
         "generate"
     );
     assert!(extras::parse_image(&json!({"prompt":"image","n":0}), false).is_err());
+    Ok(())
 }
 
 #[test]
-fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validation() {
+fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validation()
+-> Result<(), String> {
     let file = extras::MultipartFile {
         name: "image".into(),
         filename: "image.png".into(),
         content_type: "image/png".into(),
         bytes: vec![1],
     };
-    let parsed = extras::parse_multipart_image(&json!({"prompt":"image","n":" 2 ","stream":"false","output_compression":"1e2","response_format":"b64_json"}), std::slice::from_ref(&file)).unwrap();
+    let parsed = extras::parse_multipart_image(&json!({"prompt":"image","n":" 2 ","stream":"false","output_compression":"1e2","response_format":"b64_json"}), std::slice::from_ref(&file)).map_err(|error| format!("{error:?}"))?;
     let plan = extras::image::prepare_parsed_image(&parsed, &"host".into(), "original");
     assert_eq!(plan.count, 2);
     assert_eq!(scalar_source(&plan.responses)["tools"][0]["action"], "edit");
@@ -444,18 +448,22 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
         );
     }
     error(
-        extras::parse_multipart_image(&json!({"prompt":"image","n":"0"}), &[]).unwrap_err(),
+        extras::parse_multipart_image(&json!({"prompt":"image","n":"0"}), &[])
+            .err()
+            .ok_or("expected source rejection")?,
         "n must be an integer from 1 to 10.",
         "invalid_request_error",
         Some(Some("n")),
     );
     error(
         extras::parse_multipart_image(&json!({"prompt":"image","moderation":"auto"}), &[])
-            .unwrap_err(),
+            .err()
+            .ok_or("expected source rejection")?,
         "Unsupported image edit field: moderation.",
         "invalid_request_error",
         Some(Some("moderation")),
     );
+    Ok(())
 }
 
 fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {

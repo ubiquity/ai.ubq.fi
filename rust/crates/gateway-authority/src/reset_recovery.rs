@@ -16,6 +16,18 @@ use gateway_core::{
     state::AuthorityStore,
 };
 
+fn existing_reset_block_reason(row: &ResetRecord, now: i64) -> Result<Option<&str>, GatewayError> {
+    let error = row.last_error_code.as_deref();
+    Ok(Some(match row.state {
+        ResetState::Verified if row.verified_at_ms.is_some() => return Ok(None),
+        ResetState::Claimed if row.lease_expires_at_ms <= now => "unsubmitted_transaction",
+        ResetState::Claimed => "in_progress",
+        ResetState::Submitted | ResetState::Unknown => "terminal_outcome_ambiguous",
+        ResetState::Rejected => error.unwrap_or("previously_rejected"),
+        ResetState::Verified => return Err(invalid("Verified reset timestamp is missing.")),
+    }))
+}
+
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Source preexistingBankedReset: never request inventory or create a redemption/budget.
     pub async fn reconcile_full_pool_reset(
@@ -67,23 +79,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 if row.v != 1 || row.identity != invocation.identity {
                     return Err(invalid("Existing reset record context does not match."));
                 }
-                if row.state != ResetState::Verified || row.verified_at_ms.is_none() {
-                    let reason = match row.state {
-                        ResetState::Claimed if row.lease_expires_at_ms <= now => {
-                            "unsubmitted_transaction".into()
-                        }
-                        ResetState::Claimed => "in_progress".into(),
-                        ResetState::Submitted | ResetState::Unknown => {
-                            "terminal_outcome_ambiguous".into()
-                        }
-                        ResetState::Rejected => row
-                            .last_error_code
-                            .unwrap_or_else(|| "previously_rejected".into()),
-                        ResetState::Verified => {
-                            return Err(invalid("Verified reset timestamp is missing."));
-                        }
-                    };
-                    return Ok(FullPoolResetReconciliation::Blocked { reason });
+                if let Some(reason) = existing_reset_block_reason(&row, now)? {
+                    return Ok(FullPoolResetReconciliation::Blocked {
+                        reason: reason.into(),
+                    });
                 }
                 existing = Some((candidate, row));
                 break;

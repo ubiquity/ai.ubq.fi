@@ -384,7 +384,8 @@ fn kernel_legacy_reserved_aggregate_is_reconciled_only_from_complete_inventory()
 }
 
 #[test]
-fn kernel_audit_rejects_reset_mismatch_and_bad_terminal_intervals() {
+fn kernel_audit_rejects_reset_mismatch_and_bad_terminal_intervals()
+-> Result<(), gateway_core::error::GatewayError> {
     let mut w = window();
     w["reserved_requests"] = json!(1);
     let observed = row(
@@ -413,15 +414,12 @@ fn kernel_audit_rejects_reset_mismatch_and_bad_terminal_intervals() {
         ]),
         r,
     );
-    assert!(
-        audit::usage::inspect_kernel(&[observed, reservation_row])
-            .unwrap()
-            .errors
-            .iter()
-            .any(|e| e
-                .try_utf8()
-                .is_ok_and(|text| text.contains("reset is inconsistent")))
-    );
+    let findings = audit::usage::inspect_kernel(&[observed, reservation_row])?;
+    assert!(findings.errors.iter().any(|error| {
+        error
+            .try_utf8()
+            .is_ok_and(|text| text.contains("reset is inconsistent"))
+    }));
     let mut invalid = reservation("request", "reserved");
     invalid["lease_expires_at_ms"] = json!(101);
     assert!(kernel::normalize_reservation(&invalid, "repo", "owner", Some("repo")).is_none());
@@ -429,4 +427,5 @@ fn kernel_audit_rejects_reset_mismatch_and_bad_terminal_intervals() {
     invalid["release_reason"] = json!("  ");
     assert!(kernel::normalize_reservation(&invalid, "repo", "owner", Some("repo")).is_none());
     assert!(audit::inspect_source_rows(&[], false, 500).is_err());
+    Ok(())
 }

@@ -1,19 +1,18 @@
 //! Managed-source publication is separate from external access_publish v1.
 //! Only an access projection is encoded; physical refresh material stays native.
-use crate::{
-    transport::{
-        NativePublicationSender, OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest,
-    },
-    wire::{PreparedPublicationCommand, PublicationDisposition, invalid},
+use crate::transport::{
+    NativePublicationSender, OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest,
 };
-use gateway_auth::{
-    crypto::{Secret, base64url},
-    managed_access::ManagedAccessProjection,
-    native::*,
-    native_auth::NativeTransportIdentity,
-    native_credentials::native_refresh_time_ns,
-    provider_credentials::{codex_credential_identity, valid_native_generation},
+use crate::wire::{PreparedPublicationCommand, PublicationDisposition, invalid};
+use gateway_auth::crypto::{Secret, base64url};
+use gateway_auth::managed_access::ManagedAccessProjection;
+use gateway_auth::native::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
+    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
+use gateway_auth::native_auth::NativeTransportIdentity;
+use gateway_auth::native_credentials::native_refresh_time_ns;
+use gateway_auth::provider_credentials::{codex_credential_identity, valid_native_generation};
 use gateway_core::error::GatewayError;
 use serde::{Deserialize, Serialize};
 

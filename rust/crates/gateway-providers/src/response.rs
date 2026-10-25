@@ -1,7 +1,10 @@
 //! Buffered response validation and translation. Transport success is not semantic completion.
 use crate::{
     source as s, tools,
-    types::*,
+    types::{
+        ChatProfile, ClientSurface, DecodePlan, DecodedResponse, Headers, ProviderEvent,
+        ResponseDecode, header, malformed,
+    },
     usage,
     writer::{ResponseWriter, envelope, finish_disposition},
 };
@@ -381,72 +384,90 @@ pub fn decode_response(
         });
     }
     if is_event_stream(plan.provider, status, headers) {
-        let mut decoder = crate::sse::StreamDecoder::new(plan.clone());
-        let mut events = decoder.push(bytes)?;
-        events.extend(decoder.finish()?);
-        // The decoder stops at the first terminal. An error must not fall back to
-        // an earlier response.created payload or the generic completed sentinel.
-        if plan.surface == ClientSurface::Responses
-            && let Some(event) = events
-                .iter()
-                .find(|event| event.type_name().as_deref() == Some("error"))
-        {
-            let body = if plan.stream {
-                output_headers.insert("Content-Type".into(), "text/event-stream".into());
-                event.data.clone()
-            } else {
-                s::generated(&json!({"error":{
-                    "message":s::control(&s::get(&event.data,"message")).unwrap_or_else(||"Upstream Responses stream ended unexpectedly.".into()),
-                    "type":"invalid_request_error",
-                    "code":s::control(&s::get(&event.data,"code")).unwrap_or_else(||"server_error".into())
-                }}))
-            };
-            return Ok(DecodedResponse {
-                status: if plan.stream { status } else { 502 },
-                headers: output_headers,
-                body,
-                events,
-                terminal: Some(SemanticTerminal::Error),
-                usage: None,
-                native_replay: None,
-                raw_body: None,
-            });
-        }
-        let body = events
+        decode_stream_response(plan, status, bytes, output_headers)
+    } else {
+        decode_buffered_response(plan, status, headers, bytes, output_headers)
+    }
+}
+fn decode_stream_response(
+    plan: &DecodePlan,
+    status: u16,
+    bytes: &[u8],
+    mut output_headers: Headers,
+) -> Result<DecodedResponse, GatewayError> {
+    let mut decoder = crate::sse::StreamDecoder::new(plan.clone());
+    let mut events = decoder.push(bytes)?;
+    events.extend(decoder.finish()?);
+    // The decoder stops at the first terminal. An error must not fall back to
+    // an earlier response.created payload or the generic completed sentinel.
+    if plan.surface == ClientSurface::Responses
+        && let Some(event) = events
             .iter()
-            .rev()
-            .find_map(|e| e.field("response"))
-            .unwrap_or_else(s::null);
-        let mut body = if plan.surface == ClientSurface::Chat {
-            collect_chat_events(&events, plan)?
-        } else {
-            body
-        };
-        if plan.surface == ClientSurface::Chat
-            && let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat)
-        {
-            s::set(&mut body, "usage", s::generated(&usage));
-        }
-        if plan.stream {
+            .find(|event| event.type_name().as_deref() == Some("error"))
+    {
+        let body = if plan.stream {
             output_headers.insert("Content-Type".into(), "text/event-stream".into());
-        }
-        let terminal = terminal_for(&body).or_else(|| {
-            decoder
-                .terminal_observed()
-                .then_some(SemanticTerminal::Completed)
-        });
-        let usage = crate::source_collector::usage(&s::get(&body, "usage"));
+            event.data.clone()
+        } else {
+            s::generated(&json!({"error":{
+                "message":s::control(&s::get(&event.data,"message")).unwrap_or_else(||"Upstream Responses stream ended unexpectedly.".into()),
+                "type":"invalid_request_error",
+                "code":s::control(&s::get(&event.data,"code")).unwrap_or_else(||"server_error".into())
+            }}))
+        };
         return Ok(DecodedResponse {
-            status,
+            status: if plan.stream { status } else { 502 },
             headers: output_headers,
             body,
             events,
-            terminal,
-            usage,
-            native_replay: decoder.native_replay().cloned(),
+            terminal: Some(SemanticTerminal::Error),
+            usage: None,
+            native_replay: None,
             raw_body: None,
         });
     }
+    let body = events
+        .iter()
+        .rev()
+        .find_map(|e| e.field("response"))
+        .unwrap_or_else(s::null);
+    let mut body = if plan.surface == ClientSurface::Chat {
+        crate::source_response::collect(&events, plan)?
+    } else {
+        body
+    };
+    if plan.surface == ClientSurface::Chat
+        && let Some(usage) = decoder.observed_usage().and_then(usage::responses_to_chat)
+    {
+        s::set(&mut body, "usage", s::generated(&usage));
+    }
+    if plan.stream {
+        output_headers.insert("Content-Type".into(), "text/event-stream".into());
+    }
+    let terminal = terminal_for(&body).or_else(|| {
+        decoder
+            .terminal_observed()
+            .then_some(SemanticTerminal::Completed)
+    });
+    let usage = crate::source_collector::usage(&s::get(&body, "usage"));
+    Ok(DecodedResponse {
+        status,
+        headers: output_headers,
+        body,
+        events,
+        terminal,
+        usage,
+        native_replay: decoder.native_replay().cloned(),
+        raw_body: None,
+    })
+}
+fn decode_buffered_response(
+    plan: &DecodePlan,
+    status: u16,
+    headers: &Headers,
+    bytes: &[u8],
+    mut output_headers: Headers,
+) -> Result<DecodedResponse, GatewayError> {
     let value: Value = serde_json::from_slice(bytes)
         .map_err(|_| malformed("Upstream response was not valid JSON."))?;
     let mut buffered_plan = plan.clone();
@@ -486,69 +507,15 @@ pub fn decode_response(
     }
     let mut events = vec![];
     let mut native_replay = None;
+    let value = &value;
     let body = match plan.decode {
-        ResponseDecode::Chat => {
-            let normalized = normalize_chat_completion_fragment(&value, plan)?;
-            if plan.provider == UpstreamProvider::Cerebras
-                && !crate::policy::chat_has_answer(&normalized)
-            {
-                return Err(cerebras_empty());
-            }
-            if plan.stream {
-                events = crate::finalize::buffered_chat_events(&normalized, plan);
-            }
-            chat_model_body(&normalized, plan)
-        }
-        ResponseDecode::ChatToResponses(_) | ResponseDecode::AnthropicChatToResponses => {
-            let profile = if plan.decode == ResponseDecode::AnthropicChatToResponses {
-                ChatProfile::Claude
-            } else {
-                profile_for(plan.decode)
-            };
-            let projected = if plan.decode == ResponseDecode::AnthropicChatToResponses {
-                let mut copy = value.clone();
-                let reasoning =
-                    crate::claude_chat_stream::readable_reasoning(&value["choices"][0]["message"]);
-                if !reasoning.is_empty() {
-                    copy["choices"][0]["message"]["reasoning_content"] = json!(reasoning);
-                }
-                copy
-            } else {
-                value.clone()
-            };
-            let completion = normalize_chat_completion_fragment(&projected, plan)?;
-            if plan.provider == UpstreamProvider::Cerebras
-                && !crate::policy::chat_has_answer(&completion)
-            {
-                return Err(cerebras_empty());
-            }
-            let body = chat_completion_to_responses(&completion, plan, profile);
-            if s::is(&s::get(&body, "status"), "completed")
-                && !crate::source_policy::response_has_answer(&body)
-            {
-                return Err(GatewayError::new(
-                    502,
-                    "Upstream response completed with no translated semantic output.",
-                    Some("empty_upstream_completion"),
-                )
-                .with_type("server_error"));
-            }
-            if plan.stream {
-                events = replay_chat(&completion, plan, profile);
-            }
-            if plan.decode == ResponseDecode::AnthropicChatToResponses
-                && s::is(&s::get(&body, "status"), "completed")
-            {
-                native_replay = value["choices"][0].get("message").cloned();
-            }
-            if plan.surface == ClientSurface::Chat {
-                crate::source_response::to_chat(&body, plan)?
-            } else {
-                body
-            }
+        ResponseDecode::Chat
+        | ResponseDecode::ChatToResponses(_)
+        | ResponseDecode::AnthropicChatToResponses => {
+            decode_buffered_chat(value, plan, &mut events, &mut native_replay)?
         }
         ResponseDecode::AnthropicToResponses => {
-            let (body, translated) = decode_anthropic(&value, plan)?;
+            let (body, translated) = decode_anthropic(value, plan)?;
             events = if plan.stream { translated } else { vec![] };
             if s::is(&s::get(&body, "status"), "completed") {
                 native_replay = Some(json!({"role":"assistant","content":value["content"]}));
@@ -563,22 +530,17 @@ pub fn decode_response(
             if !value.is_object() {
                 return Err(malformed("Upstream Responses body is invalid."));
             }
-            if value["status"] == "completed" && !crate::policy::response_has_answer(&value) {
-                return Err(GatewayError::new(
-                    502,
-                    "Upstream response completed with no translated semantic output.",
-                    Some("empty_upstream_completion"),
-                )
-                .with_type("server_error"));
+            if value["status"] == "completed" && !crate::policy::response_has_answer(value) {
+                return Err(empty_completion());
             }
             if plan.decode == ResponseDecode::ResponsesToChat {
-                response_to_chat(&value, plan)?
+                response_to_chat(value, plan)?
             } else {
-                s::generated(&value)
+                s::generated(value)
             }
         }
-        ResponseDecode::Voyage => crate::source_embeddings::decode_embeddings(&value, plan)?,
-        ResponseDecode::SystemOne => s::generated(&crate::extras::decode_systemone(&value)?),
+        ResponseDecode::Voyage => crate::source_embeddings::decode_embeddings(value, plan)?,
+        ResponseDecode::SystemOne => s::generated(&crate::extras::decode_systemone(value)?),
     };
     if plan.stream && !events.is_empty() {
         output_headers.insert("Content-Type".into(), "text/event-stream".into());
@@ -602,12 +564,58 @@ pub fn decode_response(
         raw_body: None,
     })
 }
-fn profile_for(decode: ResponseDecode) -> ChatProfile {
-    if let ResponseDecode::ChatToResponses(profile) = decode {
-        profile
-    } else {
-        ChatProfile::Claude
+fn decode_buffered_chat(
+    value: &Value,
+    plan: &DecodePlan,
+    events: &mut Vec<ProviderEvent>,
+    native_replay: &mut Option<Value>,
+) -> Result<SourceJson, GatewayError> {
+    let profile = match plan.decode {
+        ResponseDecode::ChatToResponses(profile) => profile,
+        _ => ChatProfile::Claude,
+    };
+    let mut projected = value.clone();
+    if plan.decode == ResponseDecode::AnthropicChatToResponses {
+        let reasoning =
+            crate::claude_chat_stream::readable_reasoning(&value["choices"][0]["message"]);
+        if !reasoning.is_empty() {
+            projected["choices"][0]["message"]["reasoning_content"] = json!(reasoning);
+        }
     }
+    let completion = normalize_chat_completion_fragment(&projected, plan)?;
+    if plan.provider == UpstreamProvider::Cerebras && !crate::policy::chat_has_answer(&completion) {
+        return Err(cerebras_empty());
+    }
+    if plan.decode == ResponseDecode::Chat {
+        if plan.stream {
+            *events = crate::finalize::buffered_chat_events(&completion, plan);
+        }
+        return Ok(chat_model_body(&completion, plan));
+    }
+    let body = chat_completion_to_responses(&completion, plan, profile);
+    let completed = s::is(&s::get(&body, "status"), "completed");
+    if completed && !crate::source_policy::response_has_answer(&body) {
+        return Err(empty_completion());
+    }
+    if plan.stream {
+        *events = replay_chat(&completion, plan, profile);
+    }
+    if plan.decode == ResponseDecode::AnthropicChatToResponses && completed {
+        *native_replay = value["choices"][0].get("message").cloned();
+    }
+    if plan.surface == ClientSurface::Chat {
+        crate::source_response::to_chat(&body, plan)
+    } else {
+        Ok(body)
+    }
+}
+fn empty_completion() -> GatewayError {
+    GatewayError::new(
+        502,
+        "Upstream response completed with no translated semantic output.",
+        Some("empty_upstream_completion"),
+    )
+    .with_type("server_error")
 }
 fn cerebras_empty() -> GatewayError {
     GatewayError::new(
@@ -625,13 +633,6 @@ fn terminal_for(value: &SourceJson) -> Option<SemanticTerminal> {
         _ => None,
     }
 }
-fn collect_chat_events(
-    events: &[ProviderEvent],
-    plan: &DecodePlan,
-) -> Result<SourceJson, GatewayError> {
-    crate::source_response::collect(events, plan)
-}
-
 /// Exact source Chat-only Responses producer spelling, not an upstream identity validator.
 pub fn translated_response_id(id: &str) -> String {
     let clean = id

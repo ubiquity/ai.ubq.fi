@@ -3,7 +3,7 @@ use gateway_admin::{
     keys::*,
     operations::{AdminHost, AdminInput, PaidKeyFields, missing_capability},
     routes::{AdminOperation, match_route},
-    service::{self, AdminService},
+    service::AdminService,
 };
 use gateway_admin_test_support::source_store::Store;
 use gateway_auth::{
@@ -845,9 +845,12 @@ async fn paid_fixture_owner_proof(
         .unwrap()
 }
 
-async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
+async fn prepare_paid_fixture_custody(
+    store: &Store,
+    host: &Host,
+) -> Result<(), Box<dyn std::error::Error>> {
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-    use gateway_authority::{keys, paid_control::*, paid_types::PaidRoutingPolicy};
+    use gateway_authority::{keys, paid_control, paid_types::PaidRoutingPolicy};
     use gateway_core::provider::PaidProvider;
     use gateway_publication::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
@@ -861,20 +864,16 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
         "fixture-epoch".into(),
         [17; 32],
         std::collections::BTreeSet::from([NativeCapability::ConfigurationPublish]),
-    )
-    .unwrap();
-    let owner_body = fixture_owner_statement(&identity).unwrap();
+    )?;
+    let owner_body = fixture_owner_statement(&identity)?;
     let owner_proof = paid_fixture_owner_proof(store, host, &identity, &owner_body).await;
-    bootstrap_fixture_owner(store, &identity, &owner_proof, host.now_ms(), "race-owner")
-        .await
-        .unwrap();
+    bootstrap_fixture_owner(store, &identity, &owner_proof, host.now_ms(), "race-owner").await?;
     let inputs = ConfiguredPaidInputs::new(
         Some(Secret::new("fixture-surplus-key".into())),
         None,
         None,
         json!({}),
-    )
-    .unwrap();
+    )?;
     let prepared = PreparedConfigurationPublication::capture(
         store,
         &identity,
@@ -882,21 +881,21 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
         "race-generation",
         host.now_ms(),
     )
-    .await
-    .unwrap();
+    .await?;
     let config_proof = paid_fixture_owner_proof(store, host, &identity, prepared.statement()).await;
     let config = prepared
         .publish(store, &config_proof, host.now_ms(), "race-config")
-        .await
-        .unwrap();
-    let observation = PaidProviderObservation {
+        .await?;
+    let observation = paid_control::PaidProviderObservation {
         v: 1,
         provider: PaidProvider::Surplus,
         owner_id: config.owner_id,
         owner_epoch: config.owner_epoch,
         configuration_generation: config.generation,
         configuration_fingerprint: config.configuration_fingerprint,
-        credential_binding: inputs.binding(PaidProvider::Surplus).unwrap(),
+        credential_binding: inputs
+            .binding(PaidProvider::Surplus)
+            .ok_or("fixture surplus binding missing")?,
         observed_at_ms: host.now_ms(),
         source_valid_until_ms: None,
         stale: false,
@@ -907,27 +906,23 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
     };
     store.rows.borrow_mut().insert(
         keys::paid_control_observation(PaidProvider::Surplus).0,
-        StoredRecord::json(
-            "race-observation",
-            serde_json::to_value(observation).unwrap(),
-            None,
-        ),
+        StoredRecord::json("race-observation", serde_json::to_value(observation)?, None),
     );
     let mut source_checks = Vec::new();
-    for key in paid_projection_source_keys() {
-        source_checks.push(PaidSourceCheck {
-            expected_revision: store.read(&key).await.unwrap().map(|row| row.revision),
+    for key in paid_control::paid_projection_source_keys() {
+        source_checks.push(paid_control::PaidSourceCheck {
+            expected_revision: store.read(&key).await?.map(|row| row.revision),
             key: key.0,
         });
     }
-    let projection = PaidRoutingProjection {
+    let projection = paid_control::PaidRoutingProjection {
         policy: PaidRoutingPolicy {
             v: 2,
             codex_enabled: true,
             codex_models: vec!["codex-only".into()],
             models: BTreeMap::from([("paid-model".into(), vec![PaidProvider::Surplus])]),
         },
-        provenance: PaidProjectionProvenance {
+        provenance: paid_control::PaidProjectionProvenance {
             v: 1,
             owner_revision: "race-owner".into(),
             config_revision: "race-config".into(),
@@ -940,12 +935,9 @@ async fn prepare_paid_fixture_custody(store: &Store, host: &Host) {
     };
     store.rows.borrow_mut().insert(
         keys::paid_routing().0,
-        StoredRecord::json(
-            "race-routing",
-            serde_json::to_value(projection).unwrap(),
-            None,
-        ),
+        StoredRecord::json("race-routing", serde_json::to_value(projection)?, None),
     );
+    Ok(())
 }
 impl AuthorityStore for PaidRaceStore<'_> {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
@@ -995,7 +987,8 @@ impl AuthorityStore for PaidRaceStore<'_> {
 }
 
 #[test]
-fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission() {
+fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         use gateway_authority::{
             paid_control::PaidRequestContext,
@@ -1021,10 +1014,12 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
             &actor(),
             "create",
         )
-        .await
-        .unwrap();
-        let id = wire_json(&key.body)["id"].as_str().unwrap().to_owned();
-        prepare_paid_fixture_custody(&store, &host).await;
+        .await?;
+        let id = wire_json(&key.body)["id"]
+            .as_str()
+            .ok_or("created fixture key id missing")?
+            .to_owned();
+        prepare_paid_fixture_custody(&store, &host).await?;
         let raced = PaidRaceStore {
             store: &store,
             host: &host,
@@ -1056,57 +1051,12 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
                 },
                 1_000_000,
             )
-            .await
-            .unwrap();
-        // Controlled authority regression: use the canonical finite original
-        // fixture chain, not a route-only receipt or a Worker-runtime claim.
-        let original = gateway_core::identity::RequestContext {
-            request_id: request.request_id.clone(),
-            principal: gateway_core::identity::PrincipalId("fixture-original-principal".into()),
-            key_id: Some(request.key_id.clone()),
-            route: request.route.clone(),
-            started_at_ms: request.created_at_ms,
-        };
-        let api = authority
-            .reserve_api_key(
-                &request.key_id,
-                &request.request_id,
-                &request.route,
-                1_000_000,
-            )
-            .await
-            .unwrap();
-        let journal_key = gateway_auth::store::key(json!([
-            "uos_ai",
-            "routing_runtime",
-            "v1",
-            "session",
-            request.request_id.0
-        ]));
-        store.rows.borrow_mut().insert(
-            journal_key.0,
-            StoredRecord::json(
-                "fixture-original-journal",
-                json!({
-                    "v":1,"context":original,"input_digest":gateway_auth::crypto::sha256_hex(b"fixture-original-input"),
-                    "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
-                    "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
-                    "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,
-                    "lease_expires_at_ms":1_000_000+gateway_authority::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
-                    "extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null
-                }),
-                None,
-            ),
-        );
-        let receipt = authority
-            .bind_paid_original_request(&receipt, &original, 1_000_000)
-            .await
-            .unwrap();
+            .await?;
+        let receipt = bind_paid_fixture_original(&authority, &store, &request, &receipt).await?;
         assert!(
             store
                 .read(&gateway_auth::api_keys::id_key(&id))
-                .await
-                .unwrap()
+                .await?
                 .is_some()
         );
         assert!(
@@ -1123,8 +1073,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         assert!(
             store
                 .read(&gateway_auth::api_keys::id_key(&id))
-                .await
-                .unwrap()
+                .await?
                 .is_none()
         );
         assert!(
@@ -1133,12 +1082,62 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
                     &id,
                     "racing-attempt"
                 ))
-                .await
-                .unwrap()
+                .await?
                 .is_none()
         );
-        assert!(store.read(&deletion_key(&id)).await.unwrap().is_some());
-    });
+        assert!(store.read(&deletion_key(&id)).await?.is_some());
+        Ok(())
+    })
+}
+
+async fn bind_paid_fixture_original(
+    authority: &gateway_authority::store::Authority<PaidRaceStore<'_>, &Host>,
+    store: &Store,
+    request: &gateway_authority::paid_types::PaidRequest,
+    receipt: &gateway_authority::paid_control::PaidRoutingReceipt,
+) -> Result<gateway_authority::paid_control::PaidRoutingReceipt, GatewayError> {
+    // Controlled authority regression: use the canonical finite original
+    // fixture chain, not a route-only receipt or a Worker-runtime claim.
+    let original = gateway_core::identity::RequestContext {
+        request_id: request.request_id.clone(),
+        principal: gateway_core::identity::PrincipalId("fixture-original-principal".into()),
+        key_id: Some(request.key_id.clone()),
+        route: request.route.clone(),
+        started_at_ms: request.created_at_ms,
+    };
+    let api = authority
+        .reserve_api_key(
+            &request.key_id,
+            &request.request_id,
+            &request.route,
+            1_000_000,
+        )
+        .await?;
+    let journal_key = gateway_auth::store::key(json!([
+        "uos_ai",
+        "routing_runtime",
+        "v1",
+        "session",
+        request.request_id.0
+    ]));
+    store.rows.borrow_mut().insert(
+        journal_key.0,
+        StoredRecord::json(
+            "fixture-original-journal",
+            json!({
+                "v":1,"context":original,"input_digest":gateway_auth::crypto::sha256_hex(b"fixture-original-input"),
+                "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
+                "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
+                "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,
+                "lease_expires_at_ms":1_000_000+gateway_authority::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
+                "extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null
+            }),
+            None,
+        ),
+    );
+    authority
+        .bind_paid_original_request(receipt, &original, 1_000_000)
+        .await
 }
 
 #[test]

@@ -2,6 +2,7 @@
 //! Source b6e25555179ad2b195b0bab93e946be834ecda6c native-authority.test.ts1097-1113
 //! is a fixture-only generic service with permanent attempt_lifetime rows, not a live Rust RPC.
 use super::support;
+use crate::{TestResult, fixture_row};
 use gateway_authority::{
     PAID_RETENTION_MS, keys,
     paid_control::*,
@@ -458,10 +459,10 @@ fn f13_deferred_original_intent_and_non_api_owner_do_not_require_new_admission()
 }
 
 #[test]
-fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() {
+fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() -> TestResult {
     let (store, authority, input, _) = setup();
     let journal_key = super::paid_original::journal_key(&input.request_id.0);
-    let mut journal = store.row(&journal_key).unwrap().value;
+    let mut journal = fixture_row(&store, &journal_key)?.value;
     let kernel = gateway_authority::kernel::KernelReservation {
         v: 2,
         owner: "fixture-owner".into(),
@@ -486,7 +487,7 @@ fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() {
     store.seed(key.clone(), &kernel);
     journal["context"]["key_id"] = Value::Null;
     journal["api"] = Value::Null;
-    journal["kernel"] = serde_json::to_value(&kernel).unwrap();
+    journal["kernel"] = serde_json::to_value(&kernel)?;
     store.seed(journal_key, &journal);
     let original = original_context(&store, &input);
     assert!(
@@ -500,15 +501,16 @@ fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() {
         run(authority.bind_paid_original_request(&fresh_route(&authority, &input), &original, NOW))
             .is_err()
     );
+    Ok(())
 }
 
 fn publish_active_paid(
     store: &MemoryStore,
     input: &PaidRequest,
     paid: &gateway_authority::paid_types::PaidReservation,
-) {
+) -> TestResult {
     let key = super::paid_original::journal_key(&input.request_id.0);
-    let mut journal = store.row(&key).unwrap().value;
+    let mut journal = fixture_row(store, &key)?.value;
     journal["active"] = json!("f13-prepared-active");
     journal["attempts"] = json!([{
         "id":"f13-prepared-active","provider":UpstreamProvider::Metered,"model":input.model,"cursor":0,
@@ -518,14 +520,14 @@ fn publish_active_paid(
         "provider_request_id":null,"billing":null
     }]);
     store.seed(key, &journal);
+    Ok(())
 }
 #[test]
-fn f13_exact_active_dispatch_rechecks_existing_only_before_and_after_api_dispatch() {
+fn f13_exact_active_dispatch_rechecks_existing_only_before_and_after_api_dispatch() -> TestResult {
     for committed in [false, true] {
         let (store, authority, input, pre) = setup();
         let PaidAdmission::Reserved(reservation) =
-            run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
-                .unwrap()
+            run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))?
         else {
             panic!("expected fresh")
         };
@@ -533,45 +535,48 @@ fn f13_exact_active_dispatch_rechecks_existing_only_before_and_after_api_dispatc
         let mut now = NOW;
         if committed {
             let key = super::paid_original::journal_key(&input.request_id.0);
-            let mut journal = store.row(&key).unwrap().value;
+            let mut journal = fixture_row(&store, &key)?.value;
             let api: gateway_authority::quota::ApiReservation =
-                serde_json::from_value(journal["api"].clone()).unwrap();
-            assert!(run(authority.dispatch_api_key(&api, UpstreamProvider::Metered, NOW)).unwrap());
+                serde_json::from_value(journal["api"].clone())?;
+            assert!(run(authority.dispatch_api_key(
+                &api,
+                UpstreamProvider::Metered,
+                NOW
+            ))?);
             now = NOW + gateway_authority::REQUEST_LEASE_MS + 1;
             journal["lease_expires_at_ms"] = json!(now + gateway_authority::REQUEST_LEASE_MS);
             store.seed(key, &journal);
             store.clock(now);
         }
-        publish_active_paid(&store, &input, &reservation);
-        let route = run(authority.authorize_paid_route(&input, &context(&input), now)).unwrap();
+        publish_active_paid(&store, &input, &reservation)?;
+        let route = run(authority.authorize_paid_route(&input, &context(&input), now))?;
         let original = original_context(&store, &input);
         assert!(run(authority.bind_paid_original_request(&route, &original, now)).is_err());
         let dispatch =
-            run(authority.bind_paid_original_dispatch(&route, &original, &reservation, now))
-                .unwrap();
+            run(authority.bind_paid_original_dispatch(&route, &original, &reservation, now))?;
         assert!(
-            matches!(run(authority.reserve_paid(&input,&PaidAuthorization::DirectPaidModel,&dispatch,now)).unwrap(),PaidAdmission::Existing(same) if same==reservation)
+            matches!(run(authority.reserve_paid(&input,&PaidAuthorization::DirectPaidModel,&dispatch,now))?,PaidAdmission::Existing(same) if same==reservation)
         );
         assert_eq!(window_value(&store, reservation.window_reset_at_ms), before);
     }
+    Ok(())
 }
 #[test]
-fn f13_existing_only_dispatch_never_recreates_missing_history_or_fresh_exposure() {
+fn f13_existing_only_dispatch_never_recreates_missing_history_or_fresh_exposure() -> TestResult {
     let (store, authority, input, pre) = setup();
     let PaidAdmission::Reserved(reservation) =
-        run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
-            .unwrap()
+        run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))?
     else {
         panic!("expected fresh")
     };
-    publish_active_paid(&store, &input, &reservation);
+    publish_active_paid(&store, &input, &reservation)?;
     let original = original_context(&store, &input);
     let route = fresh_route(&authority, &input);
     let dispatch =
-        run(authority.bind_paid_original_dispatch(&route, &original, &reservation, NOW)).unwrap();
+        run(authority.bind_paid_original_dispatch(&route, &original, &reservation, NOW))?;
     let before = window_value(&store, reservation.window_reset_at_ms);
     let key = keys::paid_attempt(&input.key_id.0, &input.attempt_id.0);
-    let mut history = store.row(&key).unwrap();
+    let mut history = fixture_row(&store, &key)?;
     history.expires_at_ms = Some(NOW);
     store.seed_record(key.clone(), history);
     assert!(
@@ -581,34 +586,33 @@ fn f13_existing_only_dispatch_never_recreates_missing_history_or_fresh_exposure(
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &dispatch, NOW))
             .is_err()
     );
-    assert!(run(store.read(&key)).unwrap().is_none());
+    assert!(run(store.read(&key))?.is_none());
     assert_eq!(window_value(&store, reservation.window_reset_at_ms), before);
+    Ok(())
 }
 #[test]
-fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() {
+fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() -> TestResult {
     let (store, authority, input, pre) = setup();
     let PaidAdmission::Reserved(reservation) =
-        run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
-            .unwrap()
+        run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))?
     else {
         panic!("expected fresh")
     };
     let mut wrong = reservation.clone();
     wrong.attempt_id.0 = "another-paid-attempt".into();
-    publish_active_paid(&store, &input, &wrong);
+    publish_active_paid(&store, &input, &wrong)?;
     let original = original_context(&store, &input);
     let route = fresh_route(&authority, &input);
     assert!(
         run(authority.bind_paid_original_dispatch(&route, &original, &reservation, NOW)).is_err()
     );
-    publish_active_paid(&store, &input, &reservation);
+    publish_active_paid(&store, &input, &reservation)?;
     let dispatch = run(authority.bind_paid_original_dispatch(
         &fresh_route(&authority, &input),
         &original,
         &reservation,
         NOW,
-    ))
-    .unwrap();
+    ))?;
     store.clock(NOW + gateway_authority::REQUEST_LEASE_MS + 1);
     assert!(
         run(authority.reserve_paid(
@@ -619,6 +623,7 @@ fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() {
         ))
         .is_err()
     );
+    Ok(())
 }
 
 fn local_phase_record(
@@ -660,21 +665,25 @@ fn set_local_phase(
     store.seed(key, &journal);
 }
 #[test]
-fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatched_api() {
+fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatched_api() -> TestResult
+{
     use gateway_core::local_work::LocalWorkPhase;
     for local in [false, true] {
         for dispatched in [false, true] {
             let (store, authority, input, _) = setup();
             if dispatched {
-                let journal = store
-                    .row(&super::paid_original::journal_key(&input.request_id.0))
-                    .unwrap()
-                    .value;
+                let journal = fixture_row(
+                    &store,
+                    &super::paid_original::journal_key(&input.request_id.0),
+                )?
+                .value;
                 let api: gateway_authority::quota::ApiReservation =
-                    serde_json::from_value(journal["api"].clone()).unwrap();
-                assert!(
-                    run(authority.dispatch_api_key(&api, UpstreamProvider::Metered, NOW)).unwrap()
-                );
+                    serde_json::from_value(journal["api"].clone())?;
+                assert!(run(authority.dispatch_api_key(
+                    &api,
+                    UpstreamProvider::Metered,
+                    NOW
+                ))?);
             }
             if local {
                 set_local_phase(&store, &input, LocalWorkPhase::ProviderPlanned);
@@ -684,26 +693,29 @@ fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatche
                 &fresh_route(&authority, &input),
                 &original,
                 NOW,
-            ))
-            .unwrap();
-            let PaidAdmission::Reserved(paid) =
-                run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
-                    .unwrap()
+            ))?;
+            let PaidAdmission::Reserved(paid) = run(authority.reserve_paid(
+                &input,
+                &PaidAuthorization::DirectPaidModel,
+                &pre,
+                NOW,
+            ))?
             else {
                 panic!("expected new exposure once")
             };
             let before = window_value(&store, paid.window_reset_at_ms);
-            publish_active_paid(&store, &input, &paid);
+            publish_active_paid(&store, &input, &paid)?;
             let route = fresh_route(&authority, &input);
             assert!(run(authority.bind_paid_original_request(&route, &original, NOW)).is_err());
             let existing =
-                run(authority.bind_paid_original_dispatch(&route, &original, &paid, NOW)).unwrap();
+                run(authority.bind_paid_original_dispatch(&route, &original, &paid, NOW))?;
             assert!(
-                matches!(run(authority.reserve_paid(&input,&PaidAuthorization::DirectPaidModel,&existing,NOW)).unwrap(),PaidAdmission::Existing(same) if same==paid)
+                matches!(run(authority.reserve_paid(&input,&PaidAuthorization::DirectPaidModel,&existing,NOW))?,PaidAdmission::Existing(same) if same==paid)
             );
             assert_eq!(window_value(&store, paid.window_reset_at_ms), before);
         }
     }
+    Ok(())
 }
 #[test]
 fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() {
@@ -800,23 +812,23 @@ fn f13_local_phase_malformed_missing_and_phase_only_permission_are_refused() {
     }
 }
 #[test]
-fn f13_local_phase_nonplanned_or_malformed_active_dispatch_cannot_add_exposure() {
+fn f13_local_phase_nonplanned_or_malformed_active_dispatch_cannot_add_exposure() -> TestResult {
     use gateway_core::local_work::LocalWorkPhase;
     for malformed in [false, true] {
         let (store, authority, input, pre) = setup();
         let PaidAdmission::Reserved(paid) =
-            run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))
-                .unwrap()
+            run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &pre, NOW))?
         else {
             panic!("expected original paid exposure")
         };
         let before = window_value(&store, paid.window_reset_at_ms);
-        publish_active_paid(&store, &input, &paid);
+        publish_active_paid(&store, &input, &paid)?;
         set_local_phase(&store, &input, LocalWorkPhase::Planning);
         if malformed {
             let key = super::paid_original::journal_key(&input.request_id.0);
-            let mut row = store.row(&key).unwrap().value;
-            row.as_object_mut().unwrap().remove("local_work");
+            let mut row = fixture_row(&store, &key)?.value;
+            let fields = row.as_object_mut().ok_or("expected journal object")?;
+            fields.remove("local_work");
             store.seed(key, &row);
         }
         assert!(
@@ -830,4 +842,5 @@ fn f13_local_phase_nonplanned_or_malformed_active_dispatch_cannot_add_exposure()
         );
         assert_eq!(window_value(&store, paid.window_reset_at_ms), before);
     }
+    Ok(())
 }

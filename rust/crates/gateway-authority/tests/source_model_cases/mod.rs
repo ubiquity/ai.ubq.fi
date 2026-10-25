@@ -1,4 +1,5 @@
 use super::*;
+use crate::{TestResult, fixture_row};
 use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_schema::selection::AccountModelsStore;
 use serde_json::json;
@@ -174,30 +175,30 @@ fn source_selection_shrink_and_empty_defaults_keep_sticky_active_identity() {
 }
 
 #[test]
-fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() {
+fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -> TestResult {
     use gateway_core::{
         js_string::JsString16, model::ModelId, source_control, source_json::SourceJson,
         source_serialization as source, value::ValueEncoding,
     };
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
-    let raw = SourceJson::parse(&r#"{"accounts":{},"unsupported":{"other":{"\udc00":NOW}},"source_metadata":{"retain":"\ud800"}}"#.replace("NOW", &NOW.to_string())).unwrap();
+    let raw = SourceJson::parse(&r#"{"accounts":{},"unsupported":{"other":{"\udc00":NOW}},"source_metadata":{"retain":"\ud800"}}"#.replace("NOW", &NOW.to_string()))?;
     store.seed_record(
         keys::models(),
-        source_control::encode_source_control_record("source-before-learn", &raw, None).unwrap(),
+        source_control::encode_source_control_record("source-before-learn", &raw, None)?,
     );
     let authority = authority(&store);
     let high = ModelId::from_source(JsString16::from_units(vec![0xd800]));
     let RouteSelection::Eligible(admission) =
-        run(authority.select_account(&high, CodexQuotaClass::Standard, NOW)).unwrap()
+        run(authority.select_account(&high, CodexQuotaClass::Standard, NOW))?
     else {
         panic!("absent catalog must not blanket-reject an opaque model")
     };
     assert_eq!(admission.requested_model, high);
-    run(authority.ensure_admission_current(&admission, NOW)).unwrap();
-    let encoded_admission = SourceJson::from_serializable(&admission).unwrap();
+    run(authority.ensure_admission_current(&admission, NOW))?;
+    let encoded_admission = SourceJson::from_serializable(&admission)?;
     let restored: gateway_authority::routing_types::AdmittedAccount =
-        encoded_admission.deserialize().unwrap();
+        encoded_admission.deserialize()?;
     assert_eq!(restored, admission);
     let detail = |unit| {
         let mut units = "The '".encode_utf16().collect::<Vec<_>>();
@@ -207,28 +208,39 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() {
         );
         JsString16::from_units(units)
     };
-    let before = store.row(&keys::models()).unwrap();
-    assert!(!run(authority.learn_model_unavailable(&admission, &detail(0xdc00), NOW)).unwrap());
-    assert_eq!(store.row(&keys::models()).unwrap(), before);
-    assert!(run(authority.learn_model_unavailable(&admission, &detail(0xd800), NOW)).unwrap());
-    let stored = store.row(&keys::models()).unwrap();
+    let before = fixture_row(&store, &keys::models())?;
+    assert!(!run(authority.learn_model_unavailable(
+        &admission,
+        &detail(0xdc00),
+        NOW
+    ))?);
+    assert_eq!(fixture_row(&store, &keys::models())?, before);
+    assert!(run(authority.learn_model_unavailable(
+        &admission,
+        &detail(0xd800),
+        NOW
+    ))?);
+    let stored = fixture_row(&store, &keys::models())?;
     assert_eq!(stored.value_encoding, ValueEncoding::ProfileV2);
-    let learned = source_control::decode_source_control_record(&stored).unwrap();
+    let learned = source_control::decode_source_control_record(&stored)?;
     for field in ["accounts", "source_metadata"] {
         assert_eq!(source::member(&learned, field), source::member(&raw, field));
     }
-    let unsupported = source::member(&learned, "unsupported").unwrap();
+    let unsupported =
+        source::member(&learned, "unsupported").ok_or("missing learned unsupported")?;
+    let original = source::member(&raw, "unsupported").ok_or("missing original unsupported")?;
     assert_eq!(
         source::member(&unsupported, "other"),
-        source::member(&source::member(&raw, "unsupported").unwrap(), "other")
+        source::member(&original, "other")
     );
-    let parsed = AccountModelsStore::parse(&learned).unwrap();
+    let parsed = AccountModelsStore::parse(&learned).ok_or("invalid learned models")?;
     assert_eq!(parsed.unsupported["a"][&high], NOW);
     assert!(
         !parsed.unsupported["a"]
             .contains_key(&ModelId::from_source(JsString16::from_units(vec![0xdc00])))
     );
     assert!(source::member(&unsupported, &routing_hash("a").0).is_none());
+    Ok(())
 }
 
 #[test]

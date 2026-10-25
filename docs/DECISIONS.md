@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Bun serves the Passport browser sign-in advertised by its admin page - 2026-10-23
+
+The production Bun gateway implements the existing Passport `ai` registration at `/auth/login`, `/auth/callback`, and `/auth/logout`, matching the fixed issuer, audience, origin, callback, RS256/JWKS verification, host-only secure cookies, and cookie-only admin authority used by the Rust implementation. An administrator claim is required for admin access; agent tokens never become admin sessions, and foreign-origin cookie mutations are rejected. The admin button requests `/admin` as its return destination; that fixed choice is bound into the random login state, while ordinary chat login returns to `/chat`.
+
+Reason: the shared admin page advertised Passport sign-in while the production Bun router returned 404 for `/auth/login`; Rust-only coverage did not exercise the runtime serving the public page.
+
+Reversal risk: removing the Bun routes strands the advertised sign-in button. Accepting arbitrary callback destinations, JWT key sources, audiences, or bearer credentials as admin authority would expand the existing trust boundary.
+
 ## Automatic banked resets are live-only - 2026-10-21
 
 Automatic banked resets are now live-only. The `CODEX_BANKED_RESET_MODE` selector and shadow-decision arming gate are retired; `CODEX_BANKED_RESET_ENABLED` remains the immediate kill switch. When enabled, an eligible blocked cohort performs fresh inventory, selects one exact credit, claims the deterministic redemption, and submits it in the same request. The existing one-per-account-per-UTC-day and one-per-window caps, exact fence checks, at-most-once transaction, and post-reset probe remain unchanged. Historical shadow decisions remain readable for audit but do not gate a live redemption.
@@ -2426,3 +2434,19 @@ First-party Cargo artifacts belong to their resolved workspace source root. The 
 The verifier removes its Darwin `debug = 0` environment overrides and excludes ambient dev/test debug overrides. Committed `rust/Cargo.toml` dev/test profiles remain `line-tables-only`, as required by the 2026-10-23 decision; production release settings are unchanged. Earlier debug-disabled component captures retain development and behavior evidence, while final combined acceptance requires the exact corrected driver/source and inspection of actual compiler flags.
 
 Fresh [structural adoption reproduction](research/rust-quality-adoption-2026-10-24.md) retains the immutable base source inventory, target closures and all fourteen adopted target counts with [machine-readable provenance](research/rust-quality-adoption-2026-10-24/provenance.json). These artifacts prove fresh structural reproduction; they do not recover the original raw Clippy captures or authorize allowance growth. Historical diagnostic identities stay unchanged, and missing historical Clippy proof remains explicit.
+
+## DeepSeek waterfall fails over before a provider reset wait - 2026-10-24
+
+The `ubiquity/deepseek-flash` synthetic model gives its LithosAI hop the immediate-failover refusal policy. A 429 or 402 is returned to the waterfall at once, so the next configured provider is attempted without spending the vendor's reset window. Direct LithosAI model ids keep the existing buffered and streamed wait policies.
+
+Reason: live LithosAI headers reported a 600-request and 8,000,000-token/minute budget, while the gateway's parallel Codex agents sent large contexts that repeatedly emptied the token bucket. Three refusals also reported `402 insufficient_quota` and `the organization is out of credit`. A streamed hop could otherwise hold an open response for five waits and up to 300 seconds before the waterfall advanced, which surfaced as iOS steering timeouts. Immediate failover improves responsiveness and prevents a refused first hop from consuming the next provider's latency budget.
+
+Reversal risk: the waterfall reaches the Official DeepSeek, OpenRouter, Surplus and OpenLux hops sooner, which can change cost mix and exposes more provider churn. The order, paid pins, direct Lithos behavior and credentials are unchanged. If the provider recovers, it is eligible again on the next request.
+
+## Gateway restarts must finish inside the mobile steer retry window - 2026-10-24
+
+The VPS gateway stop timeout is 15 seconds, and HTTP shutdown closes lingering idle keep-alive sockets only after every active handler has settled. The previous 180-second stop timeout allowed a deploy to stop accepting requests for three minutes; the Codex app-server backed off through 5, 10, and 20-second retries, and the iOS client discarded pending steers after about 30 seconds.
+
+Reason: a live deploy at 23:11:17 UTC stopped the gateway listener and systemd killed the process at 23:14:17 UTC. Gateway requests during that interval failed at the transport boundary, and the mobile messages were deleted before the next successful model call. The app-server returns to service on its 20-second retry when the listener is restored within 19 seconds, so the stop and restart must complete before that retry. Active HTTP handlers still drain before lingering sockets are closed; no accounting or terminal write is bypassed by the idle-socket cleanup.
+
+Reversal risk: a longer stop timeout restores the three-minute blackout and will drop consecutive mobile steers again. Forcing all connections closed before active handlers settle would lose delivery or settlement evidence, so the close remains gated on an empty active set.

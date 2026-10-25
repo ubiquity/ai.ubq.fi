@@ -1,25 +1,34 @@
 //! Actual fixed TLS import client. No generic response/carrier/reader input can
 //! mint body, claim, Started, currentness or terminal proofs through this type.
+use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
 use super::{
+    AuthenticatedNativeImport,
     custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted},
-    effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart},
-    remote_state::RemoteImportState,
+    effects::{self, NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart},
+    remote_state::{self, ImportActionState, RemoteImportState},
     remote_tls::{ImportAuthorityTls, Roots},
-    *,
+    unavailable,
 };
 use gateway_auth::{
     crypto::base64url,
-    native::*,
+    native::{
+        NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
+        NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+    },
     native_auth::NativeTransportIdentity,
-    native_import::authority::{
-        ImportAuthorityClaimMode, ImportAuthorityCommand as Command,
-        ImportAuthorityRequestData as Request, ImportAuthorityStateData as State,
-        ImportAuthorityTerminalData, ImportCustodyStartedReplyData, ImportCustodyStartedWire,
-        completion::ImportCompletionData,
-        import_authority_reply_max_bytes_for, import_custody_reply_max_bytes,
-        result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
+    native_import::{
+        NativeImportAdmission, NativeImportKind, NativeImportTarget,
+        authority::{
+            ImportAuthorityClaimMode, ImportAuthorityCommand as Command,
+            ImportAuthorityRequestData as Request, ImportAuthorityStateData as State,
+            ImportAuthorityTerminalData, ImportCustodyStartedReplyData, ImportCustodyStartedWire,
+            completion::ImportCompletionData,
+            import_authority_reply_max_bytes_for, import_custody_reply_max_bytes,
+            result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
+        },
     },
 };
+use gateway_core::error::GatewayError;
 use std::{
     cell::Cell,
     net::TcpStream,

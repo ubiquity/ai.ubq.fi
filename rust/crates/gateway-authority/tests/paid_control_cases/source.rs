@@ -1,4 +1,5 @@
 use super::*;
+use crate::TestResult;
 use gateway_authority::paid_types::{PaidAttempt, PaidReservation};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId,
@@ -273,13 +274,13 @@ impl gateway_schema::aliases::SourceStringCollator for FixtureOnlyCollator {
 }
 
 #[test]
-fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fail_closed() {
+fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fail_closed()
+-> TestResult {
     // Captured pinned Bun source localeCompare, fixture-only four exact pairs.
     // No general native comparator/lexical fallback is inferred from this test.
     let data: CapturedCollation = serde_json::from_str(include_str!(
         "../fixtures/source-string-collation-paid.json"
-    ))
-    .unwrap();
+    ))?;
     assert!(data.fixture_only);
     let store = MemoryStore::default();
     paid_setup(&store);
@@ -292,18 +293,15 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
             source::object(vec![
                 (
                     "id",
-                    JsString16::from_units(units.clone())
-                        .to_source_json()
-                        .unwrap(),
+                    JsString16::from_units(units.clone()).to_source_json()?,
                 ),
                 (
                     "supported_endpoint_types",
-                    SourceJson::from_serializable(&vec!["openai-response", "openai"]).unwrap(),
+                    SourceJson::from_serializable(&vec!["openai-response", "openai"])?,
                 ),
             ])
-            .unwrap()
         })
-        .collect();
+        .collect::<Result<_, GatewayError>>()?;
     seed_source(&store, key, &observation);
     republish(&store);
     let winner = if data.orders[0][1] <= 0 { 0 } else { 1 };
@@ -311,11 +309,7 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
     input.model = logical(&data.ids[winner]);
     let mut context = context(&input);
     context.original_model = gateway_schema::aliases::SYNTHETIC_MODEL.into();
-    context.body = source::object(vec![(
-        "model",
-        context.original_model.to_source_json().unwrap(),
-    )])
-    .unwrap();
+    context.body = source::object(vec![("model", context.original_model.to_source_json()?)])?;
     context.synthetic_hop = Some(PaidSyntheticHop::Openlux);
     let missing_collator = gateway_authority::store::Authority::with_clock(
         store.clone(),
@@ -344,6 +338,7 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
         .is_err()
     );
     let authority = authority(&store).with_source_string_collator(collator);
-    run(authority.authorize_paid_route(&input, &context, NOW)).unwrap();
+    run(authority.authorize_paid_route(&input, &context, NOW))?;
     assert!(calls.load(std::sync::atomic::Ordering::SeqCst) > 1);
+    Ok(())
 }

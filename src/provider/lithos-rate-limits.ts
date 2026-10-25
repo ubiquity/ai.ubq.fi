@@ -143,6 +143,14 @@ export const LITHOS_BUFFERED_REFUSAL_WAIT_POLICY: LithosRefusalWaitPolicy = {
 
 export const LITHOS_STREAMED_REFUSAL_WAIT_POLICY: LithosRefusalWaitPolicy = { maxWaits: 5, totalCapMs: 300_000 };
 
+/**
+ * A waterfall hop has another provider behind it. Spending the vendor's reset
+ * window here prevents that hop from ever being reached, so a refusal is
+ * returned immediately and the waterfall advances. Direct LithosAI requests
+ * keep the buffered/streamed policies above.
+ */
+export const LITHOS_IMMEDIATE_FAILOVER_WAIT_POLICY: LithosRefusalWaitPolicy = { maxWaits: 0, totalCapMs: 0 };
+
 /** The pause this refusal asks for, bounded by the per-wait, count and total caps. */
 export const lithosRefusalWait = (
   headers: Headers,

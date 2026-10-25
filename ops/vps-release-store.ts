@@ -221,7 +221,12 @@ export class ImmutableVpsReleaseStore {
     if (profile === VPS_LAUNCHER_PROFILE_SHA256) supported = unit === VPS_UNIT_SHA256;
     else if (profile === HISTORICAL_BUN_VPS_PROFILE_SHA256) supported = unit === HISTORICAL_BUN_VPS_UNIT_SHA256;
     else
-      supported = profile === (await this.currentLauncherProfile()) && unit === (await vpsBytesDigest(await readFile(this.absolute("ops/ai-ubq-fi.service"))));
+      supported =
+        profile === (await this.currentLauncherProfile()) &&
+        // The 25173 release predates the 15-second unit. It remains a valid
+        // rollback target for this transition even though its recorded unit is
+        // the known historical 180-second file.
+        (unit === (await vpsBytesDigest(await readFile(this.absolute("ops/ai-ubq-fi.service")))) || unit === HISTORICAL_BUN_VPS_UNIT_SHA256);
     if (matches.length !== 1 || port < 1 || port > 65535 || !supported) throw new Error("Unsupported previous launcher or service layout");
     return { ...previous, selector: selected, port, profile };
   }

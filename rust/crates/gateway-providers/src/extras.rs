@@ -1,5 +1,8 @@
 //! First-class image, Voyage and System One protocol adapters; persistence remains external.
-use crate::{source_tools::ToolMap, types::*};
+use crate::{
+    source_tools::ToolMap,
+    types::{ClientSurface, DecodePlan, Headers, PrepareOptions, PreparedRequest, ResponseDecode},
+};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
     source_json::SourceJson, source_serialization as source,

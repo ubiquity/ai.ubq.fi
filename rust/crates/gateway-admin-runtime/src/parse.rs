@@ -371,10 +371,9 @@ pub fn claude_source(body: &SourceJson) -> Result<ClaudeSubmission, GatewayError
                         })
                 })
                 .ok_or_else(|| invalid("account_id is invalid"))?;
-            Some(
-                String::from_utf16(id.as_units())
-                    .expect("closed upload account ID ASCII predicate"),
-            )
+            id.try_utf8()
+                .map(Some)
+                .map_err(|_| invalid("account_id is invalid"))?
         }
     };
     for name in ["create_new", "activate"] {

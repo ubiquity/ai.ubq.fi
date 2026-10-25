@@ -9,6 +9,7 @@ use super::{
 };
 use crate::{
     keys,
+    native_live::mapping_key,
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
     routing::LiveAccountSelection,
     routing_types::SubscriptionPool,
@@ -21,7 +22,7 @@ use gateway_auth::provider_credentials::{
 use gateway_core::error::GatewayError;
 use gateway_core::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_schema::catalog_store::runtime_config_key;
 use serde_json::Value;
 
 struct Control {
@@ -29,18 +30,6 @@ struct Control {
     policy_digest: String,
     account_hash: String,
     checks_digest: String,
-}
-fn mapping_key(call: &str, pending: bool) -> gateway_core::state::RecordKey {
-    let mut p = vec![
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("codex_live_calls"),
-        ScalarKeyPart::String("v1"),
-    ];
-    if pending {
-        p.push(ScalarKeyPart::String("pending_retirement"));
-    }
-    p.push(ScalarKeyPart::String(call));
-    TupleKey::from_scalar_parts(&p).to_record_key()
 }
 impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     NativeRenewalAuthority<'_, S, I, C>
@@ -195,12 +184,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             .read(&keys::paid_control_config())
             .await?
             .ok_or_else(fail)?;
-        let runtime_key = TupleKey::from_scalar_parts(&[
-            ScalarKeyPart::String("uos_ai"),
-            ScalarKeyPart::String("runtime_config"),
-            ScalarKeyPart::String("v2"),
-        ])
-        .to_record_key();
+        let runtime_key = runtime_config_key();
         tx.observe_revision(&runtime_key).await?;
         if config.v != PAID_CONTROL_CONFIG_VERSION
             || config.owner_id != owner.owner_id
@@ -220,7 +204,40 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         if current.scope != scope {
             return Err(fail());
         }
-        let account_hash = match context {
+        let account_hash = self
+            .live_account_hash(tx, context, &current.principal)
+            .await?;
+        tx.now = self.time(tx.now)?;
+        actor::validate_current_time(actor, tx.now)?;
+        if let NativeRenewalContext::LiveMapped { call_id, .. } = context
+            && tx
+                .expiry(&mapping_key(call_id, false))
+                .is_some_and(|at| at <= tx.now)
+        {
+            return Err(fail());
+        }
+        // Credential replacement is proven separately by current facts/known terminal publication.
+        // Do not mistake the operation's own source+projection CAS for caller/configuration drift.
+        let credential_keys = [codex_source_pool_key(), keys::pool()];
+        let control_checks = tx
+            .checks()
+            .into_iter()
+            .filter(|c| !credential_keys.contains(&c.key))
+            .collect::<Vec<_>>();
+        Ok(Control {
+            principal: current.principal,
+            policy_digest: current.policy_digest,
+            account_hash,
+            checks_digest: facts::checks_digest(&control_checks)?,
+        })
+    }
+    async fn live_account_hash(
+        &self,
+        tx: &mut Transaction<'_, S, I>,
+        context: &NativeRenewalContext,
+        principal: &str,
+    ) -> Result<String, GatewayError> {
+        Ok(match context {
             NativeRenewalContext::LiveCreate {
                 binding,
                 active_generation,
@@ -271,7 +288,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 let key = mapping_key(call_id, false);
                 let mapping: Value = tx.read(&key).await?.ok_or_else(fail)?;
                 if tx.revision(&key).as_ref() != Some(mapping_revision)
-                    || mapping["principal_id"].as_str() != Some(&current.principal)
+                    || mapping["principal_id"].as_str() != Some(principal)
                     || tx.expiry(&key).is_some_and(|v| v <= tx.now)
                 {
                     return Err(fail());
@@ -283,11 +300,8 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 sha256_hex(format!("uos_ai\0codex_routing_account\0{account}").as_bytes())
             }
             NativeRenewalContext::CacheExperiment { context } => {
-                {
-                    let now = self.time(tx.now)?;
-                    crate::cache_experiment::validate_refresh_context(tx, context, now)
-                }
-                .await?;
+                let now = self.time(tx.now)?;
+                crate::cache_experiment::validate_refresh_context(tx, context, now).await?;
                 let pool: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
                 if pool.accounts.len() != 2 {
                     return Err(fail());
@@ -295,29 +309,6 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 pool.accounts[0].account_id_hash.0.clone()
             }
             NativeRenewalContext::Inference { .. } => return Err(fail()),
-        };
-        tx.now = self.time(tx.now)?;
-        actor::validate_current_time(actor, tx.now)?;
-        if let NativeRenewalContext::LiveMapped { call_id, .. } = context
-            && tx
-                .expiry(&mapping_key(call_id, false))
-                .is_some_and(|at| at <= tx.now)
-        {
-            return Err(fail());
-        }
-        // Credential replacement is proven separately by current facts/known terminal publication.
-        // Do not mistake the operation's own source+projection CAS for caller/configuration drift.
-        let credential_keys = [codex_source_pool_key(), keys::pool()];
-        let control_checks = tx
-            .checks()
-            .into_iter()
-            .filter(|c| !credential_keys.contains(&c.key))
-            .collect::<Vec<_>>();
-        Ok(Control {
-            principal: current.principal,
-            policy_digest: current.policy_digest,
-            account_hash,
-            checks_digest: facts::checks_digest(&control_checks)?,
         })
     }
     pub(super) async fn read_context(

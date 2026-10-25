@@ -132,7 +132,8 @@ fn reply() -> &'static [u8] {
     br#"{"id":"chat_fixture","object":"chat.completion","created":2,"choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#
 }
 #[test]
-fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source() {
+fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source()
+-> Result<(), String> {
     let raw = parse(SOURCE);
     let prepared = prepare_source_request(
         UpstreamProvider::Deepseek,
@@ -141,14 +142,15 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap();
-    let decoded = decode_response(&prepared.decode, 200, &Default::default(), reply()).unwrap();
+    .map_err(|error| format!("{error:?}"))?;
+    let decoded = decode_response(&prepared.decode, 200, &Default::default(), reply())
+        .map_err(|error| format!("{error:?}"))?;
     assert_echo(&decoded.body, &raw);
     let mut plan = prepared.decode.clone();
     plan.stream = true;
     let mut decoder = gateway_providers::sse::StreamDecoder::new(plan);
-    let mut events=decoder.push(b"data: {\"id\":\"chat_fixture\",\"object\":\"chat.completion.chunk\",\"created\":2,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n").unwrap();
-    events.extend(decoder.finish().unwrap());
+    let mut events=decoder.push(b"data: {\"id\":\"chat_fixture\",\"object\":\"chat.completion.chunk\",\"created\":2,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n").map_err(|error| format!("{error:?}"))?;
+    events.extend(decoder.finish().map_err(|error| format!("{error:?}"))?);
     for kind in [
         "response.created",
         "response.in_progress",
@@ -157,13 +159,18 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
         let event = events
             .iter()
             .find(|event| event.type_name().as_deref() == Some(kind))
-            .unwrap();
-        assert_echo(&event.field("response").unwrap(), &raw);
+            .ok_or("missing fixture value")?;
+        assert_echo(
+            &event
+                .field("response")
+                .ok_or("missing response fixture field")?,
+            &raw,
+        );
         let encoded = event.encode_sse();
         let data = encoded
             .lines()
             .find_map(|line| line.strip_prefix("data: "))
-            .unwrap();
+            .ok_or("missing response fixture field")?;
         let parsed = parse(data);
         assert_echo(&get(&parsed, "response"), &raw);
     }
@@ -171,8 +178,16 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
         let mut writer = gateway_providers::writer::ResponseWriter::new(prepared.decode.clone());
         writer.finish_reason = Some(reason.into());
         let events = writer.finish();
-        assert_echo(&events.last().unwrap().field("response").unwrap(), &raw);
+        assert_echo(
+            &events
+                .last()
+                .ok_or("missing fixture value")?
+                .field("response")
+                .ok_or("missing response fixture field")?,
+            &raw,
+        );
     }
+    Ok(())
 }
 
 #[test]
@@ -245,14 +260,15 @@ fn direct_native_and_ordinary_branches_keep_the_source_phase_boundary() {
 }
 
 #[test]
-fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
+fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() -> Result<(), String> {
     // This is explicitly the common envelope validator, not a provider-owned ingress gate.
     let error = gateway_schema::source_request::fields::validate_request_fields(
         &parse(r#"{"model":"deepseek-flash","input":"x","\ud800":1}"#),
         gateway_schema::request::RequestSurface::Responses,
         &Default::default(),
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected source rejection")?;
     assert_eq!(
         error.body(),
         &parse(
@@ -267,7 +283,8 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected source rejection")?;
     assert_eq!(
         text(&path(error.body(), &["error", "message"])),
         JsString16::from_units(
@@ -289,7 +306,8 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap_err();
+    .err()
+    .ok_or("expected source rejection")?;
     assert_eq!(
         get(&get(error.body(), "error"), "code"),
         parse(r#""context_length_exceeded""#)
@@ -311,6 +329,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() {
         text(&path(error.body(), &["error", "message"])),
         JsString16::from_units(units)
     );
+    Ok(())
 }
 
 #[test]
@@ -400,7 +419,8 @@ fn paid_and_native_claude_source_wire_and_request_echo_keep_text_and_schema_unit
 }
 
 #[test]
-fn source_original_tool_identity_survives_buffered_and_streamed_generated_items() {
+fn source_original_tool_identity_survives_buffered_and_streamed_generated_items()
+-> Result<(), String> {
     let raw = parse(r#"{"model":"deepseek-flash","input":"x"}"#);
     let mut plan = prepare_source_request(
         UpstreamProvider::Deepseek,
@@ -409,7 +429,7 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap()
+    .map_err(|error| format!("{error:?}"))?
     .decode;
     let identity = gateway_providers::types::ToolIdentity {
         name: JsString16::from_units(vec![102, 0xd800]),
@@ -423,14 +443,14 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
         &plan,
         200,
         &Default::default(),
-        &serde_json::to_vec(&generated).unwrap(),
+        &serde_json::to_vec(&generated).map_err(|error| format!("{error:?}"))?,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     let item = rows(&get(&buffered.body, "output")).remove(0);
     assert_eq!(text(&get(&item, "name")), identity.name);
     assert_eq!(
         text(&get(&item, "namespace")),
-        identity.namespace.clone().unwrap()
+        identity.namespace.clone().ok_or("missing fixture value")?
     );
     let mut writer = gateway_providers::writer::ResponseWriter::new(plan);
     let mut events =
@@ -441,14 +461,15 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
         .iter()
         .filter(|event| event.type_name().as_deref() == Some("response.output_item.done"))
     {
-        let item = event.field("item").unwrap();
+        let item = event.field("item").ok_or("missing fixture value")?;
         assert_eq!(text(&get(&item, "name")), identity.name);
         assert_eq!(
             text(&get(&item, "namespace")),
-            identity.namespace.clone().unwrap()
+            identity.namespace.clone().ok_or("missing fixture value")?
         );
         assert!(event.encode_sse().contains("\\ud800"));
     }
+    Ok(())
 }
 
 #[test]
@@ -593,7 +614,8 @@ fn combined_image_text_reduction_preserves_source_parts_and_exact_refusal_bounda
 }
 
 #[test]
-fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mirror() {
+fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mirror()
+-> Result<(), String> {
     let mut names = ToolMap::new();
     names.insert(
         "custom".into(),
@@ -621,7 +643,7 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
         &"deepseek-flash".into(),
         &options(),
     )
-    .unwrap()
+    .map_err(|error| format!("{error:?}"))?
     .decode;
     plan.tool_names = names;
     let mut writer = gateway_providers::writer::ResponseWriter::new(plan);
@@ -630,13 +652,20 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
     let delta = events
         .iter()
         .find(|event| event.type_name().as_deref() == Some("response.custom_tool_call_input.delta"))
-        .unwrap();
-    assert_eq!(delta.field("delta").unwrap(), parse(r#""raw\udc00""#));
+        .ok_or("missing fixture value")?;
+    assert_eq!(
+        delta
+            .field("delta")
+            .ok_or("missing response fixture field")?,
+        parse(r#""raw\udc00""#)
+    );
     assert!(delta.encode_sse().contains("\\udc00"));
+    Ok(())
 }
 
 #[test]
-fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings() {
+fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings()
+-> Result<(), String> {
     use gateway_core::model::ModelId;
     for model in [
         JsString16::from_units(vec![0xd800]),
@@ -645,10 +674,15 @@ fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings
         JsString16::from_utf8("m\ncontrol"),
     ] {
         let raw = json::object(vec![
-            ("model", model.to_source_json().unwrap()),
+            (
+                "model",
+                model
+                    .to_source_json()
+                    .map_err(|error| format!("{error:?}"))?,
+            ),
             ("input", parse(r#""x""#)),
         ])
-        .unwrap();
+        .map_err(|error| format!("{error:?}"))?;
         let selected = ModelId::from_source(model.clone());
         let prepared = prepare_source_request(
             UpstreamProvider::Surplus,
@@ -657,7 +691,7 @@ fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings
             &selected,
             &options(),
         )
-        .unwrap();
+        .map_err(|error| format!("{error:?}"))?;
         assert_eq!(text(&get(&prepared.body, "model")), model);
         // Select the existing scalar Chat upstream codec to exercise its synthesized
         // request-derived envelope; this is not a new router/provider selection.
@@ -665,7 +699,8 @@ fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings
         plan.decode = gateway_providers::types::ResponseDecode::ChatToResponses(
             gateway_providers::types::ChatProfile::Deepseek,
         );
-        let buffered = decode_response(&plan, 200, &Default::default(), reply()).unwrap();
+        let buffered = decode_response(&plan, 200, &Default::default(), reply())
+            .map_err(|error| format!("{error:?}"))?;
         assert_eq!(text(&get(&buffered.body, "model")), model);
         let mut writer = gateway_providers::writer::ResponseWriter::new(prepared.decode);
         let mut events = writer.text("answer", false);
@@ -675,17 +710,21 @@ fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings
             .filter(|event| event.field("response").is_some())
         {
             assert_eq!(
-                text(&get(&event.field("response").unwrap(), "model")),
+                text(&get(
+                    &event.field("response").ok_or("missing fixture value")?,
+                    "model"
+                )),
                 model
             );
             let encoded = event.encode_sse();
             let data = encoded
                 .lines()
                 .find_map(|line| line.strip_prefix("data: "))
-                .unwrap();
+                .ok_or("missing fixture value")?;
             assert_eq!(text(&path(&parse(data), &["response", "model"])), model);
         }
     }
+    Ok(())
 }
 #[test]
 fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {

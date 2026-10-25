@@ -54,7 +54,8 @@ fn inspect(rows: &[ObservedRow]) -> audit::Audit {
 }
 
 #[test]
-fn named_paid_source_audit_retains_utf16_model_effort_and_exact_counter_inventory() {
+fn named_paid_source_audit_retains_utf16_model_effort_and_exact_counter_inventory()
+-> Result<(), Box<dyn std::error::Error>> {
     for (model, effort) in [
         (r#""\ud800""#, r#""\udc00""#),
         (r#""\ufffd""#, r#""arbitrary-effort""#),
@@ -72,12 +73,11 @@ fn named_paid_source_audit_retains_utf16_model_effort_and_exact_counter_inventor
         assert_eq!(findings.counts["paid_fallback_v3_requests"], 1);
         assert_eq!(findings.counts["paid_fallback_v3_windows"], 1);
         assert_eq!(findings.counts["paid_fallback_v3_pending"], 1);
-        let current = decode_source_control_record(&rows[1].record).unwrap();
+        let current = decode_source_control_record(&rows[1].record)?;
         for field in ["model", "reasoning"] {
-            assert_eq!(
-                source_json_tree(&source::member(&current, field).unwrap()).unwrap(),
-                source_json_tree(&source::member(&document, field).unwrap()).unwrap()
-            );
+            let actual = source::member(&current, field).ok_or("missing current field")?;
+            let expected = source::member(&document, field).ok_or("missing original field")?;
+            assert_eq!(source_json_tree(&actual)?, source_json_tree(&expected)?);
         }
         assert_eq!(
             rows.iter()
@@ -86,10 +86,12 @@ fn named_paid_source_audit_retains_utf16_model_effort_and_exact_counter_inventor
             original
         );
     }
+    Ok(())
 }
 
 #[test]
-fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals() {
+fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals()
+-> Result<(), GatewayError> {
     let document = request(r#""\ud800""#, r#""none""#);
     let mut rows = inventory(&document);
     rows.pop();
@@ -119,16 +121,12 @@ fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals() {
                 .is_ok_and(|text| text.contains("request is malformed"))
         }));
     }
-    let mut missing = document.object_entries().unwrap();
-    missing.retain(|(key, _)| {
-        key.as_units()
-            .iter()
-            .copied()
-            .ne("reasoning".encode_utf16())
-    });
+    let mut missing = document.object_entries()?;
+    missing.retain(|(key, _)| key != &JsString16::from_utf8("reasoning"));
     assert!(!audit::paid::valid_source_paid_request(
-        &source::object_keys(missing).unwrap()
+        &source::object_keys(missing)?
     ));
+    Ok(())
 }
 
 #[test]

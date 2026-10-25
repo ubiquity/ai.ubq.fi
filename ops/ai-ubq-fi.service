@@ -15,7 +15,11 @@ Environment=DENO_TIMELINE=production
 ExecStart=/bin/sh /home/codex/repos/ubiquity/ai.ubq.fi/ops/launch-vps.sh
 Restart=always
 RestartSec=5
-TimeoutStopSec=180
+# A mobile steer is discarded after about 30 seconds without an acknowledgement.
+# The app-server retries a failed model stream at 5s, then 10s, then 20s, so the
+# stop and restart must finish before that 20s retry. The old 180s drain let the
+# client expire the steer while the gateway was still shutting down.
+TimeoutStopSec=15
 UMask=0077
 NoNewPrivileges=true
 # The native control socket's physical target is in shared /tmp.

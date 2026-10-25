@@ -1,4 +1,5 @@
 use super::*;
+use crate::TestResult;
 use gateway_core::js_string::JsString16;
 use gateway_core::state::StoredRecord;
 use gateway_core::value::PortableValue;
@@ -639,13 +640,12 @@ fn claude_expiry_crossing_async_reads_never_reserves_paid_exposure() {
 }
 
 #[test]
-fn claude_model_scope_clock_and_current_paid_policy_remain_required() {
+fn claude_model_scope_clock_and_current_paid_policy_remain_required() -> TestResult {
     let store = MemoryStore::default();
     claude_setup(&store);
     let authority = authority(&store);
-    let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))
-        .unwrap()
-        .unwrap();
+    let proof = run(authority.prove_claude_unavailable(&"paid-model".into(), NOW))?
+        .ok_or("expected Claude exhaustion proof")?;
     let mut input = paid_request("claude-wrong-model", PaidProvider::Surplus);
     input.model = "gpt-test".into();
     assert!(
@@ -673,13 +673,15 @@ fn claude_model_scope_clock_and_current_paid_policy_remain_required() {
     let no_clock = gateway_authority::store::Authority::new(store.clone(), Tokens::default());
     assert_eq!(
         run(no_clock.prove_claude_unavailable(&"paid-model".into(), NOW))
-            .unwrap_err()
+            .err()
+            .ok_or("expected controlled rejection")?
             .envelope
             .error
             .code
             .as_deref(),
         Some("authority_clock_unavailable")
     );
+    Ok(())
 }
 
 #[test]

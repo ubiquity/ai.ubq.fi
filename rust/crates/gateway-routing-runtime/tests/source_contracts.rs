@@ -14,14 +14,20 @@ use gateway_routing_runtime::{
     session::RoutingSession,
     settlement::recover_pending,
     types::{
-        AttemptFailure, AttemptUsage, PreparedWireRequest, RefusalDecision, RoutingHost,
-        RoutingInput, RoutingResult, SourceRefusalBody, TransportState,
+        AttemptFailure, AttemptUsage, PreparedAttempt, PreparedWireRequest, RefusalDecision,
+        RoutingHost, RoutingInput, RoutingResult, SourceRefusalBody, TransportState,
     },
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+type TestSession = RoutingSession<Store, Store, Store, Host>;
+async fn next_attempt(session: &TestSession) -> TestResult<PreparedAttempt> {
+    let attempt = session.next_attempt().await?;
+    attempt.ok_or_else(|| "missing prepared attempt".into())
+}
 fn fixture(value: &Value) -> SourceJson {
     SourceJson::from_serializable(value).unwrap()
 }
@@ -54,11 +60,7 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
     );
 }
 
-fn paid_input(
-    store: &Store,
-    id: &str,
-    model: &str,
-) -> gateway_routing_runtime::types::RoutingInput {
+fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> {
     use gateway_authority::{keys, paid_control::*};
     use gateway_core::{provider::PaidProvider, state::AuthorityStore};
     let mut request = input(id, model, &["surplus", "openlux"]);
@@ -71,7 +73,12 @@ fn paid_input(
         })
         .to_vec();
     for provider in ["surplus", "openlux"] {
-        request.catalog.providers.get_mut(provider).unwrap().models = models.clone();
+        request
+            .catalog
+            .providers
+            .get_mut(provider)
+            .ok_or("missing paid provider fixture")?
+            .models = models.clone();
     }
     store.seed(
         keys::paid_control_owner(),
@@ -120,7 +127,7 @@ fn paid_input(
             },
         );
     }
-    let revision = |key| run(store.read(&key)).unwrap().map(|row| row.revision);
+    let revision = |key| run(store.read(&key)).map(|row| row.map(|row| row.revision));
     store.seed(
         keys::paid_routing(),
         PaidRoutingProjection {
@@ -140,35 +147,39 @@ fn paid_input(
             },
             provenance: PaidProjectionProvenance {
                 v: 1,
-                owner_revision: revision(keys::paid_control_owner()).unwrap(),
-                config_revision: revision(keys::paid_control_config()).unwrap(),
+                owner_revision: revision(keys::paid_control_owner())?
+                    .ok_or("missing paid owner revision")?,
+                config_revision: revision(keys::paid_control_config())?
+                    .ok_or("missing paid config revision")?,
                 surplus_observation_revision: revision(keys::paid_control_observation(
                     PaidProvider::Surplus,
-                )),
+                ))?,
                 openlux_observation_revision: revision(keys::paid_control_observation(
                     PaidProvider::Metered,
-                )),
+                ))?,
                 observed_at_ms: NOW,
                 source_valid_until_ms: None,
                 source_checks: paid_projection_source_keys()
                     .into_iter()
-                    .map(|key| PaidSourceCheck {
-                        expected_revision: revision(key.clone()),
-                        key: key.0,
+                    .map(|key| {
+                        revision(key.clone()).map(|expected_revision| PaidSourceCheck {
+                            expected_revision,
+                            key: key.0,
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
             },
         },
     );
-    request
+    Ok(request)
 }
 
 #[test]
-fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() {
+fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> TestResult {
     run(async {
         let store = Store::new();
         seed_key(&store);
-        let request = paid_input(&store, "paid-current", "paid-model");
+        let request = paid_input(&store, "paid-current", "paid-model")?;
         let session = RoutingSession::begin(
             request,
             store.clone(),
@@ -176,30 +187,25 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() {
             store.clone(),
             store.clone(),
         )
-        .await
-        .unwrap();
-        let attempt = session.next_attempt().await.unwrap().unwrap();
+        .await?;
+        let attempt = next_attempt(&session).await?;
         assert!(attempt.paid.is_some());
         assert!(matches!(
             attempt.credential,
             gateway_routing_runtime::types::CredentialFence::Paid { .. }
         ));
-        session.before_dispatch(&attempt).await.unwrap();
-        session.transport_started(&attempt).await.unwrap();
+        session.before_dispatch(&attempt).await?;
+        session.transport_started(&attempt).await?;
         assert_eq!(
             session
                 .refusal(&attempt, refusal(503, TransportState::Started))
-                .await
-                .unwrap(),
+                .await?,
             RefusalDecision::Return
         );
-        session
-            .finish(TransportObservation::default())
-            .await
-            .unwrap();
+        session.finish(TransportObservation::default()).await?;
         assert_eq!(window(&store)["committed_requests"], 1);
 
-        let request = paid_input(&store, "paid-rotated", "paid-model");
+        let request = paid_input(&store, "paid-rotated", "paid-model")?;
         let session = RoutingSession::begin(
             request,
             store.clone(),
@@ -207,26 +213,23 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() {
             store.clone(),
             store.clone(),
         )
-        .await
-        .unwrap();
-        let attempt = session.next_attempt().await.unwrap().unwrap();
+        .await?;
+        let attempt = next_attempt(&session).await?;
         let mut config = store.value(gateway_authority::keys::paid_control_config());
         config["generation"] = json!("next-generation");
         store.seed(gateway_authority::keys::paid_control_config(), config);
         assert!(session.before_dispatch(&attempt).await.is_err());
         let mut failure = refusal(499, TransportState::NotStarted);
         failure.cancelled = true;
-        session.refusal(&attempt, failure).await.unwrap();
-        session
-            .finish(TransportObservation::default())
-            .await
-            .unwrap();
+        session.refusal(&attempt, failure).await?;
+        session.finish(TransportObservation::default()).await?;
         assert_eq!(window(&store)["committed_requests"], 1);
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn paid_original_api_release_prevents_new_paid_exposure() {
+fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
     use gateway_authority::{keys, quota::ApiReservation, store::Authority};
     use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
 
@@ -235,14 +238,13 @@ fn paid_original_api_release_prevents_new_paid_exposure() {
         seed_key(&store);
         let id = "paid-original-released";
         let session = RoutingSession::begin(
-            paid_input(&store, id, "paid-model"),
+            paid_input(&store, id, "paid-model")?,
             store.clone(),
             Host::new(&store),
             store.clone(),
             store.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
         let journal_key = TupleKey::from_scalar_parts(&[
             ScalarKeyPart::String("uos_ai"),
             ScalarKeyPart::String("routing_runtime"),
@@ -252,22 +254,22 @@ fn paid_original_api_release_prevents_new_paid_exposure() {
         ])
         .to_record_key();
         let original_api: ApiReservation =
-            serde_json::from_value(store.value(journal_key)["api"].clone()).unwrap();
+            serde_json::from_value(store.value(journal_key)["api"].clone())?;
         Authority::with_clock(store.clone(), store.clone(), store.clone())
             .release_api_key(&original_api, true, "fixture_original_released", NOW)
-            .await
-            .unwrap();
+            .await?;
         assert!(session.next_attempt().await.is_err());
         assert_eq!(
             store.value(keys::paid_window("key-a", NOW + gateway_authority::DAY_MS)),
             Value::Null,
             "A stale original API owner must fail before any paid exposure is created"
         );
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn paid_dispatch_missing_active_history_cannot_recreate_exposure() {
+fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult {
     use gateway_authority::keys;
     use gateway_core::state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
@@ -277,18 +279,17 @@ fn paid_dispatch_missing_active_history_cannot_recreate_exposure() {
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin(
-            paid_input(&store, "paid-active-history-missing", "paid-model"),
+            paid_input(&store, "paid-active-history-missing", "paid-model")?,
             store.clone(),
             Host::new(&store),
             store.clone(),
             store.clone(),
         )
-        .await
-        .unwrap();
-        let attempt = session.next_attempt().await.unwrap().unwrap();
-        let paid = attempt.paid.as_ref().unwrap();
+        .await?;
+        let attempt = next_attempt(&session).await?;
+        let paid = attempt.paid.as_ref().ok_or("missing paid reservation")?;
         let key = keys::paid_attempt(&paid.key_id.0, &paid.attempt_id.0);
-        let record = store.read(&key).await.unwrap().unwrap();
+        let record = store.read(&key).await?.ok_or("missing fixture value")?;
         let window_key = keys::paid_window("key-a", NOW + gateway_authority::DAY_MS);
         let exposure = store.value(window_key.clone());
         assert_ne!(exposure, Value::Null);
@@ -301,27 +302,27 @@ fn paid_dispatch_missing_active_history_cannot_recreate_exposure() {
                     }],
                     mutations: vec![RecordMutation::Delete { key: key.clone() }],
                 })
-                .await
-                .unwrap(),
+                .await?,
             CommitOutcome::Committed
         );
         assert!(session.before_dispatch(&attempt).await.is_err());
-        assert!(store.read(&key).await.unwrap().is_none());
+        assert!(store.read(&key).await?.is_none());
         assert_eq!(
             store.value(window_key),
             exposure,
             "Existing-only dispatch must not reserve fresh exposure when history vanished"
         );
         assert_eq!(window(&store)["committed_requests"], 0);
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity() {
+fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity() -> TestResult {
     run(async {
         let store = Store::new();
         seed_key(&store);
-        let mut request = paid_input(&store, "synthetic-paid", "ubiquity/deepseek-flash");
+        let mut request = paid_input(&store, "synthetic-paid", "ubiquity/deepseek-flash")?;
         set_source(&mut request.raw, "reasoning", json!({"effort":"high"}));
         let session = RoutingSession::begin(
             request,
@@ -330,10 +331,9 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
             store.clone(),
             store.clone(),
         )
-        .await
-        .unwrap();
-        let first = session.next_attempt().await.unwrap().unwrap();
-        let reservation = first.paid.as_ref().unwrap();
+        .await?;
+        let first = next_attempt(&session).await?;
+        let reservation = first.paid.as_ref().ok_or("missing paid reservation")?;
         assert_eq!(
             reservation.attempt_id.0,
             gateway_providers::policy::paid_hop_identity(
@@ -341,35 +341,39 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
                 gateway_core::provider::PaidProvider::Surplus
             )
         );
-        session.before_dispatch(&first).await.unwrap();
-        session.transport_started(&first).await.unwrap();
+        session.before_dispatch(&first).await?;
+        session.transport_started(&first).await?;
         assert_eq!(
             session
                 .refusal(&first, refusal(429, TransportState::Started))
-                .await
-                .unwrap(),
+                .await?,
             RefusalDecision::Continue
         );
-        let second = session.next_attempt().await.unwrap().unwrap();
+        let second = next_attempt(&session).await?;
         assert_eq!(second.request.provider(), UpstreamProvider::Metered);
         assert_ne!(
-            first.paid.unwrap().attempt_id,
-            second.paid.as_ref().unwrap().attempt_id
+            first
+                .paid
+                .ok_or("missing first paid reservation")?
+                .attempt_id,
+            second
+                .paid
+                .as_ref()
+                .ok_or("missing second paid reservation")?
+                .attempt_id
         );
         assert_eq!(first.original_request_id, second.original_request_id);
         let mut failure = refusal(499, TransportState::NotStarted);
         failure.cancelled = true;
-        session.refusal(&second, failure).await.unwrap();
-        session
-            .finish(TransportObservation::default())
-            .await
-            .unwrap();
+        session.refusal(&second, failure).await?;
+        session.finish(TransportObservation::default()).await?;
         assert_eq!(window(&store)["committed_requests"], 1);
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() {
+fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
@@ -383,23 +387,18 @@ fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() {
             store.clone(),
             ExtrasFamily::ImageGenerations,
         )
-        .await
-        .unwrap();
+        .await?;
         let handle = session.admission_handle();
-        let children = handle.children(2).await.unwrap();
+        let children = handle.children(2).await?;
         assert_eq!(children[0].request_id(), "image-parent");
         assert_eq!(children[1].request_id(), "image-parent:image:generations:2");
         assert!(session.next_attempt().await.is_err());
         assert!(session.finish(complete()).await.is_err());
-        let ticket = handle.before_dispatch(&children[0]).await.unwrap();
-        handle
-            .transport_started(&children[0], &ticket)
-            .await
-            .unwrap();
+        let ticket = handle.before_dispatch(&children[0]).await?;
+        handle.transport_started(&children[0], &ticket).await?;
         handle
             .child_finished(&children[1], TransportState::NotStarted)
-            .await
-            .unwrap();
+            .await?;
         assert!(
             handle
                 .finish(complete(), KernelTerminal::Committed, "outer complete")
@@ -414,22 +413,20 @@ fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() {
         );
         handle
             .child_finished(&children[0], TransportState::Started)
-            .await
-            .unwrap();
+            .await?;
         handle
             .finish(complete(), KernelTerminal::Committed, "outer complete")
-            .await
-            .unwrap();
+            .await?;
         handle
             .finish(complete(), KernelTerminal::Committed, "outer complete")
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(window(&store)["committed_requests"], 1);
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
+fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
@@ -443,16 +440,14 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
             store.clone(),
             ExtrasFamily::ImageEdits,
         )
-        .await
-        .unwrap();
+        .await?;
         let handle = session.admission_handle();
-        let children = handle.children(2).await.unwrap();
-        handle.before_dispatch(&children[0]).await.unwrap();
+        let children = handle.children(2).await?;
+        handle.before_dispatch(&children[0]).await?;
         for child in children {
             handle
                 .child_finished(&child, TransportState::NotStarted)
-                .await
-                .unwrap();
+                .await?;
         }
         handle
             .finish(
@@ -460,8 +455,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
                 KernelTerminal::Released,
                 "source cancelled",
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(window(&store)["committed_requests"], 0);
         let session = RoutingSession::begin_extras(
             input("image-unknown", "gpt-test", &[]),
@@ -471,11 +465,10 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
             store.clone(),
             ExtrasFamily::ImageGenerations,
         )
-        .await
-        .unwrap();
+        .await?;
         let handle = session.admission_handle();
-        let children = handle.children(1).await.unwrap();
-        handle.before_dispatch(&children[0]).await.unwrap();
+        let children = handle.children(1).await?;
+        handle.before_dispatch(&children[0]).await?;
         store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
@@ -484,19 +477,19 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() {
             store.clone(),
             100,
         )
-        .await
-        .unwrap();
+        .await?;
         assert_eq!(recovered.len(), 1);
         assert_eq!(
             recovered[0].observation.delivery,
             DeliveryOutcome::Unobserved
         );
         assert_eq!(window(&store)["committed_requests"], 1);
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
+fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
@@ -510,10 +503,9 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
             store.clone(),
             ExtrasFamily::Embeddings,
         )
-        .await
-        .unwrap();
+        .await?;
         let handle = session.admission_handle();
-        let child = handle.children(1).await.unwrap().remove(0);
+        let child = handle.children(1).await?.remove(0);
         let other = RoutingSession::begin_extras(
             input("other", "voyage-3", &[]),
             store.clone(),
@@ -522,11 +514,10 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
             store.clone(),
             ExtrasFamily::Embeddings,
         )
-        .await
-        .unwrap()
+        .await?
         .admission_handle();
-        let other_child = other.children(1).await.unwrap().remove(0);
-        let other_ticket = other.before_dispatch(&other_child).await.unwrap();
+        let other_child = other.children(1).await?.remove(0);
+        let other_ticket = other.before_dispatch(&other_child).await?;
         assert!(
             handle
                 .transport_started(&child, &other_ticket)
@@ -534,35 +525,32 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() {
                 .is_err()
         );
         for _ in 0..2 {
-            let ticket = handle.before_dispatch(&child).await.unwrap();
-            handle.transport_started(&child, &ticket).await.unwrap();
+            let ticket = handle.before_dispatch(&child).await?;
+            handle.transport_started(&child, &ticket).await?;
         }
         handle
             .child_finished(&child, TransportState::Started)
-            .await
-            .unwrap();
+            .await?;
         handle
             .finish(complete(), KernelTerminal::Committed, "voyage complete")
-            .await
-            .unwrap();
+            .await?;
         other
             .child_finished(&other_child, TransportState::NotStarted)
-            .await
-            .unwrap();
+            .await?;
         other
             .finish(
                 TransportObservation::default(),
                 KernelTerminal::Released,
                 "no chunk started",
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(window(&store)["committed_requests"], 1);
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission() {
+fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
@@ -577,35 +565,32 @@ fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission()
             store.clone(),
             ExtrasFamily::ImageGenerations,
         )
-        .await
-        .unwrap();
+        .await?;
         let handle = session.admission_handle();
-        let child = handle.children(1).await.unwrap().remove(0);
-        let attempt=handle.prepare_image_child(&child,fixture(&json!({"model":"gpt-test","input":"image fixture","tools":[{"type":"image_generation"}]}))).await.unwrap();
+        let child = handle.children(1).await?.remove(0);
+        let attempt=handle.prepare_image_child(&child,fixture(&json!({"model":"gpt-test","input":"image fixture","tools":[{"type":"image_generation"}]}))).await?;
         assert_eq!(attempt.request.provider, UpstreamProvider::ChatgptCodex);
-        let ticket = handle.before_image_dispatch(&attempt).await.unwrap();
-        handle.transport_started(&child, &ticket).await.unwrap();
+        let ticket = handle.before_image_dispatch(&attempt).await?;
+        handle.transport_started(&child, &ticket).await?;
         assert_eq!(
             handle
                 .image_refusal(&attempt, refusal(503, TransportState::Started))
-                .await
-                .unwrap(),
+                .await?,
             RefusalDecision::Return
         );
         handle
             .child_finished(&child, TransportState::Started)
-            .await
-            .unwrap();
+            .await?;
         handle
             .finish(complete(), KernelTerminal::Committed, "image complete")
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(window(&store)["committed_requests"], 1);
-    });
+        Ok(())
+    })
 }
 
 #[test]
-fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission() {
+fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
@@ -619,14 +604,12 @@ fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission(
             store.clone(),
             ExtrasFamily::EmbeddingJobPoll,
         )
-        .await
-        .unwrap();
+        .await?;
         let handle = session.admission_handle();
-        let child = handle.children(1).await.unwrap().remove(0);
+        let child = handle.children(1).await?.remove(0);
         handle
             .child_finished(&child, TransportState::NotStarted)
-            .await
-            .unwrap();
+            .await?;
         assert!(
             handle
                 .finish(complete(), KernelTerminal::Committed, "job cached")
@@ -635,10 +618,10 @@ fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission(
         );
         handle
             .finish(complete(), KernelTerminal::Released, "job read")
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(window(&store)["committed_requests"], 0);
-    });
+        Ok(())
+    })
 }
 
 fn refusal(status: u16, transport: TransportState) -> AttemptFailure {
@@ -668,7 +651,7 @@ fn complete() -> TransportObservation {
 }
 
 #[test]
-fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() {
+fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() -> TestResult {
     assert_eq!(
         policy::endpoint(gateway_providers::types::ClientSurface::Responses),
         "openai-response"
@@ -690,38 +673,53 @@ fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() {
         gateway_providers::types::ClientSurface::Responses,
         &raw,
         &options,
-    )
-    .unwrap();
+    )?;
     assert_eq!(raw["model"], "gpt-5.6-sol");
     assert_eq!(
         source::member(&prepared.body, "model").and_then(|value| source::string(&value)),
         Some("gpt-5.6-sol-low".into())
     );
     assert!(source::member(&prepared.body, "reasoning").is_none());
+    Ok(())
 }
 
 #[test]
-fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() {
+fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() -> TestResult {
     let mut request = input("model-gate", "unknown-model", &[]);
-    assert_eq!(source_plan(&request).unwrap_err().error.status, 404);
+    assert!(source_plan(&request).is_err_and(|error| error.error.status == 404));
     request.catalog.snapshot = request.catalog.full_snapshot.take();
-    assert_eq!(source_plan(&request).unwrap_err().error.status, 404);
-    request.catalog.snapshot.as_mut().unwrap().models.clear();
+    assert!(source_plan(&request).is_err_and(|error| error.error.status == 404));
+    request
+        .catalog
+        .snapshot
+        .as_mut()
+        .ok_or("missing catalog snapshot")?
+        .models
+        .clear();
     assert!(source_plan(&request).is_ok());
     request.catalog.snapshot = None;
     assert!(source_plan(&request).is_ok());
     let mut reserve = input("reserve-model", "gpt-reserve", &["surplus"]);
-    reserve.catalog.providers.get_mut("surplus").unwrap().models = vec![fixture(
+    reserve
+        .catalog
+        .providers
+        .get_mut("surplus")
+        .ok_or("missing fixture value")?
+        .models = vec![fixture(
         &json!({"id":"gpt-reserve","supported_endpoint_types":["openai-response"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
     )];
-    let plan = source_plan(&reserve).unwrap();
+    let plan = source_plan(&reserve)?;
     assert!(!plan.paid.metered_only);
     assert!(matches!(plan.hops.get(1), Some(policy::RouteHop::Codex)));
     let mut paid = input("paid-endpoint", "paid-model", &["surplus"]);
-    paid.catalog.providers.get_mut("surplus").unwrap().models = vec![fixture(
+    paid.catalog
+        .providers
+        .get_mut("surplus")
+        .ok_or("missing fixture value")?
+        .models = vec![fixture(
         &json!({"id":"paid-model","supported_endpoint_types":["openai"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
     )];
-    assert_eq!(source_plan(&paid).unwrap_err().error.status, 404);
+    assert!(source_plan(&paid).is_err_and(|error| error.error.status == 404));
     paid.surface = gateway_providers::types::ClientSurface::Chat;
     // Keep the model/content/control intent in the actual Chat envelope.
     paid.raw = fixture(&json!({
@@ -730,6 +728,7 @@ fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() {
         "reasoning_effort":"none"
     }));
     assert!(source_plan(&paid).is_ok());
+    Ok(())
 }
 #[test]
 fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
@@ -1164,7 +1163,7 @@ fn cancellation_before_admission_preserves_original_reason() {
 }
 
 #[test]
-fn source_deepseek_extension_uses_one_captured_route_selection() {
+fn source_deepseek_extension_uses_one_captured_route_selection() -> TestResult {
     run(async {
         let store = Store::new();
         seed_key(&store);
@@ -1176,12 +1175,16 @@ fn source_deepseek_extension_uses_one_captured_route_selection() {
         request.catalog.selection = gateway_schema::selection::ProviderSelection::normalize(
             &json!({"provider_ids":["cerebras"],"updated_at_ms":NOW}),
         );
-        let error = source_plan(&request).unwrap_err();
+        let error = source_plan(&request)
+            .err()
+            .ok_or("expected source rejection")?;
         assert_eq!(error.error.status, 400);
-        let SourceRefusalBody::Json(body) = error.source_body.unwrap() else {
+        let SourceRefusalBody::Json(body) =
+            error.source_body.ok_or("missing source refusal body")?
+        else {
             panic!("expected the original source request error body")
         };
-        let source_error = source::member(&body, "error").unwrap();
+        let source_error = source::member(&body, "error").ok_or("missing source error")?;
         assert_eq!(
             source::member(&source_error, "param").map(|param| source::string(&param)),
             Some(Some("thinking".into()))
@@ -1194,24 +1197,21 @@ fn source_deepseek_extension_uses_one_captured_route_selection() {
             store.clone(),
             store.clone(),
         )
-        .await
-        .unwrap();
+        .await?;
         request.catalog.selection = gateway_schema::selection::ProviderSelection::normalize(
             &json!({"provider_ids":["cerebras"],"updated_at_ms":NOW+1}),
         );
         assert!(!request.catalog.enabled("deepseek"));
-        let attempt = session.next_attempt().await.unwrap().unwrap();
+        let attempt = next_attempt(&session).await?;
         assert_eq!(attempt.request.provider(), UpstreamProvider::Deepseek);
         assert_eq!(
             source::member(attempt.request.body(), "reasoning_effort")
                 .and_then(|value| source::string(&value)),
             Some("none".into())
         );
-        session
-            .finish(TransportObservation::default())
-            .await
-            .unwrap();
-    });
+        session.finish(TransportObservation::default()).await?;
+        Ok(())
+    })
 }
 
 #[test]

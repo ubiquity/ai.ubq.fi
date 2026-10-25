@@ -3,7 +3,7 @@ use crate::{
     replay::{ReplayEntry, ReplayTransport},
     source as s,
     source_tools::{self, ToolMap},
-    types::*,
+    types::{ClaudeBodyOptions, PrepareOptions},
 };
 use gateway_core::{source_json::SourceJson, source_serialization as json};
 fn eq(value: &SourceJson, literal: &str) -> bool {

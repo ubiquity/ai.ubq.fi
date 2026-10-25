@@ -3,7 +3,7 @@ use crate::{
     chat::{FORWARD_LIMIT, FORWARD_VERSION, bound_source},
     source as s,
     source_tools::{self, ToolMap},
-    types::*,
+    types::{ChatProfile, Elision},
 };
 use gateway_core::{
     js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
