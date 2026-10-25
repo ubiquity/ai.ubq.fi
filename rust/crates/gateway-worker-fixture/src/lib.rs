@@ -86,9 +86,8 @@ pub async fn fetch(
     })?;
     #[cfg(feature = "stream-drop-fixture")]
     let request = {
-        let mut request = request;
         if request.method() == worker::Method::Post && request.path() == "/v1/responses" {
-            let marker = match request.cloned() {
+            let marker = match request.clone() {
                 Ok(mut cloned) => cloned.json::<serde_json::Value>().await.ok(),
                 Err(_) => None,
             };
