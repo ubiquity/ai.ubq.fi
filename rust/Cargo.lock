@@ -1326,17 +1326,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway-worker-stream"
-version = "0.1.0"
-dependencies = [
- "futures-util",
- "gateway-core",
- "gateway-providers",
- "serde_json",
- "worker",
-]
-
-[[package]]
 name = "gateway-worker-fixture"
 version = "0.1.0"
 dependencies = [
@@ -1363,6 +1352,17 @@ dependencies = [
  "gateway-publication-transport",
  "gateway-worker",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-worker-stream"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-core",
+ "gateway-providers",
+ "serde_json",
+ "worker",
 ]
 
 [[package]]
