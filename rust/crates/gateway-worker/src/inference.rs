@@ -586,6 +586,15 @@ impl Inference<'_> {
                 return crate::inference_source::error_response(error, self.capture).await;
             }
         };
+        self.respond_selected(owner, selected, client_stream).await
+    }
+
+    async fn respond_selected(
+        self,
+        mut owner: gateway_admission::handoff::Pending<stream::PendingLifetime>,
+        selected: stream::Selected,
+        client_stream: bool,
+    ) -> ResponseResult {
         let stream::Selected {
             upstream,
             attempt,

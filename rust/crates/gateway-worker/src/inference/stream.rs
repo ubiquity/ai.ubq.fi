@@ -564,6 +564,24 @@ impl TerminalObserver for Lifecycle {
 }
 
 impl super::Inference<'_> {
+    fn arm_pending(&self, owner: &mut Pending<PendingLifetime>) {
+        if owner.armed() {
+            return;
+        }
+        let (context, capture, cancellation) = (
+            self.context.clone(),
+            self.capture.clone(),
+            self.host.cancellation.clone(),
+        );
+        owner.arm(move |lifetime| {
+            context.wait_until(async move {
+                let _ = lifetime
+                    .cleanup(interrupted().into(), capture, cancellation)
+                    .await;
+            })
+        });
+    }
+
     pub(super) async fn select(
         &self,
         owner: &mut Pending<PendingLifetime>,
@@ -597,20 +615,7 @@ impl super::Inference<'_> {
             if !selected.needs_preparation(&lifetime.session) {
                 return Ok(selected);
             }
-            if !owner.armed() {
-                let (context, capture, cancellation) = (
-                    self.context.clone(),
-                    self.capture.clone(),
-                    self.host.cancellation.clone(),
-                );
-                owner.arm(move |lifetime| {
-                    context.wait_until(async move {
-                        let _ = lifetime
-                            .cleanup(interrupted().into(), capture, cancellation)
-                            .await;
-                    })
-                });
-            }
+            self.arm_pending(owner);
             let source = selected
                 .upstream
                 .stream()
@@ -636,12 +641,13 @@ impl super::Inference<'_> {
                     let mut future = Box::pin(prepared.prepare());
                     std::future::Future::poll(future.as_mut(), context)
                 };
-                if result.is_pending() && prepared.presemantic_prefix_observed() {
-                    if let Some(value) = owner.get() {
-                        crate::stream_fixture::note_preparation(
-                            &value.session.original_context().request_id.0,
-                        );
-                    }
+                if result.is_pending()
+                    && prepared.presemantic_prefix_observed()
+                    && let Some(value) = owner.get()
+                {
+                    crate::stream_fixture::note_preparation(
+                        &value.session.original_context().request_id.0,
+                    );
                 }
                 result
             })
