@@ -21,6 +21,9 @@ members = [
   "crates/gateway-routing-runtime-test-support",
   "crates/gateway-extras-runtime",
   "crates/gateway-publication",
+  "crates/gateway-publication-policy",
+  "crates/gateway-publication-transport",
+  "crates/gateway-publication-test-support",
   "crates/gateway-native",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
@@ -68,6 +71,9 @@ gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
 gateway-routing-runtime-test-support = { path = "crates/gateway-routing-runtime-test-support" }
 gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
 gateway-publication = { path = "crates/gateway-publication" }
+gateway-publication-policy = { path = "crates/gateway-publication-policy" }
+gateway-publication-transport = { path = "crates/gateway-publication-transport" }
+gateway-publication-test-support = { path = "crates/gateway-publication-test-support" }
 gateway-native = { path = "crates/gateway-native" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }

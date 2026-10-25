@@ -1,10 +1,9 @@
-use crate::{
-    access_publication::PreparedAccessPublication,
-    control_publication::PreparedConfigurationPublication,
-};
+use crate::access_publication::PreparedAccessPublication;
 use gateway_auth::native_credentials::{NativeCredentials, parse_native_document};
 use gateway_authority::paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_core::error::GatewayError;
+use gateway_publication_policy::control_publication::PreparedConfigurationPublication;
+use gateway_publication_policy::protocol::{invalid, valid_revision};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -151,35 +150,24 @@ impl WireCommand {
         Ok(command)
     }
 }
-pub(crate) fn valid_revision(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 256
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
-}
-
-impl PreparedConfigurationPublication {
-    pub fn command(
-        &self,
-        publication_revision: &str,
-    ) -> Result<PreparedPublicationCommand, GatewayError> {
-        if !valid_revision(publication_revision) {
-            return Err(invalid());
-        }
-        Ok(PreparedPublicationCommand(WireCommand::ConfigPublish(
-            ConfigWire {
-                v: 1,
-                config: self.config.clone(),
-                owner_revision: self.checks[0]
-                    .expected_revision
-                    .clone()
-                    .ok_or_else(invalid)?,
-                previous_config_revision: self.checks[1].expected_revision.clone(),
-                publication_revision: publication_revision.into(),
-            },
-        )))
+pub fn configuration_command(
+    prepared: &PreparedConfigurationPublication,
+    publication_revision: &str,
+) -> Result<PreparedPublicationCommand, GatewayError> {
+    if !valid_revision(publication_revision) {
+        return Err(invalid());
     }
+    Ok(PreparedPublicationCommand(WireCommand::ConfigPublish(
+        ConfigWire {
+            v: 1,
+            config: prepared.configuration().clone(),
+            owner_revision: prepared.owner_revision().ok_or_else(invalid)?.into(),
+            previous_config_revision: prepared
+                .previous_configuration_revision()
+                .map(str::to_owned),
+            publication_revision: publication_revision.into(),
+        },
+    )))
 }
 impl PreparedAccessPublication {
     pub fn command(&self) -> Result<PreparedPublicationCommand, GatewayError> {
@@ -276,11 +264,4 @@ impl PublicationReceipt {
             }
         }
     }
-}
-pub(crate) fn invalid() -> GatewayError {
-    GatewayError::new(
-        400,
-        "Invalid fixed native publication payload",
-        Some("native_publication_invalid"),
-    )
 }

@@ -849,7 +849,7 @@ dependencies = [
  "gateway-core",
  "gateway-profile-values",
  "gateway-providers",
- "gateway-publication",
+ "gateway-publication-policy",
  "serde",
  "serde_json",
  "url",
@@ -962,7 +962,7 @@ dependencies = [
  "gateway-core",
  "gateway-native",
  "gateway-providers",
- "gateway-publication",
+ "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "serde",
@@ -1102,6 +1102,8 @@ dependencies = [
  "gateway-core",
  "gateway-native-supervisor-read",
  "gateway-publication",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
  "getrandom 0.4.3",
  "httparse",
  "landlock",
@@ -1192,6 +1194,46 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-publication-policy",
+ "gateway-publication-test-support",
+ "gateway-publication-transport",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-publication-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-publication-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-publication",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-publication-transport"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-publication",
+ "gateway-publication-policy",
  "serde",
  "serde_json",
 ]
@@ -1282,6 +1324,8 @@ dependencies = [
  "gateway-profile-values",
  "gateway-providers",
  "gateway-publication",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -1298,7 +1342,8 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
- "gateway-publication",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
  "gateway-worker",
  "gateway-worker-fixture-setup",
  "serde_json",
@@ -1313,6 +1358,8 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-publication",
+ "gateway-publication-policy",
+ "gateway-publication-transport",
  "gateway-worker",
  "serde_json",
 ]

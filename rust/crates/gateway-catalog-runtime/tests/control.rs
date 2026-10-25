@@ -995,7 +995,7 @@ mod native_configuration {
             NativeNonceAuthority, NativeTransportIdentity,
         },
     };
-    use gateway_publication::control_publication::{
+    use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
         fixture_owner_statement,
     };

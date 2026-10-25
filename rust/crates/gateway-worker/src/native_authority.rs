@@ -350,7 +350,7 @@ pub async fn managed_publication(
     bytes: &[u8],
 ) -> Result<Response, GatewayError> {
     if request.method() != Method::Post
-        || bytes.len() > gateway_publication::managed::MANAGED_PUBLICATION_MAX_BYTES
+        || bytes.len() > gateway_publication_transport::managed::MANAGED_PUBLICATION_MAX_BYTES
     {
         return Err(invalid());
     }
@@ -387,7 +387,7 @@ pub async fn managed_publication(
         &incoming,
     );
     use gateway_authority::native_control::managed::NativeManagedPublicationDisposition as Disposition;
-    use gateway_publication::{managed::ManagedPublicationReceipt, wire::PublicationDisposition};
+    use gateway_publication::wire::PublicationDisposition;
     let applied = receiver
         .publish_managed(&proof, bytes)
         .await
@@ -396,7 +396,7 @@ pub async fn managed_publication(
                 Disposition::Applied => PublicationDisposition::Applied,
                 Disposition::AlreadyCurrent => PublicationDisposition::AlreadyCurrent,
             };
-            ManagedPublicationReceipt {
+            gateway_publication_transport::managed::ManagedPublicationReceipt {
                 v: 2,
                 operation: "managed_access_publish".into(),
                 disposition,

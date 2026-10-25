@@ -10,6 +10,8 @@ gateway-auth.workspace = true
 gateway-authority.workspace = true
 gateway-core.workspace = true
 gateway-publication.workspace = true
+gateway-publication-policy.workspace = true
+gateway-publication-transport.workspace = true
 gateway-worker = { path = "../gateway-worker", default-features = false }
 serde_json.workspace = true
 

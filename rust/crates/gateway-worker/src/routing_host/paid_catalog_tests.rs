@@ -24,14 +24,14 @@ use gateway_core::source_json::SourceJson;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
-use gateway_publication::control_publication::{
+use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
     fixture_owner_statement, runtime_config_key,
 };
-use gateway_publication::transport::{
-    NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
-    PublicationResponse,
+use gateway_publication_policy::protocol::{
+    PublicationCarrier, PublicationRequest, PublicationResponse,
 };
+use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_routing_runtime_test_support::source_catalog;
 use serde_json::json;
 use std::{
@@ -117,22 +117,23 @@ async fn install(store: &Store) -> ConfiguredPaidInputs {
         [31; 32],
         BTreeSet::from([NativeCapability::ConfigurationPublish]),
     )
-    .unwrap();
+    .unwrap_or_else(|_| panic!("fixture install"));
     let inputs = ConfiguredPaidInputs::new(
         Some(Secret::new("synthetic-surplus-only".into())),
         None,
         None,
         json!({"test":"selected-paid-hop"}),
     )
-    .unwrap();
+    .unwrap_or_else(|_| panic!("fixture install"));
     let receiver =
-        PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now).unwrap();
-    let body = fixture_owner_statement(&identity).unwrap();
+        PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now)
+            .unwrap_or_else(|_| panic!("fixture install"));
+    let body = fixture_owner_statement(&identity).unwrap_or_else(|_| panic!("fixture install"));
     let nonce = base64url(&[1; 32]);
     let time = NOW.to_string();
     let mac = identity
         .sign(NATIVE_PUBLICATION_PATH, NOW, &nonce, &body)
-        .unwrap();
+        .unwrap_or_else(|_| panic!("fixture install"));
     let replay = StoreNonceAuthority::new(store);
     let proof = NativeAuthenticator::new(&identity, &replay)
         .authenticate(
@@ -148,10 +149,10 @@ async fn install(store: &Store) -> ConfiguredPaidInputs {
             NOW,
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("fixture install"));
     bootstrap_fixture_owner(store, &identity, &proof, NOW, "signed-owner")
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("fixture install"));
     let prepared = PreparedConfigurationPublication::capture(
         store,
         &identity,
@@ -160,17 +161,19 @@ async fn install(store: &Store) -> ConfiguredPaidInputs {
         NOW,
     )
     .await
-    .unwrap();
-    NativePublicationSender::configured(
+    .unwrap_or_else(|_| panic!("fixture install"));
+    let command = gateway_publication::wire::configuration_command(&prepared, "signed-config")
+        .unwrap_or_else(|_| panic!("fixture install"));
+    gateway_publication::sender::NativePublicationSender::configured(
         &identity,
         &Carrier {
             store,
             receiver: &receiver,
         },
     )
-    .send(&prepared.command("signed-config").unwrap(), [2; 32], NOW)
+    .send(&command, [2; 32], NOW)
     .await
-    .unwrap();
+    .unwrap_or_else(|_| panic!("fixture install"));
     inputs
 }
 struct Host {

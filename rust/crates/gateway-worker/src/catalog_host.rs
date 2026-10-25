@@ -62,7 +62,7 @@ fn binding(provider: &str, secret: &str) -> ProviderBinding {
         _ => None,
     } {
         return ProviderBinding {
-            identity: gateway_publication::control_publication::configured_paid_binding(
+            identity: gateway_publication_policy::control_publication::configured_paid_binding(
                 provider,
                 &gateway_auth::crypto::Secret::new(secret.to_owned()),
             ),
