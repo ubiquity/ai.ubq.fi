@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRustDocumentation, isRustGateInput, RUST_NATIVE_PACKAGES } from "./rust-inputs.ts";
+import { rustScopeForChanges, type RustScope } from "./rust-scope.ts";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GIT = "/usr/bin/git";
@@ -51,6 +53,7 @@ export type CiScope = TestSelection &
     needsRustWasm: boolean;
     needsRustBuild: boolean;
     needsTypeScriptValidate: boolean;
+    rustScope: RustScope | null;
   }>;
 
 const git = (args: readonly string[]): string | null => {
@@ -100,19 +103,12 @@ const changedPathsFromGit = (): string[] | null => {
   return uniqueSorted(paths);
 };
 
-export const isDocumentationPath = (path: string): boolean => DOCUMENTATION_FILE.test(path);
+export const isDocumentationPath = (path: string): boolean => DOCUMENTATION_FILE.test(path) && isRustDocumentation(path);
 export const isTestPath = (path: string): boolean => TEST_FILE.test(path);
 /** Rust has its own compiler/test graph; never feed it to the Bun import scanner. */
 export const isRustPath = (path: string): boolean => path.startsWith("rust/") && !isDocumentationPath(path);
-export const isRustGatePath = (path: string): boolean => isRustPath(path) || /^scripts\/rust-verify(?:\.test)?\.ts$/.test(path);
-export const RUST_NATIVE_ONLY_PACKAGES = [
-  "gateway-native",
-  "gateway-native-supervisor-read",
-  "gateway-quality",
-  "gateway-quality-syntax",
-  "gateway-claude-runtime-test-support",
-  "gateway-migration-test-support",
-] as const;
+export const isRustGatePath = isRustGateInput;
+export const RUST_NATIVE_ONLY_PACKAGES = RUST_NATIVE_PACKAGES;
 const WORKFLOW_CONTRACT_PATH = ".github/workflows/deno-deploy.yml";
 
 export const classifyChangedPaths = (paths: readonly string[]): ChangeScope => {
@@ -245,10 +241,9 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
         (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));
   const docsOnly = selection.reason === "documentation-only";
   const rustSelected = !docsOnly && selection.paths.some(isRustGatePath);
-  const needsRustNative = completeCheckSet || selection.runAll || rustSelected;
-  const rustPaths = selection.paths.filter(isRustGatePath);
-  const nativeOnly = rustPaths.length > 0 && rustPaths.every((path) => RUST_NATIVE_ONLY_PACKAGES.some((name) => path.startsWith(`rust/crates/${name}/`)));
-  const needsRustWasm = needsRustNative && (completeCheckSet || selection.runAll || !nativeOnly);
+  const rustScope = rustSelected ? rustScopeForChanges(root, selection.paths, completeCheckSet || selection.runAll, environment) : null;
+  const needsRustNative = completeCheckSet || selection.runAll || (rustScope?.nativePackages.length ?? 0) > 0;
+  const needsRustWasm = completeCheckSet || selection.runAll || (rustScope?.wasmPackages.length ?? 0) > 0;
   const hasTypeScriptWork = selection.paths.some((path) => !isDocumentationPath(path) && !isRustPath(path));
   const needsNativeKv =
     selection.runAll ||
@@ -273,7 +268,8 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
     needsArtifact,
     needsRustNative,
     needsRustWasm,
-    needsRustBuild: needsRustWasm,
+    needsRustBuild: completeCheckSet || selection.runAll || (rustScope?.shippingWorkerBuild ?? false),
+    rustScope,
   };
 };
 

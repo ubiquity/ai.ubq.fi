@@ -71,6 +71,7 @@ const scopeCommand = (args: readonly string[], context: NodeJS.ProcessEnv, paths
       PATH: process.env.PATH,
       TMPDIR: fixture,
       TEST_SCOPE_PATHS: paths,
+      TEST_SCOPE_BASE: "HEAD",
       TEST_SCOPE_IGNORE_UNTRACKED: "1",
       ...context,
     },
@@ -734,7 +735,7 @@ test.each(["gateway-admin-test-support", "gateway-extras-runtime-test-support"])
       affectedTests: [],
       needsRustNative: true,
       needsRustWasm: true,
-      needsRustBuild: true,
+      needsRustBuild: false,
       needsTypeScriptValidate: false,
     });
   }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { stagedClippyArguments } from "./rust-quality-clippy.ts";
+import { ciScopeForSelection } from "./test-scope.ts";
 import { join } from "node:path";
 import {
   executeRustPlan,
@@ -210,6 +211,35 @@ test("package-local changes stay scoped while lock/tooling changes select every 
   assert.deepEqual(planRustVerification(root, ["rust/Cargo.lock"], "native").packages, ["gateway-core", "gateway-native", "gateway-worker"]);
   assert.deepEqual(planRustVerification(root, ["scripts/rust-verify.ts"], "native").testPackages, ["gateway-core"]);
   assert.throws(() => planRustVerification(root, ["rust/crates/unregistered/src/lib.rs"], "native"), /no registered Cargo member/);
+});
+
+test("CLI and pre-install CI consume the same production, test, asset and fallback descriptor", () => {
+  const root = fixture();
+  for (const paths of [
+    ["rust/crates/gateway-core/src/lib.rs"],
+    ["rust/crates/gateway-core/tests/contracts.rs"],
+    ["rust/crates/gateway-native/src/lib.rs"],
+    ["rust/Cargo.lock"],
+    ["favicon.png"],
+    ["rust/.cargo/config.toml"],
+  ]) {
+    const ci = ciScopeForSelection({ paths, affectedTests: [], documentationOnly: false, runAll: false, reason: "selected" }, root, {});
+    const native = planRustVerification(root, paths, "native");
+    assert.deepEqual(native.scope, ci.rustScope);
+    assert.ok(native.scope);
+    assert.equal(ci.needsRustNative, native.packages.length > 0);
+    assert.equal(ci.needsRustWasm, native.scope.wasmPackages.length > 0);
+    assert.equal(ci.needsRustBuild, native.scope.shippingWorkerBuild);
+    if (ci.needsRustWasm) {
+      const wasm = planRustVerification(root, paths, "wasm");
+      assert.deepEqual(wasm.scope, ci.rustScope);
+      assert.equal(wasm.buildWorker, ci.needsRustBuild);
+      assert.equal(
+        wasm.commands.some((command) => command.argv[0] === "worker-build"),
+        ci.needsRustBuild
+      );
+    }
+  }
 });
 
 test("portable runtime crates outside the Worker closure receive scoped native tests and WASM checks", () => {

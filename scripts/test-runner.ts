@@ -89,6 +89,8 @@ const quality = (): Group =>
       "scripts/test-native-kv.test.ts",
       "scripts/test-scope.test.ts",
       "scripts/rust-verify.test.ts",
+      "scripts/rust-inputs.test.ts",
+      "scripts/rust-scope.test.ts",
       "scripts/rust-quality.test.ts",
       "scripts/rust-quality-clippy.test.ts",
       "scripts/prepare-worker-test-runtime.test.ts",
