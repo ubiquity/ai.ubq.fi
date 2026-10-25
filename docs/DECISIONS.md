@@ -6,6 +6,18 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Private offline copies and finite prelaunch fixtures preserve migration authority - 2026-10-25
+
+The M64 operator uses a completed read-only SQLite online backup as a new closed private input to the existing typed capture and bounded CORE_STATE selector while the original Bun service may keep serving. The copy proves neither stopped-serving-source ownership, latest-write/deletion currentness nor native credential custody, and grants no activation or rollback authority. The October 21 custody/bootstrap and October 22 offline-only CORE_STATE boundaries remain unchanged.
+
+The core-state export keeps Input v1 and returns Receipt v2 naming the actual selected private capture path, byte count and hash. Full and selected capture bytes may contain credential-bearing state and remain private pending the existing current-custody and access-only sanitization checks. The serving source identity stays distinct from the helper source/tree and runtime/artifact provenance; one cannot stand in for another.
+
+Only the exact Darwin prelaunch fixture controller runs outside the ordinary test wrapper so each protected product child receives its first actual OS profile and its Python descendants inherit that boundary. Other tests retain their existing wrapper. The controller binds the observed system Python shim, canonical launcher and terminal interpreter to exact checked paths, root ownership, executable mode, Apple signing identities and recorded hashes. Real startup markers, denial results and matching positive controls remain required; no generic isolation bypass, environment escape or broader process grant is introduced.
+
+Reason: component copy, selector and child-confinement evidence does not establish the staged whole-producer read boundary, which remains unresolved. Neither component evidence nor these source interfaces accept a private copy for live adoption.
+
+Reversal risk: treating a consistent copy or selected-byte receipt as current authority can lose later writes or expose credentials; treating a controller startup failure as a successful denial can falsely claim confinement. Existing stopped-source/currentness, custody, exact-artifact, target-isolation and live-acceptance requirements remain in force.
+
 ## Bun serves the Passport browser sign-in advertised by its admin page - 2026-10-23
 
 The production Bun gateway implements the existing Passport `ai` registration at `/auth/login`, `/auth/callback`, and `/auth/logout`, matching the fixed issuer, audience, origin, callback, RS256/JWKS verification, host-only secure cookies, and cookie-only admin authority used by the Rust implementation. An administrator claim is required for admin access; agent tokens never become admin sessions, and foreign-origin cookie mutations are rejected. The admin button requests `/admin` as its return destination; that fixed choice is bound into the random login state, while ordinary chat login returns to `/chat`.
