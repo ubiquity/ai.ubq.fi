@@ -6,7 +6,7 @@ use gateway_core::{
 };
 use serde_json::json;
 
-// Exact existing profile::js_string coercion for this finite source JSON domain.
+// Exact existing gateway_profile_values::coercion::js_string coercion for this finite source JSON domain.
 // Serialization/grammar stay in the shared SourceJson/JsString16 implementation.
 fn diagnostic_text(value: &SourceJson) -> Result<JsString16, GatewayError> {
     if let Some(text) = source::string(value) {
@@ -27,9 +27,9 @@ fn diagnostic_text(value: &SourceJson) -> Result<JsString16, GatewayError> {
     if source::entries(value).is_some() {
         return Ok(JsString16::from_utf8("[object Object]"));
     }
-    Ok(JsString16::from_utf8(&crate::profile::js_string(
-        &value.deserialize()?,
-    )))
+    Ok(JsString16::from_utf8(
+        &gateway_profile_values::coercion::js_string(&value.deserialize()?),
+    ))
 }
 pub fn inspect_model_snapshot(rows: &[ObservedRow]) -> Result<Vec<JsString16>, GatewayError> {
     inspect_model_inventory(&SliceInventory(rows))

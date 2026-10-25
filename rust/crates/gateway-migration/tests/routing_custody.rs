@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_admin_data::profile::{CanonicalDates, source::to_source_profile};
+use gateway_admin_data::profile::source::to_source_profile;
 use gateway_core::{
     error::GatewayError,
     query::*,
@@ -14,6 +14,7 @@ use gateway_migration::{
 };
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_profile_values::date::CanonicalDates;
 use serde_json::{Value, json};
 use std::path::Path;
 

@@ -4,6 +4,7 @@ use gateway_auth::types::invalid;
 use gateway_core::{
     error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16, source_json::SourceJson,
 };
+use gateway_profile_values::coercion::js_number;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -35,7 +36,7 @@ pub fn source_integer(value: &SourceJson) -> Option<i64> {
         // An unpaired unit cannot be in a valid finite Number spelling.
         // Only this consumed numeric string is projected, never the body.
         let text = text.try_utf8().ok()?;
-        gateway_admin_data::profile::js_number(&Value::String(text))
+        js_number(&Value::String(text))
     };
     (n.is_finite() && n.abs() <= MAX_SAFE_INTEGER as f64).then_some(n.trunc() as i64)
 }
@@ -63,7 +64,7 @@ pub fn source_coerced_number(value: &SourceJson) -> f64 {
             .deserialize::<Value>()
             .ok()
             .as_ref()
-            .map(gateway_admin_data::profile::js_number)
+            .map(js_number)
             .unwrap_or(f64::NAN)
     })
 }
@@ -83,7 +84,7 @@ pub fn integer(value: &Value) -> Option<i64> {
     if !value.is_number() && !value.is_string() {
         return None;
     }
-    let n = gateway_admin_data::profile::js_number(value);
+    let n = js_number(value);
     (n.is_finite() && n.abs() <= MAX_SAFE_INTEGER as f64).then_some(n.trunc() as i64)
 }
 
@@ -224,7 +225,7 @@ pub fn capture(input: &AdminInput, incidents: bool) -> Result<CaptureRequest, Ga
         first(q, name)
             .filter(|s| !s.is_empty())
             .map(|s| {
-                let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));
+                let n = js_number(&Value::String(s.into()));
                 (n.is_finite() && n.fract() == 0.0 && n >= 0.0 && n <= MAX_SAFE_INTEGER as f64)
                     .then_some(n as i64)
             })

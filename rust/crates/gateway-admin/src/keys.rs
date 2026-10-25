@@ -20,6 +20,7 @@ use gateway_core::{
     source_json::SourceJson,
     state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
 };
+use gateway_profile_values::coercion::js_number;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -255,7 +256,7 @@ fn window(raw: Option<&SourceJson>, default: i64) -> Result<i64, GatewayError> {
                 // This field must become a finite Number. An unpaired unit cannot
                 // form its numeric grammar; it gets the same window validation error.
                 text.try_utf8().ok().and_then(|text| {
-                    let n = gateway_admin_data::profile::js_number(&Value::String(text));
+                    let n = js_number(&Value::String(text));
                     (n.is_finite() && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
                         .then_some(n.trunc() as i64)
                 })

@@ -1,8 +1,11 @@
 use super::{ObservedRow, check, key, put, starts};
-use crate::{error, integer, json_number, number, present, text};
 use gateway_core::{
     error::GatewayError,
     state::{AtomicTransition, RecordMutation},
+};
+use gateway_profile_values::{
+    coercion::js_number,
+    scalar::{error, integer, json_number, number, present, text},
 };
 use serde_json::{Value, json};
 
@@ -212,7 +215,7 @@ pub fn reconcile_imported_window(
 
 pub fn legacy_number(value: Option<&Value>, fallback: f64) -> f64 {
     let number = match value {
-        Some(Value::String(s)) => super::super::profile::js_number(&Value::String(s.clone())),
+        Some(Value::String(s)) => js_number(&Value::String(s.clone())),
         Some(v) => v.as_f64().unwrap_or(f64::NAN),
         None => f64::NAN,
     };
