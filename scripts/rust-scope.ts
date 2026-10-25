@@ -317,7 +317,7 @@ export const selectRustScope = (inputs: RustChangeInputs, complete = false): Rus
   assertWorkerPortable(worker, RUST_NATIVE_PACKAGES);
   if (complete) seeds.reasons.push("Complete acceptance explicitly retains every package and a fresh Worker artifact");
   const uncertain = rustUnique([...(base?.uncertainInputs ?? []), ...head.uncertainInputs]);
-  if (changed.length && uncertain.length) seeds.reasons.push(`Unproven compiled input syntax: ${uncertain.join(", ")}`);
+  if (changed.length && uncertain.length) seeds.reasons.push(`Unproven Rust input semantics: ${uncertain.join(", ")}`);
   seedManifestChanges(inputs, changed, seeds);
   for (const path of changed) seedChangedPath(path, inputs, graph, seeds);
   const nativeOnly = nativeOnlyPackages(inputs, graph);

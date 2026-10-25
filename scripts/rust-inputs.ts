@@ -26,6 +26,7 @@ const stringArray = (value: unknown): string[] => {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new Error("Expected a Rust string array");
   return value;
 };
+const cargoConfigPaths = [".cargo/config", ".cargo/config.toml", "rust/.cargo/config", "rust/.cargo/config.toml"];
 export const RUST_NATIVE_PACKAGES = [
   "gateway-native",
   "gateway-native-supervisor-read",
@@ -294,6 +295,15 @@ const hashAuthoredInputs = (reader: RustInputReader, access: SnapshotAccess): vo
   for (const path of access.files) if (authoredRustInput(path) && !(path in access.hashes)) access.hashes[path] = rustHash(reader.read(path));
 };
 
+const auditCargoConfigurations = (access: SnapshotAccess, inputs: CompiledInputs): void => {
+  for (const path of cargoConfigPaths) {
+    if (!access.files.has(path)) continue;
+    access.text(path);
+    const audited = path === "rust/.cargo/config.toml" && access.hashes[path] === "97ecbb7999582b1f19d8125a3cda29727c8fd46620cfb8329e5ba8a8ed64ce8c";
+    if (!audited) inputs.uncertainInputs.push(path);
+  }
+};
+
 export const readRustSnapshot = (reader: RustInputReader): RustSnapshot => {
   const access = snapshotAccess(reader);
   const root = access.parse("rust/Cargo.toml");
@@ -309,6 +319,7 @@ export const readRustSnapshot = (reader: RustInputReader): RustSnapshot => {
     hasTests: packageHasTests(item.directory, access),
   }));
   const inputs = compiledInputOwners(packages, access);
+  auditCargoConfigurations(access, inputs);
   hashAuthoredInputs(reader, access);
   return {
     identity: reader.identity,
@@ -429,7 +440,6 @@ export const workingRustReader = (root: string): RustInputReader => {
     },
   };
 };
-const cargoConfigPaths = [".cargo/config", ".cargo/config.toml", "rust/.cargo/config", "rust/.cargo/config.toml"];
 export const untrackedCargoConfigurations = (root: string): readonly string[] =>
   cargoConfigPaths.filter((path) => existsSync(join(root, path)) && git(root, ["ls-files", "--error-unmatch", "--", path]) === null);
 

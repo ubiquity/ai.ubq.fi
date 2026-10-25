@@ -213,3 +213,16 @@ test("a shared external input preserves both production and test owners", () => 
   assert.deepEqual(scope.wasmPackages, ["gateway-worker"]);
   assert.equal(scope.shippingWorkerBuild, true);
 });
+
+test("unreviewed committed Cargo config keeps full fallback on later Rust changes", () => {
+  const unknown = fixture({ extraFiles: { ".cargo/config.toml": '[patch.crates-io]\nexample={path="alternate"}\n' } });
+  const expanded = select(unknown, unknown, ["rust/crates/gateway-native/src/lib.rs"]);
+  assert.equal(expanded.mode, "full");
+  assert.equal(expanded.shippingWorkerBuild, true);
+  const known = fixture({
+    extraFiles: { "rust/.cargo/config.toml": '[target.wasm32-unknown-unknown]\nrustflags = ["--cfg", \'getrandom_backend="wasm_js"\']\n' },
+  });
+  const scoped = select(known, known, ["rust/crates/gateway-worker/src/lib.rs"]);
+  assert.equal(scoped.mode, "selected");
+  assert.deepEqual(scoped.nativePackages, ["gateway-worker"]);
+});
