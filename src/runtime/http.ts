@@ -138,6 +138,8 @@ const sendResponse = async (request: Request, response: Response, outgoing: Serv
   };
   signal.addEventListener("abort", cancel, { once: true });
   try {
+    // SSE clients need the headers even while the producer is quiet.
+    if (/^text\/event-stream(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) outgoing.flushHeaders();
     while (!responseInterrupted(outgoing, signal)) {
       const chunk = await reader.read();
       if (responseInterrupted(outgoing, signal)) break;
