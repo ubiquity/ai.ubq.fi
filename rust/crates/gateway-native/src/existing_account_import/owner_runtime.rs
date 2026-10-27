@@ -1,5 +1,5 @@
 //! Owned-process custody only. Dirty state never becomes another import start permit.
-use super::exclusive_owner::{ExclusiveManagedOwner, Facts, PinnedExecutable, fail};
+use super::exclusive_owner::{ExclusiveManagedOwner, PinnedExecutable, fail};
 use crate::native_import::NativeImportContext;
 use gateway_authority::{
     native_control::{
@@ -13,6 +13,7 @@ use gateway_authority::{
     store::TokenSource,
 };
 use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_native_confinement::file_observation::Facts;
 use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags, flock, fsync, openat, renameat, statat};
 use serde::{Deserialize, Serialize};
 #[cfg(all(test, target_os = "macos"))]
