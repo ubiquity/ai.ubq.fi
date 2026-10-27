@@ -274,7 +274,7 @@ describe("Sentinel complete CI check set", () => {
   test("development push wrappers use the actual before-to-head diff when the fetched development ref already equals HEAD", () => {
     const repository = mkdtempSync(join(fixture, "push-"));
     mkdirSync(join(repository, "scripts"));
-    for (const path of ["test-scope.ts", "verify.sh", "_bootstrap.sh"]) {
+    for (const path of ["test-scope.ts", "rust-inputs.ts", "rust-scope.ts", "verify.sh", "_bootstrap.sh"]) {
       copyFileSync(join(ROOT, "scripts", path), join(repository, "scripts", path));
     }
     const git = (...args: string[]): string => {
