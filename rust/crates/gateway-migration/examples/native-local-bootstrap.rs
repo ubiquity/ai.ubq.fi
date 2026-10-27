@@ -55,7 +55,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
             .capture_file
             .as_ref()
             .ok_or("Expected exactly one private capture input")?;
-        let directory = gateway_migration::native_stage::directory(
+        let directory = gateway_migration_spool::directory(
             path.parent().ok_or("Missing stopped-file parent")?,
         )?;
         let mut plan = run(

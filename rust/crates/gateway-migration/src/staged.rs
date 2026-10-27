@@ -59,7 +59,7 @@ enum StageRows {
     Memory(VecDeque<(CanonicalRecord, usize)>),
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     Disk {
-        reader: crate::native_spool::Reader<CanonicalRecord>,
+        reader: gateway_migration_spool::canonical::CanonicalReader,
         order: VecDeque<(usize, usize)>,
     },
 }
@@ -145,7 +145,7 @@ impl StagePlan {
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     pub(crate) fn from_spool(
         manifest: gateway_migration_data::manifest::Manifest,
-        spool: crate::native_spool::Spool<CanonicalRecord>,
+        spool: gateway_migration_spool::canonical::CanonicalRows,
     ) -> Result<Self, GatewayError> {
         let mut reader = spool.reader()?;
         let mut keys = std::collections::BTreeMap::new();
@@ -288,7 +288,7 @@ impl StagePlan {
             unreachable!("memory adapter returned above");
         };
         reader.verify_file_end()?;
-        if reader.spool().len() != self.header.records || order.len() > self.header.records {
+        if reader.len() != self.header.records || order.len() > self.header.records {
             return Err(invalid("Staged canonical count changed"));
         }
         if order.is_empty() {
@@ -310,12 +310,12 @@ impl StagePlan {
             if count != 0 && size + encoded_size + 1 > PREFERRED_BATCH_BYTES {
                 break;
             }
-            if *encoded_size != reader.spool().encoded_size(*index)
+            if *encoded_size != reader.encoded_size(*index)
                 || *encoded_size + 1024 > STAGED_BATCH_MAX_BYTES
             {
                 return Err(invalid("Staged canonical frame length changed"));
             }
-            let key = reader.spool().key(*index)?.to_owned();
+            let key = reader.key(*index)?.to_owned();
             if last_key
                 .as_deref()
                 .is_some_and(|previous| previous >= key.as_str())

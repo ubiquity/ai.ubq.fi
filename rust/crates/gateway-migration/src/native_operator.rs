@@ -211,7 +211,7 @@ pub async fn prepare_local_stage(
 ) -> Result<crate::staged::StagePlan, gateway_migration_data::error::MigrationError> {
     let custody = ConfiguredNativeCustody::new(registrations)?;
     custody.verify_existing_access_only(&source).await?;
-    let directory = crate::native_stage::directory(&std::env::temp_dir())?;
+    let directory = gateway_migration_spool::directory(&std::env::temp_dir())?;
     crate::native_stage::Captured::owned(source, &directory)?
         .prepare(&custody)
         .await
@@ -269,7 +269,7 @@ pub async fn reconcile_local_history_file<
     custody_sink: &mut C,
 ) -> Result<crate::native_stage::Captured, gateway_migration_data::error::MigrationError> {
     use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
-    let root = crate::native_stage::directory(directory)?;
+    let root = gateway_migration_spool::directory(directory)?;
     let latest_path = root.join("latest-native.json");
     let mut latest_file = OpenOptions::new()
         .write(true)
@@ -290,11 +290,13 @@ pub async fn reconcile_local_history_file<
         .sync_all()
         .map_err(|_| crate::invalid("Private latest source file cannot be synced"))?;
     drop(latest_file);
-    let original_directory = crate::native_stage::directory(&root)?;
-    let latest_directory = crate::native_stage::directory(&root)?;
+    let original_directory = gateway_migration_spool::directory(&root)?;
+    let latest_directory = gateway_migration_spool::directory(&root)?;
     let original = crate::native_stage::Captured::read(original_path, &original_directory)?;
     let latest = crate::native_stage::Captured::read(&latest_path, &latest_directory)?;
-    let mut writer = crate::native_spool::Writer::create(&root.join("reconciled-native.spool"))?;
+    let mut writer = gateway_migration_spool::native_entries::NativeEntryWriter::create(
+        &root.join("reconciled-native.spool"),
+    )?;
     let header = crate::native_history_reconcile::reconcile(
         &original,
         &latest,

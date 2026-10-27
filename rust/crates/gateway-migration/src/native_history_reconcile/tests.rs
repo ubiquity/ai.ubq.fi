@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
-        Self(crate::native_stage::directory(&std::env::temp_dir()).unwrap())
+        Self(gateway_migration_spool::directory(&std::env::temp_dir()).unwrap())
     }
     fn capture(&self, name: &str, source: NativeCapture) -> Captured {
         let directory = self.0.join(name);
@@ -200,7 +200,10 @@ fn large_spooled_payloads_remain_exact() {
     let scratch = Scratch::new();
     let directory = scratch.0.join("large-original");
     std::fs::create_dir(&directory).unwrap();
-    let mut writer = crate::native_spool::Writer::create(&directory.join("entries")).unwrap();
+    let mut writer = gateway_migration_spool::native_entries::NativeEntryWriter::create(
+        &directory.join("entries"),
+    )
+    .unwrap();
     let row_bytes = 2 * 1024 * 1024;
     for ordinal in 0u32..20 {
         writer

@@ -3,7 +3,6 @@
 //! This is a local, offline policy over one complete stopped-source capture. It
 //! does not open a database, target, credential, service, or public route.
 use crate::invalid;
-use crate::native_spool::Spool;
 use crate::parts;
 use crate::starts;
 use crate::unavailable;
@@ -14,6 +13,7 @@ use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_spool::native_entries::NativeEntries;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -373,7 +373,7 @@ fn derived_rows(capture: &NativeCapture) -> Result<usize, MigrationError> {
 
 pub(crate) fn select_spool(
     header: &NativeCapture,
-    entries: &Spool<NativeEntry>,
+    entries: &NativeEntries,
 ) -> Result<CoreStateCapture, MigrationError> {
     header.validate_header()?;
     let source_rows = entries.len();

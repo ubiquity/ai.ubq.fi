@@ -1,24 +1,24 @@
 //! Same index predicates, with native-private independent cursor lookups.
 use super::{ReservationIndexes, bind_identity, derive_basics};
-use crate::native_spool::{Spool, Writer};
 use crate::{Row, Transform, decode, invalid, parts, starts};
 use gateway_core::{
     error::GatewayError,
     state::{RecordKey, StoredRecord},
 };
+use gateway_migration_spool::rows::{RowSpool, RowWriter};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
-type BoundRows = (Spool<Row>, Vec<(RecordKey, StoredRecord)>);
+type BoundRows = (RowSpool, Vec<(RecordKey, StoredRecord)>);
 pub(crate) fn bind_spooled(
-    rows: &Spool<Row>,
+    rows: &RowSpool,
     now: i64,
     revision: &str,
     path: &Path,
 ) -> Result<BoundRows, GatewayError> {
-    let mut output = Writer::create(path)?;
+    let mut output = RowWriter::create(path)?;
     let mut snapshot = BTreeMap::new();
     for index in 0..rows.len() {
         if rows.live(index, now) {
@@ -55,7 +55,8 @@ pub(crate) fn bind_spooled(
     derive_basics(&mut get, revision, &mut derived)?;
     let mut reader = rows.reader()?;
     let mut index = 0usize;
-    while let Some(raw) = reader.next_raw()? {
+    while let Some(frame) = reader.next_frame()? {
+        let raw = frame.bytes();
         let p = parts(&RecordKey(rows.key(index)?.to_owned()))?;
         let live = rows.live(index, now);
         index += 1;
@@ -68,7 +69,7 @@ pub(crate) fn bind_spooled(
         {
             continue;
         }
-        let row: Row = serde_json::from_slice(&raw)
+        let row: Row = serde_json::from_slice(raw)
             .map_err(|_| invalid("Private bound row cannot be decoded"))?;
         bind_identity(&row, now, revision, &mut get, &mut derived)?;
     }
@@ -76,7 +77,8 @@ pub(crate) fn bind_spooled(
     let mut indexes = ReservationIndexes::default();
     let mut reader = rows.reader()?;
     let mut index = 0usize;
-    while let Some(raw) = reader.next_raw()? {
+    while let Some(frame) = reader.next_frame()? {
+        let raw = frame.bytes();
         let p = parts(&RecordKey(rows.key(index)?.to_owned()))?;
         let live = rows.live(index, now);
         index += 1;
@@ -89,7 +91,7 @@ pub(crate) fn bind_spooled(
         {
             continue;
         }
-        let row: Row = serde_json::from_slice(&raw)
+        let row: Row = serde_json::from_slice(raw)
             .map_err(|_| invalid("Private bound row cannot be decoded"))?;
         indexes.observe(&row, now, &paid_limits, &mut get, &|key| {
             snapshot.contains_key(key)
@@ -98,11 +100,11 @@ pub(crate) fn bind_spooled(
     reader.verify_end()?;
     let mut reader = rows.reader()?;
     let mut index = 0usize;
-    while let Some(raw) = reader.next_raw()? {
+    while let Some(frame) = reader.next_frame()? {
+        let raw = frame.bytes();
         let key = rows.key(index)?.to_owned();
         let p = parts(&RecordKey(key.clone()))?;
         let transform = rows.transform(index);
-        let expiry = rows.expiry(index);
         let live = rows.live(index, now);
         index += 1;
         if !live
@@ -111,10 +113,10 @@ pub(crate) fn bind_spooled(
                 Some(Transform::ApiWindow | Transform::KernelWindow | Transform::PaidGate)
             ) || starts(&p, &["uos_ai", "paid_fallback", "v3", "window"]))
         {
-            output.push_frame(&raw, Some(key), expiry, transform)?;
+            output.copy_frame(&frame)?;
             continue;
         }
-        let mut row: Row = serde_json::from_slice(&raw)
+        let mut row: Row = serde_json::from_slice(raw)
             .map_err(|_| invalid("Private bound row cannot be decoded"))?;
         indexes.bind_window(&mut row)?;
         output.push(&row)?;

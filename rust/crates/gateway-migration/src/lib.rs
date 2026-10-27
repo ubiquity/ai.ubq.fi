@@ -15,8 +15,6 @@ mod native_latest;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 pub mod native_operator;
 #[cfg(all(unix, not(target_arch = "wasm32")))]
-mod native_spool;
-#[cfg(all(unix, not(target_arch = "wasm32")))]
 pub mod native_stage;
 pub mod operational;
 mod profile_bindings;
@@ -36,6 +34,4 @@ use gateway_migration_data::{
     MappingData as Mapping, RowData as Row, Transform, decode, digest, invalid, json, key, parts,
     private_source_key, starts, unavailable,
 };
-use gateway_profile_values::coercion::encode_base64;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;

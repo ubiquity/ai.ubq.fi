@@ -1,9 +1,11 @@
 //! Native-private immutable row frames. Never a database/runtime or wire codec.
-use crate::*;
-use gateway_admin_data::inventory::AuditInventory;
+use gateway_core::error::GatewayError;
 use gateway_migration_data::native_capture::NativeEntry;
-use gateway_migration_ledger::rows::ObservedRow;
+use gateway_migration_data::{RowData as Row, Transform, invalid};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
+#[cfg(test)]
+use serde_json::Value;
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
@@ -226,6 +228,9 @@ impl<T: SpoolValue> Spool<T> {
     }
 }
 impl<T: SpoolValue> Reader<T> {
+    pub(crate) fn position(&self) -> usize {
+        self.next
+    }
     pub(crate) fn spool(&self) -> &Spool<T> {
         &self.spool
     }
@@ -300,60 +305,11 @@ impl<T: SpoolValue> Reader<T> {
         Ok(())
     }
 }
-/// Complete normalized row inventory. Rows were already validated by the same
-/// native validator before this spool was sealed, so the audit does not decode
-/// or rebuild them a second time.
-pub(crate) struct RowInventory<'a> {
-    pub rows: &'a Spool<Row>,
-    pub now: i64,
-}
-impl AuditInventory for RowInventory<'_> {
-    fn visit(
-        &self,
-        callback: &mut dyn FnMut(&ObservedRow) -> Result<(), GatewayError>,
-    ) -> Result<(), GatewayError> {
-        let mut reader = self.rows.reader()?;
-        while let Some(row) = reader.next()? {
-            if row
-                .record
-                .expires_at_ms
-                .is_none_or(|expiry| expiry > self.now)
-            {
-                callback(&ObservedRow {
-                    key: row.key,
-                    parts: row.parts,
-                    record: row.record,
-                })?;
-            }
-        }
-        reader.verify_end()
-    }
-}
-
-impl Writer<gateway_migration_data::staged::CanonicalRecord> {
-    // Only native preparation calls this after full row validation, global audit,
-    // projection/index binding, and verified source-frame hashing. The record raw
-    // token is unchanged from that genuine typed record's serializer.
-    pub(crate) fn push_canonical(
-        &mut self,
-        key: String,
-        record: &serde_json::value::RawValue,
-        expiry: Option<i64>,
-    ) -> Result<(), GatewayError> {
-        let bytes = format!(
-            "{{\"key\":{},\"record\":{}}}",
-            serde_json::to_string(&key).map_err(|_| failure())?,
-            record.get()
-        );
-        self.push_frame(bytes.as_bytes(), Some(key), expiry, None)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     fn directory() -> PathBuf {
-        crate::native_stage::directory(&std::env::temp_dir()).unwrap()
+        crate::directory(&std::env::temp_dir()).unwrap()
     }
     #[test]
     fn independent_replays_keep_order_and_callback_failures() {

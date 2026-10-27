@@ -185,7 +185,7 @@ fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
     }
     let registrations = registrations(input.registrations)?;
     let custody = ConfiguredNativeCustody::new(registrations)?;
-    let directory = gateway_migration::native_stage::directory(&input.directory)?;
+    let directory = gateway_migration_spool::directory(&input.directory)?;
     let source = Captured::read(&input.capture, &directory)?;
     if source.count() != input.expected.entries {
         return Err(failure(

@@ -30,6 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+gateway-migration-spool.workspace = true
 gateway-native = { path = "../gateway-native" }
 sha2 = "=0.10.9"
 

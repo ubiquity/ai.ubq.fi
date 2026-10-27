@@ -5,7 +5,6 @@ use crate::digest;
 use crate::invalid;
 use crate::key;
 use crate::native_custody::NativeCustody;
-use crate::native_spool::Writer;
 use crate::parts;
 use crate::starts;
 use crate::unavailable;
@@ -24,6 +23,7 @@ use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::staged::CanonicalRecord;
+use gateway_migration_spool::{canonical::CanonicalWriter, native_entries::NativeEntryWriter};
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -35,7 +35,7 @@ use std::{
 mod native_import;
 const LATEST_QUERY_PAGE: u32 = 256;
 pub(super) struct DiskMap {
-    reader: RefCell<crate::native_spool::Reader<CanonicalRecord>>,
+    reader: RefCell<gateway_migration_spool::canonical::CanonicalReader>,
     index: BTreeMap<String, usize>,
 }
 impl DiskMap {
@@ -55,7 +55,7 @@ async fn collect<S: QueryStore>(
     now_ms: i64,
     directory: &Path,
 ) -> Result<DiskMap, GatewayError> {
-    let mut writer = Writer::create(&directory.join("current-common.spool"))?;
+    let mut writer = CanonicalWriter::create(&directory.join("current-common.spool"))?;
     let mut index = BTreeMap::new();
     let mut ordinal = 0;
     let mut cursor = None;
@@ -415,7 +415,7 @@ pub(crate) async fn write_latest_for_reconciliation<
     if manifest.v != 4 || now_ms < manifest.captured_at_ms {
         return Err(invalid("Inverse capture clock/version invalid").into());
     }
-    let directory = crate::native_stage::directory(&std::env::temp_dir())?;
+    let directory = gateway_migration_spool::directory(&std::env::temp_dir())?;
     let all = collect(store, now_ms, &directory).await?;
     let (manifest, rows, controls, mapping_keys) = validate(&all, manifest, now_ms)?;
     let old = manifest
@@ -425,7 +425,7 @@ pub(crate) async fn write_latest_for_reconciliation<
     let (version, _) = old.numbers()?;
     let mut changed = rows.len() != manifest.source_rows;
     let mut sequence = 0i64;
-    let mut writer = Writer::create(&directory.join("latest-source.spool"))?;
+    let mut writer = NativeEntryWriter::create(&directory.join("latest-source.spool"))?;
     for (key, mapping_key) in &rows {
         let record = all.required(&key.0)?;
         let mapping = mapping_key

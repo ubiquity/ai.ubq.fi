@@ -3,7 +3,6 @@ use crate::Transform;
 use crate::digest;
 use crate::invalid;
 use crate::json;
-use crate::key;
 use gateway_admin_data::inventory::SliceInventory;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
@@ -20,7 +19,6 @@ use gateway_migration_data::manifest::{
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_profile_values::date::SourceDateHost;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::BTreeMap;
 
 pub struct PreparedAdoption {

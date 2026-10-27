@@ -98,12 +98,12 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
     drop(source);
     let source_inventory = native_stage::Captured::read(
         &source_path,
-        &native_stage::directory(Path::new(directory))?,
+        &gateway_migration_spool::directory(Path::new(directory))?,
     )?;
     let mut plan = support_run(
         native_stage::Captured::read(
             &source_path,
-            &native_stage::directory(Path::new(directory))?,
+            &gateway_migration_spool::directory(Path::new(directory))?,
         )?
         .prepare(&fixed),
     )?;
@@ -189,7 +189,7 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
     mark(directory, "inverse_verification")?;
     let latest = native_stage::Captured::read(
         &latest_path,
-        &native_stage::directory(Path::new(directory))?,
+        &gateway_migration_spool::directory(Path::new(directory))?,
     )?;
     let mut keys = std::collections::BTreeMap::new();
     let mut ordinal = 0;

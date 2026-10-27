@@ -2,8 +2,7 @@
 //! database, public import route, or capability is created by these spool files.
 use crate::core_state::{CoreStateCapture, CoreStateManifest};
 use crate::native_custody::NativeCustody;
-use crate::native_spool::{RowInventory, Spool, Writer};
-use crate::{Mapping, Row, Transform, digest, invalid, json, starts};
+use crate::{Transform, digest, invalid, json, starts};
 use gateway_core::error::GatewayError;
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::StoredRecord;
@@ -11,7 +10,11 @@ use gateway_core::tuple_key::TupleKey;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
-use serde::Deserialize;
+use gateway_migration_spool::canonical::CanonicalWriter;
+use gateway_migration_spool::native_entries::{
+    NativeEntries, NativeEntryReader, NativeEntryWriter,
+};
+use gateway_migration_spool::rows::{RowFrame, RowInventory, RowWriter};
 use serde::de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use std::{
@@ -25,12 +28,12 @@ use std::{
 /// contains no entry payload; a separate sealed spool retains every original row.
 pub struct Captured {
     header: NativeCapture,
-    entries: Spool<NativeEntry>,
+    entries: NativeEntries,
     directory: PathBuf,
 }
 impl Captured {
     pub fn read(path: &Path, directory: &Path) -> Result<Self, GatewayError> {
-        let mut writer = Writer::create(&directory.join("native-entries.spool"))?;
+        let mut writer = NativeEntryWriter::create(&directory.join("native-entries.spool"))?;
         let file = private_file(path)?;
         let mut decoder = serde_json::Deserializer::from_reader(BufReader::new(file));
         let header = CaptureSeed(&mut writer)
@@ -48,7 +51,7 @@ impl Captured {
     }
     pub fn owned(mut source: NativeCapture, directory: &Path) -> Result<Self, GatewayError> {
         source.validate_header()?;
-        let mut writer = Writer::create(&directory.join("native-entries.spool"))?;
+        let mut writer = NativeEntryWriter::create(&directory.join("native-entries.spool"))?;
         for entry in std::mem::take(&mut source.entries) {
             writer.push(&entry)?;
         }
@@ -60,7 +63,7 @@ impl Captured {
     }
     pub(crate) fn from_parts(
         header: NativeCapture,
-        entries: Spool<NativeEntry>,
+        entries: NativeEntries,
         directory: &Path,
     ) -> Self {
         Self {
@@ -104,11 +107,11 @@ impl Captured {
         host: &H,
     ) -> Result<(CoreStateManifest, crate::staged::StagePlan), MigrationError> {
         let CoreStateCapture { capture, manifest } = self.core_capture()?;
-        let directory = crate::native_stage::directory(&self.directory)?;
+        let directory = gateway_migration_spool::directory(&self.directory)?;
         let plan = Captured::owned(capture, &directory)?.prepare(host).await?;
         Ok((manifest, plan))
     }
-    pub(crate) fn reader(&self) -> Result<crate::native_spool::Reader<NativeEntry>, GatewayError> {
+    pub(crate) fn reader(&self) -> Result<NativeEntryReader, GatewayError> {
         self.entries.reader()
     }
     pub async fn verify_configured(
@@ -127,7 +130,7 @@ impl Captured {
         host: &H,
     ) -> Result<crate::staged::StagePlan, MigrationError> {
         let version = self.header.validate_header()?;
-        let mut writer = Writer::<Row>::create(&self.directory.join("normalized-rows.spool"))?;
+        let mut writer = RowWriter::create(&self.directory.join("normalized-rows.spool"))?;
         let mut seen = std::collections::BTreeSet::new();
         // Every complete source row, including expired data, passes the original
         // tuple/version/expiry/typed graph/counter and current-custody validators.
@@ -164,7 +167,7 @@ impl Captured {
                 .map_err(|_| invalid("Private source identity cannot be encoded"))?,
         );
         let revision = format!("capture:{capture_id}");
-        let mut projected = Writer::<Row>::create(&self.directory.join("projected-rows.spool"))?;
+        let mut projected = RowWriter::create(&self.directory.join("projected-rows.spool"))?;
         let mut reader = normalized.reader()?;
         while let Some(mut row) = reader.next()? {
             let p = &row.parts;
@@ -194,22 +197,18 @@ impl Captured {
             &revision,
             &self.directory.join("bound-rows.spool"),
         )?;
-        let mut canonical = Writer::create(&self.directory.join("canonical-rows.spool"))?;
+        let mut canonical = CanonicalWriter::create(&self.directory.join("canonical-rows.spool"))?;
         let mut mapping_digests = BTreeMap::new();
         let mut keys = std::collections::BTreeSet::new();
         let mut reader = bound.reader()?;
-        let mut index = 0usize;
-        while let Some(bytes) = reader.next_raw()? {
+        while let Some(frame) = reader.next_frame()? {
             canonical_row(
-                &bytes,
-                index,
-                &reader,
+                &frame,
                 (&capture_id, &revision),
                 &mut canonical,
                 &mut mapping_digests,
                 &mut keys,
             )?;
-            index += 1;
         }
         reader.verify_end()?;
         let mut derived_digests = BTreeMap::new();
@@ -244,43 +243,30 @@ impl Captured {
     }
 }
 fn canonical_row(
-    bytes: &[u8],
-    index: usize,
-    reader: &crate::native_spool::Reader<Row>,
+    frame: &RowFrame,
     identity: (&str, &str),
-    canonical: &mut Writer<gateway_migration_data::staged::CanonicalRecord>,
+    canonical: &mut CanonicalWriter,
     mapping_digests: &mut BTreeMap<String, String>,
     keys: &mut std::collections::BTreeSet<String>,
 ) -> Result<(), MigrationError> {
     let (capture_id, revision) = identity;
-    #[derive(Deserialize)]
-    struct RawRow<'a> {
-        key: String,
-        #[serde(borrow)]
-        record: &'a serde_json::value::RawValue,
-        mapping: Mapping,
+    let (source, mut mapping_data) = frame.canonical_parts()?;
+    mapping_data.baseline_digest = source.baseline_digest();
+    if mapping_data.transform == Transform::Identity {
+        mapping_data.source.value = SourceJson::parse("null")?;
+        mapping_data.source.key.clear();
     }
-    let mut row: RawRow<'_> = serde_json::from_slice(bytes)
-        .map_err(|_| invalid("Private canonical row cannot be decoded"))?;
-    row.mapping.baseline_digest = gateway_auth::crypto::sha256_hex(row.record.get().as_bytes());
-    if row.mapping.transform == Transform::Identity {
-        row.mapping.source.value = SourceJson::parse("null")?;
-        row.mapping.source.key.clear();
-    }
-    let mapping = gateway_migration_data::manifest::mapping_key(capture_id, &row.key);
-    let record = StoredRecord::json(revision, json(&row.mapping)?, None);
+    let mapping = gateway_migration_data::manifest::mapping_key(capture_id, source.key());
+    let record = StoredRecord::json(revision, json(&mapping_data)?, None);
     mapping_digests.insert(mapping.0.clone(), digest(&record)?);
-    if !keys.insert(row.key.clone()) {
+    if !keys.insert(source.key().to_owned()) {
         return Err(invalid("Staged canonical inventory has duplicate keys").into());
     }
     canonical.push(&gateway_migration_data::staged::CanonicalRecord {
         key: mapping,
         record,
     })?;
-    if row.key != reader.spool().key(index)? {
-        return Err(invalid("Private canonical key changed").into());
-    }
-    canonical.push_canonical(row.key, row.record, reader.spool().expiry(index))?;
+    canonical.push_source_row(&source)?;
     Ok(())
 }
 
@@ -303,7 +289,7 @@ fn private_file(path: &Path) -> Result<File, GatewayError> {
     }
     Ok(file)
 }
-struct CaptureSeed<'a>(&'a mut Writer<NativeEntry>);
+struct CaptureSeed<'a>(&'a mut NativeEntryWriter);
 impl<'de> DeserializeSeed<'de> for CaptureSeed<'_> {
     type Value = NativeCapture;
     fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<NativeCapture, D::Error> {
@@ -345,7 +331,7 @@ impl<'de> Visitor<'de> for CaptureSeed<'_> {
         serde_json::from_value(Value::Object(header)).map_err(M::Error::custom)
     }
 }
-struct EntriesSeed<'a>(&'a mut Writer<NativeEntry>);
+struct EntriesSeed<'a>(&'a mut NativeEntryWriter);
 impl<'de> DeserializeSeed<'de> for EntriesSeed<'_> {
     type Value = ();
     fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<(), D::Error> {
@@ -363,24 +349,4 @@ impl<'de> Visitor<'de> for EntriesSeed<'_> {
         }
         Ok(())
     }
-}
-
-/// Fresh private directory under the caller's task-owned stopped-file location.
-pub fn directory(parent: &Path) -> Result<PathBuf, GatewayError> {
-    use std::os::unix::fs::DirBuilderExt;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| invalid("Private spool clock is invalid"))?
-        .as_nanos();
-    static NEXT_DIRECTORY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let sequence = NEXT_DIRECTORY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = parent.join(format!(
-        "uos-native-stage-{}-{stamp}-{sequence}",
-        std::process::id()
-    ));
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&path)
-        .map_err(|_| invalid("Private spool directory cannot be created"))?;
-    Ok(path)
 }

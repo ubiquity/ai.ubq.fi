@@ -175,7 +175,8 @@ impl AuditInventory for Merged<'_> {
     ) -> Result<(), GatewayError> {
         self.visit_entries(&mut |entry| {
             let value =
-                gateway_migration_data::native_capture::validate_entry(entry, self.version)?;
+                gateway_migration_data::native_capture::validate_entry(entry, self.version)?
+                    .into_data();
             if value
                 .record
                 .expires_at_ms

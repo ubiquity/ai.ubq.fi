@@ -220,16 +220,16 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
         }
     }
     corrupt.entries = retained;
-    let corrupt_dir = native_stage::directory(&std::env::temp_dir())?;
+    let corrupt_dir = gateway_migration_spool::directory(&std::env::temp_dir())?;
     assert!(
         run(native_stage::Captured::owned(corrupt, &corrupt_dir)?.prepare(&Host)).is_err(),
         "sealed native replay must retain the complete orphan-pair audit"
     );
     std::fs::remove_dir_all(corrupt_dir)?;
     let (expired_key, expiry) = add_expired_and_utf16_entries(&mut capture)?;
-    let dir = native_stage::directory(&std::env::temp_dir())?;
+    let dir = gateway_migration_spool::directory(&std::env::temp_dir())?;
     let mut plan = run(native_stage::Captured::owned(capture.clone(), &dir)?.prepare(&Host))?;
-    let wire_dir = native_stage::directory(&std::env::temp_dir())?;
+    let wire_dir = gateway_migration_spool::directory(&std::env::temp_dir())?;
     let mut wire_plan =
         run(native_stage::Captured::owned(capture.clone(), &wire_dir)?.prepare(&Host))?;
     assert_eq!(
@@ -302,7 +302,7 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
     std::fs::write(&path, b"{\"entries\":[")?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    let second = native_stage::directory(&std::env::temp_dir())?;
+    let second = gateway_migration_spool::directory(&std::env::temp_dir())?;
     assert!(native_stage::Captured::read(&path, &second).is_err());
     std::fs::remove_dir_all(dir)?;
     std::fs::remove_dir_all(wire_dir)?;
@@ -330,7 +330,7 @@ fn sealed_native_frame_emitter_refuses_spool_and_sink_faults()
         }
     }
     let plan = || -> Result<_, Box<dyn std::error::Error>> {
-        let directory = native_stage::directory(&std::env::temp_dir())?;
+        let directory = gateway_migration_spool::directory(&std::env::temp_dir())?;
         let plan = run(native_stage::Captured::owned(fixture(), &directory)?.prepare(&Host))?;
         Ok((directory, plan))
     };

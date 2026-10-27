@@ -67,7 +67,7 @@ fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
             "Private capture hash differs from its producer receipt",
         ));
     }
-    let directory = gateway_migration::native_stage::directory(&input.directory)?;
+    let directory = gateway_migration_spool::directory(&input.directory)?;
     let capture = Captured::read(&input.capture, &directory)?;
     if capture.count() != input.expected_entries {
         return Err(failure(
