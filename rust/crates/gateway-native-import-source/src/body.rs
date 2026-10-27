@@ -158,7 +158,7 @@ pub fn decode_auth<'a>(
 #[cfg(unix)]
 #[doc(hidden)]
 pub mod profile {
-    use super::*;
+    use super::{BodyError, PROFILE_MAX_BYTES, request_text};
 
     fn js_space(value: char) -> bool {
         matches!(value, '\u{0009}'..='\u{000d}' | ' ' | '\u{00a0}' | '\u{1680}'

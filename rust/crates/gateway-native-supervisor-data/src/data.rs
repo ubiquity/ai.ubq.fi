@@ -239,38 +239,14 @@ impl SupervisorData {
     fn collect(&self, now_ms: i64, start: Instant) -> Value {
         let next = AtomicUsize::new(0);
         let deadline = start + Duration::from_secs(9);
-        let mut samples = std::thread::scope(|scope| {
-            let mut workers = Vec::new();
-            for _ in 0..self.sources.len().min(2) {
-                let next = &next;
-                workers.push(scope.spawn(move || {
-                    let mut values = Vec::new();
-                    loop {
-                        let at = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(source) = self.sources.get(at) else {
-                            break;
-                        };
-                        values.push((
-                            at,
-                            sample_source(
-                                source,
-                                now_ms.saturating_add(start.elapsed().as_millis() as i64),
-                                deadline,
-                                self.hostname.as_deref(),
-                            ),
-                        ));
-                    }
-                    values
-                }));
-            }
-            workers
-                .into_iter()
-                .flat_map(|w| {
-                    w.join()
-                        .unwrap_or_else(|error| std::panic::resume_unwind(error))
-                })
-                .collect::<Vec<_>>()
-        });
+        let mut samples = sample_sources(
+            &self.sources,
+            &next,
+            now_ms,
+            start,
+            deadline,
+            self.hostname.as_deref(),
+        );
         samples.sort_by_key(|(at, _)| *at);
         let mut views = Vec::new();
         let mut sessions = Vec::new();
@@ -370,6 +346,211 @@ fn source_view(
     } = state;
     json!({"id":source.id,"name":redact(&source.name).text,"kind":if source.home.is_some(){"local"}else{"remote"},"hostname":if source.home.is_some(){hostname}else{None},"state":if available{"ok"}else{"unavailable"},"reason":reason,"metadata":{"available":meta.reason.is_none(),"database":meta.database,"reason":meta.reason},"inventory":{"listed":counts.0,"sampled":counts.1,"returned":counts.2,"truncated":counts.3},"lineage":if lineage{"available"}else{"unavailable"},"quota":quota,"quotaReason":if available{"account quota read unavailable"}else{"source unavailable"},"durationMs":duration,"sampledAtMs":now})
 }
+fn sample_sources(
+    sources: &[SupervisorSourceConfig],
+    next: &AtomicUsize,
+    now_ms: i64,
+    start: Instant,
+    deadline: Instant,
+    hostname: Option<&str>,
+) -> Vec<(usize, SourceSample)> {
+    std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for _ in 0..sources.len().min(2) {
+            workers.push(scope.spawn(move || {
+                let mut values = Vec::new();
+                loop {
+                    let at = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(source) = sources.get(at) else {
+                        break;
+                    };
+                    values.push((
+                        at,
+                        sample_source(
+                            source,
+                            now_ms.saturating_add(start.elapsed().as_millis() as i64),
+                            deadline,
+                            hostname,
+                        ),
+                    ));
+                }
+                values
+            }));
+        }
+        workers
+            .into_iter()
+            .flat_map(|w| {
+                w.join()
+                    .unwrap_or_else(|error| std::panic::resume_unwind(error))
+            })
+            .collect::<Vec<_>>()
+    })
+}
+fn loaded_threads(socket: &mut UnixSupervisor) -> Result<Vec<String>, GatewayError> {
+    Ok(call(socket, SupervisorMethod::ThreadLoadedList, json!({}))?
+        .get("data")
+        .and_then(Value::as_array)
+        .map(|v| {
+            v.iter()
+                .filter_map(Value::as_str)
+                .filter(|id| inventory::valid_thread(id))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default())
+}
+fn probe_threads(
+    source: &SupervisorSourceConfig,
+    ids: &[String],
+    deadline: Instant,
+) -> BTreeMap<String, ThreadProbe> {
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for _ in 0..ids.len().min(4) {
+            let next = &next;
+            workers.push(scope.spawn(move || {
+                let mut values = Vec::new();
+                loop {
+                    let at = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(id) = ids.get(at) else {
+                        break;
+                    };
+                    values.push((id.clone(), probe(source, id, deadline)));
+                }
+                values
+            }));
+        }
+        workers
+            .into_iter()
+            .flat_map(|w| {
+                w.join()
+                    .unwrap_or_else(|error| std::panic::resume_unwind(error))
+            })
+            .collect::<BTreeMap<_, _>>()
+    })
+}
+fn sample_connected(
+    source: &SupervisorSourceConfig,
+    now: i64,
+    deadline: Instant,
+    hostname: Option<&str>,
+    start: Instant,
+    socket: &mut UnixSupervisor,
+) -> Result<SourceSample, GatewayError> {
+    let loaded = loaded_threads(socket)?;
+    let loaded_set = loaded.iter().collect::<BTreeSet<_>>();
+    let mut listed = Vec::new();
+    let mut cursor = None;
+    let mut truncated = false;
+    for _ in 0..2 {
+        let reply = call(
+            socket,
+            SupervisorMethod::ThreadList,
+            inventory::list_params(cursor.as_deref()),
+        )?;
+        listed.extend(
+            reply
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(inventory::listed_thread),
+        );
+        cursor = text(reply.get("nextCursor"));
+        if cursor.is_none() || listed.len() >= 60 {
+            break;
+        }
+    }
+    if cursor.is_some() {
+        truncated = true;
+    }
+    if listed.len() > 60 {
+        listed.truncate(60);
+        truncated = true;
+    }
+    let listed_ids = listed.iter().map(|v| v.id.clone()).collect::<Vec<_>>();
+    let mut metadata_ids = listed_ids.clone();
+    metadata_ids.extend(loaded.iter().take(8).cloned());
+    let mut seen = BTreeSet::new();
+    metadata_ids.retain(|id| seen.insert(id.clone()));
+    let meta = metadata(source, Some(&metadata_ids));
+    let ids = inventory::probe_ids(&listed_ids, &loaded);
+    let probes = probe_threads(source, &ids, deadline);
+    let listed_map = listed
+        .into_iter()
+        .map(|v| (v.id.clone(), v))
+        .collect::<BTreeMap<_, _>>();
+    let mut row_ids = listed_ids.clone();
+    row_ids.extend(ids.iter().cloned());
+    let mut seen = BTreeSet::new();
+    row_ids.retain(|id| seen.insert(id.clone()));
+    let live = row_ids
+        .iter()
+        .filter_map(|id| {
+            inventory::merge_live(
+                listed_map.get(id),
+                probes.get(id).and_then(|p| p.thread.as_ref()),
+            )
+            .map(|v| (id.clone(), v))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let children = inventory::children_by_parent(&row_ids, &live, &meta.rows);
+    let lineage = !listed_map.is_empty()
+        || probes.values().any(|p| p.thread.is_some())
+        || (source.home.is_some() && meta.reason.is_none());
+    let mut sessions = Vec::new();
+    for id in &row_ids {
+        let p = probes.get(id);
+        let mut notes = Vec::new();
+        if p.is_none() {
+            notes.push("live status not sampled in this pass".into());
+        }
+        if source.home.is_none() {
+            notes.push("token usage is not reported by the source".into());
+        } else if let Some(reason) = &meta.reason {
+            notes.push(format!("metadata unavailable: {reason}"));
+        }
+        sessions.push(inventory::session_from_parts(SessionParts {
+            id,
+            source_id: source.id.as_str(),
+            machine: &source.name,
+            metadata: meta.rows.get(id),
+            listed: listed_map.get(id),
+            probe: p,
+            loaded: loaded_set.contains(id),
+            sampled_at_ms: now,
+            child_ids: lineage.then(|| children.get(id).cloned().unwrap_or_default()),
+            unavailable: notes,
+        }));
+    }
+    let quota = call(socket, SupervisorMethod::AccountRateLimitsRead, json!({}))
+        .ok()
+        .and_then(|v| inventory::quota_from_rate_limits(&v));
+    let mut view = source_view(
+        source,
+        now,
+        start.elapsed().as_millis() as usize,
+        &meta,
+        hostname,
+        ViewState {
+            available: true,
+            reason: None,
+            counts: (
+                listed_ids.len(),
+                ids.len(),
+                sessions.len(),
+                truncated || ids.len() < row_ids.len(),
+            ),
+            lineage,
+            quota: quota.clone(),
+        },
+    );
+    if quota.is_some() {
+        view["quotaReason"] = Value::Null;
+    }
+    Ok(SourceSample { view, sessions })
+}
 fn sample_source(
     source: &SupervisorSourceConfig,
     now: i64,
@@ -379,159 +560,7 @@ fn sample_source(
     let start = Instant::now();
     let result = (|| -> Result<SourceSample, GatewayError> {
         let mut socket = UnixSupervisor::configured_socket_until(&source.socket, deadline)?;
-        let collected = (|| {
-            let loaded = call(&mut socket, SupervisorMethod::ThreadLoadedList, json!({}))?
-                .get("data")
-                .and_then(Value::as_array)
-                .map(|v| {
-                    v.iter()
-                        .filter_map(Value::as_str)
-                        .filter(|id| inventory::valid_thread(id))
-                        .map(str::to_owned)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let loaded_set = loaded.iter().collect::<BTreeSet<_>>();
-            let mut listed = Vec::new();
-            let mut cursor = None;
-            let mut truncated = false;
-            for _ in 0..2 {
-                let reply = call(
-                    &mut socket,
-                    SupervisorMethod::ThreadList,
-                    inventory::list_params(cursor.as_deref()),
-                )?;
-                listed.extend(
-                    reply
-                        .get("data")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(inventory::listed_thread),
-                );
-                cursor = text(reply.get("nextCursor"));
-                if cursor.is_none() || listed.len() >= 60 {
-                    break;
-                }
-            }
-            if cursor.is_some() {
-                truncated = true;
-            }
-            if listed.len() > 60 {
-                listed.truncate(60);
-                truncated = true;
-            }
-            let listed_ids = listed.iter().map(|v| v.id.clone()).collect::<Vec<_>>();
-            let mut metadata_ids = listed_ids.clone();
-            metadata_ids.extend(loaded.iter().take(8).cloned());
-            let mut seen = BTreeSet::new();
-            metadata_ids.retain(|id| seen.insert(id.clone()));
-            let meta = metadata(source, Some(&metadata_ids));
-            let ids = inventory::probe_ids(&listed_ids, &loaded);
-            let next = AtomicUsize::new(0);
-            let probes = std::thread::scope(|scope| {
-                let mut workers = Vec::new();
-                for _ in 0..ids.len().min(4) {
-                    let ids = &ids;
-                    let next = &next;
-                    workers.push(scope.spawn(move || {
-                        let mut values = Vec::new();
-                        loop {
-                            let at = next.fetch_add(1, Ordering::Relaxed);
-                            let Some(id) = ids.get(at) else {
-                                break;
-                            };
-                            values.push((id.clone(), probe(source, id, deadline)));
-                        }
-                        values
-                    }));
-                }
-                workers
-                    .into_iter()
-                    .flat_map(|w| {
-                        w.join()
-                            .unwrap_or_else(|error| std::panic::resume_unwind(error))
-                    })
-                    .collect::<BTreeMap<_, _>>()
-            });
-            let listed_map = listed
-                .into_iter()
-                .map(|v| (v.id.clone(), v))
-                .collect::<BTreeMap<_, _>>();
-            let mut row_ids = listed_ids.clone();
-            row_ids.extend(ids.iter().cloned());
-            let mut seen = BTreeSet::new();
-            row_ids.retain(|id| seen.insert(id.clone()));
-            let live = row_ids
-                .iter()
-                .filter_map(|id| {
-                    inventory::merge_live(
-                        listed_map.get(id),
-                        probes.get(id).and_then(|p| p.thread.as_ref()),
-                    )
-                    .map(|v| (id.clone(), v))
-                })
-                .collect::<BTreeMap<_, _>>();
-            let children = inventory::children_by_parent(&row_ids, &live, &meta.rows);
-            let lineage = !listed_map.is_empty()
-                || probes.values().any(|p| p.thread.is_some())
-                || (source.home.is_some() && meta.reason.is_none());
-            let mut sessions = Vec::new();
-            for id in &row_ids {
-                let p = probes.get(id);
-                let mut notes = Vec::new();
-                if p.is_none() {
-                    notes.push("live status not sampled in this pass".into());
-                }
-                if source.home.is_none() {
-                    notes.push("token usage is not reported by the source".into());
-                } else if let Some(reason) = &meta.reason {
-                    notes.push(format!("metadata unavailable: {reason}"));
-                }
-                sessions.push(inventory::session_from_parts(SessionParts {
-                    id,
-                    source_id: source.id.as_str(),
-                    machine: &source.name,
-                    metadata: meta.rows.get(id),
-                    listed: listed_map.get(id),
-                    probe: p,
-                    loaded: loaded_set.contains(id),
-                    sampled_at_ms: now,
-                    child_ids: lineage.then(|| children.get(id).cloned().unwrap_or_default()),
-                    unavailable: notes,
-                }));
-            }
-            let quota = call(
-                &mut socket,
-                SupervisorMethod::AccountRateLimitsRead,
-                json!({}),
-            )
-            .ok()
-            .and_then(|v| inventory::quota_from_rate_limits(&v));
-            let mut view = source_view(
-                source,
-                now,
-                start.elapsed().as_millis() as usize,
-                &meta,
-                hostname,
-                ViewState {
-                    available: true,
-                    reason: None,
-                    counts: (
-                        listed_ids.len(),
-                        ids.len(),
-                        sessions.len(),
-                        truncated || ids.len() < row_ids.len(),
-                    ),
-                    lineage,
-                    quota: quota.clone(),
-                },
-            );
-            if quota.is_some() {
-                view["quotaReason"] = Value::Null;
-            }
-            Ok(SourceSample { view, sessions })
-        })();
+        let collected = sample_connected(source, now, deadline, hostname, start, &mut socket);
         close(&mut socket);
         collected
     })();
