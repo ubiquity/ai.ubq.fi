@@ -6,29 +6,21 @@ use gateway_admin::{
     service::AdminService,
 };
 use gateway_admin_test_support::source_store::Store;
-use gateway_auth::{
-    crypto::Secret,
-    types::{
-        AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse,
-        AuthResponseBody,
-    },
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-};
+use gateway_auth::{crypto::Secret, types::AuthConfig, upstream::AuthUpstreamResponse};
+use gateway_auth::{types::AuthHost, types::AuthMethod, types::AuthPrincipal, types::AuthRequest};
+use gateway_auth::{types::AuthResponse, types::AuthResponseBody, upstream::AuthUpstreamRequest};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
 use gateway_authority_paid_records::PaidRequest;
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
 use gateway_core::{error::GatewayError, source_json::SourceJson, state::*};
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    future::Future,
-    task::{Context, Poll, Waker},
-};
+use serde_json::{Value, json};
+use std::{cell::Cell, cell::RefCell, collections::BTreeMap, future::Future, task::Context};
+use std::{task::Poll, task::Waker};
 
 fn source(value: &Value) -> SourceJson {
     SourceJson::from_serializable(value).unwrap()
 }
-use serde_json::{Value, json};
 
 fn wire_json(body: &AuthResponseBody) -> Value {
     serde_json::from_slice(&body.to_bytes().unwrap()).unwrap()
@@ -851,7 +843,6 @@ async fn prepare_paid_fixture_custody(
     host: &Host,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-    use gateway_authority::paid_control;
     use gateway_authority_keys as keys;
     use gateway_core::provider::PaidProvider;
     use gateway_publication_policy::control_publication::{
@@ -911,7 +902,7 @@ async fn prepare_paid_fixture_custody(
         StoredRecord::json("race-observation", serde_json::to_value(observation)?, None),
     );
     let mut source_checks = Vec::new();
-    for key in paid_control::paid_projection_source_keys() {
+    for key in gateway_authority_paid_evidence::paid_projection_source_keys() {
         source_checks.push(gateway_authority_paid_control_records::PaidSourceCheck {
             expected_revision: store.read(&key).await?.map(|row| row.revision),
             key: key.0,
@@ -992,7 +983,6 @@ impl AuthorityStore for PaidRaceStore<'_> {
 fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission()
 -> Result<(), Box<dyn std::error::Error>> {
     run(async {
-        use gateway_authority::paid_types::PaidAuthorization;
         use gateway_core::{
             identity::{ApiKeyId, PaidAttemptId, RequestId},
             provider::PaidProvider,
@@ -1090,8 +1080,8 @@ async fn bind_paid_fixture_original(
     authority: &gateway_authority::store::Authority<PaidRaceStore<'_>, &Host>,
     store: &Store,
     request: &gateway_authority_paid_records::PaidRequest,
-    receipt: &gateway_authority::paid_control::PaidRoutingReceipt,
-) -> Result<gateway_authority::paid_control::PaidRoutingReceipt, GatewayError> {
+    receipt: &gateway_authority_paid_route::PaidRoutingReceipt,
+) -> Result<gateway_authority_paid_route::PaidRoutingReceipt, GatewayError> {
     // Controlled authority regression: use the canonical finite original
     // fixture chain, not a route-only receipt or a Worker-runtime claim.
     let original = gateway_core::identity::RequestContext {

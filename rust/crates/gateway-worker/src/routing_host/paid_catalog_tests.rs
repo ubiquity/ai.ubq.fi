@@ -1,45 +1,36 @@
 use super::prepare_credential_catalog;
-use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native_auth::{
-    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-};
-use gateway_auth::native_replay::StoreNonceAuthority;
+use gateway_auth::{crypto::Secret, crypto::base64url, native_auth::NativeAuthHeaders};
+use gateway_auth::{native_auth::NativeAuthenticator, native_auth::NativeCapability};
+use gateway_auth::{native_auth::NativeTransportIdentity, native_replay::StoreNonceAuthority};
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-use gateway_authority::{paid_control::paid_projection_source_keys, store::Authority};
+use gateway_authority::store::Authority;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
+use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_authority_paid_records::PaidRequest;
-use gateway_catalog_runtime::host::{
-    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
-    ProviderBinding,
-};
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
-use gateway_core::source_control::decode_source_control_record;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-};
-use gateway_core::{error::GatewayError, source_json::SourceJson};
-use gateway_publication_policy::control_publication::{
-    ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
-    fixture_owner_statement, runtime_config_key,
-};
-use gateway_publication_policy::protocol::{
-    PublicationCarrier, PublicationRequest, PublicationResponse,
-};
+use gateway_authority_paid_route::PaidRouteOperations;
+use gateway_catalog_runtime::{host::CatalogFetch, host::ProviderBinding};
+use gateway_catalog_runtime::{host::CatalogFetchResponse, host::CatalogHost};
+use gateway_catalog_runtime::{host::CatalogProvider, host::CredentialPublication};
+use gateway_core::{error::GatewayError, source_json::SourceJson, state::RecordMutation};
+use gateway_core::{identity::ApiKeyId, identity::PaidAttemptId, state::StoredRecord};
+use gateway_core::{identity::RequestId, provider::PaidProvider, provider::UpstreamProvider};
+use gateway_core::{query::QueryPage, query::QueryRequest, query::QueryStore};
+use gateway_core::{source_control::decode_source_control_record, state::AtomicTransition};
+use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RecordKey};
+use gateway_publication_policy::control_publication::ConfiguredPaidInputs;
+use gateway_publication_policy::control_publication::PreparedConfigurationPublication;
+use gateway_publication_policy::control_publication::bootstrap_fixture_owner;
+use gateway_publication_policy::control_publication::fixture_owner_statement;
+use gateway_publication_policy::control_publication::runtime_config_key;
+use gateway_publication_policy::protocol::PublicationRequest;
+use gateway_publication_policy::{protocol::PublicationCarrier, protocol::PublicationResponse};
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_routing_runtime_test_support::source_catalog;
 use serde_json::json;
-use std::{
-    cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet},
-    future::Future,
-    rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Waker},
-};
+use std::{cell::Cell, cell::RefCell, collections::BTreeMap, collections::BTreeSet};
+use std::{future::Future, rc::Rc, sync::Arc, task::Context, task::Poll, task::Waker};
 const NOW: i64 = 1_800_000_000_000;
 fn now() -> i64 {
     NOW

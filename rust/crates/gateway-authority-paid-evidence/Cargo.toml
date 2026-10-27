@@ -1,0 +1,24 @@
+[package]
+name = "gateway-authority-paid-evidence"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-core = { path = "../gateway-core" }
+gateway-providers = { path = "../gateway-providers" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

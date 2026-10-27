@@ -1,20 +1,13 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_core::{
-    error::GatewayError,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::{error::GatewayError, state::StoredRecord};
+use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
+use gateway_core::{state::AtomicTransition, state::AuthorityStore, state::CommitOutcome};
+use gateway_core::{state::RecordKey, state::RecordMutation, state::RevisionCheck};
 use gateway_schema::aliases::SourceStringCollator;
 use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
 
 pub struct Authority<S, I> {
     pub(crate) store: S,
@@ -512,5 +505,23 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_routing_selection::Sel
             &self.tokens,
             self.clock.as_deref(),
         )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_route::PaidRouteFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    fn paid_route(&self) -> gateway_authority_paid_route::PaidRouteService<'_, S> {
+        gateway_authority_paid_route::PaidRouteService::new(
+            &self.store,
+            self.clock.as_deref(),
+            self.source_string_collator(),
+        )
+    }
+}
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub(crate) fn paid_route_clock(&self) -> Option<&dyn AuthorityClock> {
+        self.clock.as_deref()
     }
 }

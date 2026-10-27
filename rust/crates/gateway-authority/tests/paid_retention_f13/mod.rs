@@ -1,28 +1,26 @@
 //! Bounded F13 experiment against current public Rust authority primitives only.
 //! Source b6e25555179ad2b195b0bab93e946be834ecda6c native-authority.test.ts1097-1113
 //! is a fixture-only generic service with permanent attempt_lifetime rows, not a live Rust RPC.
-use gateway_authority::{paid_control::*, paid_types::PaidAuthorization};
 use gateway_authority_api_quota::ApiQuotaOperations;
-use gateway_authority_contracts::DAY_MS;
-use gateway_authority_contracts::PAID_RETENTION_MS;
+use gateway_authority_contracts::{DAY_MS, PAID_RETENTION_MS};
 use gateway_authority_keys as keys;
-use gateway_authority_paid_control_records::{
-    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
-    PaidProviderObservation, PaidRequestContext, PaidRoutingPolicy, PaidRoutingProjection,
-    PaidSourceCheck,
-};
+use gateway_authority_paid_control_records::PaidRoutingProjection;
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidSourceCheck};
+use gateway_authority_paid_control_records::{PaidControlConfig, PaidControlOwner};
+use gateway_authority_paid_control_records::{PaidProjectionProvenance, PaidProviderObservation};
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
+use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_authority_paid_records::{PaidAdmission, PaidRequest};
+use gateway_authority_paid_route::PaidRoutingReceipt;
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
 use gateway_authority_test_support::{TestResult, fixture_row};
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::state::{AuthorityStore, RecordKey};
+use gateway_core::state::AuthorityStore;
+use gateway_core::{identity::ApiKeyId, identity::PaidAttemptId, state::RecordKey};
+use gateway_core::{identity::RequestId, provider::PaidProvider, provider::UpstreamProvider};
 use gateway_providers::types::ClientSurface;
-use gateway_routing_runtime_test_support::authority::MemoryStore;
-use gateway_routing_runtime_test_support::authority::NOW;
-use gateway_routing_runtime_test_support::authority::TestAuthority;
-use gateway_routing_runtime_test_support::authority::authority;
-use gateway_routing_runtime_test_support::authority::policy;
-use gateway_routing_runtime_test_support::authority::run;
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
+use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::authority};
+use gateway_routing_runtime_test_support::{authority::policy, authority::run};
 use serde_json::{Value, json};
 
 pub fn context(input: &PaidRequest) -> PaidRequestContext {

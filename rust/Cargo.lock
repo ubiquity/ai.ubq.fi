@@ -842,6 +842,8 @@ dependencies = [
 name = "gateway-admin"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-route",
+ "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
  "gateway-authority-api-quota",
  "gateway-authority-contracts",
@@ -948,6 +950,8 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-route",
+ "gateway-authority-paid-evidence",
  "gateway-authority-routing-selection",
  "gateway-authority-routing-policy",
  "gateway-authority-reset-records",
@@ -1056,7 +1060,7 @@ dependencies = [
  "gateway-schema",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2",
 ]
 
 [[package]]
@@ -1132,11 +1136,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-paid-evidence"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-records",
+ "gateway-authority-reset-records",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-paid-records"
 version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-route"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-routing-selection",
+ "gateway-authority-claude-proof",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-records",
  "gateway-core",
  "gateway-schema",
  "serde",
@@ -1209,6 +1249,8 @@ dependencies = [
 name = "gateway-authority-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-route",
+ "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
  "gateway-authority-api-quota",
  "gateway-authority-contracts",
@@ -1257,6 +1299,8 @@ dependencies = [
 name = "gateway-catalog-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-route",
+ "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
  "gateway-authority-api-quota",
  "gateway-authority-contracts",
@@ -1597,6 +1641,8 @@ dependencies = [
 name = "gateway-routing-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-route",
+ "gateway-authority-paid-evidence",
  "gateway-authority-routing-selection",
  "gateway-authority-paid-records",
  "gateway-authority-claude-proof",
@@ -1659,6 +1705,8 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-route",
+ "gateway-authority-paid-evidence",
  "gateway-authority-routing-selection",
  "gateway-authority-reset-records",
  "gateway-authority-paid-records",

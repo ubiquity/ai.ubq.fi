@@ -1,18 +1,17 @@
 use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_authority::paid_types::PaidAuthorization;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_route::authorization::PaidAuthorization;
 use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_test_support::{TestResult, fixture_row, paid_request, paid_setup};
-use gateway_core::{
-    js_string::JsString16, model::ModelId, provider::CodexQuotaClass, provider::PaidProvider,
-    source_control, source_json::SourceJson, source_serialization as source, value::ValueEncoding,
-};
-use gateway_routing_runtime_test_support::{
-    authority::MemoryStore, authority::NOW, authority::admin_hash, authority::admitted,
-    authority::authority, authority::block, authority::pool, authority::routing_hash,
-    authority::run, authority::seed_pool,
-};
+use gateway_core::{js_string::JsString16, model::ModelId, provider::CodexQuotaClass};
+use gateway_core::{provider::PaidProvider, source_control, source_json::SourceJson};
+use gateway_core::{source_serialization as source, value::ValueEncoding};
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
+use gateway_routing_runtime_test_support::{authority::admin_hash, authority::admitted};
+use gateway_routing_runtime_test_support::{authority::authority, authority::block};
+use gateway_routing_runtime_test_support::{authority::pool, authority::routing_hash};
+use gateway_routing_runtime_test_support::{authority::run, authority::seed_pool};
 use gateway_schema::selection::AccountModelsStore;
 use serde_json::json;
 

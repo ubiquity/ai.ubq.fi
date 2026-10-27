@@ -1,4 +1,4 @@
-use gateway_authority::{paid_types::PaidAuthorization, reset_types::ResetCandidate};
+use gateway_authority::reset_types::ResetCandidate;
 use gateway_authority_api_protocol::ApiUsageWindow;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_api_release::ApiReleaseOperations;
@@ -7,27 +7,24 @@ use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelTerminal, KernelWindow};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidCorrelation, PaidUsage, PaidWindow};
-use gateway_authority_reset_records::{
-    AccountDayBudget, ResetClaim, ResetConfig, ResetCredit, ResetMode, ResetState,
-    reset_invocation, utc_day,
-};
+use gateway_authority_paid_route::authorization::PaidAuthorization;
+use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetCredit};
+use gateway_authority_reset_records::{ResetMode, ResetState, reset_invocation, utc_day};
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
-use gateway_authority_test_support::{
-    TestResult, fixture_json, fixture_row, id, paid_request, paid_reservation, paid_setup,
-    reserve_paid, seed_policy,
-};
-use gateway_core::{
-    identity::PaidAttemptId, identity::PoolVersionstamp, lifecycle::BillingState,
-    lifecycle::PaidTerminalState, provider::CodexQuotaClass, provider::PaidProvider,
-    provider::UpstreamProvider, state::AtomicTransition, state::AuthorityStore,
-    state::RecordMutation, state::RevisionCheck, state::StoredRecord, value::PortableValue,
-};
-use gateway_routing_runtime_test_support::{
-    authority::MemoryStore, authority::NOW, authority::TestAuthority, authority::Tokens,
-    authority::admin_hash, authority::admitted, authority::authority, authority::block,
-    authority::policy, authority::pool, authority::routing_hash, authority::run,
-    authority::seed_pool, authority::source_account,
-};
+use gateway_authority_test_support::{TestResult, fixture_json, fixture_row, id, paid_request};
+use gateway_authority_test_support::{paid_reservation, paid_setup, reserve_paid, seed_policy};
+use gateway_core::{identity::PaidAttemptId, identity::PoolVersionstamp, lifecycle::BillingState};
+use gateway_core::{lifecycle::PaidTerminalState, provider::CodexQuotaClass};
+use gateway_core::{provider::PaidProvider, provider::UpstreamProvider, state::AtomicTransition};
+use gateway_core::{state::AuthorityStore, state::RecordMutation, state::RevisionCheck};
+use gateway_core::{state::StoredRecord, value::PortableValue};
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
+use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::Tokens};
+use gateway_routing_runtime_test_support::{authority::admin_hash, authority::admitted};
+use gateway_routing_runtime_test_support::{authority::authority, authority::block};
+use gateway_routing_runtime_test_support::{authority::policy, authority::pool};
+use gateway_routing_runtime_test_support::{authority::routing_hash, authority::run};
+use gateway_routing_runtime_test_support::{authority::seed_pool, authority::source_account};
 use std::sync::atomic::Ordering;
 #[test]
 fn serial_identity_survives_headroom_reorder_and_same_account_refresh() {

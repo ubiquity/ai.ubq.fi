@@ -1,18 +1,17 @@
 //! Synthetic source-control fixtures; all production grants still use real public checked operations.
-use gateway_authority::paid_control::*;
 use gateway_authority_keys as keys;
-use gateway_authority_paid_control_records::{
-    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
-    PaidProviderObservation, PaidRequestContext, PaidRoutingPolicy, PaidRoutingProjection,
-    PaidSourceCheck,
-};
+use gateway_authority_paid_control_records::PaidRoutingProjection;
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidSourceCheck};
+use gateway_authority_paid_control_records::{PaidControlConfig, PaidControlOwner};
+use gateway_authority_paid_control_records::{PaidProjectionProvenance, PaidProviderObservation};
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
+use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_authority_paid_records::PaidRequest;
-use gateway_core::provider::PaidProvider;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, RecordKey, RecordMutation, RevisionCheck,
-};
+use gateway_core::{provider::PaidProvider, state::AtomicTransition, state::AuthorityStore};
+use gateway_core::{state::RecordKey, state::RecordMutation, state::RevisionCheck};
 use gateway_providers::types::ClientSurface;
-use gateway_routing_runtime_test_support::authority::{MemoryStore, NOW, run};
+use gateway_routing_runtime_test_support::authority::NOW;
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::run};
 use serde_json::{Value, json};
 
 pub fn seed_source<T: serde::Serialize + ?Sized>(store: &MemoryStore, key: RecordKey, value: &T) {

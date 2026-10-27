@@ -1,20 +1,14 @@
 //! Read-only projection of the existing routing journal ownership fields.
 //! No second Journal DTO, stored format, lease extension or routing dependency.
-use super::{PaidRoutingReceipt, control_error, source_key};
-use crate::store::{Authority, Transaction};
+use super::{control_error, source_key};
+use crate::backend::ReadTransaction;
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
-use gateway_authority_contracts::TokenSource;
 use gateway_authority_kernel_protocol::KernelReservation;
 use gateway_authority_keys as keys;
-use gateway_authority_paid_records::{PaidAttempt, PaidRequest, PaidReservation};
-use gateway_core::{
-    error::GatewayError,
-    identity::RequestContext,
-    local_work::{LocalWorkPhase, journal_local_work},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::AuthorityStore,
-};
+use gateway_authority_paid_records::{PaidRequest, PaidReservation};
+use gateway_core::{error::GatewayError, identity::RequestContext, local_work::LocalWorkPhase};
+use gateway_core::{local_work::journal_local_work, source_json::SourceJson};
+use gateway_core::{source_serialization as source, state::AuthorityStore};
 use serde::de::DeserializeOwned;
 
 fn field<T: DeserializeOwned>(value: &SourceJson, name: &str) -> Option<T> {
@@ -24,8 +18,8 @@ fn absent_or_null(value: &SourceJson, name: &str) -> bool {
     source::member(value, name).is_none_or(|value| value.as_str() == "null")
 }
 
-pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
-    tx: &mut Transaction<'_, S, I>,
+pub(super) async fn require_current<S: AuthorityStore>(
+    tx: &mut ReadTransaction<'_, S>,
     request: &PaidRequest,
     original: &RequestContext,
     existing: Option<&PaidReservation>,
@@ -161,64 +155,4 @@ pub(super) async fn require_current<S: AuthorityStore, I: TokenSource>(
         }
     }
     Ok(())
-}
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
-    /// Bind the exact authenticated original context to existing same-store ownership.
-    /// Input data or a route-only receipt cannot authorize paid exposure by themselves.
-    pub async fn bind_paid_original_request(
-        &self,
-        receipt: &PaidRoutingReceipt,
-        original: &RequestContext,
-        now: i64,
-    ) -> Result<PaidRoutingReceipt, GatewayError> {
-        self.bind_original(receipt, original, None, now).await
-    }
-    /// Recheck only the exact already-active paid reservation; this never grants fresh exposure.
-    pub async fn bind_paid_original_dispatch(
-        &self,
-        receipt: &PaidRoutingReceipt,
-        original: &RequestContext,
-        existing: &PaidReservation,
-        now: i64,
-    ) -> Result<PaidRoutingReceipt, GatewayError> {
-        self.bind_original(receipt, original, Some(existing), now)
-            .await
-    }
-    async fn bind_original(
-        &self,
-        receipt: &PaidRoutingReceipt,
-        original: &RequestContext,
-        existing: Option<&PaidReservation>,
-        now: i64,
-    ) -> Result<PaidRoutingReceipt, GatewayError> {
-        for _ in 0..128 {
-            let mut tx = self.transaction(self.fresh_time(now)?)?;
-            self.require_paid_route(&mut tx, &receipt.request, receipt, now)
-                .await?;
-            require_current(&mut tx, &receipt.request, original, existing).await?;
-            if let Some(expected) = existing {
-                let key = keys::paid_attempt(&expected.key_id.0, &expected.attempt_id.0);
-                let row: PaidAttempt = tx
-                    .read_source_control(&key)
-                    .await?
-                    .ok_or_else(|| control_error("Existing paid history is missing or expired."))?;
-                if &row.reservation != expected {
-                    return Err(control_error("Active paid reservation changed."));
-                }
-            }
-            // Recheck time against this same cached snapshot, then CAS its exact revisions.
-            tx.now = self.fresh_time(tx.now)?;
-            require_current(&mut tx, &receipt.request, original, existing).await?;
-            let mut bound = receipt.clone();
-            bound.original_request = Some(original.clone());
-            bound.existing_paid = existing.cloned();
-            bound.checks = tx.checks();
-            if tx.commit().await? {
-                return Ok(bound);
-            }
-        }
-        Err(control_error(
-            "Original request ownership changed repeatedly.",
-        ))
-    }
 }

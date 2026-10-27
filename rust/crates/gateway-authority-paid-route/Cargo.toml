@@ -1,0 +1,22 @@
+[package]
+name = "gateway-authority-paid-route"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-claude-proof = { path = "../gateway-authority-claude-proof" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-core = { path = "../gateway-core" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

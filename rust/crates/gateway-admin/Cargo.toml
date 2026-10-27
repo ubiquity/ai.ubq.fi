@@ -19,6 +19,8 @@ serde_json.workspace = true
 url = "=2.5.8"
 
 [dev-dependencies]
+gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-auth-native-wire.workspace = true

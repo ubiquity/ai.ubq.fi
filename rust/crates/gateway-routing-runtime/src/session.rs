@@ -5,8 +5,7 @@ use crate::{
     types::*,
 };
 use gateway_auth::types::AuthMethod;
-use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::{paid_control::PaidRoutingReceipt, store::Authority};
+use gateway_authority::store::Authority;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_claude_proof::ClaudeProofOperations;
@@ -14,6 +13,7 @@ use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
+use gateway_authority_paid_route::{PaidRoutingReceipt, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::types::AdmittedAccount;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_core::{error::GatewayError, identity::ApiKeyId, model::ModelId};

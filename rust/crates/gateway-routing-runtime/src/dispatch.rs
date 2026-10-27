@@ -1,17 +1,17 @@
-use crate::{classify, journal, journal::AttemptRecord, journal::BillingUsage, journal::Journal};
-use crate::{journal::Phase, journal::unavailable, session::RoutingSession, settlement};
-use crate::{types::AttemptFailure, types::AttemptUsage, types::CredentialFence};
-use crate::{types::FailureOrigin, types::PreparedAttempt, types::RecoveredSession};
-use crate::{types::RefreshOutcome, types::RefusalDecision, types::RevisionCheckWire};
-use crate::{types::RoutingHost, types::RoutingResult, types::TransportState};
+use crate::journal::{AttemptRecord, BillingUsage, Journal, Phase, unavailable};
+use crate::types::{AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin};
+use crate::types::{PreparedAttempt, RecoveredSession, RefreshOutcome, RefusalDecision};
+use crate::types::{RevisionCheckWire, RoutingHost, RoutingResult, TransportState};
+use crate::{classify, journal, session::RoutingSession, settlement};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
-use gateway_core::{error::GatewayError, lifecycle::PaidTerminalState};
-use gateway_core::{lifecycle::SemanticTerminal, lifecycle::TransportObservation};
-use gateway_core::{provider::UpstreamProvider, query::QueryStore};
+use gateway_core::lifecycle::TransportObservation;
+use gateway_core::{error::GatewayError, provider::UpstreamProvider, query::QueryStore};
+use gateway_core::{lifecycle::PaidTerminalState, lifecycle::SemanticTerminal};
 use gateway_providers::{policy::HopDecision, policy::HopFailure};
 
 impl<
@@ -170,7 +170,7 @@ impl<
                 .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
-                gateway_authority::paid_types::PaidAuthorization::DirectPaidModel
+                gateway_authority_paid_route::authorization::PaidAuthorization::DirectPaidModel
             } else {
                 self.paid_authorization(row).await?
             };

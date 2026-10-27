@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-claude-proof = { path = "../gateway-authority-claude-proof" }
@@ -30,6 +31,7 @@ chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-routing-runtime-test-support.workspace = true
 
 [lints]

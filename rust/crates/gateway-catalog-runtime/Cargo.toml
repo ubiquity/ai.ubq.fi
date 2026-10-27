@@ -16,6 +16,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }

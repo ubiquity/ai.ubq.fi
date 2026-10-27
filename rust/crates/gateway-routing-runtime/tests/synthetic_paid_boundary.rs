@@ -1,28 +1,18 @@
 //! Fake-only paid boundary derived from source_contracts.rs:63-171,321-373 at 08431133.
-use gateway_authority::paid_control::paid_projection_source_keys;
 use gateway_authority_keys as keys;
-use gateway_authority_paid_control_records::{
-    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
-    PaidProviderObservation, PaidRoutingPolicy, PaidRoutingProjection, PaidSourceCheck,
-};
-use gateway_core::{
-    lifecycle::TransportObservation,
-    provider::{PaidProvider, UpstreamProvider},
-    source_json::SourceJson,
-    state::AuthorityStore,
-};
-use gateway_providers::policy::{HopFailure, paid_hop_identity};
-use gateway_routing_runtime::{
-    session::RoutingSession,
-    types::{AttemptFailure, FailureOrigin, RefusalDecision, RoutingInput, TransportState},
-};
-use gateway_routing_runtime_test_support::{
-    exec::run,
-    host::Host,
-    input::{NOW, input},
-    seed::{seed_key, window},
-    store::Store,
-};
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
+use gateway_authority_paid_control_records::{PaidControlOwner, PaidProjectionProvenance};
+use gateway_authority_paid_control_records::{PaidProviderObservation, PaidRoutingPolicy};
+use gateway_authority_paid_control_records::{PaidRoutingProjection, PaidSourceCheck};
+use gateway_authority_paid_evidence::paid_projection_source_keys;
+use gateway_core::{lifecycle::TransportObservation, provider::PaidProvider};
+use gateway_core::{provider::UpstreamProvider, source_json::SourceJson, state::AuthorityStore};
+use gateway_providers::{policy::HopFailure, policy::paid_hop_identity};
+use gateway_routing_runtime::{session::RoutingSession, types::TransportState};
+use gateway_routing_runtime::{types::AttemptFailure, types::FailureOrigin};
+use gateway_routing_runtime::{types::RefusalDecision, types::RoutingInput};
+use gateway_routing_runtime_test_support::{exec::run, host::Host, input::NOW, input::input};
+use gateway_routing_runtime_test_support::{seed::seed_key, seed::window, store::Store};
 use serde_json::json;
 use std::collections::BTreeMap;
 

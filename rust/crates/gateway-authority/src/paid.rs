@@ -1,28 +1,19 @@
 //! Paid ledger v3: exposure, terminal evidence and correlated billing are independent.
-use crate::{
-    DAY_MS, PAID_RETENTION_MS, add, invalid, nonnegative,
-    paid_control::PaidRoutingReceipt,
-    paid_types::PaidAuthorization,
-    positive, quota_error, retention,
-    routing::validate_cohort,
-    store::{Authority, Transaction},
-    text, unavailable,
-};
+use crate::unavailable;
+use crate::{DAY_MS, PAID_RETENTION_MS, add, invalid, nonnegative, positive, store::Transaction};
+use crate::{quota_error, retention, routing::validate_cohort, store::Authority, text};
 use gateway_authority_api_protocol::ApiKeyPolicy;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_authority_paid_records::{
-    PaidAdmission, PaidAttempt, PaidCorrelation, PaidRequest, PaidReservation, PaidRollup,
-    PaidUsage, PaidWindow, PendingPaid, ReconciliationGate, ReconciliationLease, provider_label,
-    rollup_shard, validate_attempt, validate_paid_window,
-};
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, MicrocreditLimit, PaidAttemptId},
-    lifecycle::{BillingState, DispatchState, PaidTerminalState},
-    provider::PaidProvider,
-    state::AuthorityStore,
-};
+use gateway_authority_paid_records::validate_attempt;
+use gateway_authority_paid_records::{PaidAdmission, PaidAttempt, validate_paid_window};
+use gateway_authority_paid_records::{PaidCorrelation, PaidRequest, PaidReservation, PaidRollup};
+use gateway_authority_paid_records::{PaidUsage, PaidWindow, PendingPaid, ReconciliationGate};
+use gateway_authority_paid_records::{ReconciliationLease, provider_label, rollup_shard};
+use gateway_authority_paid_route::{PaidRoutingReceipt, authorization::PaidAuthorization};
+use gateway_core::{error::GatewayError, identity::ApiKeyId, identity::MicrocreditLimit};
+use gateway_core::{identity::PaidAttemptId, lifecycle::BillingState, lifecycle::DispatchState};
+use gateway_core::{lifecycle::PaidTerminalState, provider::PaidProvider, state::AuthorityStore};
 
 fn pending_id(key: &ApiKeyId, attempt: &PaidAttemptId) -> String {
     serde_json::json!([key.0, attempt.0]).to_string()
@@ -74,7 +65,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         receipt: &PaidRoutingReceipt,
         now: i64,
     ) -> Result<PaidAdmission, GatewayError> {
-        if receipt.original_request.is_none() {
+        if !receipt.has_original_request() {
             return Err(unavailable(
                 "paid_control_unavailable",
                 "Original request ownership is required before paid reservation.",
@@ -165,11 +156,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let key = keys::paid_attempt(&input.key_id.0, &input.attempt_id.0);
             if let Some(existing) = tx.read_source_control::<PaidAttempt>(&key).await? {
-                if receipt
-                    .existing_paid
-                    .as_ref()
-                    .is_some_and(|expected| expected != &existing.reservation)
-                {
+                if !receipt.matches_existing(&existing.reservation) {
                     return Err(invalid("Existing-only paid reservation changed."));
                 }
                 if existing.reservation.request_id != input.request_id
@@ -205,7 +192,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     continue;
                 }
             }
-            if receipt.existing_paid.is_some() {
+            if receipt.requires_existing() {
                 return Err(unavailable(
                     "paid_control_unavailable",
                     "Existing paid history is missing or expired; dispatch cannot create exposure.",

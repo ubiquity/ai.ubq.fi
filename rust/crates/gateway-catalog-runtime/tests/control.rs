@@ -1,43 +1,32 @@
+use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiKeyPolicy;
-use gateway_authority_paid_control_records::{
-    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProviderObservation,
-    PaidRequestContext, PaidRoutingProjection, PaidSourceCheck, PaidSyntheticHop,
-};
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
+use gateway_authority_paid_control_records::{PaidControlOwner, PaidProviderObservation};
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
+use gateway_authority_paid_control_records::{PaidSourceCheck, PaidSyntheticHop};
+use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_authority_paid_records::PaidAdmission;
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
+use gateway_catalog_runtime::{CatalogRuntime, host::CatalogFetch, host::CatalogFetchResponse};
+use gateway_catalog_runtime::{host::CatalogHost, host::CatalogProvider};
+use gateway_catalog_runtime::{host::CredentialPublication, host::ProviderBinding, state};
+use gateway_core::{error::GatewayError, provider::PaidProvider, query::QueryPage};
+use gateway_core::{query::QueryRequest, query::QueryStore};
+use gateway_core::{source_control::decode_source_control_record, source_json::SourceJson};
+use gateway_core::{state::AtomicTransition, state::AuthorityStore, state::CommitOutcome};
+use gateway_core::{state::RecordKey, state::RecordMutation, state::StoredRecord};
+use gateway_routing_runtime_test_support::source_catalog;
+use gateway_schema::runtime_config::build_runtime_config;
+use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
+use serde_json::{Value, json};
+use std::{cell::Cell, cell::RefCell, collections::BTreeMap, collections::VecDeque, task::Waker};
+use std::{future::Future, future::poll_fn, rc::Rc, sync::Arc, task::Context, task::Poll};
 mod original_request_fixture;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-use gateway_routing_runtime_test_support::source_catalog;
 type MemoryStore = Store;
 type TestAuthority = gateway_authority::store::Authority<Store, Tokens>;
-use gateway_authority::paid_control::*;
 use gateway_authority_keys as keys;
-use gateway_catalog_runtime::CatalogRuntime;
-use gateway_catalog_runtime::host::{
-    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
-    ProviderBinding,
-};
-use gateway_catalog_runtime::state;
-use gateway_core::error::GatewayError;
-use gateway_core::provider::PaidProvider;
-use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
-use gateway_core::source_control::decode_source_control_record;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-};
-use gateway_schema::{
-    catalog_store, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
-};
-use serde_json::{Value, json};
-use std::{
-    cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
-    future::{Future, poll_fn},
-    rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Waker},
-};
 fn run<T>(future: impl Future<Output = T>) -> T {
     let mut future = std::pin::pin!(future);
     let mut cx = Context::from_waker(Waker::noop());
@@ -825,7 +814,6 @@ fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
 #[test]
 fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale_existing()
 -> TestResult {
-    use gateway_authority::{paid_types::PaidAuthorization, store::Authority};
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);

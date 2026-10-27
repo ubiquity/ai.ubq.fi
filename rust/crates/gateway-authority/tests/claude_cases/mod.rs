@@ -1,22 +1,13 @@
-use gateway_authority::paid_types::PaidAuthorization;
 use gateway_authority_claude_proof::ClaudeProofOperations;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidAdmission, PaidWindow};
-use gateway_authority_test_support::TestResult;
-use gateway_authority_test_support::paid_request;
-use gateway_authority_test_support::paid_setup;
-use gateway_authority_test_support::reserve_paid;
-use gateway_core::js_string::JsString16;
-use gateway_core::provider::PaidProvider;
-use gateway_core::state::RecordKey;
-use gateway_core::state::StoredRecord;
-use gateway_core::value::PortableValue;
-use gateway_routing_runtime_test_support::authority::MemoryStore;
-use gateway_routing_runtime_test_support::authority::NOW;
-use gateway_routing_runtime_test_support::authority::Tokens;
-use gateway_routing_runtime_test_support::authority::authority;
-use gateway_routing_runtime_test_support::authority::policy;
-use gateway_routing_runtime_test_support::authority::run;
+use gateway_authority_paid_route::authorization::PaidAuthorization;
+use gateway_authority_test_support::{TestResult, paid_request, paid_setup, reserve_paid};
+use gateway_core::{js_string::JsString16, provider::PaidProvider, state::RecordKey};
+use gateway_core::{state::StoredRecord, value::PortableValue};
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
+use gateway_routing_runtime_test_support::{authority::Tokens, authority::authority};
+use gateway_routing_runtime_test_support::{authority::policy, authority::run};
 
 fn claude_roster() -> serde_json::Value {
     let fingerprints = [
