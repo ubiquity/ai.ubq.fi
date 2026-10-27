@@ -4,6 +4,7 @@ use gateway_core::error::GatewayError;
 use gateway_core::identity::ApiKeyId;
 use gateway_core::identity::RequestId;
 use gateway_core::state::AtomicTransition;
+use gateway_core::state::AuthorityStore;
 use gateway_core::state::RecordMutation;
 use gateway_core::state::RevisionCheck;
 use gateway_core::state::StoredRecord;

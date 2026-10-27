@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
 use gateway_core::state::AtomicTransition;
+use gateway_core::state::AuthorityStore;
 use gateway_core::state::RecordMutation;
 use gateway_core::state::RevisionCheck;
 use gateway_core::state::StoredRecord;

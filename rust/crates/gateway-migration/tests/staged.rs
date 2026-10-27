@@ -1,6 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_core::state::AuthorityStore;
-use gateway_migration::native_operator;
 use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;

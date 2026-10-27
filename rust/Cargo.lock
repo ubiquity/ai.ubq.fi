@@ -1279,6 +1279,7 @@ name = "gateway-migration-history"
 version = "0.1.0"
 dependencies = [
  "gateway-admin-data",
+ "gateway-auth",
  "gateway-core",
  "gateway-migration-data",
  "gateway-migration-ledger",

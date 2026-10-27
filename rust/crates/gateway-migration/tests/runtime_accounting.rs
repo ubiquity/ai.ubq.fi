@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_admin_contracts::operations::AdminHost as _;
-use gateway_auth::store::key;
 use gateway_core::identity::RequestId;
+use gateway_core::state::AuthorityStore;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_inverse::inverse::export_latest;
 use gateway_migration_prepare::engine::adopt_empty;

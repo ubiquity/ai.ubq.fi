@@ -317,6 +317,16 @@ impl QueryStore for Store {
     }
 }
 
+// A reference to the SAME wire port, not a second store, row mirror or id counter.
+impl AuthorityStore for &Store {
+    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        (*self).read(key).await
+    }
+    async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        (*self).commit(tx).await
+    }
+}
+
 #[cfg(test)]
 mod frame_tests {
     use super::*;
@@ -414,15 +424,5 @@ mod frame_tests {
         for bytes in [b"{\"operation\":\"store_response\",\"id\":7,\"response\":{\"operation\":\"sql\"}}\n".as_slice(),b"{\"operation\":\"store_response\",\"id\":7,\"id\":7,\"response\":{\"operation\":\"read\",\"record\":null}}\n"]{
             assert!(read_frame::<Incoming,_>(&mut Cursor::new(bytes)).is_err());
         }
-    }
-}
-
-// A reference to the SAME wire port, not a second store, row mirror or id counter.
-impl AuthorityStore for &Store {
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
-        (*self).read(key).await
-    }
-    async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        (*self).commit(tx).await
     }
 }

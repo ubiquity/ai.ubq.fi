@@ -302,6 +302,26 @@ impl NativeCustody for Host {
     }
 }
 
+fn verify_refresh_only_projection(
+    projection: &ManagedAccessProjection,
+    original_account: &CodexSourceAccount,
+) -> Result<(), GatewayError> {
+    if projection.access_generation() != original_account.identity().native_generation_hash
+        || projection.native_source_generation()
+            == original_account
+                .native_owner
+                .as_ref()
+                .and_then(|o| o.managed_source.as_ref())
+                .ok_or_else(|| error("Managed source missing"))?
+                .generation_hash
+    {
+        return Err(error(
+            "Original refresh-only generation distinction differs",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,24 +394,4 @@ mod tests {
             assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), bytes);
         }
     }
-}
-
-fn verify_refresh_only_projection(
-    projection: &ManagedAccessProjection,
-    original_account: &CodexSourceAccount,
-) -> Result<(), GatewayError> {
-    if projection.access_generation() != original_account.identity().native_generation_hash
-        || projection.native_source_generation()
-            == original_account
-                .native_owner
-                .as_ref()
-                .and_then(|o| o.managed_source.as_ref())
-                .ok_or_else(|| error("Managed source missing"))?
-                .generation_hash
-    {
-        return Err(error(
-            "Original refresh-only generation distinction differs",
-        ));
-    }
-    Ok(())
 }
