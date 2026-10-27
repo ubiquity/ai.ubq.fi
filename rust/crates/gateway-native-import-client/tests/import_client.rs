@@ -36,7 +36,7 @@ use gateway_core::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
-use gateway_native::import_client::{ClientError, NativeImportClient};
+use gateway_native_import_client::client::{ClientError, NativeImportClient};
 use serde::Serialize;
 use serde_json::json;
 use std::{

@@ -87,7 +87,7 @@ fn original_request(
     )
     .unwrap();
     let actor = admin_actor(store);
-    let client = crate::import_client::NativeImportClient::configured(
+    let client = gateway_native_import_client::client::NativeImportClient::configured(
         address, &authority, &identity, &owner, &config, &cancel,
     )
     .unwrap();
