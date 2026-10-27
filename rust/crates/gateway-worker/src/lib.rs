@@ -46,7 +46,6 @@ pub mod private_installer;
 mod publication;
 mod routing_host;
 mod runtime;
-mod source_collator;
 pub mod transport;
 
 fn error_response(error: GatewayError) -> Result<Response> {

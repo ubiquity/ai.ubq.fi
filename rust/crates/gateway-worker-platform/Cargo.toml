@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 gateway-admission.workspace = true
 gateway-core.workspace = true
+gateway-schema.workspace = true
 gateway-worker-stream.workspace = true
 serde_json.workspace = true
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }

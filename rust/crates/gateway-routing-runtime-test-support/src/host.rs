@@ -72,10 +72,11 @@ impl RoutingHost for Host {
     async fn wait(&self, milliseconds: i64) -> WaitOutcome {
         if let Some(error) = &self.wait_start_clock_error {
             return WaitOutcome::NotStarted {
-                error: self
-                    .cancelled()
-                    .then(|| self.cancellation_error())
-                    .unwrap_or_else(|| error.clone()),
+                error: if self.cancelled() {
+                    self.cancellation_error()
+                } else {
+                    error.clone()
+                },
             };
         }
         let elapsed_ms = self.cancel_wait_after_ms.unwrap_or(milliseconds);

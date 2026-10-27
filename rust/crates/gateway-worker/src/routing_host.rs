@@ -43,7 +43,7 @@ impl RoutingHost for Host {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
@@ -56,10 +56,11 @@ impl RoutingHost for Host {
             Ok(started) => started,
             Err(error) => {
                 return WaitOutcome::NotStarted {
-                    error: self
-                        .cancelled()
-                        .then(|| self.cancellation_error())
-                        .unwrap_or(error),
+                    error: if self.cancelled() {
+                        self.cancellation_error()
+                    } else {
+                        error
+                    },
                 };
             }
         };

@@ -128,7 +128,7 @@ impl Binding {
             &self.store,
             &self.host.platform,
             &allowed_key_ids,
-            &|left, right| crate::source_collator::shared().compare(left, right),
+            &|left, right| gateway_worker_platform::source_collator::shared().compare(left, right),
         )
         .await?;
         if !access.policy.allows_scalar(key_id) {

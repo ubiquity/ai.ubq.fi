@@ -111,7 +111,7 @@ impl CatalogHost for Host {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
     fn now_ms(&self) -> i64 {
         now_ms().unwrap_or(i64::MAX)

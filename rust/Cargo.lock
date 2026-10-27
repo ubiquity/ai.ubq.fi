@@ -1525,6 +1525,7 @@ dependencies = [
  "futures-util",
  "gateway-admission",
  "gateway-core",
+ "gateway-schema",
  "gateway-worker-stream",
  "serde_json",
  "worker",
@@ -1557,6 +1558,8 @@ version = "0.1.0"
 dependencies = [
  "gateway-core",
  "gateway-schema",
+ "gateway-worker-platform",
+ "gateway-worker-storage",
  "serde_json",
  "worker",
 ]

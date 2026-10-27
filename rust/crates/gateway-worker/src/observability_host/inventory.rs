@@ -120,7 +120,7 @@ impl RequestHost {
         let access = match self.store.read(&claude_access::policy_key()).await? {
             Some(row) if row.expires_at_ms.is_none_or(|t| t > at) => {
                 claude_access::decode_policy_record(&row, at, &|a, b| {
-                    crate::source_collator::shared().compare(a, b)
+                    gateway_worker_platform::source_collator::shared().compare(a, b)
                 })?
                 .map(|policy| ClaudeAccessReadback {
                     source: match policy.source {
