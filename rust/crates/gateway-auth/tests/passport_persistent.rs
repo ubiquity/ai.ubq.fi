@@ -14,14 +14,10 @@ use gateway_auth_passport_contracts::{
 };
 use gateway_auth_passport_sessions::sessions::{PassportSessions, session_key, token_shape};
 use gateway_auth_primitives::crypto::{base64url, sha256_base64url};
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},

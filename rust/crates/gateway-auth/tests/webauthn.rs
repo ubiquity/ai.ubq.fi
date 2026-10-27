@@ -5,7 +5,7 @@ use gateway_auth_contracts::{
     webauthn::*,
 };
 use gateway_auth_primitives::crypto::{base64url, decode_base64url};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use p256::ecdsa::{
     Signature, SigningKey, VerifyingKey,
     signature::{Signer, Verifier},

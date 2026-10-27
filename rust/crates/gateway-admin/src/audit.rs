@@ -13,8 +13,8 @@ pub const RETENTION_MS: i64 = 7_776_000_000;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ChangeActor {
     pub kind: String,
-    pub principal_id: Option<String>,
-    pub principal_label: Option<String>,
+    pub principal_id: Option<JsString16>,
+    pub principal_label: Option<JsString16>,
     pub is_super_admin: bool,
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -31,9 +31,17 @@ pub struct KeyChange {
 }
 
 pub fn actor(principal: &AuthPrincipal) -> ChangeActor {
-    let identity = |id, label| ("passkey_user", Some(id.clone()), Some(label.clone()));
+    let identity = |id: &String, label: &String| {
+        (
+            "passkey_user",
+            Some(JsString16::from_utf8(id)),
+            Some(JsString16::from_utf8(label)),
+        )
+    };
     let (kind, id, label) = match &principal.method {
-        AuthMethod::PasskeySession { user_id, handle, .. } => identity(user_id, handle),
+        AuthMethod::PasskeySession {
+            user_id, handle, ..
+        } => identity(user_id, handle),
         AuthMethod::PassportSession { claims } => identity(&claims.sub, &claims.handle),
         AuthMethod::Disabled => ("local_admin", None, None),
         _ => ("shared_admin_credential", None, None),

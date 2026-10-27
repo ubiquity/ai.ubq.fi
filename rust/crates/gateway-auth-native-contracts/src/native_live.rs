@@ -1,5 +1,5 @@
 use gateway_auth_primitives::crypto::{base64url, decode_base64url, sha256_hex};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 pub const NATIVE_LIVE_PATH: &str = "/v1/native/live";
 pub const NATIVE_LIVE_AUTHORITY_PATH: &str = "/uos/native/live-authority";
 pub const NATIVE_LIVE_ACTION_HEADER: &str = "x-uos-native-live-action";

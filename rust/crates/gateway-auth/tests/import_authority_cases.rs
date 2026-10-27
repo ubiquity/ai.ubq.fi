@@ -175,7 +175,7 @@ fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
     after.action_revision = terminal.publication_revision.clone();
     // This old negative mutates through Value; UTF16 has a separate direct-codec test.
     let mut completion = sample_completion();
-    completion.models.source = gateway_core::js_string::JsString16::from_utf8("source");
+    completion.models.source = gateway_source::js_string::JsString16::from_utf8("source");
     let reply = ImportAuthorityReplyData::new(ImportAuthorityResult::Terminal {
         state: after,
         terminal: Box::new(terminal),
@@ -277,7 +277,7 @@ fn sample_completion() -> ImportCompletionData {
         updated_at_ms: 1234.5,
         models: ImportCompletionModelsData {
             count: 3,
-            source: gateway_core::source_json::SourceJson::parse(r#""\ud800""#)
+            source: gateway_source::source_json::SourceJson::parse(r#""\ud800""#)
                 .unwrap()
                 .deserialize()
                 .unwrap(),

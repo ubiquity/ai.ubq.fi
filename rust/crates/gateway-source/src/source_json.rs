@@ -1,5 +1,5 @@
 //! Validated JSON bytes; raw string leaves never pass through serde_json::Value.
-use crate::{error::GatewayError, js_string::JsString16, value::PortableValue};
+use crate::{error::GatewayError, js_string::JsString16};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{DeserializeOwned, Error},
@@ -33,12 +33,6 @@ impl SourceJson {
     pub fn from_serializable<T: Serialize + ?Sized>(value: &T) -> Result<Self, GatewayError> {
         let text = serde_json::to_string(value).map_err(|_| invalid())?;
         Self::parse(&text)
-    }
-    pub fn from_portable_json(value: &PortableValue) -> Result<Self, GatewayError> {
-        value.validate_for_storage_v2()?;
-        let mut out = String::new();
-        write_value(value, &mut out)?;
-        Self::parse(&out)
     }
     pub fn as_str(&self) -> &str {
         self.0.get()
@@ -186,54 +180,6 @@ impl<'de> Deserialize<'de> for SourceJson {
         let raw = Box::<RawValue>::deserialize(deserializer)?;
         Self::parse(raw.get()).map_err(|_| D::Error::custom("Invalid source JSON"))
     }
-}
-fn write_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayError> {
-    match value {
-        PortableValue::Null => out.push_str("null"),
-        PortableValue::Boolean(v) => out.push_str(if *v { "true" } else { "false" }),
-        PortableValue::String(v) => out.push_str(&JsString16::from_utf8(v).json_token()),
-        PortableValue::StringUtf16(v) => out.push_str(&v.json_token()),
-        PortableValue::NumberBits(_) => {
-            let v = value.to_json_lossless().ok_or_else(invalid)?;
-            out.push_str(&serde_json::to_string(&v).map_err(|_| invalid())?);
-        }
-        PortableValue::Array(values) => {
-            out.push('[');
-            for (at, value) in values.iter().enumerate() {
-                if at != 0 {
-                    out.push(',');
-                }
-                write_value(value, out)?;
-            }
-            out.push(']');
-        }
-        PortableValue::Object(values) => {
-            out.push('{');
-            for (at, (key, value)) in values.iter().enumerate() {
-                if at != 0 {
-                    out.push(',');
-                }
-                out.push_str(&JsString16::from_utf8(key).json_token());
-                out.push(':');
-                write_value(value, out)?;
-            }
-            out.push('}');
-        }
-        PortableValue::ObjectUtf16(values) => {
-            out.push('{');
-            for (at, (key, value)) in values.iter().enumerate() {
-                if at != 0 {
-                    out.push(',');
-                }
-                out.push_str(&key.json_token());
-                out.push(':');
-                write_value(value, out)?;
-            }
-            out.push('}');
-        }
-        _ => return Err(invalid()),
-    }
-    Ok(())
 }
 fn invalid() -> GatewayError {
     GatewayError::unavailable(

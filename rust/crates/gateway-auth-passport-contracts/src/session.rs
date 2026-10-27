@@ -1,5 +1,5 @@
 // Persistent identity DATA is separate from strictly expiring JWT claims.
-use gateway_core::js_string::JsString16;
+use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};
 
 pub const PASSPORT_COOKIE_MAX_AGE_SECONDS: i64 = 400 * 24 * 60 * 60;
@@ -7,7 +7,7 @@ pub const PASSPORT_VERIFIER_COOKIE: &str = "__Host-uos_ai_passport_verifier";
 pub const PASSPORT_SESSION_URL: &str = "https://passport.ubq.fi/api/auth/sso/session";
 pub const PASSPORT_REVOKE_URL: &str = "https://passport.ubq.fi/api/auth/sso/session/revoke";
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PassportSessionIdentity {
     pub subject: JsString16,
     pub handle: JsString16,
@@ -24,7 +24,7 @@ pub trait PassportDate {
 
 /// Source JWT DATA. Expiration stays mandatory; this is never a persistent SSO
 /// record and there is no public authenticity constructor.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PassportSourceClaims {
     pub iss: String,
@@ -74,10 +74,10 @@ impl PassportSourceClaims {
 /// existing lossless JS JSON normalization (including last duplicate fields).
 pub fn parse_source_json(
     bytes: &[u8],
-) -> Result<gateway_core::source_json::SourceJson, gateway_core::error::GatewayError> {
+) -> Result<gateway_source::source_json::SourceJson, gateway_source::error::GatewayError> {
     let text = String::from_utf8_lossy(bytes);
-    let value = gateway_core::source_json::SourceJson::parse(
+    let value = gateway_source::source_json::SourceJson::parse(
         text.strip_prefix('\u{feff}').unwrap_or(&text),
     )?;
-    gateway_core::source_serialization::canonical(&value)
+    gateway_source::source_serialization::canonical(&value)
 }

@@ -1,10 +1,8 @@
-use gateway_core::{
-    error::GatewayError,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
+    StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 

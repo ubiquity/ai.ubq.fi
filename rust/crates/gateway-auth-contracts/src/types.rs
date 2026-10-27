@@ -1,5 +1,5 @@
 use gateway_auth_primitives::crypto::Secret;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -70,7 +70,7 @@ pub struct NativePeer {
 pub enum AuthResponseBody {
     Empty,
     Json(Value),
-    SourceJson(gateway_core::source_json::SourceJson),
+    SourceJson(gateway_source::source_json::SourceJson),
 }
 impl AuthResponseBody {
     pub fn as_json(&self) -> Option<&Value> {
@@ -137,7 +137,7 @@ impl AuthResponse {
             stream: None,
         }
     }
-    pub fn source_json(status: u16, body: gateway_core::source_json::SourceJson) -> Self {
+    pub fn source_json(status: u16, body: gateway_source::source_json::SourceJson) -> Self {
         Self {
             status,
             headers: BTreeMap::from([

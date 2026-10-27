@@ -1,6 +1,6 @@
 use gateway_auth_native_contracts::native_import::{NativeImportKind, NativeImportMetadata};
 use gateway_auth_primitives::crypto::{base64url, decode_base64url, sha256_hex};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 pub fn signature_input(
     kind: NativeImportKind,
     metadata: &NativeImportMetadata,

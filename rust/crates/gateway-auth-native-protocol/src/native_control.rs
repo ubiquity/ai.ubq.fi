@@ -5,7 +5,7 @@ use gateway_auth_native_wire::{
     native_read::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH},
 };
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 pub fn control_response_input(
     key_id: &str,

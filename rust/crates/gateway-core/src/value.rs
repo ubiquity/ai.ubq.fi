@@ -1,5 +1,6 @@
 //! Explicit tree value codec. Type metadata belongs to the record, never to guessed JSON shapes.
-use crate::{error::GatewayError, js_string::JsString16};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -30,7 +31,7 @@ pub enum PortableValue {
     Null,
     Boolean(bool),
     String(String),
-    StringUtf16(#[serde(with = "crate::js_string::units")] JsString16),
+    StringUtf16(#[serde(with = "crate::value::source_units")] JsString16),
     NumberBits(String),
     BigInt(String),
     KvU64(String),
@@ -59,15 +60,15 @@ pub enum PortableValue {
         cause: Option<Box<Self>>,
     },
     RegExpUtf16 {
-        #[serde(with = "crate::js_string::units")]
+        #[serde(with = "crate::value::source_units")]
         source: JsString16,
         flags: String,
     },
     ErrorUtf16 {
         kind: String,
-        #[serde(with = "crate::js_string::units")]
+        #[serde(with = "crate::value::source_units")]
         message: JsString16,
-        #[serde(with = "crate::js_string::optional_units")]
+        #[serde(with = "crate::value::optional_source_units")]
         stack: Option<JsString16>,
         cause: Option<Box<Self>>,
     },
@@ -84,8 +85,11 @@ impl PortableValue {
             None
         }
     }
-    pub fn to_source_json(&self) -> Result<crate::source_json::SourceJson, GatewayError> {
-        crate::source_json::SourceJson::from_portable_json(self)
+    pub fn to_source_json(&self) -> Result<gateway_source::source_json::SourceJson, GatewayError> {
+        self.validate_for_storage_v2()?;
+        let mut out = String::new();
+        write_source_value(self, &mut out)?;
+        gateway_source::source_json::SourceJson::parse(&out)
     }
     pub fn number(value: f64) -> Self {
         Self::NumberBits(format!("{:016x}", value.to_bits()))
@@ -353,5 +357,91 @@ mod utf16_object {
                 .map(|(key, value)| (JsString16::from_units(key), value))
                 .collect()
         })
+    }
+}
+
+fn write_source_value(value: &PortableValue, out: &mut String) -> Result<(), GatewayError> {
+    match value {
+        PortableValue::Null => out.push_str("null"),
+        PortableValue::Boolean(v) => out.push_str(if *v { "true" } else { "false" }),
+        PortableValue::String(v) => {
+            out.push_str(JsString16::from_utf8(v).to_source_json()?.as_str())
+        }
+        PortableValue::StringUtf16(v) => out.push_str(v.to_source_json()?.as_str()),
+        PortableValue::NumberBits(_) => {
+            let v = value.to_json_lossless().ok_or_else(source_json_invalid)?;
+            out.push_str(&serde_json::to_string(&v).map_err(|_| source_json_invalid())?);
+        }
+        PortableValue::Array(values) => {
+            out.push('[');
+            for (at, value) in values.iter().enumerate() {
+                if at != 0 {
+                    out.push(',');
+                }
+                write_source_value(value, out)?;
+            }
+            out.push(']');
+        }
+        PortableValue::Object(values) => {
+            out.push('{');
+            for (at, (key, value)) in values.iter().enumerate() {
+                if at != 0 {
+                    out.push(',');
+                }
+                out.push_str(JsString16::from_utf8(key).to_source_json()?.as_str());
+                out.push(':');
+                write_source_value(value, out)?;
+            }
+            out.push('}');
+        }
+        PortableValue::ObjectUtf16(values) => {
+            out.push('{');
+            for (at, (key, value)) in values.iter().enumerate() {
+                if at != 0 {
+                    out.push(',');
+                }
+                out.push_str(key.to_source_json()?.as_str());
+                out.push(':');
+                write_source_value(value, out)?;
+            }
+            out.push('}');
+        }
+        _ => return Err(source_json_invalid()),
+    }
+    Ok(())
+}
+fn source_json_invalid() -> GatewayError {
+    GatewayError::unavailable(
+        "Source JSON is malformed or the typed value is not losslessly JSON-representable",
+        "source_json_invalid",
+    )
+}
+
+/// Only explicit ProfileV2 nodes use this physical representation.
+pub(crate) mod source_units {
+    use super::*;
+    pub fn serialize<S: Serializer>(value: &JsString16, serializer: S) -> Result<S::Ok, S::Error> {
+        value.as_units().serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<JsString16, D::Error> {
+        Vec::<u16>::deserialize(deserializer).map(JsString16::from_units)
+    }
+}
+
+pub(crate) mod optional_source_units {
+    use super::*;
+    pub fn serialize<S: Serializer>(
+        value: &Option<JsString16>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value
+            .as_ref()
+            .map(JsString16::as_units)
+            .serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<JsString16>, D::Error> {
+        Option::<Vec<u16>>::deserialize(deserializer).map(|v| v.map(JsString16::from_units))
     }
 }

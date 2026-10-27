@@ -14,7 +14,7 @@ use gateway_auth_primitives::{
     crypto::{Secret, base64url, decode_base64url},
     error::unauthorized,
 };
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

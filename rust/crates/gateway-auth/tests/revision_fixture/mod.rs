@@ -4,7 +4,8 @@ use gateway_auth_contracts::{
     upstream::*,
 };
 use gateway_auth_passkeys::{passkeys::*, session_index};
-use gateway_core::{error::GatewayError, state::*};
+use gateway_core::state::*;
+use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,

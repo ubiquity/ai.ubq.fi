@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 pub const GIT_SHA_HEADER: &str = "x-uos-git-sha";
 pub const DEPLOYMENT_ID_HEADER: &str = "x-uos-deployment-id";

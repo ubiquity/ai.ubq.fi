@@ -164,34 +164,6 @@ impl<'de> Deserialize<'de> for JsString16 {
     }
 }
 
-/// Only explicit ProfileV2 nodes use this physical representation.
-pub(crate) mod units {
-    use super::*;
-    pub fn serialize<S: Serializer>(value: &JsString16, serializer: S) -> Result<S::Ok, S::Error> {
-        value.as_units().serialize(serializer)
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<JsString16, D::Error> {
-        Vec::<u16>::deserialize(deserializer).map(JsString16::from_units)
-    }
-}
-
-pub(crate) mod optional_units {
-    use super::*;
-    pub fn serialize<S: Serializer>(
-        value: &Option<JsString16>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        value
-            .as_ref()
-            .map(JsString16::as_units)
-            .serialize(serializer)
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<JsString16>, D::Error> {
-        Option::<Vec<u16>>::deserialize(deserializer).map(|v| v.map(JsString16::from_units))
-    }
-}
 fn whitespace(unit: u16) -> bool {
     matches!(unit, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
 }

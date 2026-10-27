@@ -1,5 +1,5 @@
 use gateway_auth_primitives::crypto::{Secret, decode_base64url};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};

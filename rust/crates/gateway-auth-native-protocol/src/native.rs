@@ -7,7 +7,7 @@ use gateway_auth_primitives::{
     crypto::{base64url, decode_base64url, sha256_hex},
     error::invalid,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 /// HMAC-SHA256 authenticates these exact bytes with a dedicated constructor key.
 /// Platforms supply real HMAC primitives; body bytes are never reserialized.

@@ -1,5 +1,5 @@
 use gateway_auth_primitives::error::invalid;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::future::Future;

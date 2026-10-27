@@ -10,10 +10,10 @@ use gateway_auth_passport_contracts::passport::{
     PASSPORT_COOKIE, PASSPORT_STATE_COOKIE, PassportClaims, PassportConfig,
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use rsa::{
     RsaPrivateKey,
     pkcs1v15::SigningKey,
@@ -409,7 +409,7 @@ fn claim_signature_and_algorithm_failures_fail_closed() -> Result<(), Box<dyn st
     let config = PassportConfig::production();
     let public = private().to_public_key();
     let keys = BTreeMap::from([(
-        gateway_core::js_string::JsString16::from_utf8("key-a"),
+        gateway_source::js_string::JsString16::from_utf8("key-a"),
         public,
     )]);
     let valid = token(&claims());

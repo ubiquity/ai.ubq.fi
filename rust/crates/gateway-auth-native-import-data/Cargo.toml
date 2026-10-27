@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source = { path = "../gateway-source" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
 gateway-auth-native-wire = { path = "../gateway-auth-native-wire" }
 gateway-core = { path = "../gateway-core" }

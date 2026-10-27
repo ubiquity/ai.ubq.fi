@@ -1,5 +1,5 @@
 use gateway_auth_primitives::crypto::Secret;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 #[derive(Clone, Debug)]
 pub enum AuthUpstreamRequest {
     GitHubRepository {

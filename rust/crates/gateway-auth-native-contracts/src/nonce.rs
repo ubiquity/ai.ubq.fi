@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::future::Future;
 /// Atomically prune only expired nonces, refuse any live replay, and refuse new
 /// requests at NATIVE_NONCE_CAP rather than evicting a live authentication fence.

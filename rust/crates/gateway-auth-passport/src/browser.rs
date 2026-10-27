@@ -12,7 +12,7 @@ use gateway_auth_primitives::{
     crypto::{Secret, base64url, sha256_base64url},
     error::unauthorized,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 use url::Url;
 
@@ -221,14 +221,14 @@ impl<S: gateway_core::state::AuthorityStore, H: AuthHost + PassportDate> Passpor
         }
         let document = gateway_auth_passport_contracts::session::parse_source_json(&response.body)
             .map_err(|_| unauthorized())?;
-        let token = gateway_core::source_serialization::member(&document, "accessToken")
+        let token = gateway_source::source_serialization::member(&document, "accessToken")
             .and_then(|v| v.deserialize::<String>().ok())
             .ok_or_else(unauthorized)?;
         let claims = crate::passport::verify_source(self.host, &token).await?;
         if claims.agent_token_id.is_some() {
             return Err(unauthorized());
         }
-        let grant = gateway_core::source_serialization::member(&document, "appSession")
+        let grant = gateway_source::source_serialization::member(&document, "appSession")
             .ok_or_else(gateway_auth_passport_sessions::sessions::unavailable)?;
         let local = PassportSessions {
             store: self.store,

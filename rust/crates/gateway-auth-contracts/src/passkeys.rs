@@ -1,5 +1,5 @@
 use gateway_auth_primitives::{crypto::decode_base64url, error::invalid};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub const CHALLENGE_TTL_MS: i64 = 300_000;

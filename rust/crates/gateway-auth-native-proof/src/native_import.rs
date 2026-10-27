@@ -9,7 +9,7 @@ use gateway_auth_native_contracts::{
 use gateway_auth_native_protocol::import_frame::signature_input;
 use gateway_auth_native_wire::native_read::NATIVE_AUTH_WINDOW_MS;
 use gateway_auth_primitives::crypto::{base64url, decode_base64url, sha256_hex};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 

@@ -5,7 +5,7 @@ use crate::{
     provider_credentials::{codex_credential_identity, valid_native_generation},
 };
 use gateway_auth_primitives::crypto::Secret;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 /// No Debug, Serialize or Deserialize: only the fixed private managed publisher
 /// may encode its access field. A projection itself is never write authority.

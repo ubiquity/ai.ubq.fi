@@ -1,5 +1,5 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use sha2::{Digest, Sha256};
 
 #[derive(Clone, Eq, PartialEq)]

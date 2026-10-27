@@ -1,5 +1,5 @@
 use gateway_auth_native_wire::native_read::NATIVE_WIRE_VERSION;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 pub mod catalog_seed;
 pub mod state;

@@ -3,7 +3,7 @@ use gateway_auth_primitives::{
     crypto::{decode_base64url, sha256_base64url},
     error::{invalid, unauthorized},
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use rsa::{
     RsaPublicKey,
     pkcs1v15::{Signature, VerifyingKey},

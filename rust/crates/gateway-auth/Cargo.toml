@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source = { path = "../gateway-source" }
 gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
 gateway-auth-attestation = { path = "../gateway-auth-attestation" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }

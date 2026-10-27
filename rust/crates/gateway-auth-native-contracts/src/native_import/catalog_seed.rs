@@ -3,7 +3,7 @@ use super::state::ImportAuthorityStateData;
 use gateway_auth_native_wire::{
     native_read::NATIVE_MAX_BODY_BYTES, validation::valid_client_version,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub const IMPORT_CATALOG_SEED_OPERATION: &str = "codex_auth_import_catalog_seed";

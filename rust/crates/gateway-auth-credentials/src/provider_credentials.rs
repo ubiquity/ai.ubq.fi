@@ -9,10 +9,10 @@ use gateway_auth_primitives::{
     store,
 };
 use gateway_core::{
-    error::GatewayError,
     identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
     state::{AuthorityStore, RecordKey},
 };
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;

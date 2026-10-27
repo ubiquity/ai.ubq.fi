@@ -13,7 +13,8 @@ use gateway_auth_primitives::{
     crypto::{Secret, sha256_base64url, sha256_hex},
     error::unauthorized,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 use url::Url;
@@ -123,7 +124,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 .as_ref()
                 .map(
                     |record| -> Result<
-                        Option<Vec<gateway_core::source_json::SourceJson>>,
+                        Option<Vec<gateway_source::source_json::SourceJson>>,
                         GatewayError,
                     > {
                         record.validate_version()?;
@@ -134,7 +135,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                             return Ok(None);
                         }
                         gateway_core::source_control::decode_source_control_record(record)?
-                            .deserialize::<Vec<gateway_core::source_json::SourceJson>>()
+                            .deserialize::<Vec<gateway_source::source_json::SourceJson>>()
                             .map(Some)
                             .map_err(|_| {
                                 GatewayError::unavailable(
@@ -150,9 +151,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             for record in stored_keys {
                 // Source skips each failed PEM import. Lone units necessarily
                 // fail atob; reject only this crypto projection, never storage.
-                if let Some(pem) = gateway_core::source_serialization::member(&record, "pem")
+                if let Some(pem) = gateway_source::source_serialization::member(&record, "pem")
                     .as_ref()
-                    .and_then(gateway_core::source_serialization::string)
+                    .and_then(gateway_source::source_serialization::string)
                     .and_then(|pem| pem.try_utf8().ok())
                     && !verification_config
                         .kernel_public_keys_pem
@@ -321,15 +322,15 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         // This named source metadata read grants no role. Preserve the checked
         // native listener gate and the separate model-free hash-policy read.
         let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
-        if !gateway_core::source_serialization::member(&metadata, "revoked_at_ms")
+        if !gateway_source::source_serialization::member(&metadata, "revoked_at_ms")
             .is_some_and(|value| value.as_str() == "null")
         {
             return Ok(None);
         }
         let (Some(hash), Some(id)) = (
-            gateway_core::source_serialization::member(&metadata, "hash")
+            gateway_source::source_serialization::member(&metadata, "hash")
                 .and_then(|v| v.deserialize::<String>().ok()),
-            gateway_core::source_serialization::member(&metadata, "id")
+            gateway_source::source_serialization::member(&metadata, "id")
                 .and_then(|v| v.deserialize::<String>().ok()),
         ) else {
             return Ok(None);

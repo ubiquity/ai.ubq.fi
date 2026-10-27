@@ -2,7 +2,7 @@ use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
 use gateway_auth_native_proof::native_auth::*;
 use gateway_auth_native_wire::native_read::*;
 use gateway_auth_primitives::crypto::{base64url, sha256_hex};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,

@@ -6,7 +6,8 @@ use gateway_auth_primitives::{
     api_keys,
     crypto::{Secret, base64url},
 };
-use gateway_core::{error::GatewayError, state::*};
+use gateway_core::state::*;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -500,7 +501,8 @@ impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
 
 #[test]
 fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection() {
-    use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
+    use gateway_core::source_control::encode_source_control_record;
+    use gateway_source::source_json::SourceJson;
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/kernel-source-public.json")).unwrap();
     let pem = fixture["pem"].as_str().unwrap();

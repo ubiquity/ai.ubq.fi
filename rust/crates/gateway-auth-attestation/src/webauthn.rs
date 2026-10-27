@@ -11,7 +11,7 @@ use gateway_auth_primitives::{
     crypto::{base64url, decode_base64url},
     error::invalid,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;

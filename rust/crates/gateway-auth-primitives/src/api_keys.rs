@@ -3,7 +3,8 @@ use crate::{
     error::unauthorized,
     store,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

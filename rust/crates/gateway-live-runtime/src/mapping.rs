@@ -1,4 +1,5 @@
 use crate::types::LIVE_CALL_ACCOUNT_TTL_MS;
+use gateway_core::source_control;
 use gateway_core::{
     error::GatewayError,
     state::{
@@ -7,6 +8,10 @@ use gateway_core::{
     },
     tuple_key::{ScalarKeyPart, TupleKey},
 };
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
+use serde::Serialize;
 use serde_json::json;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
@@ -35,7 +40,7 @@ struct Pending {
 
 pub(crate) struct Mapping {
     pub account_id: String,
-    pub principal_id: Option<String>,
+    pub principal_id: Option<JsString16>,
 }
 
 pub fn mapping_key(call_id: &str) -> RecordKey {
@@ -126,18 +131,16 @@ impl<S: AuthorityStore> LiveRuntime<S> {
         &self,
         call_id: &str,
         account: &str,
-        principal: &str,
+        principal: &JsString16,
         now: i64,
     ) {
         // Deliberately best-effort and unconditional. Never clears a pending-retirement marker.
         let Ok(revision) = self.revision() else {
             return;
         };
-        let record = StoredRecord::json(
-            revision,
-            json!({"account_id":account,"principal_id":principal,"created_at_ms":now}),
-            Some(now.saturating_add(LIVE_CALL_ACCOUNT_TTL_MS)),
-        );
+        let Ok(record) = encode_mapping(revision, account, principal, now) else {
+            return;
+        };
         let _ = self
             .state
             .store
@@ -174,14 +177,7 @@ impl<S: AuthorityStore> LiveRuntime<S> {
         if record.expires_at_ms.is_some_and(|expiry| expiry <= now) {
             return None;
         }
-        let value = record.json_value().ok()?;
-        Some(Mapping {
-            account_id: value.get("account_id")?.as_str()?.into(),
-            principal_id: value
-                .get("principal_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_owned),
-        })
+        decode_mapping(&record)
     }
 
     async fn retire_once(&self, call_id: &str) -> RetirementOutcome {
@@ -292,4 +288,39 @@ fn parse_marker(record: &StoredRecord, call_id: &str) -> Option<Pending> {
 
 pub(crate) fn mapping_missing() -> GatewayError {
     crate::types::invalid(404, "Unknown realtime call.")
+}
+
+/// Mapping DATA only. Other fields retain their scalar domains and original expiry.
+fn encode_mapping(
+    revision: String,
+    account: &str,
+    principal: &JsString16,
+    now: i64,
+) -> Result<StoredRecord, GatewayError> {
+    #[derive(Serialize)]
+    struct Data<'a> {
+        account_id: &'a str,
+        principal_id: &'a JsString16,
+        created_at_ms: i64,
+    }
+    let source = SourceJson::from_serializable(&Data {
+        account_id: account,
+        principal_id: principal,
+        created_at_ms: now,
+    })?;
+    source_control::encode_source_control_record(
+        revision,
+        &source,
+        Some(now.saturating_add(LIVE_CALL_ACCOUNT_TTL_MS)),
+    )
+}
+fn decode_mapping(record: &StoredRecord) -> Option<Mapping> {
+    let value = source_control::decode_source_control_record(record).ok()?;
+    Some(Mapping {
+        account_id: source::member(&value, "account_id")?
+            .deserialize::<String>()
+            .ok()?,
+        // Source getString accepts every string, including empty. Non-string/absent stays null.
+        principal_id: source::member(&value, "principal_id").and_then(|v| source::string(&v)),
+    })
 }

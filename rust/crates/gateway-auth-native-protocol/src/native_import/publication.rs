@@ -3,7 +3,7 @@
 use gateway_auth_credentials::provider_credentials::codex_credential_identity;
 use gateway_auth_native_wire::{publication_command as command, publication_data as data};
 use gateway_auth_primitives::crypto::{Secret, sha256_hex};
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 fn unavailable() -> GatewayError {
     GatewayError::unavailable(
@@ -120,7 +120,7 @@ pub fn new_reply_limit(
         Ok(source) => source,
         Err(_) => return Ok(None),
     };
-    let operation = gateway_core::source_serialization::member(&source, "operation")
+    let operation = gateway_source::source_serialization::member(&source, "operation")
         .and_then(|v| v.deserialize::<String>().ok());
     if operation.as_deref() != Some("codex_auth_import_publish") {
         return Ok(None);

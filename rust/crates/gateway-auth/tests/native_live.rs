@@ -7,7 +7,7 @@ use gateway_auth_native_proof::{
     native_live::*,
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{
     collections::BTreeSet,
     future::Future,

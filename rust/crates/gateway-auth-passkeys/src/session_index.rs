@@ -1,10 +1,8 @@
 // Private source-session revision metadata, never a bearer or authorization proof.
 use gateway_auth_contracts::passkeys::PasskeySession;
 use gateway_auth_primitives::{crypto::sha256_hex, store};
-use gateway_core::{
-    error::GatewayError,
-    state::{AuthorityStore, RecordKey, StoredRecord},
-};
+use gateway_core::state::{AuthorityStore, RecordKey, StoredRecord};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

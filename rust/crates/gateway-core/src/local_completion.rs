@@ -1,18 +1,18 @@
 //! Finite data-only local-completion patch. This never constructs a live runtime handle.
 use crate::{
-    error::GatewayError,
     identity::{MAX_SAFE_INTEGER, RequestContext},
-    js_string::JsString16,
     lifecycle::DeliveryOutcome,
     local_work::{
         LocalSemanticOutcome, LocalTerminalObservation, LocalWorkPhase, journal_local_work,
     },
     source_control::decode_source_control_record,
-    source_json::SourceJson,
     source_serialization as source,
     state::{RecordKey, StoredRecord},
     tuple_key::{ScalarKeyPart, TupleKey},
 };
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
 
 /// Prepared only after the runtime's complete Journal decoder and genuine owned
 /// success boundary. Validating this data does not establish either of those facts.
@@ -218,7 +218,7 @@ mod tests {
     fn fixture() -> (RequestContext, SourceJson) {
         let context = RequestContext {
             request_id: RequestId("original".into()),
-            principal: PrincipalId("principal".into()),
+            principal: PrincipalId::from_scalar("principal".into()),
             key_id: None,
             route: "responses".into(),
             started_at_ms: 10,

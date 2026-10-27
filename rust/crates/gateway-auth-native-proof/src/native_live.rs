@@ -7,7 +7,7 @@ use crate::native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIde
 use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
 use gateway_auth_native_wire::native_read::{NATIVE_AUTH_WINDOW_MS, NATIVE_WIRE_VERSION};
 use gateway_auth_primitives::crypto::{base64url, decode_base64url, sha256_hex};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 

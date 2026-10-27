@@ -6,7 +6,7 @@ use super::{
     ImportCustodyStartedWire, completion::ImportCompletionData,
     import_authority_reply_max_bytes_for, invalid, nullable, reference, text,
 };
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 macro_rules! results {
     ($( $variant:ident $phase:literal { $( $(#[$attr:meta])* $field:ident : $ty:ty, )* } ),* $(,)?) => {
@@ -16,7 +16,7 @@ macro_rules! results {
         impl<'de> Deserialize<'de> for ImportAuthorityResult {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer:D)->Result<Self,D::Error> {
                 let raw=<SourceJson as Deserialize>::deserialize(deserializer)?;
-                let phase=gateway_core::source_serialization::member(&raw,"phase").and_then(|v|v.deserialize::<String>().ok()).ok_or_else(||serde::de::Error::custom("Missing import reply phase"))?;
+                let phase=gateway_source::source_serialization::member(&raw,"phase").and_then(|v|v.deserialize::<String>().ok()).ok_or_else(||serde::de::Error::custom("Missing import reply phase"))?;
                 match phase.as_str() {
                     $( $phase => {
                         #[derive(Deserialize)] #[serde(deny_unknown_fields)]

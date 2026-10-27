@@ -6,7 +6,7 @@ use gateway_auth_native_protocol::native_import::publication::{
 };
 use gateway_auth_native_wire::{publication_command::*, publication_data::*};
 use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 use std::collections::BTreeSet;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn request(normalized: bool) -> ImportPublicationCommandData {

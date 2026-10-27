@@ -1,5 +1,6 @@
 use gateway_auth_contracts::{types::AuthHost, upstream::AuthUpstreamRequest};
 use gateway_auth_passport_contracts::{
+    actor_data::{PassportAppSessionBinding, PassportAppSessionData, digest_shape},
     passport::PassportConfig,
     session::{PassportDate, PassportSessionIdentity},
 };
@@ -8,14 +9,12 @@ use gateway_auth_primitives::{
     store,
 };
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
     source_control,
-    source_json::SourceJson,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 
 pub fn token_shape(token: &str) -> bool {
@@ -33,12 +32,11 @@ fn bounded(value: &JsString16, max: usize, empty: bool) -> bool {
     (empty || !value.as_units().is_empty()) && value.as_units().len() <= max
 }
 pub fn session_key(token: &str) -> RecordKey {
+    digest_key(&sha256_hex(token.as_bytes()))
+}
+fn digest_key(digest: &str) -> RecordKey {
     store::key(serde_json::json!([
-        "uos_ai",
-        "auth",
-        "passport",
-        "sessions",
-        sha256_hex(token.as_bytes())
+        "uos_ai", "auth", "passport", "sessions", digest
     ]))
 }
 pub fn unavailable() -> GatewayError {
@@ -93,6 +91,19 @@ struct Record {
     app_session_token: String,
 }
 impl Record {
+    fn binding(&self, session_digest: String, revision: &str) -> PassportAppSessionBinding {
+        PassportAppSessionBinding {
+            session_digest,
+            row_revision: revision.into(),
+            subject: self.subject.clone(),
+            created_at: self.created_at.clone(),
+            app_token_digest: sha256_hex(self.app_session_token.as_bytes()),
+            client_id: self.client_id.clone(),
+            audience: self.audience.clone(),
+            origin: self.origin.clone(),
+            redirect_uri: self.redirect_uri.clone(),
+        }
+    }
     fn valid<H: PassportDate>(&self, host: &H) -> bool {
         self.version == 1.0
             && bounded(&self.subject, 500, false)
@@ -229,7 +240,7 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         subject: &JsString16,
         previous: Option<&str>,
     ) -> Result<String, GatewayError> {
-        let record = gateway_core::source_serialization::canonical(grant)?
+        let record = gateway_source::source_serialization::canonical(grant)?
             .deserialize::<Grant>()
             .map_err(|_| unavailable())?
             .record();
@@ -294,10 +305,15 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         Ok(())
     }
     pub async fn get(&self, token: &str) -> Result<PassportSessionIdentity, GatewayError> {
+        Ok(self.authenticate(token).await?.identity)
+    }
+    /// Authenticates the actual cookie and returns identity plus its exact source binding DATA.
+    pub async fn authenticate(&self, token: &str) -> Result<PassportAppSessionData, GatewayError> {
         if !token_shape(token) {
             return Err(unauthorized());
         }
-        let key = session_key(token);
+        let digest = sha256_hex(token.as_bytes());
+        let key = digest_key(&digest);
         let row = self
             .store
             .read(&key)
@@ -305,9 +321,39 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
             .map_err(|_| unavailable())?
             .ok_or_else(unauthorized)?;
         let record = self.decode(&row)?;
-        let response = self.request(&record, false).await?;
-        // Host status-only handling for 401 is required even if cancelling a
-        // rejected body fails; a body-read error must not mask revocation.
+        let binding = record.binding(digest, &row.revision);
+        self.introspect(key, &binding, &record).await
+    }
+    /// Concrete constructor-held preflight for Authority. Reads the stored app token;
+    /// no caller verification callback or token reconstruction. Return value is DATA.
+    pub async fn check_bound(
+        &self,
+        binding: &PassportAppSessionBinding,
+    ) -> Result<PassportAppSessionData, GatewayError> {
+        if !binding.has_valid_shape() {
+            return Err(unauthorized());
+        }
+        let key = digest_key(&binding.session_digest);
+        let row = self
+            .store
+            .read(&key)
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unauthorized)?;
+        let record = self.decode(&row)?;
+        if record.binding(binding.session_digest.clone(), &row.revision) != *binding {
+            return Err(unauthorized());
+        }
+        self.introspect(key, binding, &record).await
+    }
+    async fn introspect(
+        &self,
+        key: RecordKey,
+        binding: &PassportAppSessionBinding,
+        record: &Record,
+    ) -> Result<PassportAppSessionData, GatewayError> {
+        let response = self.request(record, false).await?;
+        // Authoritative 401 remains authoritative even when body cancellation fails.
         if response.status == 401 {
             self.delete(key).await?;
             return Err(unauthorized());
@@ -320,16 +366,21 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {
         let identity = document
             .deserialize::<Introspection>()
             .map_err(|_| unavailable())?
-            .identity(&record)?;
-        let current = self.store.read(&key).await.map_err(|_| unavailable())?;
-        let current = current
-            .as_ref()
-            .and_then(|row| self.decode(row).ok())
+            .identity(record)?;
+        let row = self
+            .store
+            .read(&key)
+            .await
+            .map_err(|_| unavailable())?
             .ok_or_else(unauthorized)?;
-        if current.app_session_token != record.app_session_token {
+        let current = self.decode(&row)?;
+        if current.binding(binding.session_digest.clone(), &row.revision) != *binding {
             return Err(unauthorized());
         }
-        Ok(identity)
+        Ok(PassportAppSessionData {
+            identity,
+            binding: binding.clone(),
+        })
     }
     pub async fn revoke(&self, token: &str) -> Result<&'static str, GatewayError> {
         if !token_shape(token) {

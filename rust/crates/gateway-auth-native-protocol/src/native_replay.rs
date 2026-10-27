@@ -6,7 +6,8 @@ use gateway_auth_primitives::{
     crypto::{base64url, decode_base64url, sha256_hex},
     store,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;

@@ -5,7 +5,7 @@ use gateway_auth_native_contracts::{
 use gateway_auth_native_proof::{native_auth::*, native_import::*};
 use gateway_auth_native_protocol::import_frame::signature_input;
 use gateway_auth_primitives::crypto::{base64url, sha256_hex};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{
     collections::BTreeSet,
     future::Future,

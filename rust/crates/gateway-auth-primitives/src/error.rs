@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 pub fn unauthorized() -> GatewayError {
     GatewayError::new(401, "Unauthorized", Some("invalid_api_key"))
 }

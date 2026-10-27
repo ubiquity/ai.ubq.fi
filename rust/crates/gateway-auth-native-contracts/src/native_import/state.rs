@@ -1,6 +1,7 @@
 use super::{NativeImportMetadata, NativeImportTarget};
 use gateway_auth_native_wire::control::NATIVE_RENEWAL_MAX_MS;
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER};
+use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 pub const IMPORT_AUTHORITY_OPERATION: &str = "codex_auth_import_authority";
 pub const IMPORT_STARTED_OPERATION: &str = "codex_auth_import_started";
