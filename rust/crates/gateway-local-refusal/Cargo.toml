@@ -6,8 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-gateway-core.workspace = true
-serde.workspace = true
+gateway-source.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -1466,8 +1466,8 @@ dependencies = [
 name = "gateway-local-refusal"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
- "serde",
+ "gateway-source",
+ "serde_json",
 ]
 
 [[package]]

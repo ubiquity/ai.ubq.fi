@@ -1,5 +1,6 @@
 //! Exact routing refusal data; no provider, authority or transport dependency.
-use gateway_core::error::GatewayError;
+use crate::closed_error_body::ClosedErrorBody;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug)]
 pub struct RoutingError {
@@ -11,14 +12,22 @@ pub struct RoutingError {
 
 #[derive(Clone, Debug)]
 pub enum SourceRefusalBody {
-    Json(gateway_core::source_json::SourceJson),
+    Json(SourceJson),
+    ClosedError(ClosedErrorBody),
     /// Exact source HTTP-constructor failure; never a quota or paid proof.
     InternalServerError,
 }
 impl SourceRefusalBody {
+    pub fn content_type(&self) -> &'static str {
+        match self {
+            Self::Json(_) | Self::ClosedError(_) => "application/json",
+            Self::InternalServerError => "text/plain; charset=utf-8",
+        }
+    }
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Json(body) => body.as_bytes(),
+            Self::ClosedError(body) => body.as_bytes(),
             Self::InternalServerError => b"Internal Server Error",
         }
     }
@@ -50,9 +59,8 @@ impl RoutingError {
     /// Cleanup is an internal diagnostic; the original wire status/body remain authoritative.
     pub fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {
         if self.source_body.is_none() {
-            self.source_body = Some(SourceRefusalBody::Json(
-                gateway_core::source_json::SourceJson::from_serializable(&self.error.envelope)
-                    .expect("A scalar error envelope is valid source JSON"),
+            self.source_body = Some(SourceRefusalBody::ClosedError(
+                ClosedErrorBody::from_scalar(&self.error),
             ));
         }
         let code = cleanup
@@ -88,7 +96,7 @@ impl From<crate::source_error::SourceRequestError> for RoutingError {
             local_aggregate_context_overflow: error.is_local_aggregate_context_overflow(),
             error: Box::new(error.diagnostic().clone()),
             headers: BTreeMap::new(),
-            source_body: Some(SourceRefusalBody::Json(error.body().clone())),
+            source_body: Some(SourceRefusalBody::ClosedError(error.body().clone())),
         }
     }
 }

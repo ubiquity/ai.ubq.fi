@@ -1,6 +1,6 @@
 //! Exact wire and private-kind invariants at the defining foundation.
-use gateway_core::{error::GatewayError, js_string::JsString16};
 use gateway_local_refusal::{routing_error::RoutingError, source_error::SourceRequestError};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 
 #[test]
 fn aggregate_constructor_sets_only_the_internal_identity() {

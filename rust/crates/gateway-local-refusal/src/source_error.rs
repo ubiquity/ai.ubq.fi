@@ -1,11 +1,11 @@
 //! Exact source error strings may themselves contain non-scalar UTF16 units.
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use serde::Serialize;
+use crate::closed_error_body::ClosedErrorBody;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 
 #[derive(Clone, Debug)]
 pub struct SourceRequestError {
     pub status: u16,
-    body: SourceJson,
+    body: ClosedErrorBody,
     diagnostic: Box<GatewayError>,
     local_aggregate_context_overflow: bool,
 }
@@ -17,29 +17,7 @@ impl SourceRequestError {
         code: Option<&str>,
         param: Option<Option<JsString16>>,
     ) -> Self {
-        #[derive(Serialize)]
-        struct ErrorBody<'a> {
-            error: ErrorFields<'a>,
-        }
-        #[derive(Serialize)]
-        struct ErrorFields<'a> {
-            message: JsString16,
-            #[serde(rename = "type")]
-            kind: &'a str,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            code: Option<&'a str>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            param: Option<Option<JsString16>>,
-        }
-        let body = SourceJson::from_serializable(&ErrorBody {
-            error: ErrorFields {
-                message: message.into(),
-                kind: error_type,
-                code,
-                param,
-            },
-        })
-        .expect("Source error fields are valid JSON");
+        let body = ClosedErrorBody::new(message.into(), error_type, code, param);
         Self {
             status,
             local_aggregate_context_overflow: false,
@@ -78,8 +56,7 @@ impl SourceRequestError {
         Self::from_scalar(error)
     }
     pub(crate) fn from_scalar(error: GatewayError) -> Self {
-        let body = SourceJson::from_serializable(&error.envelope)
-            .expect("Scalar error fields are valid JSON");
+        let body = ClosedErrorBody::from_scalar(&error);
         Self {
             status: error.status,
             local_aggregate_context_overflow: false,
@@ -87,7 +64,7 @@ impl SourceRequestError {
             diagnostic: Box::new(error),
         }
     }
-    pub fn body(&self) -> &SourceJson {
+    pub fn body(&self) -> &ClosedErrorBody {
         &self.body
     }
     pub fn diagnostic(&self) -> &GatewayError {
@@ -101,39 +78,29 @@ impl SourceRequestError {
     }
     /// Only the old scalar API calls this after supplying an actual serde Value.
     pub fn into_scalar(self) -> GatewayError {
-        #[derive(serde::Deserialize)]
-        struct Body {
-            error: Fields,
+        let message = match self.body.message().try_utf8() {
+            Ok(message) => message,
+            Err(_) => return *self.diagnostic,
+        };
+        let param = match self.body.param() {
+            Some(Some(param)) => match param.try_utf8() {
+                Ok(param) => Some(Some(param)),
+                Err(_) => return *self.diagnostic,
+            },
+            Some(None) => Some(None),
+            None => None,
+        };
+        let mut error = GatewayError::new(self.status, message, self.body.code())
+            .with_type(self.body.error_type());
+        if let Some(param) = param {
+            error = error.with_param(param.as_deref());
         }
-        #[derive(serde::Deserialize)]
-        struct Fields {
-            message: String,
-            #[serde(rename = "type")]
-            kind: String,
-            code: Option<String>,
-            param: Option<String>,
-        }
-        match self.body.deserialize::<Body>() {
-            Ok(body) => {
-                let fields = body.error;
-                let mut error =
-                    GatewayError::new(self.status, fields.message, fields.code.as_deref())
-                        .with_type(&fields.kind);
-                if let Some(param) = fields.param {
-                    error = error.with_param(Some(&param));
-                } else if gateway_core::source_serialization::member(&self.body, "error")
-                    .and_then(|body| gateway_core::source_serialization::member(&body, "param"))
-                    .is_some()
-                {
-                    error = error.with_param(None);
-                }
-                error
-            }
-            Err(_) => *self.diagnostic,
-        }
+        error
     }
 }
 
 impl From<GatewayError> for SourceRequestError {
-    fn from(error: GatewayError) -> Self { Self::from_gateway(error) }
+    fn from(error: GatewayError) -> Self {
+        Self::from_gateway(error)
+    }
 }
