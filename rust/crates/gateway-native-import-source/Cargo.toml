@@ -12,6 +12,9 @@ gateway-auth-native-wire.workspace = true
 gateway-authority.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+url = "=2.5.8"
+
 [dev-dependencies]
 serde.workspace = true
 
