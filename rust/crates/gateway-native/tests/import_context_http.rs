@@ -238,7 +238,7 @@ fn ingress_header_guard_and_error_mapping_are_the_original_source_rules() -> Res
             &consumer,
         )
         .err()
-        .map_err(|_| fail())?;
+        .ok_or_else(fail)?;
         assert_eq!(error.status, 400);
         assert_eq!(
             error.envelope.error.message,
