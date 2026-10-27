@@ -104,10 +104,11 @@ impl NativeRelay {
                 Ok(None) => {}
                 Err(error) => break (1011, error.envelope.error.message),
             }
-            if self.upstream.is_none() && self.retired.is_none() {
-                if let Some(close) = self.receive_dial() {
-                    break close;
-                }
+            if self.upstream.is_none()
+                && self.retired.is_none()
+                && let Some(close) = self.receive_dial()
+            {
+                break close;
             }
             if let Some(close) = self.retire(authority) {
                 break close;
