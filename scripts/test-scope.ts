@@ -242,17 +242,30 @@ export const detectTestSelection = (): TestSelection => {
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
 
+const manualDispatchInputs = (environment: NodeJS.ProcessEnv): Record<string, unknown> => {
+  if (environment.GITHUB_EVENT_NAME !== "workflow_dispatch" || !environment.GITHUB_EVENT_PATH) return {};
+  try {
+    const event: unknown = JSON.parse(readFileSync(environment.GITHUB_EVENT_PATH, "utf8"));
+    if (event === null || typeof event !== "object" || Array.isArray(event)) return {};
+    const inputs = (event as Record<string, unknown>).inputs;
+    return inputs !== null && typeof inputs === "object" && !Array.isArray(inputs) ? (inputs as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+};
+
 export const ciScopeForSelection = (selection: TestSelection, root = ROOT, environment: NodeJS.ProcessEnv = process.env): CiScope => {
   // Sentinel compares head failures with same-name base checks. Exercise every
   // real job for its heads, development baselines and CI-policy changes without
   // changing the dependency-scoped test selection.
   const changesCiPolicy = selection.paths.some((path) => path === ".github/workflows/deno-deploy.yml" || path === "scripts/test-scope.ts");
+  // Reserved GITHUB_BASE_REF cannot be overridden on manual runs. These event
+  // inputs select check coverage only; they do not authenticate a PR or author.
+  const dispatch = manualDispatchInputs(environment);
   const completeCheckSet =
     environment.GITHUB_EVENT_NAME === "merge_group" ||
     (environment.GITHUB_EVENT_NAME === "push" && environment.GITHUB_REF === "refs/heads/development") ||
-    (environment.GITHUB_EVENT_NAME === "workflow_dispatch" &&
-      environment.GITHUB_BASE_REF === "development" &&
-      environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]") ||
+    (dispatch.base_ref === "development" && dispatch.sentinel_pr_author === "ubiquity-sentinel[bot]") ||
     (environment.GITHUB_EVENT_NAME === "pull_request" &&
       (environment.GITHUB_BASE_REF === "queue-canary" ||
         (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));
