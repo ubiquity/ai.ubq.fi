@@ -1,5 +1,6 @@
 //! Fixed synthetic >32MiB producer through the same real common-DO port.
 use crate::host;
+use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::source_graph::{GraphAtom, SourceGraph};
 use gateway_core::state::AuthorityStore;

@@ -92,7 +92,7 @@ mod tests {
     }
     fn field(record: &StoredRecord, name: &str, value: SourceJson) -> TestResult<StoredRecord> {
         let document = decode_source_control_record(record)?;
-        let mut fields = source::entries(&document)?;
+        let mut fields = source::entries(&document).ok_or("Source fixture object missing")?;
         let old = fields
             .iter_mut()
             .find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16()))
