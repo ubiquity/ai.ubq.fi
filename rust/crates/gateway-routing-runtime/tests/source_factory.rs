@@ -1,13 +1,8 @@
-use gateway_authority::{
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock, TokenSource},
-};
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    source_serialization as source,
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_routing_runtime::{
     local_work::{LocalAdmissionInput, LocalProviderAdmission, LocalRequestMetadata},
     session::RoutingSession,
@@ -15,6 +10,9 @@ use gateway_routing_runtime::{
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::{request::RequestSurface, source_request::SourceRequestDocument};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use std::sync::{Arc, Mutex};
 fn metadata(input: RoutingInput) -> LocalRequestMetadata {
     LocalRequestMetadata {
@@ -56,7 +54,7 @@ fn admission_with_tokens<I: TokenSource + Clone>(
     .unwrap();
     run(local.resume_original()).unwrap()
 }
-fn session_key(id: &str) -> gateway_core::state::RecordKey {
+fn session_key(id: &str) -> gateway_kv_codec::key::RecordKey {
     TupleKey::from_scalar_parts(&[
         ScalarKeyPart::String("uos_ai"),
         ScalarKeyPart::String("routing_runtime"),
@@ -88,12 +86,12 @@ fn local_factory_reuses_original_identity_digest_and_one_reservation() {
     let store = Store::new();
     let source = r#"{"model":"gpt-test","input":"\ud800","instructions":"astral😀\udfff","reasoning":{"effort":"none"}}"#;
     let admission = admission(&store, "real-factory", source);
-    let key = gateway_core::tuple_key::TupleKey::from_scalar_parts(&[
-        gateway_core::tuple_key::ScalarKeyPart::String("uos_ai"),
-        gateway_core::tuple_key::ScalarKeyPart::String("routing_runtime"),
-        gateway_core::tuple_key::ScalarKeyPart::String("v1"),
-        gateway_core::tuple_key::ScalarKeyPart::String("session"),
-        gateway_core::tuple_key::ScalarKeyPart::String("real-factory"),
+    let key = gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("uos_ai"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("routing_runtime"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("v1"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("session"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("real-factory"),
     ])
     .to_record_key();
     let before = store.value(key.clone());
@@ -163,12 +161,12 @@ fn fresh_ordinary_v3_binds_canonical_original_without_persisting_payload() {
     ))
     .unwrap();
     assert_eq!(session.original_source(), &original);
-    let key = gateway_core::tuple_key::TupleKey::from_scalar_parts(&[
-        gateway_core::tuple_key::ScalarKeyPart::String("uos_ai"),
-        gateway_core::tuple_key::ScalarKeyPart::String("routing_runtime"),
-        gateway_core::tuple_key::ScalarKeyPart::String("v1"),
-        gateway_core::tuple_key::ScalarKeyPart::String("session"),
-        gateway_core::tuple_key::ScalarKeyPart::String("ordinary-source-v3"),
+    let key = gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(&[
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("uos_ai"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("routing_runtime"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("v1"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("session"),
+        gateway_kv_codec::tuple_key::ScalarKeyPart::String("ordinary-source-v3"),
     ])
     .to_record_key();
     let row = store.value(key);
@@ -218,7 +216,7 @@ fn failed_planning_cleans_expired_original_without_provider_terminal_or_new_admi
         "factory-owner",
         r#"{"model":"unavailable-model","input":"source fixture","reasoning":{"effort":"none"}}"#,
     );
-    store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+    store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
     assert!(run(RoutingSession::from_local_admission(admission)).is_err());
     let row = store.value(session_key("factory-owner"));
     assert_eq!(row["local_work"]["terminal"]["semantic"], "incomplete");

@@ -2,11 +2,9 @@ use crate::{
     rows::{DAY, ObservedRow, api_id, safe},
     transition::{check, key, put},
 };
-use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, RecordKey, RevisionCheck},
-    value::PortableValue,
-};
+use gateway_source::error::GatewayError;
+use gateway_core::state::{AtomicTransition, RevisionCheck};
+use gateway_kv_codec::{key::RecordKey, value::PortableValue};
 use gateway_profile_values::scalar::{error, integer, number, text};
 use serde_json::{Value, json};
 

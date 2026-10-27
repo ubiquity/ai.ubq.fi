@@ -1,25 +1,22 @@
 use crate::{input::NOW, store::Store};
 use gateway_auth::crypto::Secret;
-use gateway_authority::{
-    keys,
-    routing_types::{PoolAccount, SubscriptionPool},
-};
-use gateway_core::{
-    identity::{ApiKeyId, PoolVersionstamp},
-    state::{RecordKey, StoredRecord},
-};
+use gateway_authority_keys as keys;
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::{identity::ApiKeyId, identity::PoolVersionstamp};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
 use serde_json::Value;
 use std::collections::BTreeMap;
 pub fn seed_key(store: &Store) {
     store.seed(
         keys::api_policy("key-a"),
-        gateway_authority::quota::ApiKeyPolicy {
+        gateway_authority_api_protocol::ApiKeyPolicy {
             v: 3,
             key_id: ApiKeyId("key-a".into()),
             expires_at_ms: -1,
             usage_limit_requests: 10,
-            window_ms: gateway_authority::DAY_MS,
-            usage_reset_at_ms: NOW + gateway_authority::DAY_MS,
+            window_ms: gateway_authority_contracts::DAY_MS,
+            usage_reset_at_ms: NOW + gateway_authority_contracts::DAY_MS,
             paid_fallback_enabled: true,
             paid_fallback_limit_microcredits: 10000,
             paid_fallback_quota_per_credit: 1000000,
@@ -83,7 +80,7 @@ pub fn source_key() -> RecordKey {
 pub fn window(store: &Store) -> Value {
     store.value(keys::api_window(
         "key-a",
-        &format!("v3:{}", gateway_authority::DAY_MS),
+        &format!("v3:{}", gateway_authority_contracts::DAY_MS),
         NOW,
     ))
 }

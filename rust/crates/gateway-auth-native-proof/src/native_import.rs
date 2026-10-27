@@ -130,7 +130,7 @@ impl<R: NativeNonceAuthority> NativeAuthenticator<'_, R> {
         let auth = headers.auth;
         if auth.version != "1"
             || auth.key_id != self.identity.key_id()
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now)
         {
             return Err(unauthorized());
         }

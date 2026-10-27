@@ -3,12 +3,11 @@ use crate::{
     Mapping, Row, Transform, capture::SourceEntry, engine::PreparedAdoption, error::MigrationError,
     invalid, parts, private_source_key, unavailable,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::source_graph::SourceGraph;
-use gateway_core::source_json::SourceJson;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_source_graph::graph::SourceGraph;
 use gateway_core::state::StoredRecord;
-use gateway_core::tuple_key::TupleKey;
-use gateway_core::value::{PortableValue, ValueEncoding};
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -166,7 +165,7 @@ impl NativeCapture {
                 .source_git_sha
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&self.captured_at_ms)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&self.captured_at_ms)
         {
             return Err(invalid(
                 "Native capture source, schema, queues or clock is unsupported",

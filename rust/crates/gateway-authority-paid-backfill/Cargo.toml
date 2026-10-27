@@ -1,0 +1,29 @@
+[package]
+name = "gateway-authority-paid-backfill"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-core = { path = "../gateway-core" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
+gateway-authority = { path = "../gateway-authority" }
+gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
+gateway-authority-paid-test-support = { path = "../gateway-authority-paid-test-support" }
+
+[lints]
+workspace = true

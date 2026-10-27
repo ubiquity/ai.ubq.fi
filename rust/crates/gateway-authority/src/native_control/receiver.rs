@@ -1,11 +1,11 @@
 use super::{
     NativeRenewalAction, NativeRenewalCancellation, NativeRenewalClaim, NativeRenewalControl,
-    NativeRenewalFence, NativeRenewalMode, NativeRenewalPublished, OWNER_RENEWAL_MAX_MS, facts,
+    NativeRenewalPublished, OWNER_RENEWAL_MAX_MS, facts,
     rows::{self, ActionRow, GenerationEffect, OperationRow, Phase, conflict, fail},
 };
 use crate::{
     add,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text,
 };
 use gateway_auth::{
@@ -17,7 +17,10 @@ use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest},
     native_read::NATIVE_CONTROL_PATH,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_authority_contracts::TokenSource;
+use gateway_core::state::AuthorityStore;
+use gateway_native_authority_wire::renewal::{NativeRenewalFence, NativeRenewalMode};
+use gateway_source::error::GatewayError;
 
 /// Registry construction is a host operation; no request may select a native home.
 pub struct RegisteredRenewalOwner {
@@ -126,7 +129,8 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             .ok_or_else(fail)?;
         if action.action_ref != reference
             || action.v != 2
-            || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
+            || action.fence.v
+                != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION
         {
             return Err(fail());
         }

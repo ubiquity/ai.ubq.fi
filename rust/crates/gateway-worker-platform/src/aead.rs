@@ -1,5 +1,5 @@
 //! Actual Worker WebCrypto AES-GCM for the source embeddings job envelope.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use worker::{
     js_sys::{Array, ArrayBuffer, Function, Object, Promise, Reflect, Uint8Array},
     wasm_bindgen::{JsCast, JsValue},

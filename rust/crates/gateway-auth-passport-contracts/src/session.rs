@@ -51,7 +51,7 @@ impl PassportSourceClaims {
         let bound = |value: &JsString16, max, empty| {
             (empty || !value.as_units().is_empty()) && value.as_units().len() <= max
         };
-        let safe = gateway_core::identity::MAX_SAFE_INTEGER;
+        let safe = gateway_contracts::identity::MAX_SAFE_INTEGER;
         self.iss == "https://passport.ubq.fi"
             && self.aud == config.audience
             && self.client_id == config.client_id

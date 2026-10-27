@@ -1,18 +1,16 @@
 //! Private offline operator data, never an HTTP/admin capability. The host must
 //! hold a NEW empty target unpublished and quiescent until seal and reconciliation.
 use crate::{decode, engine::PreparedAdoption, invalid, json, key};
-use gateway_authority::{
-    initial_control_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts},
-    paid_control::PaidControlOwner,
-};
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
+use gateway_authority_initial_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts};
+use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_core::state::StoredRecord;
-use gateway_core::tuple_key::TupleKey;
 use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck},
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_source::error::GatewayError;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::{BTreeSet, VecDeque};
@@ -20,8 +18,8 @@ use std::collections::{BTreeSet, VecDeque};
 pub const STAGED_BATCH_MAX_BYTES: usize = crate::operational::PRIVATE_WIRE_MAX_BYTES;
 const PREFERRED_BATCH_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) mod record_key_wire {
-    use gateway_core::state::RecordKey;
-    use gateway_core::tuple_key::TupleKey;
+    use gateway_kv_codec::key::RecordKey;
+    use gateway_kv_codec::tuple_key::TupleKey;
     use serde::Deserialize;
     pub fn serialize<S: serde::Serializer>(
         key: &RecordKey,
@@ -726,10 +724,12 @@ fn validate_owner_binding(binding: &StageOwnerBinding) -> Result<(), GatewayErro
                 || !hex(&account.access_generation, 64)
                 || !accounts.insert(account.account_id_hash.clone())
         })
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.source_captured_at_ms)
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.custody_observed_at_ms)
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.valid_through_ms)
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.bound_at_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER)
+            .contains(&binding.source_captured_at_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER)
+            .contains(&binding.custody_observed_at_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&binding.valid_through_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&binding.bound_at_ms)
         || binding.source_captured_at_ms > binding.custody_observed_at_ms
         || binding.valid_through_ms < binding.custody_observed_at_ms
         || binding.bound_at_ms < binding.custody_observed_at_ms
@@ -790,7 +790,7 @@ async fn sealed_owner_facts<S: QueryStore>(
         .await?
         .ok_or_else(owner_refused)?;
     let normalized = store
-        .read(&gateway_authority::keys::pool())
+        .read(&gateway_authority_keys::pool())
         .await?
         .ok_or_else(owner_refused)?;
     if source.revision != binding.source_pool_revision
@@ -800,7 +800,7 @@ async fn sealed_owner_facts<S: QueryStore>(
     }
     let pool = gateway_auth::provider_credentials::parse_codex_source_pool(source.json_value()?)?
         .ok_or_else(owner_refused)?;
-    let routing: gateway_authority::routing_types::SubscriptionPool =
+    let routing: gateway_authority_routing_records::types::SubscriptionPool =
         decode(normalized.json_value()?)?;
     if routing.v != 1
         || routing.pool_versionstamp.0 != source.revision
@@ -887,7 +887,7 @@ async fn bind_owner<S: QueryStore>(
     validate_owner_binding(binding)?;
     let (manifest, manifest_record, source, normalized) =
         sealed_owner_facts(store, binding).await?;
-    let owner_key = gateway_authority::keys::paid_control_owner();
+    let owner_key = gateway_authority_keys::paid_control_owner();
     let expected =
         serde_json::to_value(owner_from_binding(binding)).map_err(|_| owner_refused())?;
     let exact = |record: &StoredRecord| {
@@ -913,7 +913,7 @@ async fn bind_owner<S: QueryStore>(
                 gateway_auth::provider_credentials::codex_source_pool_key(),
                 Some(source.revision),
             ),
-            check(gateway_authority::keys::pool(), Some(normalized.revision)),
+            check(gateway_authority_keys::pool(), Some(normalized.revision)),
             check(owner_key.clone(), None),
         ],
         mutations: vec![RecordMutation::Put {

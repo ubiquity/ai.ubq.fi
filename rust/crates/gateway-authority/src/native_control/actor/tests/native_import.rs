@@ -1,12 +1,8 @@
 use super::*;
 use crate::native_control::custody::validate_native_control_custody;
-use crate::{
-    native_control::{
-        NativeRenewalCancellation, actor, receiver::NativeRenewalAuthority,
-        receiver::RegisteredRenewalOwner,
-    },
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    routing_types::{PoolAccount, SubscriptionPool},
+use crate::native_control::{
+    NativeRenewalCancellation, actor, receiver::NativeRenewalAuthority,
+    receiver::RegisteredRenewalOwner,
 };
 use gateway_auth::{
     crypto::{base64url, sha256_hex},
@@ -19,7 +15,11 @@ use gateway_auth::{
         CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
     },
 };
-use gateway_core::identity::PoolVersionstamp;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
+};
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::identity::PoolVersionstamp;
 use std::collections::BTreeSet;
 struct Cancel;
 impl NativeRenewalCancellation for Cancel {
@@ -78,7 +78,7 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             surplus_binding: None,
             openlux_discovery_binding: None,
             openlux_binding: None,
-            source_checks: vec![crate::paid_control::PaidSourceCheck {
+            source_checks: vec![gateway_authority_paid_control_records::PaidSourceCheck {
                 key: runtime.0,
                 expected_revision: None,
             }],

@@ -10,9 +10,8 @@ use gateway_claude_runtime::{
     host::{OutcomeDecision, PoolConfig, PoolSelection, SelectedAccount, SelectionInput},
     pool::ClaudePoolSession,
 };
-use gateway_core::{
-    claude::ClaudeErrorEvidence, error::GatewayError, model::ModelId, source_json::SourceJson,
-};
+use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_providers::replay::{ReplayContext, ReplayStore, ReplayTransport};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
@@ -39,7 +38,7 @@ struct RequestState {
     key_id: String,
     model: ModelId,
     raw: SourceJson,
-    effective_effort: Option<gateway_core::js_string::JsString16>,
+    effective_effort: Option<gateway_source::js_string::JsString16>,
     session: ClaudePoolSession,
     selected: RefCell<Option<SelectedAccount>>,
 }
@@ -105,7 +104,7 @@ impl Binding {
         principal: &AuthPrincipal,
         model: &ModelId,
         raw: &SourceJson,
-        effective_effort: Option<&gateway_core::js_string::JsString16>,
+        effective_effort: Option<&gateway_source::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);

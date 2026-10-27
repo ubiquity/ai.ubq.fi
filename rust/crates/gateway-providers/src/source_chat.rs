@@ -5,9 +5,10 @@ use crate::{
     source_tools::{self, ToolMap},
     types::{ChatProfile, Elision},
 };
-use gateway_core::{
-    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as json,
 };
+use gateway_contracts::model::ModelId;
 
 pub(crate) struct Projection {
     pub body: SourceJson,

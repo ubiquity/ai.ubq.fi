@@ -1,13 +1,14 @@
 //! Same-authority reservation and paid-event indexes for public profile writes.
 use crate::{Transform, invalid, key, parts, starts};
-use gateway_core::error::GatewayError;
+use gateway_authority_paid_records::{PendingPaid, ReconciliationGate};
 use gateway_core::{
-    query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
-    state::{
-        AtomicTransition, CommitOutcome, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
-    },
+    query::QueryEntry, query::QueryRequest, query::QuerySelector, query::QueryStore,
+    state::AtomicTransition, state::CommitOutcome, state::RecordMutation, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_migration_ledger::{kernel, rows::ObservedRow};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -268,8 +269,8 @@ async fn bind_paid_rows<S: QueryStore>(
     transition: &mut AtomicTransition,
 ) -> Result<(), GatewayError> {
     let p = input.parts;
-    use gateway_authority::paid_types::{PendingPaid, ReconciliationGate};
-    let gate_key = gateway_authority::keys::paid_gate();
+
+    let gate_key = gateway_authority_keys::paid_gate();
     let observed = store.read(&gate_key).await?;
     let current = if gate_key == *input.key {
         Some(input.record.clone())

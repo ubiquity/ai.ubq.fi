@@ -8,15 +8,15 @@ use super::{
 use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
 use gateway_auth::provider_credentials::{codex_access_expiry_ms, read_codex_source_pool};
-use gateway_authority::{
-    routing::{LiveAccountSelection, LiveRouteSelection},
-    store::Authority,
-};
-use gateway_core::{error::GatewayError, js_string::JsString16};
+use gateway_authority::store::Authority;
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::{types::LiveAccountSelection, types::LiveRouteSelection};
+use gateway_authority_routing_signal::SignalOperations;
 use gateway_live_runtime::{
     runtime::PreparedSideband,
     types::{LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse},
 };
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
@@ -331,17 +331,17 @@ fn model_unavailable(
 mod source_detail_tests {
     #[test]
     fn unavailable_model_and_detail_keep_source_units() -> Result<(), Box<dyn std::error::Error>> {
-        let model = gateway_core::js_string::JsString16::from_units(vec![109, 0xd800]);
-        let detail = gateway_core::js_string::JsString16::from_units(vec![100, 0xdc00]);
+        let model = gateway_source::js_string::JsString16::from_units(vec![109, 0xd800]);
+        let detail = gateway_source::js_string::JsString16::from_units(vec![100, 0xdc00]);
         let response = super::model_unavailable(Some(&model), Some(&detail))?;
         let crate::live_host::body::Body::Bytes(bytes) = response.body else {
             panic!("model refusal is bytes");
         };
-        let value = gateway_core::source_json::SourceJson::parse(std::str::from_utf8(&bytes)?)?;
-        let message = gateway_core::source_serialization::member(&value, "error")
-            .and_then(|value| gateway_core::source_serialization::member(&value, "message"))
+        let value = gateway_source::source_json::SourceJson::parse(std::str::from_utf8(&bytes)?)?;
+        let message = gateway_source::source_serialization::member(&value, "error")
+            .and_then(|value| gateway_source::source_serialization::member(&value, "message"))
             .as_ref()
-            .and_then(gateway_core::source_serialization::string)
+            .and_then(gateway_source::source_serialization::string)
             .ok_or("source refusal message is missing")?;
         assert!(message.as_units().contains(&0xd800));
         assert!(message.as_units().contains(&0xdc00));

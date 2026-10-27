@@ -23,7 +23,7 @@ fn frame_fields(key_id: &str, time_ms: i64, nonce: &str) -> Result<(), GatewayEr
         || !key_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&time_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&time_ms)
     {
         return Err(invalid());
     }

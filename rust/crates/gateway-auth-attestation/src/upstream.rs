@@ -31,7 +31,7 @@ pub fn github_token_shape(token: &str) -> bool {
     token.starts_with("gh") || token.starts_with("github_pat_")
 }
 
-pub fn kernel_public_keys_key() -> gateway_core::state::RecordKey {
+pub fn kernel_public_keys_key() -> gateway_kv_codec::key::RecordKey {
     gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "kernel_pubkeys"]))
 }
 

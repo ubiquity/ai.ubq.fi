@@ -1,7 +1,7 @@
-use gateway_core::{
-    js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
-    source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_providers::{
     source_request::prepare_source_request,
     types::{

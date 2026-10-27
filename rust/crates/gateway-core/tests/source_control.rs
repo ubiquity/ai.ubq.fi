@@ -1,7 +1,12 @@
-use gateway_core::{identity::MAX_SAFE_INTEGER, model::ModelId, source_control::{
-        decode_source_control_record, encode_source_control_record, source_json_tree,
-    }, state::StoredRecord, value::{PortableValue, ValueEncoding}};
-use gateway_source::{js_string::JsString16, source_json::SourceJson, source_serialization as source};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
+use gateway_core::{
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    source_control::source_json_tree, state::StoredRecord,
+};
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::json;
 use std::collections::BTreeSet;
 

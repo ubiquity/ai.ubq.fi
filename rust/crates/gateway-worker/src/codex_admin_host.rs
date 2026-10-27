@@ -5,7 +5,7 @@ use gateway_auth::{
     types::{AuthConfig, AuthRequest, AuthResponse},
 };
 use gateway_authority::native_control::actor::NativeRenewalActor;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 pub(crate) mod automatic;
 mod manual;

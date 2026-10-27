@@ -1,14 +1,12 @@
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::{
-        decode_source_control_record, encode_source_control_record, source_json_tree,
-    },
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
 };
+use gateway_core::{
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    source_control::source_json_tree, state::StoredRecord,
+};
+use gateway_kv_codec::value::{PortableValue, ValueEncoding};
 use gateway_ledger_audit as audit;
 use gateway_migration_ledger::rows::ObservedRow;
 use serde_json::{Value, json};

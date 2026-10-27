@@ -9,13 +9,11 @@ use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use gateway_auth::types::{AuthConfig, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_authority::{
-    native_control::actor::{NativeRenewalActor, authenticate_client_actor},
+    native_control::actor::NativeRenewalActor, native_control::actor::authenticate_client_actor,
     store::Authority,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
-};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_live_runtime::protocol::{LiveRoute, live_route, principal_id};
 use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;

@@ -1,12 +1,11 @@
 //! Owned local semantic choice, separate from durable acknowledgement and transport.
 use super::*;
 use crate::types::RoutingError;
-use gateway_authority::local_completion::LocalCompletedIntentOutcome;
-use gateway_core::{
-    lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
-    local_completion::LocalCompletedJournalPlan,
-    state::{AtomicTransition, CommitOutcome, RevisionCheck},
-};
+use gateway_authority_local_completion::{LocalCompletedIntentOutcome, LocalCompletionOperations};
+use gateway_contracts::lifecycle::ReaderTermination;
+use gateway_contracts::{lifecycle::BodyOutcome, lifecycle::DeliveryOutcome};
+use gateway_core::{state::AtomicTransition, state::CommitOutcome, state::RevisionCheck};
+use gateway_local_journal::local_completion::LocalCompletedJournalPlan;
 
 pub struct PendingLocalCompletion<S, I, C, H> {
     original: Option<LocalWorkHandle<S, I, C, H>>,

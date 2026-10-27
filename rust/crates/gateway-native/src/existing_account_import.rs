@@ -1,18 +1,16 @@
 //! Native-private import custody. Independent native writer exclusion is not yet available.
 //! The production mutation boundary fails closed; a recovered durability receipt is not publication.
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_native_contracts::native_import::NativeImportMetadata;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation,
-        import::{
-            AuthenticatedNativeImport,
-            effects::{NativeImportBinding, NativeImportClaim},
-        },
-        receiver::NativeRenewalAuthority,
-    },
-    store::TokenSource,
+    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
+    native_control::import::effects::NativeImportBinding,
+    native_control::import::effects::NativeImportClaim,
+    native_control::receiver::NativeRenewalAuthority,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_authority_contracts::TokenSource;
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use std::{fs::File, path::Path};
 mod acl_inspector;
 mod actor_channel;
@@ -21,7 +19,6 @@ pub mod custodian_runtime;
 mod custodian_service;
 pub mod durability;
 pub mod exclusive_owner;
-mod import_documents;
 mod import_endpoints;
 pub mod import_process;
 mod import_publication;
@@ -29,6 +26,70 @@ pub mod live_custody;
 pub mod owner_runtime;
 mod prepare_flow;
 mod validation;
+/// Dynamic-extent input for the real existing-account operation; never a wire/permission constructor.
+struct NativeImportInputs<'a> {
+    proof: &'a AuthenticatedNativeImport,
+    body: &'a [u8],
+    context: &'a crate::native_import::NativeImportContext<'a>,
+    original: &'a crate::owner_control::NativeControlContext<'a>,
+}
+impl<'a> NativeImportInputs<'a> {
+    fn checked(
+        proof: &'a AuthenticatedNativeImport,
+        metadata: &'a NativeImportMetadata,
+        body: &'a [u8],
+        context: &'a crate::native_import::NativeImportContext<'a>,
+        original: &'a crate::owner_control::NativeControlContext<'a>,
+    ) -> Result<Self, GatewayError> {
+        context.require_original(original)?;
+        context.check_document(proof, metadata, body)?;
+        Ok(Self {
+            proof,
+            body,
+            context,
+            original,
+        })
+    }
+    fn original_proof(&self) -> &'a AuthenticatedNativeImport {
+        self.proof
+    }
+    fn original_body(&self) -> &'a [u8] {
+        self.body
+    }
+    fn auth_data(&self) -> &crate::native_import::NativeAuthImportData<'_> {
+        self.context.auth_data()
+    }
+    fn check(&self) -> Result<(), GatewayError> {
+        self.context.require_original(self.original)?;
+        self.context.check()
+    }
+    fn check_document(
+        &self,
+        proof: &AuthenticatedNativeImport,
+        metadata: &NativeImportMetadata,
+        body: &[u8],
+    ) -> Result<(), GatewayError> {
+        self.context.require_original(self.original)?;
+        self.context.check_document(proof, metadata, body)
+    }
+    fn now_ms(&self) -> Result<i64, GatewayError> {
+        self.original.now_ms()
+    }
+    fn deadline(&self) -> std::time::Instant {
+        let now = std::time::Instant::now();
+        let remaining = self
+            .original
+            .now_ms()
+            .ok()
+            .and_then(|ms| self.proof.deadline_ms().checked_sub(ms))
+            .and_then(|ms| u64::try_from(ms).ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or_default();
+        self.original
+            .deadline()
+            .min(now.checked_add(remaining).unwrap_or(now))
+    }
+}
 /// Fixed helper-only entry; it accepts no path, command, environment or arbitrary descriptor selector.
 pub fn owner_inspector_entry() -> Result<(), GatewayError> {
     acl_inspector::entry()
@@ -49,7 +110,9 @@ impl ExistingAccountImportStore {
         let native_owner_id = registered.native_owner_id().to_owned();
         let home = Path::new(registered.registered_home());
         if native_owner_id.is_empty()
-            || !gateway_auth::provider_credentials::valid_native_generation(&account_id_hash)
+            || !gateway_auth_credentials::provider_credentials::valid_native_generation(
+                &account_id_hash,
+            )
         {
             return Err(unavailable());
         }
@@ -128,9 +191,12 @@ impl ExistingAccountImportStore {
         proof: &AuthenticatedNativeImport,
         original_body: &[u8],
         context: &crate::native_import::NativeImportContext<'_>,
+        original: &crate::owner_control::NativeControlContext<'_>,
         now_ms: i64,
     ) -> Result<durability::DurableNativeImport, GatewayError> {
-        durability::issue_fixture(self, start, proof, original_body, context, now_ms)
+        let inputs =
+            NativeImportInputs::checked(proof, proof.metadata(), original_body, context, original)?;
+        durability::issue_fixture(self, start, proof, original_body, &inputs, now_ms)
     }
     /// A recovered proof still requires an exact current native reread before publication.
     pub async fn recheck_receipt<
@@ -168,3 +234,6 @@ mod foundation_tests;
 
 #[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
 mod flow_tests;
+
+#[cfg(all(test, unix))]
+mod receipt_tests;

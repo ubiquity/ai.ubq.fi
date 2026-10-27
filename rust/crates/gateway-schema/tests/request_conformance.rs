@@ -1,4 +1,4 @@
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use gateway_schema::{
     allowlists::*, content::*, prompt_cache::*, reasoning::*, request::*, util::*,
 };

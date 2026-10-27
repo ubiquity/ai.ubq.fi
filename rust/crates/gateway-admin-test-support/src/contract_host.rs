@@ -1,7 +1,7 @@
 //! Original admin-contract clock, entropy and denied host capabilities.
 use gateway_auth::types::AuthHost;
 use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::cell::Cell;
 
 #[derive(Default)]
@@ -39,7 +39,7 @@ impl AuthHost for Host {
         ))
     }
 }
-impl gateway_authority::store::TokenSource for &Host {
+impl gateway_authority_contracts::TokenSource for &Host {
     fn next_token(&self) -> Result<String, GatewayError> {
         gateway_auth::crypto::uuid_from_random(&self.random_bytes(16)?)
     }

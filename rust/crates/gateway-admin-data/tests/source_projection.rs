@@ -1,6 +1,6 @@
 mod source_fixture;
 
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

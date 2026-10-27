@@ -6,6 +6,12 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-api-protocol.workspace = true
+gateway-authority-keys.workspace = true
+gateway-authority-paid-control-records.workspace = true
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-source-audit.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-core.workspace = true

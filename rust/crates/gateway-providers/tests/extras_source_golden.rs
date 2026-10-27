@@ -1,6 +1,6 @@
 //! Golden cases from src/embeddings/voyage.ts, src/images.ts and
 //! src/systemone/handlers.ts at 1b7b9737; no live provider calls.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_providers::{extras, types::PrepareOptions};
 use serde_json::{Value, json};
 
@@ -117,7 +117,7 @@ fn embeddings_scalar_errors_and_precedence_match_source() {
     .unwrap();
     assert_eq!(
         accepted.inputs,
-        [gateway_core::js_string::JsString16::from_utf8("")]
+        [gateway_source::js_string::JsString16::from_utf8("")]
     );
     assert_eq!(accepted.dimensions, 256);
     assert_eq!(accepted.input_type, "document");
@@ -466,12 +466,12 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
     Ok(())
 }
 
-fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")
 }
 
-fn scalar_source(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar_source(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value.deserialize().expect("actual scalar fixture output")
 }

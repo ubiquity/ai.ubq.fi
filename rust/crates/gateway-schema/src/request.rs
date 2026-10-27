@@ -1,6 +1,6 @@
 //! Source request syntax. Provider-specific interpretation remains outside official allowlists.
 use crate::util::*;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestSurface {
@@ -18,7 +18,7 @@ pub fn validate_request_fields(
     extensions: &RequestExtensions,
 ) -> Result<(), GatewayError> {
     crate::source_request::fields::validate_request_fields(
-        &gateway_core::source_json::SourceJson::from_serializable(body)?,
+        &gateway_source::source_json::SourceJson::from_serializable(body)?,
         surface,
         extensions,
     )
@@ -62,7 +62,7 @@ pub fn parse_instructions(value: Option<&Value>) -> Result<Option<String>, Gatew
 
 pub fn validate_cache_control(control: &Value) -> Result<(), GatewayError> {
     crate::source_request::fields::validate_cache_control(
-        &gateway_core::source_json::SourceJson::from_serializable(control)?,
+        &gateway_source::source_json::SourceJson::from_serializable(control)?,
     )
     .map_err(crate::source_request::error::SourceRequestError::into_scalar)
 }

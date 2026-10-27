@@ -1,8 +1,8 @@
 //! Private native-source graph wire. Strings remain validated JSON tokens throughout.
 use crate::{GatewayError, SourceJson, invalid};
-use gateway_core::js_string::JsString16;
-use gateway_core::source_graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind};
-use gateway_core::value::PortableValue;
+use gateway_source::js_string::JsString16;
+use gateway_source_graph::graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind};
+use gateway_kv_codec::value::PortableValue;
 use gateway_profile_source::codec::{from_source_profile, to_source_profile};
 use gateway_profile_values::coercion::{decode_base64, encode_base64, js_string, normalize_bigint};
 use std::collections::BTreeMap;

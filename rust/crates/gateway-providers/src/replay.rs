@@ -1,6 +1,6 @@
 //! Process/isolate-local authenticated native replay receipts. No signatures enter public wire/disk.
 use crate::{source as s, source_tools::ToolMap, types::PrepareOptions};
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use std::collections::{BTreeSet, VecDeque};

@@ -1,10 +1,7 @@
 mod support;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use gateway_core::{
-    state::{RecordKey, StoredRecord},
-    tuple_key::TupleKey,
-    value::PortableValue,
-};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
+use gateway_core::state::StoredRecord;
 use gateway_observability::{
     ObservabilityRuntime, incidents::IncidentObservation, replay_model as model,
 };
@@ -198,7 +195,7 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
     let expected=gateway_auth::crypto::sha256_hex(br#"{"endpoint":"/v1/responses","method":"POST","status":502,"stream":true,"completed":false,"framing_valid":false,"terminal":"stream_framing"}"#);
     assert_eq!(input.fingerprint().unwrap(), expected);
     let first = run(runtime.record_incident_index(&input)).unwrap();
-    let document = gateway_core::source_json::SourceJson::parse(&format!(
+    let document = gateway_source::source_json::SourceJson::parse(&format!(
         "{},\"future\":{{\"text\":\"\\ud800\"}}}}",
         first
             .record
@@ -240,7 +237,7 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
     run(runtime.record_incident_index(&p)).unwrap();
     let response = run(runtime.list_incidents(Some(&first.incident_id), None, 1)).unwrap();
     let source =
-        gateway_core::source_json::SourceJson::parse_bytes(&response.body.to_bytes().unwrap())
+        gateway_source::source_json::SourceJson::parse_bytes(&response.body.to_bytes().unwrap())
             .unwrap();
     let cursor = source
         .object_entries()

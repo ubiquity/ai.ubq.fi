@@ -1,12 +1,20 @@
 use crate::TestResult;
+use gateway_authority_capacity_policy::{
+    apply_capacity_observation, capacity_headroom_for_observation, plan_capacity_observation_store,
+};
+use gateway_authority_routing_evidence::{
+    capacity::CapacityObservation, capacity::CapacityStore, capacity::normalize_capacity_window,
+};
+use gateway_authority_routing_records::{
+    codec::normalize, codec::parse_routing_state, types::PoolAccount, types::SubscriptionPool,
+};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_contracts::{identity::PoolVersionstamp, identity::SubscriptionSelectionHash};
+use serde_json::{Value, from_value, json};
 mod live_selection;
 use super::support::*;
-use gateway_authority::capacity_rules::*;
-use gateway_authority::routing_codec::*;
-use gateway_authority::routing_rules::*;
-use gateway_authority::routing_types::*;
-use gateway_core::identity::{PoolVersionstamp, SubscriptionSelectionHash};
-use serde_json::{Value, from_value, json};
+
+use gateway_authority_routing_selection::types::*;
 fn packet() -> Value {
     serde_json::from_str(include_str!("../fixtures/codex-capacity-source-v1.json")).unwrap()
 }
@@ -100,7 +108,7 @@ fn named_limit_applicability_and_ordered_capacity_reconciliation_match_source() 
                 &row,
                 case["model"]
                     .as_str()
-                    .map(gateway_core::model::ModelId::from_scalar)
+                    .map(gateway_contracts::model::ModelId::from_scalar)
                     .as_ref(),
             ))
             .unwrap(),
@@ -117,7 +125,7 @@ fn named_limit_applicability_and_ordered_capacity_reconciliation_match_source() 
             case["now"].as_i64().unwrap(),
             case["model"]
                 .as_str()
-                .map(gateway_core::model::ModelId::from_scalar)
+                .map(gateway_contracts::model::ModelId::from_scalar)
                 .as_ref(),
             case["updated_at_ms"].as_i64().unwrap(),
         )
@@ -159,16 +167,16 @@ fn hot_selection_uses_check_only_identity_and_never_balances_to_sibling() {
     let authority = authority(&store);
     let first = admitted(&authority);
     let r = store
-        .row(&gateway_authority::keys::routing())
+        .row(&gateway_authority_keys::routing())
         .unwrap()
         .revision;
     let a = store
-        .row(&gateway_authority::keys::active())
+        .row(&gateway_authority_keys::active())
         .unwrap()
         .revision;
     let RouteSelection::Eligible(second) = run(authority.select_account(
         &"gpt-test".into(),
-        gateway_core::provider::CodexQuotaClass::Standard,
+        gateway_contracts::provider::CodexQuotaClass::Standard,
         NOW + 1,
     ))
     .unwrap() else {
@@ -177,14 +185,14 @@ fn hot_selection_uses_check_only_identity_and_never_balances_to_sibling() {
     assert_eq!(first.binding, second.binding);
     assert_eq!(
         store
-            .row(&gateway_authority::keys::routing())
+            .row(&gateway_authority_keys::routing())
             .unwrap()
             .revision,
         r
     );
     assert_eq!(
         store
-            .row(&gateway_authority::keys::active())
+            .row(&gateway_authority_keys::active())
             .unwrap()
             .revision,
         a

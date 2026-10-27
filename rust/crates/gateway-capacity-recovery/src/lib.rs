@@ -1,17 +1,25 @@
 //! Request-owned observation only. The existing journal owns the single recovery
 //! attempt; this module cannot reset, refresh credentials or select paid hops.
-use gateway_auth::provider_credentials::{CodexSourceSnapshot, read_codex_source_pool};
-use gateway_authority::{
-    capacity::{CodexCapacityAccountRef, CodexCapacitySample},
-    routing_types::{CapacityState, CohortProof, RouteSelection},
-    store::{Authority, TokenSource},
+use gateway_auth::{
+    provider_credentials::CodexSourceSnapshot, provider_credentials::read_codex_source_pool,
 };
-use gateway_core::{error::GatewayError, model::ModelId, state::AuthorityStore};
+use gateway_authority::store::Authority;
+use gateway_authority_capacity::{
+    CapacityOperations, CodexCapacityAccountRef, CodexCapacitySample,
+};
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_routing_evidence::capacity::CapacityState;
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::CohortProof, types::RouteSelection,
+};
+use gateway_capacity_projection::shapes;
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
 use gateway_observability::{
-    capacity_shapes,
     host_types::{CapacityAccountRef, CapacityProbe},
     types::ObservabilityHost,
 };
+use gateway_source::error::GatewayError;
 use std::future::Future;
 
 fn changed() -> GatewayError {
@@ -106,7 +114,7 @@ where
         else {
             return Ok(None);
         };
-        let Some(windows) = capacity_shapes::parse_codex_usage(&json) else {
+        let Some(windows) = shapes::parse_codex_usage(&json) else {
             return Ok(None);
         };
         samples.push(CodexCapacitySample {
@@ -119,7 +127,7 @@ where
             snapshot_at_ms: at,
             windows: serde_json::from_value(windows.clone()).map_err(|_| changed())?,
             additional_rate_limits: serde_json::from_value(serde_json::json!(
-                capacity_shapes::additional_for_routing(&windows["additional_rate_limits"], at)
+                shapes::additional_for_routing(&windows["additional_rate_limits"], at)
             ))
             .map_err(|_| changed())?,
         });

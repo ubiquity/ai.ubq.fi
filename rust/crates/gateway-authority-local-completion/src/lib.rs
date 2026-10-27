@@ -1,0 +1,257 @@
+//! One joint original local-success transition across API/kernel/journal/pending evidence.
+mod backend;
+use backend::Transaction;
+use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_contracts::{QUOTA_RETENTION_MS, TokenSource, invalid, retention};
+use gateway_authority_kernel_protocol::{
+    KernelReservation, KernelTerminal, KernelTerminalDraft, KernelWindow, decode_kernel_window,
+    kernel_identity,
+};
+use gateway_authority_keys as keys;
+use gateway_core::state::AuthorityStore;
+use gateway_local_journal::{
+    local_completion::LocalCompletedJournalPlan, local_completion::LocalCompletedJournalState,
+};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
+
+#[derive(Debug)]
+pub enum LocalCompletedIntentOutcome {
+    Applied,
+    AlreadyApplied,
+    Conflict,
+    /// A commit error does not prove rollback, including a lost durable-sync ack.
+    Unconfirmed(GatewayError),
+}
+
+pub struct LocalCompletionService<'a, S, I> {
+    store: &'a S,
+    tokens: &'a I,
+}
+impl<S, I> Copy for LocalCompletionService<'_, S, I> {}
+impl<S, I> Clone for LocalCompletionService<'_, S, I> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<'a, S: AuthorityStore, I: TokenSource> LocalCompletionService<'a, S, I> {
+    pub fn new(store: &'a S, tokens: &'a I) -> Self {
+        Self { store, tokens }
+    }
+    fn transaction(&self, now: i64) -> Result<backend::Transaction<'_, S, I>, GatewayError> {
+        backend::Transaction::new(self.store, self.tokens, now)
+    }
+}
+async fn api_matches<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    plan: &LocalCompletedJournalPlan,
+    expected: Option<&ApiReservation>,
+) -> Result<bool, GatewayError> {
+    let snapshot: Option<ApiReservation> = source::member(plan.original_document(), "api")
+        .ok_or_else(|| invalid("Local journal API binding is missing."))?
+        .deserialize()?;
+    if snapshot.as_ref() != expected {
+        return Ok(false);
+    }
+    let Some(expected) = expected else {
+        return Ok(true);
+    };
+    if expected.request_id != plan.context().request_id
+        || expected.route != plan.context().route
+        || plan.context().key_id.as_ref() != Some(&expected.key_id)
+    {
+        return Ok(false);
+    }
+    let key = keys::api_request(
+        &expected.key_id.0,
+        &expected.policy_version,
+        expected.window_start_ms,
+        &expected.request_id.0,
+    );
+    let actual: Option<ApiUsageRequest> = tx.read(&key).await?;
+    let Some(actual) = actual else {
+        // Source unused release treats a missing original row as a no-op.
+        // Transaction::read retains the actual absence check through the joint CAS.
+        return Ok(true);
+    };
+    actual.validate()?;
+    Ok(actual.key_id == expected.key_id
+        && actual.request_id == expected.request_id
+        && actual.route == expected.route
+        && match actual.state {
+            // The earlier dispatch-aware release never compensates dispatched use.
+            // Its validated request revision is fenced; no API window is mutated.
+            ApiUsageState::Dispatched => true,
+            ApiUsageState::Reserved | ApiUsageState::Released => !actual.transport_started,
+        })
+}
+
+fn kernel_snapshot_matches(
+    plan: &LocalCompletedJournalPlan,
+    expected: Option<&KernelReservation>,
+) -> Result<bool, GatewayError> {
+    let snapshot: Option<KernelReservation> = source::member(plan.original_document(), "kernel")
+        .ok_or_else(|| invalid("Local journal kernel binding is missing."))?
+        .deserialize()?;
+    Ok(match (snapshot.as_ref(), expected) {
+        (Some(actual), Some(expected)) => {
+            expected.request_id == plan.context().request_id
+                && expected.route == plan.context().route
+                && kernel_identity(actual, expected)
+        }
+        (None, None) => true,
+        _ => false,
+    })
+}
+
+async fn read_kernel_window<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    key: &gateway_kv_codec::key::RecordKey,
+    owner: &str,
+    repo: Option<&str>,
+) -> Result<Option<KernelWindow>, GatewayError> {
+    let raw = tx.read_source_control::<SourceJson>(key).await?;
+    decode_kernel_window(raw.as_ref(), owner, repo)
+}
+
+async fn stage_kernel_terminal_intent<S: AuthorityStore, I: TokenSource>(
+    tx: &mut Transaction<'_, S, I>,
+    expected: &KernelReservation,
+    terminal: KernelTerminal,
+    now: i64,
+) -> Result<bool, GatewayError> {
+    let key = keys::kernel_request(
+        &expected.owner,
+        expected.repo.as_deref(),
+        expected.window_created_at_ms,
+        &expected.request_id.0,
+    );
+    let row: KernelReservation = tx
+        .read(&key)
+        .await?
+        .ok_or_else(|| invalid("Kernel reservation is missing."))?;
+    let draft = KernelTerminalDraft::prepare(expected, row, terminal, now)?;
+    let window = if draft.needs_window() {
+        let row = draft.row();
+        let window_key = keys::kernel_window(&row.owner, row.repo.as_deref());
+        read_kernel_window(tx, &window_key, &row.owner, row.repo.as_deref()).await?
+    } else {
+        None
+    };
+    let (row, window, was_chosen) = draft.finish(window)?.into_parts();
+    if let Some(window) = window {
+        let window_key = keys::kernel_window(&window.owner, window.repo.as_deref());
+        tx.put(
+            &window_key,
+            &window,
+            Some(retention(window.usage_reset_at_ms, QUOTA_RETENTION_MS)?),
+        )?;
+    }
+    if let Some(row) = row {
+        tx.put(
+            &key,
+            &row,
+            Some(retention(row.window_reset_at_ms, QUOTA_RETENTION_MS)?),
+        )?;
+    }
+    Ok(was_chosen)
+}
+
+pub trait LocalCompletionFactory {
+    type Store: AuthorityStore;
+    type Tokens: TokenSource;
+    fn local_completion(&self) -> LocalCompletionService<'_, Self::Store, Self::Tokens>;
+}
+
+pub trait LocalCompletionOperations: LocalCompletionFactory {
+    /// The runtime must already own a genuine synchronous local-success choice.
+    /// This borrows its finite plan, so errors never consume the actual handle.
+    /// Old inference-lease expiry is not a new terminal-settlement predicate.
+    fn record_local_completed_intent(
+        &self,
+        plan: &LocalCompletedJournalPlan,
+        expected_api: Option<&ApiReservation>,
+        expected_kernel: Option<&KernelReservation>,
+        now: i64,
+    ) -> impl std::future::Future<Output = Result<LocalCompletedIntentOutcome, GatewayError>> {
+        async move {
+            let context = self.local_completion();
+            let mut tx = context.transaction(now)?;
+            let journal_key = plan.journal_key();
+            let Some(current) = tx.read_source_control::<SourceJson>(&journal_key).await? else {
+                return Ok(LocalCompletedIntentOutcome::Conflict);
+            };
+            if tx.expiry(&journal_key).is_some() {
+                return Err(invalid("Unfinished local journal has retention expiry."));
+            }
+            let state = plan.classify(&current)?;
+            if state == LocalCompletedJournalState::Conflict
+                || (state == LocalCompletedJournalState::Prepared
+                    && !tx.expect(&journal_key, &Some(plan.expected_revision().to_owned())))
+            {
+                return Ok(LocalCompletedIntentOutcome::Conflict);
+            }
+            let pending_key = plan.pending_key();
+            let Some(pending) = tx.read::<serde_json::Value>(&pending_key).await? else {
+                return Ok(LocalCompletedIntentOutcome::Conflict);
+            };
+            if pending != serde_json::json!({"request_id": plan.context().request_id.0})
+                || tx.expiry(&pending_key).is_some()
+                || tx.revision(&pending_key)
+                    != tx
+                        .revision(&journal_key)
+                        .map(|revision| format!("{revision}:pending"))
+            {
+                return Err(invalid("Local journal pending custody conflicts."));
+            }
+            if !api_matches(&mut tx, plan, expected_api).await?
+                || !kernel_snapshot_matches(plan, expected_kernel)?
+            {
+                return Ok(LocalCompletedIntentOutcome::Conflict);
+            }
+            if let Some(kernel) = expected_kernel {
+                let key = keys::kernel_request(
+                    &kernel.owner,
+                    kernel.repo.as_deref(),
+                    kernel.window_created_at_ms,
+                    &kernel.request_id.0,
+                );
+                let Some(actual) = tx.read::<KernelReservation>(&key).await? else {
+                    return Ok(LocalCompletedIntentOutcome::Conflict);
+                };
+                if !kernel_identity(&actual, kernel)
+                    || actual
+                        .state
+                        .is_some_and(|value| value != KernelTerminal::Committed)
+                    || actual
+                        .terminal_intent
+                        .is_some_and(|value| value != KernelTerminal::Committed)
+                {
+                    return Ok(LocalCompletedIntentOutcome::Conflict);
+                }
+                let was_chosen = actual.state == Some(KernelTerminal::Committed)
+                    || actual.terminal_intent == Some(KernelTerminal::Committed);
+                if was_chosen != (state == LocalCompletedJournalState::Applied) {
+                    return Ok(LocalCompletedIntentOutcome::Conflict);
+                }
+                if state == LocalCompletedJournalState::Prepared {
+                    stage_kernel_terminal_intent(&mut tx, kernel, KernelTerminal::Committed, now)
+                        .await?;
+                }
+            }
+            if state == LocalCompletedJournalState::Prepared {
+                tx.put_local_completed_journal(plan, now)?;
+            }
+            match tx.commit().await {
+                Ok(true) if state == LocalCompletedJournalState::Applied => {
+                    Ok(LocalCompletedIntentOutcome::AlreadyApplied)
+                }
+                Ok(true) => Ok(LocalCompletedIntentOutcome::Applied),
+                Ok(false) => Ok(LocalCompletedIntentOutcome::Conflict),
+                Err(error) => Ok(LocalCompletedIntentOutcome::Unconfirmed(error)),
+            }
+        }
+    }
+}
+impl<T: LocalCompletionFactory + ?Sized> LocalCompletionOperations for T {}

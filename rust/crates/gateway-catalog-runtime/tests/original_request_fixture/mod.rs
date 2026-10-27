@@ -1,14 +1,16 @@
 //! Original request fixture uses the actual public admission and existing full journal format.
 use super::{MemoryStore, TestAuthority};
-use gateway_authority::REQUEST_LEASE_MS;
-use gateway_authority::paid_control::{PaidRequestContext, PaidRoutingReceipt};
-use gateway_authority::paid_types::PaidRequest;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PrincipalId, RequestContext};
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_contracts::REQUEST_LEASE_MS;
+use gateway_authority_paid_control_records::PaidRequestContext;
+use gateway_authority_paid_records::PaidRequest;
+use gateway_authority_paid_route::{PaidRouteOperations, PaidRoutingReceipt};
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext};
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::json;
 
-pub fn journal_key(id: &str) -> gateway_core::state::RecordKey {
+pub fn journal_key(id: &str) -> gateway_kv_codec::key::RecordKey {
     TupleKey::from_scalar_parts(&[
         ScalarKeyPart::String("uos_ai"),
         ScalarKeyPart::String("routing_runtime"),
@@ -48,7 +50,7 @@ pub async fn bind(
     }
     let row = store.row(&key).unwrap();
     let raw = gateway_core::source_control::decode_source_control_record(&row).unwrap();
-    let original: RequestContext = gateway_core::source_serialization::member(&raw, "context")
+    let original: RequestContext = gateway_source::source_serialization::member(&raw, "context")
         .unwrap()
         .deserialize()
         .unwrap();

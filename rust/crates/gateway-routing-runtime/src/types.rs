@@ -1,22 +1,18 @@
 use gateway_auth::{crypto::Secret, types::AuthPrincipal};
-use gateway_authority::{
-    paid_types::{PaidReservation, PaidUsage},
-    routing_types::{AdmittedAccount, CohortProof},
+use gateway_authority_paid_records::{PaidReservation, PaidUsage};
+use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
+use gateway_contracts::identity::RequestContext;
+use gateway_contracts::{
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::RequestContext,
-    js_string::JsString16,
-    lifecycle::TransportObservation,
-    model::ModelId,
-    provider::UpstreamProvider,
-    state::{RecordKey, RevisionCheck},
-};
-use gateway_providers::types::{
-    AuthMaterial, ClaudeBodyOptions, ClientSurface, DecodePlan, Headers, PrepareOptions,
-    PreparedClaudeBody, PreparedRequest,
-};
+use gateway_core::state::RevisionCheck;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_providers::{types::AuthMaterial, types::ClaudeBodyOptions, types::ClientSurface};
+use gateway_providers::{types::DecodePlan, types::Headers, types::PrepareOptions};
+use gateway_providers::{types::PreparedClaudeBody, types::PreparedRequest};
 use gateway_schema::catalog::CatalogInput;
+use gateway_source::source_json::SourceJson;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_wait_observation::outcome::WaitOutcome;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,10 +22,10 @@ use std::{collections::BTreeMap, future::Future};
 pub struct RoutingInput {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
-    pub raw: gateway_core::source_json::SourceJson,
+    pub raw: gateway_source::source_json::SourceJson,
     pub surface: ClientSurface,
     pub catalog: CatalogInput,
-    pub runtime: Option<gateway_core::source_json::SourceJson>,
+    pub runtime: Option<gateway_source::source_json::SourceJson>,
     pub client_version: String,
     pub native_session_id: Option<String>,
     /// Existing server-side request retry policy; never read from client JSON.
@@ -57,23 +53,23 @@ impl RoutingInput {
             retry_prohibited: metadata.retry_prohibited,
         }
     }
-    pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
+    pub fn original_source(&self) -> &gateway_source::source_json::SourceJson {
         &self.raw
     }
-    pub fn source_member(&self, name: &str) -> Option<gateway_core::source_json::SourceJson> {
-        gateway_core::source_serialization::member(&self.raw, name)
+    pub fn source_member(&self, name: &str) -> Option<gateway_source::source_json::SourceJson> {
+        gateway_source::source_serialization::member(&self.raw, name)
     }
     pub fn streamed(&self) -> bool {
         self.source_member("stream")
             .is_some_and(|value| value.as_str() == "true")
     }
-    pub fn requested_reasoning(&self) -> Option<gateway_core::js_string::JsString16> {
+    pub fn requested_reasoning(&self) -> Option<gateway_source::js_string::JsString16> {
         self.source_member("reasoning")
-            .and_then(|value| gateway_core::source_serialization::member(&value, "effort"))
-            .and_then(|value| gateway_core::source_serialization::string(&value))
+            .and_then(|value| gateway_source::source_serialization::member(&value, "effort"))
+            .and_then(|value| gateway_source::source_serialization::string(&value))
             .or_else(|| {
                 self.source_member("reasoning_effort")
-                    .and_then(|value| gateway_core::source_serialization::string(&value))
+                    .and_then(|value| gateway_source::source_serialization::string(&value))
             })
     }
 }
@@ -87,7 +83,7 @@ pub struct RoutingError {
 
 #[derive(Clone, Debug)]
 pub enum SourceRefusalBody {
-    Json(gateway_core::source_json::SourceJson),
+    Json(gateway_source::source_json::SourceJson),
     /// Exact source HTTP-constructor failure; never a quota or paid proof.
     InternalServerError,
 }
@@ -110,7 +106,7 @@ impl RoutingError {
     pub(crate) fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {
         if self.source_body.is_none() {
             self.source_body = Some(SourceRefusalBody::Json(
-                gateway_core::source_json::SourceJson::from_serializable(&self.error.envelope)
+                gateway_source::source_json::SourceJson::from_serializable(&self.error.envelope)
                     .expect("A scalar error envelope is valid source JSON"),
             ));
         }
@@ -254,7 +250,7 @@ impl PreparedWireRequest {
             Self::Claude(body) => body.method(),
         }
     }
-    pub fn body(&self) -> &gateway_core::source_json::SourceJson {
+    pub fn body(&self) -> &gateway_source::source_json::SourceJson {
         match self {
             Self::Ready(request) => &request.body,
             Self::Claude(body) => body.body(),
@@ -307,7 +303,7 @@ pub enum ClaudeSelection {
     Refused {
         status: u16,
         headers: Headers,
-        body: gateway_core::source_json::SourceJson,
+        body: gateway_source::source_json::SourceJson,
     },
 }
 #[derive(Clone, Debug)]
@@ -392,8 +388,8 @@ pub trait RoutingHost {
         &self,
         principal: &AuthPrincipal,
         model: &ModelId,
-        raw: &gateway_core::source_json::SourceJson,
-        effective_effort: Option<&gateway_core::js_string::JsString16>,
+        raw: &gateway_source::source_json::SourceJson,
+        effective_effort: Option<&gateway_source::js_string::JsString16>,
     ) -> impl Future<Output = Result<ClaudeSelection, GatewayError>>;
     fn observe_claude_response(
         &self,
@@ -404,7 +400,7 @@ pub trait RoutingHost {
     fn finish_claude_response(
         &self,
         head: Self::ClaudeHead,
-        evidence: gateway_core::claude::ClaudeErrorEvidence,
+        evidence: gateway_contracts::claude::ClaudeErrorEvidence,
     ) -> impl Future<Output = Result<ClaudeOutcome, GatewayError>>;
     fn recover_codex(
         &self,
@@ -487,8 +483,6 @@ pub struct RecoveredSession {
 }
 
 mod record_key {
-    use gateway_core::{state::RecordKey, tuple_key::TupleKey};
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::Error as _};
     pub fn serialize<S: Serializer>(key: &RecordKey, serializer: S) -> Result<S::Ok, S::Error> {
         TupleKey::from_record_key(key)
             .and_then(|key| key.validate_stored_key())
@@ -507,7 +501,6 @@ mod record_key {
 #[cfg(test)]
 mod source_cleanup_tests {
     use super::*;
-    use gateway_core::{js_string::JsString16, source_json::SourceJson};
     #[test]
     fn cleanup_diagnostic_never_overwrites_original_source_wire_truth() {
         let source = gateway_schema::source_request::error::SourceRequestError::new(

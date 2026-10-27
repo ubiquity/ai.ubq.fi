@@ -5,11 +5,9 @@ use crate::{
     store,
     types::ObservabilityHost,
 };
-use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    state::{RecordKey, RecordMutation},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::{query::QueryStore, state::RecordMutation};
+use gateway_kv_codec::key::RecordKey;
 use serde_json::json;
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     async fn claim_replay_victim(
@@ -136,9 +134,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let has_owner = !row.request_id.is_empty();
         let count = if has_owner { 2.0 } else { 1.0 };
         let bytes = schema::metadata_charge(
-            &gateway_core::source_json::SourceJson::from_serializable(&tombstone)?,
+            &gateway_source::source_json::SourceJson::from_serializable(&tombstone)?,
         ) + if has_owner {
-            schema::metadata_charge(&gateway_core::source_json::SourceJson::from_serializable(
+            schema::metadata_charge(&gateway_source::source_json::SourceJson::from_serializable(
                 &status,
             )?)
         } else {

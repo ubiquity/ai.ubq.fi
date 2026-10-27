@@ -1,4 +1,5 @@
 use super::*;
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -38,13 +39,14 @@ fn inject(channel: &UnixStream, packet: &[u8], descriptors: Vec<OwnedFd>) {
 }
 
 #[test]
-fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process() {
+fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process()
+-> FixtureResult<()> {
     let directory =
         std::env::temp_dir().join(format!("uos-reverse-fd-policy-{}", std::process::id()));
-    std::fs::create_dir(&directory).unwrap();
-    let binary = std::env::current_exe().unwrap().canonicalize().unwrap();
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let fixture_port = listener.local_addr().unwrap().port();
+    std::fs::create_dir(&directory)?;
+    let binary = std::env::current_exe()?.canonicalize()?;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let fixture_port = listener.local_addr()?.port();
     for scenario in [
         "valid",
         "digest",
@@ -61,142 +63,10 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         "production-port",
         "closed-valid",
     ] {
-        let (mut sender, receiver) = UnixStream::pair().unwrap();
-        let expected_port = if scenario == "production-port" {
-            443
-        } else {
-            fixture_port
-        };
-        sender.write_all(&expected_port.to_be_bytes()).unwrap();
-        sender
-            .write_all(&u32::try_from(CONFIG.len()).unwrap().to_be_bytes())
-            .unwrap();
-        sender.write_all(CONFIG).unwrap();
-        let connected = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        assert_eq!(
-            send(&sender, CONFIG, connected.try_clone().unwrap()).unwrap_err(),
-            ControlError::InvalidDescriptor,
-            "production sender must still require port443"
-        );
-        let (mut witness, _) = listener.accept().unwrap();
-        witness
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        #[cfg(target_os = "macos")]
-        let profile = crate::connector_policy::request(
-            &binary,
-            &crate::confinement::NativeConfinement {
-                readonly_paths: Vec::new(),
-                list_directories: Vec::new(),
-                replay_directory: directory.clone(),
-                unix_sockets: Vec::new(),
-            },
-            witness.local_addr().unwrap(),
-            witness.peer_addr().unwrap(),
-        )
-        .unwrap();
-        #[cfg(target_os = "macos")]
-        let mut command = {
-            let mut command = Command::new("/usr/bin/sandbox-exec");
-            command.args(["-p", &profile]).arg(&binary);
-            command
-        };
-        #[cfg(not(target_os = "macos"))]
-        let mut command = Command::new(&binary);
-        command
-            .args([
-                "--ignored",
-                "--exact",
-                "daemon_startup::live_bootstrap::tests::reverse_fd_receive_child",
-                "--nocapture",
-                "--test-threads=1",
-            ])
-            .stdin(Stdio::from(OwnedFd::from(receiver)))
-            .env_clear()
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        let mut child = if matches!(scenario, "valid" | "completion-rights") {
-            Some(ReceiverChild(command.spawn().unwrap()))
-        } else {
-            None
-        };
-        if matches!(scenario, "valid" | "completion-rights" | "closed-valid") {
-            send_bound(&sender, CONFIG, connected, fixture_port).unwrap();
-            if scenario != "closed-valid" {
-                let mut marker = [0; 8];
-                witness.read_exact(&mut marker).unwrap();
-                assert_eq!(&marker, b"received");
-            }
-            if matches!(scenario, "valid" | "closed-valid") {
-                sender.write_all(&[1]).unwrap();
-            } else {
-                inject(&sender, &[1], vec![File::open("/dev/null").unwrap().into()]);
-            }
-        } else {
-            let socket = connected;
-            let mut body = Bootstrap {
-                v: 1,
-                purpose: PURPOSE.into(),
-                config_sha256: sha256_hex(CONFIG),
-                peer: socket.peer_addr().unwrap(),
-            };
-            match scenario {
-                "digest" => body.config_sha256 = sha256_hex(b"different"),
-                "purpose" => body.purpose = "provider_live".into(),
-                "version" => body.v = 2,
-                "peer" => body.peer.set_port(442),
-                _ => {}
-            }
-            let body = serde_json::to_vec(&body).unwrap();
-            let mut packet = u32::try_from(body.len()).unwrap().to_be_bytes().to_vec();
-            packet.extend_from_slice(&body);
-            let rights = match scenario {
-                "missing" => Vec::new(),
-                "not-socket" => vec![OwnedFd::from(File::open("/dev/null").unwrap())],
-                "extra" => vec![socket.try_clone().unwrap().into(), socket.into()],
-                "ancillary-truncated" => (0..16)
-                    .map(|_| socket.try_clone().unwrap().into())
-                    .collect(),
-                _ => vec![socket.into()],
-            };
-            if scenario == "late" {
-                sender.write_all(&packet[..4]).unwrap();
-                inject(&sender, &packet[4..], rights);
-            } else if scenario == "truncated" {
-                inject(&sender, &packet[..5], rights);
-            } else {
-                inject(&sender, &packet, rights);
-            }
-        }
-        drop(sender);
-        // These cases start only after sender close: queued rights must survive
-        // the actual Darwin HUP/timeout race, not depend on lucky scheduling.
-        if child.is_none() {
-            child = Some(ReceiverChild(command.spawn().unwrap()));
-        }
-        drop(command);
-        let status = child.as_mut().unwrap().0.wait().unwrap();
-        let expected = match scenario {
-            "valid" | "closed-valid" => 0,
-            "extra" | "late" | "completion-rights" => {
-                ControlError::UnexpectedDescriptor.exit_code()
-            }
-            "ancillary-truncated" => ControlError::AncillaryTruncated.exit_code(),
-            "truncated" => ControlError::Truncated.exit_code(),
-            "peer" | "production-port" => ControlError::InvalidDescriptor.exit_code(),
-            "not-socket" => ControlError::Io(std::io::ErrorKind::Other).exit_code(),
-            _ => ControlError::InvalidFrame.exit_code(),
-        };
-        assert_eq!(status.code(), Some(expected), "{scenario}: {status}");
-        if scenario == "closed-valid" {
-            let mut marker = [0; 8];
-            witness.read_exact(&mut marker).unwrap();
-            assert_eq!(&marker, b"received");
-        }
-        // No sender copy or request-process descriptor may keep this peer alive.
-        assert_eq!(witness.read(&mut [0]).unwrap(), 0, "{scenario}");
+        run_scenario(&directory, &binary, &listener, fixture_port, scenario)?;
     }
-    std::fs::remove_dir(directory).unwrap();
+    std::fs::remove_dir(directory)?;
+    Ok(())
 }
 
 #[test]
@@ -253,4 +123,155 @@ fn reverse_fd_receive_child() {
         }
         Ok(())
     })
+}
+
+fn run_scenario(
+    directory: &std::path::Path,
+    binary: &std::path::Path,
+    listener: &TcpListener,
+    fixture_port: u16,
+    scenario: &str,
+) -> FixtureResult<()> {
+    let (mut sender, receiver) = UnixStream::pair()?;
+    let expected_port = if scenario == "production-port" {
+        443
+    } else {
+        fixture_port
+    };
+    sender.write_all(&expected_port.to_be_bytes())?;
+    sender.write_all(&u32::try_from(CONFIG.len())?.to_be_bytes())?;
+    sender.write_all(CONFIG)?;
+    let connected = TcpStream::connect(listener.local_addr()?)?;
+    assert_eq!(
+        send(&sender, CONFIG, connected.try_clone()?)
+            .err()
+            .ok_or_else(|| std::io::Error::other("expected fixed-port refusal"))?,
+        ControlError::InvalidDescriptor,
+        "production sender must still require port443"
+    );
+    let (mut witness, _) = listener.accept()?;
+    witness.set_read_timeout(Some(Duration::from_secs(2)))?;
+    #[cfg(target_os = "macos")]
+    let profile = gateway_native_connector::connector_policy::request(
+        &binary,
+        &gateway_native_confinement::confinement::NativeConfinement {
+            readonly_paths: Vec::new(),
+            list_directories: Vec::new(),
+            replay_directory: directory.to_path_buf(),
+            unix_sockets: Vec::new(),
+        },
+        witness.local_addr()?,
+        witness.peer_addr()?,
+    )?;
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command.args(["-p", &profile]).arg(binary);
+        command
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut command = Command::new(binary);
+    command
+        .args([
+            "--ignored",
+            "--exact",
+            "daemon_startup::live_bootstrap::tests::reverse_fd_receive_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .stdin(Stdio::from(OwnedFd::from(receiver)))
+        .env_clear()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = if matches!(scenario, "valid" | "completion-rights") {
+        Some(ReceiverChild(command.spawn()?))
+    } else {
+        None
+    };
+    if matches!(scenario, "valid" | "completion-rights" | "closed-valid") {
+        send_bound(&sender, CONFIG, connected, fixture_port)?;
+        if scenario != "closed-valid" {
+            let mut marker = [0; 8];
+            witness.read_exact(&mut marker)?;
+            assert_eq!(&marker, b"received");
+        }
+        if matches!(scenario, "valid" | "closed-valid") {
+            sender.write_all(&[1])?;
+        } else {
+            inject(&sender, &[1], vec![File::open("/dev/null")?.into()]);
+        }
+    } else {
+        inject_fault(&mut sender, connected, scenario)?;
+    }
+    drop(sender);
+    // These cases start only after sender close: queued rights must survive
+    // the actual Darwin HUP/timeout race, not depend on lucky scheduling.
+    if child.is_none() {
+        child = Some(ReceiverChild(command.spawn()?));
+    }
+    drop(command);
+    let status = child
+        .as_mut()
+        .ok_or_else(|| std::io::Error::other("receiver child missing"))?
+        .0
+        .wait()?;
+    let expected = match scenario {
+        "valid" | "closed-valid" => 0,
+        "extra" | "late" | "completion-rights" => ControlError::UnexpectedDescriptor.exit_code(),
+        "ancillary-truncated" => ControlError::AncillaryTruncated.exit_code(),
+        "truncated" => ControlError::Truncated.exit_code(),
+        "peer" | "production-port" => ControlError::InvalidDescriptor.exit_code(),
+        "not-socket" => ControlError::Io(std::io::ErrorKind::Other).exit_code(),
+        _ => ControlError::InvalidFrame.exit_code(),
+    };
+    assert_eq!(status.code(), Some(expected), "{scenario}: {status}");
+    if scenario == "closed-valid" {
+        let mut marker = [0; 8];
+        witness.read_exact(&mut marker)?;
+        assert_eq!(&marker, b"received");
+    }
+    // No sender copy or request-process descriptor may keep this peer alive.
+    assert_eq!(witness.read(&mut [0])?, 0, "{scenario}");
+    Ok(())
+}
+fn inject_fault(
+    sender: &mut UnixStream,
+    connected: TcpStream,
+    scenario: &str,
+) -> FixtureResult<()> {
+    let socket = connected;
+    let mut body = Bootstrap {
+        v: 1,
+        purpose: PURPOSE.into(),
+        config_sha256: sha256_hex(CONFIG),
+        peer: socket.peer_addr()?,
+    };
+    match scenario {
+        "digest" => body.config_sha256 = sha256_hex(b"different"),
+        "purpose" => body.purpose = "provider_live".into(),
+        "version" => body.v = 2,
+        "peer" => body.peer.set_port(442),
+        _ => {}
+    }
+    let body = serde_json::to_vec(&body)?;
+    let mut packet = u32::try_from(body.len())?.to_be_bytes().to_vec();
+    packet.extend_from_slice(&body);
+    let rights = match scenario {
+        "missing" => Vec::new(),
+        "not-socket" => vec![OwnedFd::from(File::open("/dev/null")?)],
+        "extra" => vec![socket.try_clone()?.into(), socket.into()],
+        "ancillary-truncated" => (0..16)
+            .map(|_| socket.try_clone().map(Into::into))
+            .collect::<std::io::Result<Vec<_>>>()?,
+        _ => vec![socket.into()],
+    };
+    if scenario == "late" {
+        sender.write_all(&packet[..4])?;
+        inject(sender, &packet[4..], rights);
+    } else if scenario == "truncated" {
+        inject(sender, &packet[..5], rights);
+    } else {
+        inject(sender, &packet, rights);
+    }
+    Ok(())
 }

@@ -1,37 +1,30 @@
 //! One finite native sideband connection. The trusted connector is fixed to the
 //! approved destination; no URL or credential is accepted from the upgrade.
 pub mod authority;
-mod queue;
+mod relay;
 pub mod socket;
 use authority::NativeLiveAuthority;
-use gateway_auth::{crypto::base64url, native_live::AuthenticatedNativeLive};
-use gateway_authority::native_live::wire::NativeLiveRetirement;
-use gateway_core::error::GatewayError;
-use queue::{PendingSocket, PreopenQueue, blocked, websocket_config};
-use socket::{LiveDialContext, NativeLiveConnector};
+use gateway_auth_native_proof::native_live::AuthenticatedNativeLive;
+use gateway_auth_primitives::crypto::base64url;
+use gateway_native_live_buffer::{
+    error::failure,
+    limits::MAX_PAYLOAD_BYTES,
+    queue::{PendingSocket, PreopenQueue, blocked},
+};
+use gateway_source::error::GatewayError;
+use socket::NativeLiveConnector;
 use std::{
     io::Write,
     net::TcpStream,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    thread,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tungstenite::{
-    Message, WebSocket,
+    Message,
     handshake::server::{create_response, write_response},
-    protocol::{
-        Role,
-        frame::{CloseFrame, coding::CloseCode},
-    },
+    protocol::frame::CloseFrame,
 };
 
-pub const MAX_PAYLOAD_BYTES: usize = 4 * 1_048_576;
-pub const MAX_BUFFERED_BYTES: usize = 8 * 1_048_576;
-pub const PREOPEN_MAX_FRAMES: usize = 32;
 pub const HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
 
 pub struct NativeLiveUpgradeRequest {
@@ -94,7 +87,10 @@ impl NativeLiveHandler for NativeLiveService {
         request: NativeLiveUpgradeRequest,
         proof: AuthenticatedNativeLive,
     ) -> Result<NativeLiveOutcome, GatewayError> {
-        proof.require_upgrade(&request.action_ref, crate::http_server::now_ms()?)?;
+        proof.require_upgrade(
+            &request.action_ref,
+            gateway_native_http_framing::response::now_ms()?,
+        )?;
         let mut random = [0; 32];
         getrandom::fill(&mut random).map_err(|_| unavailable())?;
         let connection_id = base64url(&random);
@@ -108,188 +104,13 @@ impl NativeLiveHandler for NativeLiveService {
         {
             return Err(unavailable());
         }
-        let mut builder = tungstenite::http::Request::builder()
-            .method("GET")
-            .uri(gateway_auth::native_live::NATIVE_LIVE_PATH);
-        let mut version_seen = false;
-        let mut key_seen = false;
-        for (name, value) in &request.headers {
-            if name.eq_ignore_ascii_case("sec-websocket-version") {
-                if version_seen || !(value == "8" || value == "13") {
-                    return Err(unavailable());
-                }
-                version_seen = true;
-                // RFC6455 framing is shared. The source ws server accepts both
-                // 8 and 13; tungstenite's response builder accepts 13 only.
-                builder = builder.header(name, "13");
-                continue;
-            }
-            if name.eq_ignore_ascii_case("sec-websocket-key") {
-                if key_seen
-                    || value.len() != 24
-                    || !value.ends_with("==")
-                    || !value.as_bytes()[..22]
-                        .iter()
-                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/'))
-                {
-                    return Err(unavailable());
-                }
-                key_seen = true;
-            }
-            builder = builder.header(name, value);
-        }
-        let upgrade = builder.body(()).map_err(|_| unavailable())?;
-        let response = create_response(&upgrade).map_err(|_| unavailable())?;
+        let response = sideband_response(&request.headers)?;
         // Once a101 write begins, the HTTP dispatcher must never receive an
         // error that it could render as a second JSON/HTTP response.
         let outcome = response_committed(stream, |stream| {
             write_response(&mut *stream, &response).map_err(|_| unavailable())?;
             stream.flush().map_err(|_| unavailable())?;
-            stream.set_nonblocking(true).map_err(|_| unavailable())?;
-            let socket = WebSocket::from_partially_read(
-                stream.try_clone().map_err(|_| unavailable())?,
-                request.buffered,
-                Role::Server,
-                Some(websocket_config()),
-            );
-            let mut downstream = PendingSocket::new(socket, Role::Server);
-            let mut preopen = PreopenQueue::default();
-            // Consume already-buffered frames and close before the first upstream
-            // dial. The same reader stays active while the dial thread awaits TLS.
-            match read_downstream::<socket::UpstreamSocket>(&mut downstream, None, &mut preopen) {
-                Ok(Some((code, reason))) => {
-                    close_peer(&mut downstream, code, &reason, false);
-                    return Ok(NativeLiveOutcome::CloseRequested { code });
-                }
-                Err(error) => {
-                    close_peer(&mut downstream, 1011, &error.envelope.error.message, false);
-                    return Ok(NativeLiveOutcome::CloseRequested { code: 1011 });
-                }
-                Ok(None) => {}
-            }
-            let alive = Arc::new(AtomicBool::new(true));
-            let context = LiveDialContext::new(
-                alive.clone(),
-                stream.try_clone().map_err(|_| unavailable())?,
-                Instant::now() + Duration::from_millis(HANDSHAKE_TIMEOUT_MS),
-            );
-            let authority = self.authority.clone();
-            let connector = self.connector.clone();
-            let tls = self.tls.clone();
-            let server_name = self.server_name.clone();
-            let (sender, receiver) = mpsc::sync_channel(1);
-            let dial = thread::spawn(move || {
-                let result = socket::dial(
-                    authority.as_ref(),
-                    connector.as_ref(),
-                    tls,
-                    server_name,
-                    authorization,
-                    &context,
-                );
-                let _ = sender.send(result);
-            });
-            let mut upstream = None;
-            let mut retired = None;
-            let finish = 'relay: loop {
-                match read_downstream(&mut downstream, upstream.as_mut(), &mut preopen) {
-                    Ok(Some(close)) => break close,
-                    Ok(None) => {}
-                    Err(error) => break (1011, error.envelope.error.message),
-                }
-                if upstream.is_none() && retired.is_none() {
-                    match receiver.try_recv() {
-                        Ok(socket::DialResult::Connected(socket)) => {
-                            let mut peer = PendingSocket::new(*socket, Role::Client);
-                            let frames = std::mem::take(&mut preopen);
-                            let mut failed = false;
-                            for text in frames.drain() {
-                                if peer.send(text).is_err() {
-                                    failed = true;
-                                    break;
-                                }
-                            }
-                            if failed {
-                                break (1011, "realtime upstream is not draining frames".into());
-                            }
-                            upstream = Some(peer);
-                        }
-                        Ok(socket::DialResult::Rejected(authorization, status)) => {
-                            retired = Some((authorization, status, Instant::now()));
-                        }
-                        Ok(socket::DialResult::Failed) => {
-                            break (1011, "realtime upstream unavailable".into());
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            break (1011, "realtime upstream unavailable".into());
-                        }
-                        Err(mpsc::TryRecvError::Empty) => {}
-                    }
-                }
-                if let Some((authorization, status, retry_at)) = &mut retired {
-                    if *status != 404 && *status != 410 {
-                        break (1011, "realtime upstream rejected the sideband".into());
-                    }
-                    if Instant::now() >= *retry_at {
-                        match self.authority.retire(
-                            authorization,
-                            *status,
-                            Instant::now() + Duration::from_secs(10),
-                        ) {
-                            Ok(NativeLiveRetirement::Retired) => {
-                                break (1011, "realtime upstream rejected the sideband".into());
-                            }
-                            Ok(NativeLiveRetirement::Pending | NativeLiveRetirement::Unknown)
-                            | Err(_) => *retry_at = Instant::now() + Duration::from_millis(250),
-                        }
-                    }
-                }
-                if let Some(peer) = upstream.as_mut() {
-                    loop {
-                        match peer.read() {
-                            Ok(Message::Text(text)) => {
-                                if downstream.send(text.to_string()).is_err() {
-                                    break 'relay (
-                                        1011,
-                                        "realtime sideband is not writable".into(),
-                                    );
-                                }
-                            }
-                            Ok(Message::Close(frame)) => {
-                                let (code, reason) = close_value(frame);
-                                alive.store(false, Ordering::Release);
-                                close_peer(peer, code, &reason, true);
-                                close_peer(&mut downstream, code, &reason, false);
-                                let _ = dial.join();
-                                return Ok(NativeLiveOutcome::CloseRequested { code });
-                            }
-                            Ok(_) => {}
-                            Err(error) if blocked(&error) => break,
-                            Err(_) => {
-                                alive.store(false, Ordering::Release);
-                                close_peer(peer, 1011, "realtime upstream error", true);
-                                close_peer(&mut downstream, 1011, "realtime upstream error", false);
-                                let _ = dial.join();
-                                return Ok(NativeLiveOutcome::CloseRequested { code: 1011 });
-                            }
-                        }
-                    }
-                    if peer.pump().is_err() {
-                        break (1011, "realtime upstream is not draining frames".into());
-                    }
-                }
-                if downstream.pump().is_err() {
-                    break (1011, "realtime sideband is not writable".into());
-                }
-                thread::sleep(Duration::from_millis(2));
-            };
-            alive.store(false, Ordering::Release);
-            if let Some(peer) = upstream.as_mut() {
-                close_peer(peer, finish.0, &finish.1, true);
-            }
-            close_peer(&mut downstream, finish.0, &finish.1, false);
-            let _ = dial.join();
-            Ok(NativeLiveOutcome::CloseRequested { code: finish.0 })
+            relay::bridge_after_commit(self, stream, request, authorization)
         });
         Ok(outcome)
     }
@@ -342,36 +163,46 @@ fn close_value(frame: Option<CloseFrame>) -> (u16, String) {
         (u16::from(frame.code), frame.reason.to_string())
     })
 }
-fn close_peer<S: std::io::Read + Write>(
-    peer: &mut PendingSocket<S>,
-    code: u16,
-    reason: &str,
-    upstream: bool,
-) {
-    let allowed = if upstream {
-        code == 1000 || (3000..=4999).contains(&code)
-    } else {
-        (1000..=4999).contains(&code) && ![1005, 1006, 1015].contains(&code)
-    };
-    let reason = String::from_utf16_lossy(&reason.encode_utf16().take(100).collect::<Vec<_>>());
-    let frame = if allowed && reason.len() <= 123 {
-        Some(CloseFrame {
-            code: CloseCode::from(code),
-            reason: reason.into(),
-        })
-    } else {
-        None
-    };
-    if peer.socket.close(frame).is_err() {
-        let _ = peer.socket.close(None);
-    }
-    let _ = peer.socket.flush();
-}
-pub(super) fn failure(reason: &str) -> GatewayError {
-    GatewayError::unavailable(reason, "native_live_transport_failed")
-}
 pub(super) fn unavailable() -> GatewayError {
     failure("Native live transport is unavailable")
+}
+
+fn sideband_response(
+    headers: &[(String, String)],
+) -> Result<tungstenite::handshake::server::Response, GatewayError> {
+    let mut builder = tungstenite::http::Request::builder()
+        .method("GET")
+        .uri(gateway_auth_native_contracts::native_live::NATIVE_LIVE_PATH);
+    let mut version_seen = false;
+    let mut key_seen = false;
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("sec-websocket-version") {
+            if version_seen || !(value == "8" || value == "13") {
+                return Err(unavailable());
+            }
+            version_seen = true;
+            // RFC6455 framing is shared. The source ws server accepts both
+            // 8 and 13; tungstenite's response builder accepts 13 only.
+            builder = builder.header(name, "13");
+            continue;
+        }
+        if name.eq_ignore_ascii_case("sec-websocket-key") {
+            if key_seen
+                || value.len() != 24
+                || !value.ends_with("==")
+                || !value.as_bytes()[..22]
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/'))
+            {
+                return Err(unavailable());
+            }
+            key_seen = true;
+        }
+        builder = builder.header(name, value);
+    }
+    let upgrade = builder.body(()).map_err(|_| unavailable())?;
+    let response = create_response(&upgrade).map_err(|_| unavailable())?;
+    Ok(response)
 }
 
 #[cfg(test)]

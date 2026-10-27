@@ -1,26 +1,27 @@
 //! One original admission before local work; no provider plan or attempt is invented.
-use crate::{
-    journal::{self, Journal},
-    policy::RoutePlan,
-    session::{RoutingSession, reserve_original},
-    types::{RecoveredSession, RevisionCheckWire, RoutingHost, RoutingResult},
-};
+use crate::{journal, journal::Journal, policy::RoutePlan, session::RoutingSession};
+use crate::{session::reserve_original, types::RecoveredSession, types::RevisionCheckWire};
+use crate::{types::RoutingHost, types::RoutingResult};
 use gateway_auth::{crypto::sha256_hex, types::AuthPrincipal};
-use gateway_authority::kernel::{KernelReservation, KernelTerminal};
-use gateway_authority::keys;
-use gateway_authority::quota::{ApiReservation, ApiUsageRequest, ApiUsageState};
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};
-use gateway_core::lifecycle::TransportObservation;
-use gateway_core::local_work::{
-    LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase, LocalWorkRecord,
-    SOURCE_REQUEST_BINDING_DOMAIN, SOURCE_REQUEST_BINDING_VERSION,
-};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal};
+use gateway_authority_keys as keys;
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
 use gateway_core::query::QueryStore;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{AuthorityStore, StoredRecord};
+use gateway_core::{state::AuthorityStore, state::StoredRecord};
+use gateway_local_journal::local_work::LocalSemanticOutcome;
+use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_DOMAIN;
+use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_VERSION;
+use gateway_local_journal::{local_work::LocalTerminalObservation, local_work::LocalWorkKind};
+use gateway_local_journal::{local_work::LocalWorkPhase, local_work::LocalWorkRecord};
 use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 
 pub mod completion;
 mod coordination;
@@ -98,7 +99,7 @@ pub const KERNEL_RENEWAL_INTERVAL_MS: i64 = 60_000;
 
 /// Binding v2 deliberately does not change any legacy ordinary v1 digest.
 pub fn original_source_digest(original: &SourceJson) -> Result<String, GatewayError> {
-    let canonical = gateway_core::source_serialization::canonical(original)?;
+    let canonical = gateway_source::source_serialization::canonical(original)?;
     let mut bytes = SOURCE_REQUEST_BINDING_DOMAIN.to_vec();
     bytes.extend_from_slice(canonical.as_bytes());
     Ok(sha256_hex(&bytes))
@@ -141,7 +142,7 @@ fn admitting_local_journal<I: TokenSource>(
         2,
         context.clone(),
         digest,
-        now.checked_add(gateway_authority::REQUEST_LEASE_MS)
+        now.checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
             .ok_or_else(invalid)?,
         now,
     );
@@ -214,7 +215,7 @@ impl<
                     semantic: LocalSemanticOutcome::Incomplete,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::OriginalBinding {
                     context,
@@ -253,7 +254,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&handle)),
             )
@@ -441,7 +442,7 @@ impl<
                 }
                 if refresh_coordination {
                     current.lease_expires_at_ms = at
-                        .checked_add(gateway_authority::REQUEST_LEASE_MS)
+                        .checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
                         .ok_or_else(invalid)?;
                 }
                 if let Some(next) = next {
@@ -485,7 +486,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&self)),
             )
@@ -512,7 +513,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&self)),
             )
@@ -601,7 +602,7 @@ impl<
             semantic: LocalSemanticOutcome::Incomplete,
             reader_termination: None,
             body: None,
-            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+            delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
         };
         journal::change(
             &original.store,

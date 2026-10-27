@@ -1,8 +1,8 @@
 use crate::{
     aliases::*, catalog::*, metadata::*, model_control as c, provider_catalog::*, selection::*,
 };
-use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
-use gateway_decision_protocol::catalog as decisions;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use {gateway_contracts::model::ModelId, gateway_decision_protocol::catalog as decisions};
 fn snapshot_models(input: &CatalogInput, full: bool) -> Vec<SourceJson> {
     let snapshot = if full {
         input.codex()

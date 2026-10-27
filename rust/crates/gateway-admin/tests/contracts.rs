@@ -8,7 +8,8 @@ use gateway_auth::{
     crypto::Secret,
     types::{AuthConfig, AuthRequest, AuthResponse},
 };
-use gateway_core::{error::GatewayError, source_json::SourceJson, state::RevisionCheck};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::state::RevisionCheck;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 

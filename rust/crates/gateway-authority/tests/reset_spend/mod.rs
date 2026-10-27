@@ -1,17 +1,27 @@
 //! Source banked-reset claim/submission and native-codex-mutations probe boundaries.
-use crate::support::*;
-use crate::{TestResult, fixture_json, fixture_row};
-use gateway_authority::{
-    full_pool_reset::types::*,
-    keys,
-    reset::utc_day,
-    reset_types::{AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetRecord, ResetState},
-    routing_types::{CohortProof, RouteSelection},
-};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
-use gateway_core::js_string::JsString16;
-use gateway_core::provider::CodexQuotaClass;
+
+use gateway_authority_keys as keys;
+use gateway_authority_reset_claim::ResetClaimOperations;
+use gateway_authority_reset_permit::{ResetPermitOperations, types::FullPoolPreparation};
+use gateway_authority_reset_permit::{types::AutomaticResetPermit, types::FullPoolEvaluation};
+use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, full_pool::SourceResetCredit};
+use gateway_authority_reset_records::{ResetConfig, ResetMode, full_pool::SourceResetInventory};
+use gateway_authority_reset_records::{ResetRecord, ResetState, reset_invocation};
+use gateway_authority_reset_records::{full_pool::SourceCreditCollation, utc_day};
+use gateway_authority_reset_recovery::ResetRecoveryOperations;
+use gateway_authority_reset_spend::ResetSpendOperations;
+use gateway_authority_routing_selection::types::CohortProof;
+use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_authority_test_support::{TestResult, fixture_json, fixture_row};
+use gateway_contracts::identity::PrincipalId;
+use gateway_contracts::{identity::RequestContext, identity::RequestId, provider::CodexQuotaClass};
+use gateway_kv_codec::key::RecordKey;
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
+use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::admitted};
+use gateway_routing_runtime_test_support::{authority::authority, authority::block};
+use gateway_routing_runtime_test_support::{authority::pool, authority::run, authority::seed_pool};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde_json::json;
 use std::cmp::Ordering;
 
@@ -115,7 +125,7 @@ fn claim(authority: &TestAuthority, permit: &AutomaticResetPermit) -> ResetRecor
     };
     record
 }
-fn budget_key(permit: &AutomaticResetPermit) -> gateway_core::state::RecordKey {
+fn budget_key(permit: &AutomaticResetPermit) -> gateway_kv_codec::key::RecordKey {
     keys::reset_day(
         &permit.invocation().unwrap().identity.account_id_hash,
         &utc_day(NOW).unwrap(),
@@ -128,10 +138,10 @@ fn preexisting_reset_scan_never_claims_an_absent_ledger_or_budget() -> TestResul
     let cohort = proof(&authority, NOW);
     assert!(matches!(
         run(authority.reconcile_full_pool_reset(&cohort, &original()))?,
-        gateway_authority::reset_types::FullPoolResetReconciliation::NoExisting
+        gateway_authority_reset_evidence::types::FullPoolResetReconciliation::NoExisting
     ));
     for account in pool().accounts {
-        let invocation = gateway_authority::reset_types::reset_invocation(
+        let invocation = gateway_authority_reset_records::reset_invocation(
             &account.admin_account_hash.0,
             &account.credential_version.0,
             NOW + 60_000,
@@ -201,8 +211,9 @@ fn preexisting_verified_reset_needs_no_new_credit_inventory() -> TestResult {
         }
         // Deliberately no prepare/finish/inventory call after the physical outcome.
         let cohort = proof(&authority, NOW);
-        let gateway_authority::reset_types::FullPoolResetReconciliation::Recovered(account) =
-            run(authority.reconcile_full_pool_reset(&cohort, &original()))?
+        let gateway_authority_reset_evidence::types::FullPoolResetReconciliation::Recovered(
+            account,
+        ) = run(authority.reconcile_full_pool_reset(&cohort, &original()))?
         else {
             panic!("known verified ledger must grant only a recovery probe")
         };
@@ -229,7 +240,7 @@ fn full_pool_spend_uses_one_existing_budget_and_unknown_never_resubmits() -> Tes
     ))?;
     assert!(matches!(
         run(authority.reconcile_full_pool_reset(&proof(&authority, NOW), &original()))?,
-        gateway_authority::reset_types::FullPoolResetReconciliation::Blocked { .. }
+        gateway_authority_reset_evidence::types::FullPoolResetReconciliation::Blocked { .. }
     ));
     assert!(run(authority.prepare_full_pool_reset_submission(&permit, &unknown)).is_err());
     assert!(run(authority.renew_full_pool_reset_before_redeem(&permit, &unknown)).is_err());

@@ -28,7 +28,7 @@ impl ManagedAccessProjection {
             || generation.fence.account_id != credentials.account_id
             || generation.fence.authority_revision.is_empty()
             || !valid_native_generation(&generation.fence.generation_hash)
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&generation.observed_at_ms)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&generation.observed_at_ms)
             || expiry <= generation.observed_at_ms.saturating_add(120_000)
             || credentials
                 .native_refreshed_at

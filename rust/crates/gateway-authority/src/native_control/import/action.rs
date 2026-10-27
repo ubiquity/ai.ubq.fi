@@ -1,7 +1,7 @@
 //! Explicit versioned action DATA readers. No optional/default v3 publication field.
 use super::*;
 use gateway_auth_native_wire::publication_data::ImportPublicationDataV1;
-use gateway_core::{source_json::SourceJson, source_serialization as source};
+use gateway_source::{source_json::SourceJson, source_serialization as source};
 
 #[derive(Clone)]
 pub(super) struct ImportActionRow {
@@ -10,7 +10,7 @@ pub(super) struct ImportActionRow {
     pub(super) metadata: NativeImportMetadata,
     pub(super) target: NativeImportTarget,
     pub(super) actor: StoredNativeActor,
-    pub(super) context: gateway_core::identity::RequestContext,
+    pub(super) context: gateway_contracts::identity::RequestContext,
     pub(super) created_at_ms: i64,
     pub(super) deadline_ms: i64,
     pub(super) facts: sources::ImportFacts,
@@ -24,7 +24,7 @@ struct ActionV2 {
     metadata: NativeImportMetadata,
     target: NativeImportTarget,
     actor: StoredNativeActor,
-    context: gateway_core::identity::RequestContext,
+    context: gateway_contracts::identity::RequestContext,
     created_at_ms: i64,
     deadline_ms: i64,
     facts: sources::ImportFacts,
@@ -37,7 +37,7 @@ struct ActionV3 {
     metadata: NativeImportMetadata,
     target: NativeImportTarget,
     actor: StoredNativeActor,
-    context: gateway_core::identity::RequestContext,
+    context: gateway_contracts::identity::RequestContext,
     created_at_ms: i64,
     deadline_ms: i64,
     facts: sources::ImportFacts,

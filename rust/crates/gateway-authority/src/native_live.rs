@@ -1,11 +1,8 @@
 //! Same-authority live custody. No admission, quota proof, refresh or paid authorization.
-use crate::{
-    keys,
-    native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    paid_control::PaidControlOwner,
-    routing_types::SubscriptionPool,
-    store::{Authority, TokenSource, Transaction},
-};
+use crate::native_control::actor;
+use crate::native_control::actor::NativeRenewalActor;
+use crate::store::Authority;
+use crate::store::Transaction;
 use gateway_auth::{
     native_auth::NativeTransportIdentity,
     native_live::AuthenticatedNativeLive,
@@ -14,18 +11,27 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation},
-    tuple_key::{ScalarKeyPart, ScalarKeyPart::String as Text, TupleKey},
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
 };
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::ScalarKeyPart::String as Text,
+    tuple_key::TupleKey,
+};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub mod wire;
-use wire::{
-    NativeLiveAccess, NativeLiveAuthorityRequest, NativeLiveAuthorityResponse, NativeLiveFence,
-    NativeLiveRetirement,
+use gateway_native_authority_wire::live::{
+    NativeLiveAuthorityResponse, NativeLiveFence, NativeLiveRetirement,
 };
+use wire::{NativeLiveAccess, NativeLiveAuthorityRequest};
 
 /// Nonexpiring secretless control custody, NOT a second routing/accounting ledger.
 pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
@@ -187,7 +193,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let pool = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
         let (slot, account) = pool
             .accounts
             .iter()
@@ -254,7 +260,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         &self,
         proof: &AuthenticatedNativeLive,
         body: &[u8],
-    ) -> Result<NativeLiveAuthorityResponse, GatewayError> {
+    ) -> Result<NativeLiveAuthorityResponse<NativeLiveAccess>, GatewayError> {
         self.proof(proof, body)?;
         match NativeLiveAuthorityRequest::parse(body)? {
             NativeLiveAuthorityRequest::Authorize {
@@ -301,7 +307,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         body: &[u8],
         action_ref: &str,
         connection_id: &str,
-    ) -> Result<NativeLiveAuthorityResponse, GatewayError> {
+    ) -> Result<NativeLiveAuthorityResponse<NativeLiveAccess>, GatewayError> {
         for _ in 0..5 {
             self.proof(proof, body)?;
             let mut tx = self.authority.transaction(self.authority.fresh_time(0)?)?;
@@ -375,7 +381,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         action_ref: &str,
         connection_id: &str,
         authorization_ref: &str,
-    ) -> Result<NativeLiveAuthorityResponse, GatewayError> {
+    ) -> Result<NativeLiveAuthorityResponse<NativeLiveAccess>, GatewayError> {
         for _ in 0..5 {
             let mut tx = self.authority.transaction(self.authority.fresh_time(0)?)?;
             let connection: ConnectionRow = tx
@@ -528,7 +534,7 @@ pub fn validate_live_custody(
                 || row.account_id.is_empty()
                 || row.call_id.is_empty()
                 || row.mapping_revision.is_empty()
-                || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
+                || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
                 || row.actor.principal().is_empty()
             {
                 return Err(fail());
@@ -544,7 +550,7 @@ pub fn validate_live_custody(
                 || row.owner_epoch.is_empty()
                 || row.key_fingerprint.len() != 64
                 || row.call_id.is_empty()
-                || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
+                || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
                 || row.upstream_status.is_some_and(|s| s != 404 && s != 410)
                 || (row.retired && row.upstream_status.is_none())
             {

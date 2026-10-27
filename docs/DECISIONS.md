@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Capacity projection has one finite defining crate - 2026-10-27
+
+The structural capacity leaf moves the existing finite JSON capacity validation, chart/history projection and folding into `gateway-capacity-projection`. It defines the five existing scalar data helpers and depends only on `gateway-core` and `serde_json`. Observability retains event identity, privacy selection, storage, currentness, authority acceptance and all effects; recovery and Worker consumers import the defining data functions directly. Bodies, thresholds, ordering, comparator errors and wire shapes remain source-compatible.
+
+This registration is a mechanical integration candidate for the separately owned leaf. Root integration and final acceptance remain separate; observability is still oversized and this transfer does not complete that family or the Rust port.
+
 ## Passport browser sign-in uses revocable permanent app sessions - 2026-10-27
 
 The Bun gateway requests an explicitly opted-in persistent Passport app grant only through a fresh browser SSO code exchange, using PKCE S256 and the existing fixed issuer, client, audience, origin and callback. Its host-only HttpOnly/Secure/SameSite cookie contains a random local session identifier; existing private KV stores its SHA-256 key and the app-scoped upstream grant without a time-based expiry or a saved administrator-role authority. Every authenticated request introspects the grant against Passport's current user. Demotion denies admin access, deletion or authoritative revocation removes local authority, and temporary verification failures return 503 while retaining the saved session. Legacy JWT cookies remain verification-only until their normal expiry and cannot create permanent grants.
@@ -2628,7 +2634,6 @@ Source profile/line codecs are defined in `gateway-profile-source`, quota projec
 Reason: the remaining 4,121-line admin-data crate exceeded the owner's 1,000-line limit. Moving the exact shared finite predicates to the ledger data owner closes dependency cycles without duplicate algorithms. The complete audit preserves its original key/inventory EOF checks, observer order, deferred API/kernel/paid/reset/model failure order, codec bytes, raw keys, revisions and absolute expiry; no inventory pass or row collection is added.
 
 Reversal risk: aggregating these definitions restores oversized-crate debt, and facade exports hide the supported defining paths. This source-only split grants no credential, state capture/conversion, provider spend, runtime/service activation or deployment authority.
-
 ## Worker stream preparation retains the original request lifetime - 2026-10-25
 
 Direct synthetic SSE hops hold metadata until semantic output and use the same Session and admission for presemantic fallback. The first semantic terminal releases only its upstream reader. An already-armed lifetime owner survives asynchronous response preparation until the existing registered body finisher takes ownership; generic admission handoff retains caller-owned values without expanding authority. A feature-only fixture observes a pending preparation phase and drops the genuine Rust handler future while its caller signal remains un-aborted; those features stay off in shipping builds. Cerebras remains buffered and the existing subscription and authoritative 402/429 paid-tier policy stays unchanged. Source checks and fixture design do not establish runtime acceptance.
@@ -2661,6 +2666,7 @@ A WASM library check does not imply a shipping Worker build. Affected compiled o
 
 Reason: a native-only extraction changes root manifests and local lock records, while a test-only edit changes no production dependency input. Unconditional whole-workspace and Worker selection obscured these distinctions. Reversal risk: narrowing from only the new graph, matching lock dependencies by name alone, or treating an uncertain input as absent could omit a real consumer; those cases must expand selection or fail.
 
+
 ## Free synthetic Responses may publish an accepted upstream SSE head - 2026-10-27
 
 The owner approved early SSE commitment on 2026-10-27 at12:18UTC after reviewing the ordinary HTTP-status tradeoff. Only the existing presemantic-held unpaid synthetic Flash Responses stream may publish common HTTP200/SSE headers after actual validation/admission and a real accepted physical200SSE head/body from Lithos, DeepSeek or OpenRouter. The same request-owned selection task continues fallback inside that body; provider/attempt/rate/RetryAfter headers are omitted while the final provider remains unknown. Paid, direct, Chat, nonstream and paths with no accepted head retain their previous behavior.
@@ -2668,6 +2674,7 @@ The owner approved early SSE commitment on 2026-10-27 at12:18UTC after reviewing
 If all later hops fail after commitment, the client receives one truthful created+failed Responses SSE envelope, empty output/null missing usage and HTTP200, while original selected HTTP status/safe headers/error/completeness and final provider attribution remain internal passive failure DATA. This changes the prior ordinary mixed200presemanticEOF→400/503 JSON/status result. Header readiness is never admission proof, semantic success, client delivery or billed spend. One original permit/currentness/deadline/settlement owner must survive handoff and actual body cancellation; no fake abort, cloned permit, heartbeat or timer is introduced.
 
 The named optional request-log native_http_failure SourceJson field preserves that original passive HTTP observation and is absent for legacy/unset records. Record normalization has its own bounded defining data crate; store/CAS/keys/expiry/effects remain with Observability. Original16 cancellation, ordering, unknown-spend and cleanup predicates remain gates, with only explicitly conflicting header/wire expectations versioned. The later b5b48 event-driven Bun EOF correction is separate evidence and is not silently treated as a Worker cancellation guarantee or this frozen source contract. This decision authorizes no service activation, deployment, credentials, provider spend or private-state adoption.
+
 
 ## Rust host wait observations preserve real failures and unknown elapsed time - 2026-10-27
 
@@ -2679,11 +2686,24 @@ These data and platform operations add no timer, callback, serialized authority,
 
 The complete source UTF16 collation operation and its private native-absence test are defined by `gateway-worker-platform::source_collator`; alias selection remains in its existing schema owner. The selected HTTP failure detail and Responses-frame encoder are defined by `gateway-worker-web::http_failure`. Their existing field, null, partial-read, error, UUID and clock behavior is unchanged; bounded reads, safe-header capture and the capture effect remain with the request owner. These relocations provide room for the atomic Passport foundation without increasing a recorded ceiling. The actual incoming cancellation signal remains distinct from the child controller signal, including direct usage.
 
+## Compaction C1 separates portable definitions from async effects - 2026-10-27
+
+The source-compatible compaction family now defines immutable text/model/finite host data in `gateway-compaction-source`, transcript parsing and the entire state fitting ladder in `gateway-compaction-history`, and pure rendering/hybrid projections/opaque summary fitting in `gateway-compaction-render`. Retained `gateway-compaction` owns the actual async decisions, windows, residue concurrency and response builder. Original fixtures and synthetic hosts live in the dev-only `gateway-compaction-test-support`. Each estimator consumer imports the sole `gateway-prompt-policy` definition directly. The cycle closes by defining pure `truncated_result` in the renderer; no forwarding facade or production test-support edge is introduced.
+
+Reason: the original 3143-line P1 compaction crate exceeds the physical owned-source cap. This preserves the original thirteen tests, fixture bytes, private UTF-16 storage and opaque fit construction while giving each cohesive owner a bounded crate. The candidate starts at unaccepted P1 `b8f203ed2a6f4abe6621f406cd1468ee99f6eba6` and ancestry-merges required unaccepted M60 `cb24be5e1ee79f53c23ae0e687956ba7860acabb`; neither input nor this structural extraction is a release acceptance receipt. Worker changes are defining type imports and the direct source dependency only, preserving original lifecycle/transport ownership.
+
+Reversal risk: a render/history backedge, externally constructed fit, exposed runtime orchestration, duplicated estimator or runtime dependency on test support would undo the responsibility and privacy boundaries. Direct Cloud Linux/WASM results do not establish canonical ARM64/confinement, controlled workerd, Mac client or final production acceptance, and this change makes no compile-performance claim.
+
+## Authority record foundations preserve private operations - 2026-10-27
+
+Source key constructors and ordinary cache campaign/refresh records have direct defining crates; raw serialized records remain data, while PreparedTarget, RefreshPermit, current campaign/credential checks, opaque proof minting and atomic mutations stay with their existing authority operations. This structural ownership change does not alter routing, provider, expiry, accounting, credential or deployment behavior. Root retains the actual private store, token source, clock and trusted collation capability and supplies finite borrowed service factories. Defining operation traits contain the complete checked business bodies, private caches, opaque proof minting and original commits; consumers import their defining types and traits directly. Closed source observations and read tickets are data, and every consumer retains their complete revision and expiry fences in its original final atomic effect. A separate earlier authorization-only commit, public generic transaction or callback-selected read set cannot replace that same-effect currentness. Structural source ownership alone does not establish native, Worker, client or deployment acceptance.
+
 ## Rust Worker authority binding keeps one complete private operation - 2026-10-27
 
 The actual coordination Durable Object, fixed `RemoteAuthorityStore` wire and profile/date/operator bindings are defined together in `gateway-worker-authority-binding`. The `AUTHORITY` binding, singleton name, version-1 private protocol, 32 MiB bounds, SQLite read/commit/query behavior and original effect order remain unchanged. The public router never forwards the private store paths, and existing adoption/staging exports remain non-HTTP trusted-host operations with their original custody and currentness gates.
 
 Consumers use the defining module directly. Wire DTOs, State, Stub, selectors and effect factories remain private; the existing finite `profile_migration` method is public only to retain its existing AdminHost call across the crate boundary. No raw store getter, forwarded name, new proof constructor or authorization from stored DATA is introduced. Source relocation is separate from actual shipping/fixture class exports, SQLite instantiation, runtime and client acceptance.
+
 
 ## Rust admin presentation and pricing DATA have a defining web owner - 2026-10-27
 

@@ -1,6 +1,6 @@
 //! Reversible source-unit function/namespace/freeform projection.
 use crate::{source_tools::ToolMap, types::ToolIdentity};
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 pub fn flatten_tools(
     value: Option<&Value>,
@@ -23,12 +23,12 @@ pub fn original<'a>(wire: &'a str, names: &'a ToolMap) -> ToolIdentity {
         custom: false,
     })
 }
-pub fn custom_input(arguments: &str) -> gateway_core::js_string::JsString16 {
+pub fn custom_input(arguments: &str) -> gateway_source::js_string::JsString16 {
     SourceJson::parse(arguments)
         .ok()
-        .and_then(|value| gateway_core::source_serialization::member(&value, "input"))
-        .and_then(|value| gateway_core::source_serialization::string(&value))
-        .unwrap_or_else(|| gateway_core::js_string::JsString16::from_utf8(arguments))
+        .and_then(|value| gateway_source::source_serialization::member(&value, "input"))
+        .and_then(|value| gateway_source::source_serialization::string(&value))
+        .unwrap_or_else(|| gateway_source::js_string::JsString16::from_utf8(arguments))
 }
 pub fn function_item(
     id: &str,

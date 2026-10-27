@@ -1,14 +1,12 @@
 use crate::HistoryHost;
-use gateway_core::{
-    error::GatewayError,
-    query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::query::{QueryEntry, QueryRequest, QuerySelector, QueryStore};
 pub(crate) fn error(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "observability_state_invalid")
 }
 pub(crate) fn now<H: HistoryHost>(host: &H) -> Result<i64, GatewayError> {
     let at = host.now_ms();
-    if (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&at) {
+    if (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&at) {
         Ok(at)
     } else {
         Err(error("Invalid observation clock"))

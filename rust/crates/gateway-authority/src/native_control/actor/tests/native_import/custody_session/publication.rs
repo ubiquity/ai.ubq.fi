@@ -7,10 +7,10 @@ use gateway_auth_native_wire::{
     native_read::NATIVE_PUBLICATION_PATH,
     publication_command::{ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData},
 };
-use gateway_core::{
-    provider::PaidProvider, source_control::encode_source_control_record, source_json::SourceJson,
-};
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::source_control::encode_source_control_record;
 use gateway_schema::catalog_store;
+use gateway_source::source_json::SourceJson;
 
 fn catalog() -> SourceJson {
     SourceJson::parse(r#"{"models":[{"slug":"model-a","supported_reasoning_levels":[{"effort":"none","description":"none"}]}]}"#).unwrap()

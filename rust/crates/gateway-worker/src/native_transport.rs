@@ -10,7 +10,7 @@ use gateway_auth_native_wire::{
         NATIVE_VERSION_HEADER,
     },
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
 use gateway_worker_platform::random;

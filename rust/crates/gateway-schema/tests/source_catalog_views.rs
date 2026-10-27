@@ -1,8 +1,9 @@
 mod support;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
 use gateway_schema::{
     aliases::SourceStringCollator,
     catalog::{CatalogInput, ProviderCatalog},
@@ -27,7 +28,7 @@ fn units(value: &SourceJson) -> Vec<u16> {
     value.deserialize::<JsString16>().unwrap().into_units()
 }
 
-fn snapshot(models: Vec<gateway_core::source_json::SourceJson>) -> ModelSnapshot {
+fn snapshot(models: Vec<gateway_source::source_json::SourceJson>) -> ModelSnapshot {
     ModelSnapshot {
         models,
         source: "codex_cli".into(),

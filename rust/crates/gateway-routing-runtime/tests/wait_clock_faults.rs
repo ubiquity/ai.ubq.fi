@@ -1,11 +1,7 @@
-use gateway_authority::store::AuthorityClock;
-use gateway_core::{
-    error::GatewayError,
-    lifecycle::TransportObservation,
-    source_control::decode_source_control_record,
-    state::{AuthorityStore, RecordKey},
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_authority_contracts::AuthorityClock;
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_core::{source_control::decode_source_control_record, state::AuthorityStore};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_providers::policy::HopFailure;
 use gateway_routing_runtime::{
     session::RoutingSession,
@@ -18,6 +14,7 @@ use gateway_routing_runtime_test_support::{
     seed::{seed_key, window},
     store::Store,
 };
+use gateway_source::error::GatewayError;
 use gateway_wait_observation::outcome::WaitOutcome;
 use serde_json::Value;
 use std::sync::atomic::Ordering;

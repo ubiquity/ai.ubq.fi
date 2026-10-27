@@ -1,14 +1,14 @@
 use super::*;
 use crate::store::Transaction;
-use crate::{
-    keys,
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    routing_types::SubscriptionPool,
-};
 use gateway_auth::{
     native_import::NativeImportTarget,
     provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
 };
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
+};
+use gateway_authority_routing_records::types::SubscriptionPool;
 use serde_json::Value;
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +37,7 @@ pub(super) async fn read<
 >(
     control: &NativeRenewalAuthority<'_, S, I, C>,
     tx: &mut Transaction<'_, S, I>,
-    actor: &super::super::actor::StoredNativeActor,
+    actor: &gateway_authority_actor_records::legacy::StoredNativeActor,
     target: &NativeImportTarget,
 ) -> Result<ImportFacts, GatewayError> {
     let NativeImportTarget::ExistingAccount { account_id_hash } = target else {
@@ -68,14 +68,14 @@ pub(super) async fn read<
         return Err(unavailable());
     }
     let current = super::super::actor::read_current(tx, actor, control.current_config).await?;
-    if current.scope != super::super::actor::NativeActorScope::Admin {
+    if current.scope != gateway_authority_actor_records::scope::NativeActorScope::Admin {
         return Err(unavailable());
     }
     let key = codex_source_pool_key();
     let raw: Value = tx.read(&key).await?.ok_or_else(unavailable)?;
     let source = parse_codex_source_pool(&raw)?.ok_or_else(unavailable)?;
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(unavailable)?;
-    normalized.validate()?;
+    gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
     if normalized.pool_versionstamp.0 != tx.revision(&key).ok_or_else(unavailable)?
         || normalized.accounts.len() != source.accounts.len()
     {

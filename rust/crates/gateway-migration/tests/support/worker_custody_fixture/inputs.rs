@@ -5,10 +5,9 @@ use gateway_auth::{
     crypto::base64url, native_credentials::parse_native_document,
     provider_credentials::codex_source_pool_key, store::key,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::source_graph::{GraphAtom, GraphNode, SourceGraph};
-use gateway_core::tuple_key::TupleKey;
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration::graph_transport;
 use gateway_migration::native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue};
 use serde::Serialize;
@@ -24,7 +23,7 @@ impl FixtureTime {
         let deadline = origin
             .checked_add(300_000)
             .ok_or_else(|| error("Fixture time overflow"))?;
-        if origin < 1200 || deadline > gateway_core::identity::MAX_SAFE_INTEGER {
+        if origin < 1200 || deadline > gateway_contracts::identity::MAX_SAFE_INTEGER {
             return Err(error("Fixture time is outside its safe range"));
         }
         Ok(Self { origin, deadline })
@@ -114,7 +113,7 @@ fn rebase(mut capture: NativeCapture, time: FixtureTime) -> Result<NativeCapture
     let mut expected = vec![
         key(json!(["ubq_ai", "api_keys", "id", "offline-key"])),
         key(json!(["ubq_ai", "api_keys", "hash", hash])),
-        gateway_authority::keys::api_window("offline-key", "v3:1000", 2000),
+        gateway_authority_keys::api_window("offline-key", "v3:1000", 2000),
     ];
     for index in 0..4 {
         expected.push(key(json!(["default", "native-graph", index])));
@@ -193,7 +192,7 @@ fn rebase(mut capture: NativeCapture, time: FixtureTime) -> Result<NativeCapture
         string("v3:1000"),
         string("v3:300000"),
     )?;
-    capture.entries[2].raw_key = TupleKey::from_record_key(&gateway_authority::keys::api_window(
+    capture.entries[2].raw_key = TupleKey::from_record_key(&gateway_authority_keys::api_window(
         "offline-key",
         "v3:300000",
         time.origin,
@@ -405,7 +404,7 @@ mod tests {
         assert_eq!(at(&mut window, "reserved_requests"), number(0));
         assert_eq!(
             new.entries[2].raw_key,
-            TupleKey::from_record_key(&gateway_authority::keys::api_window(
+            TupleKey::from_record_key(&gateway_authority_keys::api_window(
                 "offline-key",
                 "v3:300000",
                 time.origin

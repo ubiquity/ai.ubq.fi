@@ -1,9 +1,10 @@
 //! Fixed synthetic source -> one persisted authority -> latest native inverse.
-use gateway_core::error::GatewayError;
+use gateway_authority_api_quota::ApiQuotaOperations;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::sqlite_store;
+use gateway_source::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(
@@ -13,15 +14,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     use fixture::{Directory, run};
     use gateway_auth::store::key;
-    use gateway_core::{source_graph::GraphNode, state::*};
+    use gateway_core::state::*;
     use gateway_migration::{
         engine::adopt_empty,
         native_capture::{NativeCapture, prepare_native},
         native_inverse::export_native_latest,
     };
+    use gateway_source_graph::graph::GraphNode;
     use sqlite_store::SqliteStore;
     struct Tokens(std::sync::atomic::AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "native-fixture-{}",
@@ -30,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }
@@ -54,8 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Clock,
     );
     run(authority.reserve_api_key(
-        &gateway_core::identity::ApiKeyId("offline-key".into()),
-        &gateway_core::identity::RequestId("native-post-restart-admission".into()),
+        &gateway_contracts::identity::ApiKeyId("offline-key".into()),
+        &gateway_contracts::identity::RequestId("native-post-restart-admission".into()),
         "responses",
         2300,
     ))?;

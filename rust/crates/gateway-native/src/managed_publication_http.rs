@@ -5,18 +5,19 @@ use crate::{
     owner_renewal::{NativeAccessPublisher, PublishedAccess, require_current_fence},
     private_https::PrivateHttps,
 };
-use gateway_auth::{
-    crypto::base64url, managed_access::ManagedAccessProjection,
-    native_auth::NativeTransportIdentity, native_credentials::NativeGeneration,
+use gateway_auth_credentials::{
+    managed_access::ManagedAccessProjection, native_credentials::NativeGeneration,
 };
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest, unverified},
     native_read::{NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH},
 };
-use gateway_authority::native_control::NativeRenewalFence;
-use gateway_core::error::GatewayError;
+use gateway_auth_primitives::crypto::base64url;
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_publication::{sender, wire};
 use gateway_publication_transport::managed;
+use gateway_source::error::GatewayError;
 use std::{net::TcpStream, time::Instant};
 
 type Request = gateway_publication_policy::protocol::PublicationRequest;

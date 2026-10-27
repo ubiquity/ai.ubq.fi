@@ -1,6 +1,7 @@
 //! Provider-declared catalog projections; credentials/configuration are injected observations.
 use crate::{aliases::*, catalog::*, metadata::*, model_control as c};
-use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
 pub const CEREBRAS_IDS: &[&str] = &["gpt-oss-120b", "qwen-3.8-27b"];
 pub fn provider_hint(provider: &str, id: &ModelId) -> MetadataHint {

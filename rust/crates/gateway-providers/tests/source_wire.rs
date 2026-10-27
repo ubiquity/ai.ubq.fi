@@ -1,8 +1,8 @@
 //! Literal source-unit and actual Rust wire/echo fixtures. No JavaScript projector or live provider.
-use gateway_core::{
-    js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
-    source_serialization as json,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as json,
 };
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_providers::{
     response::decode_response,
     source_request::prepare_source_request,
@@ -382,7 +382,7 @@ fn semantic_and_usage_accessors_observe_the_authoritative_event_only() {
     assert_eq!(event.observed_usage().unwrap()["total_tokens"], 3);
     assert_eq!(
         event.terminal(),
-        Some(gateway_core::lifecycle::SemanticTerminal::Completed)
+        Some(gateway_contracts::lifecycle::SemanticTerminal::Completed)
     );
 }
 
@@ -666,7 +666,7 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
 #[test]
 fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings()
 -> Result<(), String> {
-    use gateway_core::model::ModelId;
+    use gateway_contracts::model::ModelId;
     for model in [
         JsString16::from_units(vec![0xd800]),
         JsString16::from_units(vec![0xdc00]),
@@ -728,7 +728,7 @@ fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings
 }
 #[test]
 fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {
-    use gateway_core::model::ModelId;
+    use gateway_contracts::model::ModelId;
     let raw = parse(r#"{"model":"\ud800","input":"x"}"#);
     let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
     let error = prepare_source_request(
@@ -754,7 +754,7 @@ fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {
 
 #[test]
 fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments() {
-    use gateway_core::{model::ModelId, provider::PaidProvider};
+    use gateway_contracts::{model::ModelId, provider::PaidProvider};
     use gateway_providers::policy::{PaidRoutingInput, resolve_paid_route};
     let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
     let row = parse(

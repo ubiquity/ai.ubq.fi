@@ -1,7 +1,5 @@
-use gateway_core::{
-    error::GatewayError,
-    health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, ReleaseIdentity},
-};
+use gateway_source::error::GatewayError;
+use gateway_contracts::health::{DEPLOYMENT_ID_HEADER, GIT_SHA_HEADER, ReleaseIdentity};
 #[cfg(feature = "entrypoint")]
 use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
@@ -150,7 +148,7 @@ pub async fn fetch_with_bindings(
             env,
             Rc::new(context),
             identity.git_sha(),
-            gateway_core::identity::RequestId(request_id.clone()),
+            gateway_contracts::identity::RequestId(request_id.clone()),
             native,
         )
         .await

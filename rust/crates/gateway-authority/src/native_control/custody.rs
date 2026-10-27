@@ -1,15 +1,11 @@
 //! Data-only private rollback validation. Never authenticates, revives or mints an operation.
-use super::{
-    NativeRenewalContext, NativeRenewalFence,
-    rows::{self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, fail},
+use super::rows::{
+    self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, fail,
 };
-use gateway_core::{
-    error::GatewayError,
-    source_control::decode_source_control_record,
-    source_serialization as source,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{DecodedKeyPart, TupleKey},
-};
+use gateway_core::{source_control::decode_source_control_record, state::StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use gateway_native_authority_wire::{context::NativeRenewalContext, renewal::NativeRenewalFence};
+use gateway_source::{error::GatewayError, source_serialization as source};
 use serde_json::Value;
 
 pub(super) fn hash(value: &str) -> Result<(), GatewayError> {
@@ -46,7 +42,7 @@ fn terminal(row: &TerminalPublication) -> Result<(), GatewayError> {
     Ok(())
 }
 fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
-    if row.v != super::NATIVE_RENEWAL_FENCE_VERSION {
+    if row.v != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION {
         return Err(fail());
     }
     for value in [
@@ -95,7 +91,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
                 return Err(fail());
             }
             hash(original_admission_digest)?;
-            if *slot > gateway_core::identity::MAX_SAFE_INTEGER as u64 {
+            if *slot > gateway_contracts::identity::MAX_SAFE_INTEGER as u64 {
                 return Err(fail());
             }
         }
@@ -104,9 +100,9 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
             active_generation,
             ..
         } => {
-            crate::routing::validate_binding(binding)?;
+            gateway_authority_routing_evidence::validation::validate_binding(binding)?;
             if *active_generation == 0
-                || *active_generation > gateway_core::identity::MAX_SAFE_INTEGER as u64
+                || *active_generation > gateway_contracts::identity::MAX_SAFE_INTEGER as u64
             {
                 return Err(fail());
             }
@@ -123,7 +119,9 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
             if context.v != 1
                 || context.slot != 1
                 || !(1..=3).contains(&context.cycle)
-                || !crate::cache_experiment::release_valid(&context.release_git_sha)
+                || !gateway_cache_experiment_records::source::release_valid(
+                    &context.release_git_sha,
+                )
             {
                 return Err(fail());
             }

@@ -6,6 +6,13 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-redaction.workspace = true
+gateway-source.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-admin-keys.workspace = true
@@ -20,6 +27,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-authority-kernel = { path = "../gateway-authority-kernel" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-admin-test-support.workspace = true
 
 [lints]

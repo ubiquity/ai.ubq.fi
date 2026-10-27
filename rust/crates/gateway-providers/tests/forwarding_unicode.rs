@@ -1,5 +1,5 @@
 //! Exact source forwarding seams, not an aggregate request tokenizer or runtime dispatch proof.
-use gateway_core::provider::UpstreamProvider;
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_providers::{
     chat,
     request::prepare_request,
@@ -182,7 +182,7 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
     }
 }
 
-fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")

@@ -1,8 +1,8 @@
 mod support;
-use gateway_core::{
-    js_string::JsString16, source_usage::extract_usage_tokens, state::StoredRecord,
-    tuple_key::TupleKey,
-};
+use gateway_source::js_string::JsString16;
+use gateway_contracts::source_usage::extract_usage_tokens;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_observability::{ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup};
 use serde_json::Value;
 use support::{Host, Memory, run};

@@ -1,13 +1,11 @@
 use crate::{Row, Transform, decode, invalid, starts, unavailable};
-use gateway_authority::{
-    kernel::{KernelPolicy, KernelReservation, KernelWindow},
-    paid_types::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate},
-    quota::{ApiUsageRequest, ApiUsageWindow},
-};
-use gateway_core::error::GatewayError;
-use gateway_core::{lifecycle::BillingState, value::PortableValue};
-use serde_json::Value;
-use serde_json::json;
+use gateway_authority_api_protocol::{ApiUsageRequest, ApiUsageWindow};
+use gateway_authority_kernel_protocol::{KernelPolicy, KernelReservation, KernelWindow};
+use gateway_authority_paid_records::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate};
+use gateway_contracts::lifecycle::BillingState;
+use gateway_kv_codec::value::PortableValue;
+use gateway_source::error::GatewayError;
+use serde_json::{Value, json};
 
 pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     if crate::paid_controls::forward(row)? {
@@ -18,7 +16,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     }
     let p = &row.parts;
     if starts(p, &["uos_ai", "codex_reset_shadow_decision"]) {
-        gateway_authority::full_pool_reset::types::FullPoolShadowDecision::validate_record(
+        gateway_authority_reset_records::full_pool::FullPoolShadowDecision::validate_record(
             &row.key,
             &row.record,
         )?;
@@ -43,11 +41,11 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             return Err(invalid("Catalog chunk view is unsupported"));
         }
         row.record.value = json!(bytes);
-        row.record.value_encoding = gateway_core::value::ValueEncoding::Json;
+        row.record.value_encoding = gateway_kv_codec::value::ValueEncoding::Json;
         row.mapping.transform = Transform::CatalogBytes;
         return Ok(());
     }
-    if row.record.value_encoding != gateway_core::value::ValueEncoding::Json {
+    if row.record.value_encoding != gateway_kv_codec::value::ValueEncoding::Json {
         if quota_family(p) {
             gateway_claude_usage_quota::parse_record(&row.record, 0)?;
             return Ok(());
@@ -77,13 +75,13 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             ));
         }
     } else if starts(p, &["uos_ai", "codex_active_account"]) {
-        let _: gateway_core::identity::ActiveSelection = decode(&v)?;
+        let _: gateway_contracts::identity::ActiveSelection = decode(&v)?;
     } else if starts(p, &["uos_ai", "codex_account_routing"]) {
-        gateway_authority::routing_codec::parse_routing_state(&v)?;
+        gateway_authority_routing_records::codec::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {
-        gateway_authority::capacity_rules::parse_capacity_store(&v)?;
+        gateway_authority_routing_evidence::capacity::parse_capacity_store(&v)?;
     } else if starts(p, &["uos_ai", "codex_manual_reset"]) {
-        let intent = gateway_authority::manual_reset::parse_manual_intent(&v)?;
+        let intent = gateway_authority_reset_records::manual::parse_manual_intent(&v)?;
         if p.len() != 4
             || p[2] != "v1"
             || p[3] != intent.account_id_hash

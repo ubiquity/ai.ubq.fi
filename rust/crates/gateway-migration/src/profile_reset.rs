@@ -1,12 +1,12 @@
 //! Exact source redemption/day validation; no redemption or promotion capability is minted.
-use gateway_authority::reset_types::{ResetRecord, ResetState};
+use gateway_authority_reset_records::{ResetRecord, ResetState};
 use gateway_migration_ledger::rows::{ObservedRow, starts};
 use serde_json::Value;
 
 fn safe(value: Option<&Value>) -> bool {
     value
         .and_then(Value::as_i64)
-        .is_some_and(|v| (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&v))
+        .is_some_and(|v| (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&v))
 }
 fn text(value: Option<&Value>, limit: usize) -> bool {
     value
@@ -123,13 +123,13 @@ fn daily(parts: &[Value], value: &Value) -> bool {
 }
 pub(crate) fn audit(
     rows: &[ObservedRow],
-    errors: &mut Vec<gateway_core::js_string::JsString16>,
-) -> Result<(), gateway_core::error::GatewayError> {
+    errors: &mut Vec<gateway_source::js_string::JsString16>,
+) -> Result<(), gateway_source::error::GatewayError> {
     for row in rows
         .iter()
         .filter(|r| starts(&r.parts, &["uos_ai", "codex_reset_shadow_decision"]))
     {
-        if gateway_authority::full_pool_reset::types::FullPoolShadowDecision::validate_record(
+        if gateway_authority_reset_records::full_pool::FullPoolShadowDecision::validate_record(
             &row.key,
             &row.record,
         )

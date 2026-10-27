@@ -1,13 +1,16 @@
-use crate::{
-    journal::{self, Journal, Phase},
-    types::{RecoveredSession, RevisionCheckWire, RoutingHost},
-};
-use gateway_authority::kernel::KernelTerminal;
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::lifecycle::{SemanticTerminal, TransportObservation};
-use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::state::{AuthorityStore, RevisionCheck};
+use crate::{journal, journal::Journal, journal::Phase, types::RecoveredSession};
+use crate::{types::RevisionCheckWire, types::RoutingHost};
+use gateway_authority::store::Authority;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_contracts::lifecycle::SemanticTerminal;
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_core::{query::QueryRequest, query::QuerySelector};
+use gateway_core::{query::QueryStore, state::AuthorityStore, state::RevisionCheck};
+use gateway_source::error::GatewayError;
 
 pub(crate) async fn finish_record<
     S: AuthorityStore + Clone,
@@ -24,20 +27,17 @@ pub(crate) async fn finish_record<
 ) -> Result<RecoveredSession, GatewayError> {
     let now = clock.now_ms()?;
     let (_, old) = journal::load(store, id).await?;
-    if let Some(local) = old
-        .local_work
-        .as_ref()
-        .filter(|local| local.phase != gateway_core::local_work::LocalWorkPhase::ProviderPlanned)
-    {
-        let local_observation =
-            local
-                .terminal
-                .unwrap_or(gateway_core::local_work::LocalTerminalObservation {
-                    semantic: gateway_core::local_work::LocalSemanticOutcome::Incomplete,
-                    reader_termination: observed.reader_termination,
-                    body: observed.body,
-                    delivery: observed.delivery,
-                });
+    if let Some(local) = old.local_work.as_ref().filter(|local| {
+        local.phase != gateway_local_journal::local_work::LocalWorkPhase::ProviderPlanned
+    }) {
+        let local_observation = local.terminal.unwrap_or(
+            gateway_local_journal::local_work::LocalTerminalObservation {
+                semantic: gateway_local_journal::local_work::LocalSemanticOutcome::Incomplete,
+                reader_termination: observed.reader_termination,
+                body: observed.body,
+                delivery: observed.delivery,
+            },
+        );
         return crate::local_work::finish_local_record(
             store,
             tokens,
@@ -199,7 +199,7 @@ pub async fn recover_pending<
         }
         let (old, row) = journal::load(&store, id).await?;
         let local_pending = row.local_work.as_ref().is_some_and(|local| {
-            local.phase == gateway_core::local_work::LocalWorkPhase::TerminalPending
+            local.phase == gateway_local_journal::local_work::LocalWorkPhase::TerminalPending
         });
         if !row.finished
             && row.terminal_intent.is_none()
@@ -220,11 +220,10 @@ pub async fn recover_pending<
             now,
             &[RevisionCheckWire::from(&fence)],
             |j| {
-                if j.terminal_intent.is_none()
-                    && !j.local_work.as_ref().is_some_and(|local| {
-                        local.phase == gateway_core::local_work::LocalWorkPhase::TerminalPending
-                    })
-                    && j.lease_expires_at_ms > now
+                if j.terminal_intent.is_none() && !j.local_work.as_ref().is_some_and(|local| {
+                    local.phase
+                        == gateway_local_journal::local_work::LocalWorkPhase::TerminalPending
+                }) && j.lease_expires_at_ms > now
                 {
                     return Err(journal::unavailable("Routing lease is still active."));
                 }

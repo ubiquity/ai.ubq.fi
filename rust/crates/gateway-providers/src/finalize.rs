@@ -1,6 +1,5 @@
 //! Source-specific final transport adaptations shared by buffered decoders.
 use crate::types::*;
-use gateway_core::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use serde_json::{Value, json};
 pub const CLAUDE_ATTRIBUTION: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 pub fn claude_native_transport(body: &mut Value, options: &PrepareOptions) {
@@ -85,7 +84,7 @@ pub fn lithos_stream_refusal(
     headers: &Headers,
     value: &Value,
 ) -> Option<DecodedResponse> {
-    if plan.provider != UpstreamProvider::Lithos || !plan.stream || status != 429 {
+    if plan.provider != gateway_contracts::provider::UpstreamProvider::Lithos || !plan.stream || status != 429 {
         return None;
     }
     let detail = value
@@ -120,7 +119,7 @@ pub fn lithos_stream_refusal(
         headers: output_headers,
         body: crate::source::generated(value),
         events: vec![event],
-        terminal: Some(SemanticTerminal::Failed),
+        terminal: Some(gateway_contracts::lifecycle::SemanticTerminal::Failed),
         usage: None,
         native_replay: None,
         raw_body: None,

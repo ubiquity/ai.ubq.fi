@@ -4,10 +4,10 @@ use gateway_auth::{
     crypto::{base64url, decode_base64url},
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
-use gateway_authority::initial_control_owner::{
+use gateway_authority_initial_owner::{
     InitialAdoptionBinding, InitialControlOwnerDeployment, InitialNativeCustodyBinding,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use worker::Env;

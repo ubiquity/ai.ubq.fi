@@ -13,11 +13,10 @@ use crate::{
     staged::CanonicalRecord,
     starts, unavailable,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::state::RecordKey;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_core::state::StoredRecord;
-use gateway_core::tuple_key::TupleKey;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -169,7 +168,7 @@ fn control_row(key: &RecordKey, p: &[Value], record: &StoredRecord) -> Result<bo
                 || p[4] != marker.call_id
                 || marker.schema_version != 1
                 || ![404, 410].contains(&marker.upstream_status)
-                || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&marker.created_at_ms)
+                || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&marker.created_at_ms)
                 || record.expires_at_ms.is_some()
             {
                 return Err(invalid("Pending live-call retirement custody is malformed"));
@@ -195,8 +194,8 @@ fn authority_control(
     record: &StoredRecord,
     now_ms: i64,
 ) -> Result<bool, GatewayError> {
-    if *key == gateway_authority::keys::kernel_defaults() {
-        let mut expected = gateway_authority::kernel::KernelDefaults::default();
+    if *key == gateway_authority_keys::kernel_defaults() {
+        let mut expected = gateway_authority_kernel_protocol::KernelDefaults::default();
         if let Some(source) =
             all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)?
         {
@@ -209,7 +208,8 @@ fn authority_control(
             expected.window_ms = gateway_admin_contracts::fields::positive(source.json_value()?)
                 .unwrap_or(604800000);
         }
-        let actual: gateway_authority::kernel::KernelDefaults = decode(record.json_value()?)?;
+        let actual: gateway_authority_kernel_protocol::KernelDefaults =
+            decode(record.json_value()?)?;
         if actual != expected {
             return Err(invalid(
                 "Latest derived Kernel defaults differ from source defaults; inverse would lose policy",
@@ -226,7 +226,7 @@ fn authority_control(
             .ok_or_else(|| invalid("Derived API policy has no source ID"))?;
         let source: gateway_admin_keys::keys::ApiKeyRecord = decode(source.json_value()?)?;
         let mut expected = gateway_admin_keys::keys::authority_policy(&source, now_ms);
-        let actual: gateway_authority::quota::ApiKeyPolicy = decode(record.json_value()?)?;
+        let actual: gateway_authority_api_protocol::ApiKeyPolicy = decode(record.json_value()?)?;
         if source.policy.revoked_at_ms.is_some() && actual.expires_at_ms <= now_ms {
             expected.expires_at_ms = actual.expires_at_ms;
         }

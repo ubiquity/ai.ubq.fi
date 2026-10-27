@@ -5,7 +5,7 @@ mod native_import;
 mod renewal_v2;
 use gateway_auth::crypto::{Secret, sha256_base64url};
 use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestId};
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestId};
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};
 use std::{
     collections::BTreeMap,
@@ -55,7 +55,7 @@ impl Store {
         *self.race.lock().unwrap() = Some((key, value));
     }
 }
-impl crate::store::AuthorityClock for Store {
+impl gateway_authority_contracts::AuthorityClock for Store {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(self.now.load(Ordering::SeqCst))
     }
@@ -249,7 +249,7 @@ fn api_setup(store: &Store, expiry: i64) -> String {
     store.seed(
         keys::api_policy("api-fixture"),
         "policy-1",
-        crate::quota::ApiKeyPolicy {
+        gateway_authority_api_protocol::ApiKeyPolicy {
             v: 3,
             key_id: ApiKeyId("api-fixture".into()),
             expires_at_ms: expiry,

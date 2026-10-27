@@ -1,0 +1,28 @@
+[package]
+name = "gateway-cache-experiment-dispatch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
+gateway-auth = { path = "../gateway-auth" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-routing-policy = { path = "../gateway-authority-routing-policy" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
+gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }
+gateway-cache-experiment-evidence = { path = "../gateway-cache-experiment-evidence" }
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-core = { path = "../gateway-core" }
+gateway-schema = { path = "../gateway-schema" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

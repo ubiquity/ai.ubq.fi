@@ -1,14 +1,21 @@
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use super::*;
 use crate::live_bridge::socket::{LiveDialContext, NativeLiveConnector};
-use gateway_auth::{
-    crypto::base64url,
-    native_auth::{NativeAuthHeaders, NativeNonceAuthority, NativeTransportIdentity},
-    native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_AUTHORITY_PATH, NativeLiveAuthenticator},
+use gateway_auth_native_contracts::{
+    native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_AUTHORITY_PATH},
+    nonce::NativeNonceAuthority,
 };
-use gateway_auth_native_wire::native_read::*;
-use gateway_authority::native_live::wire::{
-    NativeLiveAccess, NativeLiveAuthorityRequest, NativeLiveAuthorityResponse, NativeLiveFence,
+use gateway_auth_native_proof::{
+    native_auth::{NativeAuthHeaders, NativeTransportIdentity},
+    native_live::NativeLiveAuthenticator,
 };
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER,
+    NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+};
+use gateway_auth_primitives::crypto::base64url;
+use gateway_authority::native_live::wire::{NativeLiveAccess, NativeLiveAuthorityRequest};
+use gateway_native_authority_wire::live::{NativeLiveAuthorityResponse, NativeLiveFence};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{
     collections::BTreeMap,
@@ -109,20 +116,16 @@ fn authority_peer(
     identity: NativeTransportIdentity,
     mode: &'static str,
     calls: Arc<AtomicUsize>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        let (socket, _) = listener.accept().unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        socket
-            .set_write_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let mut tls = StreamOwned::new(ServerConnection::new(server_tls()).unwrap(), socket);
+) -> thread::JoinHandle<FixtureResult<()>> {
+    thread::spawn(move || -> FixtureResult<()> {
+        let (socket, _) = listener.accept()?;
+        socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+        socket.set_write_timeout(Some(Duration::from_secs(5)))?;
+        let mut tls = StreamOwned::new(ServerConnection::new(server_tls())?, socket);
         let count = if mode == "lost" { 1 } else { 4 };
         for index in 0..count {
             let (headers, body) = request(&mut tls);
-            let now = crate::http_server::now_ms().unwrap();
+            let now = gateway_native_http_framing::response::now_ms()?;
             let proof = futures_executor::block_on(
                 NativeLiveAuthenticator::new(&identity, &Nonces).authenticate_authority(
                     NativeAuthHeaders {
@@ -135,14 +138,13 @@ fn authority_peer(
                     &body,
                     now,
                 ),
-            )
-            .unwrap();
-            proof.require_authority_request(&body, now).unwrap();
+            )?;
+            proof.require_authority_request(&body, now)?;
             let mut current = fence();
             if mode == "changed" && index == 3 {
                 current.mapping_revision = "changed-mapping".into();
             }
-            let reply = match NativeLiveAuthorityRequest::parse(&body).unwrap() {
+            let reply = match NativeLiveAuthorityRequest::parse(&body)? {
                 NativeLiveAuthorityRequest::Authorize { .. } => {
                     assert_eq!(index, 0);
                     NativeLiveAuthorityResponse::Authorize {
@@ -162,20 +164,28 @@ fn authority_peer(
                 }
                 NativeLiveAuthorityRequest::Retire { .. } => panic!("normal close must not retire"),
             };
-            let reply = serde_json::to_vec(&reply).unwrap();
-            let signature = identity
-                .sign_live_authority_response(&headers[NATIVE_NONCE_HEADER], &body, 200, &reply)
-                .unwrap();
+            let reply = serde_json::to_vec(&reply)?;
+            let signature = identity.sign_live_authority_response(
+                &headers[NATIVE_NONCE_HEADER],
+                &body,
+                200,
+                &reply,
+            )?;
             let connection = if mode == "lost" {
                 "close"
             } else {
                 "keep-alive"
             };
-            write!(tls,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n{NATIVE_RESPONSE_MAC_HEADER}: {signature}\r\n\r\n",reply.len()).unwrap();
-            tls.write_all(&reply).unwrap();
-            tls.flush().unwrap();
+            write!(
+                tls,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {connection}\r\n{NATIVE_RESPONSE_MAC_HEADER}: {signature}\r\n\r\n",
+                reply.len()
+            )?;
+            tls.write_all(&reply)?;
+            tls.flush()?;
             calls.fetch_add(1, Ordering::SeqCst);
         }
+        Ok(())
     })
 }
 struct Connector {
@@ -191,48 +201,45 @@ impl NativeLiveConnector for Connector {
 }
 
 #[test]
-fn actual_startup_composer_reuses_reverse_tls_for_currentness_and_native_101_frames_and_close() {
+fn actual_startup_composer_reuses_reverse_tls_for_currentness_and_native_101_frames_and_close()
+-> FixtureResult<()> {
     for mode in ["normal", "lost", "changed"] {
         let directory = std::env::temp_dir().join(format!(
             "uos-native-live-startup-{}-{mode}",
             std::process::id()
         ));
-        std::fs::create_dir(&directory).unwrap();
+        std::fs::create_dir(&directory)?;
         let config = serde_json::json!({"v":3,"listen":"127.0.0.1:0","identity":{"key_id":"fixture-key","owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_base64url":base64url(&[73;32])},"nonce_database":directory.join("nonces.sqlite3"),"sources":[],"live_sideband":{"authority_origin":"https://rust-candidate.ai.ubq.fi"}});
         let config =
-            crate::daemon_config::NativeDaemonConfig::read_stdin(config.to_string().as_bytes())
-                .unwrap();
+            crate::daemon_config::NativeDaemonConfig::read_stdin(config.to_string().as_bytes())?;
         let identity = config.identity.clone();
-        let authority_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let reverse = TcpStream::connect(authority_listener.local_addr().unwrap()).unwrap();
+        let authority_listener = TcpListener::bind("127.0.0.1:0")?;
+        let reverse = TcpStream::connect(authority_listener.local_addr()?)?;
         let rpc = Arc::new(AtomicUsize::new(0));
         let authority = authority_peer(authority_listener, identity.clone(), mode, rpc.clone());
-        let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let upstream_address = upstream_listener.local_addr().unwrap();
+        let upstream_listener = TcpListener::bind("127.0.0.1:0")?;
+        let upstream_address = upstream_listener.local_addr()?;
         let upstream = if mode == "lost" {
             None
         } else {
-            Some(thread::spawn(move || {
-                let (socket, _) = upstream_listener.accept().unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .unwrap();
-                let tls = StreamOwned::new(ServerConnection::new(server_tls()).unwrap(), socket);
-                let mut socket = tungstenite::accept(tls).unwrap();
+            Some(thread::spawn(move || -> FixtureResult<()> {
+                let (socket, _) = upstream_listener.accept()?;
+                socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+                let tls = StreamOwned::new(ServerConnection::new(server_tls())?, socket);
+                let mut socket = tungstenite::accept(tls)?;
                 if mode == "normal" {
-                    socket.send(Message::Text("upstream".into())).unwrap();
-                    assert_eq!(socket.read().unwrap(), Message::Text("downstream".into()));
-                    socket.send(Message::Text("echo".into())).unwrap();
-                    socket
-                        .close(Some(CloseFrame {
-                            code: CloseCode::Normal,
-                            reason: "normal".into(),
-                        }))
-                        .unwrap();
+                    socket.send(Message::Text("upstream".into()))?;
+                    assert_eq!(socket.read()?, Message::Text("downstream".into()));
+                    socket.send(Message::Text("echo".into()))?;
+                    socket.close(Some(CloseFrame {
+                        code: CloseCode::Normal,
+                        reason: "normal".into(),
+                    }))?;
                 } else {
                     let _ = socket.send(Message::Text("must-not-reach-client".into()));
                     assert!(matches!(socket.read(), Err(_) | Ok(Message::Close(_))));
                 }
+                Ok(())
             }))
         };
         let dials = Arc::new(AtomicUsize::new(0));
@@ -243,22 +250,18 @@ fn actual_startup_composer_reuses_reverse_tls_for_currentness_and_native_101_fra
                 calls: dials.clone(),
             }),
             Some(reverse),
-        )
-        .unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let native = thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            service.serve_connection(&mut socket).unwrap();
+        )?;
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let native = thread::spawn(move || -> FixtureResult<()> {
+            let (mut socket, _) = listener.accept()?;
+            service.serve_connection(&mut socket)?;
+            Ok(())
         });
-        let mut request = format!("ws://{address}/v1/native/live")
-            .into_client_request()
-            .unwrap();
-        let now = crate::http_server::now_ms().unwrap();
+        let mut request = format!("ws://{address}/v1/native/live").into_client_request()?;
+        let now = gateway_native_http_framing::response::now_ms()?;
         let nonce = base64url(&[7; 32]);
-        let mac = identity
-            .sign_live_request(now, &nonce, "fixture-action")
-            .unwrap();
+        let mac = identity.sign_live_request(now, &nonce, "fixture-action")?;
         for (key, value) in [
             (NATIVE_VERSION_HEADER, "1".to_owned()),
             (NATIVE_KEY_HEADER, identity.key_id().to_owned()),
@@ -268,39 +271,44 @@ fn actual_startup_composer_reuses_reverse_tls_for_currentness_and_native_101_fra
             (NATIVE_LIVE_ACTION_HEADER, "fixture-action".to_owned()),
         ] {
             request.headers_mut().insert(
-                tungstenite::http::HeaderName::from_bytes(key.as_bytes()).unwrap(),
-                value.parse().unwrap(),
+                tungstenite::http::HeaderName::from_bytes(key.as_bytes())?,
+                value.parse()?,
             );
         }
-        let socket = TcpStream::connect(address).unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
-        let (mut client, response) = tungstenite::client(request, socket).unwrap();
+        let socket = TcpStream::connect(address)?;
+        socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let (mut client, response) = tungstenite::client(request, socket)?;
         assert_eq!(response.status(), 101);
         if mode == "normal" {
-            client.send(Message::Text("downstream".into())).unwrap();
-            assert_eq!(client.read().unwrap(), Message::Text("upstream".into()));
-            assert_eq!(client.read().unwrap(), Message::Text("echo".into()));
+            client.send(Message::Text("downstream".into()))?;
+            assert_eq!(client.read()?, Message::Text("upstream".into()));
+            assert_eq!(client.read()?, Message::Text("echo".into()));
             assert!(
-                matches!(client.read().unwrap(),Message::Close(Some(frame)) if frame.code==CloseCode::Normal)
+                matches!(client.read()?,Message::Close(Some(frame)) if frame.code==CloseCode::Normal)
             );
         } else {
             assert!(
-                matches!(client.read().unwrap(),Message::Close(Some(frame)) if u16::from(frame.code)==1011)
+                matches!(client.read()?,Message::Close(Some(frame)) if u16::from(frame.code)==1011)
             );
         }
         drop(client);
-        native.join().unwrap();
-        authority.join().unwrap();
+        native
+            .join()
+            .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
+        authority
+            .join()
+            .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
         if let Some(upstream) = upstream {
-            upstream.join().unwrap();
+            upstream
+                .join()
+                .map_err(|_| std::io::Error::other("fixture thread panicked"))??;
         }
         assert_eq!(
             rpc.load(Ordering::SeqCst),
             if mode == "lost" { 1 } else { 4 }
         );
         assert_eq!(dials.load(Ordering::SeqCst), usize::from(mode != "lost"));
-        std::fs::remove_dir_all(directory).unwrap();
+        std::fs::remove_dir_all(directory)?;
     }
+    Ok(())
 }

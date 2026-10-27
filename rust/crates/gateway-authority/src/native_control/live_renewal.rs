@@ -1,28 +1,37 @@
 //! Explicit non-inference native renewal facts. No manufactured session, attempt or admission.
-use super::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalAction, NativeRenewalCancellation,
-    NativeRenewalContext, NativeRenewalFence, OWNER_RENEWAL_MAX_MS,
-    actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    facts,
-    receiver::NativeRenewalAuthority,
-    rows::{self, ActionRow, conflict, fail},
-};
-use crate::{
-    keys,
-    native_live::mapping_key,
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    routing::LiveAccountSelection,
-    routing_types::SubscriptionPool,
-    store::{TokenSource, Transaction},
-};
+use super::NativeRenewalAction;
+use super::NativeRenewalCancellation;
+use super::OWNER_RENEWAL_MAX_MS;
+use super::actor;
+use super::actor::NativeRenewalActor;
+use super::facts;
+use super::receiver::NativeRenewalAuthority;
+use super::rows;
+use super::rows::ActionRow;
+use super::rows::conflict;
+use super::rows::fail;
+use crate::native_live::mapping_key;
+use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::ActiveSelection;
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
+};
+use gateway_authority_routing_records::types::SubscriptionPool;
+use gateway_authority_routing_selection::types::LiveAccountSelection;
+use gateway_contracts::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
+use gateway_native_authority_wire::context::NativeRenewalContext;
+use gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION;
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_schema::catalog_store::runtime_config_key;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 struct Control {
@@ -74,7 +83,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     pub async fn prepare_cache_experiment_renewal(
         &self,
         actor: &NativeRenewalActor,
-        permit: &crate::cache_experiment::RefreshPermit,
+        permit: &gateway_cache_experiment_dispatch::RefreshPermit,
     ) -> Result<NativeRenewalAction, GatewayError> {
         self.prepare_live_context(
             actor,
@@ -89,7 +98,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         &self,
         actor: &NativeRenewalActor,
         context: NativeRenewalContext,
-        expected: Option<&gateway_core::identity::AccountBinding>,
+        expected: Option<&gateway_contracts::identity::AccountBinding>,
     ) -> Result<NativeRenewalAction, GatewayError> {
         let scope = if matches!(context, NativeRenewalContext::CacheExperiment { .. }) {
             NativeActorScope::Admin
@@ -252,7 +261,8 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 }
                 let routing: Option<Value> = tx.read(&keys::routing()).await?;
                 if let Some(raw) = routing {
-                    let state = crate::routing_codec::parse_routing_state(&raw)?;
+                    let state =
+                        gateway_authority_routing_records::codec::parse_routing_state(&raw)?;
                     let slot = state
                         .slots
                         .get(usize::try_from(binding.slot).map_err(|_| fail())?)
@@ -335,7 +345,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let source = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
         if normalized.pool_versionstamp.0 != tx.revision(&source_key).ok_or_else(fail)?
             || source.accounts.len() != normalized.accounts.len()
         {

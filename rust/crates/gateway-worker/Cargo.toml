@@ -15,6 +15,36 @@ fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
 gateway-worker-authority-binding.workspace = true
+gateway-native-authority-wire.workspace = true
+gateway-source.workspace = true
+gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
+gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
+gateway-auth-contracts.workspace = true
+gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
+gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
+gateway-authority-reset-recovery = { path = "../gateway-authority-reset-recovery" }
+gateway-authority-reset-spend = { path = "../gateway-authority-reset-spend" }
+gateway-authority-reset-claim = { path = "../gateway-authority-reset-claim" }
+gateway-authority-reset-permit = { path = "../gateway-authority-reset-permit" }
+gateway-authority-reset-evidence = { path = "../gateway-authority-reset-evidence" }
+gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
+gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-capacity = { path = "../gateway-authority-capacity" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-kernel = { path = "../gateway-authority-kernel" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-claude-usage-runtime.workspace = true
 gateway-claude-usage-admin.workspace = true
@@ -32,7 +62,9 @@ gateway-extras-contract.workspace = true
 gateway-catalog-provider.workspace = true
 gateway-worker-stream.workspace = true
 gateway-auth-native-wire.workspace = true
+gateway-capacity-projection.workspace = true
 gateway-compaction.workspace = true
+gateway-compaction-source.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true

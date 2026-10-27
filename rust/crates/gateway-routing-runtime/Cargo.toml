@@ -6,6 +6,28 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
+gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission" }
+gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-claude-proof = { path = "../gateway-authority-claude-proof" }
+gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
+gateway-authority-kernel = { path = "../gateway-authority-kernel" }
+gateway-authority-api-release = { path = "../gateway-authority-api-release" }
+gateway-authority-local-completion = { path = "../gateway-authority-local-completion" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-local-journal.workspace = true
+gateway-source.workspace = true
 gateway-wait-observation.workspace = true
 gateway-decision-protocol.workspace = true
 gateway-extras-contract.workspace = true
@@ -20,6 +42,7 @@ chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-routing-runtime-test-support.workspace = true
 
 [lints]

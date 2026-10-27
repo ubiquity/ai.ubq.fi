@@ -1,8 +1,9 @@
-use gateway_core::{model::ModelId, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
+use gateway_source::source_json::SourceJson;
 use gateway_decision_protocol::{catalog, legacy, request, response};
 use serde_json::{Value, json};
 type Result = std::result::Result<(), Box<dyn std::error::Error>>;
-fn source(value: Value) -> std::result::Result<SourceJson, gateway_core::error::GatewayError> {
+fn source(value: Value) -> std::result::Result<SourceJson, gateway_source::error::GatewayError> {
     SourceJson::from_serializable(&value)
 }
 fn valid() -> Value {

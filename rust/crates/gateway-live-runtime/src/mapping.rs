@@ -1,16 +1,14 @@
 use crate::types::LIVE_CALL_ACCOUNT_TTL_MS;
 use gateway_core::source_control;
-use gateway_core::{
-    error::GatewayError,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
 use gateway_source::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
+};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use serde::Serialize;
 use serde_json::json;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -329,7 +327,7 @@ fn decode_mapping(record: &StoredRecord) -> Option<Mapping> {
 mod passport_data_cases {
     use super::{decode_mapping, encode_mapping};
     use gateway_core::state::StoredRecord;
-    use gateway_core::value::ValueEncoding;
+    use gateway_kv_codec::value::ValueEncoding;
     use gateway_source::js_string::JsString16;
 
     #[test]

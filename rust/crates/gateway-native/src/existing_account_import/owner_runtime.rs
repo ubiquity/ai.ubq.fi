@@ -1,18 +1,16 @@
 //! Owned-process custody only. Dirty state never becomes another import start permit.
-use super::exclusive_owner::{ExclusiveManagedOwner, Facts, PinnedExecutable, fail};
+use super::exclusive_owner::{ExclusiveManagedOwner, PinnedExecutable, fail};
 use crate::native_import::NativeImportContext;
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation,
-        import::{
-            AuthenticatedNativeImport,
-            effects::{NativeImportBinding, NativeImportStart},
-        },
-        receiver::NativeRenewalAuthority,
-    },
-    store::TokenSource,
+    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
+    native_control::import::effects::NativeImportBinding,
+    native_control::import::effects::NativeImportStart,
+    native_control::receiver::NativeRenewalAuthority,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_authority_contracts::TokenSource;
+use gateway_core::state::AuthorityStore;
+use gateway_native_confinement::file_observation::Facts;
+use gateway_source::error::GatewayError;
 use rustix::fs::{AtFlags, FlockOperation, Mode, OFlags, flock, fsync, openat, renameat, statat};
 use serde::{Deserialize, Serialize};
 #[cfg(all(test, target_os = "macos"))]
@@ -168,7 +166,7 @@ impl OwnedRuntime {
             || epoch.account_id_hash != self.owner.account_id_hash
             || epoch.root_device != facts.device
             || epoch.root_inode != facts.inode
-            || !gateway_auth::provider_credentials::valid_native_generation(&epoch.boot)
+            || !gateway_auth_credentials::provider_credentials::valid_native_generation(&epoch.boot)
         {
             return Err(fail());
         }
@@ -254,7 +252,7 @@ impl OwnedRuntime {
             account_id_hash: self.owner.account_id_hash.clone(),
             root_device: root.device,
             root_inode: root.inode,
-            boot: gateway_auth::crypto::sha256_hex(&random),
+            boot: gateway_auth_primitives::crypto::sha256_hex(&random),
             phase: Phase::Running,
         });
         // Dirty BEFORE spawn; even failed spawn/reap cannot silently create a clean restart.
@@ -397,7 +395,8 @@ impl OwnedRuntime {
             return Err(fail());
         }
         let value = serde_json::from_slice(&bytes).map_err(|_| fail())?;
-        let credentials = gateway_auth::native_credentials::parse_native_document(&value)?;
+        let credentials =
+            gateway_auth_credentials::native_credentials::parse_native_document(&value)?;
         if credentials.routing_account_hash() != binding.account_id_hash
             || credentials.generation_hash() != binding.source_native_generation
             || credentials.external_user_id.is_some()

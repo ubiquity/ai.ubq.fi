@@ -1,27 +1,29 @@
 //! Deterministic conformance store, not a Worker/runtime acceptance substitute.
-use gateway_authority::quota::ApiKeyPolicy;
-use gateway_authority::routing_types::{
-    AdmittedAccount, PoolAccount, QuotaBlock, QuotaBlockSource, RouteSelection, SubscriptionPool,
+use gateway_auth::crypto::Secret;
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiKeyPolicy;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_routing_records::{
+    types::PoolAccount, types::QuotaBlock, types::QuotaBlockSource, types::SubscriptionPool,
 };
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::AdmittedAccount, types::RouteSelection,
+};
+use gateway_contracts::{
+    identity::ApiKeyId, identity::PoolVersionstamp, identity::RoutingAccountHash,
+    identity::SubscriptionSelectionHash, provider::CodexQuotaClass,
+};
 use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash},
-    provider::CodexQuotaClass,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::TupleKey,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    future::Future,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering},
-    },
-    task::{Context, Poll, Waker},
+    collections::BTreeMap, collections::BTreeSet, future::Future, sync::Arc, sync::Mutex,
+    sync::atomic::AtomicI64, sync::atomic::AtomicU64, sync::atomic::AtomicUsize,
+    sync::atomic::Ordering, task::Context, task::Poll, task::Waker,
 };
 
 #[track_caller]
@@ -205,8 +207,8 @@ struct FixtureCollator;
 impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
     fn compare(
         &self,
-        left: &gateway_core::js_string::JsString16,
-        right: &gateway_core::js_string::JsString16,
+        left: &gateway_source::js_string::JsString16,
+        right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         // Fixed test input ordering only; pinned locale-equivalence survivors are tested separately.
         Ok(left.as_units().cmp(right.as_units()))
@@ -251,7 +253,6 @@ pub fn source_account(
     id: &str,
     refreshed: bool,
 ) -> gateway_auth::provider_credentials::CodexSourceAccount {
-    use gateway_auth::crypto::Secret;
     gateway_auth::provider_credentials::CodexSourceAccount {
         access_token: Secret::new(format!("fixture-access-{id}-{}", u8::from(refreshed))),
         refresh_token: Secret::new(format!("fixture-refresh-{id}")),
@@ -301,7 +302,7 @@ pub fn seed_pool(store: &MemoryStore, pool: &SubscriptionPool) {
         &source.private_source_value(),
         &pool.pool_versionstamp.0,
     );
-    store.seed(gateway_authority::keys::pool(), pool);
+    store.seed(gateway_authority_keys::pool(), pool);
 }
 pub fn policy() -> ApiKeyPolicy {
     ApiKeyPolicy {
@@ -309,8 +310,8 @@ pub fn policy() -> ApiKeyPolicy {
         key_id: ApiKeyId("key-a".to_owned()),
         expires_at_ms: -1,
         usage_limit_requests: 2,
-        window_ms: gateway_authority::DAY_MS,
-        usage_reset_at_ms: NOW + gateway_authority::DAY_MS,
+        window_ms: gateway_authority_contracts::DAY_MS,
+        usage_reset_at_ms: NOW + gateway_authority_contracts::DAY_MS,
         paid_fallback_enabled: true,
         paid_fallback_limit_microcredits: 10_000,
         paid_fallback_quota_per_credit: 1_000_000,

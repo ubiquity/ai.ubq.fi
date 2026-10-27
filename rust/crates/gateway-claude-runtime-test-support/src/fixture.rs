@@ -15,12 +15,12 @@ use gateway_claude_runtime::persistence::quota_key;
 use gateway_claude_runtime::pool::ClaudePoolSession;
 use gateway_claude_usage_quota as quota;
 use gateway_claude_usage_quota::observation::AcceptedObservation;
-use gateway_core::claude::ClaudeErrorEvidence as ErrorEvidence;
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
+use gateway_contracts::claude::ClaudeErrorEvidence as ErrorEvidence;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RevisionCheck, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_providers::types::Headers;
 use gateway_schema::catalog::ProviderCatalog;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -234,7 +234,7 @@ pub struct Host {
 }
 impl Host {
     pub fn new(store: &Store) -> Self {
-        Self{store:store.clone(),random:Cell::new(50),catalog_calls:Cell::new(0),catalog_action:RefCell::default(),catalog:RefCell::new(ProviderCatalog{models:vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["low","high","Custom"]})).unwrap()],updated_at_ms:Some(NOW),configured:true,available:true,stale:false}),workspace_calls:Cell::new(0),workspace_action:RefCell::default(),workspace:RefCell::new(WorkspaceResponse{status:200,body:json!({"data":[{"id":"wrkspc_first","name":"Other"},{"id":"wrkspc_default","name":"Default"}]}).to_string()}),accepted:RefCell::default(),health:RefCell::default(),fail_telemetry:Cell::new(false)}
+        Self{store:store.clone(),random:Cell::new(50),catalog_calls:Cell::new(0),catalog_action:RefCell::default(),catalog:RefCell::new(ProviderCatalog{models:vec![gateway_source::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["low","high","Custom"]})).unwrap()],updated_at_ms:Some(NOW),configured:true,available:true,stale:false}),workspace_calls:Cell::new(0),workspace_action:RefCell::default(),workspace:RefCell::new(WorkspaceResponse{status:200,body:json!({"data":[{"id":"wrkspc_first","name":"Other"},{"id":"wrkspc_default","name":"Default"}]}).to_string()}),accepted:RefCell::default(),health:RefCell::default(),fail_telemetry:Cell::new(false)}
     }
 }
 impl WebAuthnCrypto for Host {
@@ -362,23 +362,23 @@ impl ClaudePoolHost for Host {
         }
     }
 }
-pub fn raw() -> gateway_core::source_json::SourceJson {
-    gateway_core::source_json::SourceJson::from_serializable(
+pub fn raw() -> gateway_source::source_json::SourceJson {
+    gateway_source::source_json::SourceJson::from_serializable(
         &json!({"model":MODEL,"input":"fixture"}),
     )
     .unwrap()
 }
-pub fn fixture_effort(raw: &gateway_core::source_json::SourceJson) -> Option<JsString16> {
-    gateway_core::source_serialization::member(raw, "reasoning")
-        .and_then(|value| gateway_core::source_serialization::member(&value, "effort"))
+pub fn fixture_effort(raw: &gateway_source::source_json::SourceJson) -> Option<JsString16> {
+    gateway_source::source_serialization::member(raw, "reasoning")
+        .and_then(|value| gateway_source::source_serialization::member(&value, "effort"))
         .as_ref()
-        .and_then(gateway_core::source_serialization::string)
+        .and_then(gateway_source::source_serialization::string)
 }
 pub fn selected(
     session: &ClaudePoolSession,
     store: &Store,
     host: &Host,
-    raw: &gateway_core::source_json::SourceJson,
+    raw: &gateway_source::source_json::SourceJson,
 ) -> SelectedAccount {
     match run(session.select(
         store,

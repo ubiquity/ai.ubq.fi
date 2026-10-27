@@ -1,23 +1,24 @@
 //! Recoverable request intent only. Counters, pool state and billing remain m03-owned.
-use crate::types::{CredentialFence, RevisionCheckWire};
-use gateway_authority::kernel::KernelReservation;
-use gateway_authority::paid_types::{PaidCorrelation, PaidReservation, PaidUsage};
-use gateway_authority::quota::ApiReservation;
-use gateway_authority::store::TokenSource;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PaidAttemptId, RequestContext};
-use gateway_core::lifecycle::TransportObservation;
-use gateway_core::local_work::{LocalWorkRecord, journal_local_work};
-use gateway_core::model::ModelId;
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
-};
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use crate::{types::CredentialFence, types::RevisionCheckWire};
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_kernel_protocol::KernelReservation;
+use gateway_authority_paid_records::{PaidCorrelation, PaidReservation, PaidUsage};
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_contracts::{identity::PaidAttemptId, identity::RequestContext};
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::source_control::encode_source_control_record;
+use gateway_core::state::AtomicTransition;
+use gateway_core::{state::AuthorityStore, state::CommitOutcome};
+use gateway_core::{state::RecordMutation, state::RevisionCheck, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_local_journal::local_work::LocalWorkRecord;
+use gateway_local_journal::local_work::journal_local_work;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -265,7 +266,7 @@ fn mutations<I: TokenSource>(
             journal
                 .context
                 .started_at_ms
-                .checked_add(gateway_authority::PAID_RETENTION_MS)
+                .checked_add(gateway_authority_contracts::PAID_RETENTION_MS)
                 .ok_or_else(|| unavailable("Routing retention overflow."))?,
         )
     } else {

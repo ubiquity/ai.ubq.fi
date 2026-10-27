@@ -1,10 +1,9 @@
 //! The existing shared source usage family includes paid AND ordinary providers.
 //! M39 owns its value predicate; this adapter adds only physical-key/metadata custody.
 use crate::*;
-use gateway_core::{
-    identity::MAX_SAFE_INTEGER, js_string::JsString16, model::ModelId,
-    source_serialization as source, tuple_key::DecodedKeyPart,
-};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
+use gateway_source::{js_string::JsString16, source_serialization as source};
+use gateway_kv_codec::tuple_key::DecodedKeyPart;
 
 pub(crate) fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayError> {
     record.validate_version()?;
@@ -34,7 +33,7 @@ pub(crate) fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), Gat
         }
         _ => return Err(invalid("Source usage rollup shard is invalid")),
     };
-    if gateway_authority::keys::paid_rollup_source(bucket, &model, &provider, shard)? != *key {
+    if gateway_authority_keys::paid_rollup_source(bucket, &model, &provider, shard)? != *key {
         return Err(invalid(
             "Source usage rollup key conflicts with its stored labels",
         ));
@@ -96,7 +95,7 @@ mod tests {
     }
     fn source_key(record: &StoredRecord, shard: f64) -> RecordKey {
         let document = decode_source_control_record(record).unwrap();
-        gateway_authority::keys::paid_rollup_source(
+        gateway_authority_keys::paid_rollup_source(
             source::member(&document, "bucket_start_at_ms")
                 .unwrap()
                 .deserialize()
@@ -169,12 +168,12 @@ mod tests {
         assert!(validate(&key, &signed).is_err());
         let model = ModelId::from_scalar("scalar-model");
         assert_eq!(
-            gateway_authority::keys::paid_rollup(0, "scalar-model", "chatgpt_codex", 6),
-            gateway_authority::keys::paid_rollup_model(0, &model, "chatgpt_codex", 6)
+            gateway_authority_keys::paid_rollup(0, "scalar-model", "chatgpt_codex", 6),
+            gateway_authority_keys::paid_rollup_model(0, &model, "chatgpt_codex", 6)
         );
         assert_eq!(
-            gateway_authority::keys::paid_rollup_model(0, &model, "chatgpt_codex", 6),
-            gateway_authority::keys::paid_rollup_source(
+            gateway_authority_keys::paid_rollup_model(0, &model, "chatgpt_codex", 6),
+            gateway_authority_keys::paid_rollup_source(
                 0.0,
                 &model,
                 &JsString16::from_utf8("chatgpt_codex"),

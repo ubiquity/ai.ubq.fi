@@ -1,8 +1,5 @@
 //! Original-request identity, rechecked from fixed source rows. Never a native operation grant.
-use crate::{
-    keys,
-    store::{Authority, TokenSource, Transaction},
-};
+use crate::store::{Authority, Transaction};
 use gateway_auth::api_keys;
 use gateway_auth::crypto::{decode_base64url, sha256_hex};
 use gateway_auth::passkeys::{self, PasskeySession, PasskeyUser};
@@ -10,18 +7,17 @@ use gateway_auth::resolve::AuthService;
 use gateway_auth::session_index;
 use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_auth::upstream;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::RequestContext;
-use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
-use serde::{Deserialize, Serialize};
+use gateway_authority_actor_records::{
+    legacy::{ConfigMethod, SourceActor, StoredNativeActor, config_digest, policy_digest},
+    scope::NativeActorScope,
+};
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_contracts::identity::RequestContext;
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NativeActorScope {
-    Client,
-    Admin,
-}
 
 /// Minted only by real AuthService authentication of the original request.
 /// ```compile_fail
@@ -64,79 +60,6 @@ impl NativeRenewalActor {
         }
         Ok(())
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct StoredNativeActor {
-    v: u8,
-    principal: String,
-    scope: NativeActorScope,
-    config_digest: String,
-    owner_revision: Option<String>,
-    config_revision: Option<String>,
-    runtime_revision: Option<String>,
-    #[serde(deserialize_with = "required_expiry")]
-    source_valid_until_ms: Option<i64>,
-    source: SourceActor,
-}
-impl StoredNativeActor {
-    pub(crate) fn principal(&self) -> &str {
-        &self.principal
-    }
-    pub(crate) fn scope(&self) -> NativeActorScope {
-        self.scope
-    }
-}
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum SourceActor {
-    ApiKey {
-        key_id: String,
-        token_hash: String,
-        hash_revision: String,
-        policy_revision: Option<String>,
-        #[serde(deserialize_with = "required_expiry")]
-        expires_at_ms: Option<i64>,
-    },
-    Session {
-        digest: String,
-        index_revision: String,
-        session_revision: String,
-        user_id: String,
-        user_revision: String,
-        expires_at_ms: i64,
-    },
-    Configuration {
-        method: ConfigMethod,
-        token_hash: Option<String>,
-        valid_until_ms: Option<i64>,
-    },
-    Passport {
-        sub: String,
-        jti: String,
-        expires_at_ms: i64,
-    },
-    Kernel {
-        owner: String,
-        repo: String,
-        state_id: String,
-        scope: String,
-        expires_at_ms: i64,
-        repo_revision: Option<String>,
-        org_revision: Option<String>,
-        defaults_revision: Option<String>,
-        cutover_revision: Option<String>,
-        keys_revision: Option<String>,
-    },
-}
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ConfigMethod {
-    AuthAllowlist,
-    AdminAllowlist,
-    Deno,
-    Disabled,
 }
 
 pub(crate) struct CurrentNativeActor {
@@ -246,7 +169,8 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
                     Some(expires_at_ms.map_or(source_expiry, |expiry| expiry.min(source_expiry)));
             }
             let policy_key = keys::api_policy(key_id);
-            let _: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
+            let _: Option<gateway_authority_api_protocol::ApiKeyPolicy> =
+                tx.read(&policy_key).await?;
             SourceActor::ApiKey {
                 key_id: key_id.clone(),
                 token_hash: policy.token_hash.clone(),
@@ -516,9 +440,13 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
             let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
             let policy = api_keys::policy_from_record(token_hash.clone(), record, tx.now)?;
             let policy_key = keys::api_policy(key_id);
-            let normalized: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
+            let normalized: Option<gateway_authority_api_protocol::ApiKeyPolicy> =
+                tx.read(&policy_key).await?;
             if let Some(normalized) = &normalized {
-                normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
+                normalized.validate(
+                    &gateway_contracts::identity::ApiKeyId(key_id.clone()),
+                    tx.now,
+                )?;
             }
             if policy.key_id != *key_id
                 || tx.revision(&key).as_ref() != Some(hash_revision)
@@ -615,7 +543,7 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
     Ok(CurrentNativeActor {
         principal,
         scope: stored.scope,
-        policy_digest: digest(stored)?,
+        policy_digest: policy_digest(stored)?,
     })
 }
 
@@ -646,25 +574,12 @@ pub(crate) fn validate_current_time(
     crate::validate_time(now)?;
     ensure_lifetime(stored, now)
 }
-fn required_expiry<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<i64>, D::Error> {
-    Option::<i64>::deserialize(deserializer)
-}
 async fn observed<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     key: &RecordKey,
 ) -> Result<Option<String>, GatewayError> {
     tx.observe_revision(key).await?;
     Ok(tx.revision(key))
-}
-fn digest(value: &impl Serialize) -> Result<String, GatewayError> {
-    Ok(sha256_hex(&serde_json::to_vec(value).map_err(|_| fail())?))
-}
-fn config_digest(config: &AuthConfig) -> Result<String, GatewayError> {
-    digest(
-        &json!({"v":1,"auth":config.auth_tokens.iter().map(|secret|sha256_hex(secret.expose().as_bytes())).collect::<Vec<_>>(),"admin":config.admin_tokens.iter().map(|secret|sha256_hex(secret.expose().as_bytes())).collect::<Vec<_>>(),"production":config.production,"hosted":config.hosted,"git":config.git_sha_known,"candidate":config.candidate_passkeys,"relay":config.extra_relay_origins,"kernel":config.kernel_public_keys_pem.iter().map(|pem|sha256_hex(pem.as_bytes())).collect::<Vec<_>>(),"app":config.deno_app_slug,"org":config.deno_org_slug,"deployment":config.deno_deployment_id}),
-    )
 }
 /// Source-exact projection; only actual AuthService authentication can mint an actor.
 pub fn principal_id(principal: &AuthPrincipal) -> String {

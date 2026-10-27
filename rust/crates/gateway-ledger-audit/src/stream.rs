@@ -4,7 +4,7 @@ use crate::{
     usage::{ApiAudit, KernelAudit},
 };
 use gateway_admin_data::report::Audit;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_migration_ledger::rows::ObservedRow;
 use std::collections::BTreeSet;
 

@@ -9,12 +9,13 @@ use gateway_auth::{
     types::{AuthConfig, AuthHost, AuthRequest, AuthResponse},
     upstream::*,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    state::*,
+    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QuerySelector,
+    query::QueryStore, state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -211,7 +212,7 @@ fn seeded_store() -> Store {
         panic!("API key record is a put");
     };
     store.rows.borrow_mut().insert(key.0, record);
-    let window = gateway_authority::keys::api_window("key-1", "v3:1000", 1000);
+    let window = gateway_authority_keys::api_window("key-1", "v3:1000", 1000);
     store.rows.borrow_mut().insert(
         window.0,
         StoredRecord::json(

@@ -1,38 +1,49 @@
 //! Bounded F13 experiment against current public Rust authority primitives only.
 //! Source b6e25555179ad2b195b0bab93e946be834ecda6c native-authority.test.ts1097-1113
 //! is a fixture-only generic service with permanent attempt_lifetime rows, not a live Rust RPC.
-use super::support;
-use crate::{TestResult, fixture_row};
-use gateway_authority::{
-    PAID_RETENTION_MS, keys,
-    paid_control::*,
-    paid_types::{PaidAdmission, PaidAuthorization, PaidRequest, PaidRoutingPolicy},
-};
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::state::{AuthorityStore, RecordKey};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_contracts::{DAY_MS, PAID_RETENTION_MS};
+use gateway_authority_keys as keys;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_control_records::PaidRequestContext;
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidRoutingPolicy};
+use gateway_authority_paid_control_records::{PaidControlConfig, PaidRoutingProjection};
+use gateway_authority_paid_control_records::{PaidControlOwner, PaidSourceCheck};
+use gateway_authority_paid_control_records::{PaidProjectionProvenance, PaidProviderObservation};
+use gateway_authority_paid_evidence::paid_projection_source_keys;
+use gateway_authority_paid_records::{PaidAdmission, PaidRequest};
+use gateway_authority_paid_route::PaidRoutingReceipt;
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
+use gateway_authority_test_support::{TestResult, fixture_row};
+use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, provider::UpstreamProvider};
+use gateway_contracts::{identity::RequestId, provider::PaidProvider};
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::key::RecordKey;
 use gateway_providers::types::ClientSurface;
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
+use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::authority};
+use gateway_routing_runtime_test_support::{authority::policy, authority::run};
 use serde_json::{Value, json};
-use support::*;
+
 pub fn context(input: &PaidRequest) -> PaidRequestContext {
     let mut fields = vec![
         ("model", input.model.to_source_json().unwrap()),
         (
             "stream",
-            gateway_core::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
+            gateway_source::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
         ),
     ];
     if let Some(effort) = &input.reasoning {
         fields.push((
             "reasoning",
-            gateway_core::source_serialization::object(vec![(
+            gateway_source::source_serialization::object(vec![(
                 "effort",
                 effort.to_source_json().unwrap(),
             )])
             .unwrap(),
         ));
     }
-    let body = gateway_core::source_serialization::object(fields).unwrap();
+    let body = gateway_source::source_serialization::object(fields).unwrap();
     PaidRequestContext {
         original_model: input.model.clone(),
         body,
@@ -73,7 +84,7 @@ pub fn republish(store: &MemoryStore) {
             key: key.0,
         })
         .collect();
-    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
+    gateway_authority_test_support::control::seed_source(store, keys::paid_routing(), &projection);
 }
 
 pub fn seed_controls(store: &MemoryStore) {
@@ -101,7 +112,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     );
-    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_core::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
+    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_source::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         store.seed(
             keys::paid_control_observation(provider),
@@ -157,7 +168,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     };
-    super::paid_control_cases::seed_source(store, keys::paid_routing(), &projection);
+    gateway_authority_test_support::control::seed_source(store, keys::paid_routing(), &projection);
     republish(store);
 }
 
@@ -181,7 +192,7 @@ fn setup() -> (MemoryStore, TestAuthority, PaidRequest, PaidRoutingReceipt) {
     seed_controls(&store);
     let authority = authority(&store);
     let input = original();
-    let receipt = run(super::paid_original::authorize(
+    let receipt = run(gateway_authority_test_support::original::authorize(
         &authority,
         &input,
         &context(&input),
@@ -272,10 +283,12 @@ fn f13_expired_history_must_not_recreate_a_retained_logical_paid_attempt() {
 fn original_context(
     store: &MemoryStore,
     input: &PaidRequest,
-) -> gateway_core::identity::RequestContext {
+) -> gateway_contracts::identity::RequestContext {
     serde_json::from_value(
         store
-            .row(&super::paid_original::journal_key(&input.request_id.0))
+            .row(&gateway_authority_test_support::original::journal_key(
+                &input.request_id.0,
+            ))
             .unwrap()
             .value["context"]
             .clone(),
@@ -302,14 +315,14 @@ fn f13_route_only_receipt_cannot_create_exposure() {
 #[test]
 fn f13_original_dispatched_api_still_allows_same_request_waterfall() {
     let (store, authority, input, _) = setup();
-    let journal = super::paid_original::journal_key(&input.request_id.0);
+    let journal = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut row = store.row(&journal).unwrap().value;
-    let api: gateway_authority::quota::ApiReservation =
+    let api: gateway_authority_api_protocol::ApiReservation =
         serde_json::from_value(row["api"].clone()).unwrap();
     assert!(run(authority.dispatch_api_key(&api, UpstreamProvider::Metered, NOW)).unwrap());
-    let future = NOW + gateway_authority::REQUEST_LEASE_MS + 1;
+    let future = NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1;
     // Existing legitimate owner renewal changes this same journal, not admission.
-    row["lease_expires_at_ms"] = json!(future + gateway_authority::REQUEST_LEASE_MS);
+    row["lease_expires_at_ms"] = json!(future + gateway_authority_contracts::REQUEST_LEASE_MS);
     store.seed(journal, &row);
     store.clock(future);
     let route = run(authority.authorize_paid_route(&input, &context(&input), future)).unwrap();
@@ -338,7 +351,7 @@ fn f13_missing_finalized_expired_or_wrong_original_journal_is_refused() {
     ] {
         let (store, authority, input, _) = setup();
         let original = original_context(&store, &input);
-        let key = super::paid_original::journal_key(&input.request_id.0);
+        let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
         let mut row = store.row(&key).unwrap();
         match field {
             "terminal_intent" => row.value[field] = json!({}),
@@ -370,10 +383,12 @@ fn f13_released_api_and_missing_non_deferred_admission_are_refused() {
         let (store, authority, input, _) = setup();
         let original = original_context(&store, &input);
         let journal = store
-            .row(&super::paid_original::journal_key(&input.request_id.0))
+            .row(&gateway_authority_test_support::original::journal_key(
+                &input.request_id.0,
+            ))
             .unwrap()
             .value;
-        let api: gateway_authority::quota::ApiReservation =
+        let api: gateway_authority_api_protocol::ApiReservation =
             serde_json::from_value(journal["api"].clone()).unwrap();
         let key = keys::api_request(
             &api.key_id.0,
@@ -403,7 +418,7 @@ fn f13_released_api_and_missing_non_deferred_admission_are_refused() {
 #[test]
 fn f13_changed_journal_revision_aborts_reservation_cas_without_exposure() {
     let (store, authority, input, bound) = setup();
-    let key = super::paid_original::journal_key(&input.request_id.0);
+    let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut changed = store.row(&key).unwrap().value;
     changed["finished"] = json!(true);
     store.race(key, &changed);
@@ -418,7 +433,10 @@ fn f13_changed_journal_revision_aborts_reservation_cas_without_exposure() {
     );
     assert!(
         store
-            .row(&keys::paid_window("key-a", NOW + gateway_authority::DAY_MS))
+            .row(&keys::paid_window(
+                "key-a",
+                NOW + gateway_authority_contracts::DAY_MS
+            ))
             .is_none()
     );
 }
@@ -426,9 +444,9 @@ fn f13_changed_journal_revision_aborts_reservation_cas_without_exposure() {
 fn f13_deferred_original_intent_and_non_api_owner_do_not_require_new_admission() {
     for non_api in [false, true] {
         let (store, authority, input, _) = setup();
-        let key = super::paid_original::journal_key(&input.request_id.0);
+        let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
         let mut journal = store.row(&key).unwrap().value;
-        let api: gateway_authority::quota::ApiReservation =
+        let api: gateway_authority_api_protocol::ApiReservation =
             serde_json::from_value(journal["api"].clone()).unwrap();
         let api_key = keys::api_request(
             &api.key_id.0,
@@ -461,18 +479,18 @@ fn f13_deferred_original_intent_and_non_api_owner_do_not_require_new_admission()
 #[test]
 fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() -> TestResult {
     let (store, authority, input, _) = setup();
-    let journal_key = super::paid_original::journal_key(&input.request_id.0);
+    let journal_key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut journal = fixture_row(&store, &journal_key)?.value;
-    let kernel = gateway_authority::kernel::KernelReservation {
+    let kernel = gateway_authority_kernel_protocol::KernelReservation {
         v: 2,
         owner: "fixture-owner".into(),
         repo: None,
         request_id: input.request_id.clone(),
         route: input.route.clone(),
         window_created_at_ms: NOW,
-        window_reset_at_ms: NOW + gateway_authority::DAY_MS,
+        window_reset_at_ms: NOW + gateway_authority_contracts::DAY_MS,
         reserved_at_ms: NOW,
-        lease_expires_at_ms: NOW + gateway_authority::REQUEST_LEASE_MS,
+        lease_expires_at_ms: NOW + gateway_authority_contracts::REQUEST_LEASE_MS,
         terminal_intent: None,
         state: None,
         terminal_at_ms: None,
@@ -507,9 +525,9 @@ fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() -> TestResult 
 fn publish_active_paid(
     store: &MemoryStore,
     input: &PaidRequest,
-    paid: &gateway_authority::paid_types::PaidReservation,
+    paid: &gateway_authority_paid_records::PaidReservation,
 ) -> TestResult {
-    let key = super::paid_original::journal_key(&input.request_id.0);
+    let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut journal = fixture_row(store, &key)?.value;
     journal["active"] = json!("f13-prepared-active");
     journal["attempts"] = json!([{
@@ -534,17 +552,18 @@ fn f13_exact_active_dispatch_rechecks_existing_only_before_and_after_api_dispatc
         let before = window_value(&store, reservation.window_reset_at_ms);
         let mut now = NOW;
         if committed {
-            let key = super::paid_original::journal_key(&input.request_id.0);
+            let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
             let mut journal = fixture_row(&store, &key)?.value;
-            let api: gateway_authority::quota::ApiReservation =
+            let api: gateway_authority_api_protocol::ApiReservation =
                 serde_json::from_value(journal["api"].clone())?;
             assert!(run(authority.dispatch_api_key(
                 &api,
                 UpstreamProvider::Metered,
                 NOW
             ))?);
-            now = NOW + gateway_authority::REQUEST_LEASE_MS + 1;
-            journal["lease_expires_at_ms"] = json!(now + gateway_authority::REQUEST_LEASE_MS);
+            now = NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1;
+            journal["lease_expires_at_ms"] =
+                json!(now + gateway_authority_contracts::REQUEST_LEASE_MS);
             store.seed(key, &journal);
             store.clock(now);
         }
@@ -613,13 +632,13 @@ fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() -> TestResu
         &reservation,
         NOW,
     ))?;
-    store.clock(NOW + gateway_authority::REQUEST_LEASE_MS + 1);
+    store.clock(NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1);
     assert!(
         run(authority.reserve_paid(
             &input,
             &PaidAuthorization::DirectPaidModel,
             &dispatch,
-            NOW + gateway_authority::REQUEST_LEASE_MS + 1
+            NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1
         ))
         .is_err()
     );
@@ -627,11 +646,12 @@ fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() -> TestResu
 }
 
 fn local_phase_record(
-    phase: gateway_core::local_work::LocalWorkPhase,
-) -> gateway_core::local_work::LocalWorkRecord {
-    use gateway_core::local_work::{
-        LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase,
-        LocalWorkRecord, SOURCE_REQUEST_BINDING_VERSION,
+    phase: gateway_local_journal::local_work::LocalWorkPhase,
+) -> gateway_local_journal::local_work::LocalWorkRecord {
+    use gateway_local_journal::{
+        local_work::LocalSemanticOutcome, local_work::LocalTerminalObservation,
+        local_work::LocalWorkKind, local_work::LocalWorkPhase, local_work::LocalWorkRecord,
+        local_work::SOURCE_REQUEST_BINDING_VERSION,
     };
     LocalWorkRecord {
         kind: LocalWorkKind::CodexResponsesCompaction,
@@ -646,20 +666,20 @@ fn local_phase_record(
             semantic: LocalSemanticOutcome::Incomplete,
             reader_termination: None,
             body: None,
-            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+            delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
         }),
     }
 }
 fn set_local_phase(
     store: &MemoryStore,
     input: &PaidRequest,
-    phase: gateway_core::local_work::LocalWorkPhase,
+    phase: gateway_local_journal::local_work::LocalWorkPhase,
 ) {
-    let key = super::paid_original::journal_key(&input.request_id.0);
+    let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut journal = store.row(&key).unwrap().value;
     journal["v"] = json!(2);
     journal["local_work"] = serde_json::to_value(local_phase_record(phase)).unwrap();
-    if phase == gateway_core::local_work::LocalWorkPhase::Terminal {
+    if phase == gateway_local_journal::local_work::LocalWorkPhase::Terminal {
         journal["finished"] = json!(true);
     }
     store.seed(key, &journal);
@@ -667,17 +687,17 @@ fn set_local_phase(
 #[test]
 fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatched_api() -> TestResult
 {
-    use gateway_core::local_work::LocalWorkPhase;
+    use gateway_local_journal::local_work::LocalWorkPhase;
     for local in [false, true] {
         for dispatched in [false, true] {
             let (store, authority, input, _) = setup();
             if dispatched {
                 let journal = fixture_row(
                     &store,
-                    &super::paid_original::journal_key(&input.request_id.0),
+                    &gateway_authority_test_support::original::journal_key(&input.request_id.0),
                 )?
                 .value;
-                let api: gateway_authority::quota::ApiReservation =
+                let api: gateway_authority_api_protocol::ApiReservation =
                     serde_json::from_value(journal["api"].clone())?;
                 assert!(run(authority.dispatch_api_key(
                     &api,
@@ -719,7 +739,7 @@ fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatche
 }
 #[test]
 fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() {
-    use gateway_core::local_work::{LocalWorkPhase, journal_local_work};
+    use gateway_local_journal::{local_work::LocalWorkPhase, local_work::journal_local_work};
     for phase in [
         LocalWorkPhase::Admitting,
         LocalWorkPhase::Running,
@@ -731,12 +751,14 @@ fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() 
         let (store, authority, input, _) = setup();
         set_local_phase(&store, &input, phase);
         let row = store
-            .row(&super::paid_original::journal_key(&input.request_id.0))
+            .row(&gateway_authority_test_support::original::journal_key(
+                &input.request_id.0,
+            ))
             .unwrap()
             .value;
         assert_eq!(
             journal_local_work(
-                &gateway_core::source_json::SourceJson::from_serializable(&row).unwrap()
+                &gateway_source::source_json::SourceJson::from_serializable(&row).unwrap()
             )
             .unwrap()
             .unwrap()
@@ -758,14 +780,17 @@ fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() 
         );
         assert!(
             store
-                .row(&keys::paid_window("key-a", NOW + gateway_authority::DAY_MS))
+                .row(&keys::paid_window(
+                    "key-a",
+                    NOW + gateway_authority_contracts::DAY_MS
+                ))
                 .is_none()
         );
     }
 }
 #[test]
 fn f13_local_phase_malformed_missing_and_phase_only_permission_are_refused() {
-    use gateway_core::local_work::LocalWorkPhase;
+    use gateway_local_journal::local_work::LocalWorkPhase;
     for defect in [
         "missing_extension",
         "missing_owner",
@@ -776,7 +801,7 @@ fn f13_local_phase_malformed_missing_and_phase_only_permission_are_refused() {
     ] {
         let (store, authority, input, _) = setup();
         set_local_phase(&store, &input, LocalWorkPhase::ProviderPlanned);
-        let key = super::paid_original::journal_key(&input.request_id.0);
+        let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
         let mut journal = store.row(&key).unwrap().value;
         match defect {
             "missing_extension" => {
@@ -813,7 +838,7 @@ fn f13_local_phase_malformed_missing_and_phase_only_permission_are_refused() {
 }
 #[test]
 fn f13_local_phase_nonplanned_or_malformed_active_dispatch_cannot_add_exposure() -> TestResult {
-    use gateway_core::local_work::LocalWorkPhase;
+    use gateway_local_journal::local_work::LocalWorkPhase;
     for malformed in [false, true] {
         let (store, authority, input, pre) = setup();
         let PaidAdmission::Reserved(paid) =
@@ -825,7 +850,7 @@ fn f13_local_phase_nonplanned_or_malformed_active_dispatch_cannot_add_exposure()
         publish_active_paid(&store, &input, &paid)?;
         set_local_phase(&store, &input, LocalWorkPhase::Planning);
         if malformed {
-            let key = super::paid_original::journal_key(&input.request_id.0);
+            let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
             let mut row = fixture_row(&store, &key)?.value;
             let fields = row.as_object_mut().ok_or("expected journal object")?;
             fields.remove("local_work");

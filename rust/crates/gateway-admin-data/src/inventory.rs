@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_migration_ledger::rows::ObservedRow;
 
 /// Replayable complete inventory. Each visit starts at the original first row and

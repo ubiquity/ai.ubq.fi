@@ -2,7 +2,7 @@
 use crate::{clock::monotonic, error::configuration_error};
 use futures_util::task::AtomicWaker;
 use gateway_admission::{AdmissionCancellation, AdmissionWait, WaitFuture};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_worker_stream::control::StreamControl;
 use std::{
     future::{Future, poll_fn},

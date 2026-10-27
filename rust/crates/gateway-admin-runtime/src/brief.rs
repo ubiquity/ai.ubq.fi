@@ -1,9 +1,7 @@
 //! Pure source brief framing and output projection. Native context never becomes the public summary.
 use crate::capabilities::SupervisorBriefTarget;
-use gateway_core::{
-    error::GatewayError,
-    redaction::{redact, redact_parts, source_whitespace},
-};
+use gateway_source::error::GatewayError;
+use gateway_redaction::redaction::{redact, redact_parts, source_whitespace};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

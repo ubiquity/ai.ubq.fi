@@ -1,11 +1,10 @@
 //! Admin runtime fixture storage retaining CAS, query and read-count behavior.
+use gateway_source::error::GatewayError;
 use gateway_core::{
-    error::GatewayError,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
@@ -75,7 +74,7 @@ impl QueryStore for Store {
             }
         }
         entries.sort_by_key(|e| {
-            gateway_core::tuple_key::TupleKey::from_record_key(&e.key)
+            gateway_kv_codec::tuple_key::TupleKey::from_record_key(&e.key)
                 .unwrap_or_else(|error| panic!("Invalid fixture key: {error}"))
         });
         if request.reverse {

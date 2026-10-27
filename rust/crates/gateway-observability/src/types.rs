@@ -1,5 +1,6 @@
 use gateway_admin_runtime::capabilities::Context;
-use gateway_core::{error::GatewayError, state::RevisionCheck};
+use gateway_source::error::GatewayError;
+use gateway_core::state::RevisionCheck;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 
@@ -98,7 +99,7 @@ pub enum HealthWrite {
 
 /// The fixed host owns real clock/wait/RNG. Pure storage algorithms never call a provider.
 pub trait ObservabilityHost {
-    fn parse_claude_usage_date(&self, _value: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, _value: &gateway_source::js_string::JsString16) -> Option<i64> {
         None
     }
     /// Finite shared collector, invoked only from the existing capacity capture.
@@ -204,7 +205,7 @@ pub trait ObservabilityHost {
     fn probe_codex_capacity(
         &self,
         _account: &crate::host_types::CapacityAccountRef,
-        _fence: &gateway_authority::capacity::CodexCapacityObservationFence,
+        _fence: &gateway_authority_capacity::CodexCapacityObservationFence,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<crate::host_types::CapacityProbe, GatewayError>> {
         async { Err(crate::store::missing("codex_capacity_probe")) }
@@ -214,7 +215,7 @@ pub trait ObservabilityHost {
         &self,
         _accounts: &[crate::host_types::CapacityAccountRef],
     ) -> impl Future<
-        Output = Result<gateway_authority::capacity::CodexCapacityObservationFence, GatewayError>,
+        Output = Result<gateway_authority_capacity::CodexCapacityObservationFence, GatewayError>,
     > {
         async { Err(crate::store::missing("capacity_authority_source_fence")) }
     }
@@ -235,11 +236,11 @@ pub trait ObservabilityHost {
     /// Calls the existing authority's current-binding observation writer; never another ledger.
     fn accept_capacity_observations(
         &self,
-        _fence: &gateway_authority::capacity::CodexCapacityObservationFence,
-        _observations: &[gateway_authority::capacity::CodexCapacitySample],
+        _fence: &gateway_authority_capacity::CodexCapacityObservationFence,
+        _observations: &[gateway_authority_capacity::CodexCapacitySample],
     ) -> impl Future<
         Output = Result<
-            gateway_authority::capacity::AcceptedCodexCapacityObservations,
+            gateway_authority_capacity::AcceptedCodexCapacityObservations,
             GatewayError,
         >,
     > {

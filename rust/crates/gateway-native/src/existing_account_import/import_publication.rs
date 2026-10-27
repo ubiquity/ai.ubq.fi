@@ -1,23 +1,23 @@
 //! Native receipt-bound sanitized command. Neither DATA nor HTTP200 is completion.
+use super::NativeImportInputs;
 use super::{
     ExistingAccountImportStore,
     durability::{self, DurableNativeImport},
     live_custody::LiveImportCustody,
-    validation::{CatalogValidation, ValidatedNativeImport},
+    validation::ValidatedNativeImport,
 };
-use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_import::publication::NativeImportPublication,
-    provider_credentials::codex_credential_identity,
-};
+use crate::import_custody_protocol::unavailable;
+use gateway_auth_credentials::provider_credentials::codex_credential_identity;
+use gateway_auth_native_protocol::native_import::publication::NativeImportPublication;
 use gateway_auth_native_wire::publication_command::{
     ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData,
 };
+use gateway_auth_primitives::crypto::{Secret, sha256_hex};
 use gateway_authority::native_control::import::{
     AuthenticatedNativeImport, remote::AuthenticatedImportTerminal,
 };
-use gateway_core::error::GatewayError;
+use gateway_native_import_source::catalog::CatalogValidation;
+use gateway_source::error::GatewayError;
 
 /// Native-only producer; no JSON/receipt-DATA/Boolean constructor.
 pub(super) struct PreparedImportPublication<'a> {
@@ -29,7 +29,7 @@ impl<'a> PreparedImportPublication<'a> {
     pub(super) fn from_durable(
         store: &ExistingAccountImportStore,
         custody: &mut LiveImportCustody<'_>,
-        context: &NativeImportContext<'a>,
+        context: &NativeImportInputs<'a>,
         candidate: &ValidatedNativeImport<'_>,
         receipt: &DurableNativeImport,
     ) -> Result<Self, GatewayError> {
@@ -170,8 +170,12 @@ impl AuthenticatedImportPublicationReply {
 }
 
 use crate::private_https::PrivateHttps;
-use gateway_auth::{crypto::base64url, native_auth::NativeTransportIdentity};
-use gateway_auth_native_wire::native_read::*;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
+    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+};
+use gateway_auth_primitives::crypto::base64url;
 use std::{net::TcpStream, time::Instant};
 /// One actual constructor-selected TLS transport; no raw-response/callback issuer.
 pub(super) struct ImportPublicationHttp {
@@ -247,7 +251,7 @@ impl ImportPublicationHttp {
         prepared: &PreparedImportPublication<'_>,
         store: &ExistingAccountImportStore,
         custody: &mut LiveImportCustody<'_>,
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
         receipt: &DurableNativeImport,
     ) -> Result<AuthenticatedImportPublicationReply, GatewayError> {
         let proof = context.original_proof();
@@ -281,7 +285,7 @@ impl ImportPublicationHttp {
         let mut random = [0u8; 32];
         getrandom::fill(&mut random).map_err(|_| unavailable())?;
         let nonce = base64url(&random);
-        let now = crate::http_server::now_ms()?;
+        let now = gateway_native_http_framing::response::now_ms()?;
         let mac = self
             .identity
             .sign(NATIVE_PUBLICATION_PATH, now, &nonce, &body)?;

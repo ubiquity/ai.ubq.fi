@@ -1,6 +1,6 @@
 //! Source OpenLux metadata decoding and pure pricing projection; no I/O or authority.
 use gateway_admin_runtime::capabilities::PricingSnapshot;
-use gateway_core::{identity::MAX_SAFE_INTEGER, model::ModelId};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

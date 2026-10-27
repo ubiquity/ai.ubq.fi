@@ -3,17 +3,15 @@
 use super::{
     ExistingAccountImportStore,
     actor_channel::{ActorBootstrap, InheritedCustodyChannel},
-    import_endpoints::ImportEndpointData,
 };
-use crate::{
-    daemon_config::NativeDaemonConfig, import_custody_protocol::unavailable,
-    nonce_sqlite::SqliteNonceStore,
-};
-use gateway_auth::native_auth::NativeTransportIdentity;
+use crate::{daemon_config::NativeDaemonConfig, import_custody_protocol::unavailable};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, receiver::RegisteredRenewalOwner,
 };
-use gateway_core::error::GatewayError;
+use gateway_native_custody_wire::bootstrap::ImportEndpointData;
+use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
+use gateway_source::error::GatewayError;
 use std::{
     io::Read,
     net::{Shutdown, TcpStream},
@@ -34,7 +32,7 @@ impl NativeRenewalCancellation for ActorCancellation {
     fn cancelled(&self) -> bool {
         self.parent_dead.load(Ordering::Acquire)
             || Instant::now() >= self.deadline
-            || crate::http_server::disconnected(&self.client)
+            || gateway_native_http_framing::response::disconnected(&self.client)
     }
 }
 pub(super) struct PreparedImportActor {
@@ -120,7 +118,9 @@ impl PreparedImportActor {
 /// Ordinary executable always refuses fixture-enabled artifacts before stdin,
 /// credentials, sockets or replay storage. The fixed test harness is separate.
 pub fn run_native_import() -> ! {
-    if crate::require_production_artifact().is_err() || !cfg!(target_os = "macos") {
+    if gateway_native_connector::artifact::require_production_artifact().is_err()
+        || !cfg!(target_os = "macos")
+    {
         std::process::exit(78);
     }
     exit_actor()
@@ -156,13 +156,14 @@ fn run_actor() -> Result<(), GatewayError> {
         deadline,
     } = actor;
     let result = (|| {
-        let head = crate::http_server::read_import_head(&mut client)?;
-        let auth = head.auth_headers()?;
+        let head = gateway_native_http_framing::request::read_import_head(&mut client)?;
+        let auth = crate::import_ingress::auth_headers(&head)?;
         let cancelled = || cancellation.cancelled();
         let original =
             crate::owner_control::NativeControlContext::admitted(deadline, &cancelled, auth);
         original.check()?;
-        let connected = endpoints.connect(&cancellation, deadline)?;
+        let connected =
+            super::import_endpoints::connect_endpoints(endpoints, &cancellation, deadline)?;
         let authority = super::import_endpoints::fixed_authority_client(
             &origin,
             connected.authority,
@@ -183,6 +184,13 @@ fn run_actor() -> Result<(), GatewayError> {
             &document.proof,
             &document.metadata,
             document.body(),
+            &original,
+        )?;
+        let context = super::NativeImportInputs::checked(
+            &document.proof,
+            &document.metadata,
+            document.body(),
+            &context,
             &original,
         )?;
         let validation = super::validation::ImportValidation::from_connected(
@@ -213,10 +221,15 @@ fn run_actor() -> Result<(), GatewayError> {
         )?;
         let verified = prepared.publish(&authority, &sender, &store, &context)?;
         let result = verified.source_result(&authority, &context)?;
-        crate::import_ingress::write_result(&mut client, result)
+        gateway_native_http_framing::response::write_import_response(
+            &mut client,
+            result.status,
+            result.headers,
+            result.body,
+        )
     })();
     match result {
         Ok(()) => Ok(()),
-        Err(error) => crate::http_server::write_error(&mut client, error),
+        Err(error) => gateway_native_http_framing::response::write_error(&mut client, error),
     }
 }

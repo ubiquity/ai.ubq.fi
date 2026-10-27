@@ -1,14 +1,12 @@
 //! Source GitHub/kernel-scoped agent-message API over the shared tuple store.
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
+use gateway_source::error::GatewayError;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_schema::{
     request::parse_json_body,
     util::{js_trim, json_stringify},
@@ -58,7 +56,7 @@ fn positive_integer(raw: Option<&str>) -> Option<f64> {
         .map(f64::trunc)
 }
 
-fn source_key(parts: &[ScalarKeyPart<'_>]) -> gateway_core::state::RecordKey {
+fn source_key(parts: &[ScalarKeyPart<'_>]) -> gateway_kv_codec::key::RecordKey {
     TupleKey::from_scalar_parts(parts).to_record_key()
 }
 

@@ -1,17 +1,12 @@
 //! One fixed source/normalized/claim publication in the existing authority CAS.
 use super::{
-    NativeRenewalCancellation, NativeRenewalFence, facts,
+    NativeRenewalCancellation, facts,
     receiver::NativeRenewalAuthority,
     rows::{
         self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, conflict, fail,
     },
 };
-use crate::{
-    keys,
-    routing_types::{PoolAccount, SubscriptionPool},
-    store::{TokenSource, Transaction},
-    text,
-};
+use crate::{store::Transaction, text};
 use gateway_auth::{
     crypto::{Secret, sha256_hex},
     native_auth::{AuthenticatedNativeOwner, NativeCapability},
@@ -23,11 +18,16 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_core::{
-    error::GatewayError,
-    identity::PoolVersionstamp,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
+use gateway_source::error::GatewayError;
 use serde::Deserialize;
 use serde_json::Value;
 

@@ -1,11 +1,10 @@
 //! Source-profile writes and their secretless derived indexes share one CAS.
 use crate::{invalid, key, starts};
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
-use gateway_core::state::StoredRecord;
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::key::RecordKey;
 use gateway_core::{
     query::QueryStore,
-    state::{AtomicTransition, RecordMutation, RevisionCheck},
+    state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord},
 };
 use serde_json::Value;
 use serde_json::json;
@@ -66,7 +65,7 @@ async fn bind_api<S: QueryStore>(
         }
     }
     for id in ids {
-        let derived = gateway_authority::keys::api_policy(&id);
+        let derived = gateway_authority_keys::api_policy(&id);
         let id_key = gateway_auth::api_keys::id_key(&id);
         let row = prospective(store, written, record, &id_key, &mut transition.checks).await?;
         let parsed = row
@@ -126,7 +125,7 @@ pub(crate) async fn bind<S: QueryStore>(
             .iter()
             .any(|name| p[1] == *name)
     {
-        let mut defaults = gateway_authority::kernel::KernelDefaults::default();
+        let mut defaults = gateway_authority_kernel_protocol::KernelDefaults::default();
         for name in ["kernel_policy_limit_requests", "kernel_policy_window_ms"] {
             let key = key(json!(["default", name]));
             if let Some(row) =
@@ -143,7 +142,7 @@ pub(crate) async fn bind<S: QueryStore>(
             }
         }
         transition.mutations.push(RecordMutation::Put {
-            key: gateway_authority::keys::kernel_defaults(),
+            key: gateway_authority_keys::kernel_defaults(),
             record: StoredRecord::json(revision, json!(defaults), None),
         });
     }

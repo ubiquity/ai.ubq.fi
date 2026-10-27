@@ -1,16 +1,14 @@
 use crate::{Row, Transform, decode, invalid, json, key, parts, starts};
 use gateway_auth::passkeys::{PasskeyCredential, PasskeyUser};
-use gateway_authority::{
-    kernel::{KernelDefaults, KernelReservation, KernelWindow},
-    keys,
-    paid::source_records::decode_paid_attempt_record,
-    paid_types::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate},
-    quota::{ApiUsageRequest, ApiUsageState, ApiUsageWindow},
-};
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
+use gateway_authority_api_protocol::{ApiUsageRequest, ApiUsageState, ApiUsageWindow};
+use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, KernelWindow};
+use gateway_authority_keys as keys;
+use gateway_authority_paid_records::source_records::decode_paid_attempt_record;
+use gateway_authority_paid_records::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate};
+use gateway_contracts::{identity::ApiKeyId, lifecycle::BillingState};
 use gateway_core::state::StoredRecord;
-use gateway_core::{identity::ApiKeyId, lifecycle::BillingState};
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use serde_json::json;
 use std::{
@@ -125,7 +123,7 @@ fn derive_basics<'a>(
             .iter()
             .map(|account| {
                 let identity = account.identity();
-                gateway_authority::routing_types::PoolAccount {
+                gateway_authority_routing_records::types::PoolAccount {
                     account_id_hash: identity.routing_account_hash,
                     admin_account_hash: identity.administrative_account_hash,
                     credential_version: identity.credential_version,
@@ -135,9 +133,11 @@ fn derive_basics<'a>(
                 }
             })
             .collect();
-        let normalized = gateway_authority::routing_types::SubscriptionPool {
+        let normalized = gateway_authority_routing_records::types::SubscriptionPool {
             v: 1,
-            pool_versionstamp: gateway_core::identity::PoolVersionstamp(source.revision.clone()),
+            pool_versionstamp: gateway_contracts::identity::PoolVersionstamp(
+                source.revision.clone(),
+            ),
             accounts,
         };
         derived.push((

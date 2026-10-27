@@ -1,28 +1,31 @@
-use super::{
-    NativeRenewalFence,
-    actor::StoredNativeActor as Actor,
-    rows::{fail, session_key},
-};
-use crate::{
-    keys,
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    quota::{ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState},
-    routing_types::{AdmittedAccount, SubscriptionPool},
-    store::{TokenSource, Transaction},
-};
+use super::rows::fail;
+use super::rows::session_key;
+use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::RequestContext;
-use gateway_core::local_work::journal_local_work;
-use gateway_core::model::ModelId;
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
+use gateway_authority_actor_records::legacy::StoredNativeActor as Actor;
+use gateway_authority_api_protocol::{
+    ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState,
+};
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
+};
+use gateway_authority_routing_records::types::SubscriptionPool;
+use gateway_authority_routing_selection::types::AdmittedAccount;
+use gateway_contracts::identity::RequestContext;
+use gateway_contracts::model::ModelId;
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_local_journal::local_work::journal_local_work;
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_schema::catalog_store::runtime_config_key;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -128,7 +131,7 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
         return Err(fail());
     }
     let current_actor = super::actor::read_current(tx, actor, current_config).await?;
-    if current_actor.scope != super::actor::NativeActorScope::Client {
+    if current_actor.scope != gateway_authority_actor_records::scope::NativeActorScope::Client {
         return Err(fail());
     }
     let policy_digest = current_actor.policy_digest;
@@ -266,7 +269,10 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     let native_owner_id = registered.native_owner_id();
     let home = registered.home.as_str();
     let view = crate::routing::read_view(tx).await?;
-    if !view.matches(admission) {
+    if !view
+        .policy()
+        .matches_admission(&admission.binding, admission.active_generation)
+    {
         return Err(fail());
     }
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
@@ -297,7 +303,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
         .filter(|v| v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0)
         .map(|v| v as i64);
     let fence = NativeRenewalFence {
-        v: super::NATIVE_RENEWAL_FENCE_VERSION,
+        v: gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION,
         owner_id: owner_id.into(),
         owner_epoch: owner_epoch.into(),
         owner_revision: tx.revision(&keys::paid_control_owner()).ok_or_else(fail)?,
@@ -313,7 +319,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
         principal: current_actor.principal,
         principal_policy_digest: control.principal_policy_digest,
         original_request_id: request_id.into(),
-        context: super::NativeRenewalContext::Inference {
+        context: gateway_native_authority_wire::context::NativeRenewalContext::Inference {
             attempt_id: control.attempt_id,
             original_admission_digest: control.original_admission_digest,
             model: control.model,

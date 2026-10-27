@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::{cancellation::Cancellation, error::configuration_error};
 use std::collections::BTreeMap;
 use worker::{

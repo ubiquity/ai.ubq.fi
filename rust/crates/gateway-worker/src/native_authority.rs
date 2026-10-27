@@ -13,17 +13,12 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation, NativeRenewalControl,
-        receiver::NativeRenewalAuthority,
-        wire::{
-            NativeRenewalAuthorityRequest as RenewalRequest,
-            NativeRenewalAuthorityResponse as RenewalResponse,
-        },
-    },
-    store::Authority,
+    native_control::NativeRenewalCancellation, native_control::NativeRenewalControl,
+    native_control::receiver::NativeRenewalAuthority,
+    native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest, store::Authority,
 };
-use gateway_core::error::GatewayError;
+use gateway_native_authority_wire::renewal_response::NativeRenewalAuthorityResponse as RenewalResponse;
+use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::request_bytes;
 use gateway_worker_platform::cancellation::Cancellation;

@@ -1,9 +1,11 @@
 #![cfg(target_os = "linux")]
-use gateway_auth::{
-    crypto::base64url, native_auth::NativeNonceAuthority, native_replay::StoreNonceAuthority,
-};
-use gateway_core::state::{AuthorityStore, RecordKey};
-use gateway_native::{daemon_config::NativeDaemonConfig, nonce_sqlite::SqliteNonceStore};
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
+use gateway_auth_primitives::crypto::base64url;
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::key::RecordKey;
+use gateway_native::daemon_config::NativeDaemonConfig;
+use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use serde_json::json;
 use std::{
     fs,
@@ -135,7 +137,7 @@ fn actual_kernel_profile_refuses_unconfigured_files_sockets_network_and_exec() {
 #[test]
 #[ignore = "isolated child entered only by the kernel profile acceptance test"]
 fn confinement_child() {
-    use gateway_native::confinement::{NativeConfinement, enforce};
+    use gateway_native_confinement::confinement::{NativeConfinement, enforce};
     use std::{net::TcpStream, os::unix::net::UnixStream, process::Command};
     let input: serde_json::Value =
         serde_json::from_str(&std::env::var("UOS_NATIVE_TEST_PROFILE").unwrap()).unwrap();

@@ -4,7 +4,7 @@ use gateway_auth::{
     crypto::Secret,
     types::{AuthMethod, AuthPrincipal},
 };
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
+use gateway_contracts::identity::{PrincipalId, RequestContext, RequestId};
 use gateway_providers::{
     response::{decode_response, response_plan, translated_response_id},
     sse::StreamDecoder,

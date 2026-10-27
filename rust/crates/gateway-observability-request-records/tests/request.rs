@@ -1,4 +1,4 @@
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use gateway_observability_request_records::request::{

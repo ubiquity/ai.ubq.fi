@@ -1,8 +1,8 @@
 //! Convert current tree state to a fresh identity-free source graph, never guess aliases.
 use crate::{GatewayError, invalid};
-use gateway_core::js_string::JsString16;
-use gateway_core::source_graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind};
-use gateway_core::value::PortableValue;
+use gateway_source::js_string::JsString16;
+use gateway_source_graph::graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind};
+use gateway_kv_codec::value::PortableValue;
 
 fn index(key: &JsString16) -> Option<u32> {
     let key = key.try_utf8().ok()?;

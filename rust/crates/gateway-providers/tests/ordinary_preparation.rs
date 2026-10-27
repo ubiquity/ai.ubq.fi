@@ -1,7 +1,6 @@
 //! The ordinary selected-metadata phase order, not a universal provider normalizer.
-use gateway_core::{
-    provider::UpstreamProvider, source_json::SourceJson, source_serialization as source,
-};
+use gateway_contracts::provider::UpstreamProvider;
+use gateway_source::{source_json::SourceJson, source_serialization as source};
 use gateway_providers::{
     source_request::prepare_source_request,
     types::{AuthMaterial, ClientSurface, OrdinaryPreparationContext, PrepareOptions},
@@ -326,7 +325,8 @@ fn selected_ordinary_metadata_does_not_prevalidate_direct_or_openrouter_branches
 
 #[test]
 fn opaque_model_and_effort_wire_map_units_are_data_not_scalar_fallbacks() {
-    use gateway_core::{js_string::JsString16, model::ModelId};
+    use gateway_source::js_string::JsString16;
+    use gateway_contracts::model::ModelId;
     let record = parse(
         r#"{"id":"\ud800","supported_reasoning_levels":["\udc00"],"default_reasoning_level":"\udc00","reasoning_effort_wire_map":{"\udc00":"wire\ud800"},"prompt_cache":false}"#,
     );

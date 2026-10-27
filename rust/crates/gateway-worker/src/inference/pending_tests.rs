@@ -1,6 +1,6 @@
 //! Routing error selection stays with the Worker lifetime owner.
 use super::stream::cleanup_error;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_routing_runtime::types::{RoutingError, SourceRefusalBody};
 
 #[test]

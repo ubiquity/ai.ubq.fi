@@ -6,11 +6,8 @@ use gateway_auth::{
     provider_credentials::{self as codex, CodexSourceAccount},
 };
 use gateway_claude_usage_history_records::types::CredentialKind;
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{AuthorityStore, RevisionCheck},
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_observability::{
     host_types::*,
     types::{HealthProvider, HealthTarget},
@@ -20,7 +17,7 @@ use serde_json::json;
 use std::collections::BTreeSet;
 
 fn stamp(value: f64) -> Option<i64> {
-    (value.is_finite() && value.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+    (value.is_finite() && value.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
         .then(|| value.trunc() as i64)
 }
 pub(super) fn monitoring_key(env: &worker::Env) -> Option<String> {
@@ -142,7 +139,7 @@ impl RequestHost {
                         source: "env".into(),
                         allowed_key_ids: ids
                             .into_iter()
-                            .map(|id| gateway_core::js_string::JsString16::from_utf8(&id))
+                            .map(|id| gateway_source::js_string::JsString16::from_utf8(&id))
                             .collect(),
                         updated_at_ms: None,
                     })
@@ -189,7 +186,7 @@ impl RequestHost {
         (
             Vec<ClaudeAccountReadback>,
             Option<String>,
-            Option<gateway_core::js_string::JsString16>,
+            Option<gateway_source::js_string::JsString16>,
         ),
         GatewayError,
     > {
@@ -235,7 +232,7 @@ impl RequestHost {
                     .workspace
                     .as_ref()
                     .and_then(|w| w.last_error.as_ref())
-                    .map(gateway_core::js_string::JsString16::to_source_json)
+                    .map(gateway_source::js_string::JsString16::to_source_json)
                     .transpose()?;
                 let workspace = account.workspace.as_ref().map(|w| WorkspaceMetadata {
                     id: w.id.clone(),

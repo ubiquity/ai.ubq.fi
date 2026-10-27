@@ -11,9 +11,8 @@ use gateway_auth::{
     store::{check, commit, put},
     types::{AuthHost, AuthResponse, conflict, invalid},
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::QueryStore, source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_core::query::QueryStore;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -68,7 +67,7 @@ fn selection(value: Option<&Value>) -> Option<Value> {
     let time = value
         .get("updated_at_ms")?
         .as_i64()
-        .filter(|n| *n > 0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER)?;
+        .filter(|n| *n > 0 && *n <= gateway_contracts::identity::MAX_SAFE_INTEGER)?;
     Some(json!({"provider_ids":normalize_ids(&ids),"updated_at_ms":time}))
 }
 

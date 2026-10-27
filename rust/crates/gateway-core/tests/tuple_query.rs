@@ -1,6 +1,9 @@
 use gateway_core::query::{QueryRequest, QuerySelector};
-use gateway_core::state::{RecordKey, StoredRecord};
-use gateway_core::tuple_key::{BigIntKey, KeyPart, ScalarKeyPart, TupleKey};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{
+    tuple_key::BigIntKey, tuple_key::KeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey,
+};
 use serde_json::{Value, json};
 
 fn key(parts: &[Value]) -> RecordKey {
@@ -28,7 +31,7 @@ fn prefix(parts: &[Value]) -> QuerySelector {
 fn row(expires_at_ms: Option<i64>) -> StoredRecord {
     StoredRecord {
         schema_version: 1,
-        value_encoding: gateway_core::value::ValueEncoding::Json,
+        value_encoding: gateway_kv_codec::value::ValueEncoding::Json,
         revision: "1".to_owned(),
         value: json!({"value":1}),
         expires_at_ms,
@@ -359,7 +362,7 @@ fn expiry_is_filtered_before_page_limit_and_never_rewritten() {
     assert_eq!(rows[2].1.expires_at_ms, Some(1_001));
     let corrupt_live = StoredRecord {
         schema_version: 2,
-        value_encoding: gateway_core::value::ValueEncoding::Json,
+        value_encoding: gateway_kv_codec::value::ValueEncoding::Json,
         ..row(None)
     };
     assert!(query.accepts_record(&rows[2].0, &corrupt_live).is_err());

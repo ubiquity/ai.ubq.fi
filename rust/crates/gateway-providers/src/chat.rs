@@ -3,14 +3,13 @@ use crate::{
     source_tools::ToolMap,
     types::{ChatProfile, Elision, invalid},
 };
-use gateway_core::{error::GatewayError, js_string::JsString16};
 use serde_json::Value;
 pub const FORWARD_LIMIT: usize = 65_536;
 pub const FORWARD_VERSION: &str = "deepseek-forwarded-payload/v1";
 pub(crate) const CONTINUATION: &str = "When tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.";
 #[derive(Clone, Debug)]
 pub struct ChatProjection {
-    pub body: gateway_core::source_json::SourceJson,
+    pub body: gateway_source::source_json::SourceJson,
     pub tool_names: ToolMap,
     pub elisions: Vec<Elision>,
     pub warnings: Vec<String>,
@@ -34,21 +33,21 @@ fn text_encoder_len(value: &[u16]) -> usize {
 pub(crate) fn oversized(
     path: &str,
     original_bytes: usize,
-    call_id: Option<&JsString16>,
+    call_id: Option<&gateway_source::js_string::JsString16>,
 ) -> gateway_schema::source_request::error::SourceRequestError {
     let call_note = call_id
         .map(|id| {
             crate::source::concat(&[
-                &JsString16::from_utf8(" (tool call "),
+                &gateway_source::js_string::JsString16::from_utf8(" (tool call "),
                 id,
-                &JsString16::from_utf8(")"),
+                &gateway_source::js_string::JsString16::from_utf8(")"),
             ])
         })
         .unwrap_or_default();
     let message = crate::source::concat(&[
-        &JsString16::from_utf8(&format!("input item {path}")),
+        &gateway_source::js_string::JsString16::from_utf8(&format!("input item {path}")),
         &call_note,
-        &JsString16::from_utf8(&format!(
+        &gateway_source::js_string::JsString16::from_utf8(&format!(
             " carries {original_bytes} bytes; this route forwards at most {FORWARD_LIMIT} bytes per message under {FORWARD_VERSION}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction."
         )),
     ]);
@@ -57,28 +56,28 @@ pub(crate) fn oversized(
         message,
         "invalid_request_error",
         Some("context_length_exceeded"),
-        Some(Some(JsString16::from_utf8(path))),
+        Some(Some(gateway_source::js_string::JsString16::from_utf8(path))),
     )
 }
 pub(crate) fn bound_source(
-    text: &JsString16,
+    text: &gateway_source::js_string::JsString16,
     path: &str,
-    call_id: Option<&JsString16>,
+    call_id: Option<&gateway_source::js_string::JsString16>,
     kind: &str,
     reject: bool,
     elisions: &mut Vec<Elision>,
-) -> crate::source::Result<JsString16> {
+) -> crate::source::Result<gateway_source::js_string::JsString16> {
     bound_source_limit(text, path, call_id, kind, reject, elisions, FORWARD_LIMIT)
 }
 pub(crate) fn bound_source_limit(
-    text: &JsString16,
+    text: &gateway_source::js_string::JsString16,
     path: &str,
-    call_id: Option<&JsString16>,
+    call_id: Option<&gateway_source::js_string::JsString16>,
     kind: &str,
     reject: bool,
     elisions: &mut Vec<Elision>,
     limit: usize,
-) -> crate::source::Result<JsString16> {
+) -> crate::source::Result<gateway_source::js_string::JsString16> {
     let original_bytes = text_encoder_len(text.as_units());
     if original_bytes <= limit {
         return Ok(text.clone());
@@ -108,7 +107,7 @@ pub(crate) fn bound_source_limit(
                 forwarded_bytes: head_bytes + marker.len(),
                 omitted_bytes: omitted,
             });
-            return Ok(JsString16::from_units(units));
+            return Ok(gateway_source::js_string::JsString16::from_units(units));
         }
         head = utf16_head(head, (head.len() as f64 * 0.9).floor() as usize);
     }
@@ -116,7 +115,7 @@ pub(crate) fn bound_source_limit(
 
 pub fn responses_messages(
     raw: &Value,
-) -> Result<(Vec<gateway_core::source_json::SourceJson>, Vec<Elision>), GatewayError> {
+) -> Result<(Vec<gateway_source::source_json::SourceJson>, Vec<Elision>), gateway_source::error::GatewayError> {
     crate::source_chat::messages(&crate::source::generated(raw))
         .map_err(crate::source::scalar_error)
 }
@@ -125,10 +124,10 @@ pub fn project_responses(
     model: &str,
     stream: bool,
     profile: ChatProfile,
-) -> Result<ChatProjection, GatewayError> {
+) -> Result<ChatProjection, gateway_source::error::GatewayError> {
     let projection = crate::source_chat::project(
         &crate::source::generated(raw),
-        &gateway_core::model::ModelId::from_scalar(model),
+        &gateway_contracts::model::ModelId::from_scalar(model),
         stream,
         profile,
     )
@@ -140,7 +139,7 @@ pub fn project_responses(
         warnings: projection.warnings,
     })
 }
-pub fn project_effort(value: &str, profile: ChatProfile) -> Result<String, GatewayError> {
+pub fn project_effort(value: &str, profile: ChatProfile) -> Result<String, gateway_source::error::GatewayError> {
     let effort = value.trim().to_lowercase();
     if profile == ChatProfile::Deepseek {
         return Ok(if effort == "ultra" {
@@ -173,7 +172,7 @@ pub fn thinking_active(effort: Option<&str>, thinking: &Value) -> bool {
         .and_then(Value::as_str)
         .is_none_or(|kind| !kind.trim().eq_ignore_ascii_case("disabled"))
 }
-pub fn validate_thinking_choice(body: &Value, field: &str) -> Result<(), GatewayError> {
+pub fn validate_thinking_choice(body: &Value, field: &str) -> Result<(), gateway_source::error::GatewayError> {
     let effort = body["reasoning_effort"].as_str();
     let thinking = thinking_active(effort, &body["thinking"]);
     if thinking && (body["tool_choice"] == "required" || body["tool_choice"].is_object()) {

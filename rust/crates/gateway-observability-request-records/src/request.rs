@@ -1,5 +1,5 @@
 //! Exact source request-log normalization and lossless passive HTTP failure DATA.
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;

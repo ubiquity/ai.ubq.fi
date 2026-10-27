@@ -6,11 +6,8 @@ use gateway_admin_test_support::{
     runtime_store::Store,
 };
 use gateway_auth::types::AuthHost;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome},
-};
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome};
 use serde_json::{Value, json};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

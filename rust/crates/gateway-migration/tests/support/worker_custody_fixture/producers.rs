@@ -4,16 +4,18 @@ use super::{port, support_run};
 use gateway_admin_contracts::operations::{AdminHost, AdminInput};
 use gateway_admin_contracts::routes::AdminOperation;
 use gateway_auth::{store::key, types::AuthHost};
-use gateway_authority::keys::{api_request, api_window};
 use gateway_authority::store::Authority;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{ApiKeyId, RequestId};
-use gateway_core::source_graph::GraphNode;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_keys::{api_request, api_window};
+use gateway_contracts::{identity::ApiKeyId, identity::RequestId};
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_migration_test_support::fixture::{RUNTIME_CASES, Receipt};
+use gateway_source::error::GatewayError;
+use gateway_source_graph::graph::GraphNode;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,7 +29,7 @@ impl AuthorityStore for &port::Store {
     }
 }
 struct Tokens(AtomicU64);
-impl gateway_authority::store::TokenSource for Tokens {
+impl gateway_authority_contracts::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         Ok(format!(
             "native-fixture-{}",
@@ -36,7 +38,7 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock(i64);
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(self.0)
     }
@@ -85,7 +87,7 @@ fn admin(body: Value, now_ms: i64) -> Result<AdminInput, GatewayError> {
     Ok(AdminInput {
         parameter: None,
         query: Default::default(),
-        body: gateway_core::source_json::SourceJson::from_serializable(&body)?,
+        body: gateway_source::source_json::SourceJson::from_serializable(&body)?,
         actor: gateway_auth::types::AuthPrincipal {
             token: None,
             method: gateway_auth::types::AuthMethod::AdminAllowlist,

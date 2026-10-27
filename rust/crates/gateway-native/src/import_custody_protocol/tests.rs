@@ -12,7 +12,7 @@ fn maximal_binding() -> ImportCustodyStartedRequest {
         source_revision: "\0".repeat(4096),
         normalized_revision: "\0".repeat(4096),
         started_revision: "\0".repeat(4096),
-        deadline_ms: gateway_core::identity::MAX_SAFE_INTEGER,
+        deadline_ms: gateway_contracts::identity::MAX_SAFE_INTEGER,
     }
 }
 fn maximal_header() -> Header {

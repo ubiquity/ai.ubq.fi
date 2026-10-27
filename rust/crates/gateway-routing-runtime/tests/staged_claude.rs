@@ -1,16 +1,12 @@
-use gateway_authority::store::TokenSource;
+use gateway_authority_contracts::TokenSource;
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_core::{
-    js_string::JsString16,
-    model::ModelId,
-    provider::UpstreamProvider,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
-    value::ValueEncoding,
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck,
+};
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey, value::ValueEncoding,
 };
 use gateway_providers::{
     source_request::prepare_source_request,
@@ -21,6 +17,9 @@ use gateway_providers::{
 };
 use gateway_routing_runtime::{currentness::*, custody, policy, session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::json;
 
 fn publication(workspace: Option<JsString16>, kind: ClaudeCredentialKind) -> PublishedCredential {
@@ -374,7 +373,7 @@ fn named_journal_preserves_scalar_null_and_utf16_workspace_and_exact_owner_fence
             custody::validate_journal_row(&key, &final_row).unwrap();
             assert_eq!(
                 final_row.expires_at_ms,
-                Some(NOW + gateway_authority::PAID_RETENTION_MS)
+                Some(NOW + gateway_authority_contracts::PAID_RETENTION_MS)
             );
         }
     });

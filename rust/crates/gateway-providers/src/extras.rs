@@ -3,10 +3,11 @@ use crate::{
     source_tools::ToolMap,
     types::{ClientSurface, DecodePlan, Headers, PrepareOptions, PreparedRequest, ResponseDecode},
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
-    source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_schema::source_request::{error::SourceRequestError, value::Value};
 use image::{ImagePlan, ParsedImageRequest};
 use serde::{Deserialize, Serialize};

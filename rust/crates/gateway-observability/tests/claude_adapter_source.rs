@@ -1,19 +1,17 @@
 //! Only the exact request-bound SourceJson and finite settings-selector adapters.
+use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
 mod support;
 use gateway_admin_runtime::capabilities::{CodexRequest, Context, ProviderRequest};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryPage, QueryRequest, QueryStore},
-    source_json::SourceJson,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability::{
-    ObservabilityRuntime,
-    capacity_shapes::{history_point, unavailable_snapshot},
-    host_types::CapacityAccountRef,
-    types::ObservabilityHost,
+    ObservabilityRuntime, host_types::CapacityAccountRef, types::ObservabilityHost,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc};
 use support::{Host, Memory, run};
@@ -205,9 +203,9 @@ fn only_matched_existing_ascii_hash_enters_unchanged_boolean_keys_no_checks_and_
         let memory = AuditMemory::default();
         let runtime = ObservabilityRuntime::new(memory.clone(), host(vec![]));
         let key = if overage {
-            gateway_authority::keys::overage(&hash)
+            gateway_authority_keys::overage(&hash)
         } else {
-            gateway_authority::keys::reset_usage(&hash)
+            gateway_authority_keys::reset_usage(&hash)
         };
         for flag in [true, false] {
             let quoted = serde_json::to_string(&hash).unwrap();

@@ -14,11 +14,14 @@ use gateway_auth::{
     },
     upstream::*,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, query::*,
-    source_control::decode_source_control_record, source_json::SourceJson, state::*,
-    value::ValueEncoding,
+    query::QueryPage, query::QueryRequest, query::QueryStore,
+    source_control::decode_source_control_record, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, value::ValueEncoding};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -459,7 +462,7 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
                 keys::authority_policy_key(&id),
             ],
         );
-        let policy: gateway_authority::quota::ApiKeyPolicy =
+        let policy: gateway_authority_api_protocol::ApiKeyPolicy =
             decode_source_control_record(&policy_row)
                 .unwrap()
                 .deserialize()

@@ -1,9 +1,8 @@
 //! Source-compatible scalar and query field parsers; decoded values carry no authority.
 use crate::source_input as source_body;
 use gateway_auth::types::invalid;
-use gateway_core::{
-    error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16, source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_profile_values::coercion::js_number;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -42,7 +41,7 @@ pub fn source_integer(value: &SourceJson) -> Option<i64> {
 }
 pub fn source_limit(value: &SourceJson) -> Option<i64> {
     if source_text(Some(value)).is_some_and(|text| {
-        gateway_core::js_string_case::lowercase_source(&text)
+        gateway_source::js_string_case::lowercase_source(&text)
             .as_units()
             .iter()
             .copied()
@@ -70,7 +69,7 @@ pub fn source_coerced_number(value: &SourceJson) -> f64 {
 }
 /// Source Object.keys semantics for the already validated admin record/array.
 pub fn source_entries(value: &SourceJson) -> Option<Vec<(JsString16, SourceJson)>> {
-    gateway_core::source_serialization::entries(value).or_else(|| {
+    gateway_source::source_serialization::entries(value).or_else(|| {
         value.array_items().ok().map(|items| {
             items
                 .into_iter()

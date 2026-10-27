@@ -8,15 +8,12 @@ use gateway_admin_runtime::{
 };
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_catalog_runtime::state::checks_current;
-use gateway_core::{
-    claude::ClaudeErrorEvidence as ErrorEvidence,
-    error::GatewayError,
-    js_string::JsString16,
-    model::ModelId,
-    source_json::SourceJson,
+use gateway_contracts::{claude::ClaudeErrorEvidence as ErrorEvidence, model::ModelId};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{AuthorityStore, RevisionCheck},
 };
+use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_providers::types::Headers;
 use gateway_schema::selection::ProviderSelection;
 use serde::Serialize;
@@ -315,7 +312,7 @@ impl ClaudePoolSession {
         response: host::ResponseObservation,
     ) -> Result<host::AcceptedHead, GatewayError> {
         if !(100..=599).contains(&response.status)
-            || !(1..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&response.observed_at_ms)
+            || !(1..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&response.observed_at_ms)
         {
             return Err(crate::invalid("Claude actual response receipt is invalid."));
         }
@@ -542,7 +539,7 @@ fn deduplicate(checks: Vec<RevisionCheck>) -> Result<Vec<RevisionCheck>, Gateway
     Ok(map
         .into_iter()
         .map(|(key, expected_revision)| RevisionCheck {
-            key: gateway_core::state::RecordKey(key),
+            key: gateway_kv_codec::key::RecordKey(key),
             expected_revision,
         })
         .collect())

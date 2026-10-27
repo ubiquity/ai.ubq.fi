@@ -1,11 +1,10 @@
 //! Finite private reverse carrier. These DTOs contain selectors and observations, not capabilities.
-use super::{NativeRenewalFence, NativeRenewalMode};
 use gateway_auth::{
     crypto::{base64url, decode_base64url},
     native_auth::NativeAuthHeaders,
 };
 use gateway_auth_native_wire::control::NATIVE_CONTROL_MAX_BYTES;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub const NATIVE_RENEWAL_AUTHORITY_PATH: &str = "/uos/native/renewal-authority";
@@ -153,39 +152,6 @@ impl NativeRenewalAuthorityRequest {
         }
         Ok(())
     }
-}
-
-mod response_codec;
-
-#[derive(Serialize)]
-#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NativeRenewalAuthorityResponse {
-    Claim {
-        v: u8,
-        action_ref: String,
-        operation_id: String,
-        claim_ref: String,
-        start_permit: Option<String>,
-        publication_revision: Option<String>,
-        mode: NativeRenewalMode,
-        deadline_ms: i64,
-        fence: NativeRenewalFence,
-    },
-    Start {
-        v: u8,
-        mode: NativeRenewalMode,
-    },
-    Recheck {
-        v: u8,
-        fence: NativeRenewalFence,
-    },
-    Published {
-        v: u8,
-        publication_revision: String,
-    },
-    Unknown {
-        v: u8,
-    },
 }
 
 pub fn invalid() -> GatewayError {

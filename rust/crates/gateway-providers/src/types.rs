@@ -1,8 +1,8 @@
 use crate::source_tools::ToolMap;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
-    source_json::SourceJson, source_serialization,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson, source_serialization,
 };
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -331,8 +331,8 @@ impl ProviderEvent {
                 })
             })
     }
-    pub fn terminal(&self) -> Option<gateway_core::lifecycle::SemanticTerminal> {
-        use gateway_core::lifecycle::SemanticTerminal;
+    pub fn terminal(&self) -> Option<gateway_contracts::lifecycle::SemanticTerminal> {
+        use gateway_contracts::lifecycle::SemanticTerminal;
         match self.type_name().as_deref() {
             Some("response.completed") => Some(SemanticTerminal::Completed),
             Some("response.incomplete") => Some(SemanticTerminal::Incomplete),
@@ -375,7 +375,7 @@ pub struct DecodedResponse {
     pub headers: Headers,
     pub body: SourceJson,
     pub events: Vec<ProviderEvent>,
-    pub terminal: Option<gateway_core::lifecycle::SemanticTerminal>,
+    pub terminal: Option<gateway_contracts::lifecycle::SemanticTerminal>,
     pub usage: Option<Value>,
     pub native_replay: Option<Value>,
     pub raw_body: Option<Vec<u8>>,

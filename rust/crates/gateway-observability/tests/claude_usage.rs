@@ -14,13 +14,11 @@ use gateway_claude_usage_runtime::{
     collect,
     fetch::{Response, UsageHost},
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{AuthorityStore, RevisionCheck, StoredRecord},
 };
+use gateway_core::state::{AuthorityStore, RevisionCheck, StoredRecord};
 use gateway_observability::{
     ObservabilityRuntime,
     host_types::{
@@ -425,7 +423,7 @@ fn corrupt_usage_rollup_refuses_entire_bucket_transaction_and_read_scan_reports_
     let a = account(1);
     host.seed(vec![a.clone()])?;
     run(collect::refresh(&host.store, &host, &a))?;
-    let key=host.store.rows.borrow().keys().find(|k|gateway_core::tuple_key::TupleKey::from_record_key(&gateway_core::state::RecordKey((*k).clone())).ok().and_then(|k|k.decoded_parts().ok()).is_some_and(|p|p.iter().any(|v|matches!(v,gateway_core::tuple_key::DecodedKeyPart::String(bytes) if bytes==b"usage_rollup")))).cloned().ok_or("usage key absent")?;
+    let key=host.store.rows.borrow().keys().find(|k|gateway_kv_codec::tuple_key::TupleKey::from_record_key(&gateway_kv_codec::key::RecordKey((*k).clone())).ok().and_then(|k|k.decoded_parts().ok()).is_some_and(|p|p.iter().any(|v|matches!(v,gateway_kv_codec::tuple_key::DecodedKeyPart::String(bytes) if bytes==b"usage_rollup")))).cloned().ok_or("usage key absent")?;
     host.store
         .rows
         .borrow_mut()
@@ -511,7 +509,7 @@ fn frozen_b592_usage_history_atomic_rows_retention_keys_and_rollup_readbacks_mat
         run(history.record_claude_capacity_observation(&event))?;
         assert_eq!(host.store.rows.borrow().len(), case.rows.len());
         for row in case.rows {
-            let key = gateway_core::tuple_key::TupleKey::from_json_parts(
+            let key = gateway_kv_codec::tuple_key::TupleKey::from_json_parts(
                 row.key.as_array().ok_or("tuple absent")?,
             )?
             .to_record_key();

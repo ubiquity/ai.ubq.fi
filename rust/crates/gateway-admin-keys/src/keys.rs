@@ -10,17 +10,15 @@ use gateway_auth::{
     store,
     types::{AuthHost, AuthPrincipal, AuthResponse, conflict, invalid},
 };
-use gateway_authority::quota::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindow};
+use gateway_authority_api_protocol::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindow};
+use gateway_contracts::{identity::ApiKeyId, model::ModelId};
 use gateway_core::{
-    error::GatewayError,
-    identity::ApiKeyId,
-    js_string::JsString16,
-    model::ModelId,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AuthorityStore, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_profile_values::coercion::js_number;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -34,16 +32,16 @@ pub struct ApiKeyRecord {
     pub created_at_ms: i64,
     pub paid_fallback_model_ids: Vec<ModelId>,
     pub paid_fallback_quota_per_credit: i64,
-    #[serde(default, with = "gateway_authority::paid_types::model_map")]
+    #[serde(default, with = "gateway_authority_paid_control_records::model_map")]
     pub paid_fallback_max_exposure_microcredits: std::collections::BTreeMap<ModelId, i64>,
     pub paid_fallback_pricing_checked_at_ms: Option<i64>,
 }
 
 pub fn authority_policy_key(id: &str) -> RecordKey {
-    gateway_authority::keys::api_policy(id)
+    gateway_authority_keys::api_policy(id)
 }
 pub fn deletion_key(id: &str) -> RecordKey {
-    gateway_authority::keys::paid_deletion(id)
+    gateway_authority_keys::paid_deletion(id)
 }
 pub fn authority_policy(record: &ApiKeyRecord, now: i64) -> AuthorityKeyPolicy {
     AuthorityKeyPolicy {
@@ -203,7 +201,7 @@ pub fn public_record(record: &ApiKeyRecord) -> SourceJson {
 
 fn safe_integer(value: &SourceJson) -> Option<i64> {
     let number = input::number(value)?.trunc();
-    (number.is_finite() && number.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+    (number.is_finite() && number.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
         .then_some(number as i64)
 }
 fn limit(raw: Option<&SourceJson>, default: i64) -> Result<i64, GatewayError> {
@@ -257,7 +255,8 @@ fn window(raw: Option<&SourceJson>, default: i64) -> Result<i64, GatewayError> {
                 // form its numeric grammar; it gets the same window validation error.
                 text.try_utf8().ok().and_then(|text| {
                     let n = js_number(&Value::String(text));
-                    (n.is_finite() && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+                    (n.is_finite()
+                        && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
                         .then_some(n.trunc() as i64)
                 })
             } else {
@@ -310,7 +309,7 @@ async fn paid_fields<A: AdminHost>(
             -1
         } else {
             let micro = (credit * 1_000_000.0).round();
-            if micro > gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+            if micro > gateway_contracts::identity::MAX_SAFE_INTEGER as f64 {
                 return Err(invalid(
                     "paid_fallback_limit_credits must be a non-negative number or -1",
                 ));
@@ -446,7 +445,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
         let pk = authority_policy_key(&id);
         let pr = self.store.read(&pk).await?;
         let ir = self.store.read(&ik).await?;
-        let wk = gateway_authority::keys::api_window(&id, &format!("v3:{window}"), now);
+        let wk = gateway_authority_keys::api_window(&id, &format!("v3:{window}"), now);
         let wr = self.store.read(&wk).await?;
         let mut checks = vec![
             store::check(&hk, hr.as_ref()),
@@ -626,7 +625,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     record.policy.usage_reset_at_ms = now + new_window;
                     record.policy.usage_requests = 0;
                     let wk =
-                        gateway_authority::keys::api_window(id, &format!("v3:{new_window}"), now);
+                        gateway_authority_keys::api_window(id, &format!("v3:{new_window}"), now);
                     let wr = self.store.read(&wk).await?;
                     // Never overwrite a live reservation when a reset shares its exact clock/window identity.
                     if wr
@@ -752,7 +751,7 @@ fn change_fields(
     let previous = fields(old);
     let mut changed = input::object(Vec::new());
     for (key, value) in
-        gateway_core::source_serialization::entries(&all).expect("constructed audit fields")
+        gateway_source::source_serialization::entries(&all).expect("constructed audit fields")
     {
         // All names come from the closed source audit allowlist above.
         let key = key.try_utf8().expect("closed ASCII audit field name");

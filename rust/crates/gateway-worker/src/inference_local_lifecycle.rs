@@ -4,7 +4,8 @@ use crate::{
     routing_host,
 };
 use futures_util::task::AtomicWaker;
-use gateway_core::{error::GatewayError, lifecycle::TransportObservation};
+use gateway_source::error::GatewayError;
+use gateway_contracts::lifecycle::TransportObservation;
 use gateway_routing_runtime::local_work::completion::response::{
     LocalAccountingProgress, LocalObservationSink, LocalSelectedResponse,
 };

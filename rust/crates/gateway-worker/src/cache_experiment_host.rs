@@ -1,4 +1,7 @@
 //! Request-owned fixed Codex control experiment. No generic inference or paid fallback.
+use gateway_cache_experiment_dispatch::CacheDispatchOperations;
+use gateway_cache_experiment_runner::io::{ExperimentIo, ReadSample};
+use gateway_cache_experiment_runner::{CacheRunOperations, PreparedTarget};
 mod sample;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
@@ -6,22 +9,17 @@ use crate::host::PlatformTokens;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
 use futures_util::StreamExt;
-use gateway_authority::{
-    cache_experiment::{
-        PreparedTarget, RefreshPermit,
-        model::{failed, unavailable},
-        run::{ExperimentIo, ReadSample},
-        transport::CacheDispatch,
-    },
-    native_control::actor::{NativeActorScope, NativeRenewalActor},
-    store::Authority,
-};
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
+use gateway_authority::{native_control::actor::NativeRenewalActor, store::Authority};
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
+use gateway_cache_experiment_records::{model::failed, model::unavailable};
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_observability::{
     ObservabilityRuntime,
     types::{HealthEvent, HealthTarget, ObservabilityHost},
 };
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
@@ -330,7 +328,7 @@ impl ExperimentIo for Host<'_> {
         }
         if head.slot != slot {
             return Ok(ReadSample {
-                value: Err(gateway_authority::cache_experiment::model::Reason::SlotDrift),
+                value: Err(gateway_cache_experiment_records::model::Reason::SlotDrift),
                 completed: false,
             });
         }

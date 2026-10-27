@@ -1,4 +1,4 @@
-use gateway_core::provider::UpstreamProvider;
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_providers::{
     chat,
     request::prepare_request,
@@ -103,15 +103,15 @@ fn lithos_tier_windows_use_same_case_and_trim_identity_as_dispatch() {
     windows.refuse(&" DEEPSEEK-AI/DeepSeek-V4.1-FLASH-ultra ".into(), 1000, 500);
     assert_eq!(
         windows.select(&"deepseek-ai/deepseek-v4.1-flash-ultra".into(), 1200),
-        gateway_core::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-fast")
+        gateway_contracts::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-fast")
     );
     assert_eq!(
         windows.select(&"deepseek-ai/deepseek-v4.1-flash-ultra".into(), 1500),
-        gateway_core::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-ultra")
+        gateway_contracts::model::ModelId::from_scalar("deepseek-ai/DeepSeek-V4.1-Flash-ultra")
     );
 }
 
-fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")

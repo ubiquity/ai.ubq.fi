@@ -1,13 +1,13 @@
 mod support;
-use gateway_core::{
-    js_string::JsString16,
-    lifecycle::DeliveryOutcome,
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{DecodedKeyPart, TupleKey},
-    value::{PortableValue, ValueEncoding},
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::lifecycle::DeliveryOutcome;
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue,
+    value::ValueEncoding,
+};
+use gateway_core::state::StoredRecord;
 use gateway_observability::{
     ObservabilityRuntime,
     incidents::IncidentObservation,

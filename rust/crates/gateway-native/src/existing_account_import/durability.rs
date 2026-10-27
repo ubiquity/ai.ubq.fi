@@ -1,11 +1,21 @@
 //! Only fixed native files are decoded here. No receipt constructor is public.
-use super::*;
+use super::{ExistingAccountImportStore, unavailable};
+use gateway_auth_credentials::native_credentials::NativeCredentials;
 #[cfg(test)]
-use gateway_auth::native_credentials::parse_native_document;
-use gateway_auth::{crypto::Secret, native_credentials::NativeCredentials};
+use gateway_auth_credentials::native_credentials::parse_native_document;
+use gateway_auth_primitives::crypto::{Secret, sha256_hex};
+use gateway_authority::native_control::import::{
+    AuthenticatedNativeImport, effects::NativeImportBinding,
+};
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 use rustix::fs::{Mode, OFlags, fstat, openat};
 use serde::{Deserialize, Serialize};
-use std::{io::Read, path::Component};
+use std::{
+    fs::File,
+    io::Read,
+    path::{Component, Path},
+};
 const AUTH_LIMIT: u64 = 1_048_576;
 const RECEIPT_LIMIT: u64 = 4096;
 #[derive(Deserialize, Serialize)]
@@ -127,15 +137,14 @@ fn read_fixed(directory: &File, name: &str, limit: u64) -> Result<Vec<u8>, Gatew
     Ok(bytes)
 }
 fn receipt_name(action_ref: &str) -> Result<String, GatewayError> {
-    if !gateway_auth::provider_credentials::valid_native_generation(action_ref) {
+    if !gateway_auth_credentials::provider_credentials::valid_native_generation(action_ref) {
         return Err(unavailable());
     }
     Ok(format!(".uos-import-{action_ref}.receipt"))
 }
 fn credentials(raw: &[u8]) -> Result<NativeCredentials, GatewayError> {
-    let document =
-        gateway_core::source_json::SourceJson::parse_bytes(raw).map_err(|_| unavailable())?;
-    super::import_documents::credentials(&document).map_err(|_| unavailable())
+    let document = SourceJson::parse_bytes(raw).map_err(|_| unavailable())?;
+    gateway_native_import_source::documents::credentials(&document).map_err(|_| unavailable())
 }
 pub(super) fn reconcile(
     store: &ExistingAccountImportStore,
@@ -172,7 +181,7 @@ pub(super) fn reconcile(
         &wire.persisted_document_sha256,
         &wire.original_document_sha256,
     ] {
-        if !gateway_auth::provider_credentials::valid_native_generation(hash) {
+        if !gateway_auth_credentials::provider_credentials::valid_native_generation(hash) {
             return Err(unavailable());
         }
     }
@@ -231,7 +240,7 @@ pub(super) fn issue_fixture(
     start: gateway_authority::native_control::import::effects::NativeImportStart<'_>,
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
-    context: &crate::native_import::NativeImportContext<'_>,
+    context: &super::NativeImportInputs<'_>,
     now_ms: i64,
 ) -> Result<DurableNativeImport, GatewayError> {
     use std::io::Write;
@@ -352,7 +361,7 @@ pub(super) fn persist_live(
     custody: &mut super::live_custody::LiveImportCustody<'_>,
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
-    context: &crate::native_import::NativeImportContext<'_>,
+    context: &super::NativeImportInputs<'_>,
     candidate: &super::validation::ValidatedNativeImport<'_>,
 ) -> Result<DurableNativeImport, GatewayError> {
     use rustix::fs::{AtFlags, fsync, renameat, unlinkat};
@@ -371,8 +380,9 @@ pub(super) fn persist_live(
     {
         return Err(unavailable());
     }
-    let previous_document = gateway_core::source_json::SourceJson::parse_bytes(&previous_bytes)?;
-    let merged = super::import_documents::merge(&previous_document, &candidate.document)?;
+    let previous_document = SourceJson::parse_bytes(&previous_bytes)?;
+    let merged =
+        gateway_native_import_source::documents::merge(&previous_document, &candidate.document)?;
     let bytes = merged.as_bytes();
     if bytes.len() as u64 > AUTH_LIMIT {
         return Err(unavailable());
@@ -480,15 +490,15 @@ pub(super) fn retain_rotated(
     custody: &mut super::live_custody::LiveImportCustody<'_>,
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
-    context: &crate::native_import::NativeImportContext<'_>,
-    rotated: &gateway_core::source_json::SourceJson,
+    context: &super::NativeImportInputs<'_>,
+    rotated: &SourceJson,
 ) -> Result<(), GatewayError> {
     use std::io::Write;
     custody.check_live(store, proof, original_body, context)?;
     let binding = custody.binding();
     store.require_binding(binding)?;
     let current = credentials(&read_fixed(&store.directory, "auth.json", AUTH_LIMIT)?)?;
-    let next = super::import_documents::credentials(rotated)?;
+    let next = gateway_native_import_source::documents::credentials(rotated)?;
     if current.routing_account_hash() != binding.account_id_hash
         || current.generation_hash() != binding.source_native_generation
         || next.account_id != current.account_id
