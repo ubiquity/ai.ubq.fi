@@ -2,9 +2,7 @@ use super::*;
 use crate::native_control::managed::NativeManagedPublicationDisposition;
 use crate::native_control::owners::RegisteredRenewalOwners;
 use crate::native_control::receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
-use crate::native_control::{
-    NativeRenewalCancellation, NativeRenewalContext, NativeRenewalControl, NativeRenewalMode,
-};
+use crate::native_control::{NativeRenewalCancellation, NativeRenewalControl};
 use crate::native_control::{custody::validate_native_control_custody, facts, rows};
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
@@ -28,6 +26,7 @@ use gateway_core::{
     model::ModelId, source_control::decode_source_control_record,
     source_control::encode_source_control_record, value::ValueEncoding,
 };
+use gateway_native_authority_wire::{context::NativeRenewalContext, renewal::NativeRenewalMode};
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;
 use std::collections::BTreeSet;
@@ -284,7 +283,10 @@ fn live_renewal_v2_mints_from_actual_actor_without_inference_state_and_preserves
         let mut stale = encoded;
         stale["v"] = json!(1);
         assert!(
-            serde_json::from_value::<crate::native_control::NativeRenewalFence>(stale).is_err()
+            serde_json::from_value::<gateway_native_authority_wire::renewal::NativeRenewalFence>(
+                stale
+            )
+            .is_err()
         );
         assert_eq!(host.fetches.load(Ordering::SeqCst), 0);
     });

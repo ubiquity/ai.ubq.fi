@@ -16,12 +16,12 @@ use gateway_auth_native_wire::control::{
     NativeControlResponse, unverified,
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_control::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode,
-    wire::{
-        NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response,
-        OriginalControlHeaders,
-    },
+use gateway_authority::native_control::wire::{
+    NativeRenewalAuthorityRequest as Request, OriginalControlHeaders,
+};
+use gateway_native_authority_wire::{
+    renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode},
+    renewal_response::NativeRenewalAuthorityResponse as Response,
 };
 use gateway_native_local_transport::{
     guard::NativeRenewalGuard,

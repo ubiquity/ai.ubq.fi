@@ -1,9 +1,6 @@
 //! Explicit non-inference native renewal facts. No manufactured session, attempt or admission.
-use super::NATIVE_RENEWAL_FENCE_VERSION;
 use super::NativeRenewalAction;
 use super::NativeRenewalCancellation;
-use super::NativeRenewalContext;
-use super::NativeRenewalFence;
 use super::OWNER_RENEWAL_MAX_MS;
 use super::actor;
 use super::actor::NativeRenewalActor;
@@ -30,6 +27,9 @@ use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_core::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
+use gateway_native_authority_wire::context::NativeRenewalContext;
+use gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION;
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_source::error::GatewayError;
 use serde_json::Value;

@@ -10,6 +10,7 @@ default = []
 native-import-fixture = ["gateway-authority/native-import-fixture"]
 
 [dependencies]
+gateway-native-authority-wire.workspace = true
 gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }

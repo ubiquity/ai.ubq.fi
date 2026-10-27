@@ -1,13 +1,11 @@
 //! Fixed owner-renewal coordination in the existing authority store.
 //! Wire selectors and fence DTOs are observations, never permissions to mutate native state.
 use gateway_auth::native_auth::AuthenticatedNativeOwner;
-use gateway_core::model::ModelId;
+use gateway_native_authority_wire::renewal::{NativeRenewalFence, NativeRenewalMode};
 use gateway_source::error::GatewayError;
-use serde::{Deserialize, Serialize};
 use std::future::Future;
 
 pub mod actor;
-mod context_codec;
 pub mod custody;
 mod facts;
 pub mod import;
@@ -19,74 +17,6 @@ mod rows;
 pub mod wire;
 
 pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
-pub const NATIVE_RENEWAL_FENCE_VERSION: u8 = 2;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NativeRenewalContext {
-    Inference {
-        attempt_id: String,
-        original_admission_digest: String,
-        model: ModelId,
-        slot: u64,
-    },
-    LiveCreate {
-        binding: gateway_core::identity::AccountBinding,
-        active_generation: u64,
-        model_utf16: Option<Vec<u16>>,
-    },
-    LiveMapped {
-        call_id: String,
-        mapping_revision: String,
-    },
-    CacheExperiment {
-        context: Box<gateway_cache_experiment_records::RefreshContext>,
-    },
-}
-fn fence_v2<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
-    let v = u8::deserialize(d)?;
-    if v != NATIVE_RENEWAL_FENCE_VERSION {
-        return Err(serde::de::Error::custom(
-            "unsupported native renewal fence version",
-        ));
-    }
-    Ok(v)
-}
-fn required_nullable_time<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
-    Option::<i64>::deserialize(d)
-}
-fn required_nullable_text<'de, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Option<String>, D::Error> {
-    Option::<String>::deserialize(d)
-}
-
-/// The source-native generation and the cloud access credential version are distinct.
-/// Publication must independently prove both; a managed credential is never relabelled external.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NativeRenewalFence {
-    #[serde(deserialize_with = "fence_v2")]
-    pub v: u8,
-    pub owner_id: String,
-    pub owner_epoch: String,
-    pub owner_revision: String,
-    pub native_owner_id: String,
-    pub source_revision: String,
-    pub normalized_revision: String,
-    pub account_id_hash: String,
-    pub credential_version: String,
-    pub source_native_generation: String,
-    pub access_generation: String,
-    #[serde(deserialize_with = "required_nullable_time")]
-    pub access_expires_at_ms: Option<i64>,
-    #[serde(deserialize_with = "required_nullable_text")]
-    pub native_refreshed_at: Option<String>,
-    pub principal: String,
-    pub principal_policy_digest: String,
-    pub original_request_id: String,
-    pub context: NativeRenewalContext,
-}
 
 /// This capability is minted only after server authentication and fixed strong-read/CAS checks.
 /// ```compile_fail
@@ -109,15 +39,6 @@ impl NativeRenewalAction {
     pub fn fence(&self) -> &NativeRenewalFence {
         &self.fence
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NativeRenewalMode {
-    /// One newly committed claim may attempt its atomic start transition once.
-    RenewOnce,
-    /// A repeated/started/uncertain operation can only read the registered source and reconcile.
-    ReconcileOnly,
 }
 
 /// A transport may carry its opaque reference; deserializing a selector cannot mint this capability.

@@ -8,7 +8,6 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_RESPONSE_MAC_HEADER,
 };
 use gateway_auth_primitives::crypto::Secret;
-use gateway_authority::native_control::NativeRenewalContext;
 use gateway_cache_experiment_records::{
     RefreshContext, model::PROFILE, model::PROVIDER, model::SLOTS, model::STEPS, model::Sample,
     model::TELEMETRY_PROVIDER, model::TargetBinding, model::Usage,
@@ -16,6 +15,7 @@ use gateway_cache_experiment_records::{
 use gateway_core::identity::{
     AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
 };
+use gateway_native_authority_wire::context::NativeRenewalContext;
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use serde_json::json;
 use std::{

@@ -10,6 +10,8 @@ use gateway_auth_native_wire::native_read::{
 use gateway_auth_primitives::crypto::base64url;
 use gateway_authority::native_live::wire::{
     NativeLiveAccess, NativeLiveAuthorityRequest as Request,
+};
+use gateway_native_authority_wire::live::{
     NativeLiveAuthorityResponse as Response, NativeLiveFence, NativeLiveRetirement,
 };
 use gateway_source::error::GatewayError;
@@ -79,7 +81,11 @@ impl NativeLiveAuthorityHttp {
             identity,
         })
     }
-    fn exchange(&self, request: Request, deadline: Instant) -> Result<Response, GatewayError> {
+    fn exchange(
+        &self,
+        request: Request,
+        deadline: Instant,
+    ) -> Result<Response<NativeLiveAccess>, GatewayError> {
         let body = serde_json::to_vec(&request).map_err(|_| super::unavailable())?;
         Request::parse(&body)?;
         let mut bytes = [0; 32];

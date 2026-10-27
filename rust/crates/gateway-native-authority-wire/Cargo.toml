@@ -1,0 +1,21 @@
+[package]
+name = "gateway-native-authority-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-source.workspace = true
+gateway-cache-experiment-records.workspace = true
+gateway-authority-actor-records.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gateway-auth-native-proof.workspace = true
+gateway-auth-primitives.workspace = true
+
+[lints]
+workspace = true

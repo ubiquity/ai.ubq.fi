@@ -14,7 +14,7 @@ use gateway_auth_native_wire::{
     native_read::{NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH},
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_control::NativeRenewalFence;
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_publication::{sender, wire};
 use gateway_publication_transport::managed;
 use gateway_source::error::GatewayError;

@@ -14,9 +14,8 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_live::wire::{
-    NativeLiveAccess, NativeLiveAuthorityRequest, NativeLiveAuthorityResponse, NativeLiveFence,
-};
+use gateway_authority::native_live::wire::{NativeLiveAccess, NativeLiveAuthorityRequest};
+use gateway_native_authority_wire::live::{NativeLiveAuthorityResponse, NativeLiveFence};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{
     collections::BTreeMap,

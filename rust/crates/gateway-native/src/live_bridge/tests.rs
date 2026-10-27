@@ -12,8 +12,9 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
     NATIVE_VERSION_HEADER,
 };
-use gateway_authority::native_live::wire::NativeLiveRetirement;
-use gateway_authority::native_live::wire::{NativeLiveAccess, NativeLiveFence};
+use gateway_authority::native_live::wire::NativeLiveAccess;
+use gateway_native_authority_wire::live::NativeLiveFence;
+use gateway_native_authority_wire::live::NativeLiveRetirement;
 use gateway_native_https_test_support::live_tls::configs;
 use rustls::{ServerConnection, StreamOwned, pki_types::ServerName};
 use std::{

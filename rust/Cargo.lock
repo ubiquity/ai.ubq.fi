@@ -1236,6 +1236,7 @@ dependencies = [
  "gateway-cache-experiment-records",
  "gateway-cache-experiment-runner",
  "gateway-core",
+ "gateway-native-authority-wire",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -2207,6 +2208,7 @@ dependencies = [
  "gateway-core",
  "gateway-migration-ledger",
  "gateway-migration-test-support",
+ "gateway-native-authority-wire",
  "gateway-native-local-transport",
  "gateway-observability",
  "gateway-profile-source",
@@ -2260,6 +2262,7 @@ dependencies = [
  "gateway-authority-routing-records",
  "gateway-cache-experiment-records",
  "gateway-core",
+ "gateway-native-authority-wire",
  "gateway-native-confinement",
  "gateway-native-connected-io",
  "gateway-native-connector",
@@ -2293,6 +2296,20 @@ dependencies = [
  "ureq",
  "url",
  "webpki-roots",
+]
+
+[[package]]
+name = "gateway-native-authority-wire"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-proof",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-records",
+ "gateway-cache-experiment-records",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2891,6 +2908,7 @@ dependencies = [
  "gateway-extras-runtime",
  "gateway-live-runtime",
  "gateway-migration",
+ "gateway-native-authority-wire",
  "gateway-observability",
  "gateway-observability-test-support",
  "gateway-profile-values",

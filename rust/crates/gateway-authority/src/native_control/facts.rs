@@ -1,4 +1,3 @@
-use super::NativeRenewalFence;
 use super::rows::fail;
 use super::rows::session_key;
 use crate::store::Transaction;
@@ -22,6 +21,7 @@ use gateway_core::local_work::journal_local_work;
 use gateway_core::model::ModelId;
 use gateway_core::provider::UpstreamProvider;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
@@ -303,7 +303,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
         .filter(|v| v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0)
         .map(|v| v as i64);
     let fence = NativeRenewalFence {
-        v: super::NATIVE_RENEWAL_FENCE_VERSION,
+        v: gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION,
         owner_id: owner_id.into(),
         owner_epoch: owner_epoch.into(),
         owner_revision: tx.revision(&keys::paid_control_owner()).ok_or_else(fail)?,
@@ -319,7 +319,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
         principal: current_actor.principal,
         principal_policy_digest: control.principal_policy_digest,
         original_request_id: request_id.into(),
-        context: super::NativeRenewalContext::Inference {
+        context: gateway_native_authority_wire::context::NativeRenewalContext::Inference {
             attempt_id: control.attempt_id,
             original_admission_digest: control.original_admission_digest,
             model: control.model,

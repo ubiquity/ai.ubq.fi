@@ -1,6 +1,6 @@
 //! One fixed source/normalized/claim publication in the existing authority CAS.
 use super::{
-    NativeRenewalCancellation, NativeRenewalFence, facts,
+    NativeRenewalCancellation, facts,
     receiver::NativeRenewalAuthority,
     rows::{
         self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, conflict, fail,
@@ -25,6 +25,7 @@ use gateway_core::{
     identity::PoolVersionstamp, state::AtomicTransition, state::AuthorityStore,
     state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
+use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_source::error::GatewayError;
 use serde::Deserialize;
 use serde_json::Value;

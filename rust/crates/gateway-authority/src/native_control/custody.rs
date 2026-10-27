@@ -1,12 +1,12 @@
 //! Data-only private rollback validation. Never authenticates, revives or mints an operation.
-use super::{
-    NativeRenewalContext, NativeRenewalFence,
-    rows::{self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, fail},
+use super::rows::{
+    self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, fail,
 };
 use gateway_core::{
     source_control::decode_source_control_record, state::RecordKey, state::StoredRecord,
     tuple_key::DecodedKeyPart, tuple_key::TupleKey,
 };
+use gateway_native_authority_wire::{context::NativeRenewalContext, renewal::NativeRenewalFence};
 use gateway_source::{error::GatewayError, source_serialization as source};
 use serde_json::Value;
 
@@ -44,7 +44,7 @@ fn terminal(row: &TerminalPublication) -> Result<(), GatewayError> {
     Ok(())
 }
 fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
-    if row.v != super::NATIVE_RENEWAL_FENCE_VERSION {
+    if row.v != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION {
         return Err(fail());
     }
     for value in [

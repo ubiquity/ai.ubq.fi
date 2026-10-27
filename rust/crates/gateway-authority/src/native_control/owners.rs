@@ -238,7 +238,8 @@ impl RegisteredRenewalOwners {
                 .ok_or_else(fail)?;
             if action.v != 2
                 || action.action_ref != action_ref
-                || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
+                || action.fence.v
+                    != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION
             {
                 return Err(fail());
             }
@@ -286,7 +287,8 @@ impl RegisteredRenewalOwners {
             if action.v != 2
                 || action.action_ref != operation.action_ref
                 || action.operation_id.as_deref() != Some(operation_id)
-                || action.fence.v != super::NATIVE_RENEWAL_FENCE_VERSION
+                || action.fence.v
+                    != gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION
             {
                 return Err(fail());
             }

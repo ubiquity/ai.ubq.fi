@@ -103,6 +103,7 @@ members = [
   "crates/gateway-publication-transport",
   "crates/gateway-publication-test-support",
   "crates/gateway-native",
+  "crates/gateway-native-authority-wire",
   "crates/gateway-native-confinement",
   "crates/gateway-native-connector",
   "crates/gateway-native-connected-io",
@@ -248,6 +249,7 @@ gateway-publication-policy = { path = "crates/gateway-publication-policy" }
 gateway-publication-transport = { path = "crates/gateway-publication-transport" }
 gateway-publication-test-support = { path = "crates/gateway-publication-test-support" }
 gateway-native = { path = "crates/gateway-native" }
+gateway-native-authority-wire = { path = "crates/gateway-native-authority-wire" }
 gateway-native-confinement = { path = "crates/gateway-native-confinement" }
 gateway-native-connector = { path = "crates/gateway-native-connector" }
 gateway-native-connected-io = { path = "crates/gateway-native-connected-io" }

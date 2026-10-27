@@ -26,10 +26,10 @@ use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub mod wire;
-use wire::{
-    NativeLiveAccess, NativeLiveAuthorityRequest, NativeLiveAuthorityResponse, NativeLiveFence,
-    NativeLiveRetirement,
+use gateway_native_authority_wire::live::{
+    NativeLiveAuthorityResponse, NativeLiveFence, NativeLiveRetirement,
 };
+use wire::{NativeLiveAccess, NativeLiveAuthorityRequest};
 
 /// Nonexpiring secretless control custody, NOT a second routing/accounting ledger.
 pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
@@ -258,7 +258,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         &self,
         proof: &AuthenticatedNativeLive,
         body: &[u8],
-    ) -> Result<NativeLiveAuthorityResponse, GatewayError> {
+    ) -> Result<NativeLiveAuthorityResponse<NativeLiveAccess>, GatewayError> {
         self.proof(proof, body)?;
         match NativeLiveAuthorityRequest::parse(body)? {
             NativeLiveAuthorityRequest::Authorize {
@@ -305,7 +305,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         body: &[u8],
         action_ref: &str,
         connection_id: &str,
-    ) -> Result<NativeLiveAuthorityResponse, GatewayError> {
+    ) -> Result<NativeLiveAuthorityResponse<NativeLiveAccess>, GatewayError> {
         for _ in 0..5 {
             self.proof(proof, body)?;
             let mut tx = self.authority.transaction(self.authority.fresh_time(0)?)?;
@@ -379,7 +379,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         action_ref: &str,
         connection_id: &str,
         authorization_ref: &str,
-    ) -> Result<NativeLiveAuthorityResponse, GatewayError> {
+    ) -> Result<NativeLiveAuthorityResponse<NativeLiveAccess>, GatewayError> {
         for _ in 0..5 {
             let mut tx = self.authority.transaction(self.authority.fresh_time(0)?)?;
             let connection: ConnectionRow = tx

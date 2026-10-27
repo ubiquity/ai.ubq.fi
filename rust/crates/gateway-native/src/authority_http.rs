@@ -15,9 +15,10 @@ use gateway_auth_native_wire::{
     },
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_control::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode,
-    wire::{NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response},
+use gateway_authority::native_control::wire::NativeRenewalAuthorityRequest as Request;
+use gateway_native_authority_wire::{
+    renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode},
+    renewal_response::NativeRenewalAuthorityResponse as Response,
 };
 use gateway_source::error::GatewayError;
 use std::{net::TcpStream, time::Instant};

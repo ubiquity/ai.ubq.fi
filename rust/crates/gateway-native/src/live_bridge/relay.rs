@@ -5,7 +5,7 @@ use super::{
     HANDSHAKE_TIMEOUT_MS, NativeLiveOutcome, NativeLiveService, NativeLiveUpgradeRequest,
     close_value, read_downstream, socket, unavailable,
 };
-use gateway_authority::native_live::wire::NativeLiveRetirement;
+use gateway_native_authority_wire::live::NativeLiveRetirement;
 use gateway_native_live_buffer::queue::{PendingSocket, PreopenQueue, blocked, websocket_config};
 use gateway_source::error::GatewayError;
 use std::{
