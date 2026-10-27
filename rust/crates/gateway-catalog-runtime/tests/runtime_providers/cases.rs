@@ -1,5 +1,4 @@
 use super::{Host, Outcome, Store, TestResult, catalog, loader_fixture, run};
-use gateway_catalog_inputs::state;
 use gateway_catalog_provider::{
     host::{CatalogFetch, CatalogFetchResponse, CatalogProvider, ProviderBinding},
     providers,

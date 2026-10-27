@@ -3,7 +3,6 @@ use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogObservation, CodexAccount,
     CredentialPublication,
 };
-use gateway_catalog_provider::providers;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
 
