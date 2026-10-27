@@ -1,5 +1,6 @@
 //! Captured and intermediate DATA with complete source/native record validation.
 pub mod capture;
+pub mod claude;
 pub mod custody;
 pub mod error;
 pub mod key_source;

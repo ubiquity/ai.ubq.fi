@@ -220,6 +220,12 @@ fn classify(
     if starts(&p, &["uos_ai", "auth"]) {
         return Ok(Decision::Include("auth_identity_state"));
     }
+    if starts(&p, &["uos_ai", "claude_code_usage"]) {
+        if gateway_migration_data::claude::usage_lease_key(&p) {
+            return Ok(Decision::Include("claude_usage_collector_state"));
+        }
+        return Err(invalid("Core-state selection found an unsupported Claude usage key").into());
+    }
     if starts(&p, &["uos_ai", "claude_code_access"])
         || starts(&p, &["uos_ai", "claude_code_accounts"])
         || starts(&p, &["uos_ai", "claude_code_quota"])
@@ -244,9 +250,16 @@ fn classify(
     if starts(&p, &["uos_ai", "metered_quota"]) {
         return Ok(Decision::Exclude("historical_metered_balance"));
     }
+    if starts(&p, &["uos_ai", "provider_capacity", "claude"]) {
+        if gateway_migration_data::claude::historical_capacity_key(&p) {
+            return Ok(Decision::Exclude("historical_provider_capacity"));
+        }
+        return Err(
+            invalid("Core-state selection found an unsupported Claude capacity key").into(),
+        );
+    }
     if starts(&p, &["uos_ai", "provider_capacity", "v1", "snapshot"])
         || starts(&p, &["uos_ai", "provider_capacity", "v1", "last_available"])
-        || starts(&p, &["uos_ai", "provider_capacity", "claude"])
     {
         return Ok(Decision::Include("provider_capacity_current_state"));
     }

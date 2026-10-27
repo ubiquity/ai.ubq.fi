@@ -270,6 +270,9 @@ fn project_paid(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
 }
 
 pub fn known_source_family(p: &[Value]) -> bool {
+    if starts(p, &["uos_ai", "claude_code_usage"]) {
+        return gateway_migration_data::claude::usage_lease_key(p);
+    }
     const UOS: &[&str] = &[
         "admin_error_log",
         "api_key_usage",
