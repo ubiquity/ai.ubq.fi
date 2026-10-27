@@ -60,7 +60,17 @@ try {
   assert(binding);
   const payload = {
     five_hour: { utilization: 42, resets_at: null },
-    limits: [{ kind: "future\ud800", group: "weekly", percent: 121.5, resets_at: null, scope: { model: { display_name: "model\udfff" } } }],
+    limits: [
+      {
+        kind: "future\ud800",
+        group: "weekly",
+        percent: 121.5,
+        resets_at: null,
+        severity: "raw",
+        is_active: true,
+        scope: { model: { display_name: "model\udfff" } },
+      },
+    ],
   };
   const observation = parseClaudeCodeUsagePayload(payload, at - 1);
   assert(observation);
