@@ -12,9 +12,7 @@ use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::{Transform, digest, invalid, json, starts};
 use gateway_migration_native_custody::native_custody::NativeCustody;
 use gateway_migration_spool::canonical::CanonicalWriter;
-use gateway_migration_spool::native_entries::{
-    NativeEntries, NativeEntryReader, NativeEntryWriter,
-};
+use gateway_migration_spool::native_entries::{NativeEntries, NativeEntryWriter};
 use gateway_migration_spool::rows::{RowFrame, RowInventory, RowWriter};
 use serde::de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
@@ -107,9 +105,6 @@ impl Captured {
     pub fn count(&self) -> usize {
         self.entries.len()
     }
-    pub(crate) fn metadata(&self) -> &NativeCapture {
-        &self.header
-    }
     pub fn visit_entries(
         &self,
         callback: &mut dyn FnMut(&NativeEntry) -> Result<(), GatewayError>,
@@ -135,9 +130,6 @@ impl Captured {
         let directory = gateway_migration_spool::directory(&self.directory)?;
         let plan = Captured::owned(capture, &directory)?.prepare(host).await?;
         Ok((manifest, plan))
-    }
-    pub(crate) fn reader(&self) -> Result<NativeEntryReader, GatewayError> {
-        self.entries.reader()
     }
     pub async fn verify_configured(
         &self,
