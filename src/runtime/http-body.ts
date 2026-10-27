@@ -19,7 +19,8 @@ export const createIncomingBody = (incoming: IncomingMessage, signal: AbortSigna
       start(controller) {
         const stop = (): void => {
           closed = true;
-          incoming.pause();
+          // Successful EOF must leave native transport reads active for disconnects.
+          if (!consumed) incoming.pause();
           cleanup();
         };
         const data = (chunk: unknown): void => {
