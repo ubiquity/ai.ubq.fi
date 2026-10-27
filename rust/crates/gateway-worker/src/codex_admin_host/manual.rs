@@ -321,7 +321,7 @@ async fn usage(
     let at = now_ms()?;
     let payload = get(platform, &url, &account, Some(8000)).await?;
     let windows =
-        gateway_observability::capacity_shapes::parse_codex_usage(&payload).ok_or_else(|| {
+        gateway_capacity_projection::shapes::parse_codex_usage(&payload).ok_or_else(|| {
             failure(
                 409,
                 "codex_quota_unavailable",

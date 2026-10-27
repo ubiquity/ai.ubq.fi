@@ -232,7 +232,7 @@ impl RequestHost {
             return Ok(None);
         };
         let value = document.deserialize::<Value>()?;
-        Ok(gateway_observability::capacity_shapes::parse_codex_overage(
+        Ok(gateway_capacity_projection::shapes::parse_codex_overage(
             &value,
         ))
     }

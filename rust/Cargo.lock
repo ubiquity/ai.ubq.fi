@@ -940,11 +940,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-capacity-projection"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-capacity-projection",
  "gateway-core",
  "gateway-observability",
  "gateway-observability-test-support",
@@ -1143,6 +1152,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-capacity-projection",
  "gateway-core",
  "gateway-observability-test-support",
  "gateway-schema",
@@ -1299,6 +1309,7 @@ dependencies = [
  "gateway-admission",
  "gateway-auth",
  "gateway-authority",
+ "gateway-capacity-projection",
  "gateway-capacity-recovery",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
