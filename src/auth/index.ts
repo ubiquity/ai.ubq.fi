@@ -9,7 +9,7 @@ import { getKv } from "../kv.ts";
 import { isAdminAuthDisabledForRequest } from "./local-admin.ts";
 import { resolveLocalDevelopmentApiKeyPolicy } from "./local-development-key.ts";
 import { getPasskeySessionForRequest, isPasskeyUserAdmin } from "./passkeys.ts";
-import { authenticatePassportAdmin, authenticatePassportSession, type PassportAuthMethod } from "./passport.ts";
+import { authenticatePassportAdmin, authenticatePassportSession, type PassportAuthMethod, renewPassportSessionCookie } from "./passport.ts";
 import { sha256Base64Url, sha256Hex } from "../utils.ts";
 import type { ApiKeyRecord } from "../types.ts";
 import { getEnv, getGitHubRepoHeaders, verifyKernelAttestation } from "../kernel/attestation.ts";
@@ -787,7 +787,7 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
     };
   }
 
-  return json(
+  const response = json(
     200,
     {
       ok: true,
@@ -803,4 +803,5 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
     },
     { "Cache-Control": "no-store" }
   );
+  return reportingMethod.kind === "passport_session" ? renewPassportSessionCookie(req, response) : response;
 };

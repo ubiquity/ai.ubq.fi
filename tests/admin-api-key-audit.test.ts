@@ -58,6 +58,29 @@ const sharedContext = (requestId = "req-shared-1"): ApiKeyAuditContext => ({
   request_id: requestId,
 });
 
+const passportContext = (): ApiKeyAuditContext => ({
+  auth: {
+    ok: true,
+    token: "passport-jwt-must-not-persist",
+    is_super_admin: false,
+    method: {
+      kind: "passport_session",
+      principal: "passport-user:passport-subject",
+      user: {
+        sub: "passport-subject",
+        handle: "passport-handle",
+        is_admin: true,
+        scopes: [],
+        auth: "sso",
+        exp: 1_900_000_000,
+        jti: "passport-jti",
+        agent_token_id: null,
+      },
+    },
+  },
+  request_id: "req-passport-1",
+});
+
 const jsonRequest = (path: string, body: Record<string, unknown>, method = "POST"): Request =>
   new Request(`https://ai.ubq.fi${path}`, {
     method,
@@ -154,6 +177,22 @@ test("key lifecycle writes ordered audit events with safe fields and actor attri
   const serialized = JSON.stringify(body);
   assert.equal(serialized.includes(createdToken), false);
   assert.equal(/authorization|bearer|token_hash|prompt|"hash"|"error"/i.test(serialized), false);
+});
+
+test("Passport identity is retained in the durable audit actor without its JWT", async () => {
+  kvStore.clear();
+
+  await createKey({ name: "Passport audit key", usage_limit_requests: 1, expires_at_ms: -1 }, passportContext());
+
+  const { status, body } = await listAudit();
+  assert.equal(status, 200);
+  assert.deepEqual(body.data?.[0]?.actor, {
+    kind: "passkey_user",
+    principal_id: "passport-subject",
+    principal_label: "passport-handle",
+    is_super_admin: false,
+  });
+  assert.equal(JSON.stringify(body).includes("passport-jwt-must-not-persist"), false);
 });
 
 test("finite and unlimited wire values round-trip through create, update and persisted readback", async () => {

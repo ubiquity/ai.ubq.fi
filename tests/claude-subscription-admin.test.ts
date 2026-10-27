@@ -6,6 +6,7 @@ import {
   handleAdminClaudeCodeAuthGet,
   handleAdminClaudeCodeAuthSet,
   handleAdminClaudeCodeQuotaClear,
+  handleAdminClaudeCodeQuotaRefresh,
   handleAdminClaudeCodeAccess,
   handleAdminClaudeCodeAccountActive,
 } from "../src/admin/claude-code.ts";
@@ -21,6 +22,7 @@ import { CLAUDE_CODE_CONFIG_COOLDOWN_MS, loadClaudeCodeQuotaState, recordClaudeC
 import { resetProviderHealthThrottleForTest } from "../src/provider/health.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { CLAUDE_CODE_ACCOUNTS_KEY, loadClaudeCodeAccountStore, resolveClaudeCodeAccount } from "../src/provider/claude-code-accounts.ts";
+import { resetClaudeCodeModelsCacheForTest } from "../src/provider/claude-code-models.ts";
 import { loadClaudeCodeAccessPolicy } from "../src/provider/claude-code-access.ts";
 
 const keyOf = (key: KvKey): string => JSON.stringify(key);
@@ -34,6 +36,10 @@ class AdminKv {
       check: (..._entries: unknown[]) => operation,
       set: (key: KvKey, value: unknown) => {
         writes.push(() => this.values.set(keyOf(key), value));
+        return operation;
+      },
+      delete: (key: KvKey) => {
+        writes.push(() => this.values.delete(keyOf(key)));
         return operation;
       },
       commit: () => {
@@ -218,6 +224,112 @@ test("clearing account guards preserves observations and account removal remains
   });
 });
 
+test("the Claude meter refresh reads direct OAuth usage and updates the existing quota state", async () => {
+  await withAdminKv(async (kv) => {
+    resetClaudeCodeModelsCacheForTest();
+    const now = Date.now();
+    await withStubbedAnthropic(modelsOk, async () => {
+      const stored = await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-meter-refresh" }));
+      assert.equal(stored.status, 200);
+    });
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const calls: StubCall[] = [];
+    const usageRead = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const requestInit = init ?? {};
+      calls.push({ url, method: requestInit.method ?? "GET", headers: new Headers(requestInit.headers) });
+      assert.equal(url, "https://api.anthropic.com/api/oauth/usage");
+      assert.equal(requestInit.method, "GET");
+      assert.equal(requestInit.body, undefined, "usage refresh never sends an inference body");
+      assert.equal(new Headers(requestInit.headers).get("authorization"), "Bearer sk-ant-oat-fixture-meter-refresh");
+      assert.doesNotMatch(url, /\/v1\/messages/);
+      return Promise.resolve(
+        Response.json({
+          five_hour: { utilization: 42, resets_at: new Date(now + 18_000_000).toISOString() },
+          seven_day: { utilization: 12, resets_at: new Date(now + 86_400_000).toISOString() },
+        })
+      );
+    };
+    const request = new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account_id: account.account_id, account_cohort_id: account.account_cohort_id }),
+    });
+    const response = await handleAdminClaudeCodeQuotaRefresh(request, { fetcher: usageRead, now: () => now });
+    assert.equal(response.status, 200, await response.clone().text());
+    const payload = await response.json();
+    assert.equal(payload.refreshed, true);
+    assert.equal(payload.source, "oauth_usage");
+    assert.equal(payload.usage.state, "ok");
+    assert.equal(calls.length, 1);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
+    assert(quota);
+    assert.equal(quota.windows["5h"]?.utilization, 0.42);
+    assert.equal(quota.windows["7d"]?.utilization, 0.12);
+    const quotaUsage = quota.usage;
+    assert(quotaUsage);
+    assert.equal(quotaUsage.state, "ok");
+    assert.equal(quotaUsage.source, "oauth_usage");
+
+    const duplicate = await handleAdminClaudeCodeQuotaRefresh(
+      new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ account_id: account.account_id, account_cohort_id: account.account_cohort_id }),
+      }),
+      { fetcher: usageRead, now: () => now + 1_000 }
+    );
+    assert.equal(duplicate.status, 200);
+    const duplicatePayload = await duplicate.json();
+    assert.equal(duplicatePayload.refreshed, false);
+    assert.equal(duplicatePayload.reason, "fresh");
+    assert.equal(calls.length, 1, "a fresh usage attempt avoids another provider request");
+  });
+});
+
+test("an admin usage refresh records a missing profile scope without blocking inference", async () => {
+  await withAdminKv(async (kv) => {
+    resetClaudeCodeModelsCacheForTest();
+    await withStubbedAnthropic(modelsOk, async () => {
+      const stored = await handleAdminClaudeCodeAuthSet(jsonRequest({ credential: "sk-ant-oat-fixture-scope-missing" }));
+      assert.equal(stored.status, 200);
+    });
+    const account = await resolveClaudeCodeAccount(kv as unknown as Kv);
+    assert(account);
+    const now = Date.now();
+    const response = await handleAdminClaudeCodeQuotaRefresh(
+      new Request("https://ai.ubq.fi/admin/providers/claude-code/quota/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ account_id: account.account_id, account_cohort_id: account.account_cohort_id }),
+      }),
+      {
+        fetcher: () =>
+          Promise.resolve(
+            Response.json({ type: "error", error: { type: "permission_error", message: "OAuth token is missing the user:profile scope" } }, { status: 403 })
+          ),
+        now: () => now,
+      }
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    const payload = await response.json();
+    assert.equal(payload.refreshed, false);
+    assert.equal(payload.reason, "scope_missing");
+    assert.match(payload.message, /user:profile/);
+    const quota = await loadClaudeCodeQuotaState(kv as unknown as Kv, account);
+    assert(quota);
+    const quotaUsage = quota.usage;
+    assert(quotaUsage);
+    assert.equal(quotaUsage.state, "scope_missing");
+    assert.equal(quotaUsage.status, 403);
+    assert.equal(quotaUsage.observed_at_ms, null);
+    assert.equal(quota.blocked_until_ms, null, "usage scope is not inference exhaustion");
+    assert.equal(quota.cooldown_until_ms, null, "usage scope does not cool down inference");
+    assert.equal(quota.last_error, null, "usage scope is not a provider routing error");
+  });
+});
+
 test("the admin routes stay behind admin auth and expose the documented paths", async () => {
   const { default: handler } = await import("../src/handler/index.ts");
   const paths: [string, string][] = [
@@ -225,6 +337,7 @@ test("the admin routes stay behind admin auth and expose the documented paths", 
     ["POST", "/admin/providers/claude-code/auth"],
     ["DELETE", "/admin/providers/claude-code/auth"],
     ["POST", "/admin/providers/claude-code/quota/clear"],
+    ["POST", "/admin/providers/claude-code/quota/refresh"],
     ["GET", "/admin/providers/claude-code/access"],
     ["POST", "/admin/providers/claude-code/access"],
     ["POST", "/admin/providers/claude-code/accounts/active"],

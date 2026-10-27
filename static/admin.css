@@ -1045,6 +1045,20 @@ body[data-page="admin"] [data-capacity-source] > header h3 {
   min-width: 0;
 }
 
+body[data-page="admin"] [data-capacity-source] [data-capacity-refresh] {
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0 10px;
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.75rem;
+}
+
+body[data-page="admin"] [data-capacity-source] [data-capacity-refresh]:disabled {
+  opacity: 0.6;
+}
+
 body[data-page="admin"] [data-capacity-source] h3,
 body[data-page="admin"] [data-capacity-window] h4 {
   margin: 0;

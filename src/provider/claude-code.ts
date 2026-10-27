@@ -6,8 +6,9 @@ import type { Kv } from "#kv";
  * travels as `x-api-key`, the legacy `CLAUDE_CODE_OAUTH_TOKEN` keeps the
  * documented Bearer plus OAuth beta wire, and an organization-scoped key that
  * demands `anthropic-workspace-id` discovers a workspace once instead of
- * failing every request. The provider's rate-limit headers stay the only
- * authoritative quota evidence and no client fingerprint is ever synthesized.
+ * failing every request. The provider's OAuth usage endpoint and unified
+ * rate-limit headers are authoritative quota evidence; inference requests
+ * never synthesize a client fingerprint.
  */
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "../inference-deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "../api-key-policy.ts";

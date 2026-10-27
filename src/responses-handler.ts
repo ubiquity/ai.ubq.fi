@@ -1,5 +1,6 @@
 // Responses routing, attempts, delivery and handler, extracted from src/openai.ts.
 
+import { nativeFailureAfterEarlyHeaders, nativeHeaderUsageContext } from "./responses-native-headers.ts";
 import { handleLithosResponses } from "./provider/lithos-handlers.ts";
 import { handleCerebrasResponses } from "./provider/cerebras-responses.ts";
 import { handleDeepSeekResponses } from "./deepseek/handlers.ts";
@@ -741,6 +742,7 @@ const deliverBufferedResponses = async (delivery: ResponsesDeliveryState): Promi
 
 const deliverStreamingResponses = (delivery: ResponsesDeliveryState): Response => {
   const body = createOwnedResponsesStream({
+    codexContextErrorCompatibility: delivery.ready.provider === "chatgpt_codex",
     initial: delivery.ready.prepared.buffered,
     iterator: delivery.ready.prepared.iterator,
     responseId: delivery.ready.responseId,
@@ -802,6 +804,7 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const { rawRecord, rawBody } = request.value;
   const invalidField = validateResponsesRequestFields(rawRecord, rawBody, await openRouterPromptCacheRequestExtensions(rawRecord));
   if (invalidField) return invalidField;
+  const dispatchContext = nativeHeaderUsageContext(req, rawRecord, usageContext);
   // DeepSeek official models are dispatched from the Responses adapter before
   // the Codex catalog lookup, exactly as the Chat Completions route is
   // dispatched before Codex model validation. Only an explicit DeepSeek id
@@ -812,31 +815,31 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   // measured DeepSeek provider order on the client's behalf, so it dispatches
   // before the provider-specific ids and their availability checks.
   if (requestedModel && isDeepSeekWaterfallModel(requestedModel)) {
-    return await handleDeepSeekWaterfallResponses(req, rawRecord, rawBody, usageContext);
+    return await handleDeepSeekWaterfallResponses(req, rawRecord, rawBody, dispatchContext);
   }
   if (requestedModel && deepSeekUpstreamModelFor(requestedModel) && isProviderEnabled("deepseek", await loadProviderSelectionCached())) {
-    return await handleDeepSeekResponses(req, rawRecord, requestedModel, usageContext);
+    return await handleDeepSeekResponses(req, rawRecord, requestedModel, dispatchContext);
   }
   // LithosAI has no Responses endpoint of its own, so this route is served by
   // the shared translation under the LithosAI profile rather than by a
   // provider-side endpoint. Only an explicit LithosAI id takes this branch.
   if (requestedModel && lithosUpstreamModelFor(requestedModel) && isProviderEnabled("lithos", await loadProviderSelectionCached())) {
-    return await handleLithosResponses(req, rawRecord, requestedModel, usageContext);
+    return await handleLithosResponses(req, rawRecord, requestedModel, dispatchContext);
   }
   // Cerebras ids are owned by the Cerebras route on both wires, so they are
   // dispatched before the Codex catalog lookup exactly as the Chat Completions
   // route dispatches them; a switched-off Cerebras provider leaves its ids to
   // the ordinary availability check.
   if (requestedModel && cerebrasUpstreamModelFor(requestedModel) && isProviderEnabled("cerebras", await loadProviderSelectionCached())) {
-    return await handleCerebrasResponses(req, rawRecord, requestedModel, usageContext);
+    return await handleCerebrasResponses(req, rawRecord, requestedModel, dispatchContext);
   }
   // OpenRouter serves the Responses wire natively; only an id in its served
   // catalogue takes this branch, and a switched-off provider leaves its ids to
   // the ordinary availability check.
   if (requestedModel && isProviderEnabled("openrouter", await loadProviderSelectionCached()) && (await resolveOpenRouterUpstreamModel(requestedModel))) {
-    return await handleOpenRouterResponses(req, rawRecord, requestedModel, usageContext);
+    return await handleOpenRouterResponses(req, rawRecord, requestedModel, dispatchContext);
   }
-  return await runOrdinaryResponsesTail(req, rawRecord, rawBody, usageContext);
+  return await runOrdinaryResponsesTail(req, rawRecord, rawBody, dispatchContext);
 };
 
 /**
@@ -871,14 +874,16 @@ const responsesHandlerTerminalType = (error: unknown, downstreamSignal: AbortSig
 export const runResponsesHandler = async (req: Request, usageContext?: UsageContext, parsedBody?: unknown): Promise<Response> =>
   await runWithResponseTelemetry(usageContext, async (context) => {
     try {
-      return await handleResponsesInternal(req, context, parsedBody);
+      const response = await handleResponsesInternal(req, context, parsedBody);
+      return await nativeFailureAfterEarlyHeaders(req, response, context);
     } catch (error) {
       const downstreamSignal = downstreamSignalFor(req, context);
       const terminalType = responsesHandlerTerminalType(error, downstreamSignal);
       if (terminalType === null) throw error;
       recordStreamTerminalType(context, terminalType);
       await recordErrorUsage(context);
-      return toPreHeaderErrorResponse(error, terminalType, context.responseTelemetry?.provider ?? "chatgpt_codex");
+      const response = toPreHeaderErrorResponse(error, terminalType, context.responseTelemetry?.provider ?? "chatgpt_codex");
+      return await nativeFailureAfterEarlyHeaders(req, response, context);
     }
   });
 

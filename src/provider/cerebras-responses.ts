@@ -1,3 +1,4 @@
+import { chatResponsesProjectionFailure } from "../deepseek/context-admission-failure.ts";
 // Cerebras Responses adapter: the shared Chat translation under CEREBRAS_RESPONSES_PROFILE.
 
 import { downstreamSignalFor, inferenceSignal } from "../openai.ts";
@@ -316,7 +317,7 @@ export const handleCerebrasResponses = async (
   // The upstream answers a buffered completion, so the translation never asks
   // for a stream: a client's `stream: true` is answered by the replay below.
   const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, false, CEREBRAS_RESPONSES_PROFILE, projectCerebrasRequest);
-  if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
+  if (!translated.ok) return chatResponsesProjectionFailure(req, rawRecord, translated, usageContext);
   // The Cerebras transport projects and collapses the translated messages in
   // its final JSON-encoding step, shared with the Chat wire. That is also where
   // unsupported system/developer content is rejected before dispatch.
