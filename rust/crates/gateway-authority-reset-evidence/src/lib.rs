@@ -1,10 +1,14 @@
 //! Closed reset source observations. DATA is never permission and every fence joins the actual effect CAS.
+use gateway_authority_contracts::unavailable;
 mod backend;
 pub mod types;
 use backend::ReadTransaction;
 use gateway_authority_keys as keys;
-use gateway_authority_reset_records::{ResetConfig, ResetInvocation, ResetMode, reset_invocation};
-use gateway_authority_reset_records::{full_pool::FullPoolFence, full_pool::policy};
+use gateway_authority_reset_records::ResetConfig;
+use gateway_authority_reset_records::ResetInvocation;
+use gateway_authority_reset_records::full_pool::FullPoolFence;
+use gateway_authority_reset_records::full_pool::policy;
+use gateway_authority_reset_records::reset_invocation;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, identity::RequestContext};
