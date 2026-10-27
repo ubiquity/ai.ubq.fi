@@ -1,15 +1,14 @@
 //! Source-compatible Voyage jobs/cache/idempotency and image/SystemOne orchestration.
 //! The host owns actual transport, cryptography and the one original m14 admission.
-mod cache;
 mod embeddings;
-mod idempotency;
 mod images;
-mod jobs;
-use gateway_core::{error::GatewayError, query::QueryStore};
-mod store;
+use gateway_core::query::QueryStore;
 use gateway_extras_contract::types::{
     ExtrasHost, ExtrasRequest, ExtrasResponse, ExtrasRoute, KernelDisposition,
 };
+use gateway_extras_jobs::{create, get};
+use gateway_extras_primitives::value::js_whitespace;
+use gateway_source::error::GatewayError;
 
 pub struct ExtrasRuntime<S, H> {
     store: S,
@@ -28,9 +27,9 @@ impl<S: QueryStore, H: ExtrasHost> ExtrasRuntime<S, H> {
     pub async fn handle(&self, request: ExtrasRequest<'_>) -> Result<ExtrasResponse, GatewayError> {
         let mut result = match &request.route {
             ExtrasRoute::Embeddings => embeddings::sync(&self.store, &self.host, &request).await?,
-            ExtrasRoute::JobCreate => jobs::create(&self.store, &self.host, &request).await?,
+            ExtrasRoute::JobCreate => create(&self.store, &self.host, &request).await?,
             ExtrasRoute::JobGet(id) => {
-                let id = id.trim_matches(store::js_whitespace);
+                let id = id.trim_matches(js_whitespace);
                 if id.is_empty() {
                     let mut r = ExtrasResponse::error(GatewayError::new(
                         404,
@@ -40,7 +39,7 @@ impl<S: QueryStore, H: ExtrasHost> ExtrasRuntime<S, H> {
                     r.kernel = KernelDisposition::Incomplete("missing_embedding_job_id");
                     return Ok(r.voyage());
                 }
-                jobs::get(&self.store, &self.host, &request, id).await?
+                get(&self.store, &self.host, &request, id).await?
             }
             ExtrasRoute::Images(kind) => images::images(&self.host, &request, *kind).await?,
             ExtrasRoute::SystemOne | ExtrasRoute::Decisions => {

@@ -1,31 +1,33 @@
-use crate::store::{
-    check, commit, decoded, hash, hash_source, key, now, put, retry_seconds, source_utf8, uuid,
-};
-use crate::{
-    cache::{TIMEOUT_MS, cache_best_effort, cached, chunks, estimate, reserve},
-    embeddings::{configured_error, fetch_chunk, result_body, retryable, usage},
-};
+//! Complete retained embedding jobs; only request create/get can run an attempt.
 use base64::{
     Engine, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::STANDARD},
 };
-use gateway_auth::{crypto::Secret, types::AuthMethod};
+use gateway_auth_contracts::types::AuthMethod;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_auth_primitives::store::{check, commit, put};
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
     lifecycle::SemanticTerminal,
     query::QueryStore,
     state::{RecordKey, RecordMutation, StoredRecord},
 };
-use gateway_extras_contract::errors::server;
+use gateway_extras_contract::errors::{invalid_state, server};
 use gateway_extras_contract::types::{ExtrasHost, ExtrasProvider, ExtrasRequest, ExtrasResponse};
+use gateway_extras_primitives::value::{
+    decoded, hash, hash_source, key, now, retry_seconds, source_utf8, uuid,
+};
+use gateway_extras_state::cache::{
+    TIMEOUT_MS, cache_best_effort, cached, chunks, estimate, reserve,
+};
+use gateway_extras_voyage::{configured_error, fetch_chunk, result_body, retryable, usage};
 use gateway_providers::extras::{self, EmbeddingsProfile};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 const TTL: i64 = 86_400_000;
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct Job {
+struct Job {
     id: String,
     status: String,
     created_at_ms: i64,
@@ -54,10 +56,10 @@ struct InputRecord {
     data_b64: String,
     created_at_ms: i64,
 }
-pub(crate) fn job_key(owner: &str, profile: &str, id: &str) -> RecordKey {
+fn job_key(owner: &str, profile: &str, id: &str) -> RecordKey {
     key(json!(["embeddings", "jobs", "v2", owner, profile, id]))
 }
-pub(crate) fn lookup_key(owner: &str, id: &str) -> RecordKey {
+fn lookup_key(owner: &str, id: &str) -> RecordKey {
     key(json!(["embeddings", "jobs", "v2", "lookup", owner, id]))
 }
 fn input_key(owner: &str, profile: &str, id: &str, hash: &str) -> RecordKey {
@@ -170,17 +172,19 @@ async fn update<S: QueryStore, H: ExtrasHost>(
     let at = now(host)?;
     let writes = vec![
         put(
-            host,
             job_key(owner, &job.cache_profile_key, &job.id),
             job,
             Some(at + TTL),
-        )?,
+            &uuid(host)?,
+        )
+        .map_err(|_| invalid_state())?,
         put(
-            host,
             lookup_key(owner, &job.id),
             &json!({"cache_profile_key":job.cache_profile_key}),
             Some(at + TTL),
-        )?,
+            &uuid(host)?,
+        )
+        .map_err(|_| invalid_state())?,
     ];
     if commit(store, vec![], writes).await? {
         Ok(())
@@ -339,13 +343,14 @@ async fn attempt<S: QueryStore, H: ExtrasHost>(
         store,
         vec![check(&k, entry)],
         vec![
-            put(host, k.clone(), &job, Some(at + TTL))?,
+            put(k.clone(), &job, Some(at + TTL), &uuid(host)?).map_err(|_| invalid_state())?,
             put(
-                host,
                 lookup_key(owner, &job.id),
                 &json!({"cache_profile_key":job.cache_profile_key}),
                 Some(at + TTL),
-            )?,
+                &uuid(host)?,
+            )
+            .map_err(|_| invalid_state())?,
         ],
     )
     .await?
@@ -500,7 +505,7 @@ async fn attempt<S: QueryStore, H: ExtrasHost>(
         queued(store, host, owner, &mut job, 60_000, None).await
     }
 }
-pub(crate) async fn create<S: QueryStore, H: ExtrasHost>(
+pub async fn create<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     request: &ExtrasRequest<'_>,
@@ -527,12 +532,15 @@ pub(crate) async fn create<S: QueryStore, H: ExtrasHost>(
         if !commit(
             store,
             vec![],
-            vec![put(
-                host,
-                input_key(&owner, &p.cache_profile_key, &id, h),
-                &encrypted,
-                Some(now(host)? + TTL),
-            )?],
+            vec![
+                put(
+                    input_key(&owner, &p.cache_profile_key, &id, h),
+                    &encrypted,
+                    Some(now(host)? + TTL),
+                    &uuid(host)?,
+                )
+                .map_err(|_| invalid_state())?,
+            ],
         )
         .await?
         {
@@ -584,7 +592,7 @@ pub(crate) async fn create<S: QueryStore, H: ExtrasHost>(
     )
     .await
 }
-pub(crate) async fn get<S: QueryStore, H: ExtrasHost>(
+pub async fn get<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     request: &ExtrasRequest<'_>,

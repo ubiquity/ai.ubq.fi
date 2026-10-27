@@ -1,0 +1,225 @@
+{
+  "contractVersion": "EX-source-v1",
+  "base": "7694a49787c7379180cb0e268b8b03fac093d879",
+  "baseTree": "7a950bf53c082af013bf02d9deb12d5819c14723",
+  "frozenCommitBinding": "PRESERVE_READY manifest.head and headTree; no self-referential commit claim",
+  "actualModel": "unknown",
+  "actualEffort": "unknown",
+  "requestedModel": "gpt-6.1-sol",
+  "requestedEffort": "max",
+  "trustedIdentityMetadata": "no active-model/effort hook or supported metadata exposed in this worker context; API coordinator verifies runtime identity independently",
+  "firstActualCommand": {
+    "argv": [
+      "pwd"
+    ],
+    "exit": 0,
+    "stdout": "/workspace/.ai-rust-source/extras-runtime-family/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-extras-runtime-family-add63533325\n"
+  },
+  "scripts": [
+    {
+      "path": "handoff-evidence/extras-runtime-family/source-family-v1/ex-family-custody-v1.py",
+      "sha256": "dbc0f0317a3b588cbae126ecc82270426b4fdf122f43bca0aecca4f41dd9e8b8",
+      "bytes": 8796,
+      "classification": "bounded one-shot source text transformation or inventory; not Rust parsing, testing or acceptance; mutation scripts are already applied, not replay-safe"
+    },
+    {
+      "path": "handoff-evidence/extras-runtime-family/source-family-v1/ex-family-extract-v1.py",
+      "sha256": "15ead75f4d1014e280125021287744fd52d5867ea5b9f493e48c589eaa534471",
+      "bytes": 8673,
+      "classification": "bounded one-shot source text transformation or inventory; not Rust parsing, testing or acceptance; mutation scripts are already applied, not replay-safe"
+    },
+    {
+      "path": "handoff-evidence/extras-runtime-family/source-family-v1/ex-family-inventory-v1.py",
+      "sha256": "aa663c806d45b6d94348f5bf4c3a5337137baaea3550e504526d90e9cc19a4da",
+      "bytes": 11149,
+      "classification": "bounded one-shot source text transformation or inventory; not Rust parsing, testing or acceptance; mutation scripts are already applied, not replay-safe"
+    },
+    {
+      "path": "handoff-evidence/extras-runtime-family/source-family-v1/ex-family-manifests-v1.py",
+      "sha256": "05b0043d176fd69f03b9733bc96b97296187467e796ea27c4ae069fc62bfed53",
+      "bytes": 5398,
+      "classification": "bounded one-shot source text transformation or inventory; not Rust parsing, testing or acceptance; mutation scripts are already applied, not replay-safe"
+    },
+    {
+      "path": "handoff-evidence/extras-runtime-family/source-family-v1/ex-family-support-v1.py",
+      "sha256": "6ca6a06daf5aa40e3119d0a74433a11b7eb72cc19cc833aeab92dfa7ac500003",
+      "bytes": 3459,
+      "classification": "bounded one-shot source text transformation or inventory; not Rust parsing, testing or acceptance; mutation scripts are already applied, not replay-safe"
+    }
+  ],
+  "knownExecutionResults": [
+    {
+      "argv": [
+        "python3",
+        "/tmp/ex-family-extract-v1.py"
+      ],
+      "exit": 0,
+      "result": "full production source move; 17 defining Auth put API call-site ports"
+    },
+    {
+      "argv": [
+        "python3",
+        "/tmp/ex-family-support-v1.py"
+      ],
+      "exit": 0,
+      "result": "original host moved to dev support; tests retained"
+    },
+    {
+      "argv": [
+        "python3",
+        "/tmp/ex-family-manifests-v1.py"
+      ],
+      "exit": 0,
+      "result": "four owners; six own first-party lock blocks"
+    },
+    {
+      "argv": [
+        "python3",
+        "/tmp/ex-family-inventory-v1.py"
+      ],
+      "exit": 0,
+      "result": "final 80 source-body comparisons, zero mismatches; 28 original cases; foreign lock blocks preserved",
+      "earlierComparisonObservation": "8 rustfmt trailing-argument/list comma differences, then comparator explicitly normalized only comma after ? before closing ) or ]; no source remediation or test change"
+    },
+    {
+      "argv": [
+        "python3",
+        "/tmp/ex-family-custody-v1.py"
+      ],
+      "exit": 0,
+      "result": "private data/host/foreign source and phase inventories",
+      "earlierAttempt": {
+        "exit": 1,
+        "reason": "gitlink lib/codex is a directory, not a file; inventory revised to compare gitlink identity without traversing it",
+        "originalScriptHash": "not retained; session tool record holds the original command, no recovered source/gate claim"
+      }
+    }
+  ],
+  "executionLogScope": "These are source-preparation results reproduced in this session; full shell commands/exit receipts remain in the tool transcript. No historical raw gate execution is reconstructed.",
+  "targetOwnerMarker": {
+    "path": "/workspace/.ai-rust-builds/extras-runtime-family/handoff-2026-10-18-ai-rust-wasm-extras-runtime-family-add63533325/uos-source-owner.json",
+    "sha256": "0e09ad6dcd50f8688ccbb77a73d8465235360d1faa47beb4839724fe729f2cc9",
+    "contents": {
+      "version": 1,
+      "sourceRoot": "/workspace/.ai-rust-source/extras-runtime-family/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-extras-runtime-family-add63533325/rust",
+      "epoch": "continuation-01a17ebe-runtime-v1",
+      "family": "EX",
+      "compilerAuthority": "none"
+    },
+    "notCompilerLeased": true,
+    "targetUntouched": true
+  },
+  "capacityObservation": {
+    "sourceFilesystemAvailableKiB": 5518240,
+    "capacityPercentUsed": 83,
+    "sufficientForBoundedSourceCheckpoint": true,
+    "noForeignCacheOrStateRemoved": true
+  },
+  "lexicalManifestChecks": [
+    {
+      "crate": "gateway-extras-jobs",
+      "lexicalDirectCrateReferencesDeclared": true,
+      "productionEdges": [
+        "gateway-auth-contracts",
+        "gateway-auth-primitives",
+        "gateway-core",
+        "gateway-extras-contract",
+        "gateway-extras-primitives",
+        "gateway-extras-state",
+        "gateway-extras-voyage",
+        "gateway-providers",
+        "gateway-source",
+        "serde",
+        "serde_json",
+        "sha2",
+        "base64"
+      ],
+      "devEdges": []
+    },
+    {
+      "crate": "gateway-extras-primitives",
+      "lexicalDirectCrateReferencesDeclared": true,
+      "productionEdges": [
+        "gateway-auth-primitives",
+        "gateway-core",
+        "gateway-extras-contract",
+        "gateway-source",
+        "serde",
+        "serde_json"
+      ],
+      "devEdges": []
+    },
+    {
+      "crate": "gateway-extras-runtime",
+      "lexicalDirectCrateReferencesDeclared": true,
+      "productionEdges": [
+        "gateway-core",
+        "gateway-decision-runtime",
+        "gateway-extras-contract",
+        "gateway-extras-jobs",
+        "gateway-extras-primitives",
+        "gateway-extras-state",
+        "gateway-extras-voyage",
+        "gateway-providers",
+        "gateway-schema",
+        "gateway-source",
+        "serde",
+        "serde_json",
+        "futures-util"
+      ],
+      "devEdges": [
+        "gateway-auth-contracts",
+        "gateway-auth-primitives",
+        "gateway-extras-runtime-test-support"
+      ]
+    },
+    {
+      "crate": "gateway-extras-runtime-test-support",
+      "lexicalDirectCrateReferencesDeclared": true,
+      "productionEdges": [
+        "gateway-core",
+        "gateway-extras-contract",
+        "gateway-providers",
+        "gateway-source",
+        "serde_json",
+        "aes-gcm"
+      ],
+      "devEdges": []
+    },
+    {
+      "crate": "gateway-extras-state",
+      "lexicalDirectCrateReferencesDeclared": true,
+      "productionEdges": [
+        "gateway-auth-primitives",
+        "gateway-core",
+        "gateway-extras-contract",
+        "gateway-extras-primitives",
+        "gateway-source",
+        "serde",
+        "serde_json",
+        "chrono"
+      ],
+      "devEdges": []
+    },
+    {
+      "crate": "gateway-extras-voyage",
+      "lexicalDirectCrateReferencesDeclared": true,
+      "productionEdges": [
+        "gateway-extras-contract",
+        "gateway-providers",
+        "gateway-source",
+        "serde",
+        "serde_json",
+        "chrono"
+      ],
+      "devEdges": []
+    }
+  ],
+  "protectedResources": "all vendors, external lock package blocks, profiles, baselines, C/D bodies, Worker bodies, toolchain/target bytes left unchanged",
+  "noChildren": true,
+  "noNetworkOrProviderCalls": true,
+  "noCompilerTestsOrRuntime": true,
+  "noOSConfinementClaim": true,
+  "checkpointIsNotAcceptance": true,
+  "remaining": "Root nominal integration and current defining C/D adoption, actual structural/native/WASM/Clippy/test/build/workerd/Mac/live/client/integration acceptance; full Rust objective unfinished"
+}

@@ -1,0 +1,234 @@
+{
+  "testsExecuted": false,
+  "cases": [
+    {
+      "target": "runtime",
+      "name": "sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage",
+      "originalBodySha256": "8196474b9e6c23a1d90031556d8f89f927466fadfff4a26e70e96bfa01323534",
+      "currentBodySha256": "8196474b9e6c23a1d90031556d8f89f927466fadfff4a26e70e96bfa01323534",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "idempotency_replays_without_credentials_and_conflict_never_redispatches",
+      "originalBodySha256": "7d2fce39337e8a23a726f24cdc03e91d8cdba5aef94e98aecd8f6c2afed48929",
+      "currentBodySha256": "7d2fce39337e8a23a726f24cdc03e91d8cdba5aef94e98aecd8f6c2afed48929",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease",
+      "originalBodySha256": "d002b6a5c985308c55e7c354561c6a8a2fd4eddb92953cfbaf25f3c0e0f27707",
+      "currentBodySha256": "d002b6a5c985308c55e7c354561c6a8a2fd4eddb92953cfbaf25f3c0e0f27707",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "explicit_failure_releases_idempotency_but_unknown_transport_never_retries",
+      "originalBodySha256": "e403d69ca336648ce39767ebda8728c54b52f3ccca3e5e2ecb8d0936afa2c3fe",
+      "currentBodySha256": "e403d69ca336648ce39767ebda8728c54b52f3ccca3e5e2ecb8d0936afa2c3fe",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "partial_chunk_success_is_not_replayed_after_global_token_budget_exhaustion",
+      "originalBodySha256": "32422d8037e979d5721382c09b29b1fdca1e46aebfaa382ad5cec32fd2bc356e",
+      "currentBodySha256": "32422d8037e979d5721382c09b29b1fdca1e46aebfaa382ad5cec32fd2bc356e",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "budget_retries_cas_then_waits_only_inside_the_twenty_second_deadline",
+      "originalBodySha256": "79ebf10e63eb951be082c22a4c7706a88560116422606bc673bb9118cdc953a6",
+      "currentBodySha256": "79ebf10e63eb951be082c22a4c7706a88560116422606bc673bb9118cdc953a6",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "quota_driven_cache_eviction_crosses_profiles_and_drops_the_oldest_pointer",
+      "originalBodySha256": "d97b62b80dd7216aa9da5ad53fd57547a64a95c1cdb0ec05afdf8d8a56bbaff8",
+      "currentBodySha256": "d97b62b80dd7216aa9da5ad53fd57547a64a95c1cdb0ec05afdf8d8a56bbaff8",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "cancelled_sync_never_dispatches_and_returns_distinct_499",
+      "originalBodySha256": "80c7efc4bdf8ff20186aff8b62ed84326a8713a4431247b83e6efe2c579e5b17",
+      "currentBodySha256": "80c7efc4bdf8ff20186aff8b62ed84326a8713a4431247b83e6efe2c579e5b17",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation",
+      "originalBodySha256": "f1c0acb3890fad260ca717fb7d8e2496a21579a5b6c095b3231ffcb5ecbd7701",
+      "currentBodySha256": "f1c0acb3890fad260ca717fb7d8e2496a21579a5b6c095b3231ffcb5ecbd7701",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "real_aes_gcm_tamper_is_a_failed_job_without_upstream_dispatch",
+      "originalBodySha256": "2e7fdb06b9d76b9f5f78f0abcb0c52280b1afe72c088f690a05adedbfb2586fc",
+      "currentBodySha256": "2e7fdb06b9d76b9f5f78f0abcb0c52280b1afe72c088f690a05adedbfb2586fc",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "live_job_lease_refuses_a_second_runner_and_input_expiry_is_not_refreshed",
+      "originalBodySha256": "68923638f91202c3c83b868dd50f9d7f288bd2259ffa98ab39638f4078146e7b",
+      "currentBodySha256": "68923638f91202c3c83b868dd50f9d7f288bd2259ffa98ab39638f4078146e7b",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "expired_input_fails_after_a_poll_extended_only_the_job_and_lookup_ttls",
+      "originalBodySha256": "9871d73b50db845fac795f9dd0f4dcc87a58ed7f3f8610edb60befadfe048cf6",
+      "currentBodySha256": "9871d73b50db845fac795f9dd0f4dcc87a58ed7f3f8610edb60befadfe048cf6",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage",
+      "originalBodySha256": "2a1fb3af3921af6f42117e6e2182c20c57f614766e965fae36b547727d2aa076",
+      "currentBodySha256": "2a1fb3af3921af6f42117e6e2182c20c57f614766e965fae36b547727d2aa076",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "systemone_maps_actual_upstream_errors_and_does_not_echo_private_bodies",
+      "originalBodySha256": "2d4fb017102197f19f6b91706867660db824bcdaedfbf3137dd2ca657584d6f3",
+      "currentBodySha256": "2d4fb017102197f19f6b91706867660db824bcdaedfbf3137dd2ca657584d6f3",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "image_fanout_uses_one_original_scope_exact_child_ids_and_common_output_metadata",
+      "originalBodySha256": "f7145f73e8704edd2fc15c2fc898aa4190ce1d8bf71b1f249155fa441b7d49fe",
+      "currentBodySha256": "f7145f73e8704edd2fc15c2fc898aa4190ce1d8bf71b1f249155fa441b7d49fe",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "image_failure_aborts_siblings_but_settles_every_logical_child_once",
+      "originalBodySha256": "df57891e8ad6a345adafa0f43d8c01d0be7f5e877c8490459d4bfa2dbe3b6804",
+      "currentBodySha256": "df57891e8ad6a345adafa0f43d8c01d0be7f5e877c8490459d4bfa2dbe3b6804",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "sync_retries_only_explicit_retryable_statuses_with_bounded_backoff",
+      "originalBodySha256": "185c7983cd0c8293a289bedafba75250fbd7a7dddb872cd0d0166e7debe1fc8a",
+      "currentBodySha256": "185c7983cd0c8293a289bedafba75250fbd7a7dddb872cd0d0166e7debe1fc8a",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "job_retry_is_poll_driven_and_does_not_schedule_a_hidden_request",
+      "originalBodySha256": "1c9a23809bd6b357ce0668c8bf8018d71381eda06b263b87c08511a63f04e67a",
+      "currentBodySha256": "1c9a23809bd6b357ce0668c8bf8018d71381eda06b263b87c08511a63f04e67a",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "base64_vectors_use_source_little_endian_float32_output_without_forwarding_the_encoding_option",
+      "originalBodySha256": "10f472f23a20a8eb39f11bf428aaa10729ed038f9bdb4896e8791c192a5e3d7d",
+      "currentBodySha256": "10f472f23a20a8eb39f11bf428aaa10729ed038f9bdb4896e8791c192a5e3d7d",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "provider_configuration_and_invalid_vector_statuses_stay_distinct",
+      "originalBodySha256": "b39b62d0563b0dab26942f1335be3e6e908efdda35b46b6f8e7afa7db8612a90",
+      "currentBodySha256": "b39b62d0563b0dab26942f1335be3e6e908efdda35b46b6f8e7afa7db8612a90",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "cache_timestamp_projection_preserves_source_negative_zero_key_identity",
+      "originalBodySha256": "bc59c86e16a7a78f91bdd8f18bc964eba9a02f4d49ae0628107affcfafbf5f52",
+      "currentBodySha256": "611093efc225bd1416fbb6b14c1d498b2bd72043acfc6a8afb4e798d88656db3",
+      "exactBody": false,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "gateway_origin_preserves_admission_and_started_ledger_failures_without_provider_health",
+      "originalBodySha256": "c78664e75110494c01d5748e6d6f0fc21032ba9bd0201976fa1835fe8c73c184",
+      "currentBodySha256": "c78664e75110494c01d5748e6d6f0fc21032ba9bd0201976fa1835fe8c73c184",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "runtime",
+      "name": "actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins",
+      "originalBodySha256": "a7b79a60214bfd82dc02931e298cdbe0002406ab2f04d453524176f1b4a8dcdf",
+      "currentBodySha256": "a7b79a60214bfd82dc02931e298cdbe0002406ab2f04d453524176f1b4a8dcdf",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "decisions",
+      "name": "actual_extras_dispatch_uses_one_fixed_decisions_call_and_terminal_usage",
+      "originalBodySha256": "8e7b13f3100ce407ba185a5efc25ba21e3a97a614124b1c77ff7328350b653bb",
+      "currentBodySha256": "8e7b13f3100ce407ba185a5efc25ba21e3a97a614124b1c77ff7328350b653bb",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "decisions",
+      "name": "invalid_disabled_unknown_and_unconfigured_requests_never_dispatch",
+      "originalBodySha256": "21528087ff3b1966cb38208c79a49d38e2a0115146e1b5c9b55c49649413d771",
+      "currentBodySha256": "21528087ff3b1966cb38208c79a49d38e2a0115146e1b5c9b55c49649413d771",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "decisions",
+      "name": "upstream_status_and_invalid_answers_retain_failed_terminal_without_retry",
+      "originalBodySha256": "4a617f1bb12f704ee03452e9c02e6a3f411854abdef6a1d968c865d7b599d534",
+      "currentBodySha256": "4a617f1bb12f704ee03452e9c02e6a3f411854abdef6a1d968c865d7b599d534",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "decisions",
+      "name": "caller_cancellation_and_predispatch_quota_failure_remain_distinct",
+      "originalBodySha256": "b8833f6b9df0446544850527d8eee23bac4f50d53e5ba6676c8610b008347915",
+      "currentBodySha256": "b8833f6b9df0446544850527d8eee23bac4f50d53e5ba6676c8610b008347915",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    },
+    {
+      "target": "decisions",
+      "name": "byte_cap_and_jev_alias_use_the_decisions_contract",
+      "originalBodySha256": "63a3a759ab8792ab658167b0dcca0e0f781fc774295b167b87bc0f3743781067",
+      "currentBodySha256": "63a3a759ab8792ab658167b0dcca0e0f781fc774295b167b87bc0f3743781067",
+      "exactBody": true,
+      "nominalOnlyBodyPreserved": true
+    }
+  ],
+  "count": 28,
+  "runtime": 23,
+  "decisions": 5,
+  "allBodiesNominalOnlyPreserved": true,
+  "queued_jobBodyExact": true
+}

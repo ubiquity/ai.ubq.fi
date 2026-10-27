@@ -1,0 +1,462 @@
+{
+  "classification": "STATIC_SOURCE_PHASE_AND_PRIVACY_CUSTODY_NOT_LIVE_AUTHORITY",
+  "privateDataBodies": [
+    {
+      "from": "idempotency.rs",
+      "to": "gateway-extras-state/src/idempotency.rs",
+      "name": "Lease",
+      "fieldsBodyExact": true,
+      "tokensSha256": "a04bc95dd1c5e0d6ce53c94c541adb0d6bc6a8f3d1edf1571c2d12ae8819d7b4",
+      "private": false,
+      "LeaseFieldsPrivate": true
+    },
+    {
+      "from": "idempotency.rs",
+      "to": "gateway-extras-state/src/idempotency.rs",
+      "name": "Ledger",
+      "fieldsBodyExact": true,
+      "tokensSha256": "e21aceb3c9ee00e3f9c9bc071faa196e87dfffa8954b3885f0f9ce4cf14a1324",
+      "private": true,
+      "LeaseFieldsPrivate": null
+    },
+    {
+      "from": "idempotency.rs",
+      "to": "gateway-extras-state/src/idempotency.rs",
+      "name": "State",
+      "fieldsBodyExact": true,
+      "tokensSha256": "bb187c4ab14c12a3363d55e28f2e3b4762095183ec62998cd92a64d3db04c6d9",
+      "private": true,
+      "LeaseFieldsPrivate": null
+    },
+    {
+      "from": "cache.rs",
+      "to": "gateway-extras-state/src/cache.rs",
+      "name": "Budget",
+      "fieldsBodyExact": true,
+      "tokensSha256": "b8da68d52cccd03f6b29df7560b648de1069e8f62d65dbd4007c5fd8d2154b09",
+      "private": true,
+      "LeaseFieldsPrivate": null
+    },
+    {
+      "from": "jobs.rs",
+      "to": "gateway-extras-jobs/src/lib.rs",
+      "name": "Job",
+      "fieldsBodyExact": true,
+      "tokensSha256": "243002899eb04846eb610c3a2d0734d1644b8bd07072160de5bd60368fe47933",
+      "private": true,
+      "LeaseFieldsPrivate": null
+    },
+    {
+      "from": "jobs.rs",
+      "to": "gateway-extras-jobs/src/lib.rs",
+      "name": "InputRecord",
+      "fieldsBodyExact": true,
+      "tokensSha256": "cc85d6b79811cb9996e32ef9670ac67543ec2fb3cfea8a1b059bed7bb18b9155",
+      "private": true,
+      "LeaseFieldsPrivate": null
+    },
+    {
+      "from": "jobs.rs",
+      "to": "gateway-extras-jobs/src/lib.rs",
+      "name": "JobAttempt",
+      "fieldsBodyExact": true,
+      "tokensSha256": "1a73e7ce0a58c64f65b7c1988cbc3e6a66914c7844bb6024242f87dea4c14c4e",
+      "private": true,
+      "LeaseFieldsPrivate": null
+    },
+    {
+      "from": "embeddings.rs",
+      "to": "gateway-extras-runtime/src/embeddings.rs",
+      "name": "SyncLease",
+      "fieldsBodyExact": true,
+      "tokensSha256": "986cb4bcf61ac997d61b1ad27ed2dcc6f752c14a4263582ab677127d50df81ab",
+      "private": true,
+      "LeaseFieldsPrivate": null
+    }
+  ],
+  "originalMovedHostMethodBodies": [
+    {
+      "name": "poll",
+      "bodySha256": "3d07e16d3bd4ca660d94eb1daf20c79ca6bba79b0057707724247daadd9fd0d6",
+      "originalBodyExact": true
+    },
+    {
+      "name": "run",
+      "bodySha256": "0d639c8718741bc10f8f5821d0f90a1c7281217c4501c8281149e39d45dfa9dc",
+      "originalBodyExact": true
+    },
+    {
+      "name": "new",
+      "bodySha256": "3ec92d95cc7b9c3fd613f2e81e66de7aa825a46abfc2785e0bb07a6097b25b4a",
+      "originalBodyExact": true
+    },
+    {
+      "name": "reply",
+      "bodySha256": "312ac2e22733e9e59b301aae63127523c95ae4b897c43b9dc6be43c410d0b19d",
+      "originalBodyExact": true
+    },
+    {
+      "name": "count",
+      "bodySha256": "dcbdec347156d88aadd17f630dec15098f2ec71facb57ffa03c395aa29d1eaff",
+      "originalBodyExact": true
+    },
+    {
+      "name": "now_ms",
+      "bodySha256": "e964657c5189bdb71e4e282058f07a4dc05b57f37223146cb10cd3559b6be60e",
+      "originalBodyExact": true
+    },
+    {
+      "name": "random_bytes",
+      "bodySha256": "1f36dc86927399044dd7c1a6d746e88e80ba9e3ff447866eebd713f460e80c2c",
+      "originalBodyExact": true
+    },
+    {
+      "name": "cancelled",
+      "bodySha256": "3ce724986e61de9383f0df38aaccef2054b32596cbeaa24019e4850a9336e845",
+      "originalBodyExact": true
+    },
+    {
+      "name": "sleep_ms",
+      "bodySha256": "843bad9e578eff68e86bd4da746efd3c415d8c5ea61e0236f7dfed23538d5a36",
+      "originalBodyExact": true
+    },
+    {
+      "name": "provider_options",
+      "bodySha256": "e665bd640afb7e7880b9d7c26c724a91a27ba10f19501599243dc03e4355a179",
+      "originalBodyExact": true
+    },
+    {
+      "name": "image_base_model",
+      "bodySha256": "bc4f429cb832653a70748763da3e9697fd57a69611a22f71288613e9ff11b927",
+      "originalBodyExact": true
+    },
+    {
+      "name": "dispatch",
+      "bodySha256": "ecbe50568ab7169542d3912eabde46fb05bdc7416d168109e458378246594359",
+      "originalBodyExact": true
+    },
+    {
+      "name": "begin_image_fanout",
+      "bodySha256": "0986b4d00edaafa88c8140bb69618bf03e4d9fec1186ae01359e823a1ee06d7e",
+      "originalBodyExact": true
+    },
+    {
+      "name": "abort_image_siblings",
+      "bodySha256": "3732613f4949c0f7d112c3ed35500ec01631244b71d4c5772eb3dcba04017d03",
+      "originalBodyExact": true
+    },
+    {
+      "name": "image_child_finished",
+      "bodySha256": "2cf234178eb863cefd7b8169d4270fe77e251c05d4f884dc8c9f2848e5c84c4e",
+      "originalBodyExact": true
+    },
+    {
+      "name": "finish_image_fanout",
+      "bodySha256": "1a3f08255a96ddafac8a433a75bf6abfb3ce0babab7345c02a75bd287c3744f6",
+      "originalBodyExact": true
+    }
+  ],
+  "externalFixtureFiles": [],
+  "embeddedFixtureEvidence": "test-case-preservation.json hashes complete case bodies including all literals and assertions; host method bodies above; no literal external compiled fixture is used by runtime/decisions targets",
+  "phaseMap": {
+    "sync": [
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+        "lines": [
+          111
+        ],
+        "match": "idempotency::acquire(",
+        "fileSha256": "35407b606eb5b2ff168c73df1cfe291ecc214067d1d26bd1b9987cac465f1d80"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+        "lines": [
+          116
+        ],
+        "match": "host.provider_options(",
+        "fileSha256": "35407b606eb5b2ff168c73df1cfe291ecc214067d1d26bd1b9987cac465f1d80"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+        "lines": [
+          191
+        ],
+        "match": "idempotency::mark_dispatched(",
+        "fileSha256": "35407b606eb5b2ff168c73df1cfe291ecc214067d1d26bd1b9987cac465f1d80"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+        "lines": [
+          196
+        ],
+        "match": "fetch_chunk(",
+        "fileSha256": "35407b606eb5b2ff168c73df1cfe291ecc214067d1d26bd1b9987cac465f1d80"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+        "lines": [
+          330
+        ],
+        "match": "idempotency::success(",
+        "fileSha256": "35407b606eb5b2ff168c73df1cfe291ecc214067d1d26bd1b9987cac465f1d80"
+      }
+    ],
+    "idempotency": [
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          17
+        ],
+        "match": "enum State {",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          39
+        ],
+        "match": "pub struct Lease {",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          129
+        ],
+        "match": "pub async fn acquire",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          163
+        ],
+        "match": "async fn acquire_inner",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          218
+        ],
+        "match": "if r.state == State::Dispatched",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          311
+        ],
+        "match": "pub async fn mark_dispatched",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          349
+        ],
+        "match": "pub async fn release",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          384
+        ],
+        "match": "pub async fn mark_indeterminate",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "lines": [
+          419
+        ],
+        "match": "pub async fn success",
+        "fileSha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6"
+      }
+    ],
+    "jobs": [
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          30
+        ],
+        "match": "struct Job {",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          53
+        ],
+        "match": "struct InputRecord {",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          77
+        ],
+        "match": "fn seed(",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          90
+        ],
+        "match": "fn crypto_key(",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          107
+        ],
+        "match": "async fn encrypt",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          135
+        ],
+        "match": "async fn decrypt",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          306
+        ],
+        "match": "struct JobAttempt",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          338
+        ],
+        "match": "job.locked_until_ms = Some(at + 30_000);",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          508
+        ],
+        "match": "pub async fn create",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      },
+      {
+        "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "lines": [
+          595
+        ],
+        "match": "pub async fn get",
+        "fileSha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6"
+      }
+    ],
+    "images": [
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/images.rs",
+        "lines": [
+          119
+        ],
+        "match": "host.begin_image_fanout(",
+        "fileSha256": "83b265aa7e5343ce3393c7095bb168f255c26366d76375ceb2f71ad255a2bfff"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/images.rs",
+        "lines": [
+          140
+        ],
+        "match": "host.abort_image_siblings();",
+        "fileSha256": "83b265aa7e5343ce3393c7095bb168f255c26366d76375ceb2f71ad255a2bfff"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/images.rs",
+        "lines": [
+          142
+        ],
+        "match": "host.image_child_finished(",
+        "fileSha256": "83b265aa7e5343ce3393c7095bb168f255c26366d76375ceb2f71ad255a2bfff"
+      },
+      {
+        "path": "rust/crates/gateway-extras-runtime/src/images.rs",
+        "lines": [
+          147
+        ],
+        "match": "host.finish_image_fanout().await?;",
+        "fileSha256": "83b265aa7e5343ce3393c7095bb168f255c26366d76375ceb2f71ad255a2bfff"
+      }
+    ],
+    "voyage": [
+      {
+        "path": "rust/crates/gateway-extras-voyage/src/lib.rs",
+        "lines": [
+          20
+        ],
+        "match": "fn retry_after",
+        "fileSha256": "436396dea52a2881d609165a4f186aa74b65d5b9ec93ba666705ffe033162177"
+      },
+      {
+        "path": "rust/crates/gateway-extras-voyage/src/lib.rs",
+        "lines": [
+          66
+        ],
+        "match": "PreparedCall::prepare(",
+        "fileSha256": "436396dea52a2881d609165a4f186aa74b65d5b9ec93ba666705ffe033162177"
+      },
+      {
+        "path": "rust/crates/gateway-extras-voyage/src/lib.rs",
+        "lines": [
+          68
+        ],
+        "match": "host.dispatch(ExtrasDispatch::Voyage(call))",
+        "fileSha256": "436396dea52a2881d609165a4f186aa74b65d5b9ec93ba666705ffe033162177"
+      },
+      {
+        "path": "rust/crates/gateway-extras-voyage/src/lib.rs",
+        "lines": [
+          123
+        ],
+        "match": "fn result_body",
+        "fileSha256": "436396dea52a2881d609165a4f186aa74b65d5b9ec93ba666705ffe033162177"
+      },
+      {
+        "path": "rust/crates/gateway-extras-voyage/src/lib.rs",
+        "lines": [
+          143
+        ],
+        "match": "fn usage",
+        "fileSha256": "436396dea52a2881d609165a4f186aa74b65d5b9ec93ba666705ffe033162177"
+      }
+    ]
+  },
+  "existingStoreDefiningAPI": {
+    "path": "rust/crates/gateway-auth-primitives/src/store.rs",
+    "sha256": "c8e2465378b46606767a7ec7418ecf6f6e9a9f6f71b7766e2c3183fc4b29d3d5",
+    "check": "check(key: &RecordKey, record: Option<&StoredRecord>) -> RevisionCheck",
+    "commit": "commit<S: AuthorityStore>(store: &S, checks: Vec<RevisionCheck>, mutations: Vec<RecordMutation>) -> Result<bool, GatewayError>",
+    "put": "put<T: Serialize>(key: RecordKey, value: &T, expiry: Option<i64>, revision: &str) -> Result<RecordMutation, GatewayError>",
+    "putMapping": "Each of 17 call sites passes the original key, value and expiry, obtains uuid(host)? before serialization, then maps only the existing put encoding error to Extras invalid_state. Randomness failure propagates unchanged. No new store API."
+  },
+  "principalHashSourceProof": {
+    "sourceReferences": [
+      "src/embeddings/handlers.ts:90",
+      "src/embeddings/ledger.ts:503",
+      "src/utils.ts:45"
+    ],
+    "operation": "JS whitespace trim then SHA256(TextEncoder(salted principal)). Replacing lone surrogates before trim commutes because the replacement is not whitespace; valid pairs/scalars retain their UTF8 bytes. Existing source_utf8 is used only at this established hash-input boundary, not a payload projection.",
+    "ownedChange": "old private principal.0 read becomes as_source -> source_utf8 -> same js_whitespace trim",
+    "actualExecution": false
+  },
+  "originalAdmissionOwnerUntouched": true,
+  "newRawKeyMutationAPI": false,
+  "newPreparedCallOrPrivateProofConstructor": false,
+  "newSchedulerOrBackgroundRequest": false,
+  "cancellationOwnerChanged": false,
+  "compilerOrTestsExecuted": false,
+  "namespaceOrConfinementEvidence": "not collected; no execution-based enforcement claim"
+}

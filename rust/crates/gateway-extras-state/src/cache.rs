@@ -1,18 +1,19 @@
-use crate::store::{check, commit, decoded, key, now, put};
 use chrono::{DateTime, SecondsFormat, Utc};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
+use gateway_auth_primitives::store::{check, commit, put};
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::state::{RecordKey, RecordMutation};
 use gateway_core::tuple_key::{DecodedKeyPart, TupleKey};
 use gateway_extras_contract::errors::invalid_state;
 use gateway_extras_contract::types::ExtrasHost;
+use gateway_extras_primitives::value::{decoded, key, now, uuid};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub const RPM: u64 = 3;
 pub const TPM: u64 = 10_000;
 pub const TIMEOUT_MS: i64 = 20_000;
-pub fn cache_key(profile: &str, hash: &str) -> RecordKey {
+fn cache_key(profile: &str, hash: &str) -> RecordKey {
     key(json!(["embeddings", "v2", "cache", profile, hash]))
 }
 fn pointer_key(profile: &str, hash: &str) -> RecordKey {
@@ -44,7 +45,7 @@ fn global_index(at: f64, profile: &str, hash: &str) -> RecordKey {
         hash
     ]))
 }
-pub(crate) fn vector(value: &Value, dimensions: u64) -> Option<Vec<f64>> {
+fn vector(value: &Value, dimensions: u64) -> Option<Vec<f64>> {
     let a = value.as_array()?;
     if a.len() != dimensions as usize {
         return None;
@@ -53,7 +54,7 @@ pub(crate) fn vector(value: &Value, dimensions: u64) -> Option<Vec<f64>> {
         .map(|v| v.as_f64().filter(|x| x.is_finite()))
         .collect()
 }
-pub(crate) async fn cached<S: QueryStore>(
+pub async fn cached<S: QueryStore>(
     store: &S,
     profile: &str,
     hash: &str,
@@ -92,16 +93,20 @@ async fn write_entry<S: QueryStore, H: ExtrasHost>(
         let at = existing.unwrap_or(created as f64);
         let mut writes = vec![
             put(
-                host,
                 cache_key(profile, hash),
                 &json!({"embedding":embedding,"created_at":iso(at)?}),
                 None,
-            )?,
-            put(host, profile_index(profile, at, hash), &1, None)?,
-            put(host, global_index(at, profile, hash), &1, None)?,
+                &uuid(host)?,
+            )
+            .map_err(|_| invalid_state())?,
+            put(profile_index(profile, at, hash), &1, None, &uuid(host)?)
+                .map_err(|_| invalid_state())?,
+            put(global_index(at, profile, hash), &1, None, &uuid(host)?)
+                .map_err(|_| invalid_state())?,
         ];
         if existing.is_none() {
-            writes.push(put(host, pointer.clone(), &at, None)?);
+            writes
+                .push(put(pointer.clone(), &at, None, &uuid(host)?).map_err(|_| invalid_state())?);
         }
         if commit(store, vec![check(&pointer, row.as_ref())], writes).await? {
             return Ok(());
@@ -195,7 +200,7 @@ async fn evict<S: QueryStore, H: ExtrasHost>(
     }
     Ok(removed)
 }
-pub(crate) async fn cache_best_effort<S: QueryStore, H: ExtrasHost>(
+pub async fn cache_best_effort<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     profile: &str,
@@ -238,10 +243,10 @@ struct Budget {
     requests: f64,
     tokens: f64,
 }
-pub(crate) fn estimate(text: &JsString16) -> u64 {
-    (crate::store::source_utf8(text).len() as u64).div_ceil(4)
+pub fn estimate(text: &JsString16) -> u64 {
+    (gateway_extras_primitives::value::source_utf8(text).len() as u64).div_ceil(4)
 }
-pub(crate) fn chunks(items: &[(String, JsString16)]) -> Vec<Vec<(String, JsString16)>> {
+pub fn chunks(items: &[(String, JsString16)]) -> Vec<Vec<(String, JsString16)>> {
     let mut out = Vec::new();
     let mut chunk = Vec::new();
     let mut tokens = 0;
@@ -259,7 +264,7 @@ pub(crate) fn chunks(items: &[(String, JsString16)]) -> Vec<Vec<(String, JsStrin
     }
     out
 }
-pub(crate) async fn reserve_once<S: QueryStore, H: ExtrasHost>(
+async fn reserve_once<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     tokens: u64,
@@ -295,7 +300,7 @@ pub(crate) async fn reserve_once<S: QueryStore, H: ExtrasHost>(
     if commit(
         store,
         vec![check(&k, row.as_ref())],
-        vec![put(host, k, &state, None)?],
+        vec![put(k, &state, None, &uuid(host)?).map_err(|_| invalid_state())?],
     )
     .await?
     {
@@ -304,7 +309,7 @@ pub(crate) async fn reserve_once<S: QueryStore, H: ExtrasHost>(
         Ok(Some(0))
     }
 }
-pub(crate) async fn reserve<S: QueryStore, H: ExtrasHost>(
+pub async fn reserve<S: QueryStore, H: ExtrasHost>(
     store: &S,
     host: &H,
     tokens: u64,

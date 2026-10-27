@@ -1462,30 +1462,93 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway-extras-runtime"
+name = "gateway-extras-jobs"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "base64 0.22.1",
- "chrono",
- "futures-util",
- "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
  "gateway-core",
- "gateway-decision-runtime",
  "gateway-extras-contract",
- "gateway-extras-runtime-test-support",
+ "gateway-extras-primitives",
+ "gateway-extras-state",
+ "gateway-extras-voyage",
  "gateway-providers",
- "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
  "sha2 0.10.9",
 ]
 
 [[package]]
+name = "gateway-extras-primitives"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-extras-contract",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-extras-runtime"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-decision-runtime",
+ "gateway-extras-contract",
+ "gateway-extras-jobs",
+ "gateway-extras-primitives",
+ "gateway-extras-runtime-test-support",
+ "gateway-extras-state",
+ "gateway-extras-voyage",
+ "gateway-providers",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-extras-runtime-test-support"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "gateway-core",
+ "gateway-extras-contract",
+ "gateway-providers",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-extras-state"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-extras-contract",
+ "gateway-extras-primitives",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-extras-voyage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gateway-extras-contract",
+ "gateway-providers",
+ "gateway-source",
+ "serde",
  "serde_json",
 ]
 

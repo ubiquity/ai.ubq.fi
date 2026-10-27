@@ -1,0 +1,242 @@
+{
+  "classification": "STATIC_DECLARED_SOURCE_NOT_COMPILER_METADATA",
+  "graph": {
+    "gateway-extras-jobs": [
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-extras-contract",
+      "gateway-extras-primitives",
+      "gateway-extras-state",
+      "gateway-extras-voyage",
+      "gateway-providers",
+      "gateway-source"
+    ],
+    "gateway-extras-primitives": [
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-extras-contract",
+      "gateway-source"
+    ],
+    "gateway-extras-runtime": [
+      "gateway-core",
+      "gateway-decision-runtime",
+      "gateway-extras-contract",
+      "gateway-extras-jobs",
+      "gateway-extras-primitives",
+      "gateway-extras-state",
+      "gateway-extras-voyage",
+      "gateway-providers",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-extras-runtime-test-support": [
+      "gateway-core",
+      "gateway-extras-contract",
+      "gateway-providers",
+      "gateway-source"
+    ],
+    "gateway-extras-state": [
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-extras-contract",
+      "gateway-extras-primitives",
+      "gateway-source"
+    ],
+    "gateway-extras-voyage": [
+      "gateway-extras-contract",
+      "gateway-providers",
+      "gateway-source"
+    ]
+  },
+  "ownedTopologicalOrder": [
+    "gateway-extras-primitives",
+    "gateway-extras-state",
+    "gateway-extras-voyage",
+    "gateway-extras-jobs",
+    "gateway-extras-runtime",
+    "gateway-extras-runtime-test-support"
+  ],
+  "counts": {
+    "gateway-extras-jobs": 663,
+    "gateway-extras-primitives": 62,
+    "gateway-extras-runtime": 740,
+    "gateway-extras-runtime-test-support": 356,
+    "gateway-extras-state": 847,
+    "gateway-extras-voyage": 145
+  },
+  "files": [
+    {
+      "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+      "bytes": 21566,
+      "sha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6",
+      "lines": 663
+    },
+    {
+      "path": "rust/crates/gateway-extras-primitives/src/lib.rs",
+      "bytes": 181,
+      "sha256": "0cda3d3585ea4d6ed3c12ce151f00522f0bde7c529c90434a722f0819c95acbe",
+      "lines": 3
+    },
+    {
+      "path": "rust/crates/gateway-extras-primitives/src/value.rs",
+      "bytes": 1957,
+      "sha256": "97e916989120fcb0b36507ede9f1adeb9bef2776d7e3651d34285a62ac1b135c",
+      "lines": 59
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+      "bytes": 13108,
+      "sha256": "35407b606eb5b2ff168c73df1cfe291ecc214067d1d26bd1b9987cac465f1d80",
+      "lines": 340
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/images.rs",
+      "bytes": 10561,
+      "sha256": "83b265aa7e5343ce3393c7095bb168f255c26366d76375ceb2f71ad255a2bfff",
+      "lines": 304
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/lib.rs",
+      "bytes": 3801,
+      "sha256": "21aed1550798e6765e177ac79df23fedec19eac585432f4778a332a8f58b8481",
+      "lines": 96
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/fixture.rs",
+      "bytes": 4960,
+      "sha256": "f1ff3b8ed7991523e6d4cdea79e96f640282c81b4add25c21c39e7ffa83d7e60",
+      "lines": 147
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/host.rs",
+      "bytes": 7450,
+      "sha256": "0f8357438227e3a7722dd569945150cb3bfd16ccb51e81f83a166dadfbb6f39d",
+      "lines": 206
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/lib.rs",
+      "bytes": 100,
+      "sha256": "be901a990a4eb4843d507e6ffd2adec78fe8f9091f00b7bba4c4c950eac65a51",
+      "lines": 3
+    },
+    {
+      "path": "rust/crates/gateway-extras-state/src/cache.rs",
+      "bytes": 10934,
+      "sha256": "cf5a79d8b60b3d5dbccd954b4e49f5c0eb7fe2147ab9396f9ac815eaf4d95dfc",
+      "lines": 350
+    },
+    {
+      "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+      "bytes": 15698,
+      "sha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6",
+      "lines": 493
+    },
+    {
+      "path": "rust/crates/gateway-extras-state/src/lib.rs",
+      "bytes": 193,
+      "sha256": "6a44f2291a62b3760db92739ddf8523717858a892cb2b0fcbee8d3ecc1693135",
+      "lines": 4
+    },
+    {
+      "path": "rust/crates/gateway-extras-voyage/src/lib.rs",
+      "bytes": 5406,
+      "sha256": "436396dea52a2881d609165a4f186aa74b65d5b9ec93ba666705ffe033162177",
+      "lines": 145
+    }
+  ],
+  "publicDeclarations": {
+    "rust/crates/gateway-extras-jobs/src/lib.rs": [
+      "pub async fn create<S: QueryStore, H: ExtrasHost>(",
+      "pub async fn get<S: QueryStore, H: ExtrasHost>("
+    ],
+    "rust/crates/gateway-extras-primitives/src/lib.rs": [
+      "pub mod value;"
+    ],
+    "rust/crates/gateway-extras-primitives/src/value.rs": [
+      "pub fn key(parts: Value) -> RecordKey {",
+      "pub fn now<H: ExtrasHost>(host: &H) -> Result<i64, GatewayError> {",
+      "pub fn uuid<H: ExtrasHost>(host: &H) -> Result<String, GatewayError> {",
+      "pub fn hash(text: &str) -> String {",
+      "pub fn decoded<T: DeserializeOwned>(",
+      "pub fn retry_seconds(ms: u64) -> u64 {",
+      "pub fn js_whitespace(c: char) -> bool {",
+      "pub fn source_utf8(text: &gateway_source::js_string::JsString16) -> String {",
+      "pub fn hash_source(text: &gateway_source::js_string::JsString16) -> String {"
+    ],
+    "rust/crates/gateway-extras-runtime/src/embeddings.rs": [],
+    "rust/crates/gateway-extras-runtime/src/images.rs": [],
+    "rust/crates/gateway-extras-runtime/src/lib.rs": [
+      "pub struct ExtrasRuntime<S, H> {"
+    ],
+    "rust/crates/gateway-extras-runtime-test-support/src/fixture.rs": [
+      "pub fn error(code: &str) -> GatewayError {",
+      "pub struct Memory {"
+    ],
+    "rust/crates/gateway-extras-runtime-test-support/src/host.rs": [
+      "pub fn poll<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {",
+      "pub fn run<F: Future>(future: F) -> F::Output {",
+      "pub struct Host(pub Rc<HostState>);",
+      "pub struct HostState {"
+    ],
+    "rust/crates/gateway-extras-runtime-test-support/src/lib.rs": [
+      "pub mod fixture;",
+      "pub mod host;"
+    ],
+    "rust/crates/gateway-extras-state/src/cache.rs": [
+      "pub const RPM: u64 = 3;",
+      "pub const TPM: u64 = 10_000;",
+      "pub const TIMEOUT_MS: i64 = 20_000;",
+      "pub async fn cached<S: QueryStore>(",
+      "pub async fn cache_best_effort<S: QueryStore, H: ExtrasHost>(",
+      "pub fn estimate(text: &JsString16) -> u64 {",
+      "pub fn chunks(items: &[(String, JsString16)]) -> Vec<Vec<(String, JsString16)>> {",
+      "pub async fn reserve<S: QueryStore, H: ExtrasHost>("
+    ],
+    "rust/crates/gateway-extras-state/src/idempotency.rs": [
+      "pub struct Lease {",
+      "pub enum Acquired {",
+      "pub fn unavailable() -> ExtrasResponse {",
+      "pub fn indeterminate() -> ExtrasResponse {",
+      "pub async fn acquire<S: QueryStore, H: ExtrasHost>(",
+      "pub async fn mark_dispatched<S: QueryStore, H: ExtrasHost>(",
+      "pub async fn release<S: QueryStore, H: ExtrasHost>(",
+      "pub async fn mark_indeterminate<S: QueryStore, H: ExtrasHost>(store: &S, host: &H, lease: &Lease) {",
+      "pub async fn success<S: QueryStore, H: ExtrasHost>("
+    ],
+    "rust/crates/gateway-extras-state/src/lib.rs": [
+      "pub mod cache;",
+      "pub mod idempotency;"
+    ],
+    "rust/crates/gateway-extras-voyage/src/lib.rs": [
+      "pub fn configured_error() -> GatewayError {",
+      "pub fn retryable(status: u16) -> bool {",
+      "pub async fn fetch_chunk<H: ExtrasHost>(",
+      "pub fn result_body(profile: &EmbeddingsProfile, vectors: &[Vec<f64>], tokens: u64) -> Value {",
+      "pub fn usage(tokens: u64) -> Value {"
+    ]
+  },
+  "testTargets": [
+    {
+      "target": "decisions",
+      "files": [
+        "rust/crates/gateway-extras-runtime/tests/decisions.rs"
+      ],
+      "physicalLines": 305,
+      "testCount": 5,
+      "literalCompiledFixtures": []
+    },
+    {
+      "target": "runtime",
+      "files": [
+        "rust/crates/gateway-extras-runtime/tests/runtime.rs"
+      ],
+      "physicalLines": 796,
+      "testCount": 23,
+      "literalCompiledFixtures": []
+    }
+  ],
+  "noProductionFixtureDependency": true,
+  "noOwnedReexportsPathIncludeSuppressionsByTokenInventory": true,
+  "newRawKeyMutationAPI": false
+}

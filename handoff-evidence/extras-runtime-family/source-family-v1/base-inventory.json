@@ -1,0 +1,198 @@
+{
+  "base": "7694a49787c7379180cb0e268b8b03fac093d879",
+  "tree": "7a950bf53c082af013bf02d9deb12d5819c14723",
+  "files": [
+    {
+      "path": "rust/crates/gateway-decision-protocol/Cargo.toml",
+      "bytes": 273,
+      "sha256": "3cfcefa150e4e8785e51524eae430c4fc197a7889a00a5465e34713f7d86e071",
+      "lines": 14
+    },
+    {
+      "path": "rust/crates/gateway-decision-protocol/src/catalog.rs",
+      "bytes": 3416,
+      "sha256": "7395d8c5a47bf7f90a5dd5c437815528b27bb9851573162088f51505b2049836",
+      "lines": 94
+    },
+    {
+      "path": "rust/crates/gateway-decision-protocol/src/legacy.rs",
+      "bytes": 3177,
+      "sha256": "86ea3cc3a904db1ed5bd1c8b9a21adb453d1697914e4dae96e4c3e66026fb423",
+      "lines": 84
+    },
+    {
+      "path": "rust/crates/gateway-decision-protocol/src/lib.rs",
+      "bytes": 162,
+      "sha256": "78c3609b89748b69ed9e39d7444ab2a27098bf447437cd7f08532043da8ea726",
+      "lines": 5
+    },
+    {
+      "path": "rust/crates/gateway-decision-protocol/src/request.rs",
+      "bytes": 10363,
+      "sha256": "04d7393e91a6eaa1ba159fd14493d366201a785fb759c4179926669aeb2ceb67",
+      "lines": 312
+    },
+    {
+      "path": "rust/crates/gateway-decision-protocol/src/response.rs",
+      "bytes": 1175,
+      "sha256": "7129e6a4646fe3b9e8a73ad0af1823d70f24b3030a0d7780d92a46363f5dde0a",
+      "lines": 34
+    },
+    {
+      "path": "rust/crates/gateway-decision-protocol/tests/contracts.rs",
+      "bytes": 7856,
+      "sha256": "c977e00433dc4a581a59a0389ebe399ffdeda781009e3937e7b0ace7e7eeddcf",
+      "lines": 195
+    },
+    {
+      "path": "rust/crates/gateway-decision-runtime/Cargo.toml",
+      "bytes": 400,
+      "sha256": "ee0b7bfe7ec973cda6a069af029f51e6fb8f438928fda9f7038d6e781dc36362",
+      "lines": 17
+    },
+    {
+      "path": "rust/crates/gateway-decision-runtime/src/lib.rs",
+      "bytes": 8637,
+      "sha256": "cdc05a508fd741079288264b1739b2444887f3898932b49858998c65c4029527",
+      "lines": 224
+    },
+    {
+      "path": "rust/crates/gateway-decision-runtime/src/state.rs",
+      "bytes": 1362,
+      "sha256": "ea335f587a9817a26fd25cf083b28e22c767f28ed26db9066cc3a1585eed31a1",
+      "lines": 45
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/Cargo.toml",
+      "bytes": 368,
+      "sha256": "e3e1e878072d47f8fffc863b185d3fccefd5dcd7fdb4eab0a2d29f8cf1453f73",
+      "lines": 17
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/errors.rs",
+      "bytes": 995,
+      "sha256": "20887ee306323d6ae4568bde3bf9329e222207ca2e8b76ebed8ec4981fdc16c8",
+      "lines": 28
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/family.rs",
+      "bytes": 1078,
+      "sha256": "dbf1a4032194f4ce8c2b0c3e6b923e14036b3dfb9eae57c5fcb41e6ad1bb57ff",
+      "lines": 36
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/lib.rs",
+      "bytes": 159,
+      "sha256": "49283847238beedd62253f191850a365817ec1e7ecba3d0b9daad6526c2b8d6f",
+      "lines": 6
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/model.rs",
+      "bytes": 572,
+      "sha256": "d2a2125a1d278853e87cf9498df5f042428e568f3802e0393a16b92867512c30",
+      "lines": 13
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/route.rs",
+      "bytes": 1410,
+      "sha256": "283a6c9ad620206884087e2d32e6bf277a07cf89d6100a04fa3149c8849a48f5",
+      "lines": 37
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/types.rs",
+      "bytes": 9226,
+      "sha256": "798d4586743edad608111ad8535d591b85d984f5ca1cf6618eb0232ddd21baad",
+      "lines": 282
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/tests/model.rs",
+      "bytes": 432,
+      "sha256": "82dbed8f9155ee2e8237261457d55cd0c4fa6564a675098150612e315a732be1",
+      "lines": 10
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/Cargo.toml",
+      "bytes": 260,
+      "sha256": "309286030f149156b032c315436089a64a9cfa01ed5e316b7a9bbf975018d690",
+      "lines": 13
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/fixture.rs",
+      "bytes": 4958,
+      "sha256": "64193b89da8bfed7fc4f5ff347c29d58ece5177b85be8f33dce1441c77a2fe80",
+      "lines": 147
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/lib.rs",
+      "bytes": 17,
+      "sha256": "8b97b524ccba81d4ace73bd2f2b9d50e2a09896b929e8eb0f820158cff16dc6c",
+      "lines": 1
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/Cargo.toml",
+      "bytes": 875,
+      "sha256": "c9c7fe7d71adacb31a9fa32600c3b4437593261284e8a23378342df977877167",
+      "lines": 27
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/README.md",
+      "bytes": 3683,
+      "sha256": "93cd5dea2559c7a3604d129311e6bbc35fd1ea4d9ef9f722ad14cc27affc924b",
+      "lines": 15
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/cache.rs",
+      "bytes": 10658,
+      "sha256": "177f5aecde21b3ccf0ed6a5c965b94814361170e94c48610c5f384f9bd915063",
+      "lines": 345
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+      "bytes": 17934,
+      "sha256": "c3f01d7f16a29f632d23022dc4312e8151a7e551cc081c31a490446a0ad49a87",
+      "lines": 476
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/idempotency.rs",
+      "bytes": 14945,
+      "sha256": "2991e5e8f51609f199c509511320dac80955bbd11b930ae9687762f8bbcb39cc",
+      "lines": 475
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/images.rs",
+      "bytes": 10552,
+      "sha256": "f345530cba351eea0f4acda6ddf50fb996f389790bc8d8c2d80cd7d100417bb3",
+      "lines": 302
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/jobs.rs",
+      "bytes": 21097,
+      "sha256": "2aba72de9233566bb83c7e07f851f1d5dd7639f0f6a44dd8e7cc26a1255ad866",
+      "lines": 655
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/lib.rs",
+      "bytes": 3758,
+      "sha256": "d28060e79529db5aba6c65f53d485bae991c1c8be58c81cd0a19b307e68b9428",
+      "lines": 97
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/store.rs",
+      "bytes": 2945,
+      "sha256": "3841b0daf4eaf5ba6695c724a5a7060d311c561a20e48ee6dd881fa7aa242253",
+      "lines": 90
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+      "bytes": 11210,
+      "sha256": "c8b0ff909bccfde01ec70dc8db0d882341466080f326eb816164e161e1c74774",
+      "lines": 308
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+      "bytes": 33499,
+      "sha256": "710e313cfd3f692ea0b9349d93f76b6eb0f7fe850081357b0542bdabd7782aa5",
+      "lines": 994
+    }
+  ]
+}

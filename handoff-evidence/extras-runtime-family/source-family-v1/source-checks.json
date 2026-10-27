@@ -1,0 +1,146 @@
+{
+  "classification": "SOURCE_ONLY_PREPARATION_RECEIPT_NOT_ACCEPTANCE",
+  "contractVersion": "EX-source-v1",
+  "commitAndTreeBinding": "Exact frozen commit and tree provided by PRESERVE_READY manifest after all source writers stop; this receipt binds the full owned Rust source hash set below.",
+  "commands": [
+    {
+      "argv": [
+        "/workspace/.ai-rust-tools/pinned-bun1.4.0-rust1.98.1-v1/rust/bin/rustfmt",
+        "--check",
+        "--config-path",
+        "rust/rustfmt.toml",
+        "--config",
+        "skip_children=true",
+        "rust/crates/gateway-extras-jobs/src/lib.rs",
+        "rust/crates/gateway-extras-primitives/src/lib.rs",
+        "rust/crates/gateway-extras-primitives/src/value.rs",
+        "rust/crates/gateway-extras-runtime-test-support/src/fixture.rs",
+        "rust/crates/gateway-extras-runtime-test-support/src/host.rs",
+        "rust/crates/gateway-extras-runtime-test-support/src/lib.rs",
+        "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+        "rust/crates/gateway-extras-runtime/src/images.rs",
+        "rust/crates/gateway-extras-runtime/src/lib.rs",
+        "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+        "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+        "rust/crates/gateway-extras-state/src/cache.rs",
+        "rust/crates/gateway-extras-state/src/idempotency.rs",
+        "rust/crates/gateway-extras-state/src/lib.rs",
+        "rust/crates/gateway-extras-voyage/src/lib.rs"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "ownedRustSourceHashes": [
+    {
+      "path": "rust/crates/gateway-extras-jobs/src/lib.rs",
+      "sha256": "b59ded4345a435a82b1a6a8a4197f5eba07050ec6e837c574140bfadb461b7a6",
+      "bytes": 21566
+    },
+    {
+      "path": "rust/crates/gateway-extras-primitives/src/lib.rs",
+      "sha256": "0cda3d3585ea4d6ed3c12ce151f00522f0bde7c529c90434a722f0819c95acbe",
+      "bytes": 181
+    },
+    {
+      "path": "rust/crates/gateway-extras-primitives/src/value.rs",
+      "sha256": "97e916989120fcb0b36507ede9f1adeb9bef2776d7e3651d34285a62ac1b135c",
+      "bytes": 1957
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/fixture.rs",
+      "sha256": "f1ff3b8ed7991523e6d4cdea79e96f640282c81b4add25c21c39e7ffa83d7e60",
+      "bytes": 4960
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/host.rs",
+      "sha256": "0f8357438227e3a7722dd569945150cb3bfd16ccb51e81f83a166dadfbb6f39d",
+      "bytes": 7450
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime-test-support/src/lib.rs",
+      "sha256": "be901a990a4eb4843d507e6ffd2adec78fe8f9091f00b7bba4c4c950eac65a51",
+      "bytes": 100
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/embeddings.rs",
+      "sha256": "35407b606eb5b2ff168c73df1cfe291ecc214067d1d26bd1b9987cac465f1d80",
+      "bytes": 13108
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/images.rs",
+      "sha256": "83b265aa7e5343ce3393c7095bb168f255c26366d76375ceb2f71ad255a2bfff",
+      "bytes": 10561
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/src/lib.rs",
+      "sha256": "21aed1550798e6765e177ac79df23fedec19eac585432f4778a332a8f58b8481",
+      "bytes": 3801
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/tests/decisions.rs",
+      "sha256": "62ec5d7e3a69322ce45cc0fe338f3d7293085380f3e174bcf22730eda8e8b9f8",
+      "bytes": 11263
+    },
+    {
+      "path": "rust/crates/gateway-extras-runtime/tests/runtime.rs",
+      "sha256": "011d0eda7974038aa17a2d10ded046b5fad963b605fd6d55fb4fa9932cef777c",
+      "bytes": 26604
+    },
+    {
+      "path": "rust/crates/gateway-extras-state/src/cache.rs",
+      "sha256": "cf5a79d8b60b3d5dbccd954b4e49f5c0eb7fe2147ab9396f9ac815eaf4d95dfc",
+      "bytes": 10934
+    },
+    {
+      "path": "rust/crates/gateway-extras-state/src/idempotency.rs",
+      "sha256": "b9fae1ca276917779ce28e77eb094a361bb70ec3cf2284708f4722f69eb730f6",
+      "bytes": 15698
+    },
+    {
+      "path": "rust/crates/gateway-extras-state/src/lib.rs",
+      "sha256": "6a44f2291a62b3760db92739ddf8523717858a892cb2b0fcbee8d3ecc1693135",
+      "bytes": 193
+    },
+    {
+      "path": "rust/crates/gateway-extras-voyage/src/lib.rs",
+      "sha256": "436396dea52a2881d609165a4f186aa74b65d5b9ec93ba666705ffe033162177",
+      "bytes": 5406
+    }
+  ],
+  "rustfmtMutationPassesUsed": 1,
+  "rustfmtMutationPassLimit": 2,
+  "readOnlyCheckOnAllOwnedChangedRust": true,
+  "bodyComparisonCount": 80,
+  "bodyComparisonFailures": 0,
+  "privateDataBodiesUnchanged": 8,
+  "originalHostMethodBodiesUnchanged": 16,
+  "originalRuntimeTestsRetained": 23,
+  "originalDecisionsTestsRetained": 5,
+  "testsExecuted": false,
+  "compiled": false,
+  "structuralParserExecuted": false,
+  "clippyExecuted": false,
+  "shippingWorkerBuilt": false,
+  "osConfinementProven": false,
+  "sourceAccepted": false,
+  "completeRustPortFinished": false,
+  "pending": [
+    "Root canonical/shared registration and nominal C/D/Worker integration",
+    "Changed-document Prettier check not run under this Rust-source-only formatting lease",
+    "actual structural parser, native/WASM strict staged Clippy and original test execution",
+    "actual shipping and fixture Worker builds, controlled workerd cancellation/admission/settlement",
+    "Mac/live/client/CI/integration acceptance retained by parent"
+  ]
+}

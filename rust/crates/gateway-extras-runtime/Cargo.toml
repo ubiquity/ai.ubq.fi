@@ -6,22 +6,24 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-core.workspace = true
 gateway-decision-runtime.workspace = true
 gateway-extras-contract.workspace = true
-gateway-core = { path = "../gateway-core" }
-gateway-auth = { path = "../gateway-auth" }
-gateway-schema = { path = "../gateway-schema" }
-gateway-providers = { path = "../gateway-providers" }
+gateway-extras-jobs.workspace = true
+gateway-extras-primitives.workspace = true
+gateway-extras-state.workspace = true
+gateway-extras-voyage.workspace = true
+gateway-providers.workspace = true
+gateway-schema.workspace = true
+gateway-source.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "=0.10.9"
-base64 = "=0.22.1"
-chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+gateway-auth-contracts.workspace = true
+gateway-auth-primitives.workspace = true
 gateway-extras-runtime-test-support.workspace = true
-aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "alloc"] }
 
 [lints]
 workspace = true
