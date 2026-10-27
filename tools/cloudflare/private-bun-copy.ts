@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { writePrivateNativeCapture, type PrivateNativeCaptureFileReceipt } from "../../rust/crates/gateway-migration/examples/native-operator-capture.ts";
+import { PrivateBunCopyPython } from "./private-bun-copy-python.ts";
 
 export type PrivateBunCopyInput = Readonly<{ v: 1; source: string; directory: string; source_git_sha: string }>;
 type FileFact = Readonly<{ path: string; bytes: number; sha256: string }>;
@@ -34,7 +35,6 @@ export type PrivateBunCopyReceipt = Readonly<{
   activation_authorized: false;
 }>;
 
-const PYTHON = "/usr/bin/python3";
 const INPUT_MAX_BYTES = 1024 * 1024;
 const CHILD_MAX_BYTES = 16 * 1024;
 const BACKUP_PROGRAM = String.raw`
@@ -262,11 +262,11 @@ function backupValue(raw: string, source: string, snapshot: FileFact): BackupRec
   };
 }
 
-async function backup(source: string, destination: string, signal?: AbortSignal): Promise<string> {
+async function backup(source: string, destination: string, binding: PrivateBunCopyPython, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
-  const child = Bun.spawn([PYTHON, "-I", "-S", "-B", "-c", BACKUP_PROGRAM], {
+  const child = Bun.spawn([PrivateBunCopyPython.command(binding), "-I", "-S", "-B", "-c", BACKUP_PROGRAM], {
     cwd: dirname(destination),
-    env: { PATH: "/usr/bin:/bin" },
+    env: { PATH: "/usr/bin:/bin", SQLITE_TMPDIR: dirname(destination) },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -287,6 +287,7 @@ async function backup(source: string, destination: string, signal?: AbortSignal)
     await child.stdin.write(JSON.stringify({ source, destination }));
     await child.stdin.end();
     const [text, error, code] = await Promise.all([stdout, stderr, child.exited]);
+    PrivateBunCopyPython.command(binding);
     if (code !== 0 || error.length !== 0) throw refused();
     signal?.throwIfAborted();
     return text;
@@ -300,9 +301,15 @@ async function backup(source: string, destination: string, signal?: AbortSignal)
 }
 
 /** Source writers stay independent; only the newly owned copy is captured. */
-export async function writePrivateBunCopyCapture(value: PrivateBunCopyInput, signal?: AbortSignal): Promise<PrivateBunCopyReceipt> {
+export async function writePrivateBunCopyCapture(
+  value: PrivateBunCopyInput,
+  signal?: AbortSignal,
+  binding?: PrivateBunCopyPython
+): Promise<PrivateBunCopyReceipt> {
   try {
     if (process.platform !== "darwin" || Bun.version !== "1.4.0") throw refused();
+    if (!binding) throw refused();
+    PrivateBunCopyPython.command(binding);
     const input = inputValue(value);
     signal?.throwIfAborted();
     const source = realpathSync(input.source);
@@ -315,7 +322,7 @@ export async function writePrivateBunCopyCapture(value: PrivateBunCopyInput, sig
     if (directory === source || resolve(input.directory) !== directory) throw refused();
     mkdirSync(directory, { mode: 0o700 });
     const snapshotPath = join(directory, "snapshot.sqlite3");
-    const raw = await backup(source, snapshotPath, signal);
+    const raw = await backup(source, snapshotPath, binding, signal);
     const snapshot = fileFact(snapshotPath);
     const copied = lstatSync(snapshotPath);
     const currentSource = lstatSync(source);
@@ -362,7 +369,8 @@ export async function writePrivateBunCopyCapture(value: PrivateBunCopyInput, sig
   }
 }
 
-if (import.meta.main) {
+export async function runPrivateBunCopyOperator(binding: PrivateBunCopyPython): Promise<void> {
+  PrivateBunCopyPython.command(binding);
   const controller = new AbortController();
   const stop = (): void => {
     controller.abort();
@@ -372,7 +380,7 @@ if (import.meta.main) {
   try {
     if (process.argv.length !== 2) throw refused();
     const input: unknown = JSON.parse(await boundedText(Bun.stdin.stream(), INPUT_MAX_BYTES));
-    const receipt = await writePrivateBunCopyCapture(inputValue(input), controller.signal);
+    const receipt = await writePrivateBunCopyCapture(inputValue(input), controller.signal, binding);
     console.log(JSON.stringify(receipt));
   } catch {
     console.error(refused().message);
@@ -381,4 +389,8 @@ if (import.meta.main) {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
   }
+}
+if (import.meta.main) {
+  console.error(refused().message);
+  process.exitCode = 78;
 }

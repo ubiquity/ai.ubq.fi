@@ -4,17 +4,20 @@ import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { serialize } from "node:v8";
-import { writePrivateBunCopyCapture, type PrivateBunCopyInput } from "../tools/cloudflare/private-bun-copy.ts";
+import { writePrivateBunCopyCapture as boundCopyCapture, type PrivateBunCopyInput } from "../tools/cloudflare/private-bun-copy.ts";
 import { capturePrivateNativeState } from "../rust/crates/gateway-migration/examples/native-operator-capture.ts";
 import { packStringKey } from "../src/kv-conversion/cursors.ts";
+import { privateBunCopyTestRuntime } from "./fixtures/private-bun-copy-runtime.ts";
 import { NATIVE_DDL } from "../src/kv-conversion/native-schema.ts";
 import { encodeNativeCaptureValue } from "../src/kv-conversion/typed-value.ts";
 
 const SOURCE_SHA = "b".repeat(40);
 const SENTINEL = "PRIVATE_CAPTURE_SENTINEL_NOT_STDOUT";
 const owned: string[] = [];
+const writePrivateBunCopyCapture = (value: PrivateBunCopyInput, signal?: AbortSignal) =>
+  boundCopyCapture(value, signal, privateBunCopyTestRuntime(dirname(value.source)));
 afterEach(() => {
   for (const path of owned.splice(0)) rmSync(path, { recursive: true, force: true });
 });
@@ -44,6 +47,16 @@ function fixture() {
   const input: PrivateBunCopyInput = { v: 1, source, directory: join(directory, "run"), source_git_sha: SOURCE_SHA };
   return { directory, source, database, graph, key, input };
 }
+
+test("an unbound copy operator refuses before creating a destination", async () => {
+  const f = fixture();
+  try {
+    await assert.rejects(boundCopyCapture(f.input), /refused/);
+    assert.equal(existsSync(f.input.directory), false);
+  } finally {
+    f.database.close(true);
+  }
+});
 
 test("online readonly backup includes committed WAL while a synthetic source writer remains open and usable", async () => {
   const f = fixture();
