@@ -391,7 +391,7 @@ pub async fn run(
         client_version,
         request_id,
         // Compaction requests use the selected provider, like ordinary inference.
-        false,
+        local_compaction: false,
         permit,
     }))
     .await
