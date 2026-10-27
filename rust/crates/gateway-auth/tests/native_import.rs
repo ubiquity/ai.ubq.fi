@@ -110,7 +110,7 @@ fn native_import_domains_metadata_and_unknown_fields_fail_closed() {
     .unwrap();
     assert_ne!(auth, profile);
     let legacy = gateway_auth::native::signature_input(
-        gateway_auth::native::NATIVE_CONTROL_PATH,
+        gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
         "import-test",
         1000,
         &nonce,
@@ -286,7 +286,7 @@ fn wrong_capability_kind_signature_and_canonical_time_refuse_before_body() {
 #[test]
 fn import_domain_does_not_inherit_legacy_rpc_body_cap_or_claim_parser_success() {
     run(async {
-        let body = vec![b'x'; gateway_auth::native::NATIVE_MAX_BODY_BYTES + 1];
+        let body = vec![b'x'; gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES + 1];
         let id = identity(NativeCapability::CodexAuthImport);
         let replay = Replay::default();
         let proof = admit(

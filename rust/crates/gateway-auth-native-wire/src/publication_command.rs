@@ -1,6 +1,9 @@
 //! Finite sanitized publication DATA. Actual native authentication/current action
 //! and the opaque fixed commit plan are separate mandatory authorization steps.
-use super::{data::ImportCatalogDisposition, hash, required_nullable, text, unavailable};
+use crate::{
+    publication_data::ImportCatalogDisposition,
+    validation::{hash, required_nullable, text, unavailable},
+};
 use gateway_core::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::json;

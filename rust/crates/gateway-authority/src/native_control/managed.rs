@@ -14,7 +14,6 @@ use crate::{
 };
 use gateway_auth::{
     crypto::{Secret, sha256_hex},
-    native::NATIVE_PUBLICATION_PATH,
     native_auth::{AuthenticatedNativeOwner, NativeCapability},
     native_credentials::native_refresh_time_ns,
     provider_credentials::{
@@ -23,6 +22,7 @@ use gateway_auth::{
         parse_codex_source_pool, valid_native_generation,
     },
 };
+use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_core::{
     error::GatewayError,
     identity::PoolVersionstamp,

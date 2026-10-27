@@ -2,10 +2,11 @@ use gateway_auth::{
     crypto::{Secret, base64url, sha256_hex},
     native_auth::{NativeCapability, NativeTransportIdentity},
     native_import::publication::{
-        self, NativeImportPublication, NativeImportPublicationDisposition, command::*, data::*,
+        self, NativeImportPublication, NativeImportPublicationDisposition,
     },
     provider_credentials::codex_credential_identity,
 };
+use gateway_auth_native_wire::{publication_command::*, publication_data::*};
 use gateway_core::source_json::SourceJson;
 use std::collections::BTreeSet;
 type TestResult = Result<(), Box<dyn std::error::Error>>;

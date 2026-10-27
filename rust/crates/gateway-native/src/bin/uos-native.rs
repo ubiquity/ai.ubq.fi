@@ -193,9 +193,9 @@ fn prepare_owner_renewal(
     >,
     GatewayError,
 > {
-    use gateway_auth::{
-        native::{NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH},
-        native_credentials::NativeOwnerId,
+    use gateway_auth::native_credentials::NativeOwnerId;
+    use gateway_auth_native_wire::native_read::{
+        NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
     };
     use gateway_native::{
         authority_http::NativeAuthorityHttp, managed_publication_http::NativeAccessPublicationHttp,

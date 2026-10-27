@@ -1,6 +1,7 @@
 //! Optional catalog DATA only; a frame never creates import/store permission.
-use super::{authority::ImportAuthorityStateData, publication::valid_client_version};
-use crate::native::NATIVE_MAX_BODY_BYTES;
+use super::authority::ImportAuthorityStateData;
+use gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES;
+use gateway_auth_native_wire::validation::valid_client_version;
 use gateway_core::error::GatewayError;
 use serde::{Deserialize, Serialize};
 

@@ -3,12 +3,12 @@ use gateway_admin_runtime::{
     brief,
     capabilities::{Context, ErrorDiagnostics, PricingSnapshot, SupervisorBriefTarget},
 };
-use gateway_auth::{native::NativeReadRequest, types::AuthResponse};
 use gateway_catalog_runtime::admin::AdminCatalogOperation;
 use gateway_core::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use worker::Method;
+use {gateway_auth::types::AuthResponse, gateway_auth_native_wire::native_read::NativeReadRequest};
 
 mod picker;
 mod pricing;

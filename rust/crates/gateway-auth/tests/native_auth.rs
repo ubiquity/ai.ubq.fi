@@ -1,8 +1,8 @@
 use gateway_auth::{
     crypto::{base64url, sha256_hex},
-    native::*,
     native_auth::*,
 };
+use gateway_auth_native_wire::native_read::*;
 use gateway_core::error::GatewayError;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -383,7 +383,7 @@ fn publication_response_hmac_has_independent_domain_and_exact_receipt_binding() 
     assert_ne!(
         identity
             .sign(
-                gateway_auth::native::NATIVE_PUBLICATION_PATH,
+                gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH,
                 1_792_339_000_000,
                 &nonce,
                 response

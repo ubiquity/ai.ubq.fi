@@ -818,10 +818,8 @@ async fn paid_fixture_owner_proof(
     identity: &gateway_auth::native_auth::NativeTransportIdentity,
     body: &[u8],
 ) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
-    use gateway_auth::{
-        crypto::base64url, native::NATIVE_PUBLICATION_PATH, native_auth::*,
-        native_replay::StoreNonceAuthority,
-    };
+    use gateway_auth::{crypto::base64url, native_auth::*, native_replay::StoreNonceAuthority};
+    use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
     let nonce = base64url(&host.random_bytes(32).unwrap());
     let time = host.now_ms().to_string();
     let mac = identity
@@ -1214,7 +1212,10 @@ fn audit_never_persists_credential_material() {
     let identified = audit::actor(&passport);
     assert_eq!(identified.kind, "passkey_user");
     assert_eq!(identified.principal_id.as_deref(), Some("passport-subject"));
-    assert_eq!(identified.principal_label.as_deref(), Some("passport-handle"));
+    assert_eq!(
+        identified.principal_label.as_deref(),
+        Some("passport-handle")
+    );
 }
 
 #[test]

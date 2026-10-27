@@ -1,9 +1,7 @@
 //! Fixed native owner-effect injection. The shared authority implementation
 //! owns action preparation, current-fact checks, claims and reconciliation.
-use gateway_auth::{
-    native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders},
-    native_control::{NativeControlEnvelope, NativeControlResponse},
-};
+use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders};
+use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlResponse};
 use gateway_core::error::GatewayError;
 use std::{
     future::Future,

@@ -1,12 +1,12 @@
 #![cfg(unix)]
 use gateway_auth::{
     crypto::base64url,
-    native::NATIVE_CONTROL_PATH,
     native_auth::{
         AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
         NativeNonceAuthority,
     },
 };
+use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
 use gateway_core::error::GatewayError;
 use gateway_native::daemon_config::{NativeDaemonConfig, PreparedNativeDaemonConfig};
 use serde_json::{Value, json};

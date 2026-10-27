@@ -265,12 +265,10 @@ impl PrivateHttps {
         deadline: Instant,
     ) -> Result<PrivateResponse, GatewayError> {
         let target = url::Url::parse(&self.target).map_err(|_| unavailable())?;
-        if target.path() != gateway_auth::native::NATIVE_PUBLICATION_PATH {
+        if target.path() != gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH {
             return Err(unavailable());
         }
-        gateway_auth::native_import::publication::command::ImportPublicationCommandData::parse(
-            body,
-        )?;
+        gateway_auth_native_wire::publication_command::ImportPublicationCommandData::parse(body)?;
         self.send_bounded(
             headers,
             body,

@@ -1,11 +1,11 @@
 use super::{authority::LiveAuthorization, *};
 use gateway_auth::{
-    native::*,
     native_auth::{
         NativeAuthHeaders, NativeCapability, NativeNonceAuthority, NativeTransportIdentity,
     },
     native_live::{NATIVE_LIVE_ACTION_HEADER, NativeLiveAuthenticator},
 };
+use gateway_auth_native_wire::native_read::*;
 use gateway_authority::native_live::wire::{NativeLiveAccess, NativeLiveFence};
 use rustls::{
     ServerConfig, ServerConnection, StreamOwned,

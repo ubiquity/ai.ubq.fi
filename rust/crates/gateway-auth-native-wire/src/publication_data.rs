@@ -1,5 +1,5 @@
 //! Closed retained terminal DATA; decoding never reconstructs an import capability.
-use super::{hash, required_nullable, text, unavailable, valid_client_version};
+use crate::validation::{hash, required_nullable, text, unavailable, valid_client_version};
 use gateway_core::error::GatewayError;
 use serde::{Deserialize, Serialize};
 

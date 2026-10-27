@@ -1,7 +1,7 @@
 //! Closed import-authority DATA only. Private body/start/currentness proofs live
 //! above this crate and cannot be reconstructed by deserializing these frames.
 use super::{NativeImportMetadata, NativeImportTarget};
-use crate::native_control::{NATIVE_CONTROL_ERROR_MAX_BYTES, NATIVE_RENEWAL_MAX_MS};
+use gateway_auth_native_wire::control::{NATIVE_CONTROL_ERROR_MAX_BYTES, NATIVE_RENEWAL_MAX_MS};
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER};
 use serde::{Deserialize, Serialize};
 

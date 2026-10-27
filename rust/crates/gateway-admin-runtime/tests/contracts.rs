@@ -3,13 +3,10 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_admin::routes::AdminOperation;
 use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::*};
 use gateway_admin_test_support::runtime_host::{Host, run};
-use gateway_auth::{
-    native::NativeReadRequest,
-    types::{
-        AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse,
-        AuthResponseBody,
-    },
+use gateway_auth::types::{
+    AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse, AuthResponseBody,
 };
+use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, query::*,
     source_control::encode_source_control_record, source_json::SourceJson, state::*,
@@ -1134,7 +1131,7 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() -> TestR
 
 #[test]
 fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() -> TestResult {
-    use gateway_auth::native::AuthStream;
+    use gateway_auth_native_wire::native_read::AuthStream;
     enum Reply {
         Prepared,
         JsonOnly,
