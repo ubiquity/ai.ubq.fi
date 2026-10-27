@@ -13,9 +13,9 @@
     "gateway-native": 22320,
     "gateway-observability": 12027,
     "gateway-providers": 9739,
-    "gateway-routing-runtime": 7944,
+    "gateway-routing-runtime": 7943,
     "gateway-schema": 7618,
-    "gateway-worker": 18849
+    "gateway-worker": 18838
   },
   "targets": {
     "gateway-authority/test/conformance": 5558,
