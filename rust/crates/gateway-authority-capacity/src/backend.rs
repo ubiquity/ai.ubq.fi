@@ -45,20 +45,50 @@ impl<'a, S: AuthorityStore, I: TokenSource> Transaction<'a, S, I> {
             writes: BTreeMap::new(),
         })
     }
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
-        let missing = !self.reads.borrow().contains_key(&key.0);
-        if missing {
-            let record = self.store.read(key).await?;
-            if let Some(row) = &record {
-                row.validate_version()?;
-                text(&row.revision)?;
-                if let Some(expiry) = row.expires_at_ms {
-                    validate_time(expiry)?;
+    async fn cached_record(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<&StoredRecord>, GatewayError> {
+        self.cached_record_classified(key)
+            .await
+            .map_err(ApiReleaseReadError::into_error)
+    }
+    async fn cached_record_classified(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<&StoredRecord>, ApiReleaseReadError> {
+        if !self.reads.contains_key(&key.0) {
+            let record = self
+                .store
+                .read(key)
+                .await
+                .map_err(ApiReleaseReadError::Backend)?;
+            if let Some(value) = &record {
+                value
+                    .validate_version()
+                    .map_err(ApiReleaseReadError::Record)?;
+                text(&value.revision).map_err(ApiReleaseReadError::Record)?;
+                if let Some(expiry) = value.expires_at_ms {
+                    validate_time(expiry).map_err(ApiReleaseReadError::Record)?;
                 }
             }
-            self.reads.borrow_mut().insert(key.0.clone(), record);
+            self.reads.insert(key.0.clone(), record);
         }
-        Ok(self.reads.borrow().get(&key.0).cloned().flatten())
+        let raw = self.reads.get(&key.0).and_then(Option::as_ref);
+        if raw.is_some_and(|row| row.expires_at_ms.is_some_and(|expiry| expiry <= self.now)) {
+            return Ok(None);
+        }
+        Ok(raw)
+    }
+
+    pub async fn read<T: DeserializeOwned>(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<T>, GatewayError> {
+        self.cached_record(key)
+            .await?
+            .map(decode_json_record)
+            .transpose()
     }
 
     pub(crate) fn routing_read_store(&mut self) -> RoutingReadStore<'_, S> {
@@ -142,10 +172,25 @@ impl<'a, S: AuthorityStore, I: TokenSource> Transaction<'a, S, I> {
         );
         Ok(())
     }
-    async fn commit(&self, _transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        Err(invalid(
-            "Routing evidence reader has no mutation authority.",
-        ))
+
+    pub async fn commit(self) -> Result<bool, GatewayError> {
+        let checks = self.checks();
+        let mut revisions = BTreeSet::new();
+        for mutation in self.writes.values() {
+            if let RecordMutation::Put { record, .. } = mutation
+                && !revisions.insert(record.revision.clone())
+            {
+                return Err(invalid("Token source duplicated a mutation revision."));
+            }
+        }
+        Ok(self
+            .store
+            .commit(AtomicTransition {
+                checks,
+                mutations: self.writes.into_values().collect(),
+            })
+            .await?
+            == CommitOutcome::Committed)
     }
 }
 /// Private fixed-reader bridge. No mutation or raw store reference crosses this boundary.

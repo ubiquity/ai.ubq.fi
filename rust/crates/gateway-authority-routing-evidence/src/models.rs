@@ -1,5 +1,5 @@
 //! Ordinary account model observations, preserving source UTF16 model identities.
-use gateway_core::{js_string::JsString16, model::ModelId};
+use gateway_core::{js_string::JsString16, model::ModelId, provider::CodexQuotaClass};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
