@@ -7372,5 +7372,23 @@
     "gateway-auth-native-wire": 669,
     "gateway-core": 4275,
     "gateway-auth": 743
+  },
+  "auth_method_api": {
+    "version": "contract-v6-auth-data",
+    "path": "rust/crates/gateway-auth-contracts/src/types.rs",
+    "session": "AuthMethod::PassportSession { identity: PassportSessionData }",
+    "bearer": "AuthMethod::PassportBearer { claims: PassportSourceClaims }",
+    "principal": "AuthMethod::principal_id(Option<&str>) -> PrincipalId",
+    "legacy": "exact scalar kind/claims serde via finite private adapter; no app-as-JWT serialization; SourceActor-v1 untouched"
+  },
+  "verified_v5_component_receipt": {
+    "feature": "51b5778b346c2e7df6f6d7d2b7d534635bdae18a",
+    "command": "foundation-v2-x86-tests-3",
+    "passed": 190,
+    "failed": 0,
+    "filtered": 0,
+    "host": "Linux x86_64",
+    "boundary": "repository testNetworkArgv Linux unshare + post-flock C lease",
+    "limitation": "does not include subsequent v6 auth-method DATA or integration changes"
   }
 }

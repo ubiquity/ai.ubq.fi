@@ -121,7 +121,7 @@ pub struct PassportAppSessionData {
     pub identity: PassportSessionIdentity,
     pub binding: PassportAppSessionBinding,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PassportSessionData {
     Jwt(PassportSourceClaims),
     App(PassportAppSessionData),

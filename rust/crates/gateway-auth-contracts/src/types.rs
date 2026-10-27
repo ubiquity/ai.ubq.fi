@@ -207,18 +207,23 @@ pub enum AuthMethod {
         credential_count: usize,
     },
     PassportSession {
-        claims: gateway_auth_passport_contracts::passport::PassportClaims,
+        #[serde(rename = "claims", with = "crate::passport_serde::session")]
+        identity: gateway_auth_passport_contracts::actor_data::PassportSessionData,
     },
     PassportBearer {
-        claims: gateway_auth_passport_contracts::passport::PassportClaims,
+        #[serde(with = "crate::passport_serde::jwt")]
+        claims: gateway_auth_passport_contracts::session::PassportSourceClaims,
     },
 }
 
 impl AuthMethod {
     /// Stable principal identity shared by admission, history and routing.
     /// Passport identity is the Passport subject, never a token or handle.
-    pub fn principal_id(&self, bearer: Option<&str>) -> String {
-        match self {
+    pub fn principal_id(&self, bearer: Option<&str>) -> gateway_core::identity::PrincipalId {
+        use gateway_core::identity::PrincipalId;
+        let scalar = match self {
+            Self::PassportSession { identity } => return passport_principal(identity.subject()),
+            Self::PassportBearer { claims } => return passport_principal(&claims.sub),
             Self::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
             Self::GithubToken { owner, repo, .. } => format!(
                 "github-repo:{}/{}",
@@ -226,9 +231,6 @@ impl AuthMethod {
                 repo.to_lowercase()
             ),
             Self::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
-            Self::PassportSession { claims } | Self::PassportBearer { claims } => {
-                format!("passport-user:{}", claims.sub)
-            }
             Self::AuthTokensAllowlist => "auth-method:auth_tokens_allowlist".into(),
             Self::AdminAllowlist => "auth-method:admin_allowlist".into(),
             Self::DenoDeployToken => "auth-method:deno_deploy_token".into(),
@@ -240,8 +242,18 @@ impl AuthMethod {
                     )
                 })
                 .unwrap_or_else(|| "local-auth-disabled".into()),
-        }
+        };
+        PrincipalId::from_scalar(scalar)
     }
+}
+fn passport_principal(
+    subject: &gateway_source::js_string::JsString16,
+) -> gateway_core::identity::PrincipalId {
+    let mut units = "passport-user:".encode_utf16().collect::<Vec<_>>();
+    units.extend_from_slice(subject.as_units());
+    gateway_core::identity::PrincipalId::from_source(
+        gateway_source::js_string::JsString16::from_units(units),
+    )
 }
 
 #[derive(Clone, Debug)]

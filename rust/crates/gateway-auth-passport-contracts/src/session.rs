@@ -24,7 +24,7 @@ pub trait PassportDate {
 
 /// Source JWT DATA. Expiration stays mandatory; this is never a persistent SSO
 /// record and there is no public authenticity constructor.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PassportSourceClaims {
     pub iss: String,
@@ -80,4 +80,55 @@ pub fn parse_source_json(
         text.strip_prefix('\u{feff}').unwrap_or(&text),
     )?;
     gateway_source::source_serialization::canonical(&value)
+}
+
+impl PassportSourceClaims {
+    /// Historical scalar DATA conversion only; never the new authentication parser.
+    pub fn from_legacy(value: crate::passport::PassportClaims) -> Self {
+        Self {
+            iss: value.iss,
+            sub: JsString16::from_utf8(&value.sub),
+            handle: JsString16::from_utf8(&value.handle),
+            is_admin: value.is_admin,
+            scopes: value
+                .scopes
+                .iter()
+                .map(|v| JsString16::from_utf8(v))
+                .collect(),
+            aud: value.aud,
+            client_id: value.client_id,
+            auth: JsString16::from_utf8(&value.auth),
+            iat: value.iat,
+            exp: value.exp,
+            jti: JsString16::from_utf8(&value.jti),
+            agent_token_id: value.agent_token_id.as_deref().map(JsString16::from_utf8),
+        }
+    }
+    /// Explicit legacy serde boundary. Source authentication must retain self's units.
+    pub fn try_legacy_scalar(
+        &self,
+    ) -> Result<crate::passport::PassportClaims, gateway_source::error::GatewayError> {
+        Ok(crate::passport::PassportClaims {
+            iss: self.iss.clone(),
+            sub: self.sub.try_utf8()?,
+            handle: self.handle.try_utf8()?,
+            is_admin: self.is_admin,
+            scopes: self
+                .scopes
+                .iter()
+                .map(JsString16::try_utf8)
+                .collect::<Result<_, _>>()?,
+            aud: self.aud.clone(),
+            client_id: self.client_id.clone(),
+            auth: self.auth.try_utf8()?,
+            iat: self.iat,
+            exp: self.exp,
+            jti: self.jti.try_utf8()?,
+            agent_token_id: self
+                .agent_token_id
+                .as_ref()
+                .map(JsString16::try_utf8)
+                .transpose()?,
+        })
+    }
 }
