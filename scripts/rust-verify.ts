@@ -565,12 +565,7 @@ export const NATIVE_IMPORT_CASES = [
     boundary: "loopback",
     seconds: 20,
   },
-  {
-    name: "actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls",
-    target: "import_policy",
-    boundary: "prelaunch",
-    seconds: 30,
-  },
+  { name: "actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls", target: "import_policy", boundary: "prelaunch", seconds: 30 },
   {
     name: "existing_account_import::live_custody::tests::raw_stopped_replay_wrong_session_sequence_challenge_and_binding_are_not_live_custody",
     boundary: "loopback",
@@ -669,6 +664,12 @@ const importFixtureArtifacts = (stdout: string, cwd: string, target: string): Ca
   }
   return artifacts;
 };
+const nativeImportPolicyArtifact = (tests: readonly CargoExecutable[], cwd: string): CargoExecutable => {
+  const policy = tests.find((item) => item.kind === "test" && item.name === "import_policy" && item.test);
+  if (policy?.source !== realpathSync(join(cwd, "crates/gateway-native/tests/import_policy.rs")))
+    throw new Error("Missing exact native import policy artifact");
+  return policy;
+};
 export const executeDarwinNativeImportTests = async (cwd: string, inherited: Record<string, string>, run: CommandRunner = runCommand): Promise<number> => {
   if (run === runCommand && (process.platform !== "darwin" || process.arch !== "arm64")) throw new Error("Native import fixtures require Darwin ARM64");
   const environment = rustVerificationEnvironment(inherited, { platform: "darwin", arch: "arm64" });
@@ -715,9 +716,7 @@ export const executeDarwinNativeImportTests = async (cwd: string, inherited: Rec
   const tests = await compile(["test", ...flags, "--lib", "--test", "import_policy", "--no-run", "--message-format=json"]);
   const testArtifacts = tests.filter((item) => item.test);
   const library = nativeLibraryArtifact(testArtifacts, cwd);
-  const importPolicy = tests.find((item) => item.kind === "test" && item.name === "import_policy" && item.test);
-  if (importPolicy?.source !== realpathSync(join(cwd, "crates/gateway-native/tests/import_policy.rs")))
-    throw new Error("Exact native import policy target/source is missing");
+  const importPolicy = nativeImportPolicyArtifact(tests, cwd);
   const names = ["uos-native-owner-inspect", "uos-native", "uos-native-supervisor", "uos-native-request", "uos-native-connector", "uos-native-import"];
   const built = await compile([
     "build",
