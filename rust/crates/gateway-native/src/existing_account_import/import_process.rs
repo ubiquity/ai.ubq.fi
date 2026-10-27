@@ -3,7 +3,6 @@
 use super::{
     ExistingAccountImportStore,
     actor_channel::{ActorBootstrap, InheritedCustodyChannel},
-    import_endpoints::ImportEndpointData,
 };
 use crate::{daemon_config::NativeDaemonConfig, import_custody_protocol::unavailable};
 use gateway_auth::native_auth::NativeTransportIdentity;
@@ -11,6 +10,7 @@ use gateway_authority::native_control::{
     NativeRenewalCancellation, receiver::RegisteredRenewalOwner,
 };
 use gateway_core::error::GatewayError;
+use gateway_native_custody_wire::bootstrap::ImportEndpointData;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
     io::Read,
@@ -162,7 +162,8 @@ fn run_actor() -> Result<(), GatewayError> {
         let original =
             crate::owner_control::NativeControlContext::admitted(deadline, &cancelled, auth);
         original.check()?;
-        let connected = endpoints.connect(&cancellation, deadline)?;
+        let connected =
+            super::import_endpoints::connect_endpoints(endpoints, &cancellation, deadline)?;
         let authority = super::import_endpoints::fixed_authority_client(
             &origin,
             connected.authority,

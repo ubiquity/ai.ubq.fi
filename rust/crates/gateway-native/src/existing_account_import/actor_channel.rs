@@ -1,13 +1,10 @@
 //! Safe fixed-role Child/bootstrap channel. Neither an accepted socket nor JSON is custody.
-use super::{
-    exclusive_owner::PinnedExecutable,
-    import_endpoints::{ImportEndpointData, ResolvedImportEndpoints},
-};
+use super::{exclusive_owner::PinnedExecutable, import_endpoints::ResolvedImportEndpoints};
 use crate::import_custody_protocol::{self as wire, unavailable};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::error::GatewayError;
-use gateway_native_custody_wire::wire::{self as data, Frame, Header, HeaderView, Stopped};
-use serde::{Deserialize, Serialize};
+use gateway_native_custody_wire::bootstrap::{Bootstrap, ImportEndpointData};
+use gateway_native_custody_wire::wire::{Frame, Header, HeaderView, Stopped};
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -16,41 +13,6 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     time::{Duration, Instant},
 };
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Bootstrap {
-    v: u8,
-    session_ref: String,
-    client_local: SocketAddr,
-    client_peer: SocketAddr,
-    custody_local: SocketAddr,
-    custody_peer: SocketAddr,
-    endpoints: ImportEndpointData,
-    native_owner_id: String,
-    account_id_hash: String,
-}
-impl Bootstrap {
-    fn validate(&self) -> Result<(), GatewayError> {
-        if self.native_owner_id.trim().is_empty()
-            || self.native_owner_id.len() > 4096
-            || !data::hash(&self.account_id_hash)
-            || self.v != 1
-            || !data::hash(&self.session_ref)
-            || [
-                self.client_local,
-                self.client_peer,
-                self.custody_local,
-                self.custody_peer,
-            ]
-            .iter()
-            .any(|a| !a.ip().is_loopback() || a.port() == 0)
-            || self.custody_local == self.custody_peer
-        {
-            return Err(unavailable());
-        }
-        self.endpoints.validate()
-    }
-}
 fn bootstrap_max_bytes() -> usize {
     use std::net::{Ipv6Addr, SocketAddrV6};
     let local = SocketAddr::V6(SocketAddrV6::new(

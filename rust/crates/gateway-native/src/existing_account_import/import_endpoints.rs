@@ -2,20 +2,12 @@
 use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::NativeRenewalCancellation;
 use gateway_core::error::GatewayError;
-use serde::{Deserialize, Serialize};
+use gateway_native_custody_wire::bootstrap::ImportEndpointData;
 use std::{
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
 };
 
-/// DATA from the actual parent's sole bootstrap pipe, never an HTTP option.
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ImportEndpointData {
-    pub(super) authority: SocketAddr,
-    pub(super) models: SocketAddr,
-    pub(super) oauth: SocketAddr,
-}
 /// Only trusted bootstrap resolves these. The actor cannot select another URL.
 pub(super) struct ResolvedImportEndpoints {
     origin: String,
@@ -85,52 +77,38 @@ impl ResolvedImportEndpoints {
         })
     }
 }
-impl ImportEndpointData {
-    pub(super) fn validate(&self) -> Result<(), GatewayError> {
-        for address in self.addresses() {
-            if address.port() == 0 || address.ip().is_unspecified() || address.ip().is_multicast() {
-                return Err(unavailable());
-            }
+pub(super) fn connect_endpoints<C: NativeRenewalCancellation>(
+    data: ImportEndpointData,
+    cancellation: &C,
+    deadline: Instant,
+) -> Result<ConnectedImportEndpoints, GatewayError> {
+    data.validate()?;
+    let connect = |address: SocketAddr| {
+        if cancellation.cancelled() {
+            return Err(unavailable());
         }
-        Ok(())
-    }
-    pub(super) fn addresses(&self) -> [SocketAddr; 3] {
-        [self.authority, self.models, self.oauth]
-    }
-    pub(super) fn connect<C: NativeRenewalCancellation>(
-        self,
-        cancellation: &C,
-        deadline: Instant,
-    ) -> Result<ConnectedImportEndpoints, GatewayError> {
-        self.validate()?;
-        let connect = |address: SocketAddr| {
-            if cancellation.cancelled() {
-                return Err(unavailable());
-            }
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .filter(|d| !d.is_zero())
-                .ok_or_else(unavailable)?;
-            let socket =
-                TcpStream::connect_timeout(&address, remaining.min(Duration::from_secs(5)))
-                    .map_err(|_| unavailable())?;
-            socket.set_nonblocking(false).map_err(|_| unavailable())?;
-            if cancellation.cancelled()
-                || Instant::now() >= deadline
-                || socket.peer_addr().map_err(|_| unavailable())? != address
-            {
-                return Err(unavailable());
-            }
-            Ok(socket)
-        };
-        // Distinct streams; no application byte proxy or shared ureq agent.
-        Ok(ConnectedImportEndpoints {
-            authority: connect(self.authority)?,
-            publication: connect(self.authority)?,
-            models: connect(self.models)?,
-            oauth: connect(self.oauth)?,
-        })
-    }
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(unavailable)?;
+        let socket = TcpStream::connect_timeout(&address, remaining.min(Duration::from_secs(5)))
+            .map_err(|_| unavailable())?;
+        socket.set_nonblocking(false).map_err(|_| unavailable())?;
+        if cancellation.cancelled()
+            || Instant::now() >= deadline
+            || socket.peer_addr().map_err(|_| unavailable())? != address
+        {
+            return Err(unavailable());
+        }
+        Ok(socket)
+    };
+    // Distinct streams; no application byte proxy or shared ureq agent.
+    Ok(ConnectedImportEndpoints {
+        authority: connect(data.authority)?,
+        publication: connect(data.authority)?,
+        models: connect(data.models)?,
+        oauth: connect(data.oauth)?,
+    })
 }
 fn checked_origin(value: &str) -> Result<url::Url, GatewayError> {
     let origin = url::Url::parse(value).map_err(|_| unavailable())?;
@@ -231,9 +209,12 @@ mod tests {
             oauth: oauth.local_addr().unwrap(),
         };
         let cancellation = Cancellation(AtomicBool::new(false));
-        let connected = data()
-            .connect(&cancellation, Instant::now() + Duration::from_secs(2))
-            .unwrap();
+        let connected = connect_endpoints(
+            data(),
+            &cancellation,
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
         assert_ne!(
             connected.authority.local_addr().unwrap(),
             connected.publication.local_addr().unwrap()
@@ -251,9 +232,12 @@ mod tests {
         drop(connected);
         cancellation.0.store(true, Ordering::SeqCst);
         assert!(
-            data()
-                .connect(&cancellation, Instant::now() + Duration::from_secs(2))
-                .is_err()
+            connect_endpoints(
+                data(),
+                &cancellation,
+                Instant::now() + Duration::from_secs(2)
+            )
+            .is_err()
         );
         for listener in [&authority, &models, &oauth] {
             listener.set_nonblocking(true).unwrap();

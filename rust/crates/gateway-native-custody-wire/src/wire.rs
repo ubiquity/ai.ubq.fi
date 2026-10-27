@@ -159,7 +159,7 @@ pub fn hash(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
-fn unavailable() -> GatewayError {
+pub(crate) fn unavailable() -> GatewayError {
     GatewayError::unavailable(
         "Native import custody is unavailable; reconcile the original action",
         "native_import_custody_unknown",
