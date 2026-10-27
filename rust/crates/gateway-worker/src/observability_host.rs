@@ -104,7 +104,7 @@ pub fn bind_admin(
     _context: Rc<worker::Context>,
     actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 ) -> Result<Runtime, GatewayError> {
-    if actor.scope() != gateway_authority::native_control::actor::NativeActorScope::Admin
+    if actor.scope() != gateway_authority_actor_records::scope::NativeActorScope::Admin
         || actor.context().request_id != *request_id
     {
         return Err(admin::auth_required());

@@ -1,13 +1,12 @@
-use super::{
-    NativeRenewalFence,
-    actor::StoredNativeActor as Actor,
-    rows::{fail, session_key},
-};
+use super::NativeRenewalFence;
+use super::rows::fail;
+use super::rows::session_key;
 use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
+use gateway_authority_actor_records::legacy::StoredNativeActor as Actor;
 use gateway_authority_api_protocol::{
     ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState,
 };
@@ -132,7 +131,7 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
         return Err(fail());
     }
     let current_actor = super::actor::read_current(tx, actor, current_config).await?;
-    if current_actor.scope != super::actor::NativeActorScope::Client {
+    if current_actor.scope != gateway_authority_actor_records::scope::NativeActorScope::Client {
         return Err(fail());
     }
     let policy_digest = current_actor.policy_digest;

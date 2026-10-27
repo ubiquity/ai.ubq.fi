@@ -1,6 +1,6 @@
 //! Recognize only the exact already-published group owned by this original import.
 //! This private issuer never accepts arbitrary revisions, flags or ignored keys.
-use super::super::actor::{self, NativeActorScope, StoredNativeActor};
+use super::super::actor;
 use super::super::receiver::NativeRenewalAuthority;
 use super::super::rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication};
 use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
@@ -12,6 +12,8 @@ use gateway_auth::provider_credentials::{
 use gateway_auth_native_wire::publication_data::{
     ImportCatalogDisposition, ImportPublicationDataV1,
 };
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};

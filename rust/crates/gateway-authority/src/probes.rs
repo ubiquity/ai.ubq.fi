@@ -1,6 +1,7 @@
 //! Actor-bound administrative half-open transition. Actor semantic migration remains held.
-use crate::{native_control::actor, native_control::actor::NativeActorScope};
+use crate::native_control::actor;
 use crate::{native_control::actor::NativeRenewalActor, store::Authority};
+use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::{TokenSource, next_generation, unavailable};
 use gateway_authority_keys as keys;
 use gateway_core::state::AuthorityStore;

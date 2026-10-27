@@ -1,7 +1,7 @@
 //! Finite admin delegation; the actor and prepared target belong to this original request only.
 use super::RequestHost;
-use gateway_authority::native_control::actor::NativeActorScope;
 use gateway_authority::native_control::actor::NativeRenewalActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_paid_backfill::PaidBackfillOperations;
 use gateway_core::error::GatewayError;
 use gateway_observability::host_types::PaidWindowBackfill;

@@ -1,18 +1,26 @@
 //! Explicit non-inference native renewal facts. No manufactured session, attempt or admission.
-use super::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalAction, NativeRenewalCancellation,
-    NativeRenewalContext, NativeRenewalFence, OWNER_RENEWAL_MAX_MS,
-    actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    facts,
-    receiver::NativeRenewalAuthority,
-    rows::{self, ActionRow, conflict, fail},
-};
+use super::NATIVE_RENEWAL_FENCE_VERSION;
+use super::NativeRenewalAction;
+use super::NativeRenewalCancellation;
+use super::NativeRenewalContext;
+use super::NativeRenewalFence;
+use super::OWNER_RENEWAL_MAX_MS;
+use super::actor;
+use super::actor::NativeRenewalActor;
+use super::facts;
+use super::receiver::NativeRenewalAuthority;
+use super::rows;
+use super::rows::ActionRow;
+use super::rows::conflict;
+use super::rows::fail;
 use crate::native_live::mapping_key;
 use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{

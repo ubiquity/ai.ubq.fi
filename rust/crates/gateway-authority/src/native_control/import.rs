@@ -1,14 +1,16 @@
 //! One actual admin/source-bound import preparation. No body/digest is persisted.
-use super::{
-    NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS,
-    actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    receiver::NativeRenewalAuthority,
-    rows,
-};
+use super::NativeRenewalCancellation;
+use super::OWNER_RENEWAL_MAX_MS;
+use super::actor;
+use super::actor::NativeRenewalActor;
+use super::receiver::NativeRenewalAuthority;
+use super::rows;
 use gateway_auth::native_import::{
     NativeImportAdmission, NativeImportKind, NativeImportMetadata, NativeImportTarget,
     VerifiedNativeImportBody,
 };
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;

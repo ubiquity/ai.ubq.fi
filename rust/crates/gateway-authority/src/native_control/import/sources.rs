@@ -37,7 +37,7 @@ pub(super) async fn read<
 >(
     control: &NativeRenewalAuthority<'_, S, I, C>,
     tx: &mut Transaction<'_, S, I>,
-    actor: &super::super::actor::StoredNativeActor,
+    actor: &gateway_authority_actor_records::legacy::StoredNativeActor,
     target: &NativeImportTarget,
 ) -> Result<ImportFacts, GatewayError> {
     let NativeImportTarget::ExistingAccount { account_id_hash } = target else {
@@ -68,7 +68,7 @@ pub(super) async fn read<
         return Err(unavailable());
     }
     let current = super::super::actor::read_current(tx, actor, control.current_config).await?;
-    if current.scope != super::super::actor::NativeActorScope::Admin {
+    if current.scope != gateway_authority_actor_records::scope::NativeActorScope::Admin {
         return Err(unavailable());
     }
     let key = codex_source_pool_key();
