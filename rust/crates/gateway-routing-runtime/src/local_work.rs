@@ -1,25 +1,22 @@
 //! One original admission before local work; no provider plan or attempt is invented.
-use crate::{
-    journal::{self, Journal},
-    policy::RoutePlan,
-    session::{RoutingSession, reserve_original},
-    types::{RecoveredSession, RevisionCheckWire, RoutingHost, RoutingResult},
-};
+use crate::{journal, journal::Journal, policy::RoutePlan, session::RoutingSession};
+use crate::{session::reserve_original, types::RecoveredSession, types::RevisionCheckWire};
+use crate::{types::RoutingHost, types::RoutingResult};
 use gateway_auth::{crypto::sha256_hex, types::AuthPrincipal};
-use gateway_authority::kernel::{KernelReservation, KernelTerminal};
-use gateway_authority::keys;
-use gateway_authority::quota::{ApiReservation, ApiUsageRequest, ApiUsageState};
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};
-use gateway_core::lifecycle::TransportObservation;
-use gateway_core::local_work::{
-    LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase, LocalWorkRecord,
-    SOURCE_REQUEST_BINDING_DOMAIN, SOURCE_REQUEST_BINDING_VERSION,
-};
-use gateway_core::query::QueryStore;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{AuthorityStore, StoredRecord};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal};
+use gateway_authority_keys as keys;
+use gateway_core::{error::GatewayError, local_work::SOURCE_REQUEST_BINDING_DOMAIN};
+use gateway_core::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
+use gateway_core::{lifecycle::TransportObservation, local_work::LocalSemanticOutcome};
+use gateway_core::{local_work::LocalTerminalObservation, local_work::LocalWorkKind};
+use gateway_core::{local_work::LocalWorkPhase, local_work::LocalWorkRecord};
+use gateway_core::{local_work::SOURCE_REQUEST_BINDING_VERSION, query::QueryStore};
+use gateway_core::{source_json::SourceJson, state::AuthorityStore, state::StoredRecord};
 use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
 
 pub mod completion;
@@ -141,7 +138,7 @@ fn admitting_local_journal<I: TokenSource>(
         2,
         context.clone(),
         digest,
-        now.checked_add(gateway_authority::REQUEST_LEASE_MS)
+        now.checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
             .ok_or_else(invalid)?,
         now,
     );
@@ -441,7 +438,7 @@ impl<
                 }
                 if refresh_coordination {
                     current.lease_expires_at_ms = at
-                        .checked_add(gateway_authority::REQUEST_LEASE_MS)
+                        .checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
                         .ok_or_else(invalid)?;
                 }
                 if let Some(next) = next {

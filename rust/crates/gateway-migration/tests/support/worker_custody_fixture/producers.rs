@@ -4,8 +4,9 @@ use super::{port, support_run};
 use gateway_admin_contracts::operations::{AdminHost, AdminInput};
 use gateway_admin_contracts::routes::AdminOperation;
 use gateway_auth::{store::key, types::AuthHost};
-use gateway_authority::keys::{api_request, api_window};
 use gateway_authority::store::Authority;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_keys::{api_request, api_window};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{ApiKeyId, RequestId};
 use gateway_core::source_graph::GraphNode;
@@ -27,7 +28,7 @@ impl AuthorityStore for &port::Store {
     }
 }
 struct Tokens(AtomicU64);
-impl gateway_authority::store::TokenSource for Tokens {
+impl gateway_authority_contracts::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         Ok(format!(
             "native-fixture-{}",
@@ -36,7 +37,7 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock(i64);
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(self.0)
     }

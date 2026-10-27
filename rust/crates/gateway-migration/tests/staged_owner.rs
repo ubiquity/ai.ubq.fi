@@ -102,7 +102,7 @@ fn sealed(directory: &Directory, name: &str) -> Target {
     let source = run(store.read(&gateway_auth::provider_credentials::codex_source_pool_key()))
         .unwrap()
         .unwrap();
-    let normalized = run(store.read(&gateway_authority::keys::pool()))
+    let normalized = run(store.read(&gateway_authority_keys::pool()))
         .unwrap()
         .unwrap();
     let pool =
@@ -141,7 +141,7 @@ fn sealed(directory: &Directory, name: &str) -> Target {
 }
 
 fn owner(store: &SqliteStore) -> Option<StoredRecord> {
-    run(store.read(&gateway_authority::keys::paid_control_owner())).unwrap()
+    run(store.read(&gateway_authority_keys::paid_control_owner())).unwrap()
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn owner_binding_refuses_unsealed_wrong_facts_stale_revision_and_duplicate_owner
     );
     target
         .store
-        .put(gateway_authority::keys::paid_control_owner(), other.clone());
+        .put(gateway_authority_keys::paid_control_owner(), other.clone());
     assert!(
         run(execute_staged(
             &target.store,
@@ -256,7 +256,7 @@ impl AuthorityStore for FaultStore {
         self.inner.read(key).await
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let owner_key = gateway_authority::keys::paid_control_owner();
+        let owner_key = gateway_authority_keys::paid_control_owner();
         let owner_commit = transition.mutations.iter().any(
             |mutation| matches!(mutation, RecordMutation::Put { key, .. } if key == &owner_key),
         );
@@ -305,7 +305,7 @@ fn owner_binding_rolls_back_on_commit_failure_and_reconciles_a_lost_response() {
         .is_err()
     );
     assert!(
-        run(failed.read(&gateway_authority::keys::paid_control_owner()))
+        run(failed.read(&gateway_authority_keys::paid_control_owner()))
             .unwrap()
             .is_none()
     );
@@ -324,7 +324,7 @@ fn owner_binding_rolls_back_on_commit_failure_and_reconciles_a_lost_response() {
         ))
         .is_err()
     );
-    let bound = run(lost.read(&gateway_authority::keys::paid_control_owner()))
+    let bound = run(lost.read(&gateway_authority_keys::paid_control_owner()))
         .unwrap()
         .unwrap();
     assert_eq!(bound.revision, target.binding.owner_revision);
@@ -335,7 +335,7 @@ fn owner_binding_rolls_back_on_commit_failure_and_reconciles_a_lost_response() {
     .unwrap();
     assert!(retry.owner_bound);
     assert_eq!(
-        run(lost.read(&gateway_authority::keys::paid_control_owner()))
+        run(lost.read(&gateway_authority_keys::paid_control_owner()))
             .unwrap()
             .unwrap(),
         bound
@@ -383,7 +383,7 @@ fn owner_binding_never_claims_activation_and_preserves_exact_source_inventory() 
     }))
     .unwrap();
     assert_eq!(after.entries.len(), before.entries.len() + 1);
-    let owner_key = gateway_authority::keys::paid_control_owner();
+    let owner_key = gateway_authority_keys::paid_control_owner();
     let mut old = before
         .entries
         .into_iter()

@@ -140,7 +140,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         now,
     )?;
     let window = store
-        .read(&gateway_authority::keys::api_window(
+        .read(&gateway_authority_keys::api_window(
             &record.policy.id,
             &format!("v3:{}", record.policy.window_ms),
             start,
@@ -150,7 +150,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         None => 0,
         Some(row) => {
             row.validate_version()?;
-            let usage: gateway_authority::quota::ApiUsageWindow =
+            let usage: gateway_authority_api_protocol::ApiUsageWindow =
                 serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                     GatewayError::unavailable(
                         "API key quota ledger is corrupt",
@@ -188,14 +188,14 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         value = omit_field(value, "usage_requests");
     }
     let paid = store
-        .read(&gateway_authority::keys::paid_window(
+        .read(&gateway_authority_keys::paid_window(
             &record.policy.id,
             reset,
         ))
         .await?;
     if let Some(row) = paid {
         row.validate_version()?;
-        let paid: gateway_authority::paid_types::PaidWindow =
+        let paid: gateway_authority_paid_records::PaidWindow =
             serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                 GatewayError::unavailable(
                     "Paid billing window is corrupt",

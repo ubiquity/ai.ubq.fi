@@ -1,16 +1,15 @@
 use super::prepare_credential_catalog;
-use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native_auth::{
-    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-};
-use gateway_auth::native_replay::StoreNonceAuthority;
+use gateway_auth::{crypto::Secret, crypto::base64url, native_auth::NativeAuthHeaders};
+use gateway_auth::{native_auth::NativeAuthenticator, native_auth::NativeCapability};
+use gateway_auth::{native_auth::NativeTransportIdentity, native_replay::StoreNonceAuthority};
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-use gateway_authority::{
-    keys,
-    paid_control::{PaidRequestContext, PaidRoutingProjection, paid_projection_source_keys},
-    paid_types::PaidRequest,
-    store::{Authority, TokenSource},
-};
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
+use gateway_authority_paid_evidence::paid_projection_source_keys;
+use gateway_authority_paid_records::PaidRequest;
+use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
@@ -34,14 +33,8 @@ use gateway_publication_policy::protocol::{
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_routing_runtime_test_support::source_catalog;
 use serde_json::json;
-use std::{
-    cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet},
-    future::Future,
-    rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Waker},
-};
+use std::{cell::Cell, cell::RefCell, collections::BTreeMap, collections::BTreeSet};
+use std::{future::Future, rc::Rc, sync::Arc, task::Context, task::Poll, task::Waker};
 const NOW: i64 = 1_800_000_000_000;
 fn now() -> i64 {
     NOW
@@ -238,7 +231,7 @@ impl CatalogHost for Host {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(NOW)
     }

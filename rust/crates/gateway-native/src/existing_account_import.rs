@@ -3,16 +3,12 @@
 use gateway_auth_native_contracts::native_import::NativeImportMetadata;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation,
-        import::{
-            AuthenticatedNativeImport,
-            effects::{NativeImportBinding, NativeImportClaim},
-        },
-        receiver::NativeRenewalAuthority,
-    },
-    store::TokenSource,
+    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
+    native_control::import::effects::NativeImportBinding,
+    native_control::import::effects::NativeImportClaim,
+    native_control::receiver::NativeRenewalAuthority,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use std::{fs::File, path::Path};

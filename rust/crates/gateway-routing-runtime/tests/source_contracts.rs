@@ -1,23 +1,21 @@
-use gateway_core::{
-    js_string::JsString16,
-    lifecycle::{
-        BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
-    },
-    model::ModelId,
-    provider::UpstreamProvider,
-    source_json::SourceJson,
-    source_serialization as source,
-};
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_control_records::PaidRoutingProjection;
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidSourceCheck};
+use gateway_authority_paid_control_records::{PaidControlConfig, PaidControlOwner};
+use gateway_authority_paid_control_records::{PaidProjectionProvenance, PaidProviderObservation};
+use gateway_core::{js_string::JsString16, lifecycle::BodyOutcome, lifecycle::DeliveryOutcome};
+use gateway_core::{lifecycle::ReaderTermination, lifecycle::SemanticTerminal};
+use gateway_core::{lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider};
+use gateway_core::{source_json::SourceJson, source_serialization as source};
 use gateway_providers::policy::HopFailure;
-use gateway_routing_runtime::{
-    classify, policy,
-    session::RoutingSession,
-    settlement::recover_pending,
-    types::{
-        AttemptFailure, AttemptUsage, PreparedAttempt, PreparedWireRequest, RefusalDecision,
-        RoutingHost, RoutingInput, RoutingResult, SourceRefusalBody, TransportState,
-    },
-};
+use gateway_routing_runtime::{classify, policy, session::RoutingSession};
+use gateway_routing_runtime::{settlement::recover_pending, types::AttemptFailure};
+use gateway_routing_runtime::{types::AttemptUsage, types::PreparedAttempt};
+use gateway_routing_runtime::{types::PreparedWireRequest, types::RefusalDecision};
+use gateway_routing_runtime::{types::RoutingHost, types::RoutingInput, types::RoutingResult};
+use gateway_routing_runtime::{types::SourceRefusalBody, types::TransportState};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
@@ -61,7 +59,8 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
 }
 
 fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> {
-    use gateway_authority::{keys, paid_control::*};
+    use gateway_authority_keys as keys;
+    use gateway_authority_paid_evidence::paid_projection_source_keys;
     use gateway_core::{provider::PaidProvider, state::AuthorityStore};
     let mut request = input(id, model, &["surplus", "openlux"]);
     let models = ["paid-model", "deepseek-v4.1-flash"]
@@ -131,7 +130,7 @@ fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> 
     store.seed(
         keys::paid_routing(),
         PaidRoutingProjection {
-            policy: gateway_authority::paid_types::PaidRoutingPolicy {
+            policy: gateway_authority_paid_control_records::PaidRoutingPolicy {
                 v: 2,
                 codex_enabled: true,
                 codex_models: vec!["gpt-test".into()],
@@ -215,9 +214,9 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
         )
         .await?;
         let attempt = next_attempt(&session).await?;
-        let mut config = store.value(gateway_authority::keys::paid_control_config());
+        let mut config = store.value(gateway_authority_keys::paid_control_config());
         config["generation"] = json!("next-generation");
-        store.seed(gateway_authority::keys::paid_control_config(), config);
+        store.seed(gateway_authority_keys::paid_control_config(), config);
         assert!(session.before_dispatch(&attempt).await.is_err());
         let mut failure = refusal(499, TransportState::NotStarted);
         failure.cancelled = true;
@@ -230,7 +229,8 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
 
 #[test]
 fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
-    use gateway_authority::{keys, quota::ApiReservation, store::Authority};
+    use gateway_authority::store::Authority;
+    use gateway_authority_keys as keys;
     use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
 
     run(async {
@@ -260,7 +260,10 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
             .await?;
         assert!(session.next_attempt().await.is_err());
         assert_eq!(
-            store.value(keys::paid_window("key-a", NOW + gateway_authority::DAY_MS)),
+            store.value(keys::paid_window(
+                "key-a",
+                NOW + gateway_authority_contracts::DAY_MS
+            )),
             Value::Null,
             "A stale original API owner must fail before any paid exposure is created"
         );
@@ -270,7 +273,7 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
 
 #[test]
 fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult {
-    use gateway_authority::keys;
+    use gateway_authority_keys as keys;
     use gateway_core::state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
     };
@@ -290,7 +293,7 @@ fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult
         let paid = attempt.paid.as_ref().ok_or("missing paid reservation")?;
         let key = keys::paid_attempt(&paid.key_id.0, &paid.attempt_id.0);
         let record = store.read(&key).await?.ok_or("missing fixture value")?;
-        let window_key = keys::paid_window("key-a", NOW + gateway_authority::DAY_MS);
+        let window_key = keys::paid_window("key-a", NOW + gateway_authority_contracts::DAY_MS);
         let exposure = store.value(window_key.clone());
         assert_ne!(exposure, Value::Null);
         assert_eq!(
@@ -375,7 +378,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
 #[test]
 fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
+        use gateway_authority_kernel_protocol::KernelTerminal;
         use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -428,7 +431,7 @@ fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() -
 #[test]
 fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
+        use gateway_authority_kernel_protocol::KernelTerminal;
         use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -469,7 +472,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> T
         let handle = session.admission_handle();
         let children = handle.children(1).await?;
         handle.before_dispatch(&children[0]).await?;
-        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+        store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             Host::new(&store),
@@ -491,7 +494,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> T
 #[test]
 fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
+        use gateway_authority_kernel_protocol::KernelTerminal;
         use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -552,7 +555,7 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() -> 
 #[test]
 fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
+        use gateway_authority_kernel_protocol::KernelTerminal;
         use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -592,7 +595,7 @@ fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission()
 #[test]
 fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
+        use gateway_authority_kernel_protocol::KernelTerminal;
         use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -737,7 +740,7 @@ fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
     assert_eq!(golden["quota"].as_array().unwrap().len(), 16);
     for case in golden["classes"].as_array().unwrap() {
         assert_eq!(
-            gateway_authority::routing::class_name(policy::class(&ModelId::from(
+            gateway_authority_routing_records::slot::class_name(policy::class(&ModelId::from(
                 case["model"].as_str().unwrap_or("")
             ))),
             case["expected"].as_str().unwrap()
@@ -1027,7 +1030,7 @@ fn codex_generic429_is_not_paid_or_account_exhaustion() {
             session.refusal(&attempt, failure).await.unwrap(),
             RefusalDecision::Return
         );
-        let active = store.value(gateway_authority::keys::active());
+        let active = store.value(gateway_authority_keys::active());
         assert_eq!(
             active["account_id_hash"],
             source_account("a").identity().routing_account_hash.0
@@ -1087,7 +1090,7 @@ fn expired_journal_recovery_never_replays_or_refunds_started_work() {
         let attempt = session.next_attempt().await.unwrap().unwrap();
         session.before_dispatch(&attempt).await.unwrap();
         session.transport_started(&attempt).await.unwrap();
-        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+        store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             host.clone(),

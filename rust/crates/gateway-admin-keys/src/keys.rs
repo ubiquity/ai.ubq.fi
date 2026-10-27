@@ -10,7 +10,7 @@ use gateway_auth::{
     store,
     types::{AuthHost, AuthPrincipal, AuthResponse, conflict, invalid},
 };
-use gateway_authority::quota::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindow};
+use gateway_authority_api_protocol::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindow};
 use gateway_core::{
     error::GatewayError,
     identity::ApiKeyId,
@@ -34,16 +34,16 @@ pub struct ApiKeyRecord {
     pub created_at_ms: i64,
     pub paid_fallback_model_ids: Vec<ModelId>,
     pub paid_fallback_quota_per_credit: i64,
-    #[serde(default, with = "gateway_authority::paid_types::model_map")]
+    #[serde(default, with = "gateway_authority_paid_control_records::model_map")]
     pub paid_fallback_max_exposure_microcredits: std::collections::BTreeMap<ModelId, i64>,
     pub paid_fallback_pricing_checked_at_ms: Option<i64>,
 }
 
 pub fn authority_policy_key(id: &str) -> RecordKey {
-    gateway_authority::keys::api_policy(id)
+    gateway_authority_keys::api_policy(id)
 }
 pub fn deletion_key(id: &str) -> RecordKey {
-    gateway_authority::keys::paid_deletion(id)
+    gateway_authority_keys::paid_deletion(id)
 }
 pub fn authority_policy(record: &ApiKeyRecord, now: i64) -> AuthorityKeyPolicy {
     AuthorityKeyPolicy {
@@ -446,7 +446,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
         let pk = authority_policy_key(&id);
         let pr = self.store.read(&pk).await?;
         let ir = self.store.read(&ik).await?;
-        let wk = gateway_authority::keys::api_window(&id, &format!("v3:{window}"), now);
+        let wk = gateway_authority_keys::api_window(&id, &format!("v3:{window}"), now);
         let wr = self.store.read(&wk).await?;
         let mut checks = vec![
             store::check(&hk, hr.as_ref()),
@@ -626,7 +626,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     record.policy.usage_reset_at_ms = now + new_window;
                     record.policy.usage_requests = 0;
                     let wk =
-                        gateway_authority::keys::api_window(id, &format!("v3:{new_window}"), now);
+                        gateway_authority_keys::api_window(id, &format!("v3:{new_window}"), now);
                     let wr = self.store.read(&wk).await?;
                     // Never overwrite a live reservation when a reset shares its exact clock/window identity.
                     if wr

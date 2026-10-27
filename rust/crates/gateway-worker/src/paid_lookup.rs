@@ -3,7 +3,7 @@ use crate::authority::RemoteAuthorityStore;
 use crate::host::provider_secret;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_authority::paid_types::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
+use gateway_authority_paid_records::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
 use gateway_core::{error::GatewayError, provider::PaidProvider, state::AuthorityStore};
 use gateway_providers::paid_lookup::{
     LookupPlan, LookupStep, OVERALL_TIMEOUT_MS, TokenLog, plan_lookup,
@@ -28,12 +28,13 @@ pub(crate) async fn stored_attempt(
     reservation: &PaidReservation,
 ) -> Result<PaidAttempt, GatewayError> {
     let key =
-        gateway_authority::keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
+        gateway_authority_keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
     let row = store
         .read(&key)
         .await?
         .ok_or_else(|| unavailable("The paid attempt is unavailable."))?;
-    let attempt = gateway_authority::paid::source_records::decode_paid_attempt_record(&key, &row)?;
+    let attempt =
+        gateway_authority_paid_records::source_records::decode_paid_attempt_record(&key, &row)?;
     if attempt.v != 3 || attempt.reservation != *reservation {
         return Err(unavailable(
             "The billing lookup does not match its admitted attempt.",
@@ -52,7 +53,11 @@ pub(crate) async fn terminal_usage(
         return Ok(None);
     }
     let attempt = stored_attempt(store, reservation).await?;
-    Ok(gateway_authority::paid::source_usage::surplus_usage_from_source(&attempt, usage, pricing))
+    Ok(
+        gateway_authority_paid_records::source_usage::surplus_usage_from_source(
+            &attempt, usage, pricing,
+        ),
+    )
 }
 
 pub async fn lookup(

@@ -9,9 +9,9 @@ use gateway_auth_native_wire::{
     publication_command::{ImportPublicationCommandData, import_publication_max_bytes},
 };
 use gateway_authority::{
-    native_control::{NativeRenewalCancellation, receiver::NativeRenewalAuthority},
-    store::TokenSource,
+    native_control::NativeRenewalCancellation, native_control::receiver::NativeRenewalAuthority,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_publication_policy::protocol::{
     PublicationRequest, PublicationResponse, error_response,

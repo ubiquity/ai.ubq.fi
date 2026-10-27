@@ -1,22 +1,24 @@
 //! Constructor-owned fixed profile registry. Picking a resource is not renewal authorization.
-use super::{
-    actor::{self, NativeActorScope, NativeRenewalActor},
-    receiver::RegisteredRenewalOwner,
-    rows::{self, ActionRow, fail},
-};
-use crate::{
-    keys,
-    routing::LiveAccountSelection,
-    routing_types::SubscriptionPool,
-    store::{Authority, TokenSource, Transaction},
-};
+use super::actor;
+use super::actor::NativeRenewalActor;
+use super::receiver::RegisteredRenewalOwner;
+use super::rows;
+use super::rows::ActionRow;
+use super::rows::fail;
+use crate::store::{Authority, Transaction};
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
 use gateway_auth::types::AuthConfig;
-use gateway_core::error::GatewayError;
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_routing_records::types::SubscriptionPool;
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_core::identity::AccountBinding;
 use gateway_core::state::{AuthorityStore, RecordKey};
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 /// One or two explicitly configured independent native owners. No environment/default lookup.
@@ -27,7 +29,7 @@ impl RegisteredRenewalOwners {
     pub async fn for_inference<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,
         authority: &Authority<S, I>,
-        admission: &crate::routing_types::AdmittedAccount,
+        admission: &gateway_authority_routing_selection::types::AdmittedAccount,
     ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
         for _ in 0..3 {
             authority
@@ -74,7 +76,7 @@ impl RegisteredRenewalOwners {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let source = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
         if normalized.pool_versionstamp.0 != tx.revision(&source_key).ok_or_else(fail)?
             || normalized.accounts.len() != source.accounts.len()
         {
@@ -177,7 +179,7 @@ impl RegisteredRenewalOwners {
     pub async fn for_cache_experiment<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,
         authority: &Authority<S, I>,
-        permit: &crate::cache_experiment::RefreshPermit,
+        permit: &gateway_cache_experiment_dispatch::RefreshPermit,
     ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
         for _ in 0..3 {
             let mut tx = authority.transaction(authority.fresh_time(0)?)?;

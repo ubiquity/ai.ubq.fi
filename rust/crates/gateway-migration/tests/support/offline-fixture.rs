@@ -1,3 +1,4 @@
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
@@ -22,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     struct Tokens(AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "offline-fixture-{}",
@@ -31,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }

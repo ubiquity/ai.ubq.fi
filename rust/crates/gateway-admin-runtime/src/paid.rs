@@ -5,10 +5,8 @@ use gateway_auth::{
     store::{check, commit, put},
     types::{AuthHost, conflict, invalid},
 };
-use gateway_authority::{
-    keys,
-    paid_types::{PaidAttempt, PaidWindow, ReconciliationGate},
-};
+use gateway_authority_keys as keys;
+use gateway_authority_paid_records::{PaidAttempt, PaidWindow, ReconciliationGate};
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,

@@ -21,14 +21,14 @@ use gateway_auth_native_wire::native_read::{
 };
 use gateway_auth_passkeys::{passkeys, session_index};
 use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
-use gateway_authority::keys;
 use gateway_authority::native_control::{
     actor,
     receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
 };
-use gateway_authority::paid_control::PaidControlOwner;
-use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
 use gateway_authority::store::Authority;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
+use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
 use gateway_core::state::AuthorityStore;
 use gateway_native_import_test_support::fixture as base;
@@ -59,7 +59,7 @@ use std::{
 };
 
 struct FlowTokens;
-impl gateway_authority::store::TokenSource for FlowTokens {
+impl gateway_authority_contracts::TokenSource for FlowTokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         static NEXT: AtomicUsize = AtomicUsize::new(1);
         Ok(format!(

@@ -12,14 +12,23 @@ use crate::transport::outbound::send_http;
 use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_pool};
 use gateway_auth::resolve::AuthService;
 use gateway_auth::types::{AuthConfig, AuthMethod, AuthRequest};
-use gateway_authority::full_pool_reset::types::{
-    AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, SourceResetInventory,
-};
-use gateway_authority::reset_types::{FullPoolResetReconciliation, ResetClaim, ResetState};
-use gateway_authority::routing_types::{AdmittedAccount, CohortProof};
 use gateway_authority::store::Authority;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{AccountBinding, RequestContext};
+use gateway_authority_reset_claim::ResetClaimOperations;
+use gateway_authority_reset_evidence::types::FullPoolResetReconciliation;
+use gateway_authority_reset_evidence::types::FullPoolResetReconciliation;
+use gateway_authority_reset_permit::{ResetPermitOperations, types::AutomaticResetPermit};
+use gateway_authority_reset_permit::{
+    types::AutomaticResetPermit, types::FullPoolEvaluation, types::FullPoolPreparation,
+};
+use gateway_authority_reset_permit::{types::FullPoolEvaluation, types::FullPoolPreparation};
+use gateway_authority_reset_records::full_pool::SourceResetInventory;
+use gateway_authority_reset_records::{ResetClaim, ResetState};
+use gateway_authority_reset_records::{ResetClaim, ResetState, full_pool::SourceResetInventory};
+use gateway_authority_reset_recovery::ResetRecoveryOperations;
+use gateway_authority_reset_spend::ResetSpendOperations;
+use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
+use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
+use gateway_core::{error::GatewayError, identity::AccountBinding, identity::RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;
 use gateway_worker_storage::store::now_ms;
 use std::cell::RefCell;

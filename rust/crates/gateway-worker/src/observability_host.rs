@@ -1,14 +1,11 @@
 //! Real platform primitives for request-owned observational reads and writes.
 use gateway_admin_runtime::capabilities::Context;
+use gateway_authority_capacity::CapacityOperations;
+use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_core::{error::GatewayError, identity::RequestId};
-use gateway_observability::{
-    ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity, replay_crypto::ReplayBody,
-    types::ObservabilityHost,
-};
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use gateway_observability::{ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity};
+use gateway_observability::{replay_crypto::ReplayBody, types::ObservabilityHost};
+use std::{cell::Cell, cell::RefCell, rc::Rc};
 mod admin;
 mod diagnostics;
 mod inventory;
@@ -86,7 +83,7 @@ pub struct RequestHost {
     request_id: String,
     original_body: ReplayBody,
     admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
-    prepared_cache_target: RefCell<Option<gateway_authority::cache_experiment::PreparedTarget>>,
+    prepared_cache_target: RefCell<Option<gateway_cache_experiment_runner::PreparedTarget>>,
     cache_target_prepared: Cell<bool>,
 }
 pub fn bind(
@@ -107,7 +104,7 @@ pub fn bind_admin(
     _context: Rc<worker::Context>,
     actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 ) -> Result<Runtime, GatewayError> {
-    if actor.scope() != gateway_authority::native_control::actor::NativeActorScope::Admin
+    if actor.scope() != gateway_authority_actor_records::scope::NativeActorScope::Admin
         || actor.context().request_id != *request_id
     {
         return Err(admin::auth_required());
@@ -367,7 +364,7 @@ impl ObservabilityHost for RequestHost {
     async fn begin_codex_capacity_observation(
         &self,
         accounts: &[gateway_observability::host_types::CapacityAccountRef],
-    ) -> Result<gateway_authority::capacity::CodexCapacityObservationFence, GatewayError> {
+    ) -> Result<gateway_authority_capacity::CodexCapacityObservationFence, GatewayError> {
         let authority = gateway_authority::store::Authority::with_clock(
             self.store.clone(),
             crate::host::PlatformTokens,
@@ -377,7 +374,7 @@ impl ObservabilityHost for RequestHost {
             .begin_codex_capacity_observation(
                 &accounts
                     .iter()
-                    .map(|a| gateway_authority::capacity::CodexCapacityAccountRef {
+                    .map(|a| gateway_authority_capacity::CodexCapacityAccountRef {
                         source_slot: a.slot,
                         account_id: a.account_id.clone(),
                     })
@@ -388,16 +385,16 @@ impl ObservabilityHost for RequestHost {
     async fn probe_codex_capacity(
         &self,
         account: &gateway_observability::host_types::CapacityAccountRef,
-        fence: &gateway_authority::capacity::CodexCapacityObservationFence,
+        fence: &gateway_authority_capacity::CodexCapacityObservationFence,
         deadline: i64,
     ) -> Result<gateway_observability::host_types::CapacityProbe, GatewayError> {
         self.capacity_probe(account, fence, deadline).await
     }
     async fn accept_capacity_observations(
         &self,
-        fence: &gateway_authority::capacity::CodexCapacityObservationFence,
-        observations: &[gateway_authority::capacity::CodexCapacitySample],
-    ) -> Result<gateway_authority::capacity::AcceptedCodexCapacityObservations, GatewayError> {
+        fence: &gateway_authority_capacity::CodexCapacityObservationFence,
+        observations: &[gateway_authority_capacity::CodexCapacitySample],
+    ) -> Result<gateway_authority_capacity::AcceptedCodexCapacityObservations, GatewayError> {
         gateway_authority::store::Authority::with_clock(
             self.store.clone(),
             crate::host::PlatformTokens,

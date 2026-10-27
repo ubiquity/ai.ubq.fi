@@ -297,15 +297,15 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "const-oid"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
-
-[[package]]
-name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "const-oid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "core-foundation-sys"
@@ -852,6 +852,15 @@ dependencies = [
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-api-quota",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-admission",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
  "gateway-core",
  "gateway-providers",
  "gateway-publication-policy",
@@ -910,6 +919,9 @@ dependencies = [
  "gateway-admin-contracts",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
  "gateway-core",
  "gateway-profile-values",
  "gateway-source-audit",
@@ -928,6 +940,11 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-kernel",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-records",
  "gateway-claude-usage-protocol",
  "gateway-core",
  "gateway-profile-values",
@@ -946,6 +963,8 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
  "gateway-core",
  "gateway-schema",
  "serde_json",
@@ -1179,10 +1198,48 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
+ "gateway-authority-actor-records",
+ "gateway-authority-api-protocol",
+ "gateway-authority-api-quota",
+ "gateway-authority-api-release",
+ "gateway-authority-capacity",
+ "gateway-authority-capacity-policy",
+ "gateway-authority-claude-proof",
+ "gateway-authority-contracts",
+ "gateway-authority-kernel",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-local-completion",
+ "gateway-authority-paid-admission",
+ "gateway-authority-paid-backfill",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-ledger",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
+ "gateway-authority-paid-test-support",
+ "gateway-authority-reset-claim",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-records",
+ "gateway-authority-reset-recovery",
+ "gateway-authority-reset-spend",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
+ "gateway-authority-test-support",
+ "gateway-cache-experiment-campaign",
+ "gateway-cache-experiment-dispatch",
+ "gateway-cache-experiment-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-cache-experiment-runner",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-source",
  "getrandom 0.4.3",
  "rustls",
  "serde",
@@ -1193,15 +1250,623 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-actor-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-api-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-paid-control-records",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-api-quota"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-api-release"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-api-quota",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-capacity"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-capacity-policy",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-capacity-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "gateway-source",
+]
+
+[[package]]
+name = "gateway-authority-claude-proof"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "gateway-authority-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+]
+
+[[package]]
+name = "gateway-authority-initial-owner"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-kernel"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-kernel-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-keys"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+]
+
+[[package]]
+name = "gateway-authority-local-completion"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-admission"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-api-protocol",
+ "gateway-authority-claude-proof",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-backfill"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-ledger",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-test-support",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-control-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-providers",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-evidence"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-records",
+ "gateway-authority-reset-records",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-ledger"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-records",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-test-support",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-route"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-claude-proof",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-backfill",
+ "gateway-authority-paid-records",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-reset-authorization"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-reset-claim"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-authorization",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-reset-evidence"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-reset-permit"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-reset-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "gateway-authority-reset-recovery"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-authorization",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-reset-spend"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-authorization",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-routing-evidence"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-routing-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-capacity-policy",
+ "gateway-authority-contracts",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "gateway-source",
+]
+
+[[package]]
+name = "gateway-authority-routing-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-routing-selection"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-capacity",
+ "gateway-authority-capacity-policy",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-routing-signal"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-authority-api-quota",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-admission",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-routing-runtime-test-support",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-cache-experiment-campaign"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-cache-experiment-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-cache-experiment-dispatch"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-signal",
+ "gateway-cache-experiment-campaign",
+ "gateway-cache-experiment-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-cache-experiment-evidence"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-cache-experiment-records",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-cache-experiment-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-cache-experiment-runner"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-routing-signal",
+ "gateway-cache-experiment-campaign",
+ "gateway-cache-experiment-dispatch",
+ "gateway-cache-experiment-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-core",
+ "gateway-schema",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-capacity-projection"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-capacity",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
+ "gateway-capacity-projection",
  "gateway-core",
  "gateway-observability",
  "gateway-observability-test-support",
  "gateway-schema",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -1225,6 +1890,15 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-api-quota",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-admission",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
  "gateway-catalog-provider",
  "gateway-core",
  "gateway-native",
@@ -1348,9 +2022,61 @@ name = "gateway-compaction"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "gateway-compaction-history",
+ "gateway-compaction-render",
+ "gateway-compaction-source",
+ "gateway-compaction-test-support",
  "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-compaction-history"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-source",
+ "gateway-compaction-test-support",
+ "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-source",
+ "serde",
+]
+
+[[package]]
+name = "gateway-compaction-render"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-history",
+ "gateway-compaction-source",
+ "gateway-compaction-test-support",
+ "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-source",
  "regress",
+ "serde",
+]
+
+[[package]]
+name = "gateway-compaction-source"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-test-support",
+ "gateway-core",
+ "gateway-source",
  "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-compaction-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-source",
+ "gateway-core",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1442,6 +2168,7 @@ name = "gateway-live-runtime"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-authority-routing-selection",
  "gateway-core",
  "ryu-js",
  "serde",
@@ -1460,6 +2187,21 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-api-quota",
+ "gateway-authority-api-release",
+ "gateway-authority-contracts",
+ "gateway-authority-initial-owner",
+ "gateway-authority-kernel",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-ledger",
+ "gateway-authority-paid-records",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
  "gateway-claude-runtime",
  "gateway-claude-usage-quota",
  "gateway-core",
@@ -1512,6 +2254,11 @@ dependencies = [
  "gateway-auth-passkeys",
  "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
+ "gateway-cache-experiment-records",
  "gateway-core",
  "gateway-native-confinement",
  "gateway-native-connected-io",
@@ -1626,6 +2373,7 @@ dependencies = [
  "gateway-auth-passkeys",
  "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-authority-contracts",
  "gateway-core",
  "gateway-source",
  "serde",
@@ -1659,6 +2407,10 @@ dependencies = [
  "gateway-auth-passkeys",
  "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-native-import-client",
  "gateway-native-replay",
@@ -1699,6 +2451,7 @@ dependencies = [
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-native-http-framing",
  "gateway-native-local-transport",
@@ -1791,10 +2544,18 @@ dependencies = [
  "flate2",
  "futures-util",
  "gateway-admin",
- "gateway-admin-data",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-capacity",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-backfill",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-capacity-projection",
  "gateway-claude-runtime",
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-history",
@@ -1807,6 +2568,7 @@ dependencies = [
  "gateway-observability-test-support",
  "gateway-quota-projection",
  "gateway-schema",
+ "gateway-source",
  "hkdf",
  "hmac 0.12.1",
  "serde",
@@ -1857,6 +2619,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-prompt-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-providers"
 version = "0.1.0"
 dependencies = [
@@ -1875,6 +2647,9 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-test-support",
@@ -1890,6 +2665,8 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
  "gateway-core",
  "serde",
  "serde_json",
@@ -1902,6 +2679,8 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-keys",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication",
  "gateway-publication-policy",
@@ -1916,6 +2695,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-contracts",
  "gateway-core",
  "gateway-publication",
  "gateway-publication-policy",
@@ -1961,6 +2741,25 @@ dependencies = [
  "futures-util",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-api-quota",
+ "gateway-authority-api-release",
+ "gateway-authority-claude-proof",
+ "gateway-authority-contracts",
+ "gateway-authority-kernel",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-local-completion",
+ "gateway-authority-paid-admission",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-ledger",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",
@@ -1978,6 +2777,12 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-records",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime",
@@ -2040,8 +2845,35 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-admission",
  "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-actor-records",
+ "gateway-authority-capacity",
+ "gateway-authority-contracts",
+ "gateway-authority-initial-owner",
+ "gateway-authority-kernel",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-backfill",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-paid-evidence",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
+ "gateway-authority-reset-claim",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-records",
+ "gateway-authority-reset-recovery",
+ "gateway-authority-reset-spend",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
+ "gateway-cache-experiment-dispatch",
+ "gateway-cache-experiment-records",
+ "gateway-cache-experiment-runner",
+ "gateway-capacity-projection",
  "gateway-capacity-recovery",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
@@ -2052,6 +2884,7 @@ dependencies = [
  "gateway-claude-usage-quota",
  "gateway-claude-usage-runtime",
  "gateway-compaction",
+ "gateway-compaction-source",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",
@@ -2068,6 +2901,7 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-source",
  "gateway-wait-observation",
  "gateway-worker-http-body",
  "gateway-worker-platform",
@@ -2086,6 +2920,9 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-transport",
@@ -2105,6 +2942,9 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication",
  "gateway-publication-policy",
@@ -3000,6 +3840,12 @@ dependencies = [
 
 [[package]]
 name = "rand_core"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
@@ -3015,12 +3861,6 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
-
-[[package]]
-name = "rand_core"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "ref-cast"

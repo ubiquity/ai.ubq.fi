@@ -1,16 +1,11 @@
 use super::*;
 use crate::native_control::managed::NativeManagedPublicationDisposition;
 use crate::native_control::owners::RegisteredRenewalOwners;
-use crate::native_control::{custody::validate_native_control_custody, facts, rows};
-use crate::{
-    native_control::{
-        NativeRenewalCancellation, NativeRenewalContext, NativeRenewalControl, NativeRenewalMode,
-        receiver::NativeRenewalAuthority, receiver::RegisteredRenewalOwner,
-    },
-    paid_control::{PaidControlConfig, PaidControlOwner, PaidSourceCheck},
-    routing::LiveRouteSelection,
-    routing_types::{PoolAccount, SubscriptionPool},
+use crate::native_control::receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
+use crate::native_control::{
+    NativeRenewalCancellation, NativeRenewalContext, NativeRenewalControl, NativeRenewalMode,
 };
+use crate::native_control::{custody::validate_native_control_custody, facts, rows};
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
     NativeTransportIdentity,
@@ -21,15 +16,20 @@ use gateway_auth::provider_credentials::{
 };
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
+use gateway_authority_paid_control_records::{
+    PaidControlConfig, PaidControlOwner, PaidSourceCheck,
+};
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::types::LiveRouteSelection;
 use gateway_core::identity::PoolVersionstamp;
-use gateway_core::js_string::JsString16;
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_core::{
-    model::ModelId,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    value::ValueEncoding,
+    model::ModelId, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, value::ValueEncoding,
 };
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
 use std::collections::BTreeSet;
 
 struct Sequence(AtomicUsize);
@@ -695,7 +695,7 @@ fn source_custody_case(template: &rows::ActionRow, case: usize, units: Vec<u16>)
         slot: 0,
     };
     let context_document = SourceJson::from_serializable(&row.fence.context)?;
-    let _: ModelId = gateway_core::source_serialization::member(&context_document, "model")
+    let _: ModelId = gateway_source::source_serialization::member(&context_document, "model")
         .ok_or("missing value")?
         .deserialize()?;
     let _: NativeRenewalContext = serde_json::from_str(context_document.as_str())

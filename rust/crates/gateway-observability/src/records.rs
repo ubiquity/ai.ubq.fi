@@ -1,15 +1,11 @@
 //! Explicit source records: only these declared text fields may use ProfileV2 strings.
 use crate::{ledger::ErrorObservation, store, types::ObservabilityHost};
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::{
-        decode_source_control_record, encode_source_control_record, source_json_tree,
-    },
-    source_json::SourceJson,
-    state::{RecordKey, RecordMutation, StoredRecord},
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    source_control::source_json_tree, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
 use gateway_observability_request_records::request::bounded_text;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 
 /// This accessor belongs only to the request/error record schema, never arbitrary history or quota.
@@ -125,7 +121,7 @@ pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, Gatew
 /// Exact source isPaidFallbackUsageRollup predicate over real UTF16 strings.
 /// Data validation only; model/provider membership and accounting authority are external.
 pub fn valid_usage_rollup_source(document: &SourceJson) -> bool {
-    let field = |name| gateway_core::source_serialization::member(document, name);
+    let field = |name| gateway_source::source_serialization::member(document, name);
     let number = |name| field(name).and_then(|value| value.deserialize::<f64>().ok());
     number("v") == Some(1.0)
         && ["model", "provider"].iter().all(|name| {

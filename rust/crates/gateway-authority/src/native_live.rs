@@ -1,11 +1,8 @@
 //! Same-authority live custody. No admission, quota proof, refresh or paid authorization.
-use crate::{
-    keys,
-    native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    paid_control::PaidControlOwner,
-    routing_types::SubscriptionPool,
-    store::{Authority, TokenSource, Transaction},
-};
+use crate::native_control::actor;
+use crate::native_control::actor::NativeRenewalActor;
+use crate::store::Authority;
+use crate::store::Transaction;
 use gateway_auth::{
     native_auth::NativeTransportIdentity,
     native_live::AuthenticatedNativeLive,
@@ -14,11 +11,18 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation},
-    tuple_key::{ScalarKeyPart, ScalarKeyPart::String as Text, TupleKey},
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RecordMutation, tuple_key::ScalarKeyPart, tuple_key::ScalarKeyPart::String as Text,
+    tuple_key::TupleKey,
 };
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub mod wire;
@@ -187,7 +191,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let pool = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
         let (slot, account) = pool
             .accounts
             .iter()

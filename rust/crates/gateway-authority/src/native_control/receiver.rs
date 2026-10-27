@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     add,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text,
 };
 use gateway_auth::{
@@ -17,7 +17,9 @@ use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest},
     native_read::NATIVE_CONTROL_PATH,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_authority_contracts::TokenSource;
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 
 /// Registry construction is a host operation; no request may select a native home.
 pub struct RegisteredRenewalOwner {

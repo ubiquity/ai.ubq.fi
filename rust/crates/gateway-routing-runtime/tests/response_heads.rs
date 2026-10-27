@@ -334,15 +334,15 @@ fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() -> T
             handle
                 .finish(
                     TransportObservation::default(),
-                    gateway_authority::kernel::KernelTerminal::Released,
+                    gateway_authority_kernel_protocol::KernelTerminal::Released,
                     "source-read-or-failure",
                 )
                 .await?;
             assert_eq!(window(&store)["committed_requests"], 1);
             assert_eq!(
-                store.value(gateway_authority::keys::api_request(
+                store.value(gateway_authority_keys::api_request(
                     "key-a",
-                    &format!("v3:{}", gateway_authority::DAY_MS),
+                    &format!("v3:{}", gateway_authority_contracts::DAY_MS),
                     NOW,
                     id
                 ))["provider"],
@@ -439,7 +439,7 @@ fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch
             handle
                 .finish(
                     TransportObservation::default(),
-                    gateway_authority::kernel::KernelTerminal::Committed,
+                    gateway_authority_kernel_protocol::KernelTerminal::Committed,
                     "invalid-image"
                 )
                 .await
@@ -448,7 +448,7 @@ fn invalid_image_request_releases_an_empty_source_plan_without_provider_dispatch
         let finished = handle
             .finish(
                 TransportObservation::default(),
-                gateway_authority::kernel::KernelTerminal::Released,
+                gateway_authority_kernel_protocol::KernelTerminal::Released,
                 "invalid-image",
             )
             .await?;

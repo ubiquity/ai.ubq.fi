@@ -14,8 +14,8 @@ use gateway_admin_contracts::{
 };
 use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
-use gateway_authority::kernel::{KernelDefaults, KernelReservation, KernelTerminal};
-use gateway_authority::keys;
+use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, KernelTerminal};
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::query::QueryStore;

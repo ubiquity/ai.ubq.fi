@@ -1,7 +1,7 @@
 //! Native read adapter only; portable publication policy has one implementation.
 use gateway_auth_credentials::native_credentials::{NativeCredentials, NativeOwnerId};
 use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
-use gateway_authority::routing_types::SubscriptionPool;
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::AuthorityStore;
 use gateway_native_local_transport::transport::NativeOwnerTransport;
 use gateway_publication::access_publication::{AccessCredentialSource, RegisteredAccessOwner};

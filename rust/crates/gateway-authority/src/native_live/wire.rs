@@ -1,5 +1,5 @@
 //! Private live-authority v1. Request selectors never carry original auth or credentials.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub const NATIVE_LIVE_AUTHORITY_PATH: &str = "/uos/native/live-authority";

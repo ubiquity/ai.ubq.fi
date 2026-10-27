@@ -5,7 +5,7 @@ use crate::{
     engine::{AdoptionReceipt, PreparedAdoption},
     json,
 };
-use gateway_authority::initial_control_owner::{
+use gateway_authority_initial_owner::{
     InitialAdoptionAccountFacts, InitialAdoptionFacts, InitialControlOwnerReceipt,
     PreparedInitialControlOwner,
 };
@@ -44,7 +44,7 @@ fn pool_records(
     prepared: &PreparedAdoption,
 ) -> Result<(&StoredRecord, &StoredRecord), GatewayError> {
     let source_key = gateway_auth::provider_credentials::codex_source_pool_key();
-    let normalized_key = gateway_authority::keys::pool();
+    let normalized_key = gateway_authority_keys::pool();
     let source = prepared
         .rows
         .iter()
@@ -67,7 +67,7 @@ fn actual_facts(prepared: &PreparedAdoption) -> Result<InitialAdoptionFacts, Gat
     let (source, normalized) = pool_records(prepared)?;
     let pool = gateway_auth::provider_credentials::parse_codex_source_pool(source.json_value()?)?
         .ok_or_else(refused)?;
-    let routing: gateway_authority::routing_types::SubscriptionPool =
+    let routing: gateway_authority_routing_records::types::SubscriptionPool =
         decode(normalized.json_value()?)?;
     if routing.v != 1
         || routing.pool_versionstamp.0 != source.revision
@@ -162,7 +162,7 @@ async fn matching_fences<S: QueryStore>(
         owner.require_adoption_facts(facts, now_ms)?;
         if !owner.matches_current_owner(
             store
-                .read(&gateway_authority::keys::paid_control_owner())
+                .read(&gateway_authority_keys::paid_control_owner())
                 .await?
                 .as_ref(),
         ) || store.read(&crate::engine::manifest_key()).await?.as_ref()
@@ -172,7 +172,7 @@ async fn matching_fences<S: QueryStore>(
                 .await?
                 .as_ref()
                 != Some(source)
-            || store.read(&gateway_authority::keys::pool()).await?.as_ref() != Some(normalized)
+            || store.read(&gateway_authority_keys::pool()).await?.as_ref() != Some(normalized)
         {
             return Err(refused());
         }

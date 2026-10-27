@@ -1,6 +1,6 @@
 //! Exact source Codex429 and entitlement proofs; an HTTP status alone is not quota.
 use chrono::{DateTime, Utc};
-use gateway_authority::routing_types::{QuotaBlock, QuotaBlockSource};
+use gateway_authority_routing_records::types::{QuotaBlock, QuotaBlockSource};
 use gateway_core::{
     js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
 };

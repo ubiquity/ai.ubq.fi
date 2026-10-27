@@ -13,15 +13,16 @@ use gateway_auth_native_contracts::native_import::NativeImportTarget;
 use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
 use gateway_auth_passkeys::{passkeys, session_index};
 use gateway_auth_primitives::crypto::{Secret, sha256_hex};
-use gateway_authority::keys;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, actor, receiver::RegisteredRenewalOwner,
 };
-use gateway_authority::paid_control::{
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
-use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,

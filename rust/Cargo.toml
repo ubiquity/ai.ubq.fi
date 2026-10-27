@@ -1,5 +1,43 @@
 [workspace]
 members = [
+  "crates/gateway-authority-actor-records",
+  "crates/gateway-cache-experiment-runner",
+  "crates/gateway-cache-experiment-dispatch",
+  "crates/gateway-cache-experiment-campaign",
+  "crates/gateway-cache-experiment-evidence",
+  "crates/gateway-authority-routing-signal",
+  "crates/gateway-authority-reset-authorization",
+  "crates/gateway-authority-reset-recovery",
+  "crates/gateway-authority-reset-spend",
+  "crates/gateway-authority-reset-claim",
+  "crates/gateway-authority-reset-permit",
+  "crates/gateway-authority-reset-evidence",
+  "crates/gateway-authority-paid-test-support",
+  "crates/gateway-authority-paid-backfill",
+  "crates/gateway-authority-paid-ledger",
+  "crates/gateway-authority-paid-admission",
+  "crates/gateway-authority-paid-route",
+  "crates/gateway-authority-paid-evidence",
+  "crates/gateway-authority-routing-selection",
+  "crates/gateway-authority-routing-policy",
+  "crates/gateway-authority-reset-records",
+  "crates/gateway-authority-paid-records",
+  "crates/gateway-authority-claude-proof",
+  "crates/gateway-authority-capacity",
+  "crates/gateway-authority-capacity-policy",
+  "crates/gateway-authority-routing-evidence",
+  "crates/gateway-authority-local-completion",
+  "crates/gateway-authority-kernel",
+  "crates/gateway-authority-kernel-protocol",
+  "crates/gateway-authority-api-release",
+  "crates/gateway-authority-api-quota",
+  "crates/gateway-authority-api-protocol",
+  "crates/gateway-authority-contracts",
+  "crates/gateway-authority-initial-owner",
+  "crates/gateway-authority-paid-control-records",
+  "crates/gateway-authority-test-support",
+  "crates/gateway-cache-experiment-records",
+  "crates/gateway-authority-keys",
   "crates/gateway-claude-usage-admin",
   "crates/gateway-claude-usage-history",
   "crates/gateway-claude-usage-history-records",
@@ -25,10 +63,17 @@ members = [
   "crates/gateway-quality",
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
+  "crates/gateway-capacity-projection",
   "crates/gateway-compaction",
+  "crates/gateway-compaction-source",
+  "crates/gateway-compaction-history",
+  "crates/gateway-compaction-render",
+  "crates/gateway-compaction-test-support",
+  "crates/gateway-prompt-policy",
   "crates/gateway-schema",
   "crates/gateway-providers",
   "crates/gateway-authority",
+  "crates/gateway-authority-routing-records",
   "crates/gateway-admission",
   "crates/gateway-catalog-provider",
   "crates/gateway-catalog-runtime",
@@ -102,6 +147,39 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-routing-signal = { path = "crates/gateway-authority-routing-signal" }
+gateway-authority-reset-authorization = { path = "crates/gateway-authority-reset-authorization" }
+gateway-authority-reset-recovery = { path = "crates/gateway-authority-reset-recovery" }
+gateway-authority-reset-spend = { path = "crates/gateway-authority-reset-spend" }
+gateway-authority-reset-claim = { path = "crates/gateway-authority-reset-claim" }
+gateway-authority-reset-permit = { path = "crates/gateway-authority-reset-permit" }
+gateway-authority-reset-evidence = { path = "crates/gateway-authority-reset-evidence" }
+gateway-authority-paid-test-support = { path = "crates/gateway-authority-paid-test-support" }
+gateway-authority-paid-backfill = { path = "crates/gateway-authority-paid-backfill" }
+gateway-authority-paid-ledger = { path = "crates/gateway-authority-paid-ledger" }
+gateway-authority-paid-admission = { path = "crates/gateway-authority-paid-admission" }
+gateway-authority-paid-route = { path = "crates/gateway-authority-paid-route" }
+gateway-authority-paid-evidence = { path = "crates/gateway-authority-paid-evidence" }
+gateway-authority-routing-selection = { path = "crates/gateway-authority-routing-selection" }
+gateway-authority-routing-policy = { path = "crates/gateway-authority-routing-policy" }
+gateway-authority-reset-records = { path = "crates/gateway-authority-reset-records" }
+gateway-authority-paid-records = { path = "crates/gateway-authority-paid-records" }
+gateway-authority-claude-proof = { path = "crates/gateway-authority-claude-proof" }
+gateway-authority-capacity = { path = "crates/gateway-authority-capacity" }
+gateway-authority-capacity-policy = { path = "crates/gateway-authority-capacity-policy" }
+gateway-authority-routing-evidence = { path = "crates/gateway-authority-routing-evidence" }
+gateway-authority-local-completion = { path = "crates/gateway-authority-local-completion" }
+gateway-authority-kernel = { path = "crates/gateway-authority-kernel" }
+gateway-authority-kernel-protocol = { path = "crates/gateway-authority-kernel-protocol" }
+gateway-authority-api-release = { path = "crates/gateway-authority-api-release" }
+gateway-authority-api-quota = { path = "crates/gateway-authority-api-quota" }
+gateway-authority-api-protocol = { path = "crates/gateway-authority-api-protocol" }
+gateway-authority-contracts = { path = "crates/gateway-authority-contracts" }
+gateway-authority-initial-owner = { path = "crates/gateway-authority-initial-owner" }
+gateway-authority-paid-control-records = { path = "crates/gateway-authority-paid-control-records" }
+gateway-authority-test-support = { path = "crates/gateway-authority-test-support" }
+gateway-cache-experiment-records = { path = "crates/gateway-cache-experiment-records" }
+gateway-authority-keys = { path = "crates/gateway-authority-keys" }
 gateway-claude-usage-admin = { path = "crates/gateway-claude-usage-admin" }
 gateway-claude-usage-history = { path = "crates/gateway-claude-usage-history" }
 gateway-claude-usage-history-records = { path = "crates/gateway-claude-usage-history-records" }
@@ -129,10 +207,17 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
 wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
+gateway-capacity-projection = { path = "crates/gateway-capacity-projection" }
 gateway-compaction = { path = "crates/gateway-compaction" }
+gateway-compaction-source = { path = "crates/gateway-compaction-source" }
+gateway-compaction-history = { path = "crates/gateway-compaction-history" }
+gateway-compaction-render = { path = "crates/gateway-compaction-render" }
+gateway-compaction-test-support = { path = "crates/gateway-compaction-test-support" }
+gateway-prompt-policy = { path = "crates/gateway-prompt-policy" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
+gateway-authority-routing-records = { path = "crates/gateway-authority-routing-records" }
 gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-provider = { path = "crates/gateway-catalog-provider" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }

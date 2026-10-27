@@ -1,7 +1,11 @@
 //! Only actual platform clock, RNG, WebCrypto and fixed authentication reads.
 use futures_util::StreamExt;
-use gateway_auth_contracts::{types::{AuthConfig, AuthHost}, upstream::{AuthUpstreamRequest, AuthUpstreamResponse}, webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto}};
-use gateway_authority::store::{AuthorityClock, TokenSource};
+use gateway_auth_contracts::{
+    types::{AuthConfig, AuthHost},
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::crypto;

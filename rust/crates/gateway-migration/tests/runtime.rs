@@ -1,6 +1,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_admin_contracts::operations::{AdminHost as _, AdminInput};
 use gateway_auth::{crypto::sha256_base64url, store::key};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, RequestId},
@@ -19,7 +23,7 @@ use gateway_profile_source::codec::from_source_profile as from_profile;
 use gateway_profile_source::codec::to_source_profile as to_profile;
 use gateway_profile_values::date::{CanonicalDates, SourceDateHost};
 use serde_json::{Value, json};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{sync::atomic::AtomicU64, sync::atomic::Ordering};
 
 fn raw(value: Value) -> SourceJson {
     SourceJson::from_serializable(&value).unwrap()
@@ -123,7 +127,7 @@ fn fixture() -> (PrivateCapture, String) {
     )
 }
 struct Tokens(AtomicU64);
-impl gateway_authority::store::TokenSource for Tokens {
+impl gateway_authority_contracts::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         Ok(format!(
             "fixture-revision-{}",
@@ -132,7 +136,7 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(2300)
     }
@@ -166,7 +170,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         ))
         .is_err()
     );
-    let consumed = gateway_authority::quota::ApiReservation {
+    let consumed = gateway_authority_api_protocol::ApiReservation {
         key_id: ApiKeyId("fixture-key".into()),
         request_id: RequestId("old-dispatched".into()),
         route: "responses".into(),
@@ -182,7 +186,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         2300
     ))?);
     assert_eq!(
-        run(store.read(&gateway_authority::keys::api_request(
+        run(store.read(&gateway_authority_keys::api_request(
             "fixture-key",
             "v3:1000",
             2000,
@@ -198,7 +202,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         "responses",
         2300,
     ))?;
-    let old = run(store.read(&gateway_authority::keys::api_request(
+    let old = run(store.read(&gateway_authority_keys::api_request(
         "fixture-key",
         "v3:1000",
         2000,
@@ -206,7 +210,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
     )))?
     .ok_or("Expected retained fixture row")?;
     assert_eq!(old.value["state"], "released");
-    let current = run(store.read(&gateway_authority::keys::api_request(
+    let current = run(store.read(&gateway_authority_keys::api_request(
         "fixture-key",
         "v3:1000",
         2000,
@@ -284,7 +288,7 @@ fn adoption_conflict_never_partially_writes_and_keeps_foreign_state() {
             .is_none()
     );
     assert!(
-        run(store.read(&gateway_authority::keys::api_policy("fixture-key")))
+        run(store.read(&gateway_authority_keys::api_policy("fixture-key")))
             .unwrap()
             .is_none()
     );
@@ -431,12 +435,12 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
     let due = run(authority.due_paid(2300, 10))?;
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].attempt_id.0, "pending-attempt");
-    let row = run(store.read(&gateway_authority::keys::paid_attempt(
+    let row = run(store.read(&gateway_authority_keys::paid_attempt(
         "fixture-key",
         "pending-attempt",
     )))?
     .ok_or("Expected retained fixture row")?;
-    let row: gateway_authority::paid_types::PaidAttempt = serde_json::from_value(row.value)?;
+    let row: gateway_authority_paid_records::PaidAttempt = serde_json::from_value(row.value)?;
     assert_eq!(row.reservation.request_id.0, "pending-attempt");
     assert_eq!(row.reservation.attempt_id.0, "pending-attempt");
     assert!(row.spend_microcredits.is_none());
@@ -475,7 +479,7 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
     assert_eq!(settled.value, input.entries[2].value);
     let rollback = SqliteStore::open(&directory.file("paid-inverse.sqlite3"));
     run(adopt_empty(&rollback, &prepare(&result, &CanonicalDates)?))?;
-    let next = run(rollback.read(&gateway_authority::keys::paid_pending(
+    let next = run(rollback.read(&gateway_authority_keys::paid_pending(
         "fixture-key",
         "pending-attempt",
     )))?
@@ -758,14 +762,14 @@ fn source_shaped_routing_capacity_keep_timeout_legacy_probe_and_named_limits_as_
     drop(store);
     let store = SqliteStore::open(&path);
     assert_eq!(
-        run(store.read(&gateway_authority::keys::routing()))
+        run(store.read(&gateway_authority_keys::routing()))
             .unwrap()
             .unwrap()
             .value,
         routing
     );
     assert_eq!(
-        run(store.read(&gateway_authority::keys::capacity()))
+        run(store.read(&gateway_authority_keys::capacity()))
             .unwrap()
             .unwrap()
             .value,
@@ -773,7 +777,7 @@ fn source_shaped_routing_capacity_keep_timeout_legacy_probe_and_named_limits_as_
     );
     // Data adoption never creates an enabled normalized pool or current publication proof.
     assert!(
-        run(store.read(&gateway_authority::keys::pool()))
+        run(store.read(&gateway_authority_keys::pool()))
             .unwrap()
             .is_none()
     );
@@ -941,7 +945,7 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert()
         .status,
         429
     );
-    let generated_window = run(store.read(&gateway_authority::keys::kernel_window(
+    let generated_window = run(store.read(&gateway_authority_keys::kernel_window(
         "fixture-owner",
         None,
     )))?
@@ -1051,7 +1055,7 @@ fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it(
         nonce.clone(),
         StoredRecord::json("current-replay-fence", nonce_value.clone(), None),
     );
-    let owner = gateway_authority::keys::paid_control_owner();
+    let owner = gateway_authority_keys::paid_control_owner();
     store.put(owner.clone(),StoredRecord::json("current-owner-revision",json!({"v":1,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"f".repeat(64)}),None));
     assert_eq!(
         run(export_latest(&store, 2300)).unwrap_err().code(),
@@ -1104,7 +1108,7 @@ fn inverse_refuses_to_drop_derived_kernel_policy_without_matching_source_default
         &prepare(&input, &CanonicalDates).unwrap(),
     ))
     .unwrap();
-    let key = gateway_authority::keys::kernel_defaults();
+    let key = gateway_authority_keys::kernel_defaults();
     let mut changed = run(store.read(&key)).unwrap().unwrap();
     changed.revision = "independent-runtime-write".into();
     changed.value["usage_limit_requests"] = json!(17);

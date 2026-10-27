@@ -4,6 +4,7 @@ use futures_util::{
     future::{Either, select},
     task::AtomicWaker,
 };
+use gateway_authority_kernel::KernelOperations;
 use gateway_core::error::GatewayError;
 use gateway_routing_runtime::{
     currentness::{ObservedRoutingLease, RoutingLeaseState},

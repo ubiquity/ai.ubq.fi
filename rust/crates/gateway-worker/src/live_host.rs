@@ -9,7 +9,7 @@ use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use gateway_auth::types::{AuthConfig, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_authority::{
-    native_control::actor::{NativeRenewalActor, authenticate_client_actor},
+    native_control::actor::NativeRenewalActor, native_control::actor::authenticate_client_actor,
     store::Authority,
 };
 use gateway_core::{

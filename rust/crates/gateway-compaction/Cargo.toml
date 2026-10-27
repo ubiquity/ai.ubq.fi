@@ -7,12 +7,17 @@ publish.workspace = true
 license = "MIT"
 
 [dependencies]
+gateway-source.workspace = true
 gateway-core.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-regress = { version = "=0.12.0", features = ["utf16"] }
-ryu-js = "=1.0.2"
+gateway-prompt-policy.workspace = true
+gateway-compaction-source.workspace = true
+gateway-compaction-history.workspace = true
+gateway-compaction-render.workspace = true
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+gateway-compaction-test-support.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

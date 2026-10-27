@@ -10,16 +10,16 @@ use gateway_auth::{
     types::{AuthConfig, AuthResponse},
 };
 use gateway_authority::{
-    capacity_rules::parse_capacity_observation,
-    manual_reset::{ManualResetPreparation, ManualResetTarget},
-    native_control::actor::NativeRenewalActor,
-    reset_types::{ResetClaim, ResetState},
-    routing_types::CapacityObservation,
-    store::Authority,
+    manual_reset::ManualResetPreparation, manual_reset::ManualResetTarget,
+    native_control::actor::NativeRenewalActor, store::Authority,
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
+use gateway_authority_reset_records::{ResetClaim, ResetState};
+use gateway_authority_reset_spend::ResetSpendOperations;
+use gateway_authority_routing_evidence::{
+    capacity::CapacityObservation, capacity::parse_capacity_observation,
 };
+use gateway_core::state::AuthorityStore;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_worker_storage::store::now_ms;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
@@ -71,7 +71,7 @@ async fn run(
     };
     let invocation = action.invocation()?;
     let previous = store
-        .read(&gateway_authority::keys::reset_redemption(
+        .read(&gateway_authority_keys::reset_redemption(
             &invocation.identity.account_id_hash,
             &invocation.identity.quota_generation,
         ))
@@ -324,7 +324,7 @@ async fn usage(
     let at = now_ms()?;
     let payload = get(platform, &url, &account, Some(8000)).await?;
     let windows =
-        gateway_observability::capacity_shapes::parse_codex_usage(&payload).ok_or_else(|| {
+        gateway_capacity_projection::shapes::parse_codex_usage(&payload).ok_or_else(|| {
             failure(
                 409,
                 "codex_quota_unavailable",
@@ -367,7 +367,7 @@ fn unavailable(message: &str) -> GatewayError {
 
 pub(super) fn consume_code(bytes: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(bytes);
-    let value = gateway_core::source_json::SourceJson::parse(
+    let value = gateway_source::source_json::SourceJson::parse(
         text.strip_prefix('\u{feff}').unwrap_or(&text),
     )
     .ok()?;

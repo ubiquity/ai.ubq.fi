@@ -24,8 +24,8 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
             store: &store,
             host: &host,
         };
-        let repo = gateway_authority::keys::kernel_policy("owner", Some("repo"));
-        let org = gateway_authority::keys::kernel_policy("owner", None);
+        let repo = gateway_authority_keys::kernel_policy("owner", Some("repo"));
+        let org = gateway_authority_keys::kernel_policy("owner", None);
         store.rows.borrow_mut().insert(
             repo.0,
             StoredRecord::json("repo", kernel_source_policy("repo", Some("repo")), None),
@@ -66,7 +66,7 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
                 .is_none()
         );
         store.rows.borrow_mut().insert(
-            gateway_authority::keys::kernel_policy("owner", Some("repo")).0,
+            gateway_authority_keys::kernel_policy("owner", Some("repo")).0,
             StoredRecord::json("stored-null", Value::Null, None),
         );
         assert_eq!(

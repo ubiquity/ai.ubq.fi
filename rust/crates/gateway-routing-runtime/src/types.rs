@@ -1,21 +1,13 @@
 use gateway_auth::{crypto::Secret, types::AuthPrincipal};
-use gateway_authority::{
-    paid_types::{PaidReservation, PaidUsage},
-    routing_types::{AdmittedAccount, CohortProof},
-};
-use gateway_core::{
-    error::GatewayError,
-    identity::RequestContext,
-    js_string::JsString16,
-    lifecycle::TransportObservation,
-    model::ModelId,
-    provider::UpstreamProvider,
-    state::{RecordKey, RevisionCheck},
-};
-use gateway_providers::types::{
-    AuthMaterial, ClaudeBodyOptions, ClientSurface, DecodePlan, Headers, PrepareOptions,
-    PreparedClaudeBody, PreparedRequest,
-};
+use gateway_authority_paid_records::{PaidReservation, PaidUsage};
+use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
+use gateway_core::source_json::SourceJson;
+use gateway_core::{error::GatewayError, identity::RequestContext, js_string::JsString16};
+use gateway_core::{lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider};
+use gateway_core::{state::RecordKey, state::RevisionCheck, tuple_key::TupleKey};
+use gateway_providers::{types::AuthMaterial, types::ClaudeBodyOptions, types::ClientSurface};
+use gateway_providers::{types::DecodePlan, types::Headers, types::PrepareOptions};
+use gateway_providers::{types::PreparedClaudeBody, types::PreparedRequest};
 use gateway_schema::catalog::CatalogInput;
 use gateway_wait_observation::outcome::WaitOutcome;
 use serde::{Deserialize, Serialize};
@@ -487,8 +479,6 @@ pub struct RecoveredSession {
 }
 
 mod record_key {
-    use gateway_core::{state::RecordKey, tuple_key::TupleKey};
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::Error as _};
     pub fn serialize<S: Serializer>(key: &RecordKey, serializer: S) -> Result<S::Ok, S::Error> {
         TupleKey::from_record_key(key)
             .and_then(|key| key.validate_stored_key())
@@ -507,7 +497,6 @@ mod record_key {
 #[cfg(test)]
 mod source_cleanup_tests {
     use super::*;
-    use gateway_core::{js_string::JsString16, source_json::SourceJson};
     #[test]
     fn cleanup_diagnostic_never_overwrites_original_source_wire_truth() {
         let source = gateway_schema::source_request::error::SourceRequestError::new(

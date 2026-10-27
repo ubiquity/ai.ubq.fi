@@ -1,9 +1,8 @@
 //! Source paid-fallback/ledger-stats.ts. Measurement cannot move a paid balance.
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_core::{
-    error::GatewayError,
-    query::{QuerySelector, QueryStore},
-};
+use gateway_capacity_projection::scalars::{DAY, safe_i64};
+use gateway_core::{query::QuerySelector, query::QueryStore};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 const BUDGET: i64 = 5 * 1024 * 1024 * 1024;
 fn prefix() -> Vec<Value> {
@@ -15,7 +14,7 @@ fn prefix() -> Vec<Value> {
     ]
 }
 fn day(at: i64) -> i64 {
-    at.max(0) / store::DAY * store::DAY
+    at.max(0) / DAY * DAY
 }
 fn key(at: i64) -> gateway_core::state::RecordKey {
     let mut p = prefix();
@@ -36,14 +35,14 @@ pub fn valid_daily(v: &Value) -> bool {
             "updated_at_ms",
         ]
         .iter()
-        .all(|f| store::safe_i64(&v[f]).is_some())
+        .all(|f| safe_i64(&v[f]).is_some())
         && ["projection_7d", "projection_30d", "projection_90d"]
             .iter()
             .all(|f| {
                 v[f].is_object()
                     && ["views", "read_units", "rollup_rows"]
                         .iter()
-                        .all(|n| store::safe_i64(&v[f][n]).is_some())
+                        .all(|n| safe_i64(&v[f][n]).is_some())
             })
 }
 fn empty_growth(at: i64) -> Value {
@@ -127,12 +126,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub async fn ledger_growth(&self, at: i64) -> Value {
         let base = empty_growth(at);
         let read:Result<Value,GatewayError>=async{
-            let mut start=prefix();start.push(json!(day(at-365*store::DAY)));let mut end=prefix();end.push(json!(at+store::DAY));let selector=QuerySelector::Range{start:store::key(json!(start)),end:store::key(json!(end))};
+            let mut start=prefix();start.push(json!(day(at-365*DAY)));let mut end=prefix();end.push(json!(at+DAY));let selector=QuerySelector::Range{start:store::key(json!(start)),end:store::key(json!(end))};
             let entries=store::scan_selector(self.store.as_ref(),selector,false,at,usize::MAX).await?;let rows:Vec<Value>=entries.iter().filter_map(|r|r.record.json_value().ok().filter(|v|valid_daily(v)).cloned()).collect();
             let sum=|name:&str|rows.iter().map(|r|r[name].as_f64().unwrap_or(0.0)).sum::<f64>();let settled=sum("settled_rows");let raw_bytes=sum("settled_row_bytes");let active=rows.iter().filter(|r|r["settled_rows"].as_f64().is_some_and(|n|n>0.0)).count();
             let mut out=base.clone();out["scan"]=json!("ok");out["read_units"]=json!(rows.len()+1);for field in ["settled_rows","settled_row_bytes","rollup_writes","rollup_bytes"]{out[field]=json!(sum(field));}
             out["active_days"]=json!(active);out["avg_row_bytes"]=if settled>0.0{json!((raw_bytes/settled).round())}else{Value::Null};out["avg_settled_rows_per_active_day"]=if active>0{json!((settled/active as f64*10.0).round()/10.0)}else{Value::Null};out["estimated_retained_rows"]=json!(settled);out["estimated_retained_raw_bytes"]=json!(raw_bytes);out["alert"]=json!(raw_bytes>=BUDGET as f64*0.8);
-            let mut leader:Vec<Value>=rows.iter().filter(|r|store::safe_i64(&r["day_start_at_ms"]).is_some_and(|t|t>=day(at-30*store::DAY))).map(|r|{let mut value=json!({});for field in ["day_start_at_ms","settled_rows","settled_row_bytes","rollup_writes","rollup_bytes"]{value[field]=r[field].clone()}for(field,source)in[("projection_views","views"),("projection_read_units","read_units"),("projection_rollup_rows","rollup_rows")]{value[field]=json!(["projection_7d","projection_30d","projection_90d"].iter().map(|p|r[p][source].as_f64().unwrap_or(0.0)).sum::<f64>());}value}).collect();let excess=leader.len().saturating_sub(30);leader.drain(..excess);out["leaderboard"]=json!(leader);
+            let mut leader:Vec<Value>=rows.iter().filter(|r|safe_i64(&r["day_start_at_ms"]).is_some_and(|t|t>=day(at-30*DAY))).map(|r|{let mut value=json!({});for field in ["day_start_at_ms","settled_rows","settled_row_bytes","rollup_writes","rollup_bytes"]{value[field]=r[field].clone()}for(field,source)in[("projection_views","views"),("projection_read_units","read_units"),("projection_rollup_rows","rollup_rows")]{value[field]=json!(["projection_7d","projection_30d","projection_90d"].iter().map(|p|r[p][source].as_f64().unwrap_or(0.0)).sum::<f64>());}value}).collect();let excess=leader.len().saturating_sub(30);leader.drain(..excess);out["leaderboard"]=json!(leader);
             let projections:Vec<Value>=[7,30,90].into_iter().map(|window|{let name=format!("projection_{window}d");let views=rows.iter().map(|r|r[&name]["views"].as_f64().unwrap_or(0.0)).sum::<f64>();let reads=rows.iter().map(|r|r[&name]["read_units"].as_f64().unwrap_or(0.0)).sum::<f64>();let count=rows.iter().map(|r|r[&name]["rollup_rows"].as_f64().unwrap_or(0.0)).sum::<f64>();json!({"window_days":window,"views":views,"read_units":reads,"rollup_rows":count,"avg_read_units_per_view":if views>0.0{Some((reads/views*10.0).round()/10.0)}else{None},"avg_rollup_rows_per_view":if views>0.0{Some((count/views*10.0).round()/10.0)}else{None}})}).collect();out["projections"]=json!(projections);Ok(out)
         }.await;
         read.unwrap_or(base)

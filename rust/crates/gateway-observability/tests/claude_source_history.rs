@@ -6,21 +6,21 @@ use gateway_claude_usage_history_records::{
 };
 mod support;
 use gateway_admin_runtime::capabilities::Context;
+use gateway_capacity_projection::{
+    shapes::BUCKET_MS, shapes::RETENTION_MS, shapes::unavailable_snapshot,
+};
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{RecordKey, RevisionCheck, StoredRecord},
-    tuple_key::TupleKey,
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::RecordKey, state::RevisionCheck, state::StoredRecord, tuple_key::TupleKey,
     value::ValueEncoding,
 };
 use gateway_observability::{
-    ObservabilityRuntime,
-    capacity_shapes::{BUCKET_MS, RETENTION_MS, unavailable_snapshot},
-    host_types::*,
-    types::{HealthProvider, HealthTarget, ObservabilityHost},
+    ObservabilityRuntime, host_types::*, types::HealthProvider, types::HealthTarget,
+    types::ObservabilityHost,
+};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
