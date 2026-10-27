@@ -1,10 +1,10 @@
 use super::{ObservedRow, check, key, put};
-use crate::{error, integer, text};
 use gateway_core::{
     error::GatewayError,
     state::{AtomicTransition, RevisionCheck},
     value::PortableValue,
 };
+use gateway_profile_values::scalar::{error, integer, text};
 use serde_json::{Value, json};
 
 pub fn current_legacy_usage(record: &Value, now: i64) -> Option<i64> {

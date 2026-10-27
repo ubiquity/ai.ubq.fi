@@ -6,7 +6,7 @@ use crate::{
     error::MigrationError,
     invalid, key, parts, starts, unavailable,
 };
-use gateway_admin_data::profile::{encode_base64, source::to_source_profile as to_profile};
+use gateway_admin_data::profile::source::to_source_profile as to_profile;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::source_json::SourceJson;
@@ -15,6 +15,7 @@ use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::DecodedKeyPart;
 use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::PortableValue;
+use gateway_profile_values::{coercion::encode_base64, date::CanonicalDates};
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -587,7 +588,7 @@ async fn export_internal<S: QueryStore>(
     };
     // A private export is not a successful rollback until every latest source/index
     // invariant can be re-adopted. This reads no old database or backup.
-    crate::engine::prepare(&result, &gateway_admin_data::profile::CanonicalDates)?;
+    crate::engine::prepare(&result, &CanonicalDates)?;
     Ok((result, controls))
 }
 

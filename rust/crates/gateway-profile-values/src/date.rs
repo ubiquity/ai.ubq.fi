@@ -1,5 +1,90 @@
 //! Gregorian Date math covering the complete ECMAScript TimeClip range.
-pub fn iso_millis(text: &str) -> Option<i64> {
+use crate::coercion::js_number;
+use crate::scalar::error;
+
+use chrono::{DateTime, NaiveDate};
+use gateway_core::error::GatewayError;
+use gateway_core::source_json::SourceJson;
+use serde_json::Value;
+
+fn date(value: Option<&Value>) -> Result<Option<i64>, GatewayError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if !value.is_string() {
+        let number = js_number(value);
+        return Ok(
+            (number.is_finite() && number.abs() <= 8_640_000_000_000_000.0)
+                .then_some(number.trunc() as i64),
+        );
+    }
+    let s = value.as_str().unwrap_or("");
+    if let Some(epoch) = iso_millis(s) {
+        return Ok(Some(epoch));
+    }
+    let iso_year = if s.starts_with('+') || s.starts_with('-') {
+        7
+    } else {
+        4
+    };
+    if s.get(iso_year..iso_year + 1) == Some("-")
+        && s.get(iso_year + 3..iso_year + 4) == Some("-")
+        && (!s.contains('T')
+            || s.ends_with('Z')
+            || s.ends_with('z')
+            || s.split('T')
+                .nth(1)
+                .is_some_and(|v| v.contains('+') || v.contains('-')))
+    {
+        return Ok(None);
+    }
+    if let Ok(d) = DateTime::parse_from_rfc3339(s) {
+        return Ok(Some(d.timestamp_millis()));
+    }
+    if let Ok(d) = DateTime::parse_from_rfc2822(s) {
+        return Ok(Some(d.timestamp_millis()));
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Ok(d
+            .and_hms_opt(0, 0, 0)
+            .map(|d| d.and_utc().timestamp_millis()));
+    }
+    if s.is_empty() || s == "Invalid Date" || !s.chars().any(|c| c.is_ascii_digit()) {
+        return Ok(None);
+    }
+    Err(error(
+        "Noncanonical Date input requires explicit source-compatible date normalization; no timezone is guessed.",
+    ))
+}
+
+/// Exact source Date constructor semantics supplied by the trusted execution realm.
+/// Inputs are data, never JavaScript code, a timezone guess or an arbitrary evaluation capability.
+pub trait SourceDateHost {
+    fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError>;
+    /// Raw source Date inputs require a host realm capable of parsing their original JSON.
+    fn source_date_value(&self, input: Option<&SourceJson>) -> Result<Option<i64>, GatewayError> {
+        let input = input
+            .map(|value| {
+                value.deserialize::<Value>().map_err(|_| {
+                    GatewayError::unavailable(
+                        "Raw source Date input requires its source-compatible realm",
+                        "source_date_host_missing",
+                    )
+                })
+            })
+            .transpose()?;
+        self.date_value(input.as_ref())
+    }
+}
+/// Retains the existing deterministic codec for canonical inputs; noncanonical inputs fail closed.
+pub struct CanonicalDates;
+impl SourceDateHost for CanonicalDates {
+    fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError> {
+        date(input)
+    }
+}
+
+fn iso_millis(text: &str) -> Option<i64> {
     let year_len = if text.starts_with('+') || text.starts_with('-') {
         7
     } else {
@@ -90,7 +175,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     let doy = (153 * m + 2) / 5 + day - 1;
     era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
 }
-pub fn format_iso(value: i64) -> String {
+pub(crate) fn format_iso(value: i64) -> String {
     let days = value.div_euclid(86_400_000);
     let time = value.rem_euclid(86_400_000);
     let z = days + 719468;

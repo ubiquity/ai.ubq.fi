@@ -6,8 +6,8 @@ pub mod source_model;
 pub mod usage;
 
 use super::{ObservedRow, starts};
-use crate::{integer, number, text};
 use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_profile_values::scalar::{error, integer, json_number, number, text};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -133,7 +133,7 @@ pub fn reference(parts: &[Value]) -> String {
         .iter()
         .map(|v| {
             if let Some(n) = v.as_f64() {
-                crate::json_number(Some(n))
+                json_number(Some(n))
             } else {
                 v.clone()
             }
@@ -257,7 +257,7 @@ pub fn inspect_source_rows(
     now: i64,
 ) -> Result<Audit, GatewayError> {
     if !complete {
-        return Err(crate::error(
+        return Err(error(
             "Migration validation requires complete source inventories.",
         ));
     }
@@ -323,12 +323,12 @@ fn inspect_key_usage(
         } else {
             source_fields::integer(record, "usage_reset_at_ms")
                 .map(|reset| (reset - 1).max(0))
-                .ok_or_else(|| crate::error("Invalid API-key migration clock."))?
+                .ok_or_else(|| error("Invalid API-key migration clock."))?
         };
         let span = source_fields::integer(record, "window_ms")
-            .ok_or_else(|| crate::error("Invalid API-key window."))?;
+            .ok_or_else(|| error("Invalid API-key window."))?;
         let initial = source_fields::integer(record, "usage_reset_at_ms")
-            .ok_or_else(|| crate::error("Invalid API-key reset."))?
+            .ok_or_else(|| error("Invalid API-key reset."))?
             - span;
         let start = if clock < initial + span {
             initial

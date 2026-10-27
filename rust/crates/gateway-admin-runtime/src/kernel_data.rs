@@ -1,8 +1,7 @@
 //! Named kernel administrative source-data views and finite record codecs only.
 //! No reservation/index permission, new namespace, or generic storage interpretation.
 use crate::store;
-use gateway_admin_contracts::fields;
-use gateway_admin_contracts::source_input as body;
+use gateway_admin_contracts::{fields, source_input as body};
 use gateway_auth::types::invalid;
 use gateway_authority::kernel::{KernelPolicy, KernelWindow};
 use gateway_core::{
@@ -14,6 +13,7 @@ use gateway_core::{
     state::{RecordKey, RecordMutation, StoredRecord},
     tuple_key::{DecodedKeyPart, TupleKey},
 };
+use gateway_profile_values::coercion::js_number;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -96,7 +96,7 @@ pub(crate) fn expiry(value: &SourceJson, now: i64) -> Option<f64> {
     if !value.is_number() && !value.is_string() {
         return None;
     }
-    let n = gateway_admin_data::profile::js_number(&value).trunc();
+    let n = js_number(&value).trunc();
     (n.is_finite() && (n == -1.0 || n > now as f64)).then_some(n)
 }
 pub(crate) fn decode_policy(

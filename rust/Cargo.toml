@@ -15,6 +15,7 @@ members = [
   "crates/gateway-admin-keys",
   "crates/gateway-admin-kernel",
   "crates/gateway-admin-data",
+  "crates/gateway-profile-values",
   "crates/gateway-admin-runtime",
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
@@ -67,6 +68,7 @@ gateway-admin-contracts = { path = "crates/gateway-admin-contracts" }
 gateway-admin-keys = { path = "crates/gateway-admin-keys" }
 gateway-admin-kernel = { path = "crates/gateway-admin-kernel" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
+gateway-profile-values = { path = "crates/gateway-profile-values" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }

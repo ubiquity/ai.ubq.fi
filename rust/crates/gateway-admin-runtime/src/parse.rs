@@ -5,6 +5,7 @@ use gateway_admin_contracts::fields::{
 use gateway_admin_contracts::{operations::AdminInput, source_input as source_body};
 use gateway_auth::types::invalid;
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, source_json::SourceJson};
+use gateway_profile_values::coercion::js_number;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -67,7 +68,7 @@ pub fn capture(input: &AdminInput, incidents: bool) -> Result<CaptureRequest, Ga
         first(q, name)
             .filter(|s| !s.is_empty())
             .map(|s| {
-                let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));
+                let n = js_number(&Value::String(s.into()));
                 (n.is_finite() && n.fract() == 0.0 && n >= 0.0 && n <= MAX_SAFE_INTEGER as f64)
                     .then_some(n as i64)
             })

@@ -3,8 +3,7 @@ use crate::{
     capabilities::{Context, RuntimeCapabilities},
     store,
 };
-use gateway_admin_contracts::fields;
-use gateway_admin_contracts::operations::AdminInput;
+use gateway_admin_contracts::{fields, operations::AdminInput};
 use gateway_auth::types::{AuthHost, AuthResponse, invalid};
 use gateway_core::{
     error::GatewayError,
@@ -12,6 +11,7 @@ use gateway_core::{
     state::StoredRecord,
     value::{PortableValue, ValueEncoding},
 };
+use gateway_profile_values::coercion::js_number;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -157,7 +157,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let limit = match fields::first(&input.query, "limit") {
             None => 100,
             Some(s) => {
-                let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));
+                let n = js_number(&Value::String(s.into()));
                 if !n.is_finite() || n.fract() != 0.0 || !(1.0..=500.0).contains(&n) {
                     return Err(invalid("limit must be an integer from 1 to 500"));
                 }

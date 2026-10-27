@@ -14,6 +14,7 @@ gateway-claude-runtime = { path = "../gateway-claude-runtime" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-admin = { path = "../gateway-admin" }
 gateway-admin-data = { path = "../gateway-admin-data" }
+gateway-profile-values.workspace = true
 gateway-admin-runtime = { path = "../gateway-admin-runtime" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-schema = { path = "../gateway-schema" }
