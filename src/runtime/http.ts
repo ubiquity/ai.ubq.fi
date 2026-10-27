@@ -139,7 +139,7 @@ const registerResponseReadiness = (
     outgoing.flushHeaders();
     // A quiet native stream needs transport activity to expose its abandoned connection.
     // No API event or usage is emitted, and stop runs before selected body forwarding.
-    heartbeat = setInterval(pulse, 200);
+    heartbeat = setInterval(pulse, 50);
     return true;
   });
   signal.addEventListener("abort", stop, { once: true });
