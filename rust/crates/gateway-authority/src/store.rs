@@ -1,10 +1,10 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::source_control::decode_source_control_record;
-use gateway_core::{error::GatewayError, state::RevisionCheck};
-use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
-use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::AuthorityStore};
-use gateway_core::{state::CommitOutcome, state::RecordKey, state::RecordMutation};
+use gateway_core::{error::GatewayError, state::RecordMutation};
+use gateway_core::{source_control::encode_source_control_record, state::RevisionCheck};
+use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::StoredRecord};
+use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RecordKey};
 use gateway_schema::aliases::SourceStringCollator;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
@@ -507,5 +507,15 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_ledger::PaidLedge
     type Tokens = I;
     fn paid_ledger(&self) -> gateway_authority_paid_ledger::PaidLedgerService<'_, S, I> {
         gateway_authority_paid_ledger::PaidLedgerService::new(&self.store, &self.tokens)
+    }
+}
+
+impl<S: gateway_core::query::QueryStore, I: TokenSource>
+    gateway_authority_paid_backfill::PaidBackfillFactory for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn paid_backfill(&self) -> gateway_authority_paid_backfill::PaidBackfillService<'_, S, I> {
+        gateway_authority_paid_backfill::PaidBackfillService::new(&self.store, &self.tokens)
     }
 }

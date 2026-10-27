@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/gateway-authority-paid-test-support",
+  "crates/gateway-authority-paid-backfill",
   "crates/gateway-authority-paid-ledger",
   "crates/gateway-authority-paid-admission",
   "crates/gateway-authority-paid-route",
@@ -72,6 +74,8 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-paid-test-support = { path = "crates/gateway-authority-paid-test-support" }
+gateway-authority-paid-backfill = { path = "crates/gateway-authority-paid-backfill" }
 gateway-authority-paid-ledger = { path = "crates/gateway-authority-paid-ledger" }
 gateway-authority-paid-admission = { path = "crates/gateway-authority-paid-admission" }
 gateway-authority-paid-route = { path = "crates/gateway-authority-paid-route" }

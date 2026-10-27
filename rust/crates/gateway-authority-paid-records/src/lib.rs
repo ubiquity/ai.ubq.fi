@@ -1,4 +1,5 @@
 //! Ordinary paid rows, validation and source billing projection; never paid authorization or settlement.
+pub mod backfill;
 pub mod source_records;
 pub mod source_usage;
 use gateway_authority_contracts::{invalid, nonnegative, positive};

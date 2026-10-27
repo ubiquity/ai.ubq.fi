@@ -13,6 +13,7 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
 gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }

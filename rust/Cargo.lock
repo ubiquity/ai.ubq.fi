@@ -951,6 +951,7 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-backfill",
  "gateway-authority-paid-ledger",
  "gateway-authority-paid-admission",
  "gateway-authority-paid-route",
@@ -1147,6 +1148,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-paid-backfill"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-ledger",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-test-support",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-paid-control-records"
 version = "0.1.0"
 dependencies = [
@@ -1194,6 +1211,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-authority-paid-test-support",
  "gateway-core",
  "gateway-schema",
  "serde",
@@ -1213,6 +1231,20 @@ dependencies = [
  "gateway-authority-paid-records",
  "gateway-core",
  "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-backfill",
+ "gateway-authority-paid-records",
+ "gateway-core",
  "serde",
  "serde_json",
 ]
@@ -1545,6 +1577,7 @@ dependencies = [
 name = "gateway-observability"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-backfill",
  "gateway-authority-paid-records",
  "gateway-authority-capacity",
  "gateway-authority-routing-evidence",
@@ -1744,6 +1777,7 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-backfill",
  "gateway-authority-paid-route",
  "gateway-authority-paid-evidence",
  "gateway-authority-routing-selection",

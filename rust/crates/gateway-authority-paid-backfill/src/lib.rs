@@ -1,19 +1,14 @@
-//! Source historical paid usage and retention, owned by the existing atomic authority.
-//! Cursors are progress hints only; request markers and revision checks prevent double folds.
-use crate::{store::Authority, validate_time};
-use gateway_authority_contracts::TokenSource;
+//! Complete event-owned historical paid backfill; cursors remain progress only.
+mod backend;
+use backend::Transaction;
+use gateway_authority_contracts::{TokenSource, invalid, validate_time};
 use gateway_authority_keys as keys;
-use gateway_authority_paid_records::PaidAttempt;
-use gateway_core::{
-    error::GatewayError,
-    query::{QueryPage, QueryRequest, QuerySelector, QueryStore},
-    state::RecordKey,
-    tuple_key::{DecodedKeyPart, ScalarKeyPart, TupleKey},
-};
+use gateway_authority_paid_records::{PaidAttempt, backfill as values};
+use gateway_core::{error::GatewayError, query::QueryPage, query::QueryRequest};
+use gateway_core::{query::QuerySelector, query::QueryStore, state::RecordKey};
+use gateway_core::{tuple_key::DecodedKeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use serde::Serialize;
 use serde_json::{Value, json};
-mod values;
-
 const PAGE_SIZE: u32 = 128;
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct PaidRequestBackfill {
@@ -50,18 +45,16 @@ enum RequestStep {
     Failed,
     Budget,
 }
-impl<S: QueryStore, I: TokenSource> Authority<S, I> {
-    /// Finite source admin operation; no provider request, admission or settlement occurs here.
-    pub async fn backfill_paid_usage(
-        &self,
-        limit: u32,
-        now: i64,
-    ) -> Result<PaidBackfillReceipt, GatewayError> {
-        validate_time(now)?;
-        let limit = limit.clamp(1, 10_000);
-        let requests = self.backfill_requests(limit, now).await?;
-        let windows = self.backfill_windows(limit, now).await?;
-        Ok(PaidBackfillReceipt { requests, windows })
+pub struct PaidBackfillService<'a, S, I> {
+    store: &'a S,
+    tokens: &'a I,
+}
+impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
+    pub fn new(store: &'a S, tokens: &'a I) -> Self {
+        Self { store, tokens }
+    }
+    fn transaction(&self, now: i64) -> Result<Transaction<'_, S, I>, GatewayError> {
+        Transaction::new(self.store, self.tokens, now)
     }
     async fn page(
         &self,
@@ -313,6 +306,29 @@ impl<S: QueryStore, I: TokenSource> Authority<S, I> {
         Ok(result)
     }
 }
+pub trait PaidBackfillFactory {
+    type Store: QueryStore;
+    type Tokens: TokenSource;
+    fn paid_backfill(&self) -> PaidBackfillService<'_, Self::Store, Self::Tokens>;
+}
+pub trait PaidBackfillOperations: PaidBackfillFactory {
+    /// Finite source admin operation; no provider request, admission or settlement occurs here.
+    fn backfill_paid_usage(
+        &self,
+        limit: u32,
+        now: i64,
+    ) -> impl std::future::Future<Output = Result<PaidBackfillReceipt, GatewayError>> {
+        async move {
+            let context = self.paid_backfill();
+            validate_time(now)?;
+            let limit = limit.clamp(1, 10_000);
+            let requests = context.backfill_requests(limit, now).await?;
+            let windows = context.backfill_windows(limit, now).await?;
+            Ok(PaidBackfillReceipt { requests, windows })
+        }
+    }
+}
+impl<T: PaidBackfillFactory> PaidBackfillOperations for T {}
 fn cursor_parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
     TupleKey::from_record_key(key)?
         .decoded_parts()?
@@ -330,5 +346,3 @@ fn cursor_parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
         })
         .collect()
 }
-#[cfg(test)]
-mod tests;

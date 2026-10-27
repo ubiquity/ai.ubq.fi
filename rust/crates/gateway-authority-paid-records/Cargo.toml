@@ -15,3 +15,6 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gateway-authority-paid-test-support = { path = "../gateway-authority-paid-test-support" }

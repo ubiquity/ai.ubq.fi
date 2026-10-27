@@ -2,9 +2,9 @@
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
 use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context, ProviderRequest};
 use gateway_auth::types::AuthResponse;
-use gateway_core::error::GatewayError;
-use gateway_core::query::{QuerySelector, QueryStore};
-use gateway_core::source_json::SourceJson;
+use gateway_authority_paid_backfill::PaidBackfillOperations;
+use gateway_core::query::QueryStore;
+use gateway_core::{error::GatewayError, query::QuerySelector, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 const HOUR: i64 = 3_600_000;

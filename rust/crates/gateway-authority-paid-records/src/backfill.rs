@@ -1,9 +1,9 @@
-use crate::{PAID_RETENTION_MS, add, nonnegative, validate_time};
+use gateway_authority_contracts::{PAID_RETENTION_MS, add, nonnegative, validate_time};
 use gateway_authority_paid_records::PaidAttempt;
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER};
 use serde_json::{Value, json};
 
-pub(super) fn expiry(anchor: i64, now: i64) -> Result<i64, GatewayError> {
+pub fn expiry(anchor: i64, now: i64) -> Result<i64, GatewayError> {
     validate_time(anchor)?;
     Ok(add(anchor, PAID_RETENTION_MS)?.max(add(now, 1)?))
 }
@@ -15,7 +15,7 @@ fn safe(value: &Value, minimum: i64) -> Option<i64> {
         })
         .map(|number| number as i64)
 }
-pub(super) fn window_anchor(value: &Value) -> Option<i64> {
+pub fn window_anchor(value: &Value) -> Option<i64> {
     if value["v"].as_f64() != Some(3.0)
         || !value["key_id"]
             .as_str()
@@ -81,7 +81,7 @@ fn valid_rollup(value: &gateway_core::source_json::SourceJson) -> bool {
 }
 /// The sole historical merge engine. Model labels and unknown source leaves never
 /// enter Value; numeric accumulation and source invalid-row replacement are unchanged.
-pub(super) fn merge_source_rollup(
+pub fn merge_source_rollup(
     existing: Option<&gateway_core::source_json::SourceJson>,
     row: &PaidAttempt,
     model: &gateway_core::model::ModelId,
@@ -181,3 +181,6 @@ pub(super) fn merge_rollup(
         .transpose()?;
     merge_source_rollup(existing.as_ref(), row, &model.into(), provider, bucket, now)?.deserialize()
 }
+
+#[cfg(test)]
+mod tests;

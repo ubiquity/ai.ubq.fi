@@ -12,7 +12,6 @@ pub mod full_pool_reset;
 pub mod manual_reset;
 pub mod native_control;
 pub mod native_live;
-pub mod paid_backfill;
 mod probes;
 pub mod reset;
 mod reset_recovery;

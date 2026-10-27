@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-capacity = { path = "../gateway-authority-capacity" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
