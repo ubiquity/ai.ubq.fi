@@ -20,7 +20,7 @@ use gateway_schema::{
         ordinary_models as ordinary_models_source, public_catalog as public_catalog_source,
     },
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, VecDeque},
