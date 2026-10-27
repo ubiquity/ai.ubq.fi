@@ -564,15 +564,14 @@ impl Capture {
     async fn persist(&self, observation: TransportObservation) -> Result<(), GatewayError> {
         let (internal, client) = {
             let mut wire = self.client.borrow_mut();
-            if let Some(parser) = &mut wire.parser {
-                match parser.finish() {
-                    Ok(frames) => {
-                        for frame in frames {
-                            wire.frame(frame)
-                        }
+            match wire.parser.as_mut().map(SseParser::finish) {
+                Some(Ok(frames)) => {
+                    for frame in frames {
+                        wire.frame(frame)
                     }
-                    Err(_) => wire.valid = false,
                 }
+                Some(Err(_)) => wire.valid = false,
+                None => {}
             }
             let cancelled = observation.reader_termination == Some(ReaderTermination::Cancelled);
             let terminal = if cancelled {
