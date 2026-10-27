@@ -17,7 +17,7 @@ use gateway_native_import_source::{
     result::{NativeImportCompletion, NativeImportResult},
 };
 use gateway_native_import_test_support::{
-    fixture::{Fixture, Store, Tokens, now_ms},
+    fixture::{Fixture, Store, Tokens, fail, now_ms},
     socket::SocketRequest,
 };
 use std::{
@@ -34,9 +34,9 @@ fn receive(
     consumer: &impl NativeImportHandler,
     revoked: bool,
 ) -> Result<NativeImportResult, GatewayError> {
-    let mut socket = SocketRequest::prepared(f, a, body);
+    let mut socket = SocketRequest::prepared(f, a, body)?;
     if !revoked {
-        socket.send(body);
+        socket.send(body)?;
         return receive_import_connection(
             &mut socket.accepted,
             a,
@@ -47,8 +47,8 @@ fn receive(
             consumer,
         );
     }
-    socket.send_head();
-    let mut sender = socket.client.try_clone().unwrap();
+    socket.send_head()?;
+    let mut sender = socket.client.try_clone().map_err(|_| fail())?;
     std::thread::scope(|scope| {
         let task = scope.spawn(move || {
             receive_import_connection(
@@ -61,7 +61,7 @@ fn receive(
                 consumer,
             )
         });
-        f.store.wait_header_admitted();
+        f.store.wait_header_admitted()?;
         f.store.seed(
             passkeys::key("users", "user-fixture"),
             "user-revoked",
@@ -71,11 +71,11 @@ fn receive(
                 is_admin: false,
                 credential_ids: vec!["credential".into()],
                 created_at_ms: 1,
-                updated_at_ms: now_ms(),
+                updated_at_ms: now_ms()?,
             },
-        );
-        sender.write_all(body).unwrap();
-        task.join().unwrap()
+        )?;
+        sender.write_all(body).map_err(|_| fail())?;
+        task.join().map_err(|_| fail())?
     })
 }
 struct Consumer {
@@ -85,13 +85,13 @@ struct Consumer {
     calls: AtomicU64,
 }
 impl Consumer {
-    fn expected(version: Option<JsString16>, raw: &[u8]) -> Self {
-        Self {
-            auth: SourceJson::parse(AUTH).unwrap(),
+    fn expected(version: Option<JsString16>, raw: &[u8]) -> Result<Self, GatewayError> {
+        Ok(Self {
+            auth: SourceJson::parse(AUTH).map_err(|_| fail())?,
             version,
             raw: raw.to_vec(),
             calls: AtomicU64::new(0),
-        }
+        })
     }
 }
 impl NativeImportHandler for Consumer {
@@ -112,13 +112,14 @@ impl NativeImportHandler for Consumer {
         Ok(NativeImportResult {
             status: 200,
             headers: BTreeMap::new(),
-            body: SourceJson::parse(r#"{"native_data_consumed":true}"#).unwrap(),
+            body: SourceJson::parse(r#"{"native_data_consumed":true}"#).map_err(|_| fail())?,
             completion: NativeImportCompletion::Unavailable,
         })
     }
 }
 #[test]
-fn actual_decoder_data_is_meaningful_handler_input_for_bare_wrapped_bom_and_utf16() {
+fn actual_decoder_data_is_meaningful_handler_input_for_bare_wrapped_bom_and_utf16()
+-> Result<(), GatewayError> {
     for (body, version) in [
         (AUTH.as_bytes().to_vec(), None),
         (
@@ -134,13 +135,13 @@ fn actual_decoder_data_is_meaningful_handler_input_for_bare_wrapped_bom_and_utf1
         ),
         ([&[0xef, 0xbb, 0xbf][..], AUTH.as_bytes()].concat(), None),
     ] {
-        let f = Fixture::new();
+        let f = Fixture::new()?;
         let a = f.authority();
-        let consumer = Consumer::expected(version, &body);
-        let result = receive(&f, &a, &body, &consumer, false).unwrap();
+        let consumer = Consumer::expected(version, &body)?;
+        let result = receive(&f, &a, &body, &consumer, false).map_err(|_| fail())?;
         assert_eq!(result.status, 200);
         assert_eq!(consumer.calls.load(Ordering::SeqCst), 1);
-        let capture = f.store.captured();
+        let capture = f.store.captured()?;
         for forbidden in [
             "SYNTHETIC_NATIVE_ACCESS",
             "SYNTHETIC_NATIVE_REFRESH",
@@ -149,17 +150,19 @@ fn actual_decoder_data_is_meaningful_handler_input_for_bare_wrapped_bom_and_utf1
             assert!(!capture.contains(forbidden));
         }
     }
+    Ok(())
 }
 #[test]
-fn actual_bound_but_invalid_auth_uses_original_error_without_calling_handler() {
+fn actual_bound_but_invalid_auth_uses_original_error_without_calling_handler()
+-> Result<(), GatewayError> {
     for body in [
         b"{}".to_vec(),
         b"{".to_vec(),
         [&[0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf][..], AUTH.as_bytes()].concat(),
     ] {
-        let f = Fixture::new();
+        let f = Fixture::new()?;
         let a = f.authority();
-        let consumer = Consumer::expected(None, &body);
+        let consumer = Consumer::expected(None, &body)?;
         let error = match receive(&f, &a, &body, &consumer, false) {
             Err(e) => e,
             Ok(_) => panic!("invalid AUTH reached handler"),
@@ -175,13 +178,15 @@ fn actual_bound_but_invalid_auth_uses_original_error_without_calling_handler() {
         );
         assert_eq!(consumer.calls.load(Ordering::SeqCst), 0);
     }
+    Ok(())
 }
 #[test]
-fn current_actual_actor_revocation_is_checked_before_the_auth_decoder() {
-    let f = Fixture::new();
+fn current_actual_actor_revocation_is_checked_before_the_auth_decoder() -> Result<(), GatewayError>
+{
+    let f = Fixture::new()?;
     let a = f.authority();
     let body = b"{";
-    let consumer = Consumer::expected(None, body);
+    let consumer = Consumer::expected(None, body)?;
     let error = match receive(&f, &a, body, &consumer, true) {
         Err(e) => e,
         Ok(_) => panic!("stale actor"),
@@ -191,9 +196,11 @@ fn current_actual_actor_revocation_is_checked_before_the_auth_decoder() {
         Some("native_actor_unavailable")
     );
     assert_eq!(consumer.calls.load(Ordering::SeqCst), 0);
+    Ok(())
 }
 #[test]
-fn ingress_header_guard_and_error_mapping_are_the_original_source_rules() {
+fn ingress_header_guard_and_error_mapping_are_the_original_source_rules() -> Result<(), GatewayError>
+{
     for good in [None, Some("0"), Some("33554432")] {
         assert!(check_auth_content_length(good).is_ok());
     }
@@ -209,18 +216,18 @@ fn ingress_header_guard_and_error_mapping_are_the_original_source_rules() {
     );
 
     for length in ["", "00", "1.0", "+1", "9007199254740992", "33554433"] {
-        let f = Fixture::new();
+        let f = Fixture::new()?;
         let a = f.authority();
-        let consumer = Consumer::expected(None, AUTH.as_bytes());
-        let mut socket = SocketRequest::prepared(&f, &a, AUTH.as_bytes());
-        let head = String::from_utf8(socket.head.clone()).unwrap();
+        let consumer = Consumer::expected(None, AUTH.as_bytes())?;
+        let mut socket = SocketRequest::prepared(&f, &a, AUTH.as_bytes())?;
+        let head = String::from_utf8(socket.head.clone()).map_err(|_| fail())?;
         socket.head = head
             .replace(
                 &format!("Content-Length: {}", AUTH.len()),
                 &format!("Content-Length: {length}"),
             )
             .into_bytes();
-        socket.send_head();
+        socket.send_head()?;
         let error = receive_import_connection(
             &mut socket.accepted,
             &a,
@@ -231,7 +238,7 @@ fn ingress_header_guard_and_error_mapping_are_the_original_source_rules() {
             &consumer,
         )
         .err()
-        .unwrap();
+        .map_err(|_| fail())?;
         assert_eq!(error.status, 400);
         assert_eq!(
             error.envelope.error.message,
@@ -240,17 +247,19 @@ fn ingress_header_guard_and_error_mapping_are_the_original_source_rules() {
         assert_eq!(error.envelope.error.error_type, "invalid_request_error");
         assert_eq!(consumer.calls.load(Ordering::SeqCst), 0);
     }
+    Ok(())
 }
 
 #[test]
-fn actual_original_disconnect_after_header_admission_precedes_any_decode_error() {
-    let f = Fixture::new();
+fn actual_original_disconnect_after_header_admission_precedes_any_decode_error()
+-> Result<(), GatewayError> {
+    let f = Fixture::new()?;
     let a = f.authority();
     let body = b"{";
-    let consumer = Consumer::expected(None, body);
-    let mut socket = SocketRequest::prepared(&f, &a, body);
-    socket.send_head();
-    let sender = socket.client.try_clone().unwrap();
+    let consumer = Consumer::expected(None, body)?;
+    let mut socket = SocketRequest::prepared(&f, &a, body)?;
+    socket.send_head()?;
+    let sender = socket.client.try_clone().map_err(|_| fail())?;
     std::thread::scope(|scope| {
         let task = scope.spawn(|| {
             receive_import_connection(
@@ -263,13 +272,17 @@ fn actual_original_disconnect_after_header_admission_precedes_any_decode_error()
                 &consumer,
             )
         });
-        f.store.wait_header_admitted();
-        sender.shutdown(std::net::Shutdown::Both).unwrap();
-        let error = task.join().unwrap().err().unwrap();
+        f.store.wait_header_admitted()?;
+        sender
+            .shutdown(std::net::Shutdown::Both)
+            .map_err(|_| fail())?;
+        let error = task.join().map_err(|_| fail())?.err().ok_or_else(fail)?;
         assert_eq!(
             error.envelope.error.code.as_deref(),
             Some("native_control_outcome_unknown")
         );
-    });
+        Ok::<(), GatewayError>(())
+    })?;
     assert_eq!(consumer.calls.load(Ordering::SeqCst), 0);
+    Ok(())
 }

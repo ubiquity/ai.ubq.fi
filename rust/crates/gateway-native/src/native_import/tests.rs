@@ -15,7 +15,7 @@ use gateway_auth_native_wire::native_read::{
 };
 use gateway_authority::{native_control::receiver::NativeRenewalAuthority, store::Authority};
 use gateway_native_import_test_support::{
-    fixture::{Fixture, Store, Tokens, now_ms, run},
+    fixture::{Fixture, Store, Tokens, fail, now_ms, run},
     socket::SocketRequest,
 };
 use std::{
@@ -38,24 +38,23 @@ fn proof(
     socket: &SocketRequest,
     body: &[u8],
     n: u8,
-) -> (AuthenticatedNativeImport, BTreeMap<String, String>) {
+) -> Result<(AuthenticatedNativeImport, BTreeMap<String, String>), gateway_core::error::GatewayError>
+{
     let mut h = socket.headers.clone();
     let digest = sha256_hex(body);
-    let at = now_ms();
+    let at = now_ms()?;
     let nonce = base64url(&[n; 32]);
     h.insert(NATIVE_NONCE_HEADER.into(), nonce.clone());
     h.insert(NATIVE_TIME_HEADER.into(), at.to_string());
     h.insert(
         NATIVE_MAC_HEADER.into(),
-        f.identity
-            .sign_import(
-                NativeImportKind::CodexAuth,
-                &socket.metadata,
-                &digest,
-                at,
-                &nonce,
-            )
-            .unwrap(),
+        f.identity.sign_import(
+            NativeImportKind::CodexAuth,
+            &socket.metadata,
+            &digest,
+            at,
+            &nonce,
+        )?,
     );
     let replay = StoreNonceAuthority::new(&socket.nonces);
     let admission = run(NativeAuthenticator::new(&f.identity, &replay).admit_import(
@@ -65,21 +64,21 @@ fn proof(
             body_sha256: &digest,
         },
         &socket.metadata,
-        now_ms(),
-    ))
-    .unwrap();
+        now_ms()?,
+    ))?;
     let control =
         NativeRenewalAuthority::configured(a, &f.identity, &f.owner, &f.config, &f.cancel);
-    let admitted = run(control.admit_import(admission)).unwrap();
-    (run(control.finish_import(admitted, body)).unwrap(), h)
+    let admitted = run(control.admit_import(admission))?;
+    Ok((run(control.finish_import(admitted, body))?, h))
 }
 #[test]
-fn a_different_actual_proof_cannot_observe_the_retained_auth_context() {
-    let f = Fixture::new();
+fn a_different_actual_proof_cannot_observe_the_retained_auth_context()
+-> Result<(), gateway_core::error::GatewayError> {
+    let f = Fixture::new()?;
     let a = f.authority();
-    let socket = SocketRequest::prepared(&f, &a, AUTH);
-    let (first, h) = proof(&f, &a, &socket, AUTH, 13);
-    let (other, _) = proof(&f, &a, &socket, AUTH, 14);
+    let socket = SocketRequest::prepared(&f, &a, AUTH)?;
+    let (first, h) = proof(&f, &a, &socket, AUTH, 13)?;
+    let (other, _) = proof(&f, &a, &socket, AUTH, 14)?;
     assert_eq!(first.metadata(), other.metadata());
     let connected = || false;
     let original = NativeControlContext::admitted(
@@ -87,29 +86,27 @@ fn a_different_actual_proof_cannot_observe_the_retained_auth_context() {
         &connected,
         headers(&h),
     );
-    let context = decode_context(&first, first.metadata(), AUTH, &original).unwrap();
-    context.require_original(&original).unwrap();
-    context
-        .check_document(&first, first.metadata(), AUTH)
-        .unwrap();
+    let context = decode_context(&first, first.metadata(), AUTH, &original)?;
+    context.require_original(&original)?;
+    context.check_document(&first, first.metadata(), AUTH)?;
     assert!(
         context
             .check_document(&other, other.metadata(), AUTH)
             .is_err()
     );
     let effects = std::sync::atomic::AtomicUsize::new(0);
-    context
-        .check_document(&first, first.metadata(), AUTH)
-        .unwrap();
+    context.check_document(&first, first.metadata(), AUTH)?;
     effects.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     assert_eq!(effects.load(std::sync::atomic::Ordering::SeqCst), 1);
+    Ok(())
 }
 #[test]
-fn a_different_genuine_original_context_cannot_extend_or_rebind_the_decoded_context() {
-    let f = Fixture::new();
+fn a_different_genuine_original_context_cannot_extend_or_rebind_the_decoded_context()
+-> Result<(), gateway_core::error::GatewayError> {
+    let f = Fixture::new()?;
     let a = f.authority();
-    let socket = SocketRequest::prepared(&f, &a, AUTH);
-    let (p, h) = proof(&f, &a, &socket, AUTH, 13);
+    let socket = SocketRequest::prepared(&f, &a, AUTH)?;
+    let (p, h) = proof(&f, &a, &socket, AUTH, 13)?;
     let connected = || false;
     let original = NativeControlContext::admitted(
         Instant::now() + Duration::from_secs(20),
@@ -121,18 +118,27 @@ fn a_different_genuine_original_context_cannot_extend_or_rebind_the_decoded_cont
         &connected,
         headers(&h),
     );
-    let context = decode_context(&p, p.metadata(), AUTH, &original).unwrap();
-    context.check_document(&p, p.metadata(), AUTH).unwrap();
-    context.require_original(&original).unwrap();
-    assert_eq!(context.require_original(&other).unwrap_err().status, 403);
+    let context = decode_context(&p, p.metadata(), AUTH, &original)?;
+    context.check_document(&p, p.metadata(), AUTH)?;
+    context.require_original(&original)?;
+    assert_eq!(
+        context
+            .require_original(&other)
+            .err()
+            .ok_or_else(fail)?
+            .status,
+        403
+    );
+    Ok(())
 }
 #[test]
-fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error() {
-    let f = Fixture::new();
+fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error()
+-> Result<(), gateway_core::error::GatewayError> {
+    let f = Fixture::new()?;
     let a = f.authority();
     let body = b"{";
-    let socket = SocketRequest::prepared(&f, &a, body);
-    let (p, h) = proof(&f, &a, &socket, body, 13);
+    let socket = SocketRequest::prepared(&f, &a, body)?;
+    let (p, h) = proof(&f, &a, &socket, body, 13)?;
     let control =
         NativeRenewalAuthority::configured(&a, &f.identity, &f.owner, &f.config, &f.cancel);
     struct Refuse;
@@ -165,8 +171,7 @@ fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error() {
         body,
         &cancelled,
     ))
-    .err()
-    .unwrap();
+    .err()?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("native_control_outcome_unknown")
@@ -183,8 +188,7 @@ fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error() {
         run(dispatch_import(
             &Refuse, &control, &p, &wrong, body, &original
         ))
-        .err()
-        .unwrap()
+        .err()?
         .status,
         403
     );
@@ -199,4 +203,5 @@ fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error() {
         ))
         .is_err()
     );
+    Ok(())
 }

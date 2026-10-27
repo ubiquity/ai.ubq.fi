@@ -36,14 +36,14 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
-pub fn now_ms() -> i64 {
+pub fn now_ms() -> Result<i64, GatewayError> {
     i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .map_err(|_| fail())?
             .as_millis(),
     )
-    .unwrap()
+    .map_err(|_| fail())
 }
 #[derive(Clone, Default)]
 pub struct Store {
@@ -53,47 +53,58 @@ pub struct Store {
     admitted: Arc<(Mutex<usize>, Condvar)>,
 }
 impl Store {
-    pub fn seed(&self, key: RecordKey, revision: &str, value: impl Serialize) {
-        self.rows.lock().unwrap().insert(
+    pub fn seed(
+        &self,
+        key: RecordKey,
+        revision: &str,
+        value: impl Serialize,
+    ) -> Result<(), GatewayError> {
+        self.rows.lock().map_err(|_| fail())?.insert(
             key.0,
-            StoredRecord::json(revision, serde_json::to_value(value).unwrap(), None),
+            StoredRecord::json(
+                revision,
+                serde_json::to_value(value).map_err(|_| fail())?,
+                None,
+            ),
         );
+        Ok(())
     }
-    pub fn wait_header_admitted(&self) {
+    pub fn wait_header_admitted(&self) -> Result<(), GatewayError> {
         let (count, ready) = &*self.admitted;
         let (count, timeout) = ready
             .wait_timeout_while(
-                count.lock().unwrap(),
+                count.lock().map_err(|_| fail())?,
                 std::time::Duration::from_secs(2),
                 |count| *count == 0,
             )
-            .unwrap();
+            .map_err(|_| fail())?;
         assert!(
             !timeout.timed_out() && *count > 0,
             "real current-action CAS did not occur before raw read"
         );
+        Ok(())
     }
-    pub fn captured(&self) -> String {
-        self.captures.lock().unwrap().join("\n")
+    pub fn captured(&self) -> Result<String, GatewayError> {
+        Ok(self.captures.lock().map_err(|_| fail())?.join("\n"))
     }
 }
 impl AuthorityClock for Store {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        Ok(now_ms())
+        now_ms()
     }
 }
 impl AuthorityStore for Store {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         self.captures
             .lock()
-            .unwrap()
+            .map_err(|_| fail())?
             .push(format!("read:{}", key.0));
-        Ok(self.rows.lock().unwrap().get(&key.0).cloned())
+        Ok(self.rows.lock().map_err(|_| fail())?.get(&key.0).cloned())
     }
     async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
         self.captures
             .lock()
-            .unwrap()
+            .map_err(|_|fail())?
              .push(json!({
                 "checks": tx.checks.iter().map(|check| json!({"key":check.key.0,"expected_revision":check.expected_revision})).collect::<Vec<_>>(),
                 "mutations": tx.mutations.iter().map(|mutation| match mutation {
@@ -101,7 +112,7 @@ impl AuthorityStore for Store {
                     RecordMutation::Delete{key} => json!({"delete":{"key":key.0}}),
                 }).collect::<Vec<_>>()
             }).to_string());
-        let mut rows = self.rows.lock().unwrap();
+        let mut rows = self.rows.lock().map_err(|_| fail())?;
         if tx
             .checks
             .iter()
@@ -113,7 +124,7 @@ impl AuthorityStore for Store {
             && self
                 .action_key
                 .lock()
-                .unwrap()
+                .map_err(|_| fail())?
                 .as_ref()
                 .is_some_and(|key| tx.checks.iter().any(|check| &check.key == key));
         for m in tx.mutations {
@@ -129,7 +140,7 @@ impl AuthorityStore for Store {
         drop(rows);
         if actual_action_observation {
             let (count, ready) = &*self.admitted;
-            *count.lock().unwrap() += 1;
+            *count.lock().map_err(|_| fail())? += 1;
             ready.notify_all();
         }
         Ok(CommitOutcome::Committed)
@@ -169,7 +180,11 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
 }
 impl AuthHost for Host {
     fn now_ms(&self) -> i64 {
-        now_ms()
+        // AuthHost has no fallible clock channel; an unusable fixture clock must fail the test.
+        match now_ms() {
+            Ok(value) => value,
+            Err(error) => panic!("Synthetic AuthHost clock failed: {error}"),
+        }
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
         Ok(vec![1; length])
@@ -213,7 +228,7 @@ pub struct Fixture {
     pub token: String,
 }
 impl Fixture {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, GatewayError> {
         let store = Store::default();
         let identity = NativeTransportIdentity::new(
             "import-client".into(),
@@ -221,8 +236,7 @@ impl Fixture {
             "epoch".into(),
             [7; 32],
             BTreeSet::from([NativeCapability::CodexAuthImport]),
-        )
-        .unwrap();
+        )?;
         store.seed(
             keys::paid_control_owner(),
             "owner-1",
@@ -232,7 +246,7 @@ impl Fixture {
                 owner_epoch: "epoch".into(),
                 key_fingerprint: identity.key_fingerprint().into(),
             },
-        );
+        )?;
         store.seed(
             keys::paid_control_config(),
             "config-1",
@@ -250,85 +264,16 @@ impl Fixture {
                     expected_revision: None,
                 }],
             },
-        );
-        let mut account = CodexSourceAccount {
-            account_id: "synthetic-account".into(),
-            access_token: Secret::new("SYNTHETIC_ACCESS_PROJECTION".into()),
-            refresh_token: Secret::new(String::new()),
-            updated_at_ms: now_ms() as f64,
-            native_owner: Some(CodexNativeOwner {
-                codex_home: "/tmp/native-import-synthetic-owner".into(),
-                generation_hash: sha256_hex(b"native-generation"),
-                native_refreshed_at: None,
-                external_user_id: None,
-                managed_source: Some(ManagedNativeSource {
-                    v: MANAGED_NATIVE_SOURCE_VERSION,
-                    generation_hash: sha256_hex(b"physical-native-generation"),
-                }),
-            }),
-        };
-        let source = account.identity();
-        account.native_owner.as_mut().unwrap().generation_hash =
-            source.native_generation_hash.clone();
-        let hash = source.routing_account_hash.0.clone();
-        store.seed(
-            codex_source_pool_key(),
-            "source-1",
-            CodexSourcePool {
-                accounts: vec![account],
-                updated_at_ms: now_ms() as f64,
-            }
-            .private_source_value(),
-        );
-        store.seed(
-            keys::pool(),
-            "pool-1",
-            SubscriptionPool {
-                v: 1,
-                pool_versionstamp: PoolVersionstamp("source-1".into()),
-                accounts: vec![PoolAccount {
-                    account_id_hash: source.routing_account_hash,
-                    admin_account_hash: source.administrative_account_hash,
-                    credential_version: source.credential_version,
-                    enabled: true,
-                }],
-            },
-        );
-        let token = "uos_ai_session_SYNTHETIC_CLIENT_ADMIN".to_owned();
-        let session = PasskeySession {
-            token: token.clone(),
-            user_id: "user-fixture".into(),
-            created_at_ms: 1,
-            expires_at_ms: now_ms() + 100_000,
-            audience_origin: None,
-        };
-        store.seed(
-            passkeys::key("users", "user-fixture"),
-            "user-1",
-            PasskeyUser {
-                id: "user-fixture".into(),
-                handle: "operator".into(),
-                is_admin: true,
-                credential_ids: vec!["credential".into()],
-                created_at_ms: 1,
-                updated_at_ms: 1,
-            },
-        );
-        store.seed(passkeys::key("sessions", &token), "session-1", &session);
-        store.rows.lock().unwrap().insert(
-            session_index::index_key(&session_index::digest(&token))
-                .unwrap()
-                .0,
-            session_index::record_for_session(&session, "session-1", None).unwrap(),
-        );
-        Self {
+        )?;
+        let hash = seed_account(&store)?;
+        let token = seed_admin(&store)?;
+        Ok(Self {
             store,
             identity,
             owner: RegisteredRenewalOwner::configured(
                 "native-owner".into(),
                 "/tmp/native-import-synthetic-owner".into(),
-            )
-            .unwrap(),
+            )?,
             config: AuthConfig {
                 production: true,
                 hosted: true,
@@ -338,12 +283,15 @@ impl Fixture {
             cancel: Cancel::default(),
             account: hash,
             token,
-        }
+        })
     }
     pub fn authority(&self) -> Authority<Store, Tokens> {
         Authority::with_clock(self.store.clone(), Tokens::default(), self.store.clone())
     }
-    pub async fn actor(&self, authority: &Authority<Store, Tokens>) -> actor::NativeRenewalActor {
+    pub async fn actor(
+        &self,
+        authority: &Authority<Store, Tokens>,
+    ) -> Result<actor::NativeRenewalActor, GatewayError> {
         actor::authenticate_admin_actor(
             authority,
             &Host,
@@ -362,17 +310,94 @@ impl Fixture {
                 principal: PrincipalId("passkey-user:user-fixture".into()),
                 key_id: None,
                 route: "native-client-preparation".into(),
-                started_at_ms: now_ms(),
+                started_at_ms: now_ms()?,
             },
         )
         .await
-        .unwrap()
     }
     pub fn target(&self) -> NativeImportTarget {
         NativeImportTarget::ExistingAccount {
             account_id_hash: self.account.clone(),
         }
     }
+}
+
+fn seed_account(store: &Store) -> Result<String, GatewayError> {
+    let mut account = CodexSourceAccount {
+        account_id: "synthetic-account".into(),
+        access_token: Secret::new("SYNTHETIC_ACCESS_PROJECTION".into()),
+        refresh_token: Secret::new(String::new()),
+        updated_at_ms: now_ms()? as f64,
+        native_owner: Some(CodexNativeOwner {
+            codex_home: "/tmp/native-import-synthetic-owner".into(),
+            generation_hash: sha256_hex(b"native-generation"),
+            native_refreshed_at: None,
+            external_user_id: None,
+            managed_source: Some(ManagedNativeSource {
+                v: MANAGED_NATIVE_SOURCE_VERSION,
+                generation_hash: sha256_hex(b"physical-native-generation"),
+            }),
+        }),
+    };
+    let source = account.identity();
+    account
+        .native_owner
+        .as_mut()
+        .ok_or_else(fail)?
+        .generation_hash = source.native_generation_hash.clone();
+    let hash = source.routing_account_hash.0.clone();
+    store.seed(
+        codex_source_pool_key(),
+        "source-1",
+        CodexSourcePool {
+            accounts: vec![account],
+            updated_at_ms: now_ms()? as f64,
+        }
+        .private_source_value(),
+    )?;
+    store.seed(
+        keys::pool(),
+        "pool-1",
+        SubscriptionPool {
+            v: 1,
+            pool_versionstamp: PoolVersionstamp("source-1".into()),
+            accounts: vec![PoolAccount {
+                account_id_hash: source.routing_account_hash,
+                admin_account_hash: source.administrative_account_hash,
+                credential_version: source.credential_version,
+                enabled: true,
+            }],
+        },
+    )?;
+    Ok(hash)
+}
+fn seed_admin(store: &Store) -> Result<String, GatewayError> {
+    let token = "uos_ai_session_SYNTHETIC_CLIENT_ADMIN".to_owned();
+    let session = PasskeySession {
+        token: token.clone(),
+        user_id: "user-fixture".into(),
+        created_at_ms: 1,
+        expires_at_ms: now_ms()? + 100_000,
+        audience_origin: None,
+    };
+    store.seed(
+        passkeys::key("users", "user-fixture"),
+        "user-1",
+        PasskeyUser {
+            id: "user-fixture".into(),
+            handle: "operator".into(),
+            is_admin: true,
+            credential_ids: vec!["credential".into()],
+            created_at_ms: 1,
+            updated_at_ms: 1,
+        },
+    )?;
+    store.seed(passkeys::key("sessions", &token), "session-1", &session)?;
+    store.rows.lock().map_err(|_| fail())?.insert(
+        session_index::index_key(&session_index::digest(&token))?.0,
+        session_index::record_for_session(&session, "session-1", None)?,
+    );
+    Ok(token)
 }
 
 impl gateway_core::query::QueryStore for Store {
@@ -386,7 +411,7 @@ impl gateway_core::query::QueryStore for Store {
             tuple_key::TupleKey,
         };
         let checked = request.validate()?;
-        let rows = self.rows.lock().unwrap();
+        let rows = self.rows.lock().map_err(|_| fail())?;
         let mut matching = Vec::new();
         for (key, record) in rows.iter() {
             let key = RecordKey(key.clone());
@@ -435,10 +460,4 @@ pub fn config() -> AuthConfig {
 }
 pub fn authority(store: &Store) -> Authority<Store, Tokens> {
     Authority::with_clock(store.clone(), Tokens::default(), store.clone())
-}
-
-impl Default for Fixture {
-    fn default() -> Self {
-        Self::new()
-    }
 }

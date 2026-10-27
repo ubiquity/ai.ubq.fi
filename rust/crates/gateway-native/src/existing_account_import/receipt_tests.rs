@@ -75,10 +75,15 @@ impl NativeImportHandler for Issuer<'_> {
             &f.cancel,
         );
         run(context.check_current(&control))?;
-        let native = self.native.lock().unwrap().take().unwrap();
+        let native = self
+            .native
+            .lock()
+            .map_err(|_| fail())?
+            .take()
+            .ok_or_else(fail)?;
         let mut claim = run(control.claim_import(proof))?;
         let start = run(control.start_import(&mut claim, proof))?.ok_or_else(fail)?;
-        let receipt = native.issue_fixture(start, proof, raw, context, original, now_ms())?;
+        let receipt = native.issue_fixture(start, proof, raw, context, original, now_ms()?)?;
         self.created.store(true, Ordering::SeqCst);
         assert!(
             !matches!(self.case, ReceiptCase::NoWrite),
@@ -97,7 +102,7 @@ impl NativeImportHandler for Issuer<'_> {
             }
             ReceiptCase::NoWrite => unreachable!(),
         }
-        Ok(pending())
+        pending()
     }
 }
 impl Issuer<'_> {
@@ -126,19 +131,21 @@ impl Issuer<'_> {
         assert_eq!(
             receipt.native_generation(),
             gateway_auth::native_credentials::parse_native_document(next)
-                .unwrap()
+                .map_err(|_| fail())?
                 .generation_hash()
         );
         let reference = receipt.receipt_ref();
         assert_eq!(reference.len(), 64);
         assert!(!reference.contains(&sha256_hex(raw)));
         drop(native);
-        let reopened = ExistingAccountImportStore::configured(&f.owner, f.account.clone()).unwrap();
+        let reopened = ExistingAccountImportStore::configured(&f.owner, f.account.clone())
+            .map_err(|_| fail())?;
         let recovered = run(reopened.reconcile(control, replay, proof, raw))?;
         assert_eq!(recovered.receipt_ref(), reference);
         run(reopened.recheck_receipt(control, replay, proof, raw, &recovered))?;
         let stored: serde_json::Value =
-            serde_json::from_slice(&fs::read(home.path().join("auth.json")).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(home.path().join("auth.json")).map_err(|_| fail())?)
+                .map_err(|_| fail())?;
         assert_eq!(stored["OPENAI_API_KEY"], old["OPENAI_API_KEY"]);
         assert_eq!(stored["other"], old["other"]);
         assert_eq!(stored["tokens"], next["tokens"]);
@@ -148,16 +155,16 @@ impl Issuer<'_> {
                     ".uos-import-{}.previous",
                     proof.metadata().action_ref
                 )))
-                .unwrap()
+                .map_err(|_| fail())?
             )
-            .unwrap(),
+            .map_err(|_| fail())?,
             **old
         );
         assert_eq!(
-            fs::read(other.path().join("auth.json")).unwrap(),
+            fs::read(other.path().join("auth.json")).map_err(|_| fail())?,
             *other_before
         );
-        let captured = f.store.captured();
+        let captured = f.store.captured()?;
         for secret in [
             "SYNTHETIC_REFRESH_old",
             "SYNTHETIC_REFRESH_new",
@@ -166,7 +173,7 @@ impl Issuer<'_> {
         ] {
             assert!(!captured.contains(secret));
         }
-        let rows = f.store.rows.lock().unwrap();
+        let rows = f.store.rows.lock().map_err(|_| fail())?;
         let operations = rows
             .values()
             .filter(|r| r.value.get("phase").is_some())
@@ -197,12 +204,12 @@ impl Issuer<'_> {
                 let foreign = ExistingAccountImportStore::configured(
                     &RegisteredRenewalOwner::configured(
                         "foreign-owner".into(),
-                        home.path().to_str().unwrap().into(),
+                        home.path().to_str().ok_or_else(fail)?.into(),
                     )
-                    .unwrap(),
+                    .map_err(|_| fail())?,
                     f.account.clone(),
                 )
-                .unwrap();
+                .map_err(|_| fail())?;
                 assert!(run(foreign.reconcile(control, replay, proof, &body)).is_err());
                 return Ok(());
             }
@@ -212,45 +219,49 @@ impl Issuer<'_> {
                     proof.metadata().action_ref
                 ));
                 let mut wire: serde_json::Value =
-                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                    serde_json::from_slice(&fs::read(&path).map_err(|_| fail())?)
+                        .map_err(|_| fail())?;
                 wire["operation_id"] = json!("foreign-operation");
-                fs::write(path, serde_json::to_vec(&wire).unwrap()).unwrap();
+                fs::write(path, serde_json::to_vec(&wire).map_err(|_| fail())?)
+                    .map_err(|_| fail())?;
             }
             "account" => {
-                let mut value = document("foreign");
+                let mut value = document("foreign")?;
                 value["tokens"]["account_id"] = json!("foreign-account");
-                home.write_auth(&value);
+                home.write_auth(&value)?;
             }
             "symlink" => {
                 let original = home.path().join("retained-auth.json");
-                fs::rename(home.path().join("auth.json"), &original).unwrap();
-                std::os::unix::fs::symlink(original, home.path().join("auth.json")).unwrap();
+                fs::rename(home.path().join("auth.json"), &original).map_err(|_| fail())?;
+                std::os::unix::fs::symlink(original, home.path().join("auth.json"))
+                    .map_err(|_| fail())?;
             }
-            "generation" => home.write_auth(&document("advanced-without-retry")),
+            "generation" => home.write_auth(&document("advanced-without-retry")?)?,
             "actor" => {
                 f.store
                     .rows
                     .lock()
-                    .unwrap()
+                    .map_err(|_| fail())?
                     .get_mut(&passkeys::key("users", "user-fixture").0)
-                    .unwrap()
+                    .ok_or_else(fail)?
                     .revision = "user-replaced".into()
             }
             "source_cf" => {
                 f.store
                     .rows
                     .lock()
-                    .unwrap()
+                    .map_err(|_| fail())?
                     .get_mut(&codex_source_pool_key().0)
-                    .unwrap()
+                    .ok_or_else(fail)?
                     .revision = "source-replaced".into()
             }
             "cancel" => f.cancel.0.store(true, Ordering::SeqCst),
             _ => {
                 let path = home.path().with_extension("retained");
-                fs::rename(home.path(), &path).unwrap();
-                fs::create_dir(home.path()).unwrap();
-                fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+                fs::rename(home.path(), &path).map_err(|_| fail())?;
+                fs::create_dir(home.path()).map_err(|_| fail())?;
+                fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700))
+                    .map_err(|_| fail())?;
                 moved = Some(path);
             }
         }
@@ -265,20 +276,20 @@ impl Issuer<'_> {
             );
         }
         if let Some(path) = moved {
-            fs::remove_dir_all(path).unwrap();
+            fs::remove_dir_all(path).map_err(|_| fail())?;
         }
         Ok(())
     }
 }
 
-fn pending() -> NativeImportResult {
-    NativeImportResult {
+fn pending() -> Result<NativeImportResult, GatewayError> {
+    Ok(NativeImportResult {
         status: 202,
         headers: BTreeMap::new(),
         body: SourceJson::parse(r#"{"state":"synthetic_native_durable_publication_pending"}"#)
-            .unwrap(),
+            .map_err(|_| fail())?,
         completion: NativeImportCompletion::PendingUnknown,
-    }
+    })
 }
 fn receive(
     f: &Fixture,
@@ -286,9 +297,9 @@ fn receive(
     mut socket: SocketRequest,
     raw: &[u8],
     issuer: &Issuer<'_>,
-) -> Result<NativeImportResult, GatewayError> {
-    socket.send(raw);
-    receive_import_connection(
+) -> Result<Result<NativeImportResult, GatewayError>, GatewayError> {
+    socket.send(raw)?;
+    Ok(receive_import_connection(
         &mut socket.accepted,
         a,
         &f.identity,
@@ -296,26 +307,28 @@ fn receive(
         &f.config,
         &socket.nonces,
         issuer,
-    )
+    ))
 }
 #[test]
-fn durable_native_receipt_reopens_original_context_without_refresh_or_published() {
-    let home = Home::fresh();
-    let other = Home::fresh();
-    let old = document("old");
-    home.write_auth(&old);
-    other.write_auth(&document("independent"));
-    let other_before = fs::read(other.path().join("auth.json")).unwrap();
-    let f = fixture(&home, &old);
+fn durable_native_receipt_reopens_original_context_without_refresh_or_published()
+-> Result<(), GatewayError> {
+    let home = Home::fresh()?;
+    let other = Home::fresh()?;
+    let old = document("old")?;
+    home.write_auth(&old)?;
+    other.write_auth(&document("independent")?)?;
+    let other_before = fs::read(other.path().join("auth.json")).map_err(|_| fail())?;
+    let f = fixture(&home, &old)?;
     let a = f.authority();
-    let next = document("new");
-    let raw =
-        serde_json::to_vec(&json!({"auth":next,"models":{"client_version":"0.100.0"}})).unwrap();
+    let next = document("new")?;
+    let raw = serde_json::to_vec(&json!({"auth":next,"models":{"client_version":"0.100.0"}}))
+        .map_err(|_| fail())?;
     let issuer = Issuer {
         f: &f,
         authority: &a,
         native: Mutex::new(Some(
-            ExistingAccountImportStore::configured(&f.owner, f.account.clone()).unwrap(),
+            ExistingAccountImportStore::configured(&f.owner, f.account.clone())
+                .map_err(|_| fail())?,
         )),
         case: ReceiptCase::Recover {
             home: &home,
@@ -326,16 +339,24 @@ fn durable_native_receipt_reopens_original_context_without_refresh_or_published(
         },
         created: AtomicBool::new(false),
     };
-    let response = receive(&f, &a, SocketRequest::prepared(&f, &a, &raw), &raw, &issuer).unwrap();
+    let response = receive(
+        &f,
+        &a,
+        SocketRequest::prepared(&f, &a, &raw)?,
+        &raw,
+        &issuer,
+    )??;
     assert!(matches!(
         response.completion,
         NativeImportCompletion::PendingUnknown
     ));
     assert_eq!(response.status, 202);
     assert!(issuer.created.load(Ordering::SeqCst));
+    Ok(())
 }
 #[test]
-fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse() {
+fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse()
+-> Result<(), GatewayError> {
     for changed in [
         "body",
         "owner",
@@ -348,17 +369,18 @@ fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse() {
         "source_cf",
         "cancel",
     ] {
-        let home = Home::fresh();
-        let old = document("old");
-        home.write_auth(&old);
-        let f = fixture(&home, &old);
+        let home = Home::fresh()?;
+        let old = document("old")?;
+        home.write_auth(&old)?;
+        let f = fixture(&home, &old)?;
         let a = f.authority();
-        let raw = serde_json::to_vec(&document("new")).unwrap();
+        let raw = serde_json::to_vec(&document("new")?).map_err(|_| fail())?;
         let issuer = Issuer {
             f: &f,
             authority: &a,
             native: Mutex::new(Some(
-                ExistingAccountImportStore::configured(&f.owner, f.account.clone()).unwrap(),
+                ExistingAccountImportStore::configured(&f.owner, f.account.clone())
+                    .map_err(|_| fail())?,
             )),
             case: ReceiptCase::Refuse {
                 changed,
@@ -366,51 +388,63 @@ fn native_receipt_wrong_owner_source_account_body_and_replaced_files_refuse() {
             },
             created: AtomicBool::new(false),
         };
-        receive(&f, &a, SocketRequest::prepared(&f, &a, &raw), &raw, &issuer).unwrap();
+        receive(
+            &f,
+            &a,
+            SocketRequest::prepared(&f, &a, &raw)?,
+            &raw,
+            &issuer,
+        )??;
         assert!(issuer.created.load(Ordering::SeqCst));
     }
+    Ok(())
 }
 #[test]
-fn production_mutation_is_unavailable_without_real_native_writer_exclusion() {
-    let home = Home::fresh();
-    let old = document("old");
-    home.write_auth(&old);
+fn production_mutation_is_unavailable_without_real_native_writer_exclusion()
+-> Result<(), GatewayError> {
+    let home = Home::fresh()?;
+    let old = document("old")?;
+    home.write_auth(&old)?;
     let hash = gateway_auth::native_credentials::parse_native_document(&old)
-        .unwrap()
+        .map_err(|_| fail())?
         .routing_account_hash();
     let native = ExistingAccountImportStore::configured(
         &RegisteredRenewalOwner::configured(
             "native-owner".into(),
-            home.path().to_str().unwrap().into(),
+            home.path().to_str().ok_or_else(fail)?.into(),
         )
-        .unwrap(),
+        .map_err(|_| fail())?,
         hash,
     )
-    .unwrap();
-    let before = fs::read(home.path().join("auth.json")).unwrap();
-    let error = native.require_mutation_owner().unwrap_err();
+    .map_err(|_| fail())?;
+    let before = fs::read(home.path().join("auth.json")).map_err(|_| fail())?;
+    let error = native.require_mutation_owner().err().ok_or_else(fail)?;
     assert_eq!(error.status, 503);
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("native_import_owner_exclusion_unavailable")
     );
-    assert_eq!(fs::read(home.path().join("auth.json")).unwrap(), before);
-    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1);
+    assert_eq!(
+        fs::read(home.path().join("auth.json")).map_err(|_| fail())?,
+        before
+    );
+    assert_eq!(fs::read_dir(home.path()).map_err(|_| fail())?.count(), 1);
+    Ok(())
 }
 
 #[test]
-fn wrong_uploaded_account_owner_and_physical_source_write_nothing() {
+fn wrong_uploaded_account_owner_and_physical_source_write_nothing() -> Result<(), GatewayError> {
     for changed in ["account", "owner", "source"] {
-        let home = Home::fresh();
-        let old = document("old");
-        home.write_auth(&old);
-        let f = fixture(&home, &old);
+        let home = Home::fresh()?;
+        let old = document("old")?;
+        home.write_auth(&old)?;
+        let f = fixture(&home, &old)?;
         let a = f.authority();
         let foreign = RegisteredRenewalOwner::configured(
             "foreign-owner".into(),
-            home.path().to_str().unwrap().into(),
+            home.path().to_str().ok_or_else(fail)?.into(),
         )
-        .unwrap();
+        .map_err(|_| fail())?;
         let native = ExistingAccountImportStore::configured(
             if changed == "owner" {
                 &foreign
@@ -419,17 +453,17 @@ fn wrong_uploaded_account_owner_and_physical_source_write_nothing() {
             },
             f.account.clone(),
         )
-        .unwrap();
-        let mut uploaded = document("new");
+        .map_err(|_| fail())?;
+        let mut uploaded = document("new")?;
         if changed == "account" {
             uploaded["tokens"]["account_id"] = json!("foreign-account");
         }
-        let raw = serde_json::to_vec(&uploaded).unwrap();
-        let socket = SocketRequest::prepared(&f, &a, &raw);
+        let raw = serde_json::to_vec(&uploaded).map_err(|_| fail())?;
+        let socket = SocketRequest::prepared(&f, &a, &raw)?;
         if changed == "source" {
-            home.write_auth(&document("independent-native-advance"));
+            home.write_auth(&document("independent-native-advance")?)?;
         }
-        let before = fs::read(home.path().join("auth.json")).unwrap();
+        let before = fs::read(home.path().join("auth.json")).map_err(|_| fail())?;
         let issuer = Issuer {
             f: &f,
             authority: &a,
@@ -437,15 +471,27 @@ fn wrong_uploaded_account_owner_and_physical_source_write_nothing() {
             case: ReceiptCase::NoWrite,
             created: AtomicBool::new(false),
         };
-        assert!(receive(&f, &a, socket, &raw, &issuer).is_err(), "{changed}");
+        let refusal = receive(&f, &a, socket, &raw, &issuer)?
+            .err()
+            .ok_or_else(fail)?;
+        assert_ne!(
+            refusal.envelope.error.code.as_deref(),
+            Some("fixture_refusal"),
+            "setup failure is not native refusal"
+        );
         assert_eq!(
-            fs::read(home.path().join("auth.json")).unwrap(),
+            fs::read(home.path().join("auth.json")).map_err(|_| fail())?,
             before,
             "{changed}"
         );
-        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1, "{changed}");
+        assert_eq!(
+            fs::read_dir(home.path()).map_err(|_| fail())?.count(),
+            1,
+            "{changed}"
+        );
         assert!(!issuer.created.load(Ordering::SeqCst));
-        let rows = f.store.rows.lock().unwrap();
+        let rows = f.store.rows.lock().map_err(|_| fail())?;
         assert!(rows.values().all(|row| row.value["phase"] != "published"));
     }
+    Ok(())
 }

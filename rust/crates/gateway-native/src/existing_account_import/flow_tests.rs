@@ -109,7 +109,7 @@ fn inputs() -> ConfiguredPaidInputs {
     )
     .unwrap()
 }
-fn setup(store: &base::Store, home: &Path) -> String {
+fn setup(store: &base::Store, home: &Path) -> Result<String, GatewayError> {
     let identity = id();
     store.seed(
         keys::paid_control_owner(),
@@ -120,7 +120,7 @@ fn setup(store: &base::Store, home: &Path) -> String {
             owner_epoch: identity.owner_epoch().into(),
             key_fingerprint: identity.key_fingerprint().into(),
         },
-    );
+    )?;
     let old = credentials();
     let mut account = CodexSourceAccount {
         account_id: old.account_id.clone(),
@@ -128,7 +128,7 @@ fn setup(store: &base::Store, home: &Path) -> String {
         refresh_token: Secret::new(String::new()),
         updated_at_ms: now() as f64,
         native_owner: Some(CodexNativeOwner {
-            codex_home: home.to_str().unwrap().into(),
+            codex_home: home.to_str().ok_or_else(base::fail)?.into(),
             generation_hash: String::new(),
             native_refreshed_at: None,
             external_user_id: None,
@@ -139,8 +139,11 @@ fn setup(store: &base::Store, home: &Path) -> String {
         }),
     };
     let projected = account.identity();
-    account.native_owner.as_mut().unwrap().generation_hash =
-        projected.native_generation_hash.clone();
+    account
+        .native_owner
+        .as_mut()
+        .ok_or_else(base::fail)?
+        .generation_hash = projected.native_generation_hash.clone();
     let hash = projected.routing_account_hash.0.clone();
     store.seed(
         codex_source_pool_key(),
@@ -150,7 +153,7 @@ fn setup(store: &base::Store, home: &Path) -> String {
             updated_at_ms: now() as f64,
         }
         .private_source_value(),
-    );
+    )?;
     store.seed(
         keys::pool(),
         "pool-before",
@@ -164,7 +167,7 @@ fn setup(store: &base::Store, home: &Path) -> String {
                 enabled: true,
             }],
         },
-    );
+    )?;
     let captured = futures_executor::block_on(PreparedConfigurationPublication::capture(
         store,
         &identity,
@@ -172,15 +175,15 @@ fn setup(store: &base::Store, home: &Path) -> String {
         "config-before",
         now(),
     ))
-    .unwrap();
+    .map_err(|_| base::fail())?;
     store.seed(
         keys::paid_control_config(),
         "config-before",
         captured.configuration(),
-    );
-    hash
+    )?;
+    Ok(hash)
 }
-fn admin_actor(store: &base::Store) -> actor::NativeRenewalActor {
+fn admin_actor(store: &base::Store) -> Result<actor::NativeRenewalActor, GatewayError> {
     let token = "uos_ai_session_SYNTHETIC_FLOW";
     store.seed(
         passkeys::key("users", "flow-user"),
@@ -193,7 +196,7 @@ fn admin_actor(store: &base::Store) -> actor::NativeRenewalActor {
             created_at_ms: 1,
             updated_at_ms: 1,
         },
-    );
+    )?;
     let session = PasskeySession {
         token: token.into(),
         user_id: "flow-user".into(),
@@ -201,12 +204,13 @@ fn admin_actor(store: &base::Store) -> actor::NativeRenewalActor {
         expires_at_ms: now() + 600_000,
         audience_origin: None,
     };
-    store.seed(passkeys::key("sessions", token), "session-before", &session);
-    store.rows.lock().unwrap().insert(
+    store.seed(passkeys::key("sessions", token), "session-before", &session)?;
+    store.rows.lock().map_err(|_| base::fail())?.insert(
         session_index::index_key(&session_index::digest(token))
-            .unwrap()
+            .map_err(|_| base::fail())?
             .0,
-        session_index::record_for_session(&session, "session-before", None).unwrap(),
+        session_index::record_for_session(&session, "session-before", None)
+            .map_err(|_| base::fail())?,
     );
     let authority = authority(store);
     let config = base::config();
@@ -230,7 +234,7 @@ fn admin_actor(store: &base::Store) -> actor::NativeRenewalActor {
         &request,
         &context,
     ))
-    .unwrap()
+    .map_err(|_| base::fail())
 }
 struct CaseRoot {
     base: PathBuf,
@@ -875,37 +879,39 @@ fn request(
     account: String,
     address: std::net::SocketAddr,
     body: &[u8],
-) -> (Vec<u8>, NativeImportMetadata) {
+) -> Result<(Vec<u8>, NativeImportMetadata), GatewayError> {
     let authority = authority(store);
     let identity = id();
     let config = base::config();
     let cancel = base::Cancel::default();
-    let owner =
-        RegisteredRenewalOwner::configured("native-owner".into(), home.to_str().unwrap().into())
-            .unwrap();
-    let actor = admin_actor(store);
+    let owner = RegisteredRenewalOwner::configured(
+        "native-owner".into(),
+        home.to_str().ok_or_else(base::fail)?.into(),
+    )
+    .map_err(|_| base::fail())?;
+    let actor = admin_actor(store)?;
     let client = gateway_native_import_client::client::NativeImportClient::configured(
         address, &authority, &identity, &owner, &config, &cancel,
     )
-    .unwrap();
+    .map_err(|_| base::fail())?;
     let prepared = futures_executor::block_on(client.prepare(
         &actor,
         NativeImportTarget::ExistingAccount {
             account_id_hash: account,
         },
     ))
-    .unwrap();
+    .map_err(|_| base::fail())?;
     let packet = client
         .request(prepared, body, now(), &base64url(&[9; 32]))
-        .unwrap();
+        .map_err(|_| base::fail())?;
     let metadata = packet.metadata().clone();
-    let mut socket = TcpStream::connect(packet.endpoint()).unwrap();
+    let mut socket = TcpStream::connect(packet.endpoint()).map_err(|_| base::fail())?;
     socket
         .set_read_timeout(Some(Duration::from_secs(50)))
-        .unwrap();
+        .map_err(|_| base::fail())?;
     socket
         .set_write_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
+        .map_err(|_| base::fail())?;
     let mut head = format!(
         "POST {} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n",
         packet.path(),
@@ -915,36 +921,42 @@ fn request(
         head.push_str(&format!("{k}: {v}\r\n"));
     }
     head.push_str("\r\n");
-    socket.write_all(head.as_bytes()).unwrap();
-    socket.write_all(packet.body()).unwrap();
+    socket
+        .write_all(head.as_bytes())
+        .map_err(|_| base::fail())?;
+    socket.write_all(packet.body()).map_err(|_| base::fail())?;
     let mut response = Vec::new();
     if let Err(error) = socket.read_to_end(&mut response) {
-        let path = home.parent().unwrap().join("partial-native-response.bin");
+        let path = home
+            .parent()
+            .ok_or_else(base::fail)?
+            .join("partial-native-response.bin");
         let mut saved = fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .mode(0o600)
             .open(path)
-            .unwrap();
+            .map_err(|_| base::fail())?;
         saved
             .write_all(&response[..response.len().min(8192)])
-            .unwrap();
+            .map_err(|_| base::fail())?;
         panic!(
             "native response read failed ({:?}); {} bytes observed, bounded private response retained",
             error.kind(),
             response.len()
         );
     }
-    (response, metadata)
+    Ok((response, metadata))
 }
 #[test]
-fn actual_existing_account_original_start_owned_child_custody_durability_and_publication() {
+fn actual_existing_account_original_start_owned_child_custody_durability_and_publication()
+-> Result<(), GatewayError> {
     let root = CaseRoot::new();
     let store = base::Store::default();
-    let account = setup(&store, &root.path().join("home"));
+    let account = setup(&store, &root.path().join("home"))?;
     let servers = Servers::start(store.clone(), root.path().join("home"));
     let (mut child, address) = start_custodian(&root, &servers, account.clone());
-    let (response, _metadata) = request(&store, &root.path().join("home"), account, address, NEW);
+    let (response, _metadata) = request(&store, &root.path().join("home"), account, address, NEW)?;
     assert!(
         response.starts_with(b"HTTP/1.1 200 "),
         "real source success required, not a dummy200 or narrowed unavailable path: {}",
@@ -954,13 +966,14 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     let header_end = response
         .windows(4)
         .position(|part| part == b"\r\n\r\n")
-        .unwrap()
+        .ok_or_else(base::fail)?
         + 4;
     let headers = String::from_utf8_lossy(&response[..header_end]).to_ascii_lowercase();
     assert!(headers.contains("x-uos-upstream: chatgpt_codex\r\n"));
-    let result: serde_json::Value = serde_json::from_slice(&response[header_end..]).unwrap();
+    let result: serde_json::Value =
+        serde_json::from_slice(&response[header_end..]).map_err(|_| base::fail())?;
     assert_eq!(
-        result.as_object().unwrap().len(),
+        result.as_object().ok_or_else(base::fail)?.len(),
         12,
         "source completion fields may not be silently omitted"
     );
@@ -987,13 +1000,13 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     assert_eq!(result["models"]["source"], "chatgpt_codex");
     assert_eq!(result["models"]["client_version"], "0.163.0");
     let pool_record = futures_executor::block_on(store.read(&codex_source_pool_key()))
-        .unwrap()
-        .unwrap();
+        .map_err(|_| base::fail())?
+        .ok_or_else(base::fail)?;
     let pool = gateway_auth::provider_credentials::parse_codex_source_pool(
-        pool_record.json_value().unwrap(),
+        pool_record.json_value().map_err(|_| base::fail())?,
     )
-    .unwrap()
-    .unwrap();
+    .map_err(|_| base::fail())?
+    .ok_or_else(base::fail)?;
     assert_eq!(
         result["updated_at_ms"].as_f64(),
         Some(pool.accounts[0].updated_at_ms)
@@ -1005,47 +1018,54 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     assert!(pool.accounts[0].refresh_token.expose().is_empty());
     let generation =
         futures_executor::block_on(store.read(&key(&["ubq_ai", "codex_catalog_auth_generation"])))
-            .unwrap()
-            .unwrap();
+            .map_err(|_| base::fail())?
+            .ok_or_else(base::fail)?;
     let cache =
         futures_executor::block_on(store.read(&key(&["ubq_ai", "codex_catalog", "0.163.0"])))
-            .unwrap()
-            .unwrap();
-    let cache = cache.json_value().unwrap();
+            .map_err(|_| base::fail())?
+            .ok_or_else(base::fail)?;
+    let cache = cache.json_value().map_err(|_| base::fail())?;
     assert_eq!(cache["auth_generation"], generation.value);
     assert_eq!(cache["source_sha256"], sha256_hex(MODELS));
-    assert!(cache["chunk_count"].as_u64().unwrap() > 0);
-    assert!(cache["source_chunk_count"].as_u64().unwrap() > 0);
+    assert!(cache["chunk_count"].as_u64().ok_or_else(base::fail)? > 0);
+    assert!(
+        cache["source_chunk_count"]
+            .as_u64()
+            .ok_or_else(base::fail)?
+            > 0
+    );
     assert_eq!(cache["content_type"], "application/json; charset=utf-8");
-    let bytes = fs::read(root.path().join("home/auth.json")).unwrap();
-    let document = SourceJson::parse_bytes(&bytes).unwrap();
-    let next = gateway_native_import_source::documents::credentials(&document).unwrap();
+    let bytes = fs::read(root.path().join("home/auth.json")).map_err(|_| base::fail())?;
+    let document = SourceJson::parse_bytes(&bytes).map_err(|_| base::fail())?;
+    let next = gateway_native_import_source::documents::credentials(&document)
+        .map_err(|_| base::fail())?;
     assert_eq!(next.access_token.expose(), "SYNTHETIC_NEW_ACCESS");
     assert_eq!(next.refresh_token.expose(), "SYNTHETIC_NEW_REFRESH");
     assert_eq!(
         gateway_native_import_source::documents::member(&document, "OPENAI_API_KEY")
-            .unwrap()
-            .unwrap()
+            .map_err(|_| base::fail())?
+            .ok_or_else(base::fail)?
             .as_str(),
         r#""SYNTHETIC_INDEPENDENT""#
     );
     assert_eq!(
         gateway_native_import_source::documents::member(&document, "unrelated")
-            .unwrap()
-            .unwrap()
+            .map_err(|_| base::fail())?
+            .ok_or_else(base::fail)?
             .as_str(),
         r#""\ud800""#
     );
-    let witness = fs::read(root.path().join("home/async-native-write")).unwrap();
+    let witness =
+        fs::read(root.path().join("home/async-native-write")).map_err(|_| base::fail())?;
     thread::sleep(Duration::from_millis(25));
     assert_eq!(
-        fs::read(root.path().join("home/async-native-write")).unwrap(),
+        fs::read(root.path().join("home/async-native-write")).map_err(|_| base::fail())?,
         witness,
         "actual writer must have stopped/reaped before credential mutation"
     );
     assert_eq!(servers.traffic.models.load(Ordering::SeqCst), 1);
     assert_eq!(servers.traffic.oauth.load(Ordering::SeqCst), 0);
-    let captured = servers.traffic.authority.lock().unwrap();
+    let captured = servers.traffic.authority.lock().map_err(|_| base::fail())?;
     assert!(captured.iter().any(|body| {
         body.windows(b"codex_auth_import_publish".len())
             .any(|w| w == b"codex_auth_import_publish")
@@ -1056,6 +1076,7 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
         assert!(!text.contains(&sha256_hex(NEW)));
         assert!(!text.contains(&sha256_hex(&bytes)));
     }
+    Ok(())
 }
 
 mod negatives;
