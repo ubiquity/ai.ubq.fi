@@ -77,6 +77,11 @@ test("static assets register frontend module dependencies", () => {
   assert.match(chatScript, /from "\.\/toast\.js\?v=passport-design-20260922";/);
 });
 
+test("chat uses the branded Ubiquity Passport sign-in button", () => {
+  assert.match(chatHtml, /id="passport-login"[\s\S]*?data-passport-signin[\s\S]*?Sign in with Ubiquity/);
+  assert.match(chatHtml, /viewBox="0 0 96 96"/);
+});
+
 test("chat response stats use one conversation bar below the composer", () => {
   assert.equal((chatHtml.match(/\bdata-chat-stats\b/g) ?? []).length, 1);
   assert.match(chatHtml, /<\/form>\s*<div data-chat-stats role="status" aria-live="polite" aria-atomic="true" hidden><\/div>/);
@@ -108,7 +113,7 @@ test("public models page is registered", () => {
 });
 
 test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const sharedAssetVersion = "passport-design-20260922";
+  const sharedAssetVersion = "ubiquity-signin-20261025";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -374,8 +379,8 @@ test("admin analytics view places capacity history before current providers", ()
   assert.match(adminHtml, /id="card-provider-capacity">Provider analytics/);
   assert.match(adminHtml, /id="view-tab-analytics"[\s\S]*?>\s*Analytics\s*</);
   assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=passport-design-20260922/);
-  assert.match(adminHtml, /admin\.js\?v=admin-decision-models-20261025/);
+  assert.match(adminHtml, /admin\.css\?v=claude-usage-refresh-20261025/);
+  assert.match(adminHtml, /admin\.js\?v=claude-usage-direct-20261025/);
   assert.match(adminScript, /endpoints\.has\("\/v1\/decisions"\)/);
   assert.match(adminScript, /toLocaleString\(undefined,/);
   assert.match(adminScript, /timeZoneName: "short"/);
@@ -765,6 +770,7 @@ test("admin routes and page aliases are never cacheable before authentication", 
     ["POST", "/admin/providers/claude-code/auth"],
     ["DELETE", "/admin/providers/claude-code/auth"],
     ["POST", "/admin/providers/claude-code/quota/clear"],
+    ["POST", "/admin/providers/claude-code/quota/refresh"],
     ["GET", "/admin/providers/quota-projection"],
     ["POST", "/admin/providers/quota-projection/backfill"],
     ["GET", "/admin/prompt-cache-analytics"],

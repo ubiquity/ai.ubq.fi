@@ -230,6 +230,24 @@ test("signOut clears a relay cookie without sending an empty bearer header", asy
   }
 });
 
+test("Passport logout unavailability preserves cached state and does not claim local sign-out", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = createFetchMock(() => {
+    calls += 1;
+    return Promise.resolve(new Response(null, { status: 503 }));
+  });
+  try {
+    await withLocalStorage({ [STORAGE_KEYS.token]: "retained", [STORAGE_KEYS.rememberToken]: "1" }, async (store) => {
+      await assert.rejects(signOut({ baseUrl: "https://ai.ubq.fi", passportSession: true }), /Sign-out is unavailable/);
+      assert.equal(store.get(STORAGE_KEYS.token), "retained");
+      assert.equal(calls, 1);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("signInWithPasskey does not restrict discoverable login to cached credential ids", async () => {
   await withPasskeyBrowser(async () => {
     await withLocalStorage(

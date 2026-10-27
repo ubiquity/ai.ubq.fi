@@ -7,16 +7,15 @@ import {
   type DeepSeekResponsesResult,
   type OriginalToolName,
   failure,
+  aggregateContextOverflow,
   originalToolName,
 } from "./responses.ts";
 import { deepSeekThinkingModeActive } from "./index.ts";
 import {
-  COMPACTION_SUMMARY_POLICY,
   FORWARDED_PAYLOAD_POLICY,
   compactionSummaryExemption,
   estimatePromptAdmission,
   inspectCompactionSummaryInput,
-  PROMPT_ADMISSION_POLICY,
   promptAdmissionFailureMessage,
   promptWindowTokensForProfile,
   reduceToolArgumentsPayload,
@@ -28,7 +27,6 @@ import {
 import { getString, isRecord } from "../utils.ts";
 
 type ChatContentPart = Record<string, unknown>;
-
 /** One Responses content part mapped onto the Chat content union for one message role. */
 const chatContentPart = (
   part: unknown,
@@ -919,52 +917,6 @@ const prepareExecutableToolMessages = (
 };
 
 /**
- * Once Codex has adopted a local-compaction summary, messages before that
- * summary are redundant history. They can nevertheless make a steer overflow
- * the provider window because Codex sends the summary alongside the old tail.
- * Keep the leading system instructions and the summary itself, replace the
- * older messages with one visible notice, and let aggregate admission decide
- * whether the remainder fits. This never mutates the summary and only runs when
- * the request allowed reduction (`truncation` absent or `auto`).
- */
-const reducePreSummaryHistory = (messages: Record<string, unknown>[], elisions: ForwardedPayloadElision[]): boolean => {
-  const prefix = `${COMPACTION_SUMMARY_POLICY.prefix}\n`;
-  const summaryIndex = messages.findLastIndex(
-    (message) => message.role === "user" && typeof message.content === "string" && message.content.startsWith(prefix)
-  );
-  if (summaryIndex < 0) return false;
-  const leadingSystem = messages[0]?.role === "system" ? 1 : 0;
-  if (summaryIndex <= leadingSystem) return false;
-  const dropped = messages.slice(leadingSystem, summaryIndex);
-  if (!dropped.length) return false;
-  const originalBytes = dropped.reduce((total, message) => total + forwardedByteLength(JSON.stringify(message)), 0);
-  const notice = `[gateway: ${PROMPT_ADMISSION_POLICY.version} omitted ${dropped.length} earlier messages before the compaction summary; the model did not receive those messages because the complete projected prompt would otherwise exceed the provider context window]`;
-  messages.splice(leadingSystem, summaryIndex - leadingSystem, { role: "system", content: notice });
-  elisions.push({
-    path: `messages[${leadingSystem}..${summaryIndex - 1}]`,
-    callId: null,
-    kind: "history",
-    originalBytes,
-    forwardedBytes: forwardedByteLength(notice),
-    omittedBytes: originalBytes,
-  });
-  return true;
-};
-
-const admitWithPreSummaryReduction = (
-  body: Record<string, unknown>,
-  window: number,
-  projection: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined,
-  messages: Record<string, unknown>[],
-  reduction: ForwardedPayloadReduction,
-  elisions: ForwardedPayloadElision[]
-): PromptAdmission => {
-  const initial = estimatePromptAdmission(body, window, projection);
-  if (initial.admitted || reduction !== "reduce" || !reducePreSummaryHistory(messages, elisions)) return initial;
-  return estimatePromptAdmission(body, window, projection);
-};
-
-/**
  * Builds the Chat Completions body for a Responses request under one provider
  * profile. Translation failures are returned so the caller can answer with a
  * precise `invalid_request_error` instead of dispatching an approximation.
@@ -1021,8 +973,8 @@ export const toDeepSeekResponsesChatBody = (
   const window = promptWindowTokensForProfile(profile.id);
   if (window === null)
     return failure("model", `${profile.label} has no verified prompt window; aggregate admission refused the request.`, "context_length_exceeded");
-  const promptAdmission = admitWithPreSummaryReduction(body, window, promptAdmissionProjection, messages.value, reduction.value, elisions);
-  if (!promptAdmission.admitted) return failure("input", promptAdmissionFailureMessage(promptAdmission, profile.label), "context_length_exceeded");
+  const promptAdmission = estimatePromptAdmission(body, window, promptAdmissionProjection);
+  if (!promptAdmission.admitted) return aggregateContextOverflow(promptAdmissionFailureMessage(promptAdmission, profile.label));
   return {
     ok: true,
     value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions, exemptions, promptAdmission, warnings },

@@ -1,3 +1,4 @@
+import { isLocalContextAdmissionFailure } from "./context-admission-failure.ts";
 // Request handler for the `ubiquity/deepseek-flash` synthetic model: resolve the
 // newest provider snapshots, dispatch each hop of the cost-first order, and
 // advance only on infrastructure or serving failures. The two paid hops
@@ -68,6 +69,10 @@ export type DeepSeekWaterfallOptions = Readonly<{
 }>;
 
 const withAttemptedProviders = (response: Response, attempted: readonly string[]): Response => {
+  if (isLocalContextAdmissionFailure(response)) {
+    response.headers.set("x-uos-attempted-providers", attempted.join(","));
+    return response;
+  }
   const headers = new Headers(response.headers);
   headers.set("x-uos-attempted-providers", attempted.join(","));
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
@@ -185,6 +190,7 @@ const attemptHop = async (
 ): Promise<HopResult> => {
   try {
     const response = await dispatch({ provider, req, rawRecord: { ...rawRecord, model }, rawBody, model, usageContext });
+    if (isLocalContextAdmissionFailure(response)) return { delivered: true, response, failure: 0 };
     if (isDeepSeekWaterfallRetryStatus(response.status)) return { delivered: false, response, failure: response.status };
     const gated = await gateStreamingHop(response, req.signal);
     if (!gated.committed) return { delivered: false, response: streamFailureResponse(provider), failure: "stream" };

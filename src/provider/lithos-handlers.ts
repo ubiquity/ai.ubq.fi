@@ -1,3 +1,4 @@
+import { chatResponsesProjectionFailure } from "../deepseek/context-admission-failure.ts";
 // LithosAI Chat and Responses handlers, extracted from src/openai.ts.
 
 import { LITHOS_RESPONSES_PROFILE, type OriginalToolName } from "../deepseek/responses.ts";
@@ -860,7 +861,7 @@ export const handleLithosResponses = async (
   if (!upstreamModel) return openaiError(400, `model '${modelRaw}' is not a LithosAI official model`, "invalid_request_error", { param: "model" });
 
   const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, clientWantsStream, LITHOS_RESPONSES_PROFILE);
-  if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
+  if (!translated.ok) return chatResponsesProjectionFailure(req, rawRecord, translated, usageContext);
   const { body: chatBody, toolNames, customToolNames } = translated.value;
   if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
   if (translated.value.exemptions.length)

@@ -49,7 +49,7 @@ import { cerebrasProviderHint } from "../request-policy.ts";
  * against this module is unchanged.
  */
 
-export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string; code?: string }>;
+export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string; code?: string; kind?: "aggregate_context_overflow" }>;
 
 export type DeepSeekResponsesResult<T> = Readonly<{ ok: true; value: T }> | DeepSeekResponsesFailure;
 
@@ -58,6 +58,12 @@ export const failure = (param: string, message: string, code?: string): DeepSeek
   message,
   param,
   ...(code === undefined ? {} : { code }),
+});
+
+/** A trusted internal distinction; it is never accepted from request metadata. */
+export const aggregateContextOverflow = (message: string): DeepSeekResponsesFailure => ({
+  ...failure("input", message, "context_length_exceeded"),
+  kind: "aggregate_context_overflow",
 });
 
 /**
