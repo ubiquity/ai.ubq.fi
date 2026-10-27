@@ -5,10 +5,14 @@ use crate::{
     types::*,
 };
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{kernel::KernelTerminal, paid_control::PaidRoutingReceipt};
+use gateway_authority::routing_types::RouteSelection;
+use gateway_authority::{paid_control::PaidRoutingReceipt, store::Authority};
 use gateway_authority::{paid_types::PaidAuthorization, routing_types::AdmittedAccount};
-use gateway_authority::{routing_types::RouteSelection, store::Authority};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
 use gateway_core::{error::GatewayError, identity::ApiKeyId, model::ModelId};
 use gateway_core::{provider::UpstreamProvider, query::QueryStore};
@@ -136,7 +140,6 @@ impl<
         {
             if let Some(api) = &row.api {
                 authority
-                    .api_release()
                     .release_api_key(api, true, "routing_admission_failed", clock.now_ms()?)
                     .await?;
             }
@@ -481,7 +484,6 @@ pub(crate) async fn reserve_original<
         }
         row.api = Some(
             authority
-                .api_quota()
                 .reserve_api_key_deferred(&id, &context.request_id, &context.route, clock.now_ms()?)
                 .await?,
         );

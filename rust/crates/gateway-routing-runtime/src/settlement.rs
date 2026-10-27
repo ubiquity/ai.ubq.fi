@@ -1,7 +1,10 @@
 use crate::{journal, journal::Journal, journal::Phase, types::RecoveredSession};
 use crate::{types::RevisionCheckWire, types::RoutingHost};
-use gateway_authority::{kernel::KernelTerminal, store::Authority};
+use gateway_authority::store::Authority;
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal};
 use gateway_core::{lifecycle::TransportObservation, query::QueryRequest, query::QuerySelector};
 use gateway_core::{query::QueryStore, state::AuthorityStore, state::RevisionCheck};
@@ -94,7 +97,6 @@ pub(crate) async fn finish_record<
         && let Some(api) = &intent.api
     {
         authority
-            .api_release()
             .release_api_key(api, true, "routing_known_before_transport", clock.now_ms()?)
             .await?;
     }

@@ -100,18 +100,6 @@ impl<'a, S: AuthorityStore, I: TokenSource> ApiReleaseService<'a, S, I> {
     fn transaction(&self, now: i64) -> Result<backend::Transaction<'_, S, I>, GatewayError> {
         backend::Transaction::new(self.store, self.tokens, now)
     }
-
-    pub async fn release_api_key(
-        self,
-        reservation: &ApiReservation,
-        known_before_transport: bool,
-        reason: &str,
-        now: i64,
-    ) -> Result<bool, GatewayError> {
-        self.release_api_key_classified(reservation, known_before_transport, reason, now)
-            .await
-            .map_err(ReleaseFailure::into_diagnostic)
-    }
     pub(crate) async fn release_api_key_classified(
         self,
         reservation: &ApiReservation,
@@ -201,21 +189,6 @@ impl<'a, S: AuthorityStore, I: TokenSource> ApiReleaseService<'a, S, I> {
             "API quota release changed concurrently.",
         )))
     }
-    pub async fn release_local_response_api(
-        self,
-        reservation: &ApiReservation,
-        now: i64,
-    ) -> Result<LocalApiReleaseCompletion, LocalApiReleaseQuotaError> {
-        self.release_api_key_classified(
-            reservation,
-            false,
-            "route_completed_without_provider_dispatch",
-            now,
-        )
-        .await
-        .map(|released| LocalApiReleaseCompletion { released })
-        .map_err(ReleaseFailure::into_local)
-    }
 }
 fn classify_release_read(error: backend::ApiReleaseReadError) -> ReleaseFailure {
     match error {
@@ -226,3 +199,48 @@ fn classify_release_read(error: backend::ApiReleaseReadError) -> ReleaseFailure 
 
 #[cfg(test)]
 mod tests;
+
+pub trait ApiReleaseFactory {
+    type Store: AuthorityStore;
+    type Tokens: TokenSource;
+    fn api_release(&self) -> ApiReleaseService<'_, Self::Store, Self::Tokens>;
+}
+
+pub trait ApiReleaseOperations: ApiReleaseFactory {
+    fn release_api_key(
+        &self,
+        reservation: &ApiReservation,
+        known_before_transport: bool,
+        reason: &str,
+        now: i64,
+    ) -> impl std::future::Future<Output = Result<bool, GatewayError>> {
+        async move {
+            let context = self.api_release();
+            context
+                .release_api_key_classified(reservation, known_before_transport, reason, now)
+                .await
+                .map_err(ReleaseFailure::into_diagnostic)
+        }
+    }
+    fn release_local_response_api(
+        &self,
+        reservation: &ApiReservation,
+        now: i64,
+    ) -> impl std::future::Future<Output = Result<LocalApiReleaseCompletion, LocalApiReleaseQuotaError>>
+    {
+        async move {
+            let context = self.api_release();
+            context
+                .release_api_key_classified(
+                    reservation,
+                    false,
+                    "route_completed_without_provider_dispatch",
+                    now,
+                )
+                .await
+                .map(|released| LocalApiReleaseCompletion { released })
+                .map_err(ReleaseFailure::into_local)
+        }
+    }
+}
+impl<T: ApiReleaseFactory + ?Sized> ApiReleaseOperations for T {}

@@ -4,6 +4,9 @@ use gateway_admin_data::profile::{
     source::{from_source_profile as from_profile, to_source_profile as to_profile},
 };
 use gateway_auth::{crypto::sha256_base64url, store::key};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_kernel::KernelOperations;
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, RequestId},
@@ -158,7 +161,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         Clock,
     );
     assert!(
-        run(authority.api_quota().reserve_api_key(
+        run(authority.reserve_api_key(
             &ApiKeyId("fixture-key".into()),
             &RequestId("old-dispatched".into()),
             "responses",
@@ -175,7 +178,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         window_reset_at_ms: 3000,
         deferred: false,
     };
-    assert!(!run(authority.api_release().release_api_key(
+    assert!(!run(authority.release_api_key(
         &consumed,
         false,
         "unknown source transport",
@@ -192,7 +195,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         .value["state"],
         "dispatched"
     );
-    let reservation = run(authority.api_quota().reserve_api_key(
+    let reservation = run(authority.reserve_api_key(
         &ApiKeyId("fixture-key".into()),
         &RequestId("new-request".into()),
         "responses",

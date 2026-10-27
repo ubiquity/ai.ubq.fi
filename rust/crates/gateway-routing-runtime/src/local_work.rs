@@ -3,12 +3,15 @@ use crate::{journal, journal::Journal, policy::RoutePlan, session::RoutingSessio
 use crate::{session::reserve_original, types::RecoveredSession, types::RevisionCheckWire};
 use crate::{types::RoutingHost, types::RoutingResult};
 use gateway_auth::{crypto::sha256_hex, types::AuthPrincipal};
-use gateway_authority::{kernel::KernelReservation, kernel::KernelTerminal, store::Authority};
+use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal};
 use gateway_authority_keys as keys;
-use gateway_core::local_work::SOURCE_REQUEST_BINDING_DOMAIN;
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, identity::RequestContext};
+use gateway_core::{error::GatewayError, local_work::SOURCE_REQUEST_BINDING_DOMAIN};
+use gateway_core::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
 use gateway_core::{lifecycle::TransportObservation, local_work::LocalSemanticOutcome};
 use gateway_core::{local_work::LocalTerminalObservation, local_work::LocalWorkKind};
 use gateway_core::{local_work::LocalWorkPhase, local_work::LocalWorkRecord};
@@ -186,7 +189,6 @@ impl<
             let authority = Authority::with_clock(store.clone(), tokens.clone(), clock.clone());
             if let Some(api) = &row.api {
                 authority
-                    .api_release()
                     .release_api_key(api, true, "local_admission_failed", clock.now_ms()?)
                     .await?;
             }
@@ -761,7 +763,6 @@ pub(crate) async fn finish_local_record<
             .is_none_or(|binding| !binding.api_release_done)
     {
         authority
-            .api_release()
             .release_api_key(
                 api,
                 false,

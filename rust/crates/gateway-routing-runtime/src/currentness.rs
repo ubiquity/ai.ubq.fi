@@ -1,9 +1,10 @@
 //! Observed ordinary-request leases, never an imported or reusable I/O grant.
 use crate::{journal, journal::AttemptRecord, journal::Journal, journal::Phase};
 use crate::{session::RoutingSession, types::RoutingHost, types::RoutingResult};
-use gateway_authority::{kernel::KernelReservation, kernel::KernelTerminal};
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal};
 use gateway_authority_keys as keys;
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, local_work::LocalWorkPhase};
 use gateway_core::{query::QueryStore, state::AtomicTransition, state::CommitOutcome};

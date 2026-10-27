@@ -11,6 +11,7 @@ use gateway_auth::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
+use gateway_authority_kernel::KernelOperations;
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,
@@ -410,7 +411,7 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
     assert_eq!(*store.rows.borrow(), before);
     run(authority.record_kernel_terminal_intent(
         &reservation,
-        gateway_authority::kernel::KernelTerminal::Committed,
+        gateway_authority_kernel_protocol::KernelTerminal::Committed,
         NOW,
     ))?;
     assert_eq!(

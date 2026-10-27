@@ -2,6 +2,7 @@
 use super::{MemoryStore, TestAuthority};
 use gateway_authority::paid_control::PaidRoutingReceipt;
 use gateway_authority::paid_types::PaidRequest;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::REQUEST_LEASE_MS;
 use gateway_authority_paid_control_records::PaidRequestContext;
 use gateway_core::error::GatewayError;
@@ -36,7 +37,6 @@ pub async fn bind(
             started_at_ms: input.created_at_ms,
         };
         let api = authority
-            .api_quota()
             .reserve_api_key(&input.key_id, &input.request_id, &input.route, now)
             .await?;
         store.seed(key.clone(), &json!({

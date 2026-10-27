@@ -1,7 +1,10 @@
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{kernel::KernelPolicy, store::Authority};
+use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::REQUEST_LEASE_MS;
+use gateway_authority_kernel_protocol::KernelPolicy;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
@@ -468,22 +471,16 @@ fn source_release_noops_do_not_refund_dispatched_or_require_a_missing_request_ro
                 .unwrap();
             }
             "released" => {
-                run(authority
-                    .api_release()
-                    .release_api_key(&reservation, false, "fixture", NOW))
-                .unwrap();
+                run(authority.release_api_key(&reservation, false, "fixture", NOW)).unwrap();
             }
             _ => {
-                run(authority.api_quota().dispatch_api_key(
+                run(authority.dispatch_api_key(
                     &reservation,
                     gateway_core::provider::UpstreamProvider::ChatgptCodex,
                     NOW,
                 ))
                 .unwrap();
-                run(authority
-                    .api_quota()
-                    .mark_api_transport_started(&reservation, NOW))
-                .unwrap();
+                run(authority.mark_api_transport_started(&reservation, NOW)).unwrap();
             }
         }
         let mut built = local.retain_built_response().unwrap();

@@ -13,6 +13,8 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-authority-kernel = { path = "../gateway-authority-kernel" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }

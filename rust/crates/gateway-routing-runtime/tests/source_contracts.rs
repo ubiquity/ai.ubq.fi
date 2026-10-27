@@ -1,4 +1,6 @@
 use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
     PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
@@ -263,7 +265,6 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
         let original_api: ApiReservation =
             serde_json::from_value(store.value(journal_key)["api"].clone())?;
         Authority::with_clock(store.clone(), store.clone(), store.clone())
-            .api_release()
             .release_api_key(&original_api, true, "fixture_original_released", NOW)
             .await?;
         assert!(session.next_attempt().await.is_err());
@@ -386,7 +387,6 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
 #[test]
 fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -439,7 +439,6 @@ fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() -
 #[test]
 fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -502,7 +501,6 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> T
 #[test]
 fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -563,7 +561,6 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() -> 
 #[test]
 fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
@@ -603,7 +600,6 @@ fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission()
 #[test]
 fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission() -> TestResult {
     run(async {
-        use gateway_authority::kernel::KernelTerminal;
         use gateway_routing_runtime::extras::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);

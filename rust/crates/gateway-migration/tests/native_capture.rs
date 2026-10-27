@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::{query::*, source_graph::GraphNode, state::*, tuple_key::TupleKey};
 use gateway_migration::native_capture::NativeRevision;
 use gateway_migration::{
@@ -56,7 +57,7 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
         Tokens(std::sync::atomic::AtomicU64::new(1)),
         Clock,
     );
-    let admission = run(authority.api_quota().reserve_api_key(
+    let admission = run(authority.reserve_api_key(
         &gateway_core::identity::ApiKeyId("offline-key".into()),
         &gateway_core::identity::RequestId("native-post-restart-admission".into()),
         "responses",

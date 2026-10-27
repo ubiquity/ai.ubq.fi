@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::{state::AuthorityStore, tuple_key::TupleKey};
 use gateway_migration::{
     core_state::CORE_STATE_DO_ROW_WRITE_LIMIT,
@@ -402,7 +403,7 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
         support_clock::Tokens(std::sync::atomic::AtomicU64::new(1)),
         support_clock::Clock,
     );
-    let reservation = run(authority.api_quota().reserve_api_key(
+    let reservation = run(authority.reserve_api_key(
         &gateway_core::identity::ApiKeyId("core-key".into()),
         &gateway_core::identity::RequestId("post-restart".into()),
         "responses",

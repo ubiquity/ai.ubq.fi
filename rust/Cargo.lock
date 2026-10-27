@@ -842,6 +842,7 @@ dependencies = [
 name = "gateway-admin"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-api-quota",
  "gateway-authority-contracts",
  "gateway-authority-api-protocol",
  "gateway-authority-paid-control-records",
@@ -876,6 +877,8 @@ dependencies = [
 name = "gateway-admin-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-kernel",
+ "gateway-authority-kernel-protocol",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-admin",
@@ -943,6 +946,9 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-local-completion",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-kernel",
  "gateway-authority-contracts",
  "gateway-authority-api-release",
  "gateway-authority-api-quota",
@@ -994,6 +1000,7 @@ dependencies = [
 name = "gateway-authority-api-release"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-api-quota",
  "gateway-authority",
  "gateway-authority-api-protocol",
  "gateway-authority-contracts",
@@ -1023,10 +1030,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-kernel"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-kernel-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-keys"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+]
+
+[[package]]
+name = "gateway-authority-local-completion"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1052,6 +1095,7 @@ dependencies = [
 name = "gateway-authority-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-api-quota",
  "gateway-authority-contracts",
  "gateway-authority-paid-control-records",
  "gateway-auth",
@@ -1095,6 +1139,7 @@ dependencies = [
 name = "gateway-catalog-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-api-quota",
  "gateway-authority-contracts",
  "gateway-authority-api-protocol",
  "gateway-authority-paid-control-records",
@@ -1207,6 +1252,10 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-kernel",
+ "gateway-authority-api-release",
+ "gateway-authority-api-quota",
+ "gateway-authority-kernel-protocol",
  "gateway-authority-contracts",
  "gateway-authority-api-protocol",
  "gateway-authority-paid-control-records",
@@ -1421,6 +1470,11 @@ dependencies = [
 name = "gateway-routing-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-kernel",
+ "gateway-authority-api-release",
+ "gateway-authority-api-quota",
+ "gateway-authority-local-completion",
+ "gateway-authority-kernel-protocol",
  "gateway-authority-contracts",
  "gateway-authority-api-protocol",
  "gateway-authority-paid-control-records",
@@ -1473,6 +1527,8 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-kernel",
+ "gateway-authority-kernel-protocol",
  "gateway-authority-contracts",
  "gateway-authority-paid-control-records",
  "gateway-authority-initial-owner",

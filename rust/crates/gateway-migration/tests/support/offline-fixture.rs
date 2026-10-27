@@ -1,3 +1,4 @@
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
@@ -51,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Tokens(AtomicU64::new(1)),
         Clock,
     );
-    let reservation = run(authority.api_quota().reserve_api_key(
+    let reservation = run(authority.reserve_api_key(
         &ApiKeyId("offline-key".into()),
         &RequestId("post-restart-write".into()),
         "responses",

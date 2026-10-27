@@ -13,7 +13,7 @@ use crate::{
     },
 };
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
-use gateway_authority::kernel::KernelTerminal;
+use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},

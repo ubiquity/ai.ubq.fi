@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority = { path = "../gateway-authority" }
 
 [lints]

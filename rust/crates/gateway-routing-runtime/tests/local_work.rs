@@ -1,7 +1,10 @@
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{kernel::KernelPolicy, store::Authority};
+use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelPolicy;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
@@ -258,9 +261,12 @@ fn changed_owner_or_released_api_cannot_reuse_a_local_handle() {
         } else {
             let api: ApiReservation = serde_json::from_value(row["api"].clone()).unwrap();
             run(
-                Authority::with_clock(store.clone(), store.clone(), store.clone())
-                    .api_release()
-                    .release_api_key(&api, true, "fixture-before-dispatch", NOW),
+                Authority::with_clock(store.clone(), store.clone(), store.clone()).release_api_key(
+                    &api,
+                    true,
+                    "fixture-before-dispatch",
+                    NOW,
+                ),
             )
             .unwrap();
         }

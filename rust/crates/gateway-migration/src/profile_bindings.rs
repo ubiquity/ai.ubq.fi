@@ -127,7 +127,7 @@ pub(crate) async fn bind<S: QueryStore>(
             .iter()
             .any(|name| p[1] == *name)
     {
-        let mut defaults = gateway_authority::kernel::KernelDefaults::default();
+        let mut defaults = gateway_authority_kernel_protocol::KernelDefaults::default();
         for name in ["kernel_policy_limit_requests", "kernel_policy_window_ms"] {
             let key = key(json!(["default", name]));
             if let Some(row) =

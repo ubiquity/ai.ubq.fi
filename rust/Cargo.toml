@@ -1,5 +1,8 @@
 [workspace]
 members = [
+  "crates/gateway-authority-local-completion",
+  "crates/gateway-authority-kernel",
+  "crates/gateway-authority-kernel-protocol",
   "crates/gateway-authority-api-release",
   "crates/gateway-authority-api-quota",
   "crates/gateway-authority-api-protocol",
@@ -57,6 +60,9 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-local-completion = { path = "crates/gateway-authority-local-completion" }
+gateway-authority-kernel = { path = "crates/gateway-authority-kernel" }
+gateway-authority-kernel-protocol = { path = "crates/gateway-authority-kernel-protocol" }
 gateway-authority-api-release = { path = "crates/gateway-authority-api-release" }
 gateway-authority-api-quota = { path = "crates/gateway-authority-api-quota" }
 gateway-authority-api-protocol = { path = "crates/gateway-authority-api-protocol" }

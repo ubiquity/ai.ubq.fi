@@ -1,5 +1,6 @@
 use super::*;
 use gateway_authority::paid_types::{PaidAttempt, PaidReservation};
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_test_support::TestResult;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId,
@@ -92,7 +93,7 @@ fn source_policy_keys_and_reasoning_round_trip_without_logical_model_conflation(
             .get(&models[2]),
         Some(&3)
     );
-    run(authority(&store).api_quota().reserve_api_key(
+    run(authority(&store).reserve_api_key(
         &ApiKeyId("key-a".into()),
         &RequestId("source-policy".into()),
         "responses",

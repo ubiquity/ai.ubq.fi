@@ -1,5 +1,6 @@
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::{
     error::GatewayError,
@@ -244,7 +245,6 @@ impl TokenSource for RacingTokens {
         if let Some(api) = self.release.lock().unwrap().take() {
             run(
                 Authority::with_clock(self.store.clone(), self.store.clone(), self.store.clone())
-                    .api_release()
                     .release_api_key(&api, true, "fixture-final-phase-race", self.store.now_ms()?),
             )?;
         }

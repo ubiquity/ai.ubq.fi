@@ -1,4 +1,5 @@
 //! Fixed synthetic source -> one persisted authority -> latest native inverse.
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
@@ -53,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Tokens(std::sync::atomic::AtomicU64::new(1)),
         Clock,
     );
-    run(authority.api_quota().reserve_api_key(
+    run(authority.reserve_api_key(
         &gateway_core::identity::ApiKeyId("offline-key".into()),
         &gateway_core::identity::RequestId("native-post-restart-admission".into()),
         "responses",

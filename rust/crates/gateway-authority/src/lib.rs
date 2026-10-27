@@ -12,8 +12,6 @@ pub mod capacity;
 pub mod capacity_rules;
 pub mod claude;
 pub mod full_pool_reset;
-pub mod kernel;
-pub mod local_completion;
 pub mod manual_reset;
 pub mod native_control;
 pub mod native_live;

@@ -6,6 +6,11 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
+gateway-authority-kernel = { path = "../gateway-authority-kernel" }
+gateway-authority-api-release = { path = "../gateway-authority-api-release" }
+gateway-authority-local-completion = { path = "../gateway-authority-local-completion" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
 gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }

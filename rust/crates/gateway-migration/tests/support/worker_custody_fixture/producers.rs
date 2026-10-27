@@ -5,6 +5,7 @@ use gateway_admin::operations::{AdminHost, AdminInput};
 use gateway_admin::routes::AdminOperation;
 use gateway_auth::{store::key, types::AuthHost};
 use gateway_authority::store::Authority;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_keys::{api_request, api_window};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{ApiKeyId, RequestId};
@@ -108,7 +109,7 @@ pub fn exercise(
         return Err(port::error("Original offline API-key fixture differs"));
     }
     let authority = Authority::with_clock(store, Tokens(AtomicU64::new(1)), Clock(now));
-    let reservation = support_run(authority.api_quota().reserve_api_key(
+    let reservation = support_run(authority.reserve_api_key(
         &ApiKeyId("offline-key".into()),
         &RequestId("native-post-restart-admission".into()),
         "responses",

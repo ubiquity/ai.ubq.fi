@@ -1,4 +1,5 @@
-use gateway_authority::kernel::{KernelPolicy, KernelWindow};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::{KernelPolicy, KernelWindow};
 use gateway_authority_keys as keys;
 use gateway_core::{
     js_string::JsString16,

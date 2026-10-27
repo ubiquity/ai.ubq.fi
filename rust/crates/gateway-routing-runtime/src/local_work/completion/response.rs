@@ -1,5 +1,7 @@
 //! Provisional built response, earlier API selection and independent accounting.
 use super::*;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_kernel::KernelOperations;
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,7 +160,6 @@ impl<
                     original.tokens.clone(),
                     original.clock.clone(),
                 )
-                .api_release()
                 .release_local_response_api(api, original.now()?)
                 .await
                 .err()

@@ -1,10 +1,12 @@
-use gateway_authority::kernel::KernelWindow;
-use gateway_authority::kernel::{KernelReservation, KernelTerminal};
-use gateway_authority::local_completion::LocalCompletedIntentOutcome;
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal, KernelWindow};
 use gateway_authority_keys as keys;
+use gateway_authority_local_completion::LocalCompletedIntentOutcome;
+use gateway_authority_local_completion::LocalCompletionOperations;
 use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
 use gateway_core::state::{
@@ -497,14 +499,14 @@ fn fixture_with_real_api_reservation() -> Fixture {
         keys::api_policy("key").0,
         StoredRecord::json("policy-source", serde_json::to_value(policy).unwrap(), None),
     );
-    let actual = run(Authority::new(f.store.clone(), f.store.clone())
-        .api_quota()
-        .reserve_api_key(
+    let actual = run(
+        Authority::new(f.store.clone(), f.store.clone()).reserve_api_key(
             &ApiKeyId("key".into()),
             &f.plan.context().request_id,
             &f.plan.context().route,
             1_000,
-        ))
+        ),
+    )
     .unwrap();
     let record = f
         .store
@@ -590,7 +592,7 @@ fn real_dispatched_original_is_noop_with_no_api_compensation() {
         let api = f.api.as_ref().unwrap();
         let authority = Authority::new(f.store.clone(), f.store.clone());
         assert!(
-            run(authority.api_quota().dispatch_api_key(
+            run(authority.dispatch_api_key(
                 api,
                 gateway_core::provider::UpstreamProvider::Surplus,
                 1_500
@@ -598,10 +600,10 @@ fn real_dispatched_original_is_noop_with_no_api_compensation() {
             .unwrap()
         );
         if started {
-            run(authority.api_quota().mark_api_transport_started(api, 1_501)).unwrap();
+            run(authority.mark_api_transport_started(api, 1_501)).unwrap();
         }
         assert!(
-            !run(authority.api_release().release_api_key(
+            !run(authority.release_api_key(
                 api,
                 false,
                 "route_completed_without_provider_dispatch",
@@ -635,13 +637,13 @@ fn dispatched_foreign_or_malformed_original_never_becomes_local_intent() {
     for malformed in [false, true] {
         let f = fixture_with_real_api_reservation();
         let api = f.api.as_ref().unwrap();
-        run(Authority::new(f.store.clone(), f.store.clone())
-            .api_quota()
-            .dispatch_api_key(
+        run(
+            Authority::new(f.store.clone(), f.store.clone()).dispatch_api_key(
                 api,
                 gateway_core::provider::UpstreamProvider::Surplus,
                 1_500,
-            ))
+            ),
+        )
         .unwrap();
         let key = api_key(api);
         let mut actual: ApiUsageRequest =

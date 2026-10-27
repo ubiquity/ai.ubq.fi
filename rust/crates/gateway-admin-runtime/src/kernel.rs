@@ -11,7 +11,7 @@ use crate::{
 use gateway_admin::{operations::AdminInput, routes::AdminOperation, source_input as body};
 use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
-use gateway_authority::kernel::{KernelDefaults, KernelReservation, KernelTerminal};
+use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, KernelTerminal};
 use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;

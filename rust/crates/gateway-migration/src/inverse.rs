@@ -288,7 +288,7 @@ fn authority_control(
     now_ms: i64,
 ) -> Result<bool, GatewayError> {
     if *key == gateway_authority_keys::kernel_defaults() {
-        let mut expected = gateway_authority::kernel::KernelDefaults::default();
+        let mut expected = gateway_authority_kernel_protocol::KernelDefaults::default();
         if let Some(source) =
             all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)
         {
@@ -300,7 +300,8 @@ fn authority_control(
             expected.window_ms =
                 gateway_admin_runtime::parse::positive(source.json_value()?).unwrap_or(604800000);
         }
-        let actual: gateway_authority::kernel::KernelDefaults = decode(record.json_value()?)?;
+        let actual: gateway_authority_kernel_protocol::KernelDefaults =
+            decode(record.json_value()?)?;
         if actual != expected {
             return Err(invalid(
                 "Latest derived Kernel defaults differ from source defaults; inverse would lose policy",

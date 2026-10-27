@@ -4,8 +4,10 @@ use crate::{types::AttemptFailure, types::AttemptUsage, types::CredentialFence};
 use crate::{types::FailureOrigin, types::PreparedAttempt, types::RecoveredSession};
 use crate::{types::RefreshOutcome, types::RefusalDecision, types::RevisionCheckWire};
 use crate::{types::RoutingHost, types::RoutingResult, types::TransportState};
-use gateway_authority::kernel::KernelTerminal;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_core::{error::GatewayError, lifecycle::PaidTerminalState};
 use gateway_core::{lifecycle::SemanticTerminal, lifecycle::TransportObservation};
 use gateway_core::{provider::UpstreamProvider, query::QueryStore};
@@ -54,14 +56,12 @@ impl<
         if let Some(reservation) = &api {
             api = Some(
                 self.authority()
-                    .api_quota()
                     .resolve_deferred_api(reservation, self.now()?)
                     .await?,
             );
         }
         if let Some(reservation) = &api {
             self.authority()
-                .api_quota()
                 .dispatch_api_key(reservation, record.provider, self.now()?)
                 .await?;
         }
@@ -197,7 +197,6 @@ impl<
         // a later rotation cannot erase the fact that the old attempt started.
         if let Some(api) = &row.api {
             self.authority()
-                .api_quota()
                 .mark_api_transport_started(api, self.now()?)
                 .await?;
         }

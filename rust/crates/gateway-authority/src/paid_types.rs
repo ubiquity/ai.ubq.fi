@@ -6,6 +6,7 @@ use gateway_core::lifecycle::{BillingState, DispatchState, PaidTerminalState};
 use gateway_core::provider::PaidProvider;
 use gateway_core::{js_string::JsString16, model::ModelId};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
 pub enum PaidAuthorization {

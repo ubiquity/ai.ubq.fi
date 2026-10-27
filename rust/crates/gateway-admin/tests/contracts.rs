@@ -14,6 +14,7 @@ use gateway_auth::{
     },
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
 };
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
 use gateway_core::{error::GatewayError, source_json::SourceJson, state::*};
 use std::{
@@ -1100,7 +1101,6 @@ async fn bind_paid_fixture_original(
         started_at_ms: request.created_at_ms,
     };
     let api = authority
-        .api_quota()
         .reserve_api_key(
             &request.key_id,
             &request.request_id,

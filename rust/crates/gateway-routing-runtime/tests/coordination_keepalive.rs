@@ -1,7 +1,10 @@
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{kernel::KernelPolicy, store::Authority};
+use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelPolicy;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
@@ -229,7 +232,6 @@ impl TokenSource for RacingTokens {
                         self.store.clone(),
                         self.store.clone(),
                     )
-                    .api_release()
                     .release_api_key(
                         &api,
                         true,

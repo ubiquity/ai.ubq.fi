@@ -6,11 +6,13 @@ use crate::{
     types::*,
 };
 use futures_util::lock::Mutex;
-use gateway_authority::{kernel::KernelTerminal, store::Authority};
+use gateway_authority::store::Authority;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_core::source_serialization as source;
-use gateway_core::{error::GatewayError, lifecycle::TransportObservation, model::ModelId};
-use gateway_core::{provider::UpstreamProvider, query::QueryStore, source_json::SourceJson};
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_core::{error::GatewayError, source_serialization as source};
+use gateway_core::{lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider};
+use gateway_core::{query::QueryStore, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
@@ -572,14 +574,12 @@ impl<
             if let Some(reservation) = &api {
                 api = Some(
                     self.authority()
-                        .api_quota()
                         .resolve_deferred_api(reservation, self.clock.now_ms()?)
                         .await?,
                 );
             }
             if let Some(api) = &api {
                 self.authority()
-                    .api_quota()
                     .dispatch_api_key(api, child.family.provider(), self.clock.now_ms()?)
                     .await?;
             }
@@ -656,7 +656,6 @@ impl<
         }
         if let Some(api) = &row.api {
             self.authority()
-                .api_quota()
                 .mark_api_transport_started(api, self.clock.now_ms()?)
                 .await?;
         }
