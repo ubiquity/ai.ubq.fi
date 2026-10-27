@@ -1,5 +1,5 @@
 //! Trusted prelaunch authority. Owns child handles, never ancillary/provider I/O.
-use crate::{daemon_config::NativeDaemonConfig, http_server};
+use crate::daemon_config::NativeDaemonConfig;
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::error::GatewayError;
 use gateway_native_connector::{connector_policy, connector_protocol::ControlError};

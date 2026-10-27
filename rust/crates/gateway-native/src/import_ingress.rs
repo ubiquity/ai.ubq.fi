@@ -27,7 +27,7 @@ use gateway_native_http_framing::{
 };
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
-    io::{Read, Write},
+    io::Read,
     net::TcpStream,
     sync::Arc,
     time::{Duration, Instant},

@@ -1,5 +1,4 @@
 //! Only fixed native files are decoded here. No receipt constructor is public.
-use super::NativeImportInputs;
 use super::*;
 #[cfg(test)]
 use gateway_auth::native_credentials::parse_native_document;

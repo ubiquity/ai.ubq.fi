@@ -10,8 +10,8 @@ use gateway_auth::native_live::{
 };
 use gateway_auth::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::control::{
-    NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlDisposition,
-    NativeControlEnvelope, NativeControlReason, NativeControlResponse,
+    NATIVE_RENEWAL_MAX_MS, NativeControlDisposition, NativeControlEnvelope, NativeControlReason,
+    NativeControlResponse,
 };
 use gateway_auth_native_wire::native_read::{
     AuthStream, NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,

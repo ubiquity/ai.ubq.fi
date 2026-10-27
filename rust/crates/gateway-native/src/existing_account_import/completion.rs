@@ -5,7 +5,7 @@ use gateway_auth::native_import::authority::completion::ImportCompletionModelsDa
 use gateway_authority::native_control::{
     NativeRenewalCancellation, import::remote::RemoteImportAuthority,
 };
-use gateway_core::error::GatewayError;
+use gateway_core::{error::GatewayError, source_json::SourceJson};
 use gateway_native_import_source::{catalog::CatalogValidation, display::expiry_display_ms};
 use serde::Serialize;
 use std::collections::BTreeMap;

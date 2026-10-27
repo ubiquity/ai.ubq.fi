@@ -79,7 +79,7 @@ impl ControlFrame {
     pub(crate) fn connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
     }
-    pub(crate) fn validate(&self) -> Result<(), ControlError> {
+    pub fn validate(&self) -> Result<(), ControlError> {
         let v = match self {
             Self::Connect {
                 v,
