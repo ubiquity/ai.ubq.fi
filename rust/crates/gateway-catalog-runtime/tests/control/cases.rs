@@ -2,9 +2,7 @@ use super::FailIds;
 use super::{Fetch, Host, Store, openlux, run, surplus};
 use gateway_authority::{
     keys,
-    paid_control::{
-        PaidControlConfig, PaidProviderObservation, PaidSourceCheck, credential_binding,
-    },
+    paid_control::{PaidControlConfig, PaidProviderObservation, PaidSourceCheck},
 };
 use gateway_catalog_control::control::publish_paid_observation;
 use gateway_catalog_control::control::publish_paid_routing;
