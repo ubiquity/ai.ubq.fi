@@ -101,7 +101,6 @@ pub fn select<H: SourceCreditCollation>(
                         .cmp(&current.credit.expires_at_ms.unwrap_or(i64::MAX))
                         .then_with(|| {
                             member
-                                .candidate
                                 .binding
                                 .slot
                                 .cmp(&members[current.member].binding.slot)

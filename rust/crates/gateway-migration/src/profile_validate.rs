@@ -1,10 +1,10 @@
 //! Source validation views of current common authority records, never a backup ledger.
 use crate::*;
-use gateway_admin_data::migration::{ObservedRow, audit, logical_fields};
+use gateway_admin_data::{migration::ObservedRow, migration::audit, migration::logical_fields};
 use gateway_auth::types::AuthResponse;
 use gateway_core::{query::*, value::PortableValue};
 use serde_json::json;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{collections::BTreeMap, collections::BTreeSet};
 
 pub(crate) async fn source_rows<S: QueryStore>(
     store: &S,
@@ -125,7 +125,8 @@ pub(crate) async fn validate<S: QueryStore>(
         .iter()
         .filter(|r| starts(&r.parts, &["uos_ai", "codex_manual_reset"]))
     {
-        let intent = gateway_authority::manual_reset::parse_manual_intent(row.record.json_value()?);
+        let intent =
+            gateway_authority_reset_records::manual::parse_manual_intent(row.record.json_value()?);
         if row.parts.len() != 4
             || row.parts[2] != "v1"
             || !intent

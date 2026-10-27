@@ -283,3 +283,5 @@ pub fn check_record(record: &ResetRecord, expected: &ResetRecord) -> Result<(), 
     nonnegative(record.lease_expires_at_ms)?;
     Ok(())
 }
+
+pub mod manual;
