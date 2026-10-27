@@ -4,6 +4,8 @@ This profile supersedes full-history ingestion for the Workers Free migration la
 
 ## Measured snapshot
 
+These measurements retain the original snapshot's provenance and predate the finite Claude retention correction on 2026-10-27. They are not current row counts or a current write-budget receipt; every new capture requires a fresh manifest.
+
 | Field                     | Value                                                              |
 | ------------------------- | ------------------------------------------------------------------ |
 | Source Git SHA            | `0be69ebcced135ff1d38966aa01691eddc74f1bb`                         |
@@ -67,6 +69,12 @@ The current paid-fallback counter is preserved as request and pending rows and o
 No live quota counter is reset, rounded, or synthesized from historical logs.
 
 ## Acceptance boundary
+
+The current selector retains the exact `["uos_ai","claude_code_usage","v1","lease",account_id,account_cohort_id]` collector row as source DATA, together with full current Claude quota rows and their `usage` and `usage_snapshot` fields. It preserves each retained key, typed value, revision and captured absolute expiry. A lease owner never becomes collector, authentication or dispatch authority, and migration never recomputes or renews its expiry.
+
+Only the proven Claude `provider_capacity/claude/v1/history`, `rollup` and `usage_rollup` key shapes are excluded from the reduced capture as historical observability. Their source TTLs remain untouched; hourly rollups have no TTL. Unknown Claude families, versions and key shapes fail closed. Current quota windows, proofs and snapshots remain operational state. Full-history export retains its existing behavior; a reduced latest inverse describes the selected subset and its subsequent writes/deletions, not a reconstruction of excluded history.
+
+The synthetic source fixture is produced by `tests/support/claude-retention-source.mjs` through the pinned TypeScript quota, usage-refresh and history writers with a fixed CAS fixture clock, an injected GET response and a fake credential. Its expiry metadata records that synthetic commit clock plus the actual source `expireIn`; it does not claim a native KV expiry measurement. The fixture is captured during the post-quota history callback before lease cleanup, keeping a coherent lease/current-quota/all-three-history state. The Rust lifecycle fixture exercises selection, actual SQLite restart, later current-row writes and lease deletion, latest inverse and re-adoption without changing retained expiry or counters.
 
 The focused tests cover selection accounting, atomic adoption, staged spool adoption, restart, API-key authentication, admin key reads, quota reservation, current paid pending/accounting rows, latest native inverse, and re-adoption. They do not authorize live adoption, credential refresh, Cloudflare deployment, or production cutover.
 

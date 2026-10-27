@@ -509,6 +509,332 @@ impl NativeCustody for NoCustody {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct ClaudeSourceFixture {
+    source_sha: String,
+    synthetic: bool,
+    fixture_clock_ms: i64,
+    rows: Vec<ClaudeSourceRow>,
+}
+
+#[derive(serde::Deserialize)]
+struct ClaudeSourceRow {
+    key: Vec<Value>,
+    value: gateway_core::source_json::SourceJson,
+    revision: String,
+    expires_at_ms: Option<i64>,
+}
+
+fn claude_source_entries() -> Vec<NativeEntry> {
+    let fixture: ClaudeSourceFixture =
+        serde_json::from_str(include_str!("fixtures/claude-core-retention-source.json")).unwrap();
+    assert_eq!(
+        fixture.source_sha,
+        "b59243d674567d418d1410f8390fc7fe47a08c92"
+    );
+    assert!(fixture.synthetic);
+    assert_eq!(fixture.fixture_clock_ms, 2200);
+    fixture
+        .rows
+        .into_iter()
+        .map(|row| NativeEntry {
+            raw_key: TupleKey::from_json_parts(&row.key)
+                .unwrap()
+                .sort_bytes()
+                .to_vec(),
+            value: NativeValue::SourceGraphV1(
+                gateway_migration_graph::transport::tree_to_source_graph(
+                    &gateway_core::source_control::source_json_tree(&row.value).unwrap(),
+                )
+                .unwrap(),
+            ),
+            revision: NativeRevision {
+                version: row.revision,
+                sequence: "0".into(),
+            },
+            expiration_ms: row.expires_at_ms.unwrap_or(-1),
+        })
+        .collect()
+}
+
+fn entry_key(entry: &NativeEntry) -> gateway_core::state::RecordKey {
+    TupleKey::from_sort_bytes(entry.raw_key.clone())
+        .unwrap()
+        .to_record_key()
+}
+
+fn native_tree(entry: &NativeEntry) -> gateway_core::value::PortableValue {
+    let NativeValue::SourceGraphV1(graph) = &entry.value else {
+        panic!("Expected source-produced JSON graph");
+    };
+    gateway_migration_graph::transport::from_source_graph(graph)
+        .unwrap()
+        .try_identity_free_tree()
+        .unwrap()
+        .unwrap()
+}
+
+fn assert_original_entry(actual: &NativeCapture, expected: &NativeEntry) {
+    let row = actual
+        .entries
+        .iter()
+        .find(|row| row.raw_key == expected.raw_key)
+        .expect("Retained source row is missing");
+    assert_eq!(row.revision, expected.revision);
+    assert_eq!(row.expiration_ms, expected.expiration_ms);
+    assert_eq!(native_tree(row), native_tree(expected));
+}
+
+fn claude_parts(entry: &NativeEntry) -> Vec<Value> {
+    gateway_migration_data::parts(&entry_key(entry)).unwrap()
+}
+
+fn write_current_quota_and_delete_lease(
+    store: &SqliteStore,
+    quota: &NativeEntry,
+    lease: &NativeEntry,
+) -> Result<gateway_core::value::PortableValue, gateway_core::error::GatewayError> {
+    use gateway_core::state::{
+        AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
+    };
+    use gateway_core::value::PortableValue;
+    let quota_key = entry_key(quota);
+    let lease_key = entry_key(lease);
+    let current_quota = run(store.read(&quota_key))?.unwrap();
+    let current_lease = run(store.read(&lease_key))?.unwrap();
+    let mut next = native_tree(quota);
+    let PortableValue::ObjectUtf16(fields) = &mut next else {
+        panic!("Expected a lossless source object");
+    };
+    fields
+        .iter_mut()
+        .find(|(name, _)| *name == gateway_core::js_string::JsString16::from_utf8("updated_at_ms"))
+        .unwrap()
+        .1 = PortableValue::number(2300.0);
+    let record = StoredRecord::profile_v2(
+        "post-adoption-current-quota",
+        next.clone(),
+        current_quota.expires_at_ms,
+    )?;
+    assert_eq!(
+        run(store.commit(AtomicTransition {
+            checks: vec![
+                RevisionCheck {
+                    key: quota_key.clone(),
+                    expected_revision: Some(current_quota.revision),
+                },
+                RevisionCheck {
+                    key: lease_key.clone(),
+                    expected_revision: Some(current_lease.revision),
+                },
+            ],
+            mutations: vec![
+                RecordMutation::Put {
+                    key: quota_key,
+                    record
+                },
+                RecordMutation::Delete { key: lease_key },
+            ],
+        }))?,
+        CommitOutcome::Committed
+    );
+    Ok(next)
+}
+
+#[test]
+fn source_claude_core_keeps_current_rows_and_latest_writes_without_renewing_lease_expiry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let rows = claude_source_entries();
+    assert_eq!(rows.len(), 5);
+    let lease = rows
+        .iter()
+        .find(|row| gateway_migration_data::claude::usage_lease_key(&claude_parts(row)))
+        .unwrap();
+    let quota = rows
+        .iter()
+        .find(|row| claude_parts(row)[1] == "claude_code_quota")
+        .unwrap();
+    assert_eq!(lease.expiration_ms, 22_200);
+    assert_eq!(quota.expiration_ms, -1);
+    let mut entries = valid_core_entries();
+    entries.extend(rows.clone());
+    let directory = Directory::new();
+    let spool = directory.file("claude-spool");
+    std::fs::create_dir(&spool)?;
+    let core = Captured::owned(capture(entries), &spool)?.core_capture()?;
+    assert_eq!(core.manifest.source_rows, 12);
+    assert_eq!(core.manifest.selected_rows, 9);
+    assert_eq!(core.manifest.excluded_rows, 3);
+    assert_eq!(core.manifest.do_row_writes, 23);
+    assert_original_entry(&core.capture, lease);
+    assert_original_entry(&core.capture, quota);
+    assert!(
+        rows.iter()
+            .filter(
+                |row| gateway_migration_data::claude::historical_capacity_key(&claude_parts(row))
+            )
+            .all(|excluded| core
+                .capture
+                .entries
+                .iter()
+                .all(|row| row.raw_key != excluded.raw_key))
+    );
+    let path = directory.file("claude-core.sqlite3");
+    let store = SqliteStore::open(&path);
+    run(adopt_empty(&store, &prepare_native(&core.capture)?))?;
+    drop(store);
+    let store = SqliteStore::open(&path);
+    let unchanged = run(export_native_latest(&store, 2300))?;
+    assert_original_entry(&unchanged, lease);
+    assert_original_entry(&unchanged, quota);
+    let next = write_current_quota_and_delete_lease(&store, quota, lease)?;
+    drop(store);
+    let store = SqliteStore::open(&path);
+    let latest = run(export_native_latest(&store, 2300))?;
+    assert!(
+        latest
+            .entries
+            .iter()
+            .all(|row| row.raw_key != lease.raw_key)
+    );
+    let updated = latest
+        .entries
+        .iter()
+        .find(|row| row.raw_key == quota.raw_key)
+        .unwrap();
+    assert_ne!(updated.revision, quota.revision);
+    assert_eq!(updated.expiration_ms, -1);
+    assert_eq!(native_tree(updated), next);
+    assert!(
+        latest.entries.iter().all(
+            |row| !gateway_migration_data::claude::historical_capacity_key(&claude_parts(row))
+        )
+    );
+    let inverse_path = directory.file("claude-core-inverse.sqlite3");
+    let inverse = SqliteStore::open(&inverse_path);
+    run(adopt_empty(&inverse, &prepare_native(&latest)?))?;
+    drop(inverse);
+    let inverse = SqliteStore::open(&inverse_path);
+    assert!(run(inverse.read(&entry_key(lease)))?.is_none());
+    let inverse_latest = run(export_native_latest(&inverse, 2300))?;
+    assert_original_entry(&inverse_latest, updated);
+    let api = gateway_authority::keys::api_window("core-key", "v3:1000", 2000);
+    assert_eq!(
+        run(inverse.read(&api))?.unwrap().json_value()?["committed_requests"],
+        42
+    );
+    Ok(())
+}
+
+#[test]
+fn full_history_export_still_retains_every_source_claude_history_kind()
+-> Result<(), Box<dyn std::error::Error>> {
+    let rows = claude_source_entries();
+    let mut entries = valid_core_entries();
+    entries.extend(rows.clone());
+    let input = capture(entries);
+    let prepared = prepare_native(&input)?;
+    assert_eq!(prepared.source_rows(), 12);
+    let directory = Directory::new();
+    let path = directory.file("claude-full-history.sqlite3");
+    let store = SqliteStore::open(&path);
+    run(adopt_empty(&store, &prepared))?;
+    drop(store);
+    let store = SqliteStore::open(&path);
+    let latest = run(export_native_latest(&store, 2300))?;
+    for row in &rows {
+        assert_original_entry(&latest, row);
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_claude_versions_kinds_and_key_shapes_refuse_core_selection() {
+    for key in [
+        json!(["uos_ai", "claude_code_usage", "v2", "lease", "a", "c"]),
+        json!(["uos_ai", "claude_code_usage", "v1", "future", "a", "c"]),
+        json!([
+            "uos_ai",
+            "claude_code_usage",
+            "v1",
+            "lease",
+            "a",
+            "c",
+            "extra"
+        ]),
+        json!([
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v2",
+            "history",
+            0,
+            "a",
+            "c"
+        ]),
+        json!([
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "future",
+            0,
+            "a",
+            "c"
+        ]),
+        json!([
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            0,
+            "a",
+            "c",
+            "extra"
+        ]),
+        json!([
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            0,
+            "a",
+            "c",
+            "future",
+            "unknown"
+        ]),
+        json!([
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            0,
+            "a",
+            "c",
+            "not-a-digest"
+        ]),
+    ] {
+        let mut entries = valid_core_entries();
+        entries.push(entry(key.clone(), json!({}), "49", -1));
+        let input = capture(entries);
+        if key[1] == "claude_code_usage" {
+            assert!(prepare_native(&input).is_err());
+        }
+        let directory = Directory::new();
+        let spool = directory.file("unknown-claude-spool");
+        std::fs::create_dir(&spool).unwrap();
+        assert!(
+            Captured::owned(input, &spool)
+                .unwrap()
+                .core_capture()
+                .is_err()
+        );
+    }
+}
+
 mod support_clock {
     use gateway_core::error::GatewayError;
     pub struct Tokens(pub std::sync::atomic::AtomicU64);
