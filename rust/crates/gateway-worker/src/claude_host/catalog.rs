@@ -92,8 +92,8 @@ impl CatalogHost for AccountCatalog<'_> {
     fn now_ms(&self) -> i64 {
         self.host.platform.now_ms()
     }
-    fn unique_id(&self) -> String {
-        crate::transport::random::opaque_token().expect("Validated platform randomness")
+    fn unique_id(&self) -> Result<String, GatewayError> {
+        crate::transport::random::opaque_token()
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         worker::Delay::from(std::time::Duration::from_millis(u64::from(milliseconds))).await;

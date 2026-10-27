@@ -227,10 +227,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let sequence = self.sequence.get() + 1;
         self.sequence.set(sequence);
-        format!("observation-{sequence}")
+        Ok(format!("observation-{sequence}"))
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         self.store
@@ -273,6 +273,64 @@ fn surplus(id: &str) -> Value {
 }
 fn openlux(id: &str) -> Value {
     json!({"data":[{"id":id,"supported_endpoint_types":["openai-response","openai"]}]})
+}
+
+/// Test-private failure injection through the real finite CatalogHost interface.
+struct FailIds<'a> {
+    host: &'a Host,
+    ordinal: u32,
+    calls: Cell<u32>,
+}
+impl<'a> FailIds<'a> {
+    fn at(host: &'a Host, ordinal: u32) -> Self {
+        Self {
+            host,
+            ordinal,
+            calls: Cell::new(0),
+        }
+    }
+}
+impl CatalogHost for FailIds<'_> {
+    fn source_string_collator(
+        &self,
+    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+        self.host.source_string_collator()
+    }
+    fn now_ms(&self) -> i64 {
+        self.host.now_ms()
+    }
+    fn unique_id(&self) -> Result<String, GatewayError> {
+        let next = self.calls.get() + 1;
+        self.calls.set(next);
+        if next == self.ordinal {
+            return Err(GatewayError::unavailable(
+                "Secure randomness is unavailable.",
+                "secure_random_unavailable",
+            ));
+        }
+        self.host.unique_id()
+    }
+    async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
+        self.host.wait(milliseconds).await
+    }
+    async fn publication(&self) -> Result<CredentialPublication, GatewayError> {
+        self.host.publication().await
+    }
+    async fn fetch(&self, request: CatalogFetch) -> Result<CatalogFetchResponse, GatewayError> {
+        self.host.fetch(request).await
+    }
+    async fn observe(
+        &self,
+        observation: gateway_catalog_provider::host::CatalogObservation,
+    ) -> Result<(), GatewayError> {
+        self.host.observe(observation).await
+    }
+    async fn refresh_codex(
+        &self,
+        account: &gateway_catalog_provider::host::CodexAccount,
+    ) -> Result<gateway_catalog_provider::host::CodexAccount, GatewayError> {
+        self.host.refresh_codex(account).await
+    }
 }
 
 mod cases;

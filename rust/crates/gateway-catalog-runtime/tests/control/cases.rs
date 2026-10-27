@@ -1,3 +1,4 @@
+use super::FailIds;
 use super::{Fetch, Host, Store, openlux, run, surplus};
 use gateway_authority::{
     keys,
@@ -551,4 +552,55 @@ fn source_paid_observation_and_projection_preserve_opaque_models_without_new_aut
         "M42_PAID_PROJECTION_WRITER_FIXTURE={}",
         serde_json::to_string(&(keys::paid_routing().0, row)).unwrap()
     );
+}
+
+#[test]
+fn paid_id_errors_preserve_prior_observation_and_policy_without_consuming_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = Store::new();
+    store.install(true, false);
+    let host = Host::new(&store, true, false);
+    let runtime = CatalogRuntime::new();
+    host.queue(surplus("paid-only"));
+    run(publish_paid_routing(&runtime, &store, &host))?;
+    let policy = store.get(&keys::paid_routing()).map(|row| row.revision);
+    let observation = store
+        .get(&keys::paid_control_observation(PaidProvider::Surplus))
+        .map(|row| row.revision);
+    let requests = host.requests.borrow().len();
+    for observation_only in [true, false] {
+        let failure = FailIds::at(&host, 1);
+        let result = if observation_only {
+            run(publish_paid_observation(
+                &runtime,
+                &store,
+                &failure,
+                PaidProvider::Surplus,
+                false,
+            ))
+            .map(|_| ())
+        } else {
+            run(publish_paid_routing(&runtime, &store, &failure)).map(|_| ())
+        };
+        let error = match result {
+            Ok(()) => return Err("failed paid publication ID was accepted".into()),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.envelope.error.code.as_deref(),
+            Some("secure_random_unavailable")
+        );
+        assert_eq!(
+            store.get(&keys::paid_routing()).map(|row| row.revision),
+            policy
+        );
+        assert_eq!(
+            store
+                .get(&keys::paid_control_observation(PaidProvider::Surplus))
+                .map(|row| row.revision),
+            observation
+        );
+        assert_eq!(host.requests.borrow().len(), requests);
+    }
+    Ok(())
 }

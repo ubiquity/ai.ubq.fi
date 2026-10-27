@@ -1,5 +1,8 @@
+use super::FailIds;
 use super::{Host, Outcome, SelectionReads, Store, body, catalog, ids, run};
 use gateway_catalog_inputs::state::{self, source_key};
+use gateway_catalog_provider::host::CatalogProvider;
+use gateway_catalog_provider::host::ProviderBinding;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CodexAccount, CredentialPublication,
 };
@@ -280,4 +283,174 @@ fn versioned_union_and_persisted_account_evidence_keep_source_model_and_effort_u
         "M42_VERSIONED_EVIDENCE_WRITER_FIXTURE={}",
         serde_json::to_string(&(state::account_models_key().0, evidence)).unwrap()
     );
+}
+
+#[test]
+fn id_error_before_generation_or_lease_never_falls_back_or_acquires()
+-> Result<(), Box<dyn std::error::Error>> {
+    for ordinal in [1, 2] {
+        let store = Store::new();
+        let host = Host::new(&store);
+        let failure = FailIds::at(&host, ordinal);
+        let error =
+            match run(CatalogRuntime::new().versioned_models(&store, &failure, "0.163.0", None)) {
+                Ok(_) => return Err("failed ID was accepted".into()),
+                Err(error) => error,
+            };
+        assert_eq!(
+            error.envelope.error.code.as_deref(),
+            Some("secure_random_unavailable")
+        );
+        assert_eq!(failure.calls.get(), ordinal);
+        assert!(host.requests.borrow().is_empty());
+        assert!(store.live(&catalog_store::lease_key("0.163.0")).is_none());
+        assert!(
+            store
+                .live(&catalog_store::metadata_key("0.163.0"))
+                .is_none()
+        );
+        assert_eq!(
+            store.live(&catalog_store::auth_generation_key()).is_some(),
+            ordinal == 2
+        );
+    }
+    Ok(())
+}
+#[test]
+fn publication_id_error_retains_prior_evidence_and_releases_original_lease()
+-> Result<(), Box<dyn std::error::Error>> {
+    for ordinal in [3, 4] {
+        let store = Store::new();
+        let host = Host::new(&store);
+        let mut response = CatalogFetchResponse::json(200, catalog("rng-source").to_string());
+        response.single_account_observation_complete = true;
+        host.queue(Outcome {
+            response: Ok(response),
+            ticks: 0,
+            callback: None,
+        });
+        let failure = FailIds::at(&host, ordinal);
+        let error =
+            match run(CatalogRuntime::new().versioned_models(&store, &failure, "0.163.0", None)) {
+                Ok(_) => return Err("failed publication ID was accepted".into()),
+                Err(error) => error,
+            };
+        assert_eq!(
+            error.envelope.error.code.as_deref(),
+            Some("secure_random_unavailable")
+        );
+        assert_eq!(failure.calls.get(), ordinal);
+        assert_eq!(host.requests.borrow().len(), 1);
+        assert!(store.live(&catalog_store::lease_key("0.163.0")).is_none());
+        assert!(
+            store
+                .live(&catalog_store::metadata_key("0.163.0"))
+                .is_none()
+        );
+        assert_eq!(
+            store.live(&state::account_models_key()).is_some(),
+            ordinal == 4
+        );
+        assert!(store.live(&catalog_store::auth_generation_key()).is_some());
+    }
+    Ok(())
+}
+#[test]
+fn discovery_id_error_preserves_current_memo_without_durable_consuming_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    store.put(
+        catalog_store::auth_generation_key(),
+        "generation-row",
+        json!("generation"),
+    );
+    let binding = ProviderBinding {
+        identity: "router-key".into(),
+    };
+    host.published
+        .borrow_mut()
+        .providers
+        .insert(CatalogProvider::Openrouter, binding.clone());
+    host.queue(Outcome::json(json!({"data":[{"id":"vendor/text"}]})));
+    let failure = FailIds::at(&host, 1);
+    let error =
+        match run(runtime.refresh_provider(&store, &failure, CatalogProvider::Openrouter, false)) {
+            Ok(_) => return Err("failed observation ID was accepted".into()),
+            Err(error) => error,
+        };
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("secure_random_unavailable")
+    );
+    assert!(
+        runtime
+            .cached_provider(&host.published.borrow(), CatalogProvider::Openrouter)
+            .is_some()
+    );
+    assert!(
+        store
+            .live(&state::provider_observation_key(
+                "generation",
+                CatalogProvider::Openrouter,
+                Some(&binding)
+            ))
+            .is_none()
+    );
+    assert_eq!(host.requests.borrow().len(), 1);
+    Ok(())
+}
+#[test]
+fn validation_id_error_preserves_accepted_memo_without_observation_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let store = Store::new();
+    let host = Host::new(&store);
+    let runtime = CatalogRuntime::new();
+    store.put(
+        catalog_store::auth_generation_key(),
+        "generation-row",
+        json!("generation"),
+    );
+    let binding = ProviderBinding {
+        identity: "claude-owner".into(),
+    };
+    host.published
+        .borrow_mut()
+        .providers
+        .insert(CatalogProvider::ClaudeCode, binding.clone());
+    let failure = FailIds::at(&host, 1);
+    let models = vec![SourceJson::from_serializable(
+        &json!({"id":"claude-valid"}),
+    )?];
+    let error = match run(runtime.cache_validated_claude(
+        &store,
+        &failure,
+        &binding,
+        models,
+        store.now.get(),
+    )) {
+        Ok(_) => return Err("failed validation ID was accepted".into()),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.envelope.error.code.as_deref(),
+        Some("secure_random_unavailable")
+    );
+    assert!(
+        runtime
+            .cached_provider(&host.published.borrow(), CatalogProvider::ClaudeCode)
+            .is_some()
+    );
+    assert!(
+        store
+            .live(&state::provider_observation_key(
+                "generation",
+                CatalogProvider::ClaudeCode,
+                Some(&binding)
+            ))
+            .is_none()
+    );
+    assert!(host.requests.borrow().is_empty());
+    Ok(())
 }

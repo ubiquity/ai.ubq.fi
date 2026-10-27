@@ -1,3 +1,4 @@
+use super::FailIds;
 use super::{
     Host, Outcome, Store, build_runtime_config, invoke, lift, normalize_snapshot, ordinary_models,
     run, scalar,
@@ -351,4 +352,36 @@ fn blank_source_label_is_rejected_before_admin_publication_mutates_rows() {
     assert_eq!(error.status, 409);
     assert!(store.rows.borrow().is_empty());
     assert!(host.requests.borrow().is_empty());
+}
+
+#[test]
+fn admin_id_errors_never_submit_models_or_whitelist_mutations()
+-> Result<(), Box<dyn std::error::Error>> {
+    for whitelist in [false, true] {
+        let store = Store::default();
+        let host = Host::new();
+        let failure = FailIds::at(&host, 1);
+        let document = SourceJson::from_serializable(&if whitelist {
+            json!({"model_ids":["a"]})
+        } else {
+            json!({"models":[{"slug":"a"}],"source":"fixture"})
+        })?;
+        let operation = if whitelist {
+            AdminCatalogOperation::WhitelistSet { document }
+        } else {
+            AdminCatalogOperation::CodexModelsSet { document }
+        };
+        let error = match run(CatalogRuntime::new().admin_catalog(&store, &failure, operation)) {
+            Ok(_) => return Err("failed admin ID was accepted".into()),
+            Err(error) => error,
+        };
+        assert_eq!(error.status, 503);
+        assert_eq!(
+            error.diagnostic().envelope.error.code.as_deref(),
+            Some("secure_random_unavailable")
+        );
+        assert!(store.rows.borrow().is_empty());
+        assert_eq!(failure.calls.get(), 1);
+    }
+    Ok(())
 }

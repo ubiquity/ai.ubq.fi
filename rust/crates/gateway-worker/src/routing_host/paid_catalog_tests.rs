@@ -213,10 +213,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         NOW
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let n = self.sequence.get() + 1;
         self.sequence.set(n);
-        format!("real-publisher-{n}")
+        Ok(format!("real-publisher-{n}"))
     }
     async fn wait(&self, _: u32) -> Result<(), GatewayError> {
         panic!("unexpected catalog wait")

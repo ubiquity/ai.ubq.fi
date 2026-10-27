@@ -13,3 +13,5 @@ Catalog responsibilities import their defining modules directly:
 The operation traits contain their actual source logic. They do not forward through legacy API facades or expose memo, secret, lease or proof constructors. Ordinary OpenAI model listings and rich exact-version Codex catalogs remain separate contracts; source UTF16, observed endpoint/reasoning metadata, collation, cancellation and publication fences are unchanged.
 
 The conventional integration targets cover cache behavior, discovery, source data, lease/currentness fences, paid authority and authenticated configuration. Each target keeps its private fixture closure, and native owner proofs remain obtained through the existing real authentication/publication operations. Static structure does not establish actual Worker, native or deployment acceptance.
+
+Catalog hosts return `Result<String, GatewayError>` for private revision/lease IDs. A failed ID propagates at its existing phase before the consuming effect; prior legitimate memo/evidence effects are preserved and the existing lease cleanup still runs. No fake ID or alternate entropy source is selected.

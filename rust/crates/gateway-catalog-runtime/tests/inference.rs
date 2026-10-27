@@ -61,8 +61,8 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         NOW
     }
-    fn unique_id(&self) -> String {
-        "fixture-cold-catalog".into()
+    fn unique_id(&self) -> Result<String, GatewayError> {
+        Ok("fixture-cold-catalog".into())
     }
     async fn publication(&self) -> Result<CredentialPublication, GatewayError> {
         Ok(self.publication.borrow().clone())

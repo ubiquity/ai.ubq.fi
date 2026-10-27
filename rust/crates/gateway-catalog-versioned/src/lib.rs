@@ -222,7 +222,7 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
         version: lease.version,
         generation: lease.generation,
         publication: &fetched.publication,
-        revision: &host.unique_id(),
+        revision: &host.unique_id()?,
         now: host.now_ms(),
     };
     state::publish_account_models(store, &fetched.evidence, &context).await?;
@@ -244,7 +244,7 @@ async fn refresh<S: QueryStore, H: CatalogHost>(
     let state = runtime
         .load_state(store, &fetched.publication, host.now_ms())
         .await?;
-    let revision = host.unique_id();
+    let revision = host.unique_id()?;
     let (etag, content_type) = match (revalidated, cached) {
         (true, Some(c)) => (
             c.metadata.etag.as_deref(),
@@ -383,7 +383,7 @@ impl VersionedCatalog for CatalogRuntime {
                     .await?;
             }
         }
-        let generation = match catalog_store::get_auth_generation(store, &host.unique_id()).await {
+        let generation = match catalog_store::get_auth_generation(store, &host.unique_id()?).await {
             Ok(generation) => generation,
             Err(_) => {
                 return fallback(
@@ -402,7 +402,7 @@ impl VersionedCatalog for CatalogRuntime {
         {
             return response(runtime, store, host, cached, conditional, CacheState::Hit).await;
         }
-        let owner = host.unique_id();
+        let owner = host.unique_id()?;
         if !catalog_store::acquire_refresh_lease(store, &version, &owner, now).await? {
             if let Some(cached) = cached {
                 return response(

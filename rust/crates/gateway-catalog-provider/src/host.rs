@@ -226,7 +226,7 @@ pub trait CatalogHost {
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>;
     fn now_ms(&self) -> i64;
-    fn unique_id(&self) -> String;
+    fn unique_id(&self) -> Result<String, GatewayError>;
     fn wait(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;
     fn publication(&self) -> impl Future<Output = Result<CredentialPublication, GatewayError>>;
     fn fetch(

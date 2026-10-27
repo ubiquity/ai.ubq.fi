@@ -171,7 +171,7 @@ async fn admin_save_models<S: QueryStore, H: CatalogHost>(
         let next_runtime =
             build_runtime_config(&next, default.as_ref(), old_effort.as_ref(), host.now_ms())
                 .map_err(runtime_error)?;
-        let revision = host.unique_id();
+        let revision = host.unique_id().map_err(lift)?;
         if store
             .commit(AtomicTransition {
                 checks: vec![
@@ -253,7 +253,8 @@ async fn admin_save_whitelist<S: QueryStore, H: CatalogHost>(
             checks: vec![],
             mutations: vec![RecordMutation::Put {
                 key: state::whitelist_key(),
-                record: encode_source_control_record(host.unique_id(), &row, None).map_err(lift)?,
+                record: encode_source_control_record(host.unique_id().map_err(lift)?, &row, None)
+                    .map_err(lift)?,
             }],
         })
         .await
