@@ -9,6 +9,7 @@ use crate::{
 };
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::types::AuthResponse;
+use gateway_claude_usage_protocol::readback::quota as quota_readback;
 use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
@@ -218,6 +219,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         roster: &host::ClaudeRosterReadback,
         at: i64,
     ) -> Result<(Vec<SourceJson>, Option<SourceObject>), GatewayError> {
+        let dates = |s| self.host.parse_claude_usage_date(s);
+        let project = |quota: &SourceJson| quota_readback(quota, &dates);
         let mut accounts = Vec::new();
         let mut active = None;
         for account in &roster.accounts {
@@ -241,15 +244,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             document.set("credential", &credential_view(&account.credential)?)?;
             document.set("workspace", &account.workspace)?;
             let quota = if current {
-                account
-                    .quota
-                    .as_ref()
-                    .map(|q| {
-                        gateway_claude_usage_protocol::readback::quota(q, &|s| {
-                            self.host.parse_claude_usage_date(s)
-                        })
-                    })
-                    .transpose()?
+                account.quota.as_ref().map(project).transpose()?
             } else {
                 None
             };
