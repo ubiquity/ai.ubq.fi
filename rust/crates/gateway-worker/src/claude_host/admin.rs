@@ -17,7 +17,7 @@ use gateway_claude_usage_admin::{
 };
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source, state::AuthorityStore,
+    source_serialization as source,
 };
 use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
 use serde::Serialize;

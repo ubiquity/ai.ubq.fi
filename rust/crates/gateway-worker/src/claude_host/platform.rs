@@ -335,6 +335,25 @@ pub(super) fn physical_request(
     .map_err(|_| ConstructionFailure)
 }
 
+impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
+    fn parse_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+        gateway_claude_usage_runtime::platform::parse_date(text)
+    }
+    async fn accepted_usage(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
+        self.accepted_observation(event).await
+    }
+    async fn usage_get(
+        &self,
+        account: &AccountBinding,
+    ) -> Result<
+        gateway_claude_usage_runtime::fetch::Response,
+        gateway_claude_usage_runtime::fetch::GetFailure,
+    > {
+        gateway_claude_usage_runtime::platform::get(account,
+            &self.platform.cancellation.source_signal(), &||self.now_ms()).await
+    }
+}
+
 #[cfg(test)]
 mod physical_tests {
     use gateway_core::js_string::JsString16;
@@ -398,21 +417,3 @@ mod physical_tests {
     }
 }
 
-impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
-    fn parse_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
-        gateway_claude_usage_runtime::platform::parse_date(text)
-    }
-    async fn accepted_usage(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
-        self.accepted_observation(event).await
-    }
-    async fn usage_get(
-        &self,
-        account: &AccountBinding,
-    ) -> Result<
-        gateway_claude_usage_runtime::fetch::Response,
-        gateway_claude_usage_runtime::fetch::GetFailure,
-    > {
-        gateway_claude_usage_runtime::platform::get(account,
-            &self.platform.cancellation.source_signal(), &||self.now_ms()).await
-    }
-}
