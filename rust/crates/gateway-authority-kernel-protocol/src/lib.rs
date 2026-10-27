@@ -461,15 +461,15 @@ impl KernelTerminalDraft {
         window: Option<KernelWindow>,
     ) -> Result<KernelTerminalUpdate, GatewayError> {
         let mut updated_window = None;
-        if self.write_required {
-            if let Some(mut window) = window {
-                validate_kernel_window(&window, &self.row.owner, self.row.repo.as_deref())?;
-                if window.created_at_ms == self.row.window_created_at_ms {
-                    window
-                        .reservations
-                        .insert(self.row.request_id.0.clone(), self.row.lease_expires_at_ms);
-                    updated_window = Some(window);
-                }
+        if self.write_required
+            && let Some(mut window) = window
+        {
+            validate_kernel_window(&window, &self.row.owner, self.row.repo.as_deref())?;
+            if window.created_at_ms == self.row.window_created_at_ms {
+                window
+                    .reservations
+                    .insert(self.row.request_id.0.clone(), self.row.lease_expires_at_ms);
+                updated_window = Some(window);
             }
         }
         Ok(KernelTerminalUpdate {
