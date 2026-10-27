@@ -243,7 +243,7 @@ fn admit_headers(
         head.kind,
         NativeImportAuthHeaders {
             auth: original.original_auth_headers(),
-            body_sha256: one(&head, NATIVE_IMPORT_BODY_HEADER)?,
+            body_sha256: one(head, NATIVE_IMPORT_BODY_HEADER)?,
         },
         metadata,
         now_ms()?,
@@ -271,7 +271,7 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     registered_target: (&str, &str),
 ) -> Result<RemoteImportDocument, GatewayError> {
     let (native_owner_id, account_id_hash) = registered_target;
-    let metadata = metadata(&head)?;
+    let metadata = metadata(head)?;
     let header = admit_headers(head, identity, nonces, &metadata, original)?;
     let admitted = authority.admit_import(header)?;
     original.check()?;
@@ -306,8 +306,8 @@ fn read_body(
     head: &ImportHead,
     original: &NativeControlContext<'_>,
 ) -> Result<NativeDocument, GatewayError> {
-    let length = optional(&head, "content-length")?;
-    let encoding = optional(&head, "transfer-encoding")?;
+    let length = optional(head, "content-length")?;
+    let encoding = optional(head, "transfer-encoding")?;
     if length.is_some() && encoding.is_some() {
         return Err(invalid());
     }
