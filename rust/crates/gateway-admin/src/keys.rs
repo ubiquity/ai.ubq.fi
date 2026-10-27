@@ -33,7 +33,7 @@ pub struct ApiKeyRecord {
     pub created_at_ms: i64,
     pub paid_fallback_model_ids: Vec<ModelId>,
     pub paid_fallback_quota_per_credit: i64,
-    #[serde(default, with = "gateway_authority::paid_types::model_map")]
+    #[serde(default, with = "gateway_authority_paid_control_records::model_map")]
     pub paid_fallback_max_exposure_microcredits: std::collections::BTreeMap<ModelId, i64>,
     pub paid_fallback_pricing_checked_at_ms: Option<i64>,
 }
