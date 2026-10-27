@@ -10,13 +10,11 @@ use gateway_auth::{
         ManagedNativeSource, codex_source_pool_key,
     },
     session_index,
-    types::{AuthConfig, AuthHost, AuthRequest},
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+    types::{AuthConfig, AuthRequest},
 };
 use gateway_authority::keys;
 use gateway_authority::native_control::{
-    NativeRenewalCancellation, actor,
+    actor,
     import::AuthenticatedNativeImport,
     receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
 };
@@ -24,142 +22,19 @@ use gateway_authority::paid_control::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority::store::Authority;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-};
-use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     net::Shutdown,
     path::PathBuf,
-    sync::{Condvar, Mutex},
+    sync::Mutex,
     thread,
 };
 const RAW: &[u8] = br#"{"tokens":{"access_token":"SYNTHETIC_ACCESS","refresh_token":"SYNTHETIC_REFRESH","account_id":"synthetic-account"},"extra":"\ud800"}"#;
 const HOME: &str = "/tmp/native-import-http-synthetic-owner";
-#[derive(Clone, Default)]
-pub(crate) struct Store {
-    pub(crate) rows: Arc<Mutex<BTreeMap<String, StoredRecord>>>,
-    admitted: Arc<(Mutex<usize>, Condvar)>,
-    action_key: Arc<Mutex<Option<RecordKey>>>,
-}
-impl Store {
-    pub(crate) fn seed(&self, key: RecordKey, revision: &str, value: impl Serialize) {
-        self.rows.lock().unwrap().insert(
-            key.0,
-            StoredRecord::json(revision, serde_json::to_value(value).unwrap(), None),
-        );
-    }
-    fn wait_header_admitted(&self) {
-        let (count, ready) = &*self.admitted;
-        let (count, timeout) = ready
-            .wait_timeout_while(count.lock().unwrap(), Duration::from_secs(2), |count| {
-                *count == 0
-            })
-            .unwrap();
-        assert!(
-            !timeout.timed_out() && *count > 0,
-            "real current-action CAS did not occur before raw read"
-        );
-    }
-}
-impl AuthorityClock for Store {
-    fn now_ms(&self) -> Result<i64, GatewayError> {
-        now_ms()
-    }
-}
-impl AuthorityStore for Store {
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
-        Ok(self.rows.lock().unwrap().get(&key.0).cloned())
-    }
-    async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let mut rows = self.rows.lock().unwrap();
-        for check in &tx.checks {
-            if rows.get(&check.key.0).map(|row| &row.revision) != check.expected_revision.as_ref() {
-                return Ok(CommitOutcome::Conflict);
-            }
-        }
-        let actual_action_observation = tx.mutations.is_empty()
-            && self
-                .action_key
-                .lock()
-                .unwrap()
-                .as_ref()
-                .is_some_and(|key| tx.checks.iter().any(|check| &check.key == key));
-        for mutation in tx.mutations {
-            match mutation {
-                RecordMutation::Put { key, record } => {
-                    rows.insert(key.0, record);
-                }
-                RecordMutation::Delete { key } => {
-                    rows.remove(&key.0);
-                }
-            }
-        }
-        drop(rows);
-        if actual_action_observation {
-            let (count, ready) = &*self.admitted;
-            *count.lock().unwrap() += 1;
-            ready.notify_all();
-        }
-        Ok(CommitOutcome::Committed)
-    }
-}
-pub(crate) struct Tokens(AtomicUsize);
-impl Default for Tokens {
-    fn default() -> Self {
-        Self(AtomicUsize::new(1))
-    }
-}
-impl TokenSource for Tokens {
-    fn next_token(&self) -> Result<String, GatewayError> {
-        Ok(format!(
-            "synthetic-http-operation-{}",
-            self.0.fetch_add(1, Ordering::SeqCst)
-        ))
-    }
-}
-pub(crate) struct Host;
-impl WebAuthnCrypto for Host {
-    async fn validate_key(&self, _: &CosePublicKey) -> Result<(), GatewayError> {
-        Err(unavailable())
-    }
-    async fn verify_signature(&self, _: SignatureInput) -> Result<bool, GatewayError> {
-        Err(unavailable())
-    }
-}
-impl AuthHost for Host {
-    fn now_ms(&self) -> i64 {
-        now_ms().unwrap()
-    }
-    fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
-        Ok(vec![1; length])
-    }
-    async fn fetch_auth(
-        &self,
-        _: AuthUpstreamRequest,
-    ) -> Result<AuthUpstreamResponse, GatewayError> {
-        panic!("synthetic passkey authentication must use actual store, not network")
-    }
-    async fn kernel_principal(
-        &self,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: &str,
-    ) -> Result<String, GatewayError> {
-        Err(unavailable())
-    }
-}
-pub(crate) struct Cancel;
-impl NativeRenewalCancellation for Cancel {
-    fn cancelled(&self) -> bool {
-        false
-    }
-}
+use gateway_native_import_test_support::fixture::{Cancel, Host, Store, Tokens};
 #[derive(Default)]
 struct Observed {
     documents: Vec<Vec<u8>>,
@@ -175,7 +50,9 @@ impl NativeImportHandler for Recording {
         metadata: &NativeImportMetadata,
         body: &[u8],
         context: &NativeImportContext<'_>,
+        original: &crate::owner_control::NativeControlContext<'_>,
     ) -> Result<NativeImportResult, GatewayError> {
+        context.require_original(original)?;
         context.check_document(proof, metadata, body)?;
         let mut observed = self.0.lock().unwrap();
         observed.documents.push(body.to_vec());
@@ -337,7 +214,8 @@ fn prepare(store: &Store, id: &NativeTransportIdentity, account: String) -> Nati
     ))
     .unwrap();
     let owner = RegisteredRenewalOwner::configured("native-owner".into(), HOME.into()).unwrap();
-    let control = NativeRenewalAuthority::configured(&a, id, &owner, &cfg, &Cancel);
+    let cancel = Cancel::default();
+    let control = NativeRenewalAuthority::configured(&a, id, &owner, &cfg, &cancel);
     let prepared = futures_executor::block_on(control.prepare_import(
         &actor,
         NativeImportTarget::ExistingAccount {

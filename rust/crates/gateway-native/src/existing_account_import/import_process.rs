@@ -183,6 +183,13 @@ fn run_actor() -> Result<(), GatewayError> {
             document.body(),
             &original,
         )?;
+        let context = super::NativeImportInputs::checked(
+            &document.proof,
+            &document.metadata,
+            document.body(),
+            &context,
+            &original,
+        )?;
         let validation = super::validation::ImportValidation::from_connected(
             connected.models,
             Some(connected.oauth),

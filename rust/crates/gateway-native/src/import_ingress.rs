@@ -120,6 +120,35 @@ where
         identity: &NativeTransportIdentity,
         nonces: &SqliteNonceStore,
     ) -> Result<(), GatewayError> {
+        let result = Admission {
+            authority: &self.authority,
+            owner: &self.owner,
+            config: &self.config,
+            handler: &self.handler,
+        }
+        .dispatch(stream, head, identity, nonces)?;
+        write_import_response(stream, result.status, result.headers, result.body)
+    }
+}
+struct Admission<'a, S, I, H: ?Sized> {
+    authority: &'a Authority<S, I>,
+    owner: &'a RegisteredRenewalOwner,
+    config: &'a AuthConfig,
+    handler: &'a H,
+}
+impl<S, I, H> Admission<'_, S, I, H>
+where
+    S: AuthorityStore + Send + Sync,
+    I: TokenSource + Send + Sync,
+    H: NativeImportHandler + ?Sized,
+{
+    fn dispatch(
+        &self,
+        stream: &mut TcpStream,
+        head: ImportHead,
+        identity: &NativeTransportIdentity,
+        nonces: &SqliteNonceStore,
+    ) -> Result<crate::native_import::NativeImportResult, GatewayError> {
         let auth = auth_headers(&head)?;
         let metadata = metadata(&head)?;
         let watch = stream.try_clone().map_err(|_| unavailable())?;
@@ -133,10 +162,10 @@ where
         let header_proof = admit_headers(&head, identity, nonces, &metadata, &original)?;
         let cancellation = OriginalCancellation(&original);
         let authority = NativeRenewalAuthority::configured(
-            &self.authority,
+            self.authority,
             identity,
-            &self.owner,
-            &self.config,
+            self.owner,
+            self.config,
             &cancellation,
         );
         let admitted = futures_executor::block_on(authority.admit_import(header_proof))?;
@@ -151,7 +180,7 @@ where
         let proof = futures_executor::block_on(authority.finish_import(admitted, &raw.0))?;
         original.check()?;
         let result = futures_executor::block_on(dispatch_import(
-            &self.handler,
+            self.handler,
             &authority,
             &proof,
             &metadata,
@@ -159,8 +188,47 @@ where
             &original,
         ))?;
         original.check()?;
-        write_import_response(stream, result.status, result.headers, result.body)
+        Ok(result)
     }
+}
+/// A fixed checked accepted-socket operation. It returns DATA/error, never an admitted context or proof.
+pub fn receive_import_connection<S, I, H>(
+    stream: &mut TcpStream,
+    authority: &Authority<S, I>,
+    identity: &NativeTransportIdentity,
+    owner: &RegisteredRenewalOwner,
+    config: &AuthConfig,
+    nonces: &SqliteNonceStore,
+    handler: &H,
+) -> Result<crate::native_import::NativeImportResult, GatewayError>
+where
+    S: AuthorityStore + Send + Sync,
+    I: TokenSource + Send + Sync,
+    H: NativeImportHandler + ?Sized,
+{
+    crate::require_production_artifact()?;
+    if !stream
+        .peer_addr()
+        .map_err(|_| unavailable())?
+        .ip()
+        .is_loopback()
+    {
+        return Err(unauthorized());
+    }
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|_| unavailable())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|_| unavailable())?;
+    let head = gateway_native_http_framing::request::read_import_head(stream)?;
+    Admission {
+        authority,
+        owner,
+        config,
+        handler,
+    }
+    .dispatch(stream, head, identity, nonces)
 }
 fn admit_headers(
     head: &ImportHead,

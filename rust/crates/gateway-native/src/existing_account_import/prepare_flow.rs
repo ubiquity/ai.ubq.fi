@@ -1,4 +1,5 @@
 //! Genuine original Start, actual live custody and native durable receipt only.
+use super::NativeImportInputs;
 use super::{
     ExistingAccountImportStore,
     actor_channel::InheritedCustodyChannel,
@@ -9,7 +10,7 @@ use super::{
     live_custody::LiveImportCustody,
     validation::{ImportValidation, ValidatedNativeImport, ValidationOutcome},
 };
-use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
+use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::{
     NativeRenewalCancellation,
     import::{
@@ -59,7 +60,7 @@ impl<'a> PreparedExistingImport<'a> {
         authority: &RemoteImportAuthority<'_, C>,
         sender: &ImportPublicationHttp,
         store: &ExistingAccountImportStore,
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<VerifiedImportPublication<'a>, GatewayError> {
         let result = (|| {
             authority.recheck_import_claim(&self.claim)?;
@@ -123,7 +124,7 @@ impl<'a> PreparedExistingImport<'a> {
     }
     pub(super) fn prepare<C: NativeRenewalCancellation>(
         authority: &RemoteImportAuthority<'_, C>,
-        context: &NativeImportContext<'a>,
+        context: &NativeImportInputs<'a>,
         store: &ExistingAccountImportStore,
         channel: InheritedCustodyChannel,
         mut validation: ImportValidation,
@@ -193,7 +194,7 @@ impl<'a> PreparedExistingImport<'a> {
 }
 fn require_catalog<C: NativeRenewalCancellation>(
     authority: &RemoteImportAuthority<'_, C>,
-    context: &NativeImportContext<'_>,
+    context: &NativeImportInputs<'_>,
     candidate: &ValidatedNativeImport<'_>,
 ) -> Result<(), GatewayError> {
     context.check()?;

@@ -1,4 +1,5 @@
 //! Only fixed native files are decoded here. No receipt constructor is public.
+use super::NativeImportInputs;
 use super::*;
 #[cfg(test)]
 use gateway_auth::native_credentials::parse_native_document;
@@ -231,7 +232,7 @@ pub(super) fn issue_fixture(
     start: gateway_authority::native_control::import::effects::NativeImportStart<'_>,
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
-    context: &crate::native_import::NativeImportContext<'_>,
+    context: &super::NativeImportInputs<'_>,
     now_ms: i64,
 ) -> Result<DurableNativeImport, GatewayError> {
     use std::io::Write;
@@ -352,7 +353,7 @@ pub(super) fn persist_live(
     custody: &mut super::live_custody::LiveImportCustody<'_>,
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
-    context: &crate::native_import::NativeImportContext<'_>,
+    context: &super::NativeImportInputs<'_>,
     candidate: &super::validation::ValidatedNativeImport<'_>,
 ) -> Result<DurableNativeImport, GatewayError> {
     use rustix::fs::{AtFlags, fsync, renameat, unlinkat};
@@ -481,7 +482,7 @@ pub(super) fn retain_rotated(
     custody: &mut super::live_custody::LiveImportCustody<'_>,
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
-    context: &crate::native_import::NativeImportContext<'_>,
+    context: &super::NativeImportInputs<'_>,
     rotated: &gateway_core::source_json::SourceJson,
 ) -> Result<(), GatewayError> {
     use std::io::Write;

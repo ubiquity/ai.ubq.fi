@@ -1,4 +1,5 @@
 //! Fixed native import validation. Candidates are DATA, never mutation or publication authority.
+use super::NativeImportInputs;
 use gateway_auth::native_credentials::NativeCredentials;
 use gateway_core::source_json::SourceJson;
 use gateway_native_import_source::{
@@ -25,7 +26,6 @@ pub(super) struct ValidatedNativeImport<'a> {
 use super::{ExistingAccountImportStore, live_custody::LiveImportCustody};
 use crate::{
     import_custody_protocol::unavailable,
-    native_import::NativeImportContext,
     private_https::{PrivateHttps, PrivateResponse},
 };
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
@@ -79,7 +79,7 @@ impl ImportValidation {
     }
     pub(super) fn probe<'a>(
         &self,
-        context: &NativeImportContext<'a>,
+        context: &NativeImportInputs<'a>,
     ) -> Result<ValidationOutcome<'a>, GatewayError> {
         context.check()?;
         let source = context.auth_data().auth().clone();
@@ -117,7 +117,7 @@ impl ImportValidation {
     fn models(
         &self,
         credentials: &NativeCredentials,
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<PrivateResponse, GatewayError> {
         context.check()?;
         let headers = vec![
@@ -144,7 +144,7 @@ impl ImportValidation {
         response: PrivateResponse,
         refreshed: bool,
         timestamps: (f64, f64),
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<ValidatedNativeImport<'a>, GatewayError> {
         let (source, credentials) = document;
         let (seed_updated_at_ms, validated_updated_at_ms) = timestamps;
@@ -224,7 +224,7 @@ impl ImportValidation {
         store: &ExistingAccountImportStore,
         proof: &'a AuthenticatedNativeImport,
         body: &[u8],
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<ValidatedNativeImport<'a>, GatewayError> {
         if !std::ptr::eq(pending.original, proof) || !std::ptr::eq(context.original_proof(), proof)
         {

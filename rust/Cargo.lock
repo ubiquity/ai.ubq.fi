@@ -1120,6 +1120,7 @@ dependencies = [
  "gateway-native-http-framing",
  "gateway-native-import-client",
  "gateway-native-import-source",
+ "gateway-native-import-test-support",
  "gateway-native-local-transport",
  "gateway-native-replay",
  "gateway-native-supervisor",
@@ -1195,6 +1196,20 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "gateway-native-import-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-native-wire",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-native-import-client",
+ "gateway-native-replay",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -28,6 +28,70 @@ pub mod live_custody;
 pub mod owner_runtime;
 mod prepare_flow;
 mod validation;
+/// Dynamic-extent input for the real existing-account operation; never a wire/permission constructor.
+struct NativeImportInputs<'a> {
+    proof: &'a AuthenticatedNativeImport,
+    body: &'a [u8],
+    context: &'a crate::native_import::NativeImportContext<'a>,
+    original: &'a crate::owner_control::NativeControlContext<'a>,
+}
+impl<'a> NativeImportInputs<'a> {
+    fn checked(
+        proof: &'a AuthenticatedNativeImport,
+        metadata: &'a gateway_auth::native_import::NativeImportMetadata,
+        body: &'a [u8],
+        context: &'a crate::native_import::NativeImportContext<'a>,
+        original: &'a crate::owner_control::NativeControlContext<'a>,
+    ) -> Result<Self, GatewayError> {
+        context.require_original(original)?;
+        context.check_document(proof, metadata, body)?;
+        Ok(Self {
+            proof,
+            body,
+            context,
+            original,
+        })
+    }
+    fn original_proof(&self) -> &'a AuthenticatedNativeImport {
+        self.proof
+    }
+    fn original_body(&self) -> &'a [u8] {
+        self.body
+    }
+    fn auth_data(&self) -> &crate::native_import::NativeAuthImportData<'_> {
+        self.context.auth_data()
+    }
+    fn check(&self) -> Result<(), GatewayError> {
+        self.context.require_original(self.original)?;
+        self.context.check()
+    }
+    fn check_document(
+        &self,
+        proof: &AuthenticatedNativeImport,
+        metadata: &gateway_auth::native_import::NativeImportMetadata,
+        body: &[u8],
+    ) -> Result<(), GatewayError> {
+        self.context.require_original(self.original)?;
+        self.context.check_document(proof, metadata, body)
+    }
+    fn now_ms(&self) -> Result<i64, GatewayError> {
+        self.original.now_ms()
+    }
+    fn deadline(&self) -> std::time::Instant {
+        let now = std::time::Instant::now();
+        let remaining = self
+            .original
+            .now_ms()
+            .ok()
+            .and_then(|ms| self.proof.deadline_ms().checked_sub(ms))
+            .and_then(|ms| u64::try_from(ms).ok())
+            .map(std::time::Duration::from_millis)
+            .unwrap_or_default();
+        self.original
+            .deadline()
+            .min(now.checked_add(remaining).unwrap_or(now))
+    }
+}
 /// Fixed helper-only entry; it accepts no path, command, environment or arbitrary descriptor selector.
 pub fn owner_inspector_entry() -> Result<(), GatewayError> {
     acl_inspector::entry()
@@ -127,9 +191,12 @@ impl ExistingAccountImportStore {
         proof: &AuthenticatedNativeImport,
         original_body: &[u8],
         context: &crate::native_import::NativeImportContext<'_>,
+        original: &crate::owner_control::NativeControlContext<'_>,
         now_ms: i64,
     ) -> Result<durability::DurableNativeImport, GatewayError> {
-        durability::issue_fixture(self, start, proof, original_body, context, now_ms)
+        let inputs =
+            NativeImportInputs::checked(proof, proof.metadata(), original_body, context, original)?;
+        durability::issue_fixture(self, start, proof, original_body, &inputs, now_ms)
     }
     /// A recovered proof still requires an exact current native reread before publication.
     pub async fn recheck_receipt<
@@ -167,3 +234,6 @@ mod foundation_tests;
 
 #[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
 mod flow_tests;
+
+#[cfg(all(test, unix))]
+mod receipt_tests;

@@ -50,6 +50,9 @@ path = "src/bin/uos-native.rs"
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 landlock = "=0.4.7"
 
+[dev-dependencies]
+gateway-native-import-test-support.workspace = true
+
 [lints]
 workspace = true
 

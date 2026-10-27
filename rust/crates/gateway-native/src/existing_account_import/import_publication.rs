@@ -1,11 +1,12 @@
 //! Native receipt-bound sanitized command. Neither DATA nor HTTP200 is completion.
+use super::NativeImportInputs;
 use super::{
     ExistingAccountImportStore,
     durability::{self, DurableNativeImport},
     live_custody::LiveImportCustody,
     validation::ValidatedNativeImport,
 };
-use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
+use crate::import_custody_protocol::unavailable;
 use gateway_auth::{
     crypto::{Secret, sha256_hex},
     native_import::publication::NativeImportPublication,
@@ -30,7 +31,7 @@ impl<'a> PreparedImportPublication<'a> {
     pub(super) fn from_durable(
         store: &ExistingAccountImportStore,
         custody: &mut LiveImportCustody<'_>,
-        context: &NativeImportContext<'a>,
+        context: &NativeImportInputs<'a>,
         candidate: &ValidatedNativeImport<'_>,
         receipt: &DurableNativeImport,
     ) -> Result<Self, GatewayError> {
@@ -248,7 +249,7 @@ impl ImportPublicationHttp {
         prepared: &PreparedImportPublication<'_>,
         store: &ExistingAccountImportStore,
         custody: &mut LiveImportCustody<'_>,
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
         receipt: &DurableNativeImport,
     ) -> Result<AuthenticatedImportPublicationReply, GatewayError> {
         let proof = context.original_proof();

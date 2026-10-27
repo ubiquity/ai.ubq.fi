@@ -1,5 +1,6 @@
+use super::NativeImportInputs;
 use super::prepare_flow::VerifiedImportPublication;
-use crate::native_import::{NativeImportCompletion, NativeImportContext, NativeImportResult};
+use crate::native_import::{NativeImportCompletion, NativeImportResult};
 use gateway_auth::native_import::authority::completion::ImportCompletionModelsData;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, import::remote::RemoteImportAuthority,
@@ -28,7 +29,7 @@ impl VerifiedImportPublication<'_> {
     pub(super) fn source_result<C: NativeRenewalCancellation>(
         &self,
         authority: &RemoteImportAuthority<'_, C>,
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<NativeImportResult, GatewayError> {
         context.check()?;
         let candidate = self.candidate();

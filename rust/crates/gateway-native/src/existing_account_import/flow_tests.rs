@@ -1,7 +1,6 @@
 //! Actual debug-only two-process native import fixtures. No v3 row rewriting,
 //! credential provider traffic, fake Start, raw-response issuer or live UID work.
 use super::{foundation_tests::assert_owned_canonical_directory, *};
-use crate::http_server::import_http_tests as base;
 use gateway_auth::{
     crypto::{Secret, base64url, sha256_hex},
     native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
@@ -27,6 +26,7 @@ use gateway_core::error::GatewayError;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::AuthorityStore;
+use gateway_native_import_test_support::fixture as base;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication,
 };
@@ -64,55 +64,6 @@ impl gateway_authority::store::TokenSource for FlowTokens {
 }
 fn authority(store: &base::Store) -> Authority<base::Store, FlowTokens> {
     Authority::with_clock(store.clone(), FlowTokens, store.clone())
-}
-impl gateway_core::query::QueryStore for base::Store {
-    async fn query(
-        &self,
-        request: gateway_core::query::QueryRequest,
-    ) -> Result<gateway_core::query::QueryPage, GatewayError> {
-        use gateway_core::{
-            query::{QueryEntry, QueryPage},
-            state::RecordKey,
-            tuple_key::TupleKey,
-        };
-        let checked = request.validate()?;
-        let rows = self.rows.lock().unwrap();
-        let mut matching = Vec::new();
-        for (key, record) in rows.iter() {
-            let key = RecordKey(key.clone());
-            if checked.accepts_record(&key, record)? {
-                matching.push((
-                    TupleKey::from_record_key(&key)?.sort_bytes().to_vec(),
-                    QueryEntry {
-                        key,
-                        record: record.clone(),
-                    },
-                ));
-            }
-        }
-        matching.sort_by(|a, b| a.0.cmp(&b.0));
-        if checked.reverse {
-            matching.reverse();
-        }
-        let more = matching.len() > checked.limit as usize;
-        matching.truncate(checked.limit as usize);
-        let entries = matching
-            .into_iter()
-            .map(|(_, entry)| entry)
-            .collect::<Vec<_>>();
-        let next_cursor = if more {
-            entries
-                .last()
-                .map(|entry| checked.cursor_after(&entry.key))
-                .transpose()?
-        } else {
-            None
-        };
-        Ok(QueryPage {
-            entries,
-            next_cursor,
-        })
-    }
 }
 const MODELS: &[u8] = br#"{"models":[{"slug":"synthetic-model","display_name":"Synthetic","supported_reasoning_levels":[{"effort":"none","description":"None"}]}]}"#;
 fn key(parts: &[&str]) -> gateway_core::state::RecordKey {
@@ -625,7 +576,7 @@ fn serve_tls(socket: TcpStream, role: u8, store: base::Store, home: &Path, traff
                 home.to_str().unwrap().into(),
             )
             .unwrap();
-            let cancel = base::Cancel;
+            let cancel = base::Cancel::default();
             let control =
                 NativeRenewalAuthority::configured(&authority, &identity, &owner, &config, &cancel);
             let owned = OwnedNativeAuthHeaders::from_pairs(headers.clone()).unwrap();
@@ -925,7 +876,7 @@ fn request(
     let authority = authority(store);
     let identity = id();
     let config = base::config();
-    let cancel = base::Cancel;
+    let cancel = base::Cancel::default();
     let owner =
         RegisteredRenewalOwner::configured("native-owner".into(), home.to_str().unwrap().into())
             .unwrap();

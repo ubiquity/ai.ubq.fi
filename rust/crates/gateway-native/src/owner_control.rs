@@ -5,6 +5,14 @@ use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlResp
 use gateway_core::error::GatewayError;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+/// The context is reachable, but only the real receiver can construct it.
+/// ```compile_fail,E0624
+/// use gateway_native::owner_control::NativeControlContext;
+/// use gateway_auth::native_auth::NativeAuthHeaders;
+/// let headers=NativeAuthHeaders {version:"1",key_id:"key",time_ms:"1",nonce:"nonce",mac:"mac"};
+/// let disconnected=||false;
+/// let _=NativeControlContext::admitted(std::time::Instant::now(),&disconnected,headers);
+/// ```
 pub struct NativeControlContext<'a> {
     deadline: Instant,
     disconnected: &'a dyn Fn() -> bool,
