@@ -82,6 +82,13 @@ async fn reset_fences<S: AuthorityStore, I: TokenSource>(
 ) -> Result<ResetInvocation, GatewayError> {
     authorization_fences(tx, ResetAuthorization::Legacy(candidate)).await
 }
+enum PreparedResetClaim {
+    Ready {
+        row: ResetRecord,
+        invocation: ResetInvocation,
+    },
+    Declined(ResetClaim),
+}
 pub struct ResetClaimService<'a, S, I> {
     store: &'a S,
     tokens: &'a I,
@@ -193,85 +200,13 @@ impl<'a, S: AuthorityStore, I: TokenSource> ResetClaimService<'a, S, I> {
                     }
                 }
             }
-            if let Some(reason) = config.live_reason() {
-                return Ok(ResetClaim::Disabled(reason));
-            }
-            let invocation = authorization_fences(&mut tx, authorization).await?;
-            if candidate.quota_reset_at_ms <= now {
-                return Err(unavailable(
-                    "quota_window_expired",
-                    "Reset quota window expired.",
-                ));
-            }
-            if let ResetAuthorization::Legacy(_) = authorization {
-                let shadow: ResetShadow = tx
-                    .read(&keys::reset_shadow(&shadow_episode(candidate)))
-                    .await?
-                    .ok_or_else(|| {
-                        unavailable(
-                            "shadow_decision_missing",
-                            "Reset requires a prior live-armed decision.",
-                        )
-                    })?;
-                if shadow.account_id_hash != invocation.identity.account_id_hash
-                    || shadow.quota_generation != invocation.identity.quota_generation
-                {
-                    return Err(unavailable(
-                        "shadow_decision_stale",
-                        "Shadow decision selected a different reset account/window.",
-                    ));
-                }
-                if shadow.expires_at_ms <= now
-                    || shadow
-                        .armed_at_ms
-                        .is_none_or(|armed| armed >= candidate.request_started_at_ms)
-                {
-                    return Ok(ResetClaim::Disabled("live_armed"));
-                }
-            }
-            let row = if let Some(mut row) = existing {
-                if row.routing_generation != candidate.binding.routing_generation {
-                    return Err(unavailable(
-                        "routing_fence_stale",
-                        "Claimed reset generation changed.",
-                    ));
-                }
-                row.owner_token = self.tokens.next_token()?;
-                row.fence = next_generation(row.fence)?;
-                row.lease_expires_at_ms = add(now, PROBE_LEASE_MS)?;
-                row.updated_at_ms = now;
-                row
-            } else {
-                ResetRecord {
-                    v: 1,
-                    identity: invocation.identity.clone(),
-                    routing_generation: candidate.binding.routing_generation,
-                    state: ResetState::Claimed,
-                    owner_token: self.tokens.next_token()?,
-                    fence: 1,
-                    lease_expires_at_ms: add(now, PROBE_LEASE_MS)?,
-                    provider_receipt_id: None,
-                    created_at_ms: now,
-                    updated_at_ms: now,
-                    submitted_at_ms: None,
-                    verified_at_ms: None,
-                    last_error_code: None,
-                }
+            let (row, invocation) = match self
+                .prepare_reset_claim(&mut tx, authorization, &config, existing, now)
+                .await?
+            {
+                PreparedResetClaim::Ready { row, invocation } => (row, invocation),
+                PreparedResetClaim::Declined(result) => return Ok(result),
             };
-            text(&row.owner_token)?;
-            let before_claim = self.fresh_time(now)?;
-            if before_claim >= candidate.quota_reset_at_ms {
-                return Err(unavailable(
-                    "quota_window_expired",
-                    "Reset quota window expired during fence reads.",
-                ));
-            }
-            if row.lease_expires_at_ms <= before_claim {
-                return Err(unavailable(
-                    "stale_owner",
-                    "Reset claim lease elapsed during fence reads.",
-                ));
-            }
             tx.put(&key, &row, None)?;
             self.check_reset_authorization_deadline(authorization, now)?;
             if tx.commit().await? {
@@ -285,6 +220,98 @@ impl<'a, S: AuthorityStore, I: TokenSource> ResetClaimService<'a, S, I> {
             "stale_owner",
             "Reset claim changed concurrently.",
         ))
+    }
+    async fn prepare_reset_claim(
+        &self,
+        tx: &mut Transaction<'_, S, I>,
+        authorization: ResetAuthorization<'_>,
+        config: &ResetConfig,
+        existing: Option<ResetRecord>,
+        now: i64,
+    ) -> Result<PreparedResetClaim, GatewayError> {
+        let candidate = authorization.candidate();
+        if let Some(reason) = config.live_reason() {
+            return Ok(PreparedResetClaim::Declined(ResetClaim::Disabled(reason)));
+        }
+        let invocation = authorization_fences(tx, authorization).await?;
+        if candidate.quota_reset_at_ms <= now {
+            return Err(unavailable(
+                "quota_window_expired",
+                "Reset quota window expired.",
+            ));
+        }
+        if let ResetAuthorization::Legacy(_) = authorization {
+            let shadow: ResetShadow = tx
+                .read(&keys::reset_shadow(&shadow_episode(candidate)))
+                .await?
+                .ok_or_else(|| {
+                    unavailable(
+                        "shadow_decision_missing",
+                        "Reset requires a prior live-armed decision.",
+                    )
+                })?;
+            if shadow.account_id_hash != invocation.identity.account_id_hash
+                || shadow.quota_generation != invocation.identity.quota_generation
+            {
+                return Err(unavailable(
+                    "shadow_decision_stale",
+                    "Shadow decision selected a different reset account/window.",
+                ));
+            }
+            if shadow.expires_at_ms <= now
+                || shadow
+                    .armed_at_ms
+                    .is_none_or(|armed| armed >= candidate.request_started_at_ms)
+            {
+                return Ok(PreparedResetClaim::Declined(ResetClaim::Disabled(
+                    "live_armed",
+                )));
+            }
+        }
+        let row = if let Some(mut row) = existing {
+            if row.routing_generation != candidate.binding.routing_generation {
+                return Err(unavailable(
+                    "routing_fence_stale",
+                    "Claimed reset generation changed.",
+                ));
+            }
+            row.owner_token = self.tokens.next_token()?;
+            row.fence = next_generation(row.fence)?;
+            row.lease_expires_at_ms = add(now, PROBE_LEASE_MS)?;
+            row.updated_at_ms = now;
+            row
+        } else {
+            ResetRecord {
+                v: 1,
+                identity: invocation.identity.clone(),
+                routing_generation: candidate.binding.routing_generation,
+                state: ResetState::Claimed,
+                owner_token: self.tokens.next_token()?,
+                fence: 1,
+                lease_expires_at_ms: add(now, PROBE_LEASE_MS)?,
+                provider_receipt_id: None,
+                created_at_ms: now,
+                updated_at_ms: now,
+                submitted_at_ms: None,
+                verified_at_ms: None,
+                last_error_code: None,
+            }
+        };
+        text(&row.owner_token)?;
+        let before_claim = self.fresh_time(now)?;
+        if before_claim >= candidate.quota_reset_at_ms {
+            return Err(unavailable(
+                "quota_window_expired",
+                "Reset quota window expired during fence reads.",
+            ));
+        }
+        if row.lease_expires_at_ms <= before_claim {
+            return Err(unavailable(
+                "stale_owner",
+                "Reset claim lease elapsed during fence reads.",
+            ));
+        }
+        Ok(PreparedResetClaim::Ready { row, invocation })
     }
 }
 pub trait ResetClaimFactory {
