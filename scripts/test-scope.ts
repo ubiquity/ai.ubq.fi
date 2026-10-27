@@ -250,6 +250,9 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
   const completeCheckSet =
     environment.GITHUB_EVENT_NAME === "merge_group" ||
     (environment.GITHUB_EVENT_NAME === "push" && environment.GITHUB_REF === "refs/heads/development") ||
+    (environment.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+      environment.GITHUB_BASE_REF === "development" &&
+      environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]") ||
     (environment.GITHUB_EVENT_NAME === "pull_request" &&
       (environment.GITHUB_BASE_REF === "queue-canary" ||
         (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));

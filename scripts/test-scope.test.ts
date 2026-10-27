@@ -60,6 +60,7 @@ const protectedContexts = [
   ciContext("merge_group"),
   ciContext("pull_request", "queue-canary", "owner"),
   ciContext("pull_request", "development", "ubiquity-sentinel[bot]"),
+  ciContext("workflow_dispatch", "development", "ubiquity-sentinel[bot]"),
   { ...ciContext("push"), GITHUB_REF: "refs/heads/development" },
 ];
 const scopeCommand = (args: readonly string[], context: NodeJS.ProcessEnv, paths = "AGENTS.md") =>
@@ -131,6 +132,13 @@ describe("Sentinel complete CI check set", () => {
       { ...ciContext("push"), GITHUB_REF: "development" },
       { ...ciContext("workflow_dispatch"), GITHUB_REF: "refs/heads/development" },
       ciContext("workflow_dispatch", "queue-canary", "ubiquity-sentinel[bot]"),
+      ciContext("workflow_dispatch", "development", ""),
+      ciContext("workflow_dispatch", "", "ubiquity-sentinel[bot]"),
+      ciContext("workflow_dispatch", "development", "owner"),
+      ciContext("workflow_dispatch", "development-extra", "ubiquity-sentinel[bot]"),
+      ciContext("workflow_dispatch", "development", "ubiquity-sentinel"),
+      ciContext("workflow_dispatch", "development", "ubiquity-sentinel[bot]-extra"),
+      { ...ciContext("workflow_dispatch", "development", "owner"), GITHUB_ACTOR: "ubiquity-sentinel[bot]" },
       ciContext("pull_request_target", "queue-canary", "ubiquity-sentinel[bot]"),
       ciContext("pull_request", "queue-canary-extra", "owner"),
       ciContext("pull_request", "development", "ubiquity-sentinel"),
@@ -693,15 +701,17 @@ describe("Rust changed-path CI selection", () => {
     expect(JSON.parse(ci.stdout).affectedTests).toEqual(["scripts/test-scope.test.ts"]);
   });
 
-  test("complete contexts schedule real Rust jobs without changing documentation test selection", () => {
+  test("complete contexts schedule real Rust jobs without widening selected tests", () => {
     for (const context of protectedContexts) {
-      expect(ciScopeForSelection(docsSelection, ROOT, context)).toMatchObject({
-        completeCheckSet: true,
-        affectedTests: [],
-        needsRustNative: true,
-        needsRustWasm: true,
-        needsRustBuild: true,
-      });
+      for (const selection of [docsSelection, { ...sourceSelection, paths: ["rust/crates/gateway-native/src/lib.rs"], affectedTests: [] }]) {
+        expect(ciScopeForSelection(selection, ROOT, context)).toMatchObject({
+          ...selection,
+          completeCheckSet: true,
+          needsRustNative: true,
+          needsRustWasm: true,
+          needsRustBuild: true,
+        });
+      }
     }
   });
 });
