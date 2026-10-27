@@ -106,6 +106,84 @@ impl<'a, S: AuthorityStore, I: TokenSource> ResetPermitService<'a, S, I> {
         }
         Ok(now)
     }
+    async fn commit_reset_selection(
+        &self,
+        plan: FullPoolResetPlan,
+        selection: selection::Selection,
+        decision: FullPoolShadowDecision,
+        now: i64,
+    ) -> Result<FullPoolEvaluation, GatewayError> {
+        let selected = selection.selected.as_ref();
+        for _ in 0..4 {
+            let at = self.fresh_time(now)?;
+            let mut tx = self.transaction(at)?;
+            let current =
+                match facts::capture(&mut tx, plan.facts.proof(), plan.facts.original()).await {
+                    Ok(current) => current,
+                    Err(error) => {
+                        return Ok(FullPoolEvaluation::Declined {
+                            reason: reason(error),
+                        });
+                    }
+                };
+            if !plan.facts.same(&current) {
+                return Ok(FullPoolEvaluation::Declined {
+                    reason: "routing_fence_stale".into(),
+                });
+            }
+            if current.config().mode == ResetMode::Live {
+                let selected = selected.ok_or_else(invalid)?;
+                let permit = AutomaticResetPermit {
+                    candidate: current.members()[selected.member].candidate.clone(),
+                    facts: current,
+                    decision: decision.clone(),
+                    credit: selected.credit.clone(),
+                    observed_at_ms: selected.observed,
+                };
+                tx.now = self.fresh_time(at)?;
+                permit.check_deadline(tx.now)?;
+                if tx.commit().await? {
+                    return Ok(FullPoolEvaluation::Ready(Box::new(permit)));
+                }
+                continue;
+            }
+            let key = keys::reset_shadow(current.episode_hash());
+            let (present, stored) = read_audit(&mut tx, current.episode_hash()).await?;
+            if present || plan.audit_present {
+                let Some(stored) = stored.filter(|stored| {
+                    stored.episode_hash == decision.episode_hash && stored.expires_at_ms > at
+                }) else {
+                    return Ok(FullPoolEvaluation::Declined {
+                        reason: "shadow_decision_unavailable".into(),
+                    });
+                };
+                tx.now = self.fresh_time(at)?;
+                if tx.commit().await? {
+                    return Ok(FullPoolEvaluation::Shadow {
+                        decision: stored,
+                        duplicate: true,
+                    });
+                }
+                continue;
+            }
+            tx.now = self.fresh_time(at)?;
+            if decision.expires_at_ms <= tx.now {
+                return Ok(FullPoolEvaluation::Declined {
+                    reason: "shadow_decision_expired".into(),
+                });
+            }
+            tx.put(&key, &decision, None)?;
+            if tx.commit().await? {
+                return Ok(FullPoolEvaluation::Shadow {
+                    decision,
+                    duplicate: false,
+                });
+            }
+        }
+        Ok(FullPoolEvaluation::Declined {
+            reason: "shadow_decision_unavailable".into(),
+        })
+    }
 }
 pub trait ResetPermitFactory {
     type Store: AuthorityStore;
@@ -251,80 +329,9 @@ pub trait ResetPermitOperations: ResetPermitFactory {
                     reason: selection.reason.into(),
                 });
             }
-            for _ in 0..4 {
-                let at = context.fresh_time(now)?;
-                let mut tx = context.transaction(at)?;
-                let current = match facts::capture(
-                    &mut tx,
-                    plan.facts.proof(),
-                    plan.facts.original(),
-                )
+            context
+                .commit_reset_selection(plan, selection, decision, now)
                 .await
-                {
-                    Ok(current) => current,
-                    Err(error) => {
-                        return Ok(FullPoolEvaluation::Declined {
-                            reason: reason(error),
-                        });
-                    }
-                };
-                if !plan.facts.same(&current) {
-                    return Ok(FullPoolEvaluation::Declined {
-                        reason: "routing_fence_stale".into(),
-                    });
-                }
-                if current.config().mode == ResetMode::Live {
-                    let selected = selected.ok_or_else(invalid)?;
-                    let permit = AutomaticResetPermit {
-                        candidate: current.members()[selected.member].candidate.clone(),
-                        facts: current,
-                        decision: decision.clone(),
-                        credit: selected.credit.clone(),
-                        observed_at_ms: selected.observed,
-                    };
-                    tx.now = context.fresh_time(at)?;
-                    permit.check_deadline(tx.now)?;
-                    if tx.commit().await? {
-                        return Ok(FullPoolEvaluation::Ready(Box::new(permit)));
-                    }
-                    continue;
-                }
-                let key = keys::reset_shadow(current.episode_hash());
-                let (present, stored) = read_audit(&mut tx, current.episode_hash()).await?;
-                if present || plan.audit_present {
-                    let Some(stored) = stored.filter(|stored| {
-                        stored.episode_hash == decision.episode_hash && stored.expires_at_ms > at
-                    }) else {
-                        return Ok(FullPoolEvaluation::Declined {
-                            reason: "shadow_decision_unavailable".into(),
-                        });
-                    };
-                    tx.now = context.fresh_time(at)?;
-                    if tx.commit().await? {
-                        return Ok(FullPoolEvaluation::Shadow {
-                            decision: stored,
-                            duplicate: true,
-                        });
-                    }
-                    continue;
-                }
-                tx.now = context.fresh_time(at)?;
-                if decision.expires_at_ms <= tx.now {
-                    return Ok(FullPoolEvaluation::Declined {
-                        reason: "shadow_decision_expired".into(),
-                    });
-                }
-                tx.put(&key, &decision, None)?;
-                if tx.commit().await? {
-                    return Ok(FullPoolEvaluation::Shadow {
-                        decision,
-                        duplicate: false,
-                    });
-                }
-            }
-            Ok(FullPoolEvaluation::Declined {
-                reason: "shadow_decision_unavailable".into(),
-            })
         }
     }
     /// Existing one-way source reset-setting completion; no new state/key family.
