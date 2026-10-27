@@ -1,18 +1,16 @@
-//! Current source Claude roster and quota evidence, never a caller-supplied authorization.
-use crate::{
-    invalid, positive,
-    store::{Authority, Transaction},
-    unavailable,
-};
-use gateway_authority_contracts::TokenSource;
+//! Complete current source Claude cohort proof; neither data nor capture can construct a grant.
+mod backend;
+use gateway_authority_contracts::{AuthorityClock, invalid, positive, unavailable, validate_time};
 use gateway_authority_keys as keys;
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::model::ModelId;
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
-use gateway_core::state::{AuthorityStore, RevisionCheck};
-use gateway_core::value::PortableValue;
+use gateway_core::{
+    error::GatewayError,
+    js_string::JsString16,
+    model::ModelId,
+    source_json::SourceJson,
+    source_serialization as source,
+    state::{AuthorityStore, RevisionCheck},
+    value::PortableValue,
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
@@ -29,7 +27,7 @@ struct Binding {
 /// Only a successful strong-read/check-only CAS can construct this secretless proof.
 /// It deliberately has neither a public constructor nor serialization implementations.
 /// ```compile_fail
-/// use gateway_authority::claude::ClaudeCohortProof;
+/// use gateway_authority_claude_proof::ClaudeCohortProof;
 /// let forged: ClaudeCohortProof = serde_json::from_str("{}").unwrap();
 /// ```
 #[derive(Clone, Debug)]
@@ -41,6 +39,10 @@ pub struct ClaudeCohortProof {
 }
 
 impl ClaudeCohortProof {
+    pub fn revision_checks(&self) -> &[RevisionCheck] {
+        &self.checks
+    }
+
     pub fn model(&self) -> &ModelId {
         &self.model
     }
@@ -384,8 +386,8 @@ pub(crate) fn quota_proof_metadata(value: &PortableValue) -> SourceJson {
     .expect("finite proof metadata")
 }
 
-async fn read_view<S: AuthorityStore, I: TokenSource>(
-    tx: &mut Transaction<'_, S, I>,
+async fn read_view<S: AuthorityStore>(
+    tx: &mut backend::ReadTransaction<'_, S>,
     model: &ModelId,
 ) -> Result<Option<View>, GatewayError> {
     let Some(raw) = tx
@@ -410,77 +412,140 @@ async fn read_view<S: AuthorityStore, I: TokenSource>(
     Ok(Some(view))
 }
 
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+pub struct ClaudeProofService<'a, S> {
+    store: &'a S,
+    clock: Option<&'a dyn AuthorityClock>,
+}
+impl<S> Copy for ClaudeProofService<'_, S> {}
+impl<S> Clone for ClaudeProofService<'_, S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<'a, S: AuthorityStore> ClaudeProofService<'a, S> {
+    pub fn new(store: &'a S, clock: Option<&'a dyn AuthorityClock>) -> Self {
+        Self { store, clock }
+    }
+    fn transaction(&self, now: i64) -> Result<backend::ReadTransaction<'_, S>, GatewayError> {
+        backend::ReadTransaction::new(self.store, now)
+    }
+    fn fresh_time(&self, started_at: i64) -> Result<i64, GatewayError> {
+        let now = self
+            .clock
+            .ok_or_else(|| {
+                unavailable(
+                    "authority_clock_unavailable",
+                    "Time-sensitive authority actions require a trusted current clock.",
+                )
+            })?
+            .now_ms()?;
+        validate_time(now)?;
+        if now < started_at {
+            return Err(unavailable(
+                "invalid_clock",
+                "Authority clock moved backwards.",
+            ));
+        }
+        Ok(now)
+    }
+}
+pub trait ClaudeProofFactory {
+    type Store: AuthorityStore;
+    fn claude_proof(&self) -> ClaudeProofService<'_, Self::Store>;
+}
+pub trait ClaudeProofOperations: ClaudeProofFactory {
     /// Missing, empty, no-active, or incompletely proven pools are never exhaustion proof.
-    pub async fn prove_claude_unavailable(
+    fn prove_claude_unavailable(
         &self,
         model: &ModelId,
         now: i64,
-    ) -> Result<Option<ClaudeCohortProof>, GatewayError> {
-        if gateway_schema::reasoning::js_trim_source(model.as_js_string())
-            .as_units()
-            .is_empty()
-        {
-            return Err(invalid("Missing authority model."));
-        }
-        for _ in 0..128 {
-            let mut tx = self.transaction(self.fresh_time(now)?)?;
-            let _ = read_view(&mut tx, model).await?;
-            tx.now = self.fresh_time(tx.now)?;
-            let Some(view) = read_view(&mut tx, model).await?.filter(|view| view.proven) else {
-                return Ok(None);
-            };
-            let proof = ClaudeCohortProof {
-                checks: tx.checks(),
-                model: model.clone(),
-                active_account_id: view.active_account_id,
-                bindings: view.bindings,
-            };
-            if tx.commit().await? {
-                return Ok(Some(proof));
+    ) -> impl std::future::Future<Output = Result<Option<ClaudeCohortProof>, GatewayError>> {
+        async move {
+            let context = self.claude_proof();
+            if gateway_schema::reasoning::js_trim_source(model.as_js_string())
+                .as_units()
+                .is_empty()
+            {
+                return Err(invalid("Missing authority model."));
             }
-        }
-        Err(unavailable(
-            "claude_code_upstream_unreachable",
-            "Claude account evidence changed repeatedly.",
-        ))
-    }
-
-    pub(crate) async fn require_claude_proof(
-        &self,
-        tx: &mut Transaction<'_, S, I>,
-        proof: &ClaudeCohortProof,
-        model: &ModelId,
-        now: i64,
-    ) -> Result<(), GatewayError> {
-        let fail = || {
-            unavailable(
+            for _ in 0..128 {
+                let mut tx = context.transaction(context.fresh_time(now)?)?;
+                let _ = read_view(&mut tx, model).await?;
+                tx.now = context.fresh_time(tx.now)?;
+                let Some(view) = read_view(&mut tx, model).await?.filter(|view| view.proven) else {
+                    return Ok(None);
+                };
+                let proof = ClaudeCohortProof {
+                    checks: tx.checks(),
+                    model: model.clone(),
+                    active_account_id: view.active_account_id,
+                    bindings: view.bindings,
+                };
+                if tx.commit().await? {
+                    return Ok(Some(proof));
+                }
+            }
+            Err(unavailable(
                 "claude_code_upstream_unreachable",
-                "Claude full-pool proof is stale, expired, or not applicable.",
-            )
-        };
-        if &proof.model != model || proof.bindings.is_empty() {
-            return Err(fail());
+                "Claude account evidence changed repeatedly.",
+            ))
         }
-        tx.now = self.fresh_time(tx.now.max(now))?;
-        let _ = read_view(tx, model).await?;
-        for check in &proof.checks {
-            if !tx.expect(&check.key, &check.expected_revision) {
-                return Err(fail());
-            }
-        }
-        tx.now = self.fresh_time(tx.now)?;
-        let Some(view) = read_view(tx, model).await? else {
-            return Err(fail());
-        };
-        if !view.proven
-            || view.active_account_id != proof.active_account_id
-            || view.bindings != proof.bindings
-        {
-            return Err(fail());
-        }
-        Ok(())
     }
+}
+impl<T: ClaudeProofFactory + ?Sized> ClaudeProofOperations for T {}
+
+/// Secretless observed DATA, not authority. Only fixed actual reads can construct it.
+pub struct ClaudeEvidence {
+    model: ModelId,
+    observed_at_ms: i64,
+    view: Option<View>,
+}
+impl ClaudeEvidence {
+    pub fn observed_at_ms(&self) -> i64 {
+        self.observed_at_ms
+    }
+}
+pub async fn capture_evidence<S: AuthorityStore>(
+    store: &S,
+    model: &ModelId,
+    now: i64,
+) -> Result<ClaudeEvidence, GatewayError> {
+    let mut tx = backend::ReadTransaction::new(store, now)?;
+    Ok(ClaudeEvidence {
+        model: model.clone(),
+        observed_at_ms: now,
+        view: read_view(&mut tx, model).await?,
+    })
+}
+pub fn require_model(proof: &ClaudeCohortProof, model: &ModelId) -> Result<(), GatewayError> {
+    if proof.model() != model || proof.selected_count() == 0 {
+        return Err(stale());
+    }
+    Ok(())
+}
+pub fn require_current(
+    proof: &ClaudeCohortProof,
+    evidence: &ClaudeEvidence,
+) -> Result<(), GatewayError> {
+    if proof.model() != &evidence.model {
+        return Err(stale());
+    }
+    let Some(view) = &evidence.view else {
+        return Err(stale());
+    };
+    if !view.proven
+        || view.active_account_id != proof.active_account_id
+        || view.bindings != proof.bindings
+    {
+        return Err(stale());
+    }
+    Ok(())
+}
+fn stale() -> GatewayError {
+    unavailable(
+        "claude_code_upstream_unreachable",
+        "Claude full-pool proof is stale, expired, or not applicable.",
+    )
 }
 
 #[cfg(test)]

@@ -208,23 +208,6 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .transpose()
     }
 
-    pub async fn read_claude_quota(
-        &mut self,
-        account_id: &str,
-        cohort_id: &str,
-    ) -> Result<Option<SourceJson>, GatewayError> {
-        let key = gateway_authority_keys::claude_quota(account_id, cohort_id);
-        self.cached_record(&key)
-            .await?
-            .map(|row| match row.value_encoding {
-                gateway_core::value::ValueEncoding::ProfileV2 => Ok(
-                    crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
-                ),
-                _ => SourceJson::from_serializable(row.json_value()?),
-            })
-            .transpose()
-    }
-
     /// Preserve the full source value and custody for this one audit family.
     pub(crate) async fn read_full_pool_reset_audit(
         &mut self,
@@ -470,5 +453,50 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_capacity::CapacityFact
             &self.tokens,
             self.clock.as_deref(),
         )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_claude_proof::ClaudeProofFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    fn claude_proof(&self) -> gateway_authority_claude_proof::ClaudeProofService<'_, S> {
+        gateway_authority_claude_proof::ClaudeProofService::new(&self.store, self.clock.as_deref())
+    }
+}
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub(crate) async fn require_claude_proof(
+        &self,
+        tx: &mut Transaction<'_, S, I>,
+        proof: &gateway_authority_claude_proof::ClaudeCohortProof,
+        model: &gateway_core::model::ModelId,
+        now: i64,
+    ) -> Result<(), GatewayError> {
+        let fail = || {
+            crate::unavailable(
+                "claude_code_upstream_unreachable",
+                "Claude full-pool proof is stale, expired, or not applicable.",
+            )
+        };
+        gateway_authority_claude_proof::require_model(proof, model)?;
+        tx.now = self.fresh_time(tx.now.max(now))?;
+        let observed_now = tx.now;
+        let _ = {
+            let reader = tx.routing_read_store();
+            gateway_authority_claude_proof::capture_evidence(&reader, model, observed_now).await?
+        };
+        for check in proof.revision_checks() {
+            if !tx.expect(&check.key, &check.expected_revision) {
+                return Err(fail());
+            }
+        }
+        tx.now = self.fresh_time(tx.now)?;
+        let observed_now = tx.now;
+        let evidence = {
+            let reader = tx.routing_read_store();
+            gateway_authority_claude_proof::capture_evidence(&reader, model, observed_now).await?
+        };
+        gateway_authority_claude_proof::require_current(proof, &evidence)?;
+        Ok(())
     }
 }

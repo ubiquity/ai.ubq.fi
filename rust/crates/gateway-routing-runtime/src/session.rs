@@ -10,6 +10,7 @@ use gateway_authority::{paid_control::PaidRoutingReceipt, store::Authority};
 use gateway_authority::{paid_types::PaidAuthorization, routing_types::AdmittedAccount};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_claude_proof::ClaudeProofOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
