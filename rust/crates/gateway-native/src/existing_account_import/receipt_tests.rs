@@ -8,9 +8,7 @@ use crate::{
     owner_control::NativeControlContext,
 };
 use gateway_auth::{
-    crypto::{base64url, sha256_hex},
-    native_import::NativeImportMetadata,
-    passkeys,
+    crypto::sha256_hex, native_import::NativeImportMetadata, passkeys,
     provider_credentials::codex_source_pool_key,
 };
 use gateway_authority::{
@@ -24,85 +22,19 @@ use gateway_authority::{
 use gateway_core::{error::GatewayError, source_json::SourceJson};
 use gateway_native_import_test_support::{
     fixture::{Cancel, Fixture, Store, Tokens, fail, now_ms, run},
+    receipt::{Home, document, fixture},
     socket::SocketRequest,
 };
 use serde_json::json;
 use std::{
     collections::BTreeMap,
     fs,
-    io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    path::PathBuf,
+    os::unix::fs::PermissionsExt,
     sync::{
         Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
 };
-struct Home(PathBuf);
-impl Home {
-    fn fresh() -> Self {
-        static SERIAL: AtomicU64 = AtomicU64::new(0);
-        let root = fs::canonicalize(std::env::temp_dir()).unwrap();
-        assert!(root.is_dir());
-        let path = root.join(format!(
-            "native-import-receipt-{}-{}",
-            std::process::id(),
-            SERIAL.fetch_add(1, Ordering::SeqCst)
-        ));
-        fs::create_dir(&path).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
-        Self(path)
-    }
-    fn write_auth(&self, value: &serde_json::Value) {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(self.0.join("auth.json"))
-            .unwrap();
-        file.write_all(&serde_json::to_vec(value).unwrap()).unwrap();
-        file.sync_all().unwrap();
-    }
-}
-impl Drop for Home {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
-    }
-}
-fn document(label: &str) -> serde_json::Value {
-    let access = format!(
-        "fixture.{}.signature",
-        base64url(
-            serde_json::to_string(&json!({"exp":now_ms()/1000+3600,"label":label}))
-                .unwrap()
-                .as_bytes()
-        )
-    );
-    json!({"tokens":{"account_id":"synthetic-account","access_token":access,"refresh_token":format!("SYNTHETIC_REFRESH_{label}")},"OPENAI_API_KEY":"SYNTHETIC_INDEPENDENT_KEY","other":{"independent":label}})
-}
-fn fixture(home: &Home, old: &serde_json::Value) -> Fixture {
-    let mut f = Fixture::new();
-    let credentials = gateway_auth::native_credentials::parse_native_document(old).unwrap();
-    let key = codex_source_pool_key();
-    let mut source = {
-        let rows = f.store.rows.lock().unwrap();
-        gateway_auth::provider_credentials::parse_codex_source_pool(
-            &rows.get(&key.0).unwrap().value,
-        )
-        .unwrap()
-        .unwrap()
-    };
-    let native = source.accounts[0].native_owner.as_mut().unwrap();
-    native.codex_home = home.0.to_str().unwrap().into();
-    native.managed_source.as_mut().unwrap().generation_hash = credentials.generation_hash();
-    f.store.seed(key, "source-1", source.private_source_value());
-    f.owner =
-        RegisteredRenewalOwner::configured("native-owner".into(), home.0.to_str().unwrap().into())
-            .unwrap();
-    f
-}
-
 enum ReceiptCase<'a> {
     Recover {
         home: &'a Home,
@@ -207,13 +139,13 @@ impl Issuer<'_> {
         assert_eq!(recovered.receipt_ref(), reference);
         run(reopened.recheck_receipt(control, replay, proof, raw, &recovered))?;
         let stored: serde_json::Value =
-            serde_json::from_slice(&fs::read(home.0.join("auth.json")).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(home.path().join("auth.json")).unwrap()).unwrap();
         assert_eq!(stored["OPENAI_API_KEY"], old["OPENAI_API_KEY"]);
         assert_eq!(stored["other"], old["other"]);
         assert_eq!(stored["tokens"], next["tokens"]);
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(
-                &fs::read(home.0.join(format!(
+                &fs::read(home.path().join(format!(
                     ".uos-import-{}.previous",
                     proof.metadata().action_ref
                 )))
@@ -222,7 +154,10 @@ impl Issuer<'_> {
             .unwrap(),
             **old
         );
-        assert_eq!(fs::read(other.0.join("auth.json")).unwrap(), *other_before);
+        assert_eq!(
+            fs::read(other.path().join("auth.json")).unwrap(),
+            *other_before
+        );
         let captured = f.store.captured();
         for secret in [
             "SYNTHETIC_REFRESH_old",
@@ -263,7 +198,7 @@ impl Issuer<'_> {
                 let foreign = ExistingAccountImportStore::configured(
                     &RegisteredRenewalOwner::configured(
                         "foreign-owner".into(),
-                        home.0.to_str().unwrap().into(),
+                        home.path().to_str().unwrap().into(),
                     )
                     .unwrap(),
                     f.account.clone(),
@@ -273,7 +208,7 @@ impl Issuer<'_> {
                 return Ok(());
             }
             "receipt" => {
-                let path = home.0.join(format!(
+                let path = home.path().join(format!(
                     ".uos-import-{}.receipt",
                     proof.metadata().action_ref
                 ));
@@ -288,9 +223,9 @@ impl Issuer<'_> {
                 home.write_auth(&value);
             }
             "symlink" => {
-                let original = home.0.join("retained-auth.json");
-                fs::rename(home.0.join("auth.json"), &original).unwrap();
-                std::os::unix::fs::symlink(original, home.0.join("auth.json")).unwrap();
+                let original = home.path().join("retained-auth.json");
+                fs::rename(home.path().join("auth.json"), &original).unwrap();
+                std::os::unix::fs::symlink(original, home.path().join("auth.json")).unwrap();
             }
             "generation" => home.write_auth(&document("advanced-without-retry")),
             "actor" => {
@@ -313,10 +248,10 @@ impl Issuer<'_> {
             }
             "cancel" => f.cancel.0.store(true, Ordering::SeqCst),
             _ => {
-                let path = home.0.with_extension("retained");
-                fs::rename(&home.0, &path).unwrap();
-                fs::create_dir(&home.0).unwrap();
-                fs::set_permissions(&home.0, fs::Permissions::from_mode(0o700)).unwrap();
+                let path = home.path().with_extension("retained");
+                fs::rename(home.path(), &path).unwrap();
+                fs::create_dir(home.path()).unwrap();
+                fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
                 moved = Some(path);
             }
         }
@@ -371,7 +306,7 @@ fn durable_native_receipt_reopens_original_context_without_refresh_or_published(
     let old = document("old");
     home.write_auth(&old);
     other.write_auth(&document("independent"));
-    let other_before = fs::read(other.0.join("auth.json")).unwrap();
+    let other_before = fs::read(other.path().join("auth.json")).unwrap();
     let f = fixture(&home, &old);
     let a = f.authority();
     let next = document("new");
@@ -445,20 +380,23 @@ fn production_mutation_is_unavailable_without_real_native_writer_exclusion() {
         .unwrap()
         .routing_account_hash();
     let native = ExistingAccountImportStore::configured(
-        &RegisteredRenewalOwner::configured("native-owner".into(), home.0.to_str().unwrap().into())
-            .unwrap(),
+        &RegisteredRenewalOwner::configured(
+            "native-owner".into(),
+            home.path().to_str().unwrap().into(),
+        )
+        .unwrap(),
         hash,
     )
     .unwrap();
-    let before = fs::read(home.0.join("auth.json")).unwrap();
+    let before = fs::read(home.path().join("auth.json")).unwrap();
     let error = native.require_mutation_owner().unwrap_err();
     assert_eq!(error.status, 503);
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("native_import_owner_exclusion_unavailable")
     );
-    assert_eq!(fs::read(home.0.join("auth.json")).unwrap(), before);
-    assert_eq!(fs::read_dir(&home.0).unwrap().count(), 1);
+    assert_eq!(fs::read(home.path().join("auth.json")).unwrap(), before);
+    assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1);
 }
 
 #[test]
@@ -471,7 +409,7 @@ fn wrong_uploaded_account_owner_and_physical_source_write_nothing() {
         let a = f.authority();
         let foreign = RegisteredRenewalOwner::configured(
             "foreign-owner".into(),
-            home.0.to_str().unwrap().into(),
+            home.path().to_str().unwrap().into(),
         )
         .unwrap();
         let native = ExistingAccountImportStore::configured(
@@ -492,7 +430,7 @@ fn wrong_uploaded_account_owner_and_physical_source_write_nothing() {
         if changed == "source" {
             home.write_auth(&document("independent-native-advance"));
         }
-        let before = fs::read(home.0.join("auth.json")).unwrap();
+        let before = fs::read(home.path().join("auth.json")).unwrap();
         let issuer = Issuer {
             f: &f,
             authority: &a,
@@ -502,11 +440,11 @@ fn wrong_uploaded_account_owner_and_physical_source_write_nothing() {
         };
         assert!(receive(&f, &a, socket, &raw, &issuer).is_err(), "{changed}");
         assert_eq!(
-            fs::read(home.0.join("auth.json")).unwrap(),
+            fs::read(home.path().join("auth.json")).unwrap(),
             before,
             "{changed}"
         );
-        assert_eq!(fs::read_dir(&home.0).unwrap().count(), 1, "{changed}");
+        assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1, "{changed}");
         assert!(!issuer.created.load(Ordering::SeqCst));
         let rows = f.store.rows.lock().unwrap();
         assert!(rows.values().all(|row| row.value["phase"] != "published"));
