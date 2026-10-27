@@ -485,7 +485,6 @@ async fn publish_observation<S: QueryStore, H: CatalogHost>(
 }
 /// Capture durable source values before any awaited provider fetch. There is one
 /// full replacement projection; missing models cannot survive from an older row.
-
 pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
     runtime: &CatalogRuntime,
     store: &S,
