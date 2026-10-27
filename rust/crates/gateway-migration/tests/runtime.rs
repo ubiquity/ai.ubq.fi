@@ -695,7 +695,8 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
 }
 
 #[test]
-fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm() {
+fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm()
+-> Result<(), Box<dyn std::error::Error>> {
     struct RecordedRealm(Value);
     impl SourceDateHost for RecordedRealm {
         fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError> {
@@ -707,9 +708,7 @@ fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm() {
             })?;
             let row = self.0["dates"]
                 .as_array()
-                .unwrap()
-                .iter()
-                .find(|r| r["input"] == text)
+                .and_then(|dates| dates.iter().find(|r| r["input"] == text))
                 .ok_or_else(|| {
                     GatewayError::unavailable(
                         "Date source realm unavailable",
@@ -719,18 +718,16 @@ fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm() {
             Ok(row["epochMs"].as_i64())
         }
     }
-    let utc: Value = serde_json::from_str(include_str!("fixtures/normalization-utc.json")).unwrap();
-    let ny: Value =
-        serde_json::from_str(include_str!("fixtures/normalization-new-york.json")).unwrap();
+    let utc: Value = serde_json::from_str(include_str!("fixtures/normalization-utc.json"))?;
+    let ny: Value = serde_json::from_str(include_str!("fixtures/normalization-new-york.json"))?;
     let input = json!({"type":"object","value":{"when":{"type":"Array","value":[{"type":"Date","value":"2024-01-02T03:04:05"}]}}});
     assert!(gateway_profile_values::codec::from_profile(&input).is_err());
-    let first =
-        gateway_profile_values::codec::from_profile_with_host(&input, &RecordedRealm(utc)).unwrap();
-    let second =
-        gateway_profile_values::codec::from_profile_with_host(&input, &RecordedRealm(ny)).unwrap();
+    let first = gateway_profile_values::codec::from_profile_with_host(&input, &RecordedRealm(utc))?;
+    let second = gateway_profile_values::codec::from_profile_with_host(&input, &RecordedRealm(ny))?;
     assert_ne!(first, second);
-    let original = from_profile(&to_profile(&first).unwrap()).unwrap();
+    let original = from_profile(&to_profile(&first)?)?;
     assert_eq!(first, original);
+    Ok(())
 }
 
 #[test]

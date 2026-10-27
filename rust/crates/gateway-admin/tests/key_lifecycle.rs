@@ -97,12 +97,9 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
 }
 
 #[test]
-fn audit_never_persists_credential_material() {
+fn audit_never_persists_credential_material() -> Result<(), Box<dyn std::error::Error>> {
     let raw = json!({"name":"key","usage_limit_requests":50,"token":"private-token","hash":"private-hash","authorization":"Bearer private","prompt":"private"});
-    let sanitized = audit::safe_changed(&raw)
-        .unwrap()
-        .deserialize::<Value>()
-        .unwrap();
+    let sanitized = audit::safe_changed(&raw)?.deserialize::<Value>()?;
     assert_eq!(sanitized, json!({"name":"key","usage_limit_requests":50}));
     let shared = audit::actor(&actor());
     assert_eq!(shared.kind, "shared_admin_credential");
@@ -136,6 +133,7 @@ fn audit_never_persists_credential_material() {
         identified.principal_label.as_deref(),
         Some("passport-handle")
     );
+    Ok(())
 }
 
 #[test]

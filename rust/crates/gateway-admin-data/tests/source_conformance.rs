@@ -49,9 +49,8 @@ fn kernel_policy_normalization_matches_frozen_bun_source() {
 }
 
 #[test]
-fn profile_types_match_frozen_bun_source() {
-    let cases: Vec<Value> =
-        serde_json::from_str(include_str!("fixtures/profile-golden.json")).unwrap();
+fn profile_types_match_frozen_bun_source() -> Result<(), Box<dyn std::error::Error>> {
+    let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/profile-golden.json"))?;
     assert_eq!(cases.len(), 53);
     for (index, case) in cases.iter().enumerate() {
         let decoded = from_profile(&case["input"]);
@@ -68,13 +67,14 @@ fn profile_types_match_frozen_bun_source() {
                 "storage {index}"
             );
             assert_eq!(
-                to_profile(&decoded).unwrap(),
+                to_profile(&decoded)?,
                 case["expected"],
                 "profile round trip {index}: {}",
                 case["input"]
             );
         }
     }
+    Ok(())
 }
 
 #[test]
