@@ -1638,6 +1638,7 @@ dependencies = [
  "gateway-observability-prompt",
  "gateway-observability-replay-model",
  "gateway-observability-replay-records",
+ "gateway-observability-replay-state",
  "gateway-observability-request-records",
  "gateway-observability-test-support",
  "gateway-quota-projection",
@@ -1746,6 +1747,19 @@ dependencies = [
  "gateway-core",
  "gateway-observability-contracts",
  "gateway-observability-replay-model",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-replay-state"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
  "gateway-source",
  "serde",
  "serde_json",

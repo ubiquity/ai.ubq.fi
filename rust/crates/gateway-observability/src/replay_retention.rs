@@ -59,7 +59,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let (plaintext, metadata) = sizes;
         let charge = schema::reservation_charge(plaintext, metadata);
         for _ in 0..4 {
-            if !self.bootstrap_replays(limits, at).await? {
+            if !self.replay_state().bootstrap_replays(limits, at).await? {
                 self.replay_skip(limits, "storage_accounting_in_progress", at)
                     .await?;
                 return Ok(Admission::Refused("storage_accounting_in_progress"));
@@ -218,7 +218,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let document = gateway_source::source_json::SourceJson::from_serializable(status)?;
         let bytes = schema::metadata_charge(&document);
         let at = manifest.captured_at_ms as i64;
-        self.prune_replay_metadata(limits, at, 1.0, bytes, 16)
+        self.replay_state()
+            .prune_replay_metadata(limits, at, 1.0, bytes, 16)
             .await?;
         let manifest_key = model::manifest_key(
             manifest.captured_at_ms,
@@ -546,7 +547,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     }
     pub async fn maintain_replays(&self, limits: RetentionLimits) -> Result<Value, GatewayError> {
         let at = data::now(self.host.as_ref())?;
-        if !self.bootstrap_replays(limits, at).await? {
+        if !self.replay_state().bootstrap_replays(limits, at).await? {
             return Ok(self.replay_retention_status(limits).await);
         }
         self.reap_replay_reservations(at, limits).await?;
@@ -561,7 +562,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .and_then(|v| v["reconciled_at_ms"].as_f64())
             .is_none_or(|t| at as f64 - t >= 900_000.0);
         if due {
-            self.recount_replay_metadata(limits, at).await?;
+            self.replay_state()
+                .recount_replay_metadata(limits, at)
+                .await?;
         }
         Ok(self.replay_retention_status(limits).await)
     }

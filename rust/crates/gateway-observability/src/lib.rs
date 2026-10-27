@@ -7,9 +7,7 @@ mod capacity_store;
 pub mod claude_capacity;
 pub mod incidents;
 pub mod remote_capacity;
-mod replay_bootstrap;
 mod replay_cleanup;
-mod replay_metadata;
 pub mod replay_producer;
 pub mod replay_read;
 pub mod replay_retention;
@@ -26,7 +24,7 @@ use std::rc::Rc;
 pub struct ObservabilityState {
     health: gateway_observability_health::HealthState,
     sampled_bucket: Rc<std::cell::Cell<i64>>,
-    replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
+    replay_bootstrap: gateway_observability_replay_state::ReplayBootstrapState,
 }
 
 pub struct ObservabilityRuntime<S, H> {
@@ -34,7 +32,7 @@ pub struct ObservabilityRuntime<S, H> {
     pub(crate) host: Rc<H>,
     pub(crate) health: gateway_observability_health::HealthState,
     pub(crate) sampled_bucket: Rc<std::cell::Cell<i64>>,
-    pub(crate) replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
+    pub(crate) replay_bootstrap: gateway_observability_replay_state::ReplayBootstrapState,
 }
 impl<S, H> Clone for ObservabilityRuntime<S, H> {
     fn clone(&self) -> Self {
@@ -84,6 +82,13 @@ impl<S, H> ObservabilityRuntime<S, H> {
             self.store.as_ref(),
             self.host.as_ref(),
             self.health.clone(),
+        )
+    }
+    pub fn replay_state(&self) -> gateway_observability_replay_state::ReplayMetadata<'_, S, H> {
+        gateway_observability_replay_state::ReplayMetadata::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.replay_bootstrap.clone(),
         )
     }
 }

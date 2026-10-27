@@ -444,20 +444,21 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         {
             return Err(data::error("Replay capture omission is invalid"));
         }
-        self.admit_replay_status(
-            &model::Status {
-                version: 1.0,
-                request_id: request_id.into(),
-                status: model::CaptureState::Disabled,
-                reason: Some(reason.into()),
-                captured_at_ms: data::now(self.host.as_ref())? as f64,
-                manifest_key: None,
-                fingerprint: None,
-                expires_at_ms: None,
-            },
-            RetentionLimits::default(),
-        )
-        .await
+        self.replay_state()
+            .admit_replay_status(
+                &model::Status {
+                    version: 1.0,
+                    request_id: request_id.into(),
+                    status: model::CaptureState::Disabled,
+                    reason: Some(reason.into()),
+                    captured_at_ms: data::now(self.host.as_ref())? as f64,
+                    manifest_key: None,
+                    fingerprint: None,
+                    expires_at_ms: None,
+                },
+                RetentionLimits::default(),
+            )
+            .await
     }
     pub async fn persist_failure(
         &self,
@@ -578,20 +579,21 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         at: i64,
         limits: RetentionLimits,
     ) -> Result<bool, GatewayError> {
-        self.admit_replay_status(
-            &model::Status {
-                version: 1.0,
-                request_id: id.into(),
-                status: state,
-                reason: Some(reason.into()),
-                captured_at_ms: at as f64,
-                manifest_key: None,
-                fingerprint: None,
-                expires_at_ms: None,
-            },
-            limits,
-        )
-        .await
+        self.replay_state()
+            .admit_replay_status(
+                &model::Status {
+                    version: 1.0,
+                    request_id: id.into(),
+                    status: state,
+                    reason: Some(reason.into()),
+                    captured_at_ms: at as f64,
+                    manifest_key: None,
+                    fingerprint: None,
+                    expires_at_ms: None,
+                },
+                limits,
+            )
+            .await
     }
     async fn persist_encrypted_failure(
         &self,
@@ -902,7 +904,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             fingerprint: Some(fingerprint.into()),
             expires_at_ms: Some(expires),
         };
-        let _ = self.admit_replay_status(&status, limits).await?;
+        let _ = self
+            .replay_state()
+            .admit_replay_status(&status, limits)
+            .await?;
         Ok(PersistResult::Duplicate {
             fingerprint: fingerprint.into(),
             manifest_key,

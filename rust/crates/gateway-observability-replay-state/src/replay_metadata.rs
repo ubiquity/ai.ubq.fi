@@ -1,5 +1,5 @@
 //! Source capture-status metadata admission/recount/pruning against the same ledger fence.
-use crate::{ObservabilityRuntime, store};
+use crate::{ReplayMetadata, store};
 use gateway_core::{
     query::QueryStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
@@ -10,7 +10,7 @@ use gateway_observability_contracts::{
 use gateway_observability_replay_model::{records::read_json_record, replay_model as model};
 use gateway_observability_replay_records::accounting as schema;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ReplayMetadata<'_, S, H> {
     pub(crate) async fn replay_metadata_candidates(
         &self,
         at: i64,
@@ -21,7 +21,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ("evicted", ReplayRows::Evicted),
         ] {
             for entry in query::scan(
-                self.store.as_ref(),
+                self.store,
                 ObservationRead::Replay(family),
                 false,
                 at,
@@ -65,13 +65,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         out.sort_by(|a, b| a.3.total_cmp(&b.3));
         Ok(out)
     }
-    pub(crate) async fn recount_replay_metadata(
+    pub async fn recount_replay_metadata(
         &self,
         limits: schema::RetentionLimits,
         at: i64,
     ) -> Result<bool, GatewayError> {
         for _ in 0..schema::ATTEMPTS {
-            let (mut ledger, previous) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, previous) = schema::read_ledger(self.store, limits).await?;
             if !ledger.ready() {
                 return Ok(false);
             }
@@ -80,12 +80,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ledger.metadata_bytes = rows.iter().fold(0.0, |sum, row| sum + row.2);
             let marker = model::key("metadata_reconciled");
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&model::key("budget"), previous.as_ref())],
                 vec![
-                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                    store::ledger_mutation(self.host, previous.as_ref(), &ledger)?,
                     store::put(
-                        self.host.as_ref(),
+                        self.host,
                         marker,
                         serde_json::json!({"version":1,"reconciled_at_ms":at}),
                         None,
@@ -99,7 +99,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         Ok(false)
     }
-    pub(crate) async fn prune_replay_metadata(
+    pub async fn prune_replay_metadata(
         &self,
         limits: schema::RetentionLimits,
         at: i64,
@@ -107,7 +107,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         extra_bytes: f64,
         max_deletes: usize,
     ) -> Result<usize, GatewayError> {
-        let (ledger, _) = schema::read_ledger(self.store.as_ref(), limits).await?;
+        let (ledger, _) = schema::read_ledger(self.store, limits).await?;
         if ledger.status_records + extra_records <= schema::MAX_RECORDS
             && ledger.metadata_bytes + extra_bytes <= limits.reserve()
         {
@@ -122,7 +122,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if deleted >= max_deletes {
                 break;
             }
-            let (mut ledger, previous) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, previous) = schema::read_ledger(self.store, limits).await?;
             if ledger.status_records + extra_records <= schema::MAX_RECORDS
                 && ledger.metadata_bytes + extra_bytes <= limits.reserve()
             {
@@ -133,13 +133,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ledger.status_pruned_records += 1.0;
             ledger.last_warning_at_ms = Some(at as f64);
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![
                     data::check(&model::key("budget"), previous.as_ref()),
                     data::check(&key, Some(&row)),
                 ],
                 vec![
-                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                    store::ledger_mutation(self.host, previous.as_ref(), &ledger)?,
                     RecordMutation::Delete { key },
                 ],
             )
@@ -150,7 +150,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         Ok(deleted)
     }
-    pub(crate) async fn admit_replay_status(
+    pub async fn admit_replay_status(
         &self,
         status: &model::Status,
         limits: schema::RetentionLimits,
@@ -158,7 +158,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if !status.valid_stored() {
             return Err(data::error("Replay capture status is invalid"));
         }
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let document = SourceJson::from_serializable(status)?;
         let bytes = schema::metadata_charge(&document);
         let key = model::request_key(&status.request_id);
@@ -168,7 +168,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             self.prune_replay_metadata(limits, at, 1.0, bytes, 1)
                 .await?;
-            let (mut ledger, previous) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, previous) = schema::read_ledger(self.store, limits).await?;
             let raw = self.store.read(&key).await?;
             let old = raw
                 .as_ref()
@@ -183,15 +183,15 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ledger.status_records += records;
             ledger.metadata_bytes = (ledger.metadata_bytes + delta).max(0.0);
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![
                     data::check(&model::key("budget"), previous.as_ref()),
                     data::check(&key, raw.as_ref()),
                 ],
                 vec![
-                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                    store::ledger_mutation(self.host, previous.as_ref(), &ledger)?,
                     store::replay_mutation(
-                        self.host.as_ref(),
+                        self.host,
                         key.clone(),
                         None,
                         status,

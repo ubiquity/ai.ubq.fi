@@ -1,5 +1,5 @@
 //! Bounded resumable source accounting bootstrap. Shared state contains owner ids only.
-use crate::{ObservabilityRuntime, store};
+use crate::{ReplayMetadata, store};
 use gateway_core::{
     query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordMutation,
 };
@@ -28,7 +28,7 @@ pub(crate) struct OwnerIndex {
     pub cursor: Option<String>,
     pub owners: BTreeSet<String>,
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ReplayMetadata<'_, S, H> {
     async fn advance_replay_owner_index(&self, sweep: &str, at: i64) -> Result<bool, GatewayError> {
         {
             let mut index = self.replay_bootstrap.borrow_mut();
@@ -87,13 +87,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         Ok(index.phase >= 2)
     }
-    pub(crate) async fn bootstrap_replays(
+    pub async fn bootstrap_replays(
         &self,
         limits: schema::RetentionLimits,
         at: i64,
     ) -> Result<bool, GatewayError> {
         for _ in 0..schema::ATTEMPTS {
-            let (mut ledger, previous) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, previous) = schema::read_ledger(self.store, limits).await?;
             if ledger.ready() {
                 return Ok(true);
             }
@@ -101,7 +101,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(false);
             }
             if ledger.bootstrap_sweep.is_none() {
-                ledger.bootstrap_sweep = Some(data::uuid(self.host.as_ref())?);
+                ledger.bootstrap_sweep = Some(data::uuid(self.host)?);
             }
             let sweep = ledger.bootstrap_sweep.clone().expect("created sweep");
             let (mut phase, mut cursor) = match ledger.bootstrap_cursor.as_deref() {
@@ -124,9 +124,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if phase == 5 && !self.advance_replay_owner_index(&sweep, at).await? {
                 if previous.is_none() {
                     store::commit(
-                        self.store.as_ref(),
+                        self.store,
                         vec![data::check(&model::key("budget"), None)],
-                        vec![store::ledger_mutation(self.host.as_ref(), None, &ledger)?],
+                        vec![store::ledger_mutation(self.host, None, &ledger)?],
                     )
                     .await?;
                 }
@@ -223,7 +223,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                     checks.push(data::check(&entry.key, Some(&entry.record)));
                                     checks.push(data::check(&key, None));
                                     mutations.push(store::replay_mutation(
-                                        self.host.as_ref(),
+                                        self.host,
                                         key.clone(),
                                         None,
                                         &row,
@@ -274,11 +274,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                 }
                                 if value["state"] != "published" {
                                     let id = value["capture_id"].as_str().expect("validated id");
-                                    let chunks = query::scan(self.store.as_ref(), ObservationRead::ReplayChunks(id), false, at, 513)
+                                    let chunks = query::scan(self.store, ObservationRead::ReplayChunks(id), false, at, 513)
                                     .await?;
                                     for chunk in chunks.iter().take(512) {
                                         let deleted = store::commit(
-                                            self.store.as_ref(),
+                                            self.store,
                                             vec![
                                                 data::check(&chunk.key, Some(&chunk.record)),
                                                 data::check(&entry.key, Some(&entry.record)),
@@ -371,9 +371,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ledger.over_budget = ledger.stored_bytes + ledger.reserved_bytes > limits.payload();
             mutations.insert(
                 0,
-                store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                store::ledger_mutation(self.host, previous.as_ref(), &ledger)?,
             );
-            if store::commit(self.store.as_ref(), checks, mutations).await? {
+            if store::commit(self.store, checks, mutations).await? {
                 return Ok(ledger.ready());
             }
         }

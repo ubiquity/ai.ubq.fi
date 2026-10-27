@@ -148,7 +148,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         } else {
             0.0
         };
-        self.prune_replay_metadata(limits, at, count, bytes, 16)
+        self.replay_state()
+            .prune_replay_metadata(limits, at, count, bytes, 16)
             .await?;
         for _ in 0..schema::ATTEMPTS {
             let (mut ledger, ledger_row) = schema::read_ledger(self.store.as_ref(), limits).await?;
