@@ -154,23 +154,7 @@ async fn run(
                 }
                 Err(_) => None,
             };
-            let state = match code.as_deref() {
-                Some("reset" | "already_redeemed") => ResetState::Verified,
-                Some("nothing_to_reset" | "no_credit") => ResetState::Rejected,
-                _ => ResetState::Unknown,
-            };
-            let error = if state == ResetState::Rejected {
-                code.as_deref()
-            } else if state == ResetState::Unknown {
-                Some("provider_outcome_unknown")
-            } else {
-                None
-            };
-            let receipt = match code.as_deref() {
-                Some("reset") => Some("upstream-reset"),
-                Some("already_redeemed") => Some("upstream-already-redeemed"),
-                _ => None,
-            };
+            let (state, error, receipt) = reset_observation(code.as_deref());
             let observed = authority
                 .record_reset_outcome(&latest.into_inner(), state, receipt, error, now_ms()?)
                 .await?;
@@ -198,6 +182,19 @@ async fn run(
         .promote_manual_reset(&action, config, &verified, &observation)
         .await?;
     serde_json::to_value(promoted).map_err(|_| unavailable("Reset promotion response is invalid."))
+}
+
+fn reset_observation(code: Option<&str>) -> (ResetState, Option<&str>, Option<&str>) {
+    match code {
+        Some("reset") => (ResetState::Verified, None, Some("upstream-reset")),
+        Some("already_redeemed") => (
+            ResetState::Verified,
+            None,
+            Some("upstream-already-redeemed"),
+        ),
+        Some(code @ ("nothing_to_reset" | "no_credit")) => (ResetState::Rejected, Some(code), None),
+        _ => (ResetState::Unknown, Some("provider_outcome_unknown"), None),
+    }
 }
 
 async fn account(
