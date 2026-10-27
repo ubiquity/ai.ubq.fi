@@ -2438,6 +2438,7 @@ dependencies = [
  "gateway-auth-passkeys",
  "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-authority-actor-records",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
@@ -2558,7 +2559,10 @@ dependencies = [
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
+ "gateway-authority",
  "rustls",
+ "serde",
+ "serde_json",
  "ureq",
 ]
 
