@@ -6,7 +6,6 @@ pub mod capacity_events;
 mod capacity_store;
 pub mod claude_capacity;
 pub mod incidents;
-pub mod metered;
 pub mod remote_capacity;
 mod replay_bootstrap;
 mod replay_cleanup;

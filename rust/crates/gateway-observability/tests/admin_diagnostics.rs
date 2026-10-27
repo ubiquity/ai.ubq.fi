@@ -1,5 +1,6 @@
 mod support;
-use gateway_observability::{ObservabilityRuntime, metered};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_metered::metered;
 use serde_json::{Value, json};
 use support::{Host, Memory, run};
 

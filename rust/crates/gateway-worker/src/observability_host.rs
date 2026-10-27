@@ -4,6 +4,7 @@ use gateway_core::identity::RequestId;
 use gateway_observability::{ObservabilityRuntime, ObservabilityState};
 use gateway_observability_contracts::host_types;
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
+use gateway_observability_metered::metered;
 use gateway_observability_replay_model::replay_crypto;
 use gateway_observability_replay_model::replay_crypto::ReplayBody;
 use gateway_source::error::GatewayError;
@@ -168,10 +169,7 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
     } else {
         None
     };
-    Ok(gateway_observability::metered::diagnostics(
-        configured,
-        snapshot.as_ref(),
-    ))
+    Ok(metered::diagnostics(configured, snapshot.as_ref()))
 }
 /// Retention maintenance and host-log diagnostics belong to this same administrative request.
 pub async fn error_diagnostics(
@@ -346,7 +344,7 @@ impl ObservabilityHost for RequestHost {
         if inventory::monitoring_key(&self.platform.env).is_none() {
             return Ok(None);
         }
-        gateway_observability::metered::quota_snapshot(&self.store, self, force, deadline).await
+        metered::quota_snapshot(&self.store, self, force, deadline).await
     }
     async fn fetch_metered_quota(&self, deadline: i64) -> Result<serde_json::Value, GatewayError> {
         self.monitoring_get(deadline).await

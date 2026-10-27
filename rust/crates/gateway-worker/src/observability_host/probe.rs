@@ -186,7 +186,7 @@ impl RequestHost {
             .map_err(|_| unavailable("Metered account API returned an unreadable body."))?;
         let value = serde_json::from_slice(&bytes)
             .map_err(|_| unavailable("Metered account API returned invalid JSON."))?;
-        gateway_observability::metered::token_usage_state(
+        gateway_observability_metered::metered::token_usage_state(
             &value,
             gateway_worker_storage::store::now_ms()?,
         )?;

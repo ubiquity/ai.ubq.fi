@@ -1634,6 +1634,7 @@ dependencies = [
  "gateway-observability-contracts",
  "gateway-observability-health",
  "gateway-observability-ledger",
+ "gateway-observability-metered",
  "gateway-observability-prompt",
  "gateway-observability-replay-model",
  "gateway-observability-request-records",
@@ -1690,6 +1691,17 @@ dependencies = [
  "gateway-observability-request-records",
  "gateway-source",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-metered"
+version = "0.1.0"
+dependencies = [
+ "gateway-capacity-projection",
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -1989,6 +2001,7 @@ dependencies = [
  "gateway-observability",
  "gateway-observability-contracts",
  "gateway-observability-ledger",
+ "gateway-observability-metered",
  "gateway-observability-prompt",
  "gateway-observability-replay-model",
  "gateway-observability-test-support",

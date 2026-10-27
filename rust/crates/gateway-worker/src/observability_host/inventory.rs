@@ -145,7 +145,7 @@ impl RequestHost {
         };
         let monitoring = monitoring_key(&self.platform.env).is_some();
         let metered = if monitoring {
-            gateway_observability::metered::cached_snapshot(&self.store, at)
+            gateway_observability_metered::metered::cached_snapshot(&self.store, at)
                 .await
                 .unwrap_or(None)
         } else {

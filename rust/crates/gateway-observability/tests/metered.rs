@@ -1,7 +1,7 @@
 mod support;
 use gateway_core::state::StoredRecord;
-use gateway_observability::metered;
 use gateway_observability_contracts::types::ObservabilityHost;
+use gateway_observability_metered::metered;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};
