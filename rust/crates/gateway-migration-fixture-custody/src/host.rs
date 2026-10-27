@@ -12,15 +12,16 @@ use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
 use gateway_core::tuple_key::TupleKey;
-use gateway_migration::native_custody::{
-    NativeCustody, OwnedNativeSnapshot, export_native_rollback_with_custody,
-};
-use gateway_migration::native_operator::{ConfiguredNativeCustody, NativeCustodyRegistration};
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeValue;
 use gateway_migration_fixture_inputs::inputs;
 use gateway_migration_fixture_port::port;
 use gateway_migration_fixture_port::{executor::support_run, port::error};
+use gateway_migration_native_custody::native_custody::NativeCustody;
+use gateway_migration_native_custody::native_custody::OwnedNativeSnapshot;
+use gateway_migration_native_custody::native_custody::export_native_rollback_with_custody;
+use gateway_migration_native_custody::registry::ConfiguredNativeCustody;
+use gateway_migration_native_custody::registry::NativeCustodyRegistration;
 use gateway_migration_test_support::fixture::{MANAGED_A_CASES, Receipt};
 use gateway_native::transport::NativeOwnerTransport;
 use gateway_native::unix::{NativeOwnerLocation, UnixOwnerTransport};

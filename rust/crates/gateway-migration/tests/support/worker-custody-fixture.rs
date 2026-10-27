@@ -14,7 +14,7 @@ struct Initialize {
 struct Export {
     v: u32,
     now_ms: i64,
-    artifacts: gateway_migration::operational::ArtifactInput,
+    artifacts: gateway_migration_protocol::operational::ArtifactInput,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Serialize)]
@@ -32,7 +32,7 @@ enum Phase {
     },
     AdvanceManagedA {
         v: u32,
-        artifacts: gateway_migration::operational::ArtifactInput,
+        artifacts: gateway_migration_protocol::operational::ArtifactInput,
     },
 }
 #[cfg(not(target_arch = "wasm32"))]
@@ -73,12 +73,12 @@ struct Selector {
 fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
     use gateway_auth::provider_credentials::codex_source_pool_key;
     use gateway_core::state::AuthorityStore;
-    use gateway_migration::native_custody::export_native_rollback_with_custody;
-    use gateway_migration::native_custody::sanitize_native_capture;
     use gateway_migration_data::custody::ArtifactContext;
     use gateway_migration_fixture_custody::{host, staged};
     use gateway_migration_fixture_inputs::{inputs, producers};
     use gateway_migration_fixture_port::{executor::support_run, port};
+    use gateway_migration_native_custody::native_custody::export_native_rollback_with_custody;
+    use gateway_migration_native_custody::native_custody::sanitize_native_capture;
     use gateway_migration_prepare::engine::adopt_empty;
     use gateway_migration_prepare::engine::prepare_native;
     assert_eq!(

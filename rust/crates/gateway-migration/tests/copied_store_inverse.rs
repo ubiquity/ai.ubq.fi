@@ -13,13 +13,13 @@ use gateway_core::{
     state::*,
     tuple_key::{KeyPart, TupleKey},
 };
-use gateway_migration::native_operator::NativeCustodyRegistration;
-use gateway_migration::native_operator::prepare_local_bootstrap;
 use gateway_migration_copied_store_support::{driver, store::ReadonlyStore};
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+use gateway_migration_native_custody::registry::prepare_local_bootstrap;
 use gateway_migration_prepare::engine::adopt_empty;
 use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};

@@ -4,12 +4,7 @@ use gateway_core::js_string::JsString16;
 use gateway_core::source_graph::{GraphAtom, SourceGraph};
 use gateway_core::state::AuthorityStore;
 use gateway_core::tuple_key::TupleKey;
-use gateway_migration::native_inverse::export_native_latest;
 use gateway_migration::native_operator;
-use gateway_migration::native_stage;
-use gateway_migration::operational;
-use gateway_migration::staged::decode_stage_request;
-use gateway_migration::staged::execute_staged;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
@@ -18,6 +13,11 @@ use gateway_migration_data::staged::StageRequest;
 use gateway_migration_fixture_inputs::{inputs, producers};
 use gateway_migration_fixture_port::{executor::support_run, port};
 use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_inverse::native_inverse::export_native_latest;
+use gateway_migration_protocol::operational;
+use gateway_migration_protocol::staged::decode_stage_request;
+use gateway_migration_protocol::staged::execute_staged;
+use gateway_migration_stage::native_stage;
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt, path::Path};
 #[derive(Deserialize)]
@@ -89,7 +89,7 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
     let source_path = Path::new(directory).join("large-source.json");
     encode(&mut file(&source_path)?, &source)?;
     let source_bytes = std::fs::metadata(&source_path).map_err(port::error)?.len();
-    if source_bytes <= operational::PRIVATE_WIRE_MAX_BYTES as u64 {
+    if source_bytes <= gateway_migration_data::PRIVATE_WIRE_MAX_BYTES as u64 {
         return Err(port::error("Synthetic full capture did not exceed32MiB").into());
     }
     mark(directory, "native_audit_stage_plan")?;
@@ -178,7 +178,7 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
     mark(directory, "latest_inverse")?;
     let latest_path = Path::new(directory).join("large-latest.json");
     let controls_path = Path::new(directory).join("large-custody.json");
-    let rows = support_run(native_operator::write_private_latest(
+    let rows = support_run(gateway_migration_latest::native_latest::write_latest(
         &store,
         time.export(),
         &fixed,

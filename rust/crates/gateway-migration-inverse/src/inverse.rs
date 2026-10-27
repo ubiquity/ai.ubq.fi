@@ -1,25 +1,25 @@
-use crate::Mapping;
-use crate::Transform;
-use crate::decode;
-use crate::digest;
-use crate::invalid;
-use crate::key;
-use crate::parts;
-use crate::starts;
-use crate::unavailable;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_data::MappingData as Mapping;
+use gateway_migration_data::Transform;
 use gateway_migration_data::capture::PrivateCapture;
 use gateway_migration_data::capture::SourceEntry;
 use gateway_migration_data::custody::{ArtifactContext, CustodyRecord, validate_artifacts};
+use gateway_migration_data::decode;
+use gateway_migration_data::digest;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::invalid;
+use gateway_migration_data::key;
 use gateway_migration_data::manifest::Manifest;
 use gateway_migration_data::manifest::manifest_key;
 use gateway_migration_data::manifest::mapping_key;
+use gateway_migration_data::parts;
+use gateway_migration_data::starts;
+use gateway_migration_data::unavailable;
 use gateway_migration_values::inverse::{
     inverse_value_for_key, source_profile_key, transform_for_new,
 };
@@ -33,7 +33,8 @@ mod native_import_custody;
 
 /// Export only after the current target owner has actually stopped its writers.
 /// QueryStore pages are not a cross-page snapshot; no stale backup is read or restored.
-pub(crate) struct LatestRow {
+/// Latest record DATA, never a prepared adoption or custody/currentness value.
+pub struct LatestRow {
     pub key: RecordKey,
     pub record: StoredRecord,
     pub mapping: Option<Mapping>,
@@ -112,13 +113,14 @@ fn authority_control(
 ) -> Result<bool, GatewayError> {
     if *key == gateway_authority::keys::kernel_defaults() {
         let mut expected = gateway_authority::kernel::KernelDefaults::default();
-        if let Some(source) =
-            all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)
+        if let Some(source) = all
+            .get(&gateway_migration_data::key(json!(["default", "kernel_policy_limit_requests"])).0)
         {
             expected.usage_limit_requests =
                 gateway_admin_contracts::fields::limit(source.json_value()?).unwrap_or(-1);
         }
-        if let Some(source) = all.get(&crate::key(json!(["default", "kernel_policy_window_ms"])).0)
+        if let Some(source) =
+            all.get(&gateway_migration_data::key(json!(["default", "kernel_policy_window_ms"])).0)
         {
             expected.window_ms = gateway_admin_contracts::fields::positive(source.json_value()?)
                 .unwrap_or(604800000);
@@ -286,7 +288,7 @@ pub(crate) async fn export_rows<S: QueryStore>(
         if p.len() == 4
             && starts(&p, &["uos_ai", "codex_live_calls", "v1"])
             && all.contains_key(
-                &crate::key(json!([
+                &gateway_migration_data::key(json!([
                     "uos_ai",
                     "codex_live_calls",
                     "v1",

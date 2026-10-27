@@ -1,8 +1,8 @@
 //! Bounded migration bindings; full native capture is private, never a public admin body.
 use gateway_core::{error::GatewayError, query::QueryStore};
-use gateway_migration::operational::NativeMigrationRequest;
-use gateway_migration::operational::NativeMigrationResponse;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_protocol::operational::NativeMigrationRequest;
+use gateway_migration_protocol::operational::NativeMigrationResponse;
 #[cfg(target_arch = "wasm32")]
 use worker::js_sys;
 
@@ -73,7 +73,7 @@ pub async fn execute_native<S: QueryStore>(
     store: &S,
     request: NativeMigrationRequest,
 ) -> Result<NativeMigrationResponse, MigrationError> {
-    gateway_migration::operational::execute_native(store, request).await
+    gateway_migration_protocol::operational::execute_native(store, request).await
 }
 
 /// Private host startup export, NOT an HTTP route. The trusted local operator
@@ -94,9 +94,9 @@ async fn local_operator_adoption(
     env: worker::Env,
     input: js_sys::Uint8Array,
 ) -> Result<js_sys::Uint8Array, worker::wasm_bindgen::JsValue> {
-    use gateway_migration::operational::{
-        NativeMigrationRequest, NativeOperation, encode_native_response,
-    };
+    use gateway_migration_protocol::operational::NativeMigrationRequest;
+    use gateway_migration_protocol::operational::NativeOperation;
+    use gateway_migration_protocol::operational::encode_native_response;
     use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
     let refused = || JsValue::from_str("private_local_bootstrap_refused");
     if input.length() as usize > gateway_migration_data::PRIVATE_WIRE_MAX_BYTES {
@@ -132,11 +132,11 @@ pub fn local_operator_stage(env: worker::Env, input: js_sys::Uint8Array) -> js_s
         if input.length() as usize > gateway_migration_data::staged::STAGED_BATCH_MAX_BYTES {
             return Err(refused());
         }
-        let request = gateway_migration::staged::decode_stage_request(&input.to_vec())
+        let request = gateway_migration_protocol::staged::decode_stage_request(&input.to_vec())
             .map_err(|_| refused())?;
         let store =
             crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| refused())?;
-        let result = gateway_migration::staged::execute_staged(&store, request)
+        let result = gateway_migration_protocol::staged::execute_staged(&store, request)
             .await
             .map_err(|_| refused())?;
         let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;

@@ -1,11 +1,11 @@
 //! Finite private host operations. The host owns stopped-source and target isolation.
 //! A decoded request is data, never an ownership, publication or replay capability.
-use crate::native_inverse::NativeRollbackBundle;
-use crate::native_inverse::export_native_rollback_bundle;
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, query::QueryStore};
 use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_inverse::native_inverse::NativeRollbackBundle;
+use gateway_migration_inverse::native_inverse::export_native_rollback_bundle;
 use gateway_migration_prepare::engine::AdoptionReceipt;
 use gateway_migration_prepare::engine::adopt_empty;
 use gateway_migration_prepare::engine::prepare_native;

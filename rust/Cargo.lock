@@ -1127,6 +1127,11 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-stage",
+ "gateway-migration-protocol",
+ "gateway-migration-native-custody",
+ "gateway-migration-latest",
+ "gateway-migration-inverse",
  "gateway-migration-profile",
  "gateway-migration-core-state",
  "gateway-migration-prepare",
@@ -1168,6 +1173,9 @@ dependencies = [
 name = "gateway-migration-copied-store-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-protocol",
+ "gateway-migration-native-custody",
+ "gateway-migration-latest",
  "gateway-migration-data",
  "gateway-auth",
  "gateway-core",
@@ -1208,6 +1216,11 @@ dependencies = [
 name = "gateway-migration-fixture-custody"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-stage",
+ "gateway-migration-protocol",
+ "gateway-migration-native-custody",
+ "gateway-migration-latest",
+ "gateway-migration-inverse",
  "gateway-migration-spool",
  "gateway-migration-data",
  "gateway-migration-graph",
@@ -1262,6 +1275,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-migration-history"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-spool",
+ "gateway-source-audit",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-migration-indexes"
 version = "0.1.0"
 dependencies = [
@@ -1278,11 +1304,68 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-migration-inverse"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-graph",
+ "gateway-migration-prepare",
+ "gateway-migration-projection",
+ "gateway-migration-values",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "gateway-routing-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-latest"
+version = "0.1.0"
+dependencies = [
+ "gateway-migration-stage",
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-inverse",
+ "gateway-migration-native-custody",
+ "gateway-migration-projection",
+ "gateway-migration-spool",
+ "gateway-migration-values",
+ "gateway-routing-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-migration-ledger"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
  "gateway-profile-values",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-native-custody"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-graph",
+ "gateway-migration-inverse",
+ "gateway-migration-prepare",
+ "gateway-native",
+ "serde",
  "serde_json",
 ]
 
@@ -1348,6 +1431,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-migration-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-inverse",
+ "gateway-migration-prepare",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-migration-spool"
 version = "0.1.0"
 dependencies = [
@@ -1356,6 +1453,26 @@ dependencies = [
  "gateway-core",
  "gateway-migration-data",
  "gateway-migration-ledger",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-stage"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-core",
+ "gateway-migration-core-state",
+ "gateway-migration-data",
+ "gateway-migration-history",
+ "gateway-migration-indexes",
+ "gateway-migration-native-custody",
+ "gateway-migration-prepare",
+ "gateway-migration-projection",
+ "gateway-migration-spool",
+ "gateway-source-audit",
  "serde",
  "serde_json",
 ]
@@ -1653,6 +1770,7 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-protocol",
  "gateway-migration-profile",
  "gateway-migration-prepare",
  "gateway-migration-data",

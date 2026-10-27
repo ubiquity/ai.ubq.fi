@@ -6,11 +6,11 @@ use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, Qu
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
-use gateway_migration::staged::decode_stage_request;
-use gateway_migration::staged::execute_staged;
 use gateway_migration_data::staged::STAGED_BATCH_MAX_BYTES;
 use gateway_migration_data::staged::StageReceipt;
 use gateway_migration_data::staged::StageRequest;
+use gateway_migration_protocol::staged::decode_stage_request;
+use gateway_migration_protocol::staged::execute_staged;
 use serde::{Deserialize, Serialize};
 use std::{
     cell::Cell,

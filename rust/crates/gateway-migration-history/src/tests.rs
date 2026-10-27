@@ -7,15 +7,55 @@ use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
 use std::path::{Path, PathBuf};
 
+use gateway_migration_spool::native_entries::{NativeEntries, NativeEntryWriter};
+struct CapturedData {
+    header: NativeCapture,
+    entries: NativeEntries,
+}
+impl CapturedData {
+    fn owned(mut source: NativeCapture, directory: &Path) -> Result<Self, GatewayError> {
+        source.validate_header()?;
+        let mut writer = NativeEntryWriter::create(&directory.join("native-entries.spool"))?;
+        for entry in std::mem::take(&mut source.entries) {
+            writer.push(&entry)?;
+        }
+        Ok(Self {
+            header: source,
+            entries: writer.seal()?,
+        })
+    }
+    fn from_parts(header: NativeCapture, entries: NativeEntries, _directory: &Path) -> Self {
+        Self { header, entries }
+    }
+    fn metadata(&self) -> &NativeCapture {
+        &self.header
+    }
+    fn view(&self) -> Inventory<'_> {
+        Inventory {
+            header: &self.header,
+            entries: &self.entries,
+        }
+    }
+}
+fn reconcile(
+    original: &CapturedData,
+    latest: &CapturedData,
+    manifest: &Manifest,
+    keys: &BTreeSet<String>,
+    emit: &mut dyn FnMut(&NativeEntry) -> Result<(), GatewayError>,
+) -> Result<NativeCapture, MigrationError> {
+    super::reconcile(&original.view(), &latest.view(), manifest, keys, emit)
+}
+
 struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         Self(gateway_migration_spool::directory(&std::env::temp_dir()).unwrap())
     }
-    fn capture(&self, name: &str, source: NativeCapture) -> Captured {
+    fn capture(&self, name: &str, source: NativeCapture) -> CapturedData {
         let directory = self.0.join(name);
         std::fs::create_dir(&directory).unwrap();
-        Captured::owned(source, &directory).unwrap()
+        CapturedData::owned(source, &directory).unwrap()
     }
 }
 impl Drop for Scratch {
@@ -215,7 +255,7 @@ fn large_spooled_payloads_remain_exact() {
             ))
             .unwrap();
     }
-    let original = Captured::from_parts(header(), writer.seal().unwrap(), &directory);
+    let original = CapturedData::from_parts(header(), writer.seal().unwrap(), &directory);
     let latest = scratch.capture("large-latest", header());
     let (manifest, keys) = mapping(&[]);
     let expected_hash = gateway_auth::crypto::sha256_hex(&vec![7; row_bytes]);
@@ -310,8 +350,10 @@ fn different_or_older_latest_header_is_not_silently_relabelled() {
 
 #[test]
 fn complete_merged_key_audit_runs_before_any_output() {
-    let mut source: NativeCapture =
-        serde_json::from_str(include_str!("../../tests/fixtures/native-source.json")).unwrap();
+    let mut source: NativeCapture = serde_json::from_str(include_str!(
+        "../../gateway-migration/tests/fixtures/native-source.json"
+    ))
+    .unwrap();
     // Break the genuine id/hash pair in a still-well-typed native graph.
     let NativeValue::SourceGraphV1(graph) = &source.entries[0].value else {
         panic!("fixture graph")

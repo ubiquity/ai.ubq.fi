@@ -1,7 +1,5 @@
 //! Private stopped-file preparation. No full-capture payload collection, VM,
 //! database, public import route, or capability is created by these spool files.
-use crate::native_custody::NativeCustody;
-use crate::{Transform, digest, invalid, json, starts};
 use gateway_core::error::GatewayError;
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::StoredRecord;
@@ -11,6 +9,8 @@ use gateway_migration_core_state::CoreStateManifest;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::{Transform, digest, invalid, json, starts};
+use gateway_migration_native_custody::native_custody::NativeCustody;
 use gateway_migration_spool::canonical::CanonicalWriter;
 use gateway_migration_spool::native_entries::{
     NativeEntries, NativeEntryReader, NativeEntryWriter,
@@ -80,6 +80,30 @@ impl Captured {
             directory: directory.into(),
         }
     }
+    fn history_view(&self) -> gateway_migration_history::Inventory<'_> {
+        gateway_migration_history::Inventory {
+            header: &self.header,
+            entries: &self.entries,
+        }
+    }
+    /// Complete DATA reconciliation retains the private Captured constructor here.
+    pub fn reconcile_histories(
+        original: Self,
+        latest: Self,
+        manifest: &gateway_migration_data::manifest::Manifest,
+        mapping_keys: &std::collections::BTreeSet<String>,
+        directory: &Path,
+    ) -> Result<Self, MigrationError> {
+        let mut writer = NativeEntryWriter::create(&directory.join("reconciled-native.spool"))?;
+        let header = gateway_migration_history::reconcile(
+            &original.history_view(),
+            &latest.history_view(),
+            manifest,
+            mapping_keys,
+            &mut |entry| writer.push(entry),
+        )?;
+        Ok(Self::from_parts(header, writer.seal()?, directory))
+    }
     pub fn count(&self) -> usize {
         self.entries.len()
     }
@@ -106,7 +130,7 @@ impl Captured {
     pub async fn prepare_core<H: NativeCustody>(
         self,
         host: &H,
-    ) -> Result<(CoreStateManifest, crate::staged::StagePlan), MigrationError> {
+    ) -> Result<(CoreStateManifest, crate::plan::StagePlan), MigrationError> {
         let CoreStateCapture { capture, manifest } = self.core_capture()?;
         let directory = gateway_migration_spool::directory(&self.directory)?;
         let plan = Captured::owned(capture, &directory)?.prepare(host).await?;
@@ -117,7 +141,7 @@ impl Captured {
     }
     pub async fn verify_configured(
         &self,
-        custody: &crate::native_operator::ConfiguredNativeCustody,
+        custody: &gateway_migration_native_custody::registry::ConfiguredNativeCustody,
     ) -> Result<(), MigrationError> {
         let mut reader = self.entries.reader()?;
         while let Some(entry) = reader.next()? {
@@ -129,7 +153,7 @@ impl Captured {
     pub async fn prepare<H: NativeCustody>(
         self,
         host: &H,
-    ) -> Result<crate::staged::StagePlan, MigrationError> {
+    ) -> Result<crate::plan::StagePlan, MigrationError> {
         let version = self.header.validate_header()?;
         let mut writer = RowWriter::create(&self.directory.join("normalized-rows.spool"))?;
         let mut seen = std::collections::BTreeSet::new();
@@ -138,7 +162,8 @@ impl Captured {
         // One sequential pass validates and seals the normalized row inventory.
         let mut reader = self.entries.reader()?;
         while let Some(mut entry) = reader.next()? {
-            crate::native_custody::normalize_entry(&mut entry, host).await?;
+            gateway_migration_native_custody::native_custody::normalize_entry(&mut entry, host)
+                .await?;
             let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
             if !seen.insert(key.0) {
                 return Err(invalid(
@@ -237,7 +262,7 @@ impl Captured {
             derived: derived_digests,
             native_revision: Some(self.header.data_revision),
         };
-        Ok(crate::staged::StagePlan::from_spool(
+        Ok(crate::plan::StagePlan::from_spool(
             manifest,
             canonical.seal()?,
         )?)
@@ -350,4 +375,30 @@ impl<'de> Visitor<'de> for EntriesSeed<'_> {
         }
         Ok(())
     }
+}
+
+/// Complete-audit DATA only, never live source, custody, currentness or ownership.
+/// Its private Captured value can only be obtained by the full checked operation.
+pub struct AuditedNativeSource(Captured);
+impl AuditedNativeSource {
+    pub fn visit_entries(
+        &self,
+        callback: &mut dyn FnMut(&NativeEntry) -> Result<(), GatewayError>,
+    ) -> Result<(), GatewayError> {
+        self.0.visit_entries(callback)
+    }
+}
+/// Keep the full original preparation/emission audit before either latest sink.
+/// Raw header/spool DATA cannot mint a Captured/StagePlan or currentness proof.
+pub async fn audit_latest_source<H: NativeCustody>(
+    header: NativeCapture,
+    entries: NativeEntries,
+    directory: &Path,
+    host: &H,
+) -> Result<AuditedNativeSource, MigrationError> {
+    let source = Captured::from_parts(header, entries, directory);
+    let candidate = source.replay(directory);
+    let mut validation = candidate.prepare(host).await?;
+    while validation.write_next_batch(&mut std::io::sink())? {}
+    Ok(AuditedNativeSource(source))
 }

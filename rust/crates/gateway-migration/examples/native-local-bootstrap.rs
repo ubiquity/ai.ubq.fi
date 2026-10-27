@@ -10,7 +10,8 @@ fn main() {
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 fn execute() -> Result<(), Box<dyn std::error::Error>> {
     use gateway_auth::native_credentials::OwnerFence;
-    use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
+    use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+    use gateway_migration_native_custody::registry::prepare_local_bootstrap;
     use std::io::{Read, Write};
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]

@@ -1,8 +1,4 @@
 //! Trusted offline/native preparation only; the common candidate never receives refresh material.
-use crate::invalid;
-use crate::parts;
-use crate::starts;
-use crate::unavailable;
 use gateway_auth::managed_access::ManagedAccessProjection;
 use gateway_auth::native_credentials::{NativeGeneration, OwnerFence, verify_fence};
 use gateway_auth::provider_credentials::{
@@ -14,9 +10,13 @@ use gateway_core::{query::QueryStore, value::PortableValue};
 use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::custody::CustodyRecord;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::invalid;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_data::parts;
+use gateway_migration_data::starts;
+use gateway_migration_data::unavailable;
 use gateway_migration_prepare::engine::PreparedAdoption;
 use gateway_migration_prepare::engine::prepare_native;
 use std::future::Future;
@@ -120,7 +120,7 @@ async fn normalize_owned<H: NativeCustody>(
     Ok(candidate)
 }
 
-pub(crate) async fn normalize_entry<H: NativeCustody>(
+pub async fn normalize_entry<H: NativeCustody>(
     entry: &mut NativeEntry,
     host: &H,
 ) -> Result<(), MigrationError> {
@@ -179,7 +179,8 @@ pub async fn export_native_with_custody<S: QueryStore, H: NativeCustody>(
     now_ms: i64,
     host: &H,
 ) -> Result<LocalNativeCapture, MigrationError> {
-    let source = crate::native_inverse::export_native_latest(store, now_ms).await?;
+    let source =
+        gateway_migration_inverse::native_inverse::export_native_latest(store, now_ms).await?;
     reconstruct_native(store, source, host).await
 }
 
@@ -194,7 +195,7 @@ async fn reconstruct_native<S: QueryStore, H: NativeCustody>(
     Ok(LocalNativeCapture(source))
 }
 
-pub(crate) async fn reconstruct_entry<S: QueryStore, H: NativeCustody>(
+pub async fn reconstruct_entry<S: QueryStore, H: NativeCustody>(
     store: &S,
     entry: &mut NativeEntry,
     host: &H,
@@ -261,7 +262,8 @@ pub async fn export_native_rollback_with_custody<S: QueryStore, H: NativeCustody
     artifacts: ArtifactContext,
 ) -> Result<LocalNativeRollbackBundle, MigrationError> {
     gateway_migration_data::custody::validate_artifacts(&artifacts)?;
-    let (source, controls) = crate::native_inverse::export(store, now_ms).await?;
+    let (source, controls) =
+        gateway_migration_inverse::native_inverse::export(store, now_ms).await?;
     Ok(LocalNativeRollbackBundle {
         source: reconstruct_native(store, source, host).await?,
         controls,

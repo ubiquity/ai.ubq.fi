@@ -3,11 +3,11 @@
 use super::store::ReadonlyStore;
 use gateway_auth::native_credentials::OwnerFence;
 use gateway_core::identity::MAX_SAFE_INTEGER;
-use gateway_migration::native_operator::ConfiguredNativeCustody;
-use gateway_migration::native_operator::NativeCustodyRegistration;
-use gateway_migration::native_operator::write_private_latest;
-use gateway_migration::operational::ArtifactInput;
 use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_latest::native_latest::write_latest;
+use gateway_migration_native_custody::registry::ConfiguredNativeCustody;
+use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+use gateway_migration_protocol::operational::ArtifactInput;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

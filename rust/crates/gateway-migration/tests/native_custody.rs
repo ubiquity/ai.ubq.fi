@@ -12,17 +12,17 @@ use gateway_core::{
     state::*,
     tuple_key::TupleKey,
 };
-use gateway_migration::native_custody::NativeCustody;
-use gateway_migration::native_custody::OwnedNativeSnapshot;
-use gateway_migration::native_custody::export_native_rollback_with_custody;
-use gateway_migration::native_custody::export_native_with_custody;
-use gateway_migration::native_custody::sanitize_native_capture;
 use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
 use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_native_custody::native_custody::NativeCustody;
+use gateway_migration_native_custody::native_custody::OwnedNativeSnapshot;
+use gateway_migration_native_custody::native_custody::export_native_rollback_with_custody;
+use gateway_migration_native_custody::native_custody::export_native_with_custody;
+use gateway_migration_native_custody::native_custody::sanitize_native_capture;
 use gateway_migration_prepare::engine::adopt_empty;
 use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};
@@ -420,10 +420,11 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
 #[test]
 fn configured_operator_composes_access_only_request_and_empty_store_adoption()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_migration::{
-        native_operator::{NativeCustodyRegistration, prepare_local_bootstrap},
-        operational::{NativeMigrationRequest, NativeOperation, execute_native},
-    };
+    use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+    use gateway_migration_native_custody::registry::prepare_local_bootstrap;
+    use gateway_migration_protocol::operational::NativeMigrationRequest;
+    use gateway_migration_protocol::operational::NativeOperation;
+    use gateway_migration_protocol::operational::execute_native;
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("actual-configured-operator");
@@ -538,7 +539,8 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
 
 #[test]
 fn configured_operator_observes_existing_external_access_and_refuses_stale_input() {
-    use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
+    use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+    use gateway_migration_native_custody::registry::prepare_local_bootstrap;
     use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("external-operator");

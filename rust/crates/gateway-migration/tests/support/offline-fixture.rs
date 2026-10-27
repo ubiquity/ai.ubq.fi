@@ -7,8 +7,8 @@ use gateway_migration_test_support::sqlite_store;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use fixture::{Directory, run};
     use gateway_core::identity::{ApiKeyId, RequestId};
-    use gateway_migration::inverse::export_latest;
     use gateway_migration_data::capture::PrivateCapture;
+    use gateway_migration_inverse::inverse::export_latest;
     use gateway_migration_prepare::engine::adopt_empty;
     use gateway_migration_prepare::engine::prepare;
     use gateway_profile_values::date::CanonicalDates;

@@ -1,7 +1,7 @@
 //! Private EOF/inventory verification for one streamed native capture file.
 //! It opens no source VM database, target, credential, service or writer.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-use gateway_migration::native_stage::Captured;
+use gateway_migration_stage::native_stage::Captured;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::PathBuf};

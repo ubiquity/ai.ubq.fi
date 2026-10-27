@@ -1,0 +1,27 @@
+[package]
+name = "gateway-migration-stage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-migration-data.workspace = true
+gateway-migration-prepare.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+gateway-admin-data.workspace = true
+gateway-auth.workspace = true
+gateway-migration-core-state.workspace = true
+gateway-migration-history.workspace = true
+gateway-migration-indexes.workspace = true
+gateway-migration-native-custody.workspace = true
+gateway-migration-projection.workspace = true
+gateway-migration-spool.workspace = true
+gateway-source-audit.workspace = true
+
+[lints]
+workspace = true

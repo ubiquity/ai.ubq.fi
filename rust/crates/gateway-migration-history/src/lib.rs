@@ -1,16 +1,43 @@
 //! Native-private candidate data only. No store, custody, publication or replay
 //! authority is created by reconciling these immutable stopped inventories.
-use crate::native_stage::Captured;
-use crate::{GatewayError, RecordKey, invalid};
+#![cfg(all(unix, not(target_arch = "wasm32")))]
 use gateway_admin_data::inventory::AuditInventory;
 use gateway_core::tuple_key::TupleKey;
+use gateway_core::{error::GatewayError, state::RecordKey};
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::invalid;
 use gateway_migration_data::manifest::Manifest;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_ledger::rows::ObservedRow;
 use gateway_source_audit::driver::inspect_inventory;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Borrowed source DATA only. Every header, row, mapping and EOF is revalidated.
+#[derive(Clone, Copy)]
+pub struct Inventory<'a> {
+    pub header: &'a NativeCapture,
+    pub entries: &'a gateway_migration_spool::native_entries::NativeEntries,
+}
+impl Inventory<'_> {
+    pub fn metadata(&self) -> &NativeCapture {
+        self.header
+    }
+    pub fn count(&self) -> usize {
+        self.entries.len()
+    }
+    pub fn visit_entries(
+        &self,
+        callback: &mut dyn FnMut(&NativeEntry) -> Result<(), GatewayError>,
+    ) -> Result<(), GatewayError> {
+        self.entries.visit(&mut |entry| callback(&entry))
+    }
+    pub fn reader(
+        &self,
+    ) -> Result<gateway_migration_spool::native_entries::NativeEntryReader, GatewayError> {
+        self.entries.reader()
+    }
+}
 
 type KeyIndex = BTreeMap<Vec<u8>, usize>;
 
@@ -26,9 +53,9 @@ type KeyIndex = BTreeMap<Vec<u8>, usize>;
 /// The returned header has no entries; emit receives one genuine row at a time.
 /// On callback failure there is no completed result: discard the private partial
 /// candidate rather than publishing it. Current controls and nonces stay separate.
-pub(crate) fn reconcile(
-    original: &Captured,
-    latest: &Captured,
+pub fn reconcile(
+    original: &Inventory<'_>,
+    latest: &Inventory<'_>,
     manifest: &Manifest,
     mapping_row_keys: &BTreeSet<String>,
     emit: &mut dyn FnMut(&NativeEntry) -> Result<(), GatewayError>,
@@ -59,9 +86,9 @@ pub(crate) fn reconcile(
         );
     }
     for key in mapping_row_keys {
-        let parts = crate::parts(&RecordKey(key.clone()))?;
+        let parts = gateway_migration_data::parts(&RecordKey(key.clone()))?;
         if parts.len() != 6
-            || !crate::starts(
+            || !gateway_migration_data::starts(
                 &parts,
                 &["uos_ai", "migration", "v3", "row", &manifest.capture_id],
             )
@@ -80,8 +107,8 @@ pub(crate) fn reconcile(
     let original_keys = index(original)?;
     let latest_keys = index(latest)?;
     let merged = Merged {
-        original,
-        latest,
+        original: *original,
+        latest: *latest,
         original_keys,
         latest_keys,
         manifest,
@@ -97,7 +124,7 @@ pub(crate) fn reconcile(
     Ok(latest_header.clone())
 }
 
-fn index(capture: &Captured) -> Result<KeyIndex, GatewayError> {
+fn index(capture: &Inventory<'_>) -> Result<KeyIndex, GatewayError> {
     let version = capture.metadata().validate_header()?;
     let mut keys = BTreeMap::new();
     let mut ordinal = 0usize;
@@ -120,8 +147,8 @@ fn index(capture: &Captured) -> Result<KeyIndex, GatewayError> {
 }
 
 struct Merged<'a> {
-    original: &'a Captured,
-    latest: &'a Captured,
+    original: Inventory<'a>,
+    latest: Inventory<'a>,
     original_keys: KeyIndex,
     latest_keys: KeyIndex,
     manifest: &'a Manifest,

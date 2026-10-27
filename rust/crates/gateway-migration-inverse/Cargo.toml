@@ -1,0 +1,26 @@
+[package]
+name = "gateway-migration-inverse"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-admin-contracts.workspace = true
+gateway-admin-keys.workspace = true
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-core.workspace = true
+gateway-migration-data.workspace = true
+gateway-migration-graph.workspace = true
+gateway-migration-prepare.workspace = true
+gateway-migration-projection.workspace = true
+gateway-migration-values.workspace = true
+gateway-profile-source.workspace = true
+gateway-profile-values.workspace = true
+gateway-routing-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

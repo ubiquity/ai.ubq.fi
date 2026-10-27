@@ -2,8 +2,8 @@
 //! It opens one private stopped capture and writes no database, target, or
 //! credential. A later preparation still requires the existing custody gate.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-use gateway_migration::native_stage::Captured;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_stage::native_stage::Captured;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

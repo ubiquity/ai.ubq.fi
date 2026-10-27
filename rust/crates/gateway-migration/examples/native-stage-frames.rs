@@ -2,13 +2,13 @@
 //! It never opens a target, an HTTP route, a service, a credential refresh or a writer.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
 use gateway_auth::native_credentials::{NativeOwnerId, OwnerFence};
-use gateway_migration::native_operator::ConfiguredNativeCustody;
-use gateway_migration::native_operator::NativeCustodyRegistration;
-use gateway_migration::native_stage::Captured;
-use gateway_migration::staged::StagePlan;
-use gateway_migration::staged::decode_stage_request;
 use gateway_migration_data::staged::StageOwnerBinding;
 use gateway_migration_data::staged::StageRequest;
+use gateway_migration_native_custody::registry::ConfiguredNativeCustody;
+use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+use gateway_migration_protocol::staged::decode_stage_request;
+use gateway_migration_stage::native_stage::Captured;
+use gateway_migration_stage::plan::StagePlan;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -67,7 +67,7 @@ struct Receipt {
     sealed: bool,
     owner_frame: bool,
     target_touched: bool,
-    summary: gateway_migration::staged::StagePlanSummary,
+    summary: gateway_migration_stage::plan::StagePlanSummary,
 }
 fn failure(message: &str) -> gateway_migration_data::error::MigrationError {
     gateway_core::error::GatewayError::unavailable(message, "m20_stage_frames_invalid").into()

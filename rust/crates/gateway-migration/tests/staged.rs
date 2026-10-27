@@ -1,19 +1,23 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_core::state::AuthorityStore;
-use gateway_migration::native_custody::NativeCustody;
-use gateway_migration::native_custody::OwnedNativeSnapshot;
-use gateway_migration::native_inverse::export_native_latest;
-use gateway_migration::native_inverse::export_native_rollback_bundle;
 use gateway_migration::native_operator;
-use gateway_migration::native_stage;
-use gateway_migration::staged::*;
 use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_data::staged::STAGED_BATCH_MAX_BYTES;
+use gateway_migration_data::staged::StageRequest;
 use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_inverse::native_inverse::export_native_latest;
+use gateway_migration_inverse::native_inverse::export_native_rollback_bundle;
+use gateway_migration_native_custody::native_custody::NativeCustody;
+use gateway_migration_native_custody::native_custody::OwnedNativeSnapshot;
 use gateway_migration_prepare::engine::adopt_empty;
 use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_protocol::staged::decode_stage_request;
+use gateway_migration_protocol::staged::execute_staged;
+use gateway_migration_stage::native_stage;
+use gateway_migration_stage::plan::StagePlan;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 fn fixture() -> NativeCapture {
@@ -284,7 +288,7 @@ fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_docume
     ))?;
     let mut source_sink = Vec::new();
     let mut custody_sink = Vec::new();
-    let count = run(native_operator::write_private_latest(
+    let count = run(gateway_migration_latest::native_latest::write_latest(
         &store,
         2300,
         &Host,

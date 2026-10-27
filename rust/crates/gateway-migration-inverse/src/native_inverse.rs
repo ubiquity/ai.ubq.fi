@@ -1,24 +1,24 @@
 //! Latest native logical state; original VM bytes are never replayed as new state.
-use crate::digest;
-use crate::invalid;
-use crate::parts;
-use crate::unavailable;
 use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
 use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::{PortableValue, ValueEncoding};
 use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::custody::CustodyRecord;
+use gateway_migration_data::digest;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::invalid;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeKind;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_data::parts;
+use gateway_migration_data::unavailable;
 use gateway_migration_prepare::engine::prepare_native;
 use serde::Serialize;
 
-pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {
+pub fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {
     if row.record.value_encoding == ValueEncoding::SourceGraphV1 {
         return Ok(NativeValue::SourceGraphV1(
             gateway_migration_graph::transport::to_source_graph(&row.record.source_graph_value()?)?,
@@ -58,7 +58,7 @@ pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeVal
     ))
 }
 
-pub(crate) async fn export<S: QueryStore>(
+pub async fn export<S: QueryStore>(
     store: &S,
     now_ms: i64,
 ) -> Result<(NativeCapture, Vec<CustodyRecord>), MigrationError> {

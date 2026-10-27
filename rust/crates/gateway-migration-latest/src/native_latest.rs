@@ -1,28 +1,28 @@
 //! Native-private latest state, one genuine row at a time; no store mirror.
-use crate::Mapping;
-use crate::decode;
-use crate::digest;
-use crate::invalid;
-use crate::key;
-use crate::native_custody::NativeCustody;
-use crate::parts;
-use crate::starts;
-use crate::unavailable;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_data::MappingData as Mapping;
 use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::custody::CustodyRecord;
+use gateway_migration_data::decode;
+use gateway_migration_data::digest;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::invalid;
+use gateway_migration_data::key;
 use gateway_migration_data::manifest::Manifest;
 use gateway_migration_data::manifest::manifest_key;
 use gateway_migration_data::manifest::mapping_key;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::parts;
 use gateway_migration_data::staged::CanonicalRecord;
+use gateway_migration_data::starts;
+use gateway_migration_data::unavailable;
+use gateway_migration_native_custody::native_custody::NativeCustody;
 use gateway_migration_spool::{canonical::CanonicalWriter, native_entries::NativeEntryWriter};
 use serde::Deserialize;
 use serde_json::Value;
@@ -203,14 +203,14 @@ fn authority_control(
 ) -> Result<bool, GatewayError> {
     if *key == gateway_authority::keys::kernel_defaults() {
         let mut expected = gateway_authority::kernel::KernelDefaults::default();
-        if let Some(source) =
-            all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)?
-        {
+        if let Some(source) = all.get(
+            &gateway_migration_data::key(json!(["default", "kernel_policy_limit_requests"])).0,
+        )? {
             expected.usage_limit_requests =
                 gateway_admin_contracts::fields::limit(source.json_value()?).unwrap_or(-1);
         }
         if let Some(source) =
-            all.get(&crate::key(json!(["default", "kernel_policy_window_ms"])).0)?
+            all.get(&gateway_migration_data::key(json!(["default", "kernel_policy_window_ms"])).0)?
         {
             expected.window_ms = gateway_admin_contracts::fields::positive(source.json_value()?)
                 .unwrap_or(604800000);
@@ -323,7 +323,7 @@ fn validate(
         if p.len() == 4
             && starts(&p, &["uos_ai", "codex_live_calls", "v1"])
             && all.index.contains_key(
-                &crate::key(json!([
+                &gateway_migration_data::key(json!([
                     "uos_ai",
                     "codex_live_calls",
                     "v1",
@@ -373,12 +373,7 @@ fn validate(
     Ok((manifest, entries, controls, mapping_keys))
 }
 
-pub(crate) async fn write_latest<
-    S: QueryStore,
-    H: NativeCustody,
-    W: std::io::Write,
-    C: std::io::Write,
->(
+pub async fn write_latest<S: QueryStore, H: NativeCustody, W: std::io::Write, C: std::io::Write>(
     store: &S,
     now_ms: i64,
     host: &H,
@@ -393,7 +388,7 @@ pub(crate) async fn write_latest<
 
 /// Internal composition data, returned only after the same complete latest
 /// inverse, mapping checksum, source audit and current-custody path succeeds.
-pub(crate) async fn write_latest_for_reconciliation<
+pub async fn write_latest_for_reconciliation<
     S: QueryStore,
     H: NativeCustody,
     W: std::io::Write,
@@ -458,18 +453,21 @@ pub(crate) async fn write_latest_for_reconciliation<
                 .ok_or_else(|| invalid("Latest native inverse sequence overflows SQLite"))?;
             revision
         };
-        let row = crate::inverse::LatestRow {
+        let row = gateway_migration_inverse::inverse::LatestRow {
             key: key.clone(),
             record,
             mapping,
         };
         let mut entry = NativeEntry {
             raw_key: TupleKey::from_record_key(key)?.sort_bytes().to_vec(),
-            value: crate::native_inverse::current_value(&row)?,
+            value: gateway_migration_inverse::native_inverse::current_value(&row)?,
             revision,
             expiration_ms: row.record.expires_at_ms.unwrap_or(-1),
         };
-        crate::native_custody::reconstruct_entry(store, &mut entry, host).await?;
+        gateway_migration_native_custody::native_custody::reconstruct_entry(
+            store, &mut entry, host,
+        )
+        .await?;
         writer.push(&entry)?;
     }
     let data_revision = if changed {
@@ -498,10 +496,13 @@ pub(crate) async fn write_latest_for_reconciliation<
     // The exact complete latest source is audited/re-adoptable before either sink
     // receives payload bytes. Current credentials are verified, never captured grants.
     let count = entries.len();
-    let source = crate::native_stage::Captured::from_parts(header.clone(), entries, &directory);
-    let candidate = source.replay(&directory);
-    let mut validation = candidate.prepare(host).await?;
-    while validation.write_next_batch(&mut std::io::sink())? {}
+    let source = gateway_migration_stage::native_stage::audit_latest_source(
+        header.clone(),
+        entries,
+        &directory,
+        host,
+    )
+    .await?;
     // Reopen a separately sealed latest native stream (the validated input is retained
     // in its existing private file; this cursor has an independent offset).
 

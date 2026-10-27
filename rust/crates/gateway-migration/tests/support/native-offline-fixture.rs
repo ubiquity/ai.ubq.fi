@@ -14,8 +14,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use fixture::{Directory, run};
     use gateway_auth::store::key;
     use gateway_core::{source_graph::GraphNode, state::*};
-    use gateway_migration::native_inverse::export_native_latest;
     use gateway_migration_data::native_capture::NativeCapture;
+    use gateway_migration_inverse::native_inverse::export_native_latest;
     use gateway_migration_prepare::engine::adopt_empty;
     use gateway_migration_prepare::engine::prepare_native;
     use sqlite_store::SqliteStore;

@@ -1,17 +1,17 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
 use gateway_core::{state::AuthorityStore, tuple_key::TupleKey};
-use gateway_migration::native_custody::NativeCustody;
-use gateway_migration::native_custody::OwnedNativeSnapshot;
-use gateway_migration::native_inverse::export_native_latest;
-use gateway_migration::native_stage::Captured;
 use gateway_migration_core_state::CORE_STATE_DO_ROW_WRITE_LIMIT;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_inverse::native_inverse::export_native_latest;
+use gateway_migration_native_custody::native_custody::NativeCustody;
+use gateway_migration_native_custody::native_custody::OwnedNativeSnapshot;
 use gateway_migration_prepare::engine::adopt_empty;
 use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_stage::native_stage::Captured;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use serde_json::{Value, json};
@@ -475,15 +475,18 @@ fn bounded_core_staging_uses_the_same_spool_and_write_budget() {
     assert_eq!(summary.derived_rows, manifest.derived_rows);
     assert_eq!(summary.records as u64 + 1, manifest.do_row_writes);
     let store = SqliteStore::open(&directory.file("staged.sqlite3"));
-    run(gateway_migration::staged::execute_staged(
+    run(gateway_migration_protocol::staged::execute_staged(
         &store,
         plan.begin(),
     ))
     .unwrap();
     while let Some(batch) = plan.next_batch().unwrap() {
-        run(gateway_migration::staged::execute_staged(&store, batch)).unwrap();
+        run(gateway_migration_protocol::staged::execute_staged(
+            &store, batch,
+        ))
+        .unwrap();
     }
-    let receipt = run(gateway_migration::staged::execute_staged(
+    let receipt = run(gateway_migration_protocol::staged::execute_staged(
         &store,
         plan.seal(),
     ))
