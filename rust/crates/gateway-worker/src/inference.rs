@@ -45,7 +45,7 @@ use gateway_worker_storage::store::now_ms;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Context, Method, Request, Response};
 
-use gateway_worker_http_body::protocol::{correlation, invalid};
+use gateway_worker_http_body::protocol::correlation;
 
 mod late_failure;
 mod stream;

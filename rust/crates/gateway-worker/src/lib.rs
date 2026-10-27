@@ -5,7 +5,7 @@ use gateway_core::{
 #[cfg(feature = "entrypoint")]
 use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
-use {native_host::NativeBindings, response::GatewayResponse, std::rc::Rc};
+use {gateway_worker_web::response::GatewayResponse, native_host::NativeBindings, std::rc::Rc};
 
 mod admin_host;
 mod admin_support_host;

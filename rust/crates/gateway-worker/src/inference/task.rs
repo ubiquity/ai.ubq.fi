@@ -2,7 +2,7 @@
 use super::{Inference, OwnedRequest, ResponseResult, late_failure};
 use crate::{inference_capture::Capture, inference_head::HeadState};
 use futures_util::{Stream, future::poll_fn};
-use gateway_core::error::GatewayError;
+use gateway_core::{error::GatewayError, lifecycle::TransportObservation};
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{
@@ -166,7 +166,7 @@ impl RequestTask {
             done: false,
             stage,
         };
-        let finish = Box::new(move |observation| {
+        let finish = Box::new(move |observation: TransportObservation| {
             Box::pin(async move {
                 if finish_stage.get() == BodyStage::Selecting
                     && observation.reader_termination

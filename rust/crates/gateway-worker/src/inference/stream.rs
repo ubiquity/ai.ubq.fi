@@ -1,6 +1,6 @@
 //! Bind decoded streams to the original Worker request lifetime.
 use super::{ResponseResult, dispatch_attempts};
-use crate::inference_lifecycle::finish_hook;
+use crate::inference_lifecycle::{Lifecycle, Usage, finish_hook};
 use crate::routing_host;
 use gateway_admission::handoff::{Pending, enqueue};
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
