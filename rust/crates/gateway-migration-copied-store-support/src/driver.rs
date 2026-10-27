@@ -176,7 +176,7 @@ pub fn execute(input: Input) -> Result<Receipt> {
     let custody_path = input.output_directory.join("custody.private.json");
     let mut source_file = output(&source_path)?;
     let mut custody_file = output(&custody_path)?;
-    let rows = run(write_private_latest(
+    let rows = run(write_latest(
         &store,
         input.now_ms,
         &custody,

@@ -4,7 +4,6 @@ use gateway_core::js_string::JsString16;
 use gateway_core::source_graph::{GraphAtom, SourceGraph};
 use gateway_core::state::AuthorityStore;
 use gateway_core::tuple_key::TupleKey;
-use gateway_migration::native_operator;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
