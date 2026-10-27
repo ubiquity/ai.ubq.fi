@@ -96,43 +96,30 @@ impl JsString16 {
     pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {
         SourceJson::parse(&self.json_token())
     }
-    pub(crate) fn json_token(&self) -> String {
-        use std::fmt::Write;
-        let mut out = String::from("\"");
-        let mut at = 0;
-        while at < self.0.len() {
-            let unit = self.0[at];
-            match unit {
-                8 => out.push_str("\\b"),
-                9 => out.push_str("\\t"),
-                10 => out.push_str("\\n"),
-                12 => out.push_str("\\f"),
-                13 => out.push_str("\\r"),
-                34 => out.push_str("\\\""),
-                92 => out.push_str("\\\\"),
-                0..=31 => write!(out, "\\u{unit:04x}").expect("String formatting cannot fail"),
-                0xd800..=0xdbff => {
-                    if let Some(&low) = self
-                        .0
-                        .get(at + 1)
-                        .filter(|&&v| (0xdc00..=0xdfff).contains(&v))
-                    {
-                        let scalar =
-                            0x10000 + ((u32::from(unit) - 0xd800) << 10) + u32::from(low) - 0xdc00;
-                        out.push(char::from_u32(scalar).expect("A surrogate pair forms a scalar"));
-                        at += 1;
-                    } else {
-                        write!(out, "\\u{unit:04x}").expect("String formatting cannot fail");
-                    }
-                }
-                0xdc00..=0xdfff => {
-                    write!(out, "\\u{unit:04x}").expect("String formatting cannot fail")
-                }
-                _ => out.push(
-                    char::from_u32(u32::from(unit)).expect("A non-surrogate u16 is a scalar"),
-                ),
+    /// Encodes every source UTF16 sequence as one JSON string token.
+    /// This returns bytes only; it does not construct SourceJson or an authority.
+    pub fn json_token(&self) -> String {
+        fn append_hex(out: &mut String, unit: u16) {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            out.push_str("\\u");
+            for shift in [12, 8, 4, 0] {
+                out.push(char::from(HEX[usize::from((unit >> shift) & 15)]));
             }
-            at += 1;
+        }
+        let mut out = String::from("\"");
+        for decoded in char::decode_utf16(self.0.iter().copied()) {
+            match decoded {
+                Ok('\u{0008}') => out.push_str("\\b"),
+                Ok('\t') => out.push_str("\\t"),
+                Ok('\n') => out.push_str("\\n"),
+                Ok('\u{000c}') => out.push_str("\\f"),
+                Ok('\r') => out.push_str("\\r"),
+                Ok('"') => out.push_str("\\\""),
+                Ok('\\') => out.push_str("\\\\"),
+                Ok(value @ '\0'..='\u{001f}') => append_hex(&mut out, value as u16),
+                Ok(value) => out.push(value),
+                Err(unpaired) => append_hex(&mut out, unpaired.unpaired_surrogate()),
+            }
         }
         out.push('"');
         out
