@@ -878,6 +878,7 @@ dependencies = [
  "gateway-profile-source",
  "gateway-profile-values",
  "gateway-quota-projection",
+ "gateway-schema",
  "gateway-source-audit",
  "ryu-js",
  "serde",
@@ -1247,6 +1248,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-core",
  "gateway-profile-values",
+ "ryu-js",
  "serde_json",
 ]
 
