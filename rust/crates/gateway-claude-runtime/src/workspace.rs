@@ -7,6 +7,41 @@ use gateway_core::{
 };
 use gateway_schema::reasoning::js_trim_source;
 
+fn workspace_candidate(body: &str) -> Option<(JsString16, Option<JsString16>)> {
+    let parsed = SourceJson::parse(body).ok();
+    let workspaces = parsed
+        .as_ref()
+        .and_then(|value| source::member(value, "data"))
+        .as_ref()
+        .and_then(source::array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let id = js_trim_source(&source::string(&source::member(&row, "id")?)?);
+            let prefix = id.as_units().iter().copied().take(7);
+            if !prefix.eq("wrkspc_".encode_utf16())
+                || source::member(&row, "archived_at").is_some_and(|v| v.as_str() != "null")
+            {
+                return None;
+            }
+            let name = source::member(&row, "name")
+                .as_ref()
+                .and_then(source::string)
+                .map(|name| js_trim_source(&name))
+                .filter(|name| !name.as_units().is_empty());
+            Some((id, name))
+        })
+        .collect::<Vec<_>>();
+    let index = workspaces
+        .iter()
+        .position(|(_, name)| {
+            name.as_ref()
+                .is_some_and(|name| lowercase_source(name) == JsString16::from_utf8("default"))
+        })
+        .unwrap_or(0);
+    workspaces.into_iter().nth(index)
+}
+
 pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
     session: &ClaudePoolSession,
     store: &S,
@@ -43,45 +78,9 @@ pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
     if !(200..300).contains(&response.status) {
         return Ok(None);
     }
-    let parsed = SourceJson::parse(&response.body).ok();
-    let mut workspaces = parsed
-        .as_ref()
-        .and_then(|value| source::member(value, "data"))
-        .as_ref()
-        .and_then(source::array)
-        .into_iter()
-        .flatten()
-        .filter_map(|row| {
-            let id = js_trim_source(&source::string(&source::member(&row, "id")?)?);
-            if !id
-                .as_units()
-                .iter()
-                .copied()
-                .take(7)
-                .eq("wrkspc_".encode_utf16())
-                || source::member(&row, "archived_at").is_some_and(|v| v.as_str() != "null")
-            {
-                return None;
-            }
-            let name = source::member(&row, "name")
-                .as_ref()
-                .and_then(source::string)
-                .map(|name| js_trim_source(&name))
-                .filter(|name| !name.as_units().is_empty());
-            Some((id, name))
-        })
-        .collect::<Vec<_>>();
-    let index = workspaces
-        .iter()
-        .position(|(_, name)| {
-            name.as_ref()
-                .is_some_and(|name| lowercase_source(name) == JsString16::from_utf8("default"))
-        })
-        .unwrap_or(0);
-    if workspaces.is_empty() {
+    let Some((id, name)) = workspace_candidate(&response.body) else {
         return Ok(None);
-    }
-    let (id, name) = workspaces.remove(index);
+    };
     if claude::current_binding(store, &selected.binding, persistence::now(host)?)
         .await?
         .is_none()
