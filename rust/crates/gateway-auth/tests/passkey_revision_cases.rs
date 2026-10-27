@@ -40,7 +40,7 @@ fn actual_session_creation_and_logout_publish_and_delete_one_atomic_pair()
             .borrow()
             .iter()
             .find(|tx| tx.checks.len() == 2 && tx.mutations.len() == 2)
-            .expect("paired session transition")
+            .ok_or("missing paired session transition")?
             .clone();
         assert_eq!(create.checks.len(), 2);
         assert_eq!(create.mutations.len(), 2);
@@ -88,7 +88,8 @@ fn actual_session_creation_and_logout_publish_and_delete_one_atomic_pair()
 }
 
 #[test]
-fn creation_conflicts_and_unknown_writes_never_detach_a_valid_index() {
+fn creation_conflicts_and_unknown_writes_never_detach_a_valid_index()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         for fault in [0, 1, 2] {
             let store = Store::default();
@@ -105,7 +106,7 @@ fn creation_conflicts_and_unknown_writes_never_detach_a_valid_index() {
                 .borrow()
                 .iter()
                 .find(|tx| tx.checks.len() == 2 && tx.mutations.len() == 2)
-                .expect("paired session transition")
+                .ok_or("missing paired session transition")?
                 .clone();
             assert_eq!(tx.checks.len(), 2);
             assert_eq!(tx.mutations.len(), 2);
@@ -122,7 +123,8 @@ fn creation_conflicts_and_unknown_writes_never_detach_a_valid_index() {
                 );
             }
         }
-    });
+        Ok(())
+    })
 }
 
 #[test]

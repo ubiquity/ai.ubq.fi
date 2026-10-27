@@ -1,6 +1,10 @@
 use crate::origin::{passkey_meta, request_audience, trusted_relay_origin};
 use gateway_auth_contracts::{
-    passkeys::*,
+    passkeys::{
+        AssertionVerification, CHALLENGE_TTL_MS, PasskeyChallenge, PasskeyCredential,
+        PasskeySession, PasskeyUser, RegistrationVerification, SESSION_TTL_MS, SessionView,
+        client_data,
+    },
     types::{AuthConfig, AuthHost, AuthRequest, AuthResponse, RELAY_COOKIE},
 };
 use gateway_auth_primitives::{

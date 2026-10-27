@@ -686,12 +686,13 @@ fn preview_client_config_is_explicit_and_fail_closed() {
 }
 
 #[test]
-fn claims_serde_keeps_the_required_wire_metadata() {
-    let parsed: PassportClaims = serde_json::from_value(claims()).unwrap();
+fn claims_serde_keeps_the_required_wire_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let parsed: PassportClaims = serde_json::from_value(claims())?;
     assert_eq!(parsed.sub, "user-123");
     assert!(parsed.is_admin);
     assert_eq!(parsed.client_id, "ai");
     assert_eq!(parsed.agent_token_id, None);
     let shaped = gateway_auth_passport::passport::method_json(&parsed, false);
     assert_eq!(shaped["principal"], "passport-user:user-123");
+    Ok(())
 }

@@ -88,7 +88,8 @@ async fn admit(
         .await
 }
 #[test]
-fn native_import_domains_metadata_and_unknown_fields_fail_closed() {
+fn native_import_domains_metadata_and_unknown_fields_fail_closed()
+-> Result<(), Box<dyn std::error::Error>> {
     let meta = metadata();
     let nonce = base64url(&[1; 32]);
     let digest = sha256_hex(b"document");
@@ -99,8 +100,7 @@ fn native_import_domains_metadata_and_unknown_fields_fail_closed() {
         "import-test",
         1000,
         &nonce,
-    )
-    .unwrap();
+    )?;
     let profile = signature_input(
         NativeImportKind::NativeProfile,
         &meta,
@@ -108,8 +108,7 @@ fn native_import_domains_metadata_and_unknown_fields_fail_closed() {
         "import-test",
         1000,
         &nonce,
-    )
-    .unwrap();
+    )?;
     assert_ne!(auth, profile);
     let legacy = gateway_auth_native_protocol::native::signature_input(
         gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
@@ -117,8 +116,7 @@ fn native_import_domains_metadata_and_unknown_fields_fail_closed() {
         1000,
         &nonce,
         b"document",
-    )
-    .unwrap();
+    )?;
     assert_ne!(auth, legacy);
     assert!(
         serde_json::from_str::<NativeImportMetadata>(
@@ -138,6 +136,7 @@ fn native_import_domains_metadata_and_unknown_fields_fail_closed() {
     bad.v = 1;
     bad.action_ref = "../home".into();
     assert!(bad.validate().is_err());
+    Ok(())
 }
 #[test]
 fn actual_mac_nonce_body_and_expiry_proofs_do_not_create_effect_authority() {
@@ -286,7 +285,8 @@ fn wrong_capability_kind_signature_and_canonical_time_refuse_before_body() {
     });
 }
 #[test]
-fn import_domain_does_not_inherit_legacy_rpc_body_cap_or_claim_parser_success() {
+fn import_domain_does_not_inherit_legacy_rpc_body_cap_or_claim_parser_success()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let body = vec![b'x'; gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES + 1];
         let id = identity(NativeCapability::CodexAuthImport);
@@ -300,8 +300,7 @@ fn import_domain_does_not_inherit_legacy_rpc_body_cap_or_claim_parser_success() 
             &base64url(&[5; 32]),
             ("1000", 1000, None),
         )
-        .await
-        .unwrap();
+        .await?;
         assert!(proof.verify_body(&body, 1000).is_ok());
         assert_eq!(
             NativeImportKind::CodexAuth.body_limit_bytes(),
@@ -311,5 +310,6 @@ fn import_domain_does_not_inherit_legacy_rpc_body_cap_or_claim_parser_success() 
             NativeImportKind::NativeProfile.body_limit_bytes(),
             5 * 1024 * 1024
         );
-    });
+        Ok(())
+    })
 }

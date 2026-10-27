@@ -104,7 +104,7 @@ impl Default for Host {
             revoke: Cell::new(204),
             fail: Cell::new(false),
             hold: Cell::new(false),
-            body: RefCell::new(serde_json::to_vec(&central()).unwrap()),
+            body: RefCell::new(central().to_string().into_bytes()),
             exchange: RefCell::new(Vec::new()),
             requests: RefCell::new(Vec::new()),
         }
@@ -180,7 +180,8 @@ impl AuthHost for Host {
             }),
             AuthUpstreamRequest::PassportJwks => Ok(AuthUpstreamResponse {
                 status: 200,
-                body: serde_json::to_vec(&json!({"keys":[public_jwk()]})).unwrap(),
+                body: serde_json::to_vec(&json!({"keys":[public_jwk().map_err(|_|failure())?]}))
+                    .map_err(|_| failure())?,
             }),
             _ => Err(failure()),
         }
@@ -197,18 +198,18 @@ fn grant() -> Value {
     v
 }
 fn central() -> Value {
-    let mut session = grant();
-    session.as_object_mut().unwrap().remove("token");
+    let mut session = binding();
+    session["subject"] = json!("user-123");
+    session["createdAt"] = json!("2026-10-27T00:00:00.000Z");
     json!({"authenticated":true,"session":session,"user":{"id":"user-123","handle":"alice","isAdmin":true,"scopes":["ai"]}})
 }
-fn source(v: &Value) -> SourceJson {
-    SourceJson::from_serializable(v).unwrap()
+fn source(v: &Value) -> Result<SourceJson, GatewayError> {
+    SourceJson::from_serializable(v)
 }
-async fn create(store: &Store, host: &Host) -> String {
+async fn create(store: &Store, host: &Host) -> Result<String, GatewayError> {
     PassportSessions { store, host }
-        .create(&source(&grant()), &JsString16::from_utf8("user-123"), None)
+        .create(&source(&grant())?, &JsString16::from_utf8("user-123"), None)
         .await
-        .unwrap()
 }
 fn request(path: &str, method: &str, token: Option<&str>) -> AuthRequest {
     AuthRequest {
@@ -222,19 +223,23 @@ fn request(path: &str, method: &str, token: Option<&str>) -> AuthRequest {
 }
 
 #[test]
-fn durable_record_is_hashed_no_expiry_no_roles_and_survives_service_restart() {
+fn durable_record_is_hashed_no_expiry_no_roles_and_survives_service_restart()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
-        let token = create(&store, &host).await;
+        let token = create(&store, &host).await?;
         assert!(token_shape(&token));
         let key = session_key(&token);
         assert!(!key.0.contains(&token));
-        let row = store.read(&key).await.unwrap().unwrap();
+        let row = store.read(&key).await?.ok_or("missing fixture record")?;
         assert_eq!(row.expires_at_ms, None);
-        let record = row.json_value().unwrap();
+        let record = row.json_value()?;
         assert_eq!(record["version"], 1.0);
-        assert_eq!(record.as_object().unwrap().len(), 8);
+        assert_eq!(
+            record.as_object().ok_or("missing fixture as_object")?.len(),
+            8
+        );
         for forbidden in ["handle", "isAdmin", "scopes", "exp", "expiresAt", "token"] {
             assert!(record.get(forbidden).is_none());
         }
@@ -243,16 +248,16 @@ fn durable_record_is_hashed_no_expiry_no_roles_and_survives_service_restart() {
             store: &store,
             host: &host,
         };
-        assert!(reopened.get(&token).await.unwrap().is_admin);
+        assert!(reopened.get(&token).await?.is_admin);
         let outbound = host.requests.borrow();
-        let request = outbound.last().unwrap();
+        let request = outbound.last().ok_or("missing fixture last")?;
         assert_eq!(
             request.url(),
             "https://passport.ubq.fi/api/auth/sso/session"
         );
         assert_eq!(request.method(), "POST");
         assert_eq!(
-            serde_json::from_slice::<Value>(&request.body().unwrap()).unwrap(),
+            serde_json::from_slice::<Value>(&request.body()?)?,
             binding()
         );
         assert!(
@@ -262,47 +267,75 @@ fn durable_record_is_hashed_no_expiry_no_roles_and_survives_service_restart() {
                 .any(|(k, v)| k == "authorization" && v.starts_with("Bearer uos_app_session_"))
         );
         assert!(!request.headers().iter().any(|(_, v)| v.contains(&token)));
-    });
+        Ok(())
+    })
 }
 #[test]
-fn central_demotion_and_scopes_are_current_and_503_recovers_without_relogin() {
+fn central_demotion_and_scopes_are_current_and_503_recovers_without_relogin()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
-        let token = create(&store, &host).await;
+        let token = create(&store, &host).await?;
         let service = PassportSessions {
             store: &store,
             host: &host,
         };
-        assert!(service.get(&token).await.unwrap().is_admin);
+        assert!(service.get(&token).await?.is_admin);
         let mut v = central();
         v["user"]["isAdmin"] = json!(false);
         v["user"]["scopes"] = json!(["new"]);
-        *host.body.borrow_mut() = serde_json::to_vec(&v).unwrap();
-        let identity = service.get(&token).await.unwrap();
+        *host.body.borrow_mut() = serde_json::to_vec(&v)?;
+        let identity = service.get(&token).await?;
         assert!(!identity.is_admin);
         assert_eq!(identity.scopes, vec![JsString16::from_utf8("new")]);
         for status in [403, 500, 503, 302] {
             host.status.set(status);
-            assert_eq!(service.get(&token).await.unwrap_err().status, 503);
-            assert!(store.read(&session_key(&token)).await.unwrap().is_some());
+            assert_eq!(
+                service
+                    .get(&token)
+                    .await
+                    .err()
+                    .ok_or("expected fixture refusal")?
+                    .status,
+                503
+            );
+            assert!(store.read(&session_key(&token)).await?.is_some());
         }
         host.fail.set(true);
-        assert_eq!(service.get(&token).await.unwrap_err().status, 503);
+        assert_eq!(
+            service
+                .get(&token)
+                .await
+                .err()
+                .ok_or("expected fixture refusal")?
+                .status,
+            503
+        );
         host.fail.set(false);
         host.status.set(200);
-        assert!(!service.get(&token).await.unwrap().is_admin);
+        assert!(!service.get(&token).await?.is_admin);
         host.status.set(401);
-        assert_eq!(service.get(&token).await.unwrap_err().status, 401);
-        assert!(store.read(&session_key(&token)).await.unwrap().is_none());
-    });
+        assert_eq!(
+            service
+                .get(&token)
+                .await
+                .err()
+                .ok_or("expected fixture refusal")?
+                .status,
+            401
+        );
+        assert!(store.read(&session_key(&token)).await?.is_none());
+        Ok(())
+    })
 }
 #[test]
-fn malformed_records_responses_and_substituted_binding_preserve_recoverable_state() {
+fn malformed_records_responses_and_substituted_binding_preserve_recoverable_state()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
-        let token = create(&store, &host).await;
+        let token = create(&store, &host).await?;
         let service = PassportSessions {
             store: &store,
             host: &host,
@@ -334,33 +367,60 @@ fn malformed_records_responses_and_substituted_binding_preserve_recoverable_stat
             cases.push(v);
         }
         for v in cases {
-            *host.body.borrow_mut() = serde_json::to_vec(&v).unwrap();
-            assert_eq!(service.get(&token).await.unwrap_err().status, 503);
-            assert!(store.read(&session_key(&token)).await.unwrap().is_some());
+            *host.body.borrow_mut() = serde_json::to_vec(&v)?;
+            assert_eq!(
+                service
+                    .get(&token)
+                    .await
+                    .err()
+                    .ok_or("expected fixture refusal")?
+                    .status,
+                503
+            );
+            assert!(store.read(&session_key(&token)).await?.is_some());
         }
         *host.body.borrow_mut() = vec![b'x'; 65_537];
-        assert_eq!(service.get(&token).await.unwrap_err().status, 503);
+        assert_eq!(
+            service
+                .get(&token)
+                .await
+                .err()
+                .ok_or("expected fixture refusal")?
+                .status,
+            503
+        );
         let key = session_key(&token);
-        let mut row = store.read(&key).await.unwrap().unwrap();
+        let mut row = store.read(&key).await?.ok_or("missing fixture record")?;
         row.expires_at_ms = Some(2_000_000);
         store.rows.borrow_mut().insert(key.0, row);
-        assert_eq!(service.get(&token).await.unwrap_err().status, 503);
+        assert_eq!(
+            service
+                .get(&token)
+                .await
+                .err()
+                .ok_or("expected fixture refusal")?
+                .status,
+            503
+        );
         assert_eq!(
             service
                 .get(&format!("uos_ai_passport_session_{}", "B".repeat(43)))
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected fixture refusal")?
                 .status,
             401
         );
-    });
+        Ok(())
+    })
 }
 #[test]
-fn grant_validation_and_failed_atomic_creation_never_remove_previous_authority() {
+fn grant_validation_and_failed_atomic_creation_never_remove_previous_authority()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
-        let first = create(&store, &host).await;
+        let first = create(&store, &host).await?;
         let service = PassportSessions {
             store: &store,
             host: &host,
@@ -379,57 +439,60 @@ fn grant_validation_and_failed_atomic_creation_never_remove_previous_authority()
             assert_eq!(
                 service
                     .create(
-                        &source(&bad),
+                        &source(&bad)?,
                         &JsString16::from_utf8("user-123"),
                         Some(&first)
                     )
                     .await
-                    .unwrap_err()
+                    .err()
+                    .ok_or("expected fixture refusal")?
                     .status,
                 503
             );
-            assert!(store.read(&session_key(&first)).await.unwrap().is_some());
+            assert!(store.read(&session_key(&first)).await?.is_some());
         }
         store.conflict.set(true);
         assert_eq!(
             service
                 .create(
-                    &source(&grant()),
+                    &source(&grant())?,
                     &JsString16::from_utf8("user-123"),
                     Some(&first)
                 )
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected fixture refusal")?
                 .status,
             503
         );
-        assert!(store.read(&session_key(&first)).await.unwrap().is_some());
+        assert!(store.read(&session_key(&first)).await?.is_some());
         let second = service
             .create(
-                &source(&grant()),
+                &source(&grant())?,
                 &JsString16::from_utf8("user-123"),
                 Some(&first),
             )
-            .await
-            .unwrap();
+            .await?;
         assert_ne!(first, second);
-        assert!(store.read(&session_key(&first)).await.unwrap().is_none());
-        assert!(store.read(&session_key(&second)).await.unwrap().is_some());
+        assert!(store.read(&session_key(&first)).await?.is_none());
+        assert!(store.read(&session_key(&second)).await?.is_some());
         assert!(
             host.requests
                 .borrow()
                 .iter()
                 .any(|r| matches!(r, AuthUpstreamRequest::PassportRevoke { .. }))
         );
-    });
+        Ok(())
+    })
 }
 #[test]
-fn successful_introspection_cannot_race_logout_or_replacement() {
+fn successful_introspection_cannot_race_logout_or_replacement()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         for replacement in [false, true] {
             let store = Store::default();
             let host = Host::default();
-            let token = create(&store, &host).await;
+            let token = create(&store, &host).await?;
             let service = PassportSessions {
                 store: &store,
                 host: &host,
@@ -441,27 +504,35 @@ fn successful_introspection_cannot_race_logout_or_replacement() {
             if replacement {
                 let _ = service
                     .create(
-                        &source(&grant()),
+                        &source(&grant())?,
                         &JsString16::from_utf8("user-123"),
                         Some(&token),
                     )
-                    .await
-                    .unwrap();
+                    .await?;
             } else {
-                assert_eq!(service.revoke(&token).await.unwrap(), "revoked");
+                assert_eq!(service.revoke(&token).await?, "revoked");
             }
             host.hold.set(false);
-            assert_eq!(pending.await.unwrap_err().status, 401);
-            assert!(store.read(&session_key(&token)).await.unwrap().is_none());
+            assert_eq!(
+                pending
+                    .await
+                    .err()
+                    .ok_or("expected fixture refusal")?
+                    .status,
+                401
+            );
+            assert!(store.read(&session_key(&token)).await?.is_none());
         }
-    });
+        Ok(())
+    })
 }
 #[test]
-fn local_first_logout_has_truthful_status_and_foreign_requests_cannot_delete() {
+fn local_first_logout_has_truthful_status_and_foreign_requests_cannot_delete()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
-        let token = create(&store, &host).await;
+        let token = create(&store, &host).await?;
         let browser = PassportBrowser {
             store: &store,
             host: &host,
@@ -469,39 +540,52 @@ fn local_first_logout_has_truthful_status_and_foreign_requests_cannot_delete() {
         let mut req = request("/auth/logout", "POST", Some(&token));
         req.headers
             .insert("origin".into(), "https://evil.invalid".into());
-        assert_eq!(browser.route(&req).await.unwrap().status, 403);
-        assert!(store.read(&session_key(&token)).await.unwrap().is_some());
+        assert_eq!(
+            browser
+                .route(&req)
+                .await
+                .ok_or("missing fixture route")?
+                .status,
+            403
+        );
+        assert!(store.read(&session_key(&token)).await?.is_some());
         req.headers.remove("origin");
         store.fail.set(true);
-        let response = browser.route(&req).await.unwrap();
+        let response = browser.route(&req).await.ok_or("missing fixture route")?;
         assert_eq!(response.status, 503);
         assert!(response.set_cookies.is_empty());
         store.fail.set(false);
         host.revoke.set(503);
-        let response = browser.route(&req).await.unwrap();
+        let response = browser.route(&req).await.ok_or("missing fixture route")?;
         assert_eq!(response.status, 204);
         assert_eq!(
             response.headers["x-uos-passport-upstream-revoke"],
             "unavailable"
         );
         assert_eq!(response.set_cookies.len(), 1);
-        assert!(store.read(&session_key(&token)).await.unwrap().is_none());
+        assert!(store.read(&session_key(&token)).await?.is_none());
         assert_eq!(
-            browser.route(&req).await.unwrap().headers["x-uos-passport-upstream-revoke"],
+            browser
+                .route(&req)
+                .await
+                .ok_or("missing fixture route")?
+                .headers["x-uos-passport-upstream-revoke"],
             "not_applicable"
         );
         assert_eq!(
             browser
                 .route(&request("/auth/logout", "GET", None))
                 .await
-                .unwrap()
+                .ok_or("missing fixture route")?
                 .status,
             405
         );
-    });
+        Ok(())
+    })
 }
 #[test]
-fn cookies_renew_only_successful_reports_and_only_authoritative_401_clears() {
+fn cookies_renew_only_successful_reports_and_only_authoritative_401_clears()
+-> Result<(), Box<dyn std::error::Error>> {
     let token = format!("uos_ai_passport_session_{}", "A".repeat(43));
     let req = request("/uos/auth", "GET", Some(&token));
     for status in [200, 401, 503] {
@@ -522,27 +606,25 @@ fn cookies_renew_only_successful_reports_and_only_authoritative_401_clears() {
         1
     );
     assert!(authentication_error(&req, failure()).set_cookies.is_empty());
+    Ok(())
 }
 #[test]
-fn source_units_and_non_iso_dates_survive_storage_and_introspection() {
+fn source_units_and_non_iso_dates_survive_storage_and_introspection()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
         let mut g = grant();
         g["createdAt"] = json!("Tue, 27 Oct 2026 00:00:00 GMT");
-        let raw = serde_json::to_string(&g)
-            .unwrap()
-            .replace("user-123", r"user-\ud800");
+        let raw = serde_json::to_string(&g)?.replace("user-123", r"user-\ud800");
         let subject = JsString16::from_units(vec![117, 115, 101, 114, 45, 0xd800]);
         let token = PassportSessions {
             store: &store,
             host: &host,
         }
-        .create(&SourceJson::parse(&raw).unwrap(), &subject, None)
-        .await
-        .unwrap();
-        let body = serde_json::to_string(&central())
-            .unwrap()
+        .create(&SourceJson::parse(&raw)?, &subject, None)
+        .await?;
+        let body = serde_json::to_string(&central())?
             .replace("user-123", r"user-\ud800")
             .replace("2026-10-27T00:00:00.000Z", "Tue, 27 Oct 2026 00:00:00 GMT")
             .replace("alice", r"\udfff");
@@ -552,17 +634,21 @@ fn source_units_and_non_iso_dates_survive_storage_and_introspection() {
             host: &host,
         }
         .get(&token)
-        .await
-        .unwrap();
+        .await?;
         assert_eq!(identity.subject, subject);
         assert_eq!(identity.handle.as_units(), &[0xdfff]);
-        let row = store.read(&session_key(&token)).await.unwrap().unwrap();
+        let row = store
+            .read(&session_key(&token))
+            .await?
+            .ok_or("missing fixture record")?;
         assert!(row.expires_at_ms.is_none());
         assert!(row.json_value().is_err());
-    });
+        Ok(())
+    })
 }
 #[test]
-fn pkce_has_independent_random_cookies_fixed_binding_and_fixed_return_paths() {
+fn pkce_has_independent_random_cookies_fixed_binding_and_fixed_return_paths()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
@@ -572,19 +658,19 @@ fn pkce_has_independent_random_cookies_fixed_binding_and_fixed_return_paths() {
         };
         for (return_to, target) in [("/admin", "admin"), ("https://evil.invalid", "chat")] {
             let req = request(&format!("/auth/login?return_to={return_to}"), "GET", None);
-            let response = browser.route(&req).await.unwrap();
+            let response = browser.route(&req).await.ok_or("missing fixture route")?;
             assert_eq!(response.status, 302);
             assert_eq!(response.set_cookies.len(), 2);
-            let authorize = url::Url::parse(&response.headers["location"]).unwrap();
+            let authorize = url::Url::parse(&response.headers["location"])?;
             let pairs = authorize.query_pairs().collect::<BTreeMap<_, _>>();
             let state = &pairs["state"];
             assert!(state.ends_with(&format!(".{target}")));
             let verifier = response.set_cookies[1]
                 .split(';')
                 .next()
-                .unwrap()
+                .ok_or("missing fixture next")?
                 .split_once('=')
-                .unwrap()
+                .ok_or("missing fixture separator")?
                 .1;
             assert_eq!(verifier.len(), 43);
             assert_ne!(&state[..43], verifier);
@@ -615,8 +701,16 @@ fn pkce_has_independent_random_cookies_fixed_binding_and_fixed_return_paths() {
             .insert("x-forwarded-proto".into(), "https".into());
         assert!(production_request(&forwarded));
         forwarded.url = "https://evil.invalid/auth/login".into();
-        assert_eq!(browser.route(&forwarded).await.unwrap().status, 401);
-    });
+        assert_eq!(
+            browser
+                .route(&forwarded)
+                .await
+                .ok_or("missing fixture route")?
+                .status,
+            401
+        );
+        Ok(())
+    })
 }
 
 const PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----
@@ -648,14 +742,14 @@ zX/WE6ttFH3l9iyyV4B0Ye+CONXFoBqXR1FjTqKl2uehhKJJ1EL6S5UqB8dnwZEF
 p1H85+tp157Y4v9cbfX8dHM=
 -----END PRIVATE KEY-----";
 
-fn public_jwk() -> Value {
+fn public_jwk() -> Result<Value, Box<dyn std::error::Error>> {
     use rsa::{pkcs8::DecodePrivateKey, traits::PublicKeyParts};
-    let public = rsa::RsaPrivateKey::from_pkcs8_pem(PRIVATE_PEM)
-        .unwrap()
-        .to_public_key();
-    json!({"kty":"RSA","kid":"persistent-fixture","alg":"RS256","use":"sig","n":base64url(&public.n().to_bytes_be()),"e":base64url(&public.e().to_bytes_be())})
+    let public = rsa::RsaPrivateKey::from_pkcs8_pem(PRIVATE_PEM)?.to_public_key();
+    Ok(
+        json!({"kty":"RSA","kid":"persistent-fixture","alg":"RS256","use":"sig","n":base64url(&public.n().to_bytes_be()),"e":base64url(&public.e().to_bytes_be())}),
+    )
 }
-fn signed_token(agent: bool) -> String {
+fn signed_token(agent: bool) -> Result<String, Box<dyn std::error::Error>> {
     use rsa::{
         pkcs8::DecodePrivateKey,
         signature::{SignatureEncoding, Signer},
@@ -665,27 +759,27 @@ fn signed_token(agent: bool) -> String {
     if agent {
         claims["agentTokenId"] = json!("agent-fixture");
     }
-    let payload = base64url(&serde_json::to_vec(&claims).unwrap());
+    let payload = base64url(&serde_json::to_vec(&claims)?);
     let input = format!("{header}.{payload}");
     let signer = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(
-        rsa::RsaPrivateKey::from_pkcs8_pem(PRIVATE_PEM).unwrap(),
+        rsa::RsaPrivateKey::from_pkcs8_pem(PRIVATE_PEM)?,
     );
-    format!(
+    Ok(format!(
         "{input}.{}",
         base64url(&signer.sign(input.as_bytes()).to_vec())
-    )
+    ))
 }
 #[test]
-fn callback_uses_pkce_and_real_signature_before_atomic_creation_and_rejects_agents() {
+fn callback_uses_pkce_and_real_signature_before_atomic_creation_and_rejects_agents()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         for agent in [false, true] {
             reset_jwks_cache();
             let store = Store::default();
             let host = Host::default();
             *host.exchange.borrow_mut() = serde_json::to_vec(
-                &json!({"accessToken":signed_token(agent),"appSession":grant()}),
-            )
-            .unwrap();
+                &json!({"accessToken":signed_token(agent)?,"appSession":grant()}),
+            )?;
             let browser = PassportBrowser {
                 store: &store,
                 host: &host,
@@ -703,7 +797,7 @@ fn callback_uses_pkce_and_real_signature_before_atomic_creation_and_rejects_agen
                     "B".repeat(43)
                 ),
             );
-            let response = browser.route(&req).await.unwrap();
+            let response = browser.route(&req).await.ok_or("missing fixture route")?;
             assert_eq!(response.status, if agent { 401 } else { 302 });
             assert_eq!(response.set_cookies.len(), if agent { 2 } else { 3 });
             assert_eq!(store.rows.borrow().len(), usize::from(!agent));
@@ -715,20 +809,22 @@ fn callback_uses_pkce_and_real_signature_before_atomic_creation_and_rejects_agen
             let exchange = requests
                 .iter()
                 .find(|r| matches!(r, AuthUpstreamRequest::PassportPkceExchange { .. }))
-                .unwrap();
-            let body: Value = serde_json::from_slice(&exchange.body().unwrap()).unwrap();
+                .ok_or("missing fixture exchange")?;
+            let body: Value = serde_json::from_slice(&exchange.body()?)?;
             assert_eq!(body["appSession"], true);
             assert_eq!(body["codeVerifier"], "B".repeat(43));
             assert_eq!(body["origin"], "https://ai.ubq.fi");
         }
-    });
+        Ok(())
+    })
 }
 #[test]
-fn callback_validation_clears_only_transient_cookies_without_exchange_or_replacement() {
+fn callback_validation_clears_only_transient_cookies_without_exchange_or_replacement()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let store = Store::default();
         let host = Host::default();
-        let previous = create(&store, &host).await;
+        let previous = create(&store, &host).await?;
         let browser = PassportBrowser {
             store: &store,
             host: &host,
@@ -742,11 +838,14 @@ fn callback_validation_clears_only_transient_cookies_without_exchange_or_replace
             format!("state={state}&code="),
         ] {
             let mut req = request(&format!("/auth/callback?{query}"), "GET", Some(&previous));
-            req.headers.get_mut("cookie").unwrap().push_str(&format!(
-                "; {PASSPORT_STATE_COOKIE}={state}; __Host-uos_ai_passport_verifier={}",
-                "B".repeat(43)
-            ));
-            let response = browser.route(&req).await.unwrap();
+            req.headers
+                .get_mut("cookie")
+                .ok_or("missing fixture cookie")?
+                .push_str(&format!(
+                    "; {PASSPORT_STATE_COOKIE}={state}; __Host-uos_ai_passport_verifier={}",
+                    "B".repeat(43)
+                ));
+            let response = browser.route(&req).await.ok_or("missing fixture route")?;
             assert_eq!(response.status, 401);
             assert_eq!(response.set_cookies.len(), 2);
             assert!(
@@ -755,8 +854,9 @@ fn callback_validation_clears_only_transient_cookies_without_exchange_or_replace
                     .iter()
                     .any(|c| c.starts_with(&format!("{PASSPORT_COOKIE}=")))
             );
-            assert!(store.read(&session_key(&previous)).await.unwrap().is_some());
+            assert!(store.read(&session_key(&previous)).await?.is_some());
         }
         assert!(host.requests.borrow().is_empty());
-    });
+        Ok(())
+    })
 }

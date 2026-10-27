@@ -351,18 +351,15 @@ fn live_nonce_capacity_fails_closed_without_evicting_a_replay_fence() {
 }
 
 #[test]
-fn publication_response_hmac_has_independent_domain_and_exact_receipt_binding() {
+fn publication_response_hmac_has_independent_domain_and_exact_receipt_binding()
+-> Result<(), Box<dyn std::error::Error>> {
     let identity = identity();
     let nonce = base64url(&[7; 32]);
     let response = b"{\"v\":1}";
-    let signature = identity
-        .sign_publication_response(&nonce, b"{}", 200, response)
-        .unwrap();
+    let signature = identity.sign_publication_response(&nonce, b"{}", 200, response)?;
     // Python hmac.new([11]*32, independently NUL-framed UTF8 fields, sha256).
     assert_eq!(signature, "T2lg-6ITeJtN3PddZXx1-DWOCK1900Msj_KtaMYB9Fo");
-    identity
-        .verify_publication_response(&nonce, b"{}", 200, response, &signature)
-        .unwrap();
+    identity.verify_publication_response(&nonce, b"{}", 200, response, &signature)?;
     for (request, status, body) in [
         (b"{ }".as_slice(), 200, response.as_slice()),
         (b"{}".as_slice(), 409, response.as_slice()),
@@ -380,14 +377,13 @@ fn publication_response_hmac_has_independent_domain_and_exact_receipt_binding() 
             .is_err()
     );
     assert_ne!(
-        identity
-            .sign(
-                gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH,
-                1_792_339_000_000,
-                &nonce,
-                response
-            )
-            .unwrap(),
+        identity.sign(
+            gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH,
+            1_792_339_000_000,
+            &nonce,
+            response
+        )?,
         signature
     );
+    Ok(())
 }

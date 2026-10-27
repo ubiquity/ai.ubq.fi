@@ -2,7 +2,10 @@
 use crate::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
 };
-use gateway_auth_native_contracts::{native_import::*, nonce::NativeNonceAuthority};
+use gateway_auth_native_contracts::{
+    native_import::{NativeImportKind, NativeImportMetadata},
+    nonce::NativeNonceAuthority,
+};
 use gateway_auth_native_protocol::import_frame::signature_input;
 use gateway_auth_native_wire::native_read::NATIVE_AUTH_WINDOW_MS;
 use gateway_auth_primitives::crypto::{base64url, decode_base64url, sha256_hex};

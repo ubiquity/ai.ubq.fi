@@ -1,5 +1,7 @@
 // Source-compatible ceremony policy. Maintained CBOR/curve libraries parse public data;
-use gateway_auth_contracts::webauthn::*;
+use gateway_auth_contracts::webauthn::{
+    CosePublicKey, SignatureAlgorithm, SignatureInput, WebAuthnCrypto,
+};
 // the platform supplies only real key import and signature verification primitives.
 use ciborium::value::Value as Cbor;
 use gateway_auth_contracts::passkeys::{

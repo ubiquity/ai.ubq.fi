@@ -1,5 +1,7 @@
 // Fixed live upgrade and reverse-authority authentication. No caller account,
-use gateway_auth_native_contracts::native_live::*;
+use gateway_auth_native_contracts::native_live::{
+    authority_response_input, authority_signature_input, request_signature_input,
+};
 // URL, bearer, filesystem path or serialized permission crosses this boundary.
 use crate::native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity};
 use gateway_auth_native_contracts::nonce::NativeNonceAuthority;

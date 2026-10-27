@@ -1,5 +1,9 @@
 // Ubiquity Passport caller authentication. URLs are fixed constants; only a
-use gateway_auth_passport_contracts::passport::*;
+use gateway_auth_passport_contracts::passport::{
+    PASSPORT_AUTHORIZE_URL, PASSPORT_COOKIE, PASSPORT_EXCHANGE_MAX_BYTES, PASSPORT_JWKS_CACHE_MS,
+    PASSPORT_JWKS_MAX_BYTES, PASSPORT_STATE_COOKIE, PASSPORT_STATE_TTL_SECONDS, PassportClaims,
+    PassportConfig,
+};
 // separately registered preview client may vary its public origin and redirect.
 use gateway_auth_contracts::{
     types::{AuthConfig, AuthHost, AuthRequest, AuthResponse, AuthResponseBody},

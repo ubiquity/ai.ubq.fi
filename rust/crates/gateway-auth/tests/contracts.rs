@@ -16,25 +16,27 @@ use std::{
 };
 
 #[test]
-fn authentication_requires_declared_json_and_never_guesses_profile_tags() {
+fn authentication_requires_declared_json_and_never_guesses_profile_tags()
+-> Result<(), Box<dyn std::error::Error>> {
     let ambiguous = json!({"type":"binary","value":{"kind":"Uint8Array","bytes":[1,2],"byte_offset":0,"byte_length":2}});
     let plain = StoredRecord::json("plain", ambiguous.clone(), None);
     assert_eq!(
-        gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&plain), 1).unwrap(),
+        gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&plain), 1)?,
         Some(ambiguous.clone())
     );
     let typed = StoredRecord::profile(
         "typed",
         gateway_core::value::PortableValue::from_json(&ambiguous),
         None,
-    )
-    .unwrap();
-    let error =
-        gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&typed), 1).unwrap_err();
+    )?;
+    let error = gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&typed), 1)
+        .err()
+        .ok_or("expected fixture refusal")?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("incompatible_value_encoding")
     );
+    Ok(())
 }
 
 fn run<F: Future>(future: F) -> F::Output {
@@ -143,7 +145,8 @@ fn insert<T: serde::Serialize>(store: &Store, key: RecordKey, value: &T) {
 }
 
 #[test]
-fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit() {
+fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         use gateway_auth_credentials::provider_credentials::{
             codex_source_pool_key, read_codex_source_pool,
@@ -155,30 +158,33 @@ fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit() {
             key.0.clone(),
             StoredRecord::json("exact-current-generation", value.clone(), Some(100)),
         );
-        let snapshot = read_codex_source_pool(&store, 99).await.unwrap().unwrap();
+        let snapshot = read_codex_source_pool(&store, 99)
+            .await?
+            .ok_or("missing fixture record")?;
         assert_eq!(snapshot.revision, "exact-current-generation");
         assert_eq!(snapshot.pool.accounts[0].account_id, "fixture");
-        assert!(read_codex_source_pool(&store, 100).await.unwrap().is_none());
+        assert!(read_codex_source_pool(&store, 100).await?.is_none());
         store.rows.borrow_mut().insert(
             key.0,
             StoredRecord::profile(
                 "typed-profile",
                 gateway_core::value::PortableValue::from_json(&value),
                 None,
-            )
-            .unwrap(),
+            )?,
         );
         assert_eq!(
             read_codex_source_pool(&store, 99)
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected fixture refusal")?
                 .envelope
                 .error
                 .code
                 .as_deref(),
             Some("incompatible_value_encoding")
         );
-    });
+        Ok(())
+    })
 }
 
 #[test]
@@ -372,7 +378,8 @@ fn failed_assertion_consumes_challenge_without_creating_session() {
 }
 
 #[test]
-fn api_key_authentication_is_quota_free_and_secret_debug_is_redacted() {
+fn api_key_authentication_is_quota_free_and_secret_debug_is_redacted()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let token = format!("u_{}", "ab".repeat(32));
         assert!(api_keys::api_key_shape(&token));
@@ -408,11 +415,13 @@ fn api_key_authentication_is_quota_free_and_secret_debug_is_redacted() {
         assert_eq!(
             api_keys::authenticate(&store, &token, 1_000_000)
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected fixture refusal")?
                 .status,
             401
         );
-    });
+        Ok(())
+    })
 }
 
 #[test]

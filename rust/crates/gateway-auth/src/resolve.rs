@@ -307,6 +307,46 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             true,
         ))
     }
+    async fn local_api_key_policy(
+        &self,
+    ) -> Result<Option<gateway_auth_primitives::api_keys::ApiKeyPolicy>, GatewayError> {
+        let Some(row) = self
+            .store
+            .read(&api_keys::id_key("local-development"))
+            .await?
+        else {
+            return Ok(None);
+        };
+        row.validate_version()?;
+        // This named source metadata read grants no role. Preserve the checked
+        // native listener gate and the separate model-free hash-policy read.
+        let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
+        if !gateway_core::source_serialization::member(&metadata, "revoked_at_ms")
+            .is_some_and(|value| value.as_str() == "null")
+        {
+            return Ok(None);
+        }
+        let (Some(hash), Some(id)) = (
+            gateway_core::source_serialization::member(&metadata, "hash")
+                .and_then(|v| v.deserialize::<String>().ok()),
+            gateway_core::source_serialization::member(&metadata, "id")
+                .and_then(|v| v.deserialize::<String>().ok()),
+        ) else {
+            return Ok(None);
+        };
+        let Some(row) = self.store.read(&api_keys::hash_key(&hash)).await? else {
+            return Ok(None);
+        };
+        row.validate_version()?;
+        let record = serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
+            GatewayError::unavailable(
+                "Local API key quota migration is incomplete",
+                "server_error",
+            )
+        })?;
+        let policy = api_keys::policy_from_record(hash, record, self.host.now_ms())?;
+        Ok((id == "local-development").then_some(policy))
+    }
     pub async fn authenticate_client(
         &self,
         request: &AuthRequest,
@@ -314,53 +354,16 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         let token = request.bearer();
         if local_bypass(request, self.config) {
             // Only the checked native listener can resolve the existing local-development principal.
-            let row = self
-                .store
-                .read(&api_keys::id_key("local-development"))
-                .await?;
-            if let Some(row) = row {
-                row.validate_version()?;
-                // This one named ID row can now hold source name/model
-                // metadata. Keep the original peer/origin gate and separate
-                // model-free hash policy read; data decoding grants no role.
-                let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
-                if gateway_core::source_serialization::member(&metadata, "revoked_at_ms")
-                    .is_some_and(|value| value.as_str() == "null")
-                    && let (Some(hash), Some(id)) = (
-                        gateway_core::source_serialization::member(&metadata, "hash")
-                            .and_then(|value| value.deserialize::<String>().ok()),
-                        gateway_core::source_serialization::member(&metadata, "id")
-                            .and_then(|value| value.deserialize::<String>().ok()),
-                    )
-                {
-                    let hash_row = self.store.read(&api_keys::hash_key(&hash)).await?;
-                    if let Some(hash_row) = hash_row {
-                        hash_row.validate_version()?;
-                        let record = serde_json::from_value(hash_row.json_value()?.clone())
-                            .map_err(|_| {
-                                GatewayError::unavailable(
-                                    "Local API key quota migration is incomplete",
-                                    "server_error",
-                                )
-                            })?;
-                        let policy = api_keys::policy_from_record(
-                            hash.to_owned(),
-                            record,
-                            self.host.now_ms(),
-                        )?;
-                        if id == "local-development" {
-                            return Ok(Self::principal(
-                                token,
-                                AuthMethod::KvApiKey {
-                                    key_id: id.to_owned(),
-                                    policy,
-                                },
-                                false,
-                                false,
-                            ));
-                        }
-                    }
-                }
+            if let Some(policy) = self.local_api_key_policy().await? {
+                return Ok(Self::principal(
+                    token,
+                    AuthMethod::KvApiKey {
+                        key_id: policy.key_id.clone(),
+                        policy,
+                    },
+                    false,
+                    false,
+                ));
             }
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
         }
@@ -660,12 +663,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                                 .get("committed_requests")
                                 .and_then(Value::as_i64)
                                 .filter(|n| *n >= 0)
-                                .ok_or_else(|| {
-                                    GatewayError::unavailable(
-                                        "API key quota ledger is unavailable",
-                                        "server_error",
-                                    )
-                                })?
+                                .ok_or_else(quota_ledger_unavailable)?
                         }
                     };
                     key = json!({"id":key_id,"name":record.get("name"),"prefix":record.get("prefix"),"created_at_ms":record.get("created_at_ms"),"expires_at_ms":policy.expires_at_ms,"revoked_at_ms":record.get("revoked_at_ms"),"usage_limit_requests":policy.usage_limit_requests,"usage_requests":usage,"usage_reset_at_ms":policy.usage_reset_at_ms,"window_ms":policy.window_ms});
@@ -708,4 +706,8 @@ pub fn token_shape(token: &str) -> &'static str {
     } else {
         "other"
     }
+}
+
+fn quota_ledger_unavailable() -> GatewayError {
+    GatewayError::unavailable("API key quota ledger is unavailable", "server_error")
 }
