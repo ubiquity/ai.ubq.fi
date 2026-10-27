@@ -250,7 +250,14 @@ async fn authentication_route(
             }
             auth_request.body = body::request_bytes(request, body::PASSKEY_BODY_MAX_BYTES).await?;
         }
-        if let Some(response) = auth.handle_auth_route(auth_request).await? {
+        let response = match auth.handle_auth_route(auth_request).await {
+            Ok(response) => response,
+            Err(error) if path == "/uos/auth" => Some(
+                gateway_auth_passport::browser::authentication_error(auth_request, error),
+            ),
+            Err(error) => return Err(error),
+        };
+        if let Some(response) = response {
             return auth_response(response).map(|response| Some(response.into()));
         }
     }

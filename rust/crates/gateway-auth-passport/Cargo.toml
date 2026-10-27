@@ -12,6 +12,7 @@ gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" 
 gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-core = { path = "../gateway-core" }
+serde.workspace = true
 serde_json.workspace = true
 sha2 = "=0.10.9"
 url = "=2.5.8"

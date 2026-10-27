@@ -10,7 +10,7 @@ use gateway_auth_contracts::{
 use gateway_auth_passkeys::{origin::local_bypass, passkeys::PasskeyService};
 use gateway_auth_primitives::{
     api_keys,
-    crypto::{Secret, sha256_base64url, sha256_hex},
+    crypto::{Secret, sha256_base64url},
     error::unauthorized,
 };
 use gateway_core::state::AuthorityStore;
@@ -27,7 +27,9 @@ pub struct AuthService<'a, S, H> {
     deno_cache: RefCell<BTreeMap<String, i64>>,
 }
 
-impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
+impl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::session::PassportDate>
+    AuthService<'a, S, H>
+{
     pub fn new(store: &'a S, host: &'a H, config: &'a AuthConfig) -> Self {
         Self {
             store,
@@ -61,14 +63,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         }
     }
     fn passport_principal(
-        claims: gateway_auth_passport_contracts::passport::PassportClaims,
+        claims: gateway_auth_passport_contracts::session::PassportSourceClaims,
         bearer: bool,
     ) -> AuthPrincipal {
         let eligible_admin = claims.is_admin && claims.agent_token_id.is_none();
         let method = if bearer {
             AuthMethod::PassportBearer { claims }
         } else {
-            AuthMethod::PassportSession { claims }
+            AuthMethod::PassportSession {
+                identity: gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt(
+                    claims,
+                ),
+            }
         };
         Self::principal(None, method, eligible_admin, false)
     }
@@ -371,20 +377,8 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         if self.legacy_local(request) {
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
         }
-        if gateway_auth_passport::browser::cookie(
-            request,
-            gateway_auth_passport_contracts::passport::PASSPORT_COOKIE,
-        )
-        .is_some()
-        {
-            let config = gateway_auth_passport::passport::config_for_request(self.config, request)
-                .ok_or_else(unauthorized)?;
-            let passport = gateway_auth_passport::passport::PassportService {
-                host: self.host,
-                config: &config,
-            };
-            let claims = passport.session(request).await?.ok_or_else(unauthorized)?;
-            return Ok(Self::passport_principal(claims, false));
+        if let Some(principal) = self.passport_cookie(request).await? {
+            return Ok(principal);
         }
         let Some(token) = token else {
             return self
@@ -447,7 +441,12 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 host: self.host,
                 config: &config,
             };
-            let claims = passport.bearer(token).await?;
+            let claims = gateway_auth_passport::passport::verify_source_for_config(
+                self.host,
+                passport.config,
+                token,
+            )
+            .await?;
             return Ok(Self::passport_principal(claims, true));
         }
         self.admin_token(token).await
@@ -472,29 +471,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         {
             return Err(unauthorized());
         }
-        if gateway_auth_passport::browser::cookie(
-            request,
-            gateway_auth_passport_contracts::passport::PASSPORT_COOKIE,
-        )
-        .is_some()
-        {
-            let config = gateway_auth_passport::passport::config_for_request(self.config, request)
-                .ok_or_else(unauthorized)?;
-            let passport = gateway_auth_passport::passport::PassportService {
-                host: self.host,
-                config: &config,
-            };
-            let claims = passport.session(request).await?.ok_or_else(unauthorized)?;
-            if !claims.is_admin {
-                return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
-            }
-            if claims.agent_token_id.is_some() {
+        if let Some(principal) = self.passport_cookie(request).await? {
+            if matches!(&principal.method,AuthMethod::PassportSession {identity:gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt(c)} if c.agent_token_id.is_some())
+            {
                 return Err(unauthorized());
+            }
+            if !principal.is_admin {
+                return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
             }
             if !gateway_auth_passkeys::origin::same_origin_mutation(request) {
                 return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
             }
-            return Ok(Self::passport_principal(claims, false));
+            return Ok(principal);
         }
         let mut session = self.passkeys().session(request, None).await?;
         if session.is_none()
@@ -537,6 +525,15 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
     ) -> Result<Option<AuthResponse>, GatewayError> {
         let url = Url::parse(&request.url)
             .map_err(|_| gateway_auth_primitives::error::invalid("Invalid request URL"))?;
+        if let Some(response) = (gateway_auth_passport::browser::PassportBrowser {
+            store: self.store,
+            host: self.host,
+        })
+        .route(request)
+        .await
+        {
+            return Ok(Some(response));
+        }
         let result = match (request.method.as_str(), url.path()) {
             ("POST", "/api/auth/register/start") => {
                 let admin = self.authenticate_admin(request).await?;
@@ -582,44 +579,33 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 let token = auth.token.as_ref().map(Secret::expose);
                 let shape = token.map(token_shape);
                 let principal = auth.method.principal_id(token);
-                AuthResponse::json(
+                let mut response = AuthResponse::source_json(
                     200,
-                    json!({"ok":true,"service":"ai.ubq.fi","auth":{"mode":if local_bypass(request,self.config)||self.legacy_local(request){"disabled"}else{"required"},"is_admin":auth.is_admin,"is_super_admin":auth.is_super_admin,"principal":principal,"method":method,"token":{"present":token.is_some(),"length":token.map(str::len),"shape":shape,"sha256_12":token.map(|token|sha256_hex(token.as_bytes())[..12].to_owned())}}}),
-                )
+                    crate::report::document(
+                        if local_bypass(request, self.config) || self.legacy_local(request) {
+                            "disabled"
+                        } else {
+                            "required"
+                        },
+                        &auth,
+                        &principal,
+                        &method,
+                        token,
+                        shape,
+                    )?,
+                );
+                gateway_auth_passport::browser::renew_report_cookie(request, &mut response);
+                response
             }
-            ("GET", "/auth/login") => {
-                let config =
-                    gateway_auth_passport::passport::config_for_request(self.config, request)
-                        .ok_or_else(passport_not_configured)?;
-                gateway_auth_passport::passport::PassportService {
-                    host: self.host,
-                    config: &config,
-                }
-                .login(request)
-                .await?
-            }
-            ("GET", "/auth/callback") => {
-                let config =
-                    gateway_auth_passport::passport::config_for_request(self.config, request)
-                        .ok_or_else(passport_not_configured)?;
-                gateway_auth_passport::passport::PassportService {
-                    host: self.host,
-                    config: &config,
-                }
-                .callback(request)
-                .await?
-            }
-            ("POST", "/auth/logout") => gateway_auth_passport::passport::PassportService {
-                host: self.host,
-                config: &gateway_auth_passport_contracts::passport::PassportConfig::production(),
-            }
-            .logout(),
             _ => return Ok(None),
         };
         Ok(Some(result))
     }
-    async fn method_wire(&self, method: &AuthMethod) -> Result<Value, GatewayError> {
-        Ok(match method {
+    async fn method_wire(
+        &self,
+        method: &AuthMethod,
+    ) -> Result<gateway_source::source_json::SourceJson, GatewayError> {
+        let value = match method {
             AuthMethod::PasskeySession {
                 user_id,
                 handle,
@@ -636,11 +622,11 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             } => {
                 json!({"kind":"github_token","repo":{"owner":owner,"repo":repo},"state_id":state_id,"limit_scope":limit_scope})
             }
-            AuthMethod::PassportSession { claims } => {
-                gateway_auth_passport::passport::method_json(claims, false)
+            AuthMethod::PassportSession { identity } => {
+                return gateway_auth_passport::identity_report::session(identity);
             }
             AuthMethod::PassportBearer { claims } => {
-                gateway_auth_passport::passport::method_json(claims, true)
+                return gateway_auth_passport::identity_report::jwt(claims, true);
             }
             AuthMethod::KvApiKey { key_id, policy } => {
                 let mut key = json!({"id":key_id});
@@ -677,16 +663,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                     "auth_state_corrupt",
                 )
             })?,
-        })
+        };
+        gateway_source::source_json::SourceJson::from_serializable(&value)
     }
-}
-
-fn passport_not_configured() -> GatewayError {
-    GatewayError::new(
-        404,
-        "Passport browser login is not configured for this deployment.",
-        Some("passport_not_configured"),
-    )
 }
 
 pub fn token_shape(token: &str) -> &'static str {

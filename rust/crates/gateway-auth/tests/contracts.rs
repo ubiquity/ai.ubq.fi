@@ -500,17 +500,21 @@ impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
 }
 
 #[test]
-fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection() {
+fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection()
+-> Result<(), Box<dyn std::error::Error>> {
     use gateway_core::source_control::encode_source_control_record;
     use gateway_source::source_json::SourceJson;
     let fixture: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/kernel-source-public.json")).unwrap();
-    let pem = fixture["pem"].as_str().unwrap();
+        serde_json::from_str(include_str!("fixtures/kernel-source-public.json"))?;
+    let pem = fixture["pem"]
+        .as_str()
+        .ok_or("missing kernel fixture string")?;
     let good = SourceJson::from_serializable(
         &json!({"app_id":1,"pem":pem,"owner":"fixture","added_at_ms":1}),
-    )
-    .unwrap();
-    let invalid=SourceJson::parse(r#"{"app_id":2,"pem":"-----BEGIN PUBLIC KEY-----\ud800-----END PUBLIC KEY-----","owner":"\udc00","added_at_ms":1}"#).unwrap();
+    )?;
+    let invalid = SourceJson::parse(
+        r#"{"app_id":2,"pem":"-----BEGIN PUBLIC KEY-----\ud800-----END PUBLIC KEY-----","owner":"\udc00","added_at_ms":1}"#,
+    )?;
     let key = kernel_public_keys_key();
     run(async {
         for source in [
@@ -521,10 +525,9 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
             let host = Host::default();
             let row = encode_source_control_record(
                 "exact-revision",
-                &SourceJson::parse(&source).unwrap(),
+                &SourceJson::parse(&source)?,
                 Some(1_000_001),
-            )
-            .unwrap();
+            )?;
             store.rows.borrow_mut().insert(key.0.clone(), row.clone());
             let cfg = AuthConfig {
                 production: true,
@@ -536,14 +539,21 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
                 .insert("authorization".into(), "Bearer ghp_fixture".into());
             req.headers.insert(
                 "x-ubiquity-kernel-token".into(),
-                fixture["jwt"].as_str().unwrap().into(),
+                fixture["jwt"]
+                    .as_str()
+                    .ok_or("missing kernel fixture string")?
+                    .into(),
             );
             // The genuine RSA signature passes, then the pre-existing injected
             // host refuses its GitHub lookup. No network or authority is minted.
-            let error = service.authenticate_client(&req).await.unwrap_err();
+            let error = service
+                .authenticate_client(&req)
+                .await
+                .err()
+                .ok_or("expected kernel fixture refusal")?;
             assert_eq!(error.status, 502);
             assert_eq!(error.envelope.error.code.as_deref(), Some("bad_gateway"));
-            assert_eq!(store.read(&key).await.unwrap(), Some(row));
+            assert_eq!(store.read(&key).await?, Some(row));
         }
         let store = Store::default();
         let host = Host::default();
@@ -557,26 +567,39 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
             .insert("authorization".into(), "Bearer ghp_fixture".into());
         req.headers.insert(
             "x-ubiquity-kernel-token".into(),
-            fixture["jwt"].as_str().unwrap().into(),
+            fixture["jwt"]
+                .as_str()
+                .ok_or("missing kernel fixture string")?
+                .into(),
         );
-        let bad = SourceJson::parse(&format!("[{}]", invalid.as_str())).unwrap();
+        let bad = SourceJson::parse(&format!("[{}]", invalid.as_str()))?;
         store.rows.borrow_mut().insert(
             key.0.clone(),
-            encode_source_control_record("invalid-pem", &bad, None).unwrap(),
+            encode_source_control_record("invalid-pem", &bad, None)?,
         );
         // Source skips an invalid imported PEM after persistence. The existing
         // no-public-key response remains, not a row/profile decoding failure.
         assert_eq!(
-            service.authenticate_client(&req).await.unwrap_err().status,
+            service
+                .authenticate_client(&req)
+                .await
+                .err()
+                .ok_or("expected kernel fixture refusal")?
+                .status,
             500
         );
-        let good = SourceJson::parse(&format!("[{}]", good.as_str())).unwrap();
+        let good = SourceJson::parse(&format!("[{}]", good.as_str()))?;
         store.rows.borrow_mut().insert(
             key.0.clone(),
-            encode_source_control_record("expired", &good, Some(1_000_000)).unwrap(),
+            encode_source_control_record("expired", &good, Some(1_000_000))?,
         );
         assert_eq!(
-            service.authenticate_client(&req).await.unwrap_err().status,
+            service
+                .authenticate_client(&req)
+                .await
+                .err()
+                .ok_or("expected kernel fixture refusal")?
+                .status,
             500
         );
         store.rows.borrow_mut().insert(
@@ -587,12 +610,22 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
             service
                 .authenticate_client(&req)
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected kernel fixture refusal")?
                 .envelope
                 .error
                 .code
                 .as_deref(),
             Some("auth_state_corrupt")
         );
-    });
+        Ok(())
+    })
+}
+
+// This legacy-only fixture has no JS Date runtime. Permanent session records
+// fail unavailable rather than gaining an ISO parser or fabricated date grant.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

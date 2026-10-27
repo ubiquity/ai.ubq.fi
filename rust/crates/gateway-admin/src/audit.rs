@@ -42,7 +42,11 @@ pub fn actor(principal: &AuthPrincipal) -> ChangeActor {
         AuthMethod::PasskeySession {
             user_id, handle, ..
         } => identity(user_id, handle),
-        AuthMethod::PassportSession { claims } => identity(&claims.sub, &claims.handle),
+        AuthMethod::PassportSession { identity } => (
+            "passkey_user",
+            Some(identity.subject().clone()),
+            Some(identity.handle().clone()),
+        ),
         AuthMethod::Disabled => ("local_admin", None, None),
         _ => ("shared_admin_credential", None, None),
     };

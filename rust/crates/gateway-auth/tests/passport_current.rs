@@ -259,3 +259,110 @@ fn logout_and_row_replacement_win_during_bound_check() -> Result<(), Box<dyn std
     }
     Ok(())
 }
+
+#[test]
+fn actual_auth_report_preserves_source_units_null_jwt_fields_and_current_admin_role()
+-> Result<(), Box<dyn std::error::Error>> {
+    use gateway_auth_contracts::types::AuthRequest;
+    use gateway_source::source_serialization::member;
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let token = create(&store, &host).await?;
+        let config = AuthConfig::default();
+        let auth = AuthService::new(&store, &host, &config);
+        let mut request = AuthRequest {
+            method: "GET".into(),
+            url: "https://ai.ubq.fi/uos/auth".into(),
+            headers: BTreeMap::from([(
+                "cookie".into(),
+                format!("__Host-uos_ai_passport_session={token}"),
+            )]),
+            ..Default::default()
+        };
+        let principal = auth.authenticate_client(&request).await?;
+        let mut expected = "passport-user:".encode_utf16().collect::<Vec<_>>();
+        expected.extend([0xd800, 0]);
+        assert_eq!(
+            principal.method.principal_id(None).as_source().as_units(),
+            expected
+        );
+        assert!(!principal.is_super_admin);
+        assert!(auth.authenticate_admin(&request).await?.is_admin);
+        let response = auth.handle_auth_route(&request).await?.ok_or("report")?;
+        assert_eq!(response.status, 200);
+        assert_eq!(response.set_cookies.len(), 1);
+        assert!(response.set_cookies[0].contains("Max-Age=34560000"));
+        let document = SourceJson::parse_bytes(&response.body.to_bytes()?)?;
+        let report = member(&document, "auth").ok_or("auth")?;
+        assert_eq!(
+            member(&report, "principal")
+                .ok_or("principal")?
+                .deserialize::<JsString16>()?
+                .as_units(),
+            expected
+        );
+        let method = member(&report, "method").ok_or("method")?;
+        assert_eq!(
+            member(&method, "kind")
+                .ok_or("kind")?
+                .deserialize::<String>()?,
+            "passport_session"
+        );
+        let user = member(&method, "user").ok_or("user")?;
+        for field in ["exp", "jti", "agent_token_id"] {
+            assert_eq!(member(&user, field).ok_or("field")?.as_str(), "null");
+        }
+        assert_eq!(
+            member(&user, "auth")
+                .ok_or("auth")?
+                .deserialize::<String>()?,
+            "sso"
+        );
+        host.admin.set(false);
+        assert_eq!(
+            auth.authenticate_admin(&request)
+                .await
+                .err()
+                .ok_or("refusal")?
+                .status,
+            403
+        );
+        host.status.set(503);
+        let error = auth
+            .handle_auth_route(&request)
+            .await
+            .err()
+            .ok_or("refusal")?;
+        assert_eq!(error.status, 503);
+        assert!(
+            gateway_auth_passport::browser::authentication_error(&request, error)
+                .set_cookies
+                .is_empty()
+        );
+        assert!(store.read(&session_key(&token)).await?.is_some());
+        host.status.set(401);
+        let error = auth
+            .handle_auth_route(&request)
+            .await
+            .err()
+            .ok_or("refusal")?;
+        assert_eq!(error.status, 401);
+        assert_eq!(
+            gateway_auth_passport::browser::authentication_error(&request, error)
+                .set_cookies
+                .len(),
+            1
+        );
+        assert!(store.read(&session_key(&token)).await?.is_none());
+        request.url = "https://ai.ubq.fi/auth/logout".into();
+        assert_eq!(
+            auth.handle_auth_route(&request)
+                .await?
+                .ok_or("route")?
+                .status,
+            405
+        );
+        Ok(())
+    })
+}

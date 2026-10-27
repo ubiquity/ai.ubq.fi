@@ -300,3 +300,11 @@ pub fn install(
     }
     Ok(())
 }
+
+// This legacy-only fixture has no JS Date runtime. Permanent session records
+// fail unavailable rather than gaining an ISO parser or fabricated date grant.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
+}

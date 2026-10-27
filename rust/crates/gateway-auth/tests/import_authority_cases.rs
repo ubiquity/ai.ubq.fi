@@ -160,7 +160,8 @@ fn new_replies_require_exact_direction_phase_binding_and_canonical_bytes() {
     assert!(authority_response_input("fixture-key", &nonce(), &body, 503, &error).is_err());
 }
 #[test]
-fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
+fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body()
+-> Result<(), Box<dyn std::error::Error>> {
     let state = max_state();
     let terminal = max_terminal();
     let request = ImportAuthorityRequestData::new(ImportAuthorityCommand::Terminal {
@@ -169,8 +170,7 @@ fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
         publication_revision: terminal.publication_revision.clone(),
         native_receipt_ref: terminal.native_receipt_ref.clone(),
         publication_request_digest: terminal.publication_request_digest.clone(),
-    })
-    .unwrap();
+    })?;
     let mut after = state;
     after.action_revision = terminal.publication_revision.clone();
     // This old negative mutates through Value; UTF16 has a separate direct-codec test.
@@ -181,16 +181,17 @@ fn maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body() {
         terminal: Box::new(terminal),
         completion,
     });
-    let bytes = serde_json::to_vec(&reply).unwrap();
-    assert!(bytes.len() <= import_authority_reply_max_bytes_for(&request).unwrap());
+    let bytes = serde_json::to_vec(&reply)?;
+    assert!(bytes.len() <= import_authority_reply_max_bytes_for(&request)?);
     assert!(bytes.len() > NATIVE_CONTROL_MAX_BYTES);
-    assert!(accepts_reply(&request.bytes().unwrap(), &bytes));
-    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(accepts_reply(&request.bytes()?, &bytes));
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes)?;
     value["result"]["terminal"]["publication_request_digest"] = serde_json::json!("b".repeat(64));
     assert!(!accepts_reply(
-        &request.bytes().unwrap(),
-        &serde_json::to_vec(&value).unwrap()
+        &request.bytes()?,
+        &serde_json::to_vec(&value)?
     ));
+    Ok(())
 }
 #[test]
 fn bare_started_reply_echoes_exact_request_and_remaining_lifetime() {
@@ -277,10 +278,7 @@ fn sample_completion() -> ImportCompletionData {
         updated_at_ms: 1234.5,
         models: ImportCompletionModelsData {
             count: 3,
-            source: gateway_source::source_json::SourceJson::parse(r#""\ud800""#)
-                .unwrap()
-                .deserialize()
-                .unwrap(),
+            source: gateway_source::js_string::JsString16::from_units(vec![0xd800]),
             updated_at_ms: 9876,
             client_version: None,
         },

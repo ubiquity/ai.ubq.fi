@@ -45,13 +45,16 @@ pub struct PassportSourceClaims {
 }
 impl PassportSourceClaims {
     pub fn valid(&self, now: i64) -> bool {
+        self.valid_for(&crate::passport::PassportConfig::production(), now)
+    }
+    pub fn valid_for(&self, config: &crate::passport::PassportConfig, now: i64) -> bool {
         let bound = |value: &JsString16, max, empty| {
             (empty || !value.as_units().is_empty()) && value.as_units().len() <= max
         };
         let safe = gateway_core::identity::MAX_SAFE_INTEGER;
         self.iss == "https://passport.ubq.fi"
-            && self.aud == "ai"
-            && self.client_id == "ai"
+            && self.aud == config.audience
+            && self.client_id == config.client_id
             && bound(&self.sub, 500, false)
             && bound(&self.jti, 500, false)
             && bound(&self.auth, 160, false)

@@ -430,6 +430,13 @@ pub async fn verify_source<H: AuthHost>(
     host: &H,
     token: &str,
 ) -> Result<gateway_auth_passport_contracts::session::PassportSourceClaims, GatewayError> {
+    verify_source_for_config(host, &PassportConfig::production(), token).await
+}
+pub async fn verify_source_for_config<H: AuthHost>(
+    host: &H,
+    config: &PassportConfig,
+    token: &str,
+) -> Result<gateway_auth_passport_contracts::session::PassportSourceClaims, GatewayError> {
     let (_, document, kid, signature) = parse_raw_jwt(token)?;
     let now = host.now_ms();
     let keys = cached_jwks(host, now, Some(&kid)).await?;
@@ -439,7 +446,7 @@ pub async fn verify_source<H: AuthHost>(
     let parts = token.split('.').collect::<Vec<_>>();
     let input = format!("{}.{}", parts[0], parts[1]);
     if signature.to_vec().len() != key.size()
-        || !claims.valid(host.now_ms().div_euclid(1000))
+        || !claims.valid_for(config, host.now_ms().div_euclid(1000))
         || VerifyingKey::<Sha256>::new(key.clone())
             .verify(input.as_bytes(), &signature)
             .is_err()
