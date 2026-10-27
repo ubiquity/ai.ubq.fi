@@ -14,7 +14,7 @@ use gateway_core::{
     source_json::SourceJson,
     state::AuthorityStore,
 };
-use gateway_providers::policy::{HopFailure, paid_hop_identity};
+use gateway_provider_policy::{policy::HopFailure, policy::paid_hop_identity};
 use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptFailure, FailureOrigin, RefusalDecision, RoutingInput, TransportState},

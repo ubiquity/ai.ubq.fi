@@ -2,10 +2,8 @@ use gateway_core::{
     claude::ClaudeErrorEvidence, lifecycle::TransportObservation, provider::UpstreamProvider,
 };
 use gateway_extras_contract::family::ExtrasFamily;
-use gateway_providers::{
-    policy::HopFailure,
-    types::{ClaudeBodyOptions, ClaudeCredentialKind},
-};
+use gateway_provider_policy::policy::HopFailure;
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind};
 use gateway_routing_runtime::{session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::json;

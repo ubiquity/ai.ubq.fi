@@ -12,10 +12,8 @@ use gateway_core::{
     provider::UpstreamProvider,
     state::{RecordKey, RevisionCheck},
 };
-use gateway_providers::types::{
-    AuthMaterial, ClaudeBodyOptions, ClientSurface, DecodePlan, Headers, PrepareOptions,
-    PreparedClaudeBody, PreparedRequest,
-};
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::DecodePlan, types::Headers, types::PrepareOptions, types::PreparedRequest};
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::PreparedClaudeBody};
 use gateway_schema::catalog::CatalogInput;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -374,7 +372,7 @@ pub struct AttemptFailure {
     pub headers: Headers,
     pub body: Vec<u8>,
     pub body_complete: bool,
-    pub failure: gateway_providers::policy::HopFailure,
+    pub failure: gateway_provider_policy::policy::HopFailure,
     pub transport: TransportState,
     pub semantic_committed: bool,
     pub cancelled: bool,

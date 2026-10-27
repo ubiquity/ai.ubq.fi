@@ -13,8 +13,8 @@ use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider,
     ExtrasRequest, ExtrasResponse, Headers, PreparedCall,
 };
-use gateway_providers::extras::{self, EmbeddingsProfile};
-use gateway_providers::types::PrepareOptions;
+use gateway_provider_services::{extras as extras, extras::EmbeddingsProfile};
+use gateway_provider_protocol::types::PrepareOptions;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 pub(crate) fn configured_error() -> GatewayError {
@@ -133,7 +133,7 @@ pub(crate) fn result_body(profile: &EmbeddingsProfile, vectors: &[Vec<f64>], tok
         .enumerate()
         .map(|(index, vector)| {
             let embedding = if profile.encoding_format == "base64" {
-                json!(extras::base64_encode(
+                json!(gateway_provider_source::extras::base64_encode(
                     &vector
                         .iter()
                         .flat_map(|v| (*v as f32).to_le_bytes())
@@ -206,7 +206,7 @@ pub(crate) async fn sync<S: QueryStore, H: ExtrasHost>(
     let owner = uuid(host)?;
     let started = now(host)?;
     let deadline = started + TIMEOUT_MS;
-    let profile = match extras::parse_source_embeddings(&request.body, false) {
+    let profile = match gateway_provider_services::extras::parse_source_embeddings(&request.body, false) {
         Ok(p) => p,
         Err(e) => return Ok(ExtrasResponse::source_error(e)),
     };

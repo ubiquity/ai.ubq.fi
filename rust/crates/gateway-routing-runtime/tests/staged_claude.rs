@@ -12,13 +12,9 @@ use gateway_core::{
     tuple_key::{ScalarKeyPart, TupleKey},
     value::ValueEncoding,
 };
-use gateway_providers::{
-    source_request::prepare_source_request,
-    types::{
-        ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, OrdinaryPreparationContext,
-        PreparedClaudeBody,
-    },
-};
+use gateway_providers::source_request::prepare_source_request;
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody};
+use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
 use gateway_routing_runtime::{currentness::*, custody, policy, session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::json;

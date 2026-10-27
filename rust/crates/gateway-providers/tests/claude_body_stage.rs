@@ -2,13 +2,9 @@ use gateway_core::{
     js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_providers::{
-    source_request::prepare_source_request,
-    types::{
-        AuthMaterial, ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, PrepareOptions,
-        PreparedClaudeBody,
-    },
-};
+use gateway_providers::source_request::prepare_source_request;
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody};
 use serde_json::json;
 fn parse(text: &str) -> SourceJson {
     SourceJson::parse(text).unwrap()
@@ -62,17 +58,17 @@ fn staged_scalar_bodies_and_decode_match_one_legacy_implementation() {
                 assert!(stage.warnings().is_empty());
                 let attribution = source::member(stage.body(), "system")
                     .as_ref()
-                    .and_then(source::array)
+                    .and_then(gateway_core::source_serialization::array)
                     .and_then(|system| {
                         system
                             .first()
                             .and_then(|block| source::member(block, "text"))
                     })
                     .as_ref()
-                    .and_then(source::string)
+                    .and_then(gateway_provider_source::source::string)
                     .is_some_and(|text| {
                         text == JsString16::from_utf8(
-                            gateway_providers::finalize::CLAUDE_ATTRIBUTION,
+                            gateway_provider_claude_body::finalize::CLAUDE_ATTRIBUTION,
                         )
                     });
                 assert_eq!(attribution, kind == ClaudeCredentialKind::Oauth);
@@ -133,7 +129,7 @@ fn stage_keeps_source_effort_payload_and_actual_disabled_capability() {
     .unwrap();
     assert_eq!(&stage.decode().request, &raw);
     assert_eq!(
-        source::string(
+        gateway_provider_source::source::string(
             &source::member(
                 &source::member(stage.body(), "output_config").unwrap(),
                 "effort"

@@ -15,7 +15,7 @@ use gateway_core::error::GatewayError;
 use gateway_core::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
 use gateway_core::provider::UpstreamProvider;
 use gateway_core::query::QueryStore;
-use gateway_providers::policy::{HopDecision, HopFailure};
+use gateway_provider_policy::{policy::HopDecision, policy::HopFailure};
 
 impl<
     S: QueryStore + Clone,
@@ -147,7 +147,7 @@ impl<
                 provider: reservation.provider,
                 model: record.model.clone(),
                 route: self.input.context.route.clone(),
-                path: if self.input.surface == gateway_providers::types::ClientSurface::Chat {
+                path: if self.input.surface == gateway_provider_protocol::types::ClientSurface::Chat {
                     "/v1/chat/completions"
                 } else {
                     "/v1/responses"
@@ -349,7 +349,7 @@ impl<
         let mut decision = RefusalDecision::Return;
         let mut cursor = record.cursor;
         if self.plan.synthetic && record.paid.is_none() {
-            decision = match gateway_providers::policy::deepseek_decision(failure.failure, false) {
+            decision = match gateway_provider_policy::policy::deepseek_decision(failure.failure, false) {
                 HopDecision::Advance => {
                     cursor += 1;
                     RefusalDecision::Continue
@@ -364,7 +364,7 @@ impl<
                 decision = RefusalDecision::Continue;
             }
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
-            if gateway_providers::policy::paid_should_advance(
+            if gateway_provider_policy::policy::paid_should_advance(
                 failure.status,
                 self.plan.hops.get(cursor + 1).is_some(),
             ) {
@@ -468,9 +468,9 @@ impl<
         failure: &AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let now = self.now()?;
-        let response_prohibited = gateway_providers::lithos::retry_prohibited(&failure.headers);
+        let response_prohibited = gateway_provider_policy::lithos::retry_prohibited(&failure.headers);
         let wait = lithos_wait_ms(&failure.headers, now);
-        let rung = gateway_providers::policy::lithos_canonical(model);
+        let rung = gateway_provider_policy::policy::lithos_canonical(model);
         self.lithos_attempted.borrow_mut().insert(rung.clone());
         if response_prohibited {
             self.lithos_no_retry.borrow_mut().insert(rung);
@@ -548,8 +548,8 @@ fn paid_terminal(terminal: SemanticTerminal) -> PaidTerminalState {
         SemanticTerminal::Failed | SemanticTerminal::Error => PaidTerminalState::Failed,
     }
 }
-fn lithos_wait_ms(headers: &gateway_providers::types::Headers, now: i64) -> Option<i64> {
-    let wait = gateway_providers::lithos::rate_limit_wait(headers, now as f64, |raw| {
+fn lithos_wait_ms(headers: &gateway_provider_protocol::types::Headers, now: i64) -> Option<i64> {
+    let wait = gateway_provider_policy::lithos::rate_limit_wait(headers, now as f64, |raw| {
         chrono::DateTime::parse_from_rfc2822(raw)
             .ok()
             .map(|date| date.timestamp_millis() as f64)

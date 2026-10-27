@@ -219,10 +219,10 @@ pub(super) struct ConstructionFailure;
 
 pub(super) fn credential_kind(
     credential: &claude::Credential,
-) -> gateway_providers::types::ClaudeCredentialKind {
+) -> gateway_provider_claude_body::types::ClaudeCredentialKind {
     match credential.kind {
-        CredentialKind::Oauth => gateway_providers::types::ClaudeCredentialKind::Oauth,
-        CredentialKind::ApiKey => gateway_providers::types::ClaudeCredentialKind::ApiKey,
+        CredentialKind::Oauth => gateway_provider_claude_body::types::ClaudeCredentialKind::Oauth,
+        CredentialKind::ApiKey => gateway_provider_claude_body::types::ClaudeCredentialKind::ApiKey,
     }
 }
 
@@ -313,7 +313,7 @@ fn trim_workspace(
 
 pub(super) fn physical_request(
     binding: &AccountBinding,
-    body: &gateway_providers::types::PreparedClaudeBody,
+    body: &gateway_provider_claude_body::types::PreparedClaudeBody,
 ) -> Result<crate::transport::outbound::ConstructedRequest, ConstructionFailure> {
     if body.kind() != credential_kind(&binding.credential) {
         return Err(ConstructionFailure);
@@ -344,9 +344,8 @@ mod physical_tests {
             AccountBinding, Credential, CredentialKind, source_secret::ClaudeSourceSecret,
         };
         use gateway_core::source_json::SourceJson;
-        use gateway_providers::types::{
-            ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, PreparedClaudeBody,
-        };
+        use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody};
+        use gateway_provider_protocol::types::ClientSurface;
         let binding = AccountBinding {
             account_id: "fixture-account".into(),
             account_cohort_id: "fixture-cohort".into(),

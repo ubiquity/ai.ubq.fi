@@ -3,12 +3,11 @@ use gateway_core::{
     js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as json,
 };
-use gateway_providers::{
-    response::decode_response,
-    source_request::prepare_source_request,
-    source_tools::ToolMap,
-    types::{AuthMaterial, ClientSurface, PrepareOptions, ProviderEvent},
-};
+use gateway_provider_response::response::decode_response;
+use gateway_providers::source_request::prepare_source_request;
+use gateway_provider_tool_grammar::source_tools::ToolMap;
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
+use gateway_provider_events::event::ProviderEvent;
 fn parse(raw: &str) -> SourceJson {
     SourceJson::parse(raw).unwrap()
 }
@@ -148,7 +147,7 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
     assert_echo(&decoded.body, &raw);
     let mut plan = prepared.decode.clone();
     plan.stream = true;
-    let mut decoder = gateway_providers::sse::StreamDecoder::new(plan);
+    let mut decoder = gateway_provider_stream::sse::StreamDecoder::new(plan);
     let mut events=decoder.push(b"data: {\"id\":\"chat_fixture\",\"object\":\"chat.completion.chunk\",\"created\":2,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n").map_err(|error| format!("{error:?}"))?;
     events.extend(decoder.finish().map_err(|error| format!("{error:?}"))?);
     for kind in [
@@ -175,9 +174,9 @@ fn buffered_and_actual_sse_writer_created_progress_terminal_echo_the_same_source
         assert_echo(&get(&parsed, "response"), &raw);
     }
     for reason in ["length", "aborted"] {
-        let mut writer = gateway_providers::writer::ResponseWriter::new(prepared.decode.clone());
+        let mut writer = gateway_provider_writer::writer::ResponseWriter::new(prepared.decode.clone());
         writer.finish_reason = Some(reason.into());
-        let events = writer.finish();
+        let events = writer.finish().map_err(|error| format!("{error:?}"))?;
         assert_echo(
             &events
                 .last()
@@ -431,7 +430,7 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
     )
     .map_err(|error| format!("{error:?}"))?
     .decode;
-    let identity = gateway_providers::types::ToolIdentity {
+    let identity = gateway_provider_source::types::ToolIdentity {
         name: JsString16::from_units(vec![102, 0xd800]),
         namespace: Some(JsString16::from_units(vec![110, 0xdc00])),
         custom: false,
@@ -452,11 +451,11 @@ fn source_original_tool_identity_survives_buffered_and_streamed_generated_items(
         text(&get(&item, "namespace")),
         identity.namespace.clone().ok_or("missing fixture value")?
     );
-    let mut writer = gateway_providers::writer::ResponseWriter::new(plan);
+    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan);
     let mut events =
-        writer.tool_delta(0, Some("call_fixture"), Some("wire_ascii"), " { \"x\":1 } ");
+        writer.tool_delta(0, Some("call_fixture"), Some("wire_ascii"), " { \"x\":1 } ").map_err(|error| format!("{error:?}"))?;
     writer.finish_reason = Some("tool_calls".into());
-    events.extend(writer.finish());
+    events.extend(writer.finish().map_err(|error| format!("{error:?}"))?);
     for event in events
         .iter()
         .filter(|event| event.type_name().as_deref() == Some("response.output_item.done"))
@@ -619,14 +618,14 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
     let mut names = ToolMap::new();
     names.insert(
         "custom".into(),
-        gateway_providers::types::ToolIdentity {
+        gateway_provider_source::types::ToolIdentity {
             name: JsString16::from_units(vec![99, 0xd800]),
             namespace: None,
             custom: true,
         },
     );
     let arguments = r#" { "input" : "raw\udc00" } "#;
-    let item = gateway_providers::tools::function_item(
+    let item = gateway_provider_tool_grammar::tools::function_item(
         "ctc_fixture",
         "call_fixture",
         "custom",
@@ -646,9 +645,9 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
     .map_err(|error| format!("{error:?}"))?
     .decode;
     plan.tool_names = names;
-    let mut writer = gateway_providers::writer::ResponseWriter::new(plan);
-    writer.tool_delta(0, Some("call_fixture"), Some("custom"), arguments);
-    let events = writer.finish();
+    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan);
+    writer.tool_delta(0, Some("call_fixture"), Some("custom"), arguments).map_err(|error| format!("{error:?}"))?;
+    let events = writer.finish().map_err(|error| format!("{error:?}"))?;
     let delta = events
         .iter()
         .find(|event| event.type_name().as_deref() == Some("response.custom_tool_call_input.delta"))
@@ -696,15 +695,15 @@ fn source_model_echoes_in_buffered_and_sse_composition_are_ordinary_json_strings
         // Select the existing scalar Chat upstream codec to exercise its synthesized
         // request-derived envelope; this is not a new router/provider selection.
         let mut plan = prepared.decode.clone();
-        plan.decode = gateway_providers::types::ResponseDecode::ChatToResponses(
-            gateway_providers::types::ChatProfile::Deepseek,
+        plan.decode = gateway_provider_protocol::types::ResponseDecode::ChatToResponses(
+            gateway_provider_source::types::ChatProfile::Deepseek,
         );
         let buffered = decode_response(&plan, 200, &Default::default(), reply())
             .map_err(|error| format!("{error:?}"))?;
         assert_eq!(text(&get(&buffered.body, "model")), model);
-        let mut writer = gateway_providers::writer::ResponseWriter::new(prepared.decode);
-        let mut events = writer.text("answer", false);
-        events.extend(writer.finish());
+        let mut writer = gateway_provider_writer::writer::ResponseWriter::new(prepared.decode);
+        let mut events = writer.text("answer", false).map_err(|error| format!("{error:?}"))?;
+        events.extend(writer.finish().map_err(|error| format!("{error:?}"))?);
         for event in events
             .iter()
             .filter(|event| event.field("response").is_some())
@@ -755,7 +754,7 @@ fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {
 #[test]
 fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments() {
     use gateway_core::{model::ModelId, provider::PaidProvider};
-    use gateway_providers::policy::{PaidRoutingInput, resolve_paid_route};
+    use gateway_provider_policy::{policy::PaidRoutingInput, policy::resolve_paid_route};
     let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
     let row = parse(
         r#"{"id":"\ud800","supported_endpoint_types":["openai-response"],"input_price_per_token":0.1,"output_price_per_token":0.2,"cache_read_price_per_token":"source\udc00"}"#,

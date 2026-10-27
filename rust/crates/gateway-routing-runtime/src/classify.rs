@@ -4,7 +4,7 @@ use gateway_authority::routing_types::{QuotaBlock, QuotaBlockSource};
 use gateway_core::{
     js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
 };
-use gateway_providers::types::Headers;
+use gateway_provider_protocol::types::Headers;
 use serde::{
     Deserialize, Deserializer,
     de::{Error, MapAccess, SeqAccess, Visitor},

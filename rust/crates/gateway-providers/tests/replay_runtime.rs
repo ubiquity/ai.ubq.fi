@@ -2,12 +2,10 @@
 use gateway_core::model::ModelId;
 use gateway_core::provider::UpstreamProvider;
 use gateway_core::source_json::SourceJson;
-use gateway_providers::{
-    anthropic, replay,
-    source_request::prepare_source_request,
-    source_tools::ToolMap,
-    types::{AuthMaterial, ClientSurface, PrepareOptions},
-};
+use gateway_providers::{anthropic, source_request::prepare_source_request};
+use gateway_provider_replay::replay;
+use gateway_provider_tool_grammar::source_tools::ToolMap;
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
 use serde_json::{Value, json};
 
 fn scalar(value: &SourceJson) -> Value {
@@ -22,8 +20,8 @@ fn sources(values: &[Value]) -> Vec<SourceJson> {
     values.iter().map(source).collect()
 }
 
-fn context() -> replay::ReplayContext {
-    replay::ReplayContext {
+fn context() -> gateway_provider_replay::replay::ReplayContext {
+    gateway_provider_replay::replay::ReplayContext {
         scope: "key-a".into(),
         provider: "surplus".into(),
         model: "claude-fixture".into(),
@@ -56,7 +54,7 @@ fn raw_request(output: &[Value]) -> Value {
 }
 
 #[test]
-fn decoded_messages_replay_publishes_and_restores_through_prepare_options() {
+fn decoded_messages_replay_publishes_and_restores_through_prepare_options() -> Result<(), String> {
     let context = context();
     let output = messages_output();
     let native = json!({"role":"assistant","content":[
@@ -64,15 +62,15 @@ fn decoded_messages_replay_publishes_and_restores_through_prepare_options() {
         {"type":"text","text":"answer"},
         {"type":"tool_use","id":"call_1","name":"read_file","input":{"path":"a.txt"}}
     ]});
-    let mut store = replay::ReplayStore::default();
+    let mut store = gateway_provider_replay::replay::ReplayStore::default();
     assert!(store.remember_decoded_native(
         context.clone(),
         &sources(&output),
         source(&native),
-        replay::ReplayTransport::Messages,
+        gateway_provider_protocol::replay::ReplayTransport::Messages,
         &ToolMap::new(),
         1,
-    ));
+    ).map_err(|error| format!("{error:?}"))?);
     let raw = raw_request(&output);
     let raw_source = SourceJson::from_serializable(&raw).unwrap();
     let mut options = PrepareOptions::default();
@@ -80,10 +78,10 @@ fn decoded_messages_replay_publishes_and_restores_through_prepare_options() {
         &context,
         &raw_source,
         &mut options,
-        replay::ReplayTransport::Messages,
+        gateway_provider_protocol::replay::ReplayTransport::Messages,
         2,
-    ));
-    let body = scalar(&anthropic::try_native_messages(&raw, &options).unwrap());
+    ).map_err(|error| format!("{error:?}"))?);
+    let body = scalar(&gateway_providers::anthropic::try_native_messages(&raw, &options).map_err(|error| format!("{error:?}"))?.unwrap());
     assert_eq!(body["messages"][0]["role"], "user");
     assert_eq!(body["messages"][1]["role"], "assistant");
     assert_eq!(body["messages"][1]["content"][0]["type"], "thinking");
@@ -95,10 +93,12 @@ fn decoded_messages_replay_publishes_and_restores_through_prepare_options() {
     assert_eq!(body["messages"][1]["content"][2]["type"], "tool_use");
     assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
     assert_eq!(body["messages"][2]["content"][1]["text"], "continue");
+
+    Ok(())
 }
 
 #[test]
-fn decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_options() {
+fn decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_options() -> Result<(), String> {
     let context = context();
     let output = messages_output();
     let native = json!({
@@ -107,15 +107,15 @@ fn decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_op
         "reasoning_details":[{"type":"reasoning.text","text":"thought","signature":"private-chat-signature"}],
         "tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}}]
     });
-    let mut store = replay::ReplayStore::default();
+    let mut store = gateway_provider_replay::replay::ReplayStore::default();
     assert!(store.remember_decoded_native(
         context.clone(),
         &sources(&output),
         source(&native),
-        replay::ReplayTransport::Chat,
+        gateway_provider_protocol::replay::ReplayTransport::Chat,
         &ToolMap::new(),
         1,
-    ));
+    ).map_err(|error| format!("{error:?}"))?);
     let raw = raw_request(&output);
     let raw_source = SourceJson::from_serializable(&raw).unwrap();
     let mut options = PrepareOptions::default();
@@ -123,10 +123,10 @@ fn decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_op
         &context,
         &raw_source,
         &mut options,
-        replay::ReplayTransport::Chat,
+        gateway_provider_protocol::replay::ReplayTransport::Chat,
         2,
-    ));
-    let body = scalar(&anthropic::try_claude_chat(&raw, &options).unwrap().body);
+    ).map_err(|error| format!("{error:?}"))?);
+    let body = scalar(&gateway_providers::anthropic::try_claude_chat(&raw, &options).map_err(|error| format!("{error:?}"))?.unwrap().body);
     assert_eq!(body["messages"][1]["role"], "assistant");
     assert_eq!(body["messages"][1]["content"], "answer");
     assert_eq!(
@@ -136,18 +136,20 @@ fn decoded_chat_replay_keeps_reasoning_details_and_tool_calls_through_prepare_op
     assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "call_1");
     let mut invalid = native;
     invalid["reasoning_details"][0]["signature"] = json!("");
-    assert!(!replay::ReplayStore::default().remember_decoded_native(
+    assert!(!gateway_provider_replay::replay::ReplayStore::default().remember_decoded_native(
         context,
         &sources(&output),
         source(&invalid),
-        replay::ReplayTransport::Chat,
+        gateway_provider_protocol::replay::ReplayTransport::Chat,
         &ToolMap::new(),
         1,
-    ));
+    ).map_err(|error| format!("{error:?}"))?);
+
+    Ok(())
 }
 
 #[test]
-fn lone_surrogate_native_replay_survives_prepare_source_request() {
+fn lone_surrogate_native_replay_survives_prepare_source_request() -> Result<(), String> {
     let context = context();
     let native =
         SourceJson::parse(r#"{"role":"assistant","content":[{"type":"text","text":"\ud800"}]}"#)
@@ -162,15 +164,15 @@ fn lone_surrogate_native_replay_survives_prepare_source_request() {
         r#"{"model":"claude-fixture","max_output_tokens":16,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"\ud800"}]},{"id":"msg_resp_lone_0","type":"message","role":"assistant","content":[{"type":"output_text","text":"\ud800"}]}]}"#,
     )
     .unwrap();
-    let mut store = replay::ReplayStore::default();
+    let mut store = gateway_provider_replay::replay::ReplayStore::default();
     assert!(store.remember_decoded_native(
         context.clone(),
         &output,
         native,
-        replay::ReplayTransport::Messages,
+        gateway_provider_protocol::replay::ReplayTransport::Messages,
         &ToolMap::new(),
         1,
-    ));
+    ).map_err(|error| format!("{error:?}"))?);
     let mut options = PrepareOptions {
         auth: AuthMaterial {
             secret: "fixture-secret".into(),
@@ -182,9 +184,9 @@ fn lone_surrogate_native_replay_survives_prepare_source_request() {
         &context,
         &raw,
         &mut options,
-        replay::ReplayTransport::Messages,
+        gateway_provider_protocol::replay::ReplayTransport::Messages,
         2,
-    ));
+    ).map_err(|error| format!("{error:?}"))?);
     let prepared = prepare_source_request(
         UpstreamProvider::Surplus,
         ClientSurface::Responses,
@@ -199,6 +201,8 @@ fn lone_surrogate_native_replay_survives_prepare_source_request() {
         "{body}"
     );
     assert!(!body.contains("fffd"), "{body}");
+
+    Ok(())
 }
 
 #[test]
@@ -224,16 +228,16 @@ fn native_replay_arguments_require_matching_valid_object_bytes()
         ("matching_object", Some(json!(r#"{"path":"a.txt"}"#)), true),
     ];
     for transport in [
-        replay::ReplayTransport::Messages,
-        replay::ReplayTransport::Chat,
+        gateway_provider_protocol::replay::ReplayTransport::Messages,
+        gateway_provider_protocol::replay::ReplayTransport::Chat,
     ] {
         let native = match transport {
-            replay::ReplayTransport::Messages => json!({"role":"assistant","content":[
+            gateway_provider_protocol::replay::ReplayTransport::Messages => json!({"role":"assistant","content":[
                 {"type":"thinking","thinking":"thought","signature":"private-signature"},
                 {"type":"text","text":"answer"},
                 {"type":"tool_use","id":"call_1","name":"read_file","input":{"path":"a.txt"}}
             ]}),
-            replay::ReplayTransport::Chat => {
+            gateway_provider_protocol::replay::ReplayTransport::Chat => {
                 json!({"role":"assistant","content":"answer","reasoning_content":"thought",
                     "tool_calls":[{"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}}]
                 })
@@ -250,19 +254,19 @@ fn native_replay_arguments_require_matching_valid_object_bytes()
                 assert!(fields.remove("arguments").is_some());
             }
             assert_eq!(
-                replay::ReplayStore::default().remember_decoded_native(
+                gateway_provider_replay::replay::ReplayStore::default().remember_decoded_native(
                     context(),
                     &sources(&output),
                     source(&native),
                     transport,
                     &ToolMap::new(),
                     1,
-                ),
+                ).map_err(|error| format!("{error:?}"))?,
                 *expected,
                 "output arguments: {transport:?}/{label}"
             );
         }
-        if transport == replay::ReplayTransport::Chat {
+        if transport == gateway_provider_protocol::replay::ReplayTransport::Chat {
             for (label, arguments, expected) in &cases {
                 let mut changed = native.clone();
                 let fields = changed["tool_calls"][0]["function"]
@@ -274,14 +278,14 @@ fn native_replay_arguments_require_matching_valid_object_bytes()
                     assert!(fields.remove("arguments").is_some());
                 }
                 assert_eq!(
-                    replay::ReplayStore::default().remember_decoded_native(
+                    gateway_provider_replay::replay::ReplayStore::default().remember_decoded_native(
                         context(),
                         &sources(&messages_output()),
                         source(&changed),
                         transport,
                         &ToolMap::new(),
                         1,
-                    ),
+                    ).map_err(|error| format!("{error:?}"))?,
                     *expected,
                     "native arguments: {label}"
                 );
@@ -297,14 +301,14 @@ fn native_replay_arguments_require_matching_valid_object_bytes()
                 } else {
                     assert!(fields.remove("input").is_some());
                 }
-                assert!(!replay::ReplayStore::default().remember_decoded_native(
+                assert!(!gateway_provider_replay::replay::ReplayStore::default().remember_decoded_native(
                     context(),
                     &sources(&messages_output()),
                     source(&changed),
                     transport,
                     &ToolMap::new(),
                     1,
-                ));
+                ).map_err(|error| format!("{error:?}"))?);
             }
         }
     }

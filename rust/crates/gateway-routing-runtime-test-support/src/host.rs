@@ -6,7 +6,7 @@ use gateway_authority::{
     routing_types::CohortProof,
 };
 use gateway_core::{error::GatewayError, state::AuthorityStore};
-use gateway_providers::types::{AuthMaterial, PrepareOptions};
+use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
     PublishedCredential, RefreshOutcome, ResponseHead, RoutingHost, WaitOutcome, direct_credential,

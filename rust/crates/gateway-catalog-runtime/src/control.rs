@@ -24,7 +24,7 @@ use gateway_core::{
     },
     tuple_key::TupleKey,
 };
-use gateway_providers::policy::{DeepseekHop, PaidRoutingInput, paid_order, resolve_paid_route};
+use gateway_provider_policy::{policy::DeepseekHop, policy::PaidRoutingInput, policy::paid_order, policy::resolve_paid_route};
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_store,

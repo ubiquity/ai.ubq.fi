@@ -1,5 +1,5 @@
 use gateway_core::source_json::SourceJson;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::policy;
 use gateway_routing_runtime_test_support::{
     input::{NOW, input},

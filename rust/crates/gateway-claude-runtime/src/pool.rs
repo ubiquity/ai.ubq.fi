@@ -17,7 +17,7 @@ use gateway_core::{
     source_serialization as source,
     state::{AuthorityStore, RevisionCheck},
 };
-use gateway_providers::types::Headers;
+use gateway_provider_protocol::types::Headers;
 use gateway_schema::selection::ProviderSelection;
 use serde::Serialize;
 use std::{
@@ -68,7 +68,7 @@ impl ClaudePoolSession {
         host: &H,
         input: host::SelectionInput<'_>,
     ) -> Result<host::PoolSelection, GatewayError> {
-        if !gateway_providers::anthropic::is_claude_model(input.model)
+        if !gateway_provider_source::anthropic::is_claude_model(input.model)
             || !ProviderSelection::enabled(input.selection, "claude_code")
         {
             return Ok(host::PoolSelection::NotApplicable);

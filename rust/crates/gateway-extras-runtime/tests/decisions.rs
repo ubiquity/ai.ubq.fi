@@ -14,7 +14,7 @@ use gateway_extras_contract::types::{
 };
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_extras_runtime_test_support::fixture::Memory;
-use gateway_providers::types::PrepareOptions;
+use gateway_provider_protocol::types::PrepareOptions;
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -81,7 +81,7 @@ impl ExtrasHost for Host {
     ) -> Result<Option<PrepareOptions>, GatewayError> {
         assert_eq!(provider, ExtrasProvider::Decisions);
         Ok(self.configured.get().then(|| PrepareOptions {
-            auth: gateway_providers::types::AuthMaterial {
+            auth: gateway_provider_protocol::types::AuthMaterial {
                 secret: "fixture-decision-key".into(),
                 ..Default::default()
             },

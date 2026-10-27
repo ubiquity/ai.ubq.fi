@@ -266,7 +266,7 @@ fn request() -> Result<(PaidRequest, PaidRequestContext), GatewayError> {
         PaidRequestContext {
             original_model: "gpt-known".into(),
             body: SourceJson::parse(r#"{"model":"gpt-known","input":"test"}"#)?,
-            surface: gateway_providers::types::ClientSurface::Responses,
+            surface: gateway_provider_protocol::types::ClientSurface::Responses,
             synthetic_hop: None,
         },
     ))

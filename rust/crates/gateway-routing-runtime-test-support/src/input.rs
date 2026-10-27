@@ -2,7 +2,7 @@
 use crate::source_catalog::json as fixture_json;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::types::RoutingInput;
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},

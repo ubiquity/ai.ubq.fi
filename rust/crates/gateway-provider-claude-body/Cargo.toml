@@ -1,0 +1,18 @@
+[package]
+name = "gateway-provider-claude-body"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-provider-chat.workspace = true
+gateway-provider-input.workspace = true
+gateway-provider-protocol.workspace = true
+gateway-provider-source.workspace = true
+gateway-provider-tool-grammar.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

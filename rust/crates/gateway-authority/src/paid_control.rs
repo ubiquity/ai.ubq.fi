@@ -13,8 +13,8 @@ use gateway_core::source_json::SourceJson;
 use gateway_core::source_serialization as source;
 use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
-use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput};
-use gateway_providers::types::ClientSurface;
+use gateway_provider_policy::{policy as policy, policy::DeepseekHop, policy::PaidRoutingInput};
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_schema::{catalog_store, selection::ProviderSelection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -514,7 +514,7 @@ async fn route_current<S: AuthorityStore, I: TokenSource>(
             PaidSyntheticHop::Openlux => PaidProvider::Metered,
         }]
     });
-    let plan = policy::resolve_paid_route(&PaidRoutingInput {
+    let plan = gateway_provider_policy::policy::resolve_paid_route(&PaidRoutingInput {
         model: request.model.clone(),
         endpoint_type: endpoint.to_owned(),
         request_uses_tools: source::member(&context.body, "tools")

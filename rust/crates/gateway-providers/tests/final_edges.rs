@@ -1,6 +1,8 @@
 //! Additional source boundaries: dc6be2c3 Cerebras and e706 Claude/Lithos/stream contracts.
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::{request::prepare_request, response::decode_response, types::*};
+use gateway_providers::request::prepare_request;
+use gateway_provider_response::response::decode_response;
+use gateway_provider_protocol::types::*;
 use serde_json::{Value, json};
 fn opts() -> PrepareOptions {
     PrepareOptions {
@@ -103,14 +105,14 @@ fn lithos_header_precedence_and_streamed_final_refusal_stay_in_band() {
         ("retry-after".into(), "2".into()),
         ("x-ratelimit-reset-tokens".into(), "1m30s".into()),
     ]);
-    let wait = gateway_providers::lithos::rate_limit_wait(&headers, 0.0, |_| None).unwrap();
+    let wait = gateway_provider_policy::lithos::rate_limit_wait(&headers, 0.0, |_| None).unwrap();
     assert_eq!(wait.wait_ms, 250.0);
     let headers = Headers::from([
         ("x-ratelimit-reset-tokens".into(), "3.23s".into()),
         ("x-ratelimit-reset-requests".into(), "250ms".into()),
     ]);
     assert_eq!(
-        gateway_providers::lithos::rate_limit_wait(&headers, 0.0, |_| None)
+        gateway_provider_policy::lithos::rate_limit_wait(&headers, 0.0, |_| None)
             .unwrap()
             .wait_ms,
         3230.0
@@ -154,11 +156,11 @@ fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() {
         ),
     ] {
         let prepared = prepare_request(UpstreamProvider::Lithos, surface, &body, &opts()).unwrap();
-        assert!(gateway_providers::sse::is_lithos_stream_refusal(
+        assert!(gateway_provider_stream::sse::is_lithos_stream_refusal(
             &prepared.decode,
             429
         ));
-        assert!(!gateway_providers::sse::is_lithos_stream_refusal(
+        assert!(!gateway_provider_stream::sse::is_lithos_stream_refusal(
             &prepared.decode,
             200
         ));
@@ -233,7 +235,7 @@ fn buffered_chat_retains_usage_without_requesting_a_stream_usage_chunk() {
 fn image_fanout_measures_every_replayed_input_byte() {
     let url = format!("https://example.test/{}", "x".repeat(14 * 1024 * 1024));
     assert!(
-        gateway_providers::extras::prepare_image(
+        gateway_provider_images::extras::prepare_image(
             &json!({"prompt":"edit","images":[{"image_url":url}],"n":4}),
             "gpt-fixture",
             true,

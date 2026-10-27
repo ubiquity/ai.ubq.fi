@@ -810,7 +810,7 @@ fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
         body: SourceJson::from_serializable(
             &json!({"model":model,"input":"controlled fixture","stream":false,"tools":[]}),
         )?,
-        surface: gateway_providers::types::ClientSurface::Responses,
+        surface: gateway_provider_protocol::types::ClientSurface::Responses,
         synthetic_hop: None,
     })
 }

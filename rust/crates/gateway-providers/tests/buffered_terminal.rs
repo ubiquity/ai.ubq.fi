@@ -1,5 +1,7 @@
 use gateway_core::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
-use gateway_providers::{response, response::decode_response, source_tools::ToolMap, types::*};
+use gateway_provider_response::{response, response::decode_response};
+use gateway_provider_tool_grammar::source_tools::ToolMap;
+use gateway_provider_protocol::types::*;
 use serde_json::{Value, json};
 
 fn plan(stream: bool) -> DecodePlan {
@@ -153,7 +155,7 @@ fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
     let terminal = completed();
     for stream in [false, true] {
         let plan = plan(stream);
-        assert!(response::is_event_stream(
+        assert!(gateway_provider_stream::response::is_event_stream(
             plan.provider,
             200,
             &Headers::new()
@@ -207,7 +209,7 @@ fn absent_codex_media_type_never_accepts_non_sse_or_missing_terminal_as_completi
 #[test]
 fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
     for status in [199, 300, 400, 403, 429, 500] {
-        assert!(!response::is_event_stream(
+        assert!(!gateway_provider_stream::response::is_event_stream(
             UpstreamProvider::ChatgptCodex,
             status,
             &Headers::new()
@@ -218,10 +220,10 @@ fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
         UpstreamProvider::Surplus,
         UpstreamProvider::Cerebras,
     ] {
-        assert!(!response::is_event_stream(provider, 200, &Headers::new()));
+        assert!(!gateway_provider_stream::response::is_event_stream(provider, 200, &Headers::new()));
     }
     let json_headers = Headers::from([("Content-Type".into(), "application/json".into())]);
-    assert!(!response::is_event_stream(
+    assert!(!gateway_provider_stream::response::is_event_stream(
         UpstreamProvider::ChatgptCodex,
         200,
         &json_headers

@@ -2,10 +2,8 @@
 use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_providers::types::{
-    ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, OrdinaryPhaseOptions,
-    OrdinaryPreparationContext, PreparedClaudeBody, PreparedClaudeOrdinary,
-};
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::OrdinaryPhaseOptions, types::PreparedClaudeBody, types::PreparedClaudeOrdinary};
+use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
 use gateway_schema::{catalog::RequestModelMetadata, reasoning::ModelReasoning};
 use serde_json::json;
 fn raw(text: &str) -> SourceJson {
@@ -84,7 +82,7 @@ fn effective_omitted_default_is_observed_before_capabilities_and_finalized_once(
     assert_eq!(prepared.decode().request, original);
     let output = source::member(prepared.body(), "output_config").unwrap();
     assert_eq!(
-        source::string(&source::member(&output, "effort").unwrap()),
+        gateway_provider_source::source::string(&source::member(&output, "effort").unwrap()),
         Some("medium".into())
     );
     assert!(source::member(&prepared.decode().request, "reasoning").is_none());
@@ -115,7 +113,7 @@ fn original_high_only_catalog_remains_an_explicit_default_medium_negative() {
     assert_eq!(error.status, 400);
     let fields = source::member(error.body(), "error").unwrap();
     assert_eq!(
-        source::string(&source::member(&fields, "param").unwrap()),
+        gateway_provider_source::source::string(&source::member(&fields, "param").unwrap()),
         Some("reasoning".into())
     );
 }
@@ -188,7 +186,7 @@ fn absent_effort_and_opaque_mapped_default_retain_exact_source_data() {
     let prepared = PreparedClaudeBody::from_ordinary(phase, &original, &observed).unwrap();
     let output = source::member(prepared.body(), "output_config").unwrap();
     assert_eq!(
-        source::string(&source::member(&output, "effort").unwrap()),
+        gateway_provider_source::source::string(&source::member(&output, "effort").unwrap()),
         Some(effort)
     );
 }
@@ -222,13 +220,13 @@ fn source_input_cache_reasoning_priority_finishes_before_any_capability_input() 
         .unwrap_err();
         let fields = source::member(error.body(), "error").unwrap();
         assert_eq!(
-            source::string(&source::member(&fields, "message").unwrap()),
+            gateway_provider_source::source::string(&source::member(&fields, "message").unwrap()),
             Some(message.into())
         );
         assert_eq!(
             source::member(&fields, "param")
                 .as_ref()
-                .and_then(source::string),
+                .and_then(gateway_provider_source::source::string),
             param.map(JsString16::from_utf8)
         );
     }
@@ -295,16 +293,16 @@ fn cloned_phase_retries_keep_one_normalized_outcome_and_actual_selected_kind() {
         assert_eq!(prepared.decode().upstream_model, *phase.model());
         let output = source::member(prepared.body(), "output_config").unwrap();
         assert_eq!(
-            source::string(&source::member(&output, "effort").unwrap()),
+            gateway_provider_source::source::string(&source::member(&output, "effort").unwrap()),
             Some("medium".into())
         );
         let system = source::member(prepared.body(), "system");
         if kind == ClaudeCredentialKind::Oauth {
-            let blocks = source::array(&system.unwrap()).unwrap();
+            let blocks = gateway_core::source_serialization::array(&system.unwrap()).unwrap();
             assert_eq!(blocks.len(), 1);
             assert_eq!(
-                source::string(&source::member(&blocks[0], "text").unwrap()),
-                Some(gateway_providers::finalize::CLAUDE_ATTRIBUTION.into())
+                gateway_provider_source::source::string(&source::member(&blocks[0], "text").unwrap()),
+                Some(gateway_provider_claude_body::finalize::CLAUDE_ATTRIBUTION.into())
             );
         } else {
             assert!(system.is_none());

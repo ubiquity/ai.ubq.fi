@@ -9,7 +9,7 @@ use gateway_core::{
     source_serialization as source,
 };
 use gateway_local_refusal::routing_error::SourceRefusalBody;
-use gateway_providers::policy::HopFailure;
+use gateway_provider_policy::policy::HopFailure;
 use gateway_routing_runtime::{
     classify, policy, session::RoutingSession, settlement::recover_pending, types::AttemptFailure,
     types::AttemptUsage, types::PreparedAttempt, types::PreparedWireRequest,
@@ -334,7 +334,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
         let reservation = first.paid.as_ref().ok_or("missing paid reservation")?;
         assert_eq!(
             reservation.attempt_id.0,
-            gateway_providers::policy::paid_hop_identity(
+            gateway_provider_policy::policy::paid_hop_identity(
                 "synthetic-paid",
                 gateway_core::provider::PaidProvider::Surplus
             )
@@ -651,16 +651,16 @@ fn complete() -> TransportObservation {
 #[test]
 fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() -> TestResult {
     assert_eq!(
-        policy::endpoint(gateway_providers::types::ClientSurface::Responses),
+        policy::endpoint(gateway_provider_protocol::types::ClientSurface::Responses),
         "openai-response"
     );
     assert_eq!(
-        policy::endpoint(gateway_providers::types::ClientSurface::Chat),
+        policy::endpoint(gateway_provider_protocol::types::ClientSurface::Chat),
         "openai"
     );
     let raw = json!({"model":"gpt-5.6-sol","input":"source fixture","reasoning":{"effort":"none"}});
-    let options = gateway_providers::types::PrepareOptions {
-        auth: gateway_providers::types::AuthMaterial {
+    let options = gateway_provider_protocol::types::PrepareOptions {
+        auth: gateway_provider_protocol::types::AuthMaterial {
             secret: "fixture".into(),
             ..Default::default()
         },
@@ -668,7 +668,7 @@ fn paid_capability_endpoint_and_logical_model_stay_separate_from_wire_alias() ->
     };
     let prepared = gateway_providers::request::prepare_request(
         UpstreamProvider::Metered,
-        gateway_providers::types::ClientSurface::Responses,
+        gateway_provider_protocol::types::ClientSurface::Responses,
         &raw,
         &options,
     )?;
@@ -718,7 +718,7 @@ fn source_availability_gate_preserves_full_compact_paid_and_reserve_cases() -> T
         &json!({"id":"paid-model","supported_endpoint_types":["openai"],"input_price_per_token":0.001,"output_price_per_token":0.002}),
     )];
     assert!(source_plan(&paid).is_err_and(|error| error.error.status == 404));
-    paid.surface = gateway_providers::types::ClientSurface::Chat;
+    paid.surface = gateway_provider_protocol::types::ClientSurface::Chat;
     // Keep the model/content/control intent in the actual Chat envelope.
     paid.raw = fixture(&json!({
         "model":"paid-model",
@@ -744,8 +744,8 @@ fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
     for case in golden["statuses"].as_array().unwrap() {
         let status = case["status"].as_u64().unwrap() as u16;
         let actual =
-            gateway_providers::policy::deepseek_decision(HopFailure::Status(status), false)
-                == gateway_providers::policy::HopDecision::Advance;
+            gateway_provider_policy::policy::deepseek_decision(HopFailure::Status(status), false)
+                == gateway_provider_policy::policy::HopDecision::Advance;
         assert_eq!(actual, case["expected"] == true);
     }
     for case in golden["quota"].as_array().unwrap() {
@@ -1166,7 +1166,7 @@ fn source_deepseek_extension_uses_one_captured_route_selection() -> TestResult {
         let store = Store::new();
         seed_key(&store);
         let mut request = input("captured-selection", "deepseek-flash", &["deepseek"]);
-        request.surface = gateway_providers::types::ClientSurface::Chat;
+        request.surface = gateway_provider_protocol::types::ClientSurface::Chat;
         request.raw = fixture(
             &json!({"model":"deepseek-flash","messages":[{"role":"user","content":"fixture"}],"thinking":{"type":"disabled"}}),
         );

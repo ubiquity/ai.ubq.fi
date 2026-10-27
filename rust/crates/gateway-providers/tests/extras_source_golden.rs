@@ -1,7 +1,8 @@
 //! Golden cases from src/embeddings/voyage.ts, src/images.ts and
 //! src/systemone/handlers.ts at 1b7b9737; no live provider calls.
 use gateway_core::error::GatewayError;
-use gateway_providers::{extras, types::PrepareOptions};
+use gateway_provider_services::extras;
+use gateway_provider_protocol::types::PrepareOptions;
 use serde_json::{Value, json};
 
 fn error(error: GatewayError, message: &str, code: &str, param: Option<Option<&str>>) {
@@ -23,14 +24,14 @@ fn embeddings_model_is_mandatory_and_never_trimmed_into_a_different_model() {
         json!({"input":"x","model":"\u{feff} "}),
     ] {
         error(
-            extras::parse_embeddings(&value, false).unwrap_err(),
+            gateway_provider_services::extras::parse_embeddings(&value, false).unwrap_err(),
             "model is required and must be a non-empty string",
             "invalid_request_error",
             Some(Some("model")),
         );
     }
     error(
-        extras::parse_embeddings(&json!({"model":" voyage-4-large","input":"x"}), false)
+        gateway_provider_services::extras::parse_embeddings(&json!({"model":" voyage-4-large","input":"x"}), false)
             .unwrap_err(),
         "Unsupported embedding model:  voyage-4-large",
         "model_not_found",
@@ -104,13 +105,13 @@ fn embeddings_scalar_errors_and_precedence_match_source() {
             .unwrap()
             .extend(fields.as_object().unwrap().clone());
         error(
-            extras::parse_embeddings(&value, false).unwrap_err(),
+            gateway_provider_services::extras::parse_embeddings(&value, false).unwrap_err(),
             message,
             "invalid_request_error",
             param,
         );
     }
-    let accepted = extras::parse_embeddings(
+    let accepted = gateway_provider_services::extras::parse_embeddings(
         &json!({"model":"voyage-4-large","input":"","dimensions":256.0,"user":null}),
         false,
     )
@@ -130,13 +131,13 @@ fn embeddings_scalar_errors_and_precedence_match_source() {
 #[test]
 fn embeddings_job_requires_input_type_and_float_format() {
     error(
-        extras::parse_embeddings(&json!({"model":"voyage-4-large","input":"x"}), true).unwrap_err(),
+        gateway_provider_services::extras::parse_embeddings(&json!({"model":"voyage-4-large","input":"x"}), true).unwrap_err(),
         "input_type is required and must be one of: \"query\", \"document\"",
         "invalid_request_error",
         Some(Some("input_type")),
     );
     error(
-        extras::parse_embeddings(
+        gateway_provider_services::extras::parse_embeddings(
             &json!({"model":"voyage-4-large","input":"x","encoding_format":"base64"}),
             true,
         )
@@ -146,7 +147,7 @@ fn embeddings_job_requires_input_type_and_float_format() {
         Some(Some("encoding_format")),
     );
     error(
-        extras::parse_embeddings(
+        gateway_provider_services::extras::parse_embeddings(
             &json!({"model":"voyage-4-large","input":"x","user":null}),
             true,
         )
@@ -160,7 +161,7 @@ fn embeddings_job_requires_input_type_and_float_format() {
 #[test]
 fn embeddings_limits_use_utf16_characters_and_utf8_token_estimates() {
     error(
-        extras::parse_embeddings(
+        gateway_provider_services::extras::parse_embeddings(
             &json!({"model":"voyage-4-large","input":vec!["x";129]}),
             false,
         )
@@ -170,7 +171,7 @@ fn embeddings_limits_use_utf16_characters_and_utf8_token_estimates() {
         Some(Some("input")),
     );
     error(
-        extras::parse_embeddings(
+        gateway_provider_services::extras::parse_embeddings(
             &json!({"model":"voyage-4-large","input":"😀".repeat(10_001)}),
             false,
         )
@@ -180,7 +181,7 @@ fn embeddings_limits_use_utf16_characters_and_utf8_token_estimates() {
         Some(Some("input")),
     );
     error(
-        extras::parse_embeddings(
+        gateway_provider_services::extras::parse_embeddings(
             &json!({"model":"voyage-4-large","input":vec!["x".repeat(20_000);6]}),
             false,
         )
@@ -190,7 +191,7 @@ fn embeddings_limits_use_utf16_characters_and_utf8_token_estimates() {
         Some(Some("input")),
     );
     error(
-        extras::parse_embeddings(
+        gateway_provider_services::extras::parse_embeddings(
             &json!({"model":"voyage-4-large","input":"界".repeat(20_000)}),
             false,
         )
@@ -209,7 +210,7 @@ fn image_reference_urls_preserve_source_case_normalization_and_url_validation() 
         "http:////example.com/a",
         "\u{feff} https://example.com/a \u{feff}",
     ] {
-        let result = extras::normalize_image_reference(&json!({"image_url":url}), false).unwrap();
+        let result = gateway_provider_images::extras::normalize_image_reference(&json!({"image_url":url}), false).unwrap();
         assert_eq!(
             result["image_url"],
             if url.starts_with('\u{feff}') {
@@ -229,7 +230,7 @@ fn image_reference_urls_preserve_source_case_normalization_and_url_validation() 
         json!({"image_url":"https://x/a","file_id":"x"}),
     ] {
         error(
-            extras::normalize_image_reference(&value, false).unwrap_err(),
+            gateway_provider_images::extras::normalize_image_reference(&value, false).unwrap_err(),
             "Each image must contain one image_url with a fully qualified HTTP(S) URL or supported base64 data URL; file_id is unsupported by this gateway.",
             "invalid_request_error",
             Some(Some("images")),
@@ -245,7 +246,7 @@ fn image_base64_uses_source_syntax_without_inventing_a_canonical_padding_rule() 
         "data:image/png;base64,AAAA",
     ] {
         let normalized =
-            extras::normalize_image_reference(&json!({"image_url":url}), false).unwrap();
+            gateway_provider_images::extras::normalize_image_reference(&json!({"image_url":url}), false).unwrap();
         assert!(
             normalized["image_url"]
                 .as_str()
@@ -264,12 +265,12 @@ fn image_base64_uses_source_syntax_without_inventing_a_canonical_padding_rule() 
         "data:image/gif;base64,AAAA",
     ] {
         assert!(
-            extras::normalize_image_reference(&json!({"image_url":url}), false).is_err(),
+            gateway_provider_images::extras::normalize_image_reference(&json!({"image_url":url}), false).is_err(),
             "{url}"
         );
     }
     assert!(
-        extras::normalize_image_reference(&json!({"image_url":"DATA:IMAGE/PNG;BASE64,AB=="}), true)
+        gateway_provider_images::extras::normalize_image_reference(&json!({"image_url":"DATA:IMAGE/PNG;BASE64,AB=="}), true)
             .is_ok()
     );
     for url in [
@@ -277,7 +278,7 @@ fn image_base64_uses_source_syntax_without_inventing_a_canonical_padding_rule() 
         "data:image/jpeg;base64,AAAA",
     ] {
         let failure =
-            extras::normalize_image_reference(&json!({"image_url":url}), true).unwrap_err();
+            gateway_provider_images::extras::normalize_image_reference(&json!({"image_url":url}), true).unwrap_err();
         assert_eq!(failure.envelope.error.param, Some(Some("mask".to_owned())));
     }
 }
@@ -285,7 +286,7 @@ fn image_base64_uses_source_syntax_without_inventing_a_canonical_padding_rule() 
 #[test]
 fn image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_disappear() {
     error(
-        extras::prepare_image(
+        gateway_provider_images::extras::prepare_image(
             &json!({"prompt":"x","input_fidelity":null}),
             "gpt-base",
             false,
@@ -297,7 +298,7 @@ fn image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_
         Some(Some("input_fidelity")),
     );
     error(
-        extras::prepare_image(
+        gateway_provider_images::extras::prepare_image(
             &json!({"prompt":"x","style":null}),
             "gpt-base",
             true,
@@ -308,7 +309,7 @@ fn image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_
         "invalid_request_error",
         Some(Some("style")),
     );
-    let plan = extras::prepare_image(
+    let plan = gateway_provider_images::extras::prepare_image(
         &json!({"prompt":"x","quality":null,"style":null,"n":1.0,"output_compression":50.0}),
         "gpt-base",
         false,
@@ -322,7 +323,7 @@ fn image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_
             .is_none()
     );
     error(
-        extras::prepare_image(&Value::Null, "gpt-base", false, "request").unwrap_err(),
+        gateway_provider_images::extras::prepare_image(&Value::Null, "gpt-base", false, "request").unwrap_err(),
         "Image requests must use an object body.",
         "invalid_request_error",
         Some(None),
@@ -332,7 +333,7 @@ fn image_unknown_null_fields_fail_before_scalar_validation_and_nullable_options_
 #[test]
 fn image_scalar_error_order_and_child_identity_follow_source() {
     error(
-        extras::prepare_image(
+        gateway_provider_images::extras::prepare_image(
             &json!({"prompt":"x","quality":"bad","output_compression":101}),
             "gpt-base",
             false,
@@ -344,7 +345,7 @@ fn image_scalar_error_order_and_child_identity_follow_source() {
         Some(Some("output_compression")),
     );
     error(
-        extras::prepare_image(
+        gateway_provider_images::extras::prepare_image(
             &json!({"prompt":"x","quality":"bad","size":""}),
             "gpt-base",
             true,
@@ -355,7 +356,7 @@ fn image_scalar_error_order_and_child_identity_follow_source() {
         "invalid_request_error",
         Some(Some("size")),
     );
-    let plan = extras::prepare_image(
+    let plan = gateway_provider_images::extras::prepare_image(
         &json!({"prompt":"😀".repeat(32_000),"n":3}),
         "gpt-base",
         false,
@@ -376,11 +377,11 @@ fn image_scalar_error_order_and_child_identity_follow_source() {
 #[test]
 fn systemone_default_and_exact_error_envelopes_follow_source() {
     let request = json!({"state":{},"questions":{"go":{"type":"noul"}}});
-    let prepared = extras::prepare_systemone(&request, &PrepareOptions::default()).unwrap();
+    let prepared = gateway_provider_services::extras::prepare_systemone(&request, &PrepareOptions::default()).unwrap();
     assert_eq!(scalar(&prepared.body)["model"], "~typesafe/jev-latest");
     for value in [Value::Null, json!([])] {
         error(
-            extras::prepare_systemone(&value, &PrepareOptions::default()).unwrap_err(),
+            gateway_provider_services::extras::prepare_systemone(&value, &PrepareOptions::default()).unwrap_err(),
             "Invalid JSON body",
             "invalid_request_error",
             None,
@@ -389,19 +390,19 @@ fn systemone_default_and_exact_error_envelopes_follow_source() {
     let mut invalid = request.clone();
     invalid["model"] = json!("other/model");
     error(
-        extras::prepare_systemone(&invalid, &PrepareOptions::default()).unwrap_err(),
+        gateway_provider_services::extras::prepare_systemone(&invalid, &PrepareOptions::default()).unwrap_err(),
         "model must be a typesafe model id",
         "invalid_request_error",
         None,
     );
     invalid["model"] = Value::Null;
     error(
-        extras::prepare_systemone(&invalid, &PrepareOptions::default()).unwrap_err(),
+        gateway_provider_services::extras::prepare_systemone(&invalid, &PrepareOptions::default()).unwrap_err(),
         "model must be a string",
         "invalid_request_error",
         None,
     );
-    let failure = extras::decode_systemone(&json!({"answers":null})).unwrap_err();
+    let failure = gateway_provider_services::extras::decode_systemone(&json!({"answers":null})).unwrap_err();
     assert_eq!(failure.status, 502);
     assert_eq!(failure.envelope.error.error_type, "invalid_request_error");
 }
@@ -409,29 +410,29 @@ fn systemone_default_and_exact_error_envelopes_follow_source() {
 #[test]
 fn opaque_image_parse_precedes_host_model_resolution_and_keeps_operation_kind() -> Result<(), String>
 {
-    let parsed = extras::parse_image(&json!({"prompt":"image","n":2}), false)
+    let parsed = gateway_provider_images::extras::parse_image(&json!({"prompt":"image","n":2}), false)
         .map_err(|error| format!("{error:?}"))?;
     assert_eq!(parsed.count(), 2);
-    let plan = extras::image::prepare_parsed_image(&parsed, &"host".into(), "original");
+    let plan = gateway_provider_images::extras::image::prepare_parsed_image(&parsed, &"host".into(), "original").map_err(|error| format!("{error:?}"))?;
     assert_eq!(
         scalar_source(&plan.responses)["tools"][0]["action"],
         "generate"
     );
-    assert!(extras::parse_image(&json!({"prompt":"image","n":0}), false).is_err());
+    assert!(gateway_provider_images::extras::parse_image(&json!({"prompt":"image","n":0}), false).is_err());
     Ok(())
 }
 
 #[test]
 fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validation()
 -> Result<(), String> {
-    let file = extras::MultipartFile {
+    let file = gateway_provider_images::extras::MultipartFile {
         name: "image".into(),
         filename: "image.png".into(),
         content_type: "image/png".into(),
         bytes: vec![1],
     };
-    let parsed = extras::parse_multipart_image(&json!({"prompt":"image","n":" 2 ","stream":"false","output_compression":"1e2","response_format":"b64_json"}), std::slice::from_ref(&file)).map_err(|error| format!("{error:?}"))?;
-    let plan = extras::image::prepare_parsed_image(&parsed, &"host".into(), "original");
+    let parsed = gateway_provider_images::extras::parse_multipart_image(&json!({"prompt":"image","n":" 2 ","stream":"false","output_compression":"1e2","response_format":"b64_json"}), std::slice::from_ref(&file)).map_err(|error| format!("{error:?}"))?;
+    let plan = gateway_provider_images::extras::image::prepare_parsed_image(&parsed, &"host".into(), "original").map_err(|error| format!("{error:?}"))?;
     assert_eq!(plan.count, 2);
     assert_eq!(scalar_source(&plan.responses)["tools"][0]["action"], "edit");
     assert_eq!(
@@ -440,7 +441,7 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
     );
     for n in ["01", "1e0", "+1", "1.0"] {
         assert!(
-            extras::parse_multipart_image(
+            gateway_provider_images::extras::parse_multipart_image(
                 &json!({"prompt":"image","n":n}),
                 std::slice::from_ref(&file)
             )
@@ -448,7 +449,7 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
         );
     }
     error(
-        extras::parse_multipart_image(&json!({"prompt":"image","n":"0"}), &[])
+        gateway_provider_images::extras::parse_multipart_image(&json!({"prompt":"image","n":"0"}), &[])
             .err()
             .ok_or("expected source rejection")?,
         "n must be an integer from 1 to 10.",
@@ -456,7 +457,7 @@ fn multipart_scalar_strings_follow_source_grammar_and_fail_before_file_validatio
         Some(Some("n")),
     );
     error(
-        extras::parse_multipart_image(&json!({"prompt":"image","moderation":"auto"}), &[])
+        gateway_provider_images::extras::parse_multipart_image(&json!({"prompt":"image","moderation":"auto"}), &[])
             .err()
             .ok_or("expected source rejection")?,
         "Unsupported image edit field: moderation.",

@@ -14,6 +14,15 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-provider-events.workspace = true
+gateway-provider-stream.workspace = true
+gateway-provider-source.workspace = true
+gateway-provider-response.workspace = true
+gateway-provider-replay.workspace = true
+gateway-provider-protocol.workspace = true
+gateway-provider-policy.workspace = true
+gateway-provider-images.workspace = true
+gateway-provider-claude-body.workspace = true
 gateway-local-refusal.workspace = true
 gateway-decision-protocol.workspace = true
 gateway-extras-contract.workspace = true

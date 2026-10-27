@@ -15,9 +15,10 @@ use crate::{
 use gateway_admission::handoff::{Pending, enqueue};
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use gateway_local_refusal::routing_error::RoutingError;
-use gateway_providers::response::decode_response;
-use gateway_providers::types::Headers;
-use gateway_providers::types::{DecodePlan, ProviderEvent};
+use gateway_provider_response::response::decode_response;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_protocol::types::DecodePlan;
+use gateway_provider_events::event::ProviderEvent;
 use gateway_routing_runtime::types::PreparedWireRequest;
 use gateway_routing_runtime::{
     types::AttemptFailure, types::FailureOrigin, types::RefusalDecision, types::TransportState,
@@ -78,7 +79,7 @@ impl Selected {
         attempt: gateway_routing_runtime::types::PreparedAttempt,
     ) -> Self {
         let headers = upstream.headers().entries().collect::<Headers>();
-        let plan = gateway_providers::response::response_plan(attempt.request.decode(), &headers);
+        let plan = gateway_provider_protocol::response::response_plan(attempt.request.decode(), &headers);
         Self {
             upstream,
             attempt,
@@ -93,7 +94,7 @@ impl Selected {
         gateway_schema::aliases::is_synthetic(session.selected_model())
             && self.attempt.paid.is_none()
             && self.attempt.request.stream()
-            && self.plan.surface == gateway_providers::types::ClientSurface::Responses
+            && self.plan.surface == gateway_provider_protocol::types::ClientSurface::Responses
             && matches!(
                 self.plan.provider,
                 UpstreamProvider::Lithos
@@ -101,7 +102,7 @@ impl Selected {
                     | UpstreamProvider::Openrouter
             )
             && self.upstream.status_code() < 400
-            && gateway_providers::response::is_event_stream(
+            && gateway_provider_stream::response::is_event_stream(
                 self.plan.provider,
                 self.upstream.status_code(),
                 &self.headers,
@@ -247,7 +248,7 @@ impl Reply<'_> {
                 self.responses,
                 self.provider,
             );
-            if gateway_providers::sse::is_lithos_stream_refusal(&self.decode_plan, self.status) {
+            if gateway_provider_stream::sse::is_lithos_stream_refusal(&self.decode_plan, self.status) {
                 return self.lithos_refusal().await;
             }
             if self.provider == UpstreamProvider::Cerebras {
@@ -404,7 +405,7 @@ impl Reply<'_> {
         set_header(
             &mut response,
             "x-uos-upstream",
-            gateway_providers::policy::direct_provider_label(self.provider),
+            gateway_provider_source::policy::direct_provider_label(self.provider),
         )?;
         provider_correlation(&mut response, self.provider, &self.headers)?;
         apply_warnings(&mut response, self.prepared.warnings())?;
@@ -678,7 +679,7 @@ impl super::Inference<'_> {
                                 body: Vec::new(),
                                 body_complete: false,
                                 failure:
-                                    gateway_providers::policy::HopFailure::StreamBeforeSemantic,
+                                    gateway_provider_policy::policy::HopFailure::StreamBeforeSemantic,
                                 transport: TransportState::Started,
                                 semantic_committed: false,
                                 cancelled: self.host.cancellation.signal().aborted(),

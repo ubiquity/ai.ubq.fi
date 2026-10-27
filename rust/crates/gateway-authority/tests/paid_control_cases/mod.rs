@@ -1,7 +1,7 @@
 use super::*;
 use gateway_authority::paid_control::*;
 use gateway_core::state::{AtomicTransition, RecordKey, RecordMutation, RevisionCheck};
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use serde_json::{Value, json};
 
 pub fn seed_source<T: serde::Serialize + ?Sized>(store: &MemoryStore, key: RecordKey, value: &T) {

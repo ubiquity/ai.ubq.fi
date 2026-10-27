@@ -4,10 +4,8 @@ use gateway_core::{
     source_json::SourceJson,
 };
 use gateway_local_refusal::source_error::SourceRequestError;
-use gateway_providers::{
-    extras::MultipartFile,
-    types::{PrepareOptions, PreparedRequest},
-};
+use gateway_provider_images::extras::MultipartFile;
+use gateway_provider_protocol::{types::PrepareOptions, types::PreparedRequest};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
@@ -79,13 +77,13 @@ impl PreparedCall {
     ) -> Result<Self, SourceRequestError> {
         let prepared = match provider {
             ExtrasProvider::Voyage => {
-                gateway_providers::extras::prepare_source_embeddings(body, options)?
+                gateway_provider_services::extras::prepare_source_embeddings(body, options)?
             }
             ExtrasProvider::SystemOne => {
-                gateway_providers::extras::prepare_source_systemone(body, options)?
+                gateway_provider_services::extras::prepare_source_systemone(body, options)?
             }
             ExtrasProvider::Decisions => {
-                gateway_providers::extras::prepare_source_decisions(body, options)?
+                gateway_provider_services::extras::prepare_source_decisions(body, options)?
             }
         };
         Ok(Self {

@@ -1,5 +1,5 @@
 //! Exact SSE blank-line framing across every source byte boundary.
-use gateway_providers::sse::SseParser;
+use gateway_provider_events::framing::SseParser;
 
 #[test]
 fn mixed_line_endings_frame_every_byte_split_without_merging_events() {

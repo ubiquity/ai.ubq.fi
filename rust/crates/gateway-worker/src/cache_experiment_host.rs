@@ -25,7 +25,8 @@ use gateway_observability::{
     ObservabilityRuntime,
     types::{HealthEvent, HealthTarget, ObservabilityHost},
 };
-use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_provider_stream::sse::MAX_RESPONSES_EVENT_BYTES;
+use gateway_provider_events::framing::SseParser;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
 use worker::{Method, Response};
 

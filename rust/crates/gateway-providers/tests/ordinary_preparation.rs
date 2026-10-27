@@ -3,10 +3,8 @@ use gateway_core::{
     provider::UpstreamProvider, source_json::SourceJson, source_serialization as source,
 };
 use gateway_local_refusal::source_error::SourceRequestError;
-use gateway_providers::{
-    source_request::prepare_source_request,
-    types::{AuthMaterial, ClientSurface, OrdinaryPreparationContext, PrepareOptions},
-};
+use gateway_providers::source_request::prepare_source_request;
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::OrdinaryPreparationContext, types::PrepareOptions};
 use gateway_schema::{catalog::RequestModelMetadata, reasoning::ModelReasoning};
 use serde_json::{Value, json};
 fn parse(raw: &str) -> SourceJson {

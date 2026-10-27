@@ -13,7 +13,7 @@ use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
     source_serialization as source, state::RevisionCheck,
 };
-use gateway_providers::types::{Headers, PrepareOptions};
+use gateway_provider_protocol::{types::Headers, types::PrepareOptions};
 use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
 use serde::Serialize;
 use std::{cmp::Ordering, future::Future};

@@ -1,26 +1,26 @@
 //! Exact source forwarding seams, not an aggregate request tokenizer or runtime dispatch proof.
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::{
-    chat,
-    request::prepare_request,
-    types::{AuthMaterial, ChatProfile, ClientSurface, PrepareOptions},
-};
+use gateway_providers::{chat, request::prepare_request};
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
+use gateway_provider_source::types::ChatProfile;
 use serde_json::{Value, json};
 
 fn golden() -> Value {
-    serde_json::from_str(include_str!("fixtures/forwarding-unicode-source-v1.json")).unwrap()
+    let source = include_str!("fixtures/forwarding-unicode-source-v1.json");
+    assert!(source.contains("deepseek-forwarded-payload/v1"));
+    serde_json::from_str(&source.replace("deepseek-forwarded-payload/v1", gateway_prompt_policy::payload::VERSION)).unwrap()
 }
 fn with_emoji(prefix: String) -> String {
     let length = prefix.encode_utf16().count();
-    prefix + "😀" + &"a".repeat(chat::FORWARD_LIMIT + 1024 - length - 2)
+    prefix + "😀" + &"a".repeat(gateway_prompt_policy::payload::PER_MESSAGE_LIMIT + 1024 - length - 2)
 }
 fn input(index: usize) -> String {
     match index {
-        0 => with_emoji("a".repeat(chat::FORWARD_LIMIT - 1)),
+        0 => with_emoji("a".repeat(gateway_prompt_policy::payload::PER_MESSAGE_LIMIT - 1)),
         1 => with_emoji("é".repeat(10_000) + &"a".repeat(43_082)),
         2 => with_emoji("é".repeat(6_552) + &"a".repeat(46_530)),
-        3 => "a".repeat(chat::FORWARD_LIMIT + 1024),
-        4 => "é".repeat(chat::FORWARD_LIMIT + 1024),
+        3 => "a".repeat(gateway_prompt_policy::payload::PER_MESSAGE_LIMIT + 1024),
+        4 => "é".repeat(gateway_prompt_policy::payload::PER_MESSAGE_LIMIT + 1024),
         _ => panic!("unknown frozen source seam"),
     }
 }
@@ -37,7 +37,7 @@ fn request(text: &str, truncation: Option<&str>) -> Value {
 
 #[test]
 fn source_bmp_prefix_is_exactly_31343_code_units() {
-    let result = chat::project_responses(
+    let result = gateway_providers::chat::project_responses(
         &request(&input(4), None),
         "deepseek-flash",
         false,
@@ -55,8 +55,8 @@ fn source_bmp_prefix_is_exactly_31343_code_units() {
 #[test]
 fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
     let golden = golden();
-    assert_eq!(golden["policy"]["version"], chat::FORWARD_VERSION);
-    assert_eq!(golden["policy"]["perMessageLimit"], chat::FORWARD_LIMIT);
+    assert_eq!(golden["policy"]["version"], gateway_prompt_policy::payload::VERSION);
+    assert_eq!(golden["policy"]["perMessageLimit"], gateway_prompt_policy::payload::PER_MESSAGE_LIMIT);
     let cases = golden["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 5);
     for (index, case) in cases.iter().enumerate() {
@@ -74,7 +74,7 @@ fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
                 let raw = request(&text, truncation);
                 let before = raw.clone();
                 let result =
-                    chat::project_responses(&raw, "deepseek-flash", false, profile).unwrap();
+                    gateway_providers::chat::project_responses(&raw, "deepseek-flash", false, profile).unwrap();
                 let body = scalar(&result.body);
                 let tool = body["messages"].as_array().unwrap().last().unwrap();
                 assert_eq!(tool["role"], "tool");
@@ -86,7 +86,7 @@ fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
                     case["name"]
                 );
                 assert_eq!(raw, before, "projection must not mutate replay history");
-                assert!(expected.len() <= chat::FORWARD_LIMIT);
+                assert!(expected.len() <= gateway_prompt_policy::payload::PER_MESSAGE_LIMIT);
                 assert!(text.starts_with(&head));
                 assert_eq!(result.elisions.len(), 1);
                 let actual = &result.elisions[0];
@@ -124,7 +124,7 @@ fn in_budget_unicode_is_verbatim_for_every_reduction_setting() {
     for truncation in [None, Some("auto"), Some("disabled")] {
         let raw = request(&text, truncation);
         let result =
-            chat::project_responses(&raw, "deepseek-flash", false, ChatProfile::Deepseek).unwrap();
+            gateway_providers::chat::project_responses(&raw, "deepseek-flash", false, ChatProfile::Deepseek).unwrap();
         assert_eq!(
             scalar(&result.body)["messages"]
                 .as_array()
@@ -152,7 +152,7 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
         (UpstreamProvider::Deepseek, "deepseek-flash"),
         (
             UpstreamProvider::Lithos,
-            gateway_providers::request::LITHOS_MODELS[0],
+            gateway_provider_policy::request::LITHOS_MODELS[0],
         ),
     ] {
         let mut current = raw.clone();

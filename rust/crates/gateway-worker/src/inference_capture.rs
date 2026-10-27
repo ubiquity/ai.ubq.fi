@@ -20,9 +20,8 @@ use gateway_observability::{
     replay_producer::{ClientFailureObservation, FailureObservation, should_persist},
     replay_trace::{AttemptTrace, TraceProvider, TraceRecorder, TraceTerminal},
 };
-use gateway_providers::sse::{
-    MAX_CHAT_EVENT_BYTES, MAX_RESPONSES_EVENT_BYTES, SseFrame, SseParser,
-};
+use gateway_provider_stream::{sse::MAX_CHAT_EVENT_BYTES, sse::MAX_RESPONSES_EVENT_BYTES};
+use gateway_provider_events::{framing::SseFrame, framing::SseParser};
 use std::{
     cell::{Cell, RefCell},
     pin::Pin,
@@ -340,7 +339,7 @@ impl Capture {
     }
     pub fn start(&self, provider: UpstreamProvider) -> Option<AttemptTrace> {
         self.client.borrow_mut().provider =
-            gateway_providers::policy::direct_provider_label(provider).into();
+            gateway_provider_source::policy::direct_provider_label(provider).into();
         let provider = match provider {
             UpstreamProvider::ChatgptCodex => TraceProvider::ChatgptCodex,
             UpstreamProvider::Surplus => TraceProvider::Surplus,
@@ -393,7 +392,7 @@ impl Capture {
         let mut client = self.client.borrow_mut();
         client.status = status;
         client.stream = stream;
-        client.provider = gateway_providers::policy::direct_provider_label(provider).into();
+        client.provider = gateway_provider_source::policy::direct_provider_label(provider).into();
         client.parser = stream.then(|| {
             SseParser::new(if responses {
                 MAX_RESPONSES_EVENT_BYTES

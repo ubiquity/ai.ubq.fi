@@ -1,9 +1,7 @@
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::{
-    chat,
-    request::prepare_request,
-    types::{AuthMaterial, ChatProfile, ClientSurface, PrepareOptions},
-};
+use gateway_providers::{chat, request::prepare_request};
+use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
+use gateway_provider_source::types::ChatProfile;
 use serde_json::{Value, json};
 
 fn options() -> PrepareOptions {
@@ -22,7 +20,7 @@ fn ba5ef_source_projection_vectors_match() {
         serde_json::from_str(include_str!("fixtures/source-currency-golden.json")).unwrap();
     for case in golden["cases"].as_array().unwrap() {
         let projection =
-            chat::project_responses(&case["raw"], "deepseek-flash", false, ChatProfile::Deepseek)
+            gateway_providers::chat::project_responses(&case["raw"], "deepseek-flash", false, ChatProfile::Deepseek)
                 .unwrap();
         let body = scalar(&projection.body);
         let observed = match case["select"].as_str().unwrap() {
@@ -91,7 +89,7 @@ fn prepared_provider_wire_keeps_source_sampling_warnings_and_zero() {
 
 #[test]
 fn lithos_tier_windows_use_same_case_and_trim_identity_as_dispatch() {
-    use gateway_providers::policy::{LithosWindows, lithos_ladder};
+    use gateway_provider_policy::{policy::LithosWindows, policy::lithos_ladder};
     assert_eq!(
         lithos_ladder(&"  DEEPSEEK-AI/deepseek-v4.1-flash-ULTRA ".into()),
         vec![

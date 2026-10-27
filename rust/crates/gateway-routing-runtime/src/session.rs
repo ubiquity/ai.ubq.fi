@@ -17,8 +17,8 @@ use gateway_core::{
     error::GatewayError, identity::ApiKeyId, model::ModelId, provider::UpstreamProvider,
     query::QueryStore,
 };
-use gateway_providers::policy::{LithosWindows, WaitBudget};
-use gateway_providers::types::PreparedClaudeOrdinary;
+use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
+use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
 use std::{cell::RefCell, collections::BTreeSet};
 
 pub struct RoutingSession<S, I, C, H> {

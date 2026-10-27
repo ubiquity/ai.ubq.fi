@@ -849,7 +849,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
- "gateway-providers",
+ "gateway-provider-protocol",
  "gateway-publication-policy",
  "serde",
  "serde_json",
@@ -979,7 +979,8 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-core",
- "gateway-providers",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "getrandom 0.4.3",
@@ -1012,7 +1013,7 @@ dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-local-refusal",
- "gateway-providers",
+ "gateway-provider-policy",
  "gateway-schema",
  "serde",
 ]
@@ -1028,7 +1029,8 @@ dependencies = [
  "gateway-core",
  "gateway-local-refusal",
  "gateway-native",
- "gateway-providers",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -1047,7 +1049,8 @@ dependencies = [
  "gateway-claude-runtime-test-support",
  "gateway-core",
  "gateway-profile-values",
- "gateway-providers",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
  "gateway-schema",
  "rusqlite",
  "serde",
@@ -1064,7 +1067,7 @@ dependencies = [
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
  "gateway-core",
- "gateway-providers",
+ "gateway-provider-protocol",
  "gateway-schema",
  "rusqlite",
  "serde_json",
@@ -1108,7 +1111,7 @@ dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",
- "gateway-providers",
+ "gateway-provider-services",
  "gateway-schema",
  "serde_json",
 ]
@@ -1120,7 +1123,9 @@ dependencies = [
  "gateway-auth",
  "gateway-core",
  "gateway-local-refusal",
- "gateway-providers",
+ "gateway-provider-images",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -1139,7 +1144,10 @@ dependencies = [
  "gateway-decision-runtime",
  "gateway-extras-contract",
  "gateway-extras-runtime-test-support",
- "gateway-providers",
+ "gateway-provider-images",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
+ "gateway-provider-source",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -1302,16 +1310,247 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway-providers"
+name = "gateway-provider-chat"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-chat-controls",
+ "gateway-provider-history",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-chat-controls"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-claude-body"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-chat",
+ "gateway-provider-input",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-collector"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-events"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-history"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-images"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-source",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "gateway-provider-input"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-chat-controls",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-schema",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-provider-events",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-replay"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-chat",
+ "gateway-provider-claude-body",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+]
+
+[[package]]
+name = "gateway-provider-response"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-decision-protocol",
+ "gateway-provider-collector",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-services",
+ "gateway-provider-source",
+ "gateway-provider-stream",
+ "gateway-provider-tool-grammar",
+ "gateway-provider-writer",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-services"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-local-refusal",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
  "gateway-schema",
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "gateway-provider-source"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-stream"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-collector",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-writer",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-tool-grammar"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-provider-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-provider-writer"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-source",
+ "gateway-provider-tool-grammar",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-providers"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-local-refusal",
+ "gateway-prompt-policy",
+ "gateway-provider-chat",
+ "gateway-provider-chat-controls",
+ "gateway-provider-claude-body",
+ "gateway-provider-collector",
+ "gateway-provider-events",
+ "gateway-provider-history",
+ "gateway-provider-images",
+ "gateway-provider-input",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-replay",
+ "gateway-provider-response",
+ "gateway-provider-services",
+ "gateway-provider-source",
+ "gateway-provider-stream",
+ "gateway-provider-tool-grammar",
+ "gateway-provider-writer",
+ "gateway-schema",
+ "serde_json",
 ]
 
 [[package]]
@@ -1397,6 +1636,11 @@ dependencies = [
  "gateway-decision-protocol",
  "gateway-extras-contract",
  "gateway-local-refusal",
+ "gateway-provider-claude-body",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-response",
+ "gateway-provider-stream",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -1411,7 +1655,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
- "gateway-providers",
+ "gateway-provider-protocol",
  "gateway-routing-runtime",
  "gateway-schema",
  "serde",
@@ -1460,6 +1704,15 @@ dependencies = [
  "gateway-observability",
  "gateway-observability-test-support",
  "gateway-profile-values",
+ "gateway-provider-claude-body",
+ "gateway-provider-events",
+ "gateway-provider-images",
+ "gateway-provider-policy",
+ "gateway-provider-protocol",
+ "gateway-provider-replay",
+ "gateway-provider-response",
+ "gateway-provider-source",
+ "gateway-provider-stream",
  "gateway-providers",
  "gateway-publication",
  "gateway-publication-policy",
@@ -1509,7 +1762,9 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-core",
- "gateway-providers",
+ "gateway-provider-events",
+ "gateway-provider-protocol",
+ "gateway-provider-stream",
  "serde_json",
  "worker",
 ]

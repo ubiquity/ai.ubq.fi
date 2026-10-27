@@ -133,3 +133,7 @@ impl SourceRequestError {
         }
     }
 }
+
+impl From<GatewayError> for SourceRequestError {
+    fn from(error: GatewayError) -> Self { Self::from_gateway(error) }
+}

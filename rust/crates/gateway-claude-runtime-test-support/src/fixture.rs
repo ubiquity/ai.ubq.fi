@@ -20,7 +20,7 @@ use gateway_core::js_string::JsString16;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
 };
-use gateway_providers::types::Headers;
+use gateway_provider_protocol::types::Headers;
 use gateway_schema::catalog::ProviderCatalog;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};

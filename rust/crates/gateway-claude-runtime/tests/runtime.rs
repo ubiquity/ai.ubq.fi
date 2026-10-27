@@ -10,7 +10,7 @@ use gateway_claude_runtime::host::{OutcomeDecision, PoolSelection, SelectionInpu
 use gateway_claude_runtime::persistence::{clear_guards, quota_key};
 use gateway_claude_runtime::pool::ClaudePoolSession;
 use gateway_claude_runtime::quota;
-use gateway_providers::types::Headers;
+use gateway_provider_protocol::types::Headers;
 use serde_json::{Value, json};
 
 #[test]
@@ -837,8 +837,8 @@ fn source_capability_options_preserve_actual_same_binding_scalar_auth() -> TestR
     let first = selected(&session, &store, &host, &raw);
     let binding = first.binding();
     let secret = binding.credential.secret.try_scalar_secret()?;
-    let base = gateway_providers::types::PrepareOptions {
-        auth: gateway_providers::types::AuthMaterial {
+    let base = gateway_provider_protocol::types::PrepareOptions {
+        auth: gateway_provider_protocol::types::AuthMaterial {
             secret: secret.expose().into(),
             api_key: binding.credential.kind == claude::CredentialKind::ApiKey,
             account_id: Some(binding.account_id.clone()),

@@ -16,7 +16,7 @@ use gateway_core::query::QueryStore;
 use gateway_core::{identity::PaidAttemptId, model::ModelId};
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 
 type SelectedHop = (
     UpstreamProvider,
@@ -66,7 +66,11 @@ impl<
                     .release_paid_before_transport(paid, self.now()?)
                     .await?;
             }
-            return retained.map(Some);
+            // A local aggregate refusal has no attempt capability and must never enter provider/paid classification.
+            return match retained {
+                Err(error) if error.is_local_aggregate_context_overflow() => Err(error),
+                result => result.map(Some),
+            };
         }
         Err(unavailable("Provider/account selection did not settle.").into())
     }
@@ -169,7 +173,7 @@ impl<
                     ClaudeSelection::InternalServerError => {
                         return Err(RoutingError::new(
                             Box::new(GatewayError::new(500, "Internal Server Error", None)),
-                            gateway_providers::types::Headers::from([(
+                            gateway_provider_protocol::types::Headers::from([(
                                 "Content-Type".into(),
                                 "text/plain; charset=utf-8".into(),
                             )]),
@@ -333,7 +337,7 @@ impl<
             )
         })?;
         let attempt_id = if synthetic {
-            gateway_providers::policy::paid_hop_identity(self.id(), provider)
+            gateway_provider_policy::policy::paid_hop_identity(self.id(), provider)
         } else {
             format!("{}:paid:{label}:{}", self.id(), self.tokens.next_token()?)
         };

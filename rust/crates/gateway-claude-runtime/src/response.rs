@@ -5,7 +5,7 @@ use crate::quota::{
 use gateway_core::{
     claude::ClaudeErrorEvidence as ErrorEvidence, js_string::JsString16, source_json::SourceJson,
 };
-use gateway_providers::types::Headers;
+use gateway_provider_protocol::types::Headers;
 use gateway_schema::util::js_trim;
 use serde_json::Value;
 use std::collections::BTreeMap;

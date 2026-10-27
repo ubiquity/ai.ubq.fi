@@ -11,7 +11,8 @@ use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson}
 use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ImageKind, UpstreamResponse,
 };
-use gateway_providers::{policy::HopFailure, response::decode_response};
+use gateway_provider_policy::policy::HopFailure;
+use gateway_provider_response::response::decode_response;
 use gateway_routing_runtime::{
     extras::{ChildScope, DispatchTicket},
     types::{AttemptFailure, RefusalDecision, TransportState},
@@ -209,10 +210,10 @@ impl Images {
             let mut headers = response
                 .headers()
                 .entries()
-                .collect::<gateway_providers::types::Headers>();
+                .collect::<gateway_provider_protocol::types::Headers>();
             headers.insert(
                 "x-uos-upstream".into(),
-                gateway_providers::policy::direct_provider_label(
+                gateway_provider_source::policy::direct_provider_label(
                     gateway_core::provider::UpstreamProvider::ChatgptCodex,
                 )
                 .into(),
@@ -286,9 +287,9 @@ fn transport_failure(failure: outbound::DispatchFailure) -> DispatchFailure {
 }
 
 fn image_response(
-    request: &gateway_providers::types::PreparedRequest,
+    request: &gateway_provider_protocol::types::PreparedRequest,
     status: u16,
-    mut headers: gateway_providers::types::Headers,
+    mut headers: gateway_provider_protocol::types::Headers,
     bytes: &[u8],
 ) -> Result<UpstreamResponse, DispatchFailure> {
     let decoded = decode_response(&request.decode, status, &headers, bytes)

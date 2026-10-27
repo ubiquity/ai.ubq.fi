@@ -22,7 +22,7 @@ use gateway_extras_contract::types::{
     ExtrasRequest, ExtrasResponse, ExtrasRoute, ImageKind, KernelDisposition,
 };
 use gateway_extras_runtime::ExtrasRuntime;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::{session::RoutingSession, types::RoutingInput};
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use std::rc::Rc;
@@ -191,7 +191,7 @@ fn completion(
 enum ExtrasBody {
     Parsed(
         SourceJson,
-        Option<Vec<gateway_providers::extras::MultipartFile>>,
+        Option<Vec<gateway_provider_images::extras::MultipartFile>>,
         usize,
     ),
     Rejected(gateway_auth::types::AuthResponse, Vec<u8>),

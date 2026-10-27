@@ -6,13 +6,14 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-provider-source.workspace = true
+gateway-provider-protocol.workspace = true
 gateway-catalog-provider.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-admin-runtime = { path = "../gateway-admin-runtime" }
 gateway-profile-values.workspace = true
 gateway-catalog-runtime = { path = "../gateway-catalog-runtime" }
-gateway-providers = { path = "../gateway-providers" }
 gateway-schema = { path = "../gateway-schema" }
 serde.workspace = true
 serde_json.workspace = true

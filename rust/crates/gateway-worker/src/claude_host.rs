@@ -13,7 +13,8 @@ use gateway_claude_runtime::{
 use gateway_core::{
     claude::ClaudeErrorEvidence, error::GatewayError, model::ModelId, source_json::SourceJson,
 };
-use gateway_providers::replay::{ReplayContext, ReplayStore, ReplayTransport};
+use gateway_provider_replay::{replay::ReplayContext, replay::ReplayStore};
+use gateway_provider_protocol::replay::ReplayTransport;
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CredentialFence, PreparedAttempt, PreparedWireRequest,
     PublishedCredential, ResponseHead,
@@ -109,7 +110,7 @@ impl Binding {
         let AuthMethod::KvApiKey { key_id, .. } = &principal.method else {
             return Ok(ClaudeSelection::NotApplicable);
         };
-        if !gateway_providers::anthropic::is_claude_model(model) {
+        if !gateway_provider_source::anthropic::is_claude_model(model) {
             return Ok(ClaudeSelection::NotApplicable);
         }
         let selection = gateway_catalog_runtime::state::read_json(
@@ -220,7 +221,7 @@ impl Binding {
         &self,
         fence: &CredentialFence,
         model: &ModelId,
-        body: &gateway_providers::types::PreparedClaudeBody,
+        body: &gateway_provider_claude_body::types::PreparedClaudeBody,
     ) -> Result<
         crate::transport::outbound::ConstructedRequest,
         gateway_local_refusal::routing_error::RoutingError,
@@ -353,11 +354,11 @@ fn credential(selected: &SelectedAccount) -> PublishedCredential {
     }
     PublishedCredential::Claude {
         fence: credential_fence(selected),
-        body_options: gateway_providers::types::ClaudeBodyOptions {
+        body_options: gateway_provider_claude_body::types::ClaudeBodyOptions {
             native_reasoning_efforts: options.native_reasoning_efforts,
             supports_disabled_thinking: options.supports_disabled_thinking,
             restored_native_messages: options.restored_native_messages,
-            ..gateway_providers::types::ClaudeBodyOptions::new(kind)
+            ..gateway_provider_claude_body::types::ClaudeBodyOptions::new(kind)
         },
     }
 }

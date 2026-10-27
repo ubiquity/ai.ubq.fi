@@ -450,7 +450,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
                 &PaidRequestContext {
                     original_model: request.model.clone(),
                     body: source(&json!({"model":request.model,"stream":false})),
-                    surface: gateway_providers::types::ClientSurface::Responses,
+                    surface: gateway_provider_protocol::types::ClientSurface::Responses,
                     synthetic_hop: None,
                 },
                 1_000_000,

@@ -15,7 +15,7 @@ use gateway_extras_contract::types::{
     UpstreamResponse,
 };
 use gateway_extras_runtime::ExtrasRuntime;
-use gateway_providers::types::PrepareOptions;
+use gateway_provider_protocol::types::PrepareOptions;
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -110,7 +110,7 @@ impl ExtrasHost for Host {
         _: ExtrasProvider,
     ) -> Result<Option<PrepareOptions>, GatewayError> {
         Ok(self.0.configured.get().then(|| PrepareOptions {
-            auth: gateway_providers::types::AuthMaterial {
+            auth: gateway_provider_protocol::types::AuthMaterial {
                 secret: "fixture-not-a-credential".into(),
                 ..Default::default()
             },
