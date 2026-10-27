@@ -121,7 +121,9 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
             if context.v != 1
                 || context.slot != 1
                 || !(1..=3).contains(&context.cycle)
-                || !crate::cache_experiment::release_valid(&context.release_git_sha)
+                || !gateway_cache_experiment_records::source::release_valid(
+                    &context.release_git_sha,
+                )
             {
                 return Err(fail());
             }

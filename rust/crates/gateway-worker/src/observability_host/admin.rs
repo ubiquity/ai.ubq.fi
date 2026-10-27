@@ -85,7 +85,7 @@ impl RequestHost {
     /// Take once after Stage 0; the authority still rechecks target, cohort, release and leases.
     pub(crate) fn take_cache_target(
         &self,
-    ) -> Result<gateway_authority::cache_experiment::PreparedTarget, GatewayError> {
+    ) -> Result<gateway_cache_experiment_runner::PreparedTarget, GatewayError> {
         self.admin_actor()?;
         self.prepared_cache_target
             .borrow_mut()

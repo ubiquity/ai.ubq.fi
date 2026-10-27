@@ -591,3 +591,11 @@ impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_dispatch::Cache
         )
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_runner::CacheRunFactory
+    for Authority<S, I>
+{
+    fn cache_runner(&self) -> gateway_cache_experiment_runner::CacheRunService<'_, S> {
+        gateway_cache_experiment_runner::CacheRunService::new(&self.store, self.clock.as_deref())
+    }
+}

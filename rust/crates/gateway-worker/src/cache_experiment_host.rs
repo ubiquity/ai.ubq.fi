@@ -1,5 +1,7 @@
 //! Request-owned fixed Codex control experiment. No generic inference or paid fallback.
 use gateway_cache_experiment_dispatch::CacheDispatchOperations;
+use gateway_cache_experiment_runner::io::{ExperimentIo, ReadSample};
+use gateway_cache_experiment_runner::{CacheRunOperations, PreparedTarget};
 mod sample;
 use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
@@ -8,11 +10,8 @@ use crate::host::PlatformTokens;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
 use futures_util::StreamExt;
-use gateway_authority::cache_experiment::PreparedTarget;
 use gateway_authority::native_control::actor::NativeActorScope;
 use gateway_authority::{native_control::actor::NativeRenewalActor, store::Authority};
-use gateway_authority_paid_test_support::run::ExperimentIo;
-use gateway_authority_paid_test_support::run::ReadSample;
 use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
 use gateway_cache_experiment_records::{model::failed, model::unavailable};
 use gateway_core::{error::GatewayError, identity::PoolVersionstamp, source_json::SourceJson};

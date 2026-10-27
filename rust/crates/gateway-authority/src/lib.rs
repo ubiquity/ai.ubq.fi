@@ -7,7 +7,7 @@ compile_error!("native-import-fixture is forbidden in non-debug production build
 /// Denial marker only. Native service entrypoints must refuse when this is true.
 pub const NATIVE_IMPORT_FIXTURE_ENABLED: bool = cfg!(feature = "native-import-fixture");
 
-pub mod cache_experiment;
+mod cache_experiment;
 pub mod manual_reset;
 pub mod native_control;
 pub mod native_live;

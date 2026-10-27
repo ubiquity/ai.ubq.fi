@@ -1,6 +1,7 @@
 //! Real platform primitives for request-owned observational reads and writes.
 use gateway_admin_runtime::capabilities::Context;
 use gateway_authority_capacity::CapacityOperations;
+use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_core::{error::GatewayError, identity::RequestId};
 use gateway_observability::{ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity};
 use gateway_observability::{replay_crypto::ReplayBody, types::ObservabilityHost};
@@ -82,7 +83,7 @@ pub struct RequestHost {
     request_id: String,
     original_body: ReplayBody,
     admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
-    prepared_cache_target: RefCell<Option<gateway_authority::cache_experiment::PreparedTarget>>,
+    prepared_cache_target: RefCell<Option<gateway_cache_experiment_runner::PreparedTarget>>,
     cache_target_prepared: Cell<bool>,
 }
 pub fn bind(

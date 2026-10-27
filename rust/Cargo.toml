@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/gateway-cache-experiment-runner",
   "crates/gateway-cache-experiment-dispatch",
   "crates/gateway-cache-experiment-campaign",
   "crates/gateway-cache-experiment-evidence",

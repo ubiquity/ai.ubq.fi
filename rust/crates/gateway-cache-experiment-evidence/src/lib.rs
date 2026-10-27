@@ -95,6 +95,14 @@ impl<'a, S: AuthorityStore> CacheEvidenceReader<'a, S> {
             checks: self.cache.checks(),
         })
     }
+    pub async fn select_current_target(mut self) -> Result<SelectedTargetData, GatewayError> {
+        let inventory = inventory::inventory(&mut self.cache).await?;
+        let target = campaign::select_target(&mut self.cache, inventory.targets).await?;
+        Ok(SelectedTargetData {
+            target,
+            checks: self.cache.checks(),
+        })
+    }
     pub async fn select_target(
         mut self,
         targets: Vec<TargetBinding>,

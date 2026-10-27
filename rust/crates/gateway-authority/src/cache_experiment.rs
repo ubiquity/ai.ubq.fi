@@ -1,32 +1,5 @@
-//! The source-owned cache campaign shares the existing transactional authority.
-//! A campaign is not inference admission, account election or another paid ledger.
-pub mod run;
-mod state;
-mod target;
-use gateway_cache_experiment_records::{
-    RefreshContext, model::TargetBinding, source::release_valid,
-};
-
-/// Prepared immediately before the immutable-release telemetry gate. Never caller JSON.
-pub struct PreparedTarget {
-    target: TargetBinding,
-    release_git_sha: String,
-}
-impl PreparedTarget {
-    pub fn binding(&self) -> &TargetBinding {
-        &self.target
-    }
-    pub fn telemetry_provider(&self) -> &str {
-        &self.target.telemetry_provider
-    }
-    pub fn model(&self) -> &str {
-        &self.target.model
-    }
-    pub fn release_git_sha(&self) -> &str {
-        &self.release_git_sha
-    }
-}
-
+//! Native effect snapshots retain the exact fixed campaign/currentness predicate.
+use gateway_cache_experiment_records::RefreshContext;
 /// Source/normalized credential publication fences are checked separately by
 /// native_control in each phase. Its own proven publication may advance the
 /// source revision, while these immutable campaign and account-membership facts remain.

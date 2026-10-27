@@ -14,8 +14,8 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
 gateway-auth-contracts.workspace = true
-gateway-authority-paid-test-support.workspace = true
 gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
 gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
 gateway-authority-reset-recovery = { path = "../gateway-authority-reset-recovery" }
