@@ -31,7 +31,8 @@ pub struct KeyChange {
 }
 
 pub fn actor(principal: &AuthPrincipal) -> ChangeActor {
-    let identity = |id, label| ("passkey_user", Some(id.clone()), Some(label.clone()));
+    let identity =
+        |id: &String, label: &String| ("passkey_user", Some(id.clone()), Some(label.clone()));
     let (kind, id, label) = match &principal.method {
         AuthMethod::PasskeySession {
             user_id, handle, ..
