@@ -1,5 +1,5 @@
 //! Actual response status/headers own proof classification. A caller supplies no exhaustion Boolean.
-use crate::quota::{
+use gateway_claude_usage_quota::{
     Exhaustion, QuotaObservation, QuotaWindow, STANDARD_FAMILIES, StandardWindow, WINDOWS,
 };
 use gateway_core::{
@@ -128,6 +128,7 @@ pub fn observe_headers(headers: &Headers, now: i64) -> Option<QuotaObservation> 
         }
     }
     let observation = QuotaObservation {
+        usage_snapshot: None,
         windows,
         standard,
         representative_claim: header(headers, "anthropic-ratelimit-unified-representative-claim")

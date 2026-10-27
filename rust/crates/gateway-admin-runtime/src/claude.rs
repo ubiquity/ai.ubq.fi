@@ -484,8 +484,6 @@ pub async fn load_roster<S: AuthorityStore, H: AuthHost>(
         }
         let ck = legacy_credential_key();
         let cr = store.read(&ck).await?;
-        let wk = legacy_workspace_key();
-        let wr = store.read(&wk).await?;
         let credential = source_value(cr.as_ref(), host.now_ms())?
             .and_then(|v| parse_source_credential(&v, "kv"))
             .or_else(|| seed.credential.clone());
@@ -495,6 +493,8 @@ pub async fn load_roster<S: AuthorityStore, H: AuthHost>(
                 revision: None,
             });
         };
+        let wk = legacy_workspace_key();
+        let wr = store.read(&wk).await?;
         let workspace = source_value(wr.as_ref(), host.now_ms())?
             .and_then(|v| parse_source_workspace(&v))
             .or_else(|| seed.workspace.clone());

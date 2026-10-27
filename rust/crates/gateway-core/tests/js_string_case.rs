@@ -1,4 +1,4 @@
-use gateway_core::{js_string::JsString16, js_string_case::lowercase_source};
+use gateway_source::{js_string::JsString16, js_string_case::lowercase_source};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 

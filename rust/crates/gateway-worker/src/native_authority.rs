@@ -1,20 +1,17 @@
 //! Fixed reverse native protocols, authenticated against the common durable nonce authority.
 pub(crate) mod import_dispatch;
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformTokens},
-    native_host::NativeBindings,
-    storage::now_ms,
-    transport::{HeaderLimits, body::request_bytes, bounded_headers, outbound::Cancellation},
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformTokens;
+use crate::native_host::NativeBindings;
 use gateway_auth::{
-    native::{
-        NATIVE_CONTROL_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER,
-        NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER,
-        NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
-    },
     native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeCapability},
     native_replay::StoreNonceAuthority,
+};
+use gateway_auth_native_wire::native_read::{
+    NATIVE_CONTROL_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER,
+    NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER,
+    NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_authority::{
     native_control::{
@@ -28,6 +25,11 @@ use gateway_authority::{
     store::Authority,
 };
 use gateway_core::error::GatewayError;
+use gateway_worker_http_body::body::request_bytes;
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::headers::HeaderLimits;
+use gateway_worker_platform::headers::bounded_headers;
+use gateway_worker_storage::store::now_ms;
 use serde::Serialize;
 use worker::{Env, Method, Request, Response};
 
@@ -138,7 +140,7 @@ pub async fn handle(
     let path = request.path();
     let maximum = if path == NATIVE_RENEWAL_AUTHORITY_PATH {
         // The authenticator still applies each complete typed operation's old/new limit.
-        gateway_auth::native::NATIVE_MAX_BODY_BYTES
+        gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES
     } else {
         gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_MAX_BYTES
     };
@@ -199,8 +201,8 @@ pub async fn handle(
             RenewalRequest::Claim { .. } => {
                 let original = parsed.original_control_body()?;
                 let envelope =
-                    gateway_auth::native_control::NativeControlEnvelope::parse(&original)?;
-                let gateway_auth::native_control::NativeControlRequest::CodexRenewAccess {
+                    gateway_auth_native_wire::control::NativeControlEnvelope::parse(&original)?;
+                let gateway_auth_native_wire::control::NativeControlRequest::CodexRenewAccess {
                     action_ref,
                 } = &envelope.request;
                 owners.for_action(&authority, action_ref).await?
@@ -268,9 +270,11 @@ async fn execute_renewal<C: NativeRenewalCancellation>(
                     now_ms()?,
                 )
                 .await?;
-            let envelope = gateway_auth::native_control::NativeControlEnvelope::parse(&original)?;
-            let gateway_auth::native_control::NativeControlRequest::CodexRenewAccess { action_ref } =
-                &envelope.request;
+            let envelope =
+                gateway_auth_native_wire::control::NativeControlEnvelope::parse(&original)?;
+            let gateway_auth_native_wire::control::NativeControlRequest::CodexRenewAccess {
+                action_ref,
+            } = &envelope.request;
             let claim = receiver
                 .claim(&proof, action_ref, &envelope.operation_id, &original)
                 .await?;

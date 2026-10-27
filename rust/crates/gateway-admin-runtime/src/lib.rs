@@ -20,10 +20,8 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as source_body,
 };
-use gateway_auth::{
-    native::NativeReadRequest,
-    types::{AuthHost, AuthResponse, invalid},
-};
+use gateway_auth::types::{AuthHost, AuthResponse, invalid};
+use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_core::{error::GatewayError, query::QueryStore, state::RevisionCheck};
 use serde_json::{Value, json};
 
@@ -108,7 +106,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 self.capabilities.provider(request, context).await
             }
             ClaudeAuthGet | ClaudeAuthSet | ClaudeAuthDelete | ClaudeAccountSelect
-            | ClaudeQuotaClear => {
+            | ClaudeQuotaClear | ClaudeQuotaRefresh => {
                 let request = match operation {
                     ClaudeAuthGet => ClaudeRequest::State,
                     ClaudeAuthSet => {
@@ -125,18 +123,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                             .ok_or_else(|| invalid("account_id is required"))?;
                         ClaudeRequest::SelectAccount { account_id: id }
                     }
+                    ClaudeQuotaRefresh => ClaudeRequest::RefreshUsage {
+                        document: input.body,
+                    },
                     ClaudeQuotaClear => {
-                        let account_value = source_body::member(&input.body, "account_id");
-                        if account_value
-                            .as_ref()
-                            .is_some_and(|value| source_body::text(value).is_none())
-                        {
-                            return Err(invalid("account_id must be a string"));
-                        }
-                        let account_id = account_value.as_ref().and_then(source_body::text);
-                        let cohort_id = source_body::member(&input.body, "account_cohort_id");
-                        // Account lookup and the targeted-cohort check belong to the
-                        // actual owner in this source order; no early UUID/scalar gate.
+                        let (account_id, cohort_id) =
+                            gateway_claude_usage_protocol::clear_target(&input.body)?;
                         ClaudeRequest::ClearQuota {
                             account_id,
                             cohort_id,
@@ -569,7 +561,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         request: NativeReadRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
-        use gateway_auth::native::{NATIVE_WIRE_VERSION, NativeRpcEnvelope, NativeRpcResponse};
+        use gateway_auth_native_wire::native_read::{
+            NATIVE_WIRE_VERSION, NativeRpcEnvelope, NativeRpcResponse,
+        };
         let envelope = NativeRpcEnvelope {
             v: NATIVE_WIRE_VERSION,
             request: request.clone(),

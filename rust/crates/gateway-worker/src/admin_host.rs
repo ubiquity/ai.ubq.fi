@@ -217,7 +217,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn native(
         &self,
-        request: gateway_auth::native::NativeReadRequest,
+        request: gateway_auth_native_wire::native_read::NativeReadRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -266,7 +266,7 @@ impl RuntimeCapabilities for Capabilities {
         left: &gateway_core::js_string::JsString16,
         right: &gateway_core::js_string::JsString16,
     ) -> Result<Ordering, GatewayError> {
-        crate::source_collator::shared().compare(left, right)
+        gateway_worker_platform::source_collator::shared().compare(left, right)
     }
 }
 

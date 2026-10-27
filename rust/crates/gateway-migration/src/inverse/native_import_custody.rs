@@ -1,10 +1,10 @@
 //! Retained v3 terminal consistency only, never current authorization or a lease.
 use crate::{invalid, key, parts};
-use gateway_auth::native_import::{NativeImportKind, publication::data::ImportPublicationDataV1};
-use gateway_core::error::GatewayError;
-use gateway_core::source_control::decode_source_control_record;
+use gateway_auth::native_import::NativeImportKind;
+use gateway_auth_native_wire::publication_data::ImportPublicationDataV1;
 use gateway_core::source_serialization as source;
 use gateway_core::state::{RecordKey, StoredRecord};
+use gateway_core::{error::GatewayError, source_control::decode_source_control_record};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 

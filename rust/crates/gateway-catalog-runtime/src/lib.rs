@@ -469,7 +469,7 @@ impl CatalogRuntime {
                 provider,
                 binding,
                 snapshot,
-                &host.unique_id(),
+                &host.unique_id()?,
                 host.now_ms(),
             )
             .await?;
@@ -610,7 +610,7 @@ impl CatalogRuntime {
                 CatalogProvider::ClaudeCode,
                 Some(binding),
                 &snapshot,
-                &host.unique_id(),
+                &host.unique_id()?,
                 host.now_ms(),
             )
             .await?;

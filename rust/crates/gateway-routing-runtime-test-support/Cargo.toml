@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-provider-protocol.workspace = true
+gateway-wait-observation.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true
 gateway-core.workspace = true

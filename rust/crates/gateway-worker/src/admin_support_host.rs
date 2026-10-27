@@ -3,12 +3,12 @@ use gateway_admin_runtime::{
     brief,
     capabilities::{Context, ErrorDiagnostics, PricingSnapshot, SupervisorBriefTarget},
 };
-use gateway_auth::{native::NativeReadRequest, types::AuthResponse};
 use gateway_catalog_runtime::admin::AdminCatalogOperation;
 use gateway_core::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use worker::Method;
+use {gateway_auth::types::AuthResponse, gateway_auth_native_wire::native_read::NativeReadRequest};
 
 mod picker;
 mod pricing;
@@ -57,7 +57,12 @@ impl Binding {
     ) -> Result<PricingSnapshot, GatewayError> {
         let ratios = pricing::fetch(self, pricing::Metadata::Ratios).await?;
         let status = pricing::fetch(self, pricing::Metadata::Status).await?;
-        pricing::project(models, &ratios, &status, crate::storage::now_ms()?)
+        pricing::project(
+            models,
+            &ratios,
+            &status,
+            gateway_worker_storage::store::now_ms()?,
+        )
     }
     pub async fn error_diagnostics(
         &self,
@@ -70,7 +75,7 @@ impl Binding {
         target: SupervisorBriefTarget,
         _: Context,
     ) -> Result<AuthResponse, GatewayError> {
-        let sampled = crate::storage::now_ms()?;
+        let sampled = gateway_worker_storage::store::now_ms()?;
         let response = self
             .catalog
             .platform
@@ -93,7 +98,7 @@ impl Binding {
                 .ok_or_else(|| unavailable("Native brief context is malformed."))?,
             &target,
         )?;
-        match brief::plan(&context, sampled, crate::storage::now_ms()?) {
+        match brief::plan(&context, sampled, gateway_worker_storage::store::now_ms()?) {
             brief::BriefPlan::Unavailable(body) => Ok(AuthResponse::json(200, body)),
             brief::BriefPlan::Generate { body, deadline_ms } => {
                 let key = crate::host::provider_secret(&self.catalog.env, "CEREBRAS_API_KEY")
@@ -115,7 +120,12 @@ impl Binding {
                     .await?;
                 Ok(AuthResponse::json(
                     200,
-                    brief::completed(&context, &reply, sampled, crate::storage::now_ms()?)?,
+                    brief::completed(
+                        &context,
+                        &reply,
+                        sampled,
+                        gateway_worker_storage::store::now_ms()?,
+                    )?,
                 ))
             }
         }
@@ -144,7 +154,7 @@ impl Binding {
         .await
         .map_err(|failure| failure.error)?;
         if !(200..300).contains(&response.status_code()) {
-            crate::transport::body::discard_response(&mut response);
+            gateway_worker_http_body::body::discard_response(&mut response);
             return Err(unavailable(
                 "Administrator metadata or summarizer request failed.",
             ));

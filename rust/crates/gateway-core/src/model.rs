@@ -1,5 +1,7 @@
 //! Opaque source model data, never an eligibility decision or authority capability.
-use crate::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

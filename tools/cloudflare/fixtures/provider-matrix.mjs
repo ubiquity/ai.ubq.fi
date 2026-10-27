@@ -494,6 +494,43 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
     thinking: isObject(body.thinking) ? body.thinking.type : null,
     ...(await contextObservation(body, marker)),
   });
+  // Owner v6 sibling wire cases. Original markers/conditions remain untouched.
+  if (marker.startsWith("fixture:matrix:early:")) {
+    const mode = marker.split(":").at(-1);
+    if (provider === "lithos" && (mode === "jsonhead" || body.stream !== true)) {
+      return Response.json(completion(provider, body, marker), { headers: { "x-request-id": "early-lithos-json" } });
+    }
+    if (provider === "lithos" && mode !== "no200") {
+      const value = {
+        id: "chatcmpl_early_head",
+        object: "chat.completion.chunk",
+        created: 1800000000,
+        model: body.model,
+        choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+      };
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(part(null, value));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream", "x-request-id": "early-lithos-head" } }
+      );
+    }
+    if ((provider === "lithos" && mode === "no200") || (provider === "openrouter" && ["mixed400", "mixed503", "no200"].includes(mode))) {
+      const status = provider === "lithos" || mode === "mixed503" ? 503 : 400;
+      const headers = new Headers({ "retry-after": mode === "mixed503" ? "r".repeat(513) : "17", "x-request-id": "early-" + provider });
+      if (mode === "mixed503") {
+        headers.set("set-cookie", "fixture-redaction-canary");
+        headers.set("authorization", "fixture-redaction-canary");
+      }
+      return Response.json(
+        { error: { code: "matrix_head_refusal", message: mode, type: status >= 500 ? "server_error" : "invalid_request_error" } },
+        { status, headers }
+      );
+    }
+  }
   if (provider === "claude" && marker.endsWith(":workspace") && !request.headers.has("anthropic-workspace-id")) {
     return Response.json({ error: { type: "invalid_request_error", message: "Request is not scoped to a workspace" } }, { status: 400 });
   }

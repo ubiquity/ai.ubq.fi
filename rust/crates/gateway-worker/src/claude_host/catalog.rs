@@ -87,13 +87,13 @@ impl CatalogHost for AccountCatalog<'_> {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
     fn now_ms(&self) -> i64 {
         self.host.platform.now_ms()
     }
-    fn unique_id(&self) -> String {
-        crate::transport::random::opaque_token().expect("Validated platform randomness")
+    fn unique_id(&self) -> Result<String, GatewayError> {
+        gateway_worker_platform::random::opaque_token()
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         worker::Delay::from(std::time::Duration::from_millis(u64::from(milliseconds))).await;

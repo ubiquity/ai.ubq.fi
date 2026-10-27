@@ -105,9 +105,7 @@ pub async fn publication(
         return Err(invalid());
     }
     let command =
-        gateway_auth::native_import::publication::command::ImportPublicationCommandData::parse(
-            bytes,
-        )?;
+        gateway_auth_native_wire::publication_command::ImportPublicationCommandData::parse(bytes)?;
     let transport = native.transport()?;
     let headers = Headers::read(request)?;
     let incoming = Incoming(Cancellation::from_request(request)?);

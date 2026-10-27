@@ -1,3 +1,4 @@
+import { runEarlyHeadWireCases } from "./early-head.ts";
 import { decisionsCases } from "./decisions.ts";
 import type { MatrixHarness } from "./contracts.ts";
 import { codexProviderCases } from "./codex.ts";
@@ -32,6 +33,7 @@ export async function runProviderMatrixCases(context: MatrixHarness): Promise<vo
   await context.withScenario("precommit", precommitCases);
   await context.withScenario("precommit-paid", precommitPaidCases);
   await runStreamRuntimeCases(context);
+  await runEarlyHeadWireCases(context);
   await context.withScenario("direct", async (context) => {
     await decisionsCases(context);
     await cacheBodyRejection(context);

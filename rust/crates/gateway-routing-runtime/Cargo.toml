@@ -12,6 +12,7 @@ gateway-provider-protocol.workspace = true
 gateway-provider-policy.workspace = true
 gateway-provider-claude-body.workspace = true
 gateway-local-refusal.workspace = true
+gateway-wait-observation.workspace = true
 gateway-decision-protocol.workspace = true
 gateway-extras-contract.workspace = true
 gateway-core.workspace = true

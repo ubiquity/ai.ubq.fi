@@ -15,7 +15,7 @@ pub const OPENLUX_DISCOVERY_SECRET: &str = "fixture-matrix-openlux-discovery";
 pub const OPENLUX_SPEND_SECRET: &str = "fixture-matrix-openlux-spend";
 
 fn now() -> i64 {
-    gateway_worker::storage::now_ms().unwrap_or(i64::MAX)
+    gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX)
 }
 fn identity() -> Result<NativeTransportIdentity, GatewayError> {
     NativeTransportIdentity::new(
@@ -43,7 +43,7 @@ pub async fn fetch(
     request: Request,
     env: Env,
     context: Context,
-) -> worker::Result<gateway_worker::response::GatewayResponse> {
+) -> worker::Result<gateway_worker_web::response::GatewayResponse> {
     if env
         .var("UOS_MATRIX_SCENARIO")
         .ok()
@@ -134,7 +134,7 @@ async fn drop_preparing(
     env: Env,
     context: Context,
     receiver: &PublicationReceiver,
-) -> worker::Result<gateway_worker::response::GatewayResponse> {
+) -> worker::Result<gateway_worker_web::response::GatewayResponse> {
     let signal = request.inner().signal();
     let phase = gateway_worker::stream_fixture::observe_preparation();
     let mut actual = Box::pin(gateway_worker::fetch_with_bindings(

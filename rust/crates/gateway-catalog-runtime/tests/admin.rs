@@ -274,10 +274,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         self.now.get()
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let id = self.sequence.get() + 1;
         self.sequence.set(id);
-        format!("m24-{id}")
+        Ok(format!("m24-{id}"))
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         let mut yielded = false;

@@ -1,11 +1,8 @@
 //! Passive request-owned replay evidence. It never authorizes dispatch or settlement.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::PlatformHost,
-    observability_host::{self, CaptureInput},
-    storage::now_ms,
-    transport::outbound::Cancellation,
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformHost;
+use crate::observability_host;
+use crate::observability_host::CaptureInput;
 use futures_util::Stream;
 use gateway_core::{
     error::GatewayError,
@@ -22,6 +19,8 @@ use gateway_observability::{
 };
 use gateway_provider_stream::{sse::MAX_CHAT_EVENT_BYTES, sse::MAX_RESPONSES_EVENT_BYTES};
 use gateway_provider_events::{framing::SseFrame, framing::SseParser};
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_storage::store::now_ms;
 use std::{
     cell::{Cell, RefCell},
     pin::Pin,
@@ -41,6 +40,9 @@ pub struct Capture {
     terminal_request: RefCell<Option<TerminalRequest>>,
     provider_request_id: RefCell<Option<String>>,
     client: RefCell<ClientWire>,
+    head: RefCell<Option<Rc<crate::inference_head::HeadState>>>,
+    deferred_http: Cell<bool>,
+    original_http_failure: RefCell<Option<SourceJson>>,
 }
 #[derive(Clone)]
 struct TerminalRequest {
@@ -97,6 +99,9 @@ impl Capture {
                 body: Vec::new(),
                 body_bytes: 0,
             }),
+            head: RefCell::new(None),
+            deferred_http: Cell::new(false),
+            original_http_failure: RefCell::new(None),
         })
     }
     pub async fn begin(
@@ -157,7 +162,7 @@ impl Capture {
         if let Some(key) = &context.key_id {
             let result = async {
                 // This generated scalar metadata is not an original request/body shadow.
-                let scalar = serde_json::json!({"id":context.request_id.0,"key_id":key.0,"route":context.route,"path":crate::normalized_path(&self.request.path()),"method":self.request.method().to_string(),"created_at_ms":context.started_at_ms,"status_code":0,"stream":stream});
+                let scalar = serde_json::json!({"id":context.request_id.0,"key_id":key.0,"route":context.route,"path":gateway_worker_web::path::normalized_path(&self.request.path()),"method":self.request.method().to_string(),"created_at_ms":context.started_at_ms,"status_code":0,"stream":stream});
                 let scalar = SourceJson::from_serializable(&scalar)?;
                 let mut fields = scalar.object_entries()?;
                 fields.push((JsString16::from_utf8("model"), SourceJson::from_serializable(&model)?));
@@ -269,6 +274,9 @@ impl Capture {
                 let mut fields = scalar.object_entries()?;
                 fields.push((JsString16::from_utf8("model"), SourceJson::from_serializable(&request.model)?));
                 fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&request.reasoning)?));
+                if let Some(original) = self.original_http_failure.borrow().as_ref() {
+                    fields.push((JsString16::from_utf8("native_http_failure"), original.clone()));
+                }
                 let patch = source::object_keys(fields)?;
                 self.runtime.update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
             }.await;
@@ -337,6 +345,55 @@ impl Capture {
     pub fn correlate(&self, provider_request_id: Option<&str>) {
         *self.provider_request_id.borrow_mut() = provider_request_id.map(str::to_owned);
     }
+    pub(crate) fn bind_head(&self, head: Rc<crate::inference_head::HeadState>) {
+        *self.head.borrow_mut() = Some(head);
+    }
+    fn expects_provisional_stream(&self) -> bool {
+        self.head
+            .borrow()
+            .as_ref()
+            .is_some_and(|head| head.expects_stream())
+    }
+    fn delivery_lost(&self) -> bool {
+        self.head
+            .borrow()
+            .as_ref()
+            .is_some_and(|head| head.is_delivery_lost())
+    }
+    pub(crate) fn provisional_wire(&self) {
+        let mut wire = self.client.borrow_mut();
+        if wire.status != 200 || !wire.stream {
+            wire.status = 200;
+            wire.stream = true;
+            wire.parser = Some(SseParser::new(MAX_RESPONSES_EVENT_BYTES));
+            wire.body.clear();
+            wire.body_bytes = 0;
+            wire.terminal = None;
+            wire.error_code = None;
+            wire.error_param = None;
+        }
+    }
+    pub(crate) fn late_http_wire(&self, original: SourceJson) {
+        *self.original_http_failure.borrow_mut() = Some(original);
+        // The inner selected HTTP body may finish after conversion. Only the
+        // actual outer wire finisher may release this capture deferral.
+        self.deferred_http.set(true);
+        {
+            let mut wire = self.client.borrow_mut();
+            wire.status = 0;
+            wire.stream = false;
+        }
+        self.provisional_wire();
+    }
+    pub(crate) fn observe_wire_bytes(&self, bytes: &[u8]) {
+        self.bytes(bytes);
+    }
+    pub(crate) async fn finish_provisional(&self, observation: TransportObservation) {
+        if self.deferred_http.replace(false) {
+            self.provisional_wire();
+        }
+        self.finish(observation, None, None).await;
+    }
     pub fn start(&self, provider: UpstreamProvider) -> Option<AttemptTrace> {
         self.client.borrow_mut().provider =
             gateway_provider_source::policy::direct_provider_label(provider).into();
@@ -389,8 +446,11 @@ impl Capture {
         responses: bool,
         provider: UpstreamProvider,
     ) {
+        let provisional = self.expects_provisional_stream();
+        self.deferred_http
+            .set(provisional && status >= 400 && !stream);
         let mut client = self.client.borrow_mut();
-        client.status = status;
+        client.status = if provisional { 200 } else { status };
         client.stream = stream;
         client.provider = gateway_provider_source::policy::direct_provider_label(provider).into();
         client.parser = stream.then(|| {
@@ -431,6 +491,9 @@ impl Capture {
         usage: Option<&serde_json::Value>,
         paid: Option<&gateway_authority::paid_types::PaidAttempt>,
     ) {
+        if self.deferred_http.get() && self.expects_provisional_stream() {
+            return;
+        }
         if self.finished.replace(true) {
             return;
         }
@@ -445,6 +508,9 @@ impl Capture {
         self.trace.dispose();
     }
     pub async fn failure(&self, error: &GatewayError, cancelled: bool) {
+        if self.expects_provisional_stream() {
+            return;
+        }
         if self.finished.replace(true) {
             return;
         }
@@ -478,6 +544,12 @@ impl Capture {
         self.trace.dispose();
     }
     pub async fn immediate(&self, status: u16, body: &[u8]) {
+        if self.expects_provisional_stream() {
+            if !self.delivery_lost() {
+                self.deferred_http.set(true);
+            }
+            return;
+        }
         {
             let mut wire = self.client.borrow_mut();
             wire.status = status;
@@ -491,15 +563,14 @@ impl Capture {
     async fn persist(&self, observation: TransportObservation) -> Result<(), GatewayError> {
         let (internal, client) = {
             let mut wire = self.client.borrow_mut();
-            if let Some(parser) = &mut wire.parser {
-                match parser.finish() {
-                    Ok(frames) => {
-                        for frame in frames {
-                            wire.frame(frame)
-                        }
+            match wire.parser.as_mut().map(SseParser::finish) {
+                Some(Ok(frames)) => {
+                    for frame in frames {
+                        wire.frame(frame)
                     }
-                    Err(_) => wire.valid = false,
                 }
+                Some(Err(_)) => wire.valid = false,
+                None => {}
             }
             let cancelled = observation.reader_termination == Some(ReaderTermination::Cancelled);
             let terminal = if cancelled {
@@ -529,16 +600,36 @@ impl Capture {
                 Some(ReaderTermination::Deadline) => Some("gateway_timeout".into()),
                 _ => None,
             };
+            let original_status = self
+                .original_http_failure
+                .borrow()
+                .as_ref()
+                .and_then(|original| source::member(original, "status"))
+                .and_then(|status| status.deserialize::<u16>().ok());
             let internal = FailureObservation {
-                status: wire.status,
-                stream: Some(wire.stream),
+                status: original_status.unwrap_or(wire.status),
+                stream: Some(if original_status.is_some() {
+                    false
+                } else {
+                    wire.stream
+                }),
                 completed,
-                terminal_type: terminal,
+                terminal_type: if cancelled {
+                    Some("cancelled".into())
+                } else if original_status.is_some() {
+                    Some("error".into())
+                } else {
+                    terminal
+                },
                 failure_kind: failure,
-                synthetic_terminal_type: None,
+                synthetic_terminal_type: original_status
+                    .filter(|_| !cancelled)
+                    .map(|_| "response.failed".into()),
                 provider_route: wire.provider.clone(),
             };
             let mut client = ClientFailureObservation::from_internal(&internal);
+            client.status = wire.status;
+            client.stream = wire.stream;
             // This is actual parsed protocol evidence, never a delivery receipt.
             client.framing_valid = !wire.stream || (wire.valid && wire.terminal.is_some());
             client.completed =

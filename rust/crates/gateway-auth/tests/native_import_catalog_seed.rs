@@ -1,14 +1,14 @@
-use gateway_auth::{
-    crypto::base64url,
-    native::{NATIVE_MAX_BODY_BYTES, NATIVE_RENEWAL_AUTHORITY_PATH, signature_input},
-    native_control::{
-        NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_ERROR_MAX_BYTES, authority_response_input,
-    },
-    native_import::{
-        NativeImportMetadata, NativeImportTarget, authority::ImportAuthorityStateData,
-        catalog_seed::*,
-    },
+use gateway_auth_native_contracts::native_import::{
+    NativeImportMetadata, NativeImportTarget, catalog_seed::*, state::ImportAuthorityStateData,
 };
+use gateway_auth_native_protocol::{
+    native::signature_input, native_control::authority_response_input,
+};
+use gateway_auth_native_wire::{
+    control::{NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_ERROR_MAX_BYTES},
+    native_read::{NATIVE_MAX_BODY_BYTES, NATIVE_RENEWAL_AUTHORITY_PATH},
+};
+use gateway_auth_primitives::crypto::base64url;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn request() -> ImportCatalogSeedRequestData {
     let hash = "a".repeat(64);

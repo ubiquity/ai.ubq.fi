@@ -6,12 +6,12 @@ use crate::{
     private_https::PrivateHttps,
 };
 use gateway_auth::{
-    crypto::base64url,
-    managed_access::ManagedAccessProjection,
-    native::{NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH},
-    native_auth::NativeTransportIdentity,
-    native_control::{NativeControlEnvelope, NativeControlRequest, unverified},
-    native_credentials::NativeGeneration,
+    crypto::base64url, managed_access::ManagedAccessProjection,
+    native_auth::NativeTransportIdentity, native_credentials::NativeGeneration,
+};
+use gateway_auth_native_wire::{
+    control::{NativeControlEnvelope, NativeControlRequest, unverified},
+    native_read::{NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH},
 };
 use gateway_authority::native_control::NativeRenewalFence;
 use gateway_core::error::GatewayError;

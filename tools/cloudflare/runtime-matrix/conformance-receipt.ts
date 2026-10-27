@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-type Selection = { name: "synthetic-precommit" | "stream-runtime"; expectedCases: readonly string[] };
+export type Selection = { name: "synthetic-precommit" | "stream-runtime" | "presemantic-abort" | "early-head-wire"; expectedCases: readonly string[] };
 
 const INPUT_PATHS = [
   "tools/cloudflare/runtime-conformance.ts",
@@ -10,6 +10,8 @@ const INPUT_PATHS = [
   "tools/cloudflare/runtime-matrix/contracts.ts",
   "tools/cloudflare/runtime-matrix/index.ts",
   "tools/cloudflare/runtime-matrix/precommit.ts",
+  "tools/cloudflare/runtime-matrix/early-head.ts",
+  "tools/cloudflare/runtime-matrix/selected-cases.ts",
   "tools/cloudflare/runtime-matrix/conformance-receipt.ts",
   "tools/cloudflare/runtime-matrix/workerd-config.ts",
   "tools/cloudflare/runtime-matrix/stream-settlement.ts",

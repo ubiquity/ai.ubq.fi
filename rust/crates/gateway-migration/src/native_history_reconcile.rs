@@ -5,8 +5,10 @@ use crate::error::MigrationError;
 use crate::native_capture::{NativeCapture, NativeEntry};
 use crate::native_stage::Captured;
 use crate::{GatewayError, RecordKey, invalid};
-use gateway_admin_data::migration::{ObservedRow, audit::AuditInventory};
+use gateway_admin_data::inventory::AuditInventory;
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_ledger::rows::ObservedRow;
+use gateway_source_audit::driver::inspect_inventory;
 use std::collections::{BTreeMap, BTreeSet};
 
 type KeyIndex = BTreeMap<Vec<u8>, usize>;
@@ -86,10 +88,7 @@ pub(crate) fn reconcile(
         version,
         now_ms: latest_header.captured_at_ms,
     };
-    let audit = gateway_admin_data::migration::audit::inspect_inventory(
-        &merged,
-        latest_header.captured_at_ms,
-    )?;
+    let audit = inspect_inventory(&merged, latest_header.captured_at_ms)?;
     if !audit.errors.is_empty() {
         return Err(MigrationError::SourceInventory(audit));
     }

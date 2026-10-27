@@ -1,7 +1,7 @@
-use gateway_admin_data::profile::source::{
-    from_source_profile, from_source_profile_with_host, to_source_profile,
-};
 use gateway_core::{error::GatewayError, source_json::SourceJson, value::PortableValue};
+use gateway_profile_source::codec::from_source_profile;
+use gateway_profile_source::codec::from_source_profile_with_host;
+use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::{
     codec::to_profile,
     date::{CanonicalDates, SourceDateHost},

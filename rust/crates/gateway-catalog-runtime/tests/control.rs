@@ -241,10 +241,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let sequence = self.sequence.get() + 1;
         self.sequence.set(sequence);
-        format!("observation-{sequence}")
+        Ok(format!("observation-{sequence}"))
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         self.store
@@ -989,12 +989,12 @@ mod native_configuration {
     use super::*;
     use gateway_auth::{
         crypto::{Secret, base64url},
-        native::NATIVE_RPC_PATH,
         native_auth::{
             AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
             NativeNonceAuthority, NativeTransportIdentity,
         },
     };
+    use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
         fixture_owner_statement,

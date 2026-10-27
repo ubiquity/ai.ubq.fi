@@ -21,7 +21,6 @@ import { captureRawBodyOnce, discardRawBodyObserverOnce, readJsonBody } from "./
  * authorization, pricing, and settlement.
  */
 
-const IMAGE_BASE_MODEL_ENV = "IMAGE_BASE_MODEL";
 const IMAGE_TOOL_TYPE = "image_generation";
 const IMAGE_EDIT_DEFAULT_MODEL = "gpt-image-1.5";
 const IMAGE_MAX_COUNT = 10;
@@ -108,14 +107,7 @@ type ImageHandlerOptions = Readonly<{
 /** Resolve the text model that hosts the image tool. */
 export const resolveImageBaseModel = async (): Promise<string | null> => {
   if (imageBaseModelForTest !== null) return imageBaseModelForTest;
-  let configured: string | null;
-  try {
-    const raw = process.env[IMAGE_BASE_MODEL_ENV]?.trim();
-    configured = raw && raw.length > 0 ? raw : null;
-  } catch {
-    configured = null;
-  }
-  return configured ?? (await getDefaultModel());
+  return await getDefaultModel();
 };
 /**
  * Rewrite an OpenAI Images request as a Responses request carrying the

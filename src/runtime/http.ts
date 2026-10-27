@@ -100,35 +100,13 @@ const prepareResponseHeaders = (request: Request, response: Response, outgoing: 
   }
 };
 
-const registerResponseReadiness = (
-  request: Request,
-  outgoing: ServerResponse,
-  signal: AbortSignal,
-  fail: (error: Error) => void
-): Readonly<{ stop: () => void; remove: () => void }> => {
-  let heartbeat: ReturnType<typeof setInterval> | null = null;
+const registerResponseReadiness = (request: Request, outgoing: ServerResponse, signal: AbortSignal): Readonly<{ stop: () => void; remove: () => void }> => {
   let pending = true;
   const stop = (): void => {
     pending = false;
-    if (heartbeat !== null) clearInterval(heartbeat);
-    heartbeat = null;
     signal.removeEventListener("abort", stop);
     outgoing.removeListener("close", stop);
     outgoing.removeListener("error", stop);
-  };
-  const pulse = (): void => {
-    if (responseInterrupted(outgoing, signal) || outgoing.writableEnded) {
-      stop();
-      return;
-    }
-    if (outgoing.writableNeedDrain) return;
-    try {
-      outgoing.write(":\n\n");
-    } catch (error) {
-      stop();
-      fail(error instanceof Error ? error : new Error("SSE keepalive write failed"));
-      outgoing.destroy();
-    }
   };
   const unregister = registerEarlySseHeaders(request, ({ headers }) => {
     const input = requestBodies.get(request);
@@ -137,9 +115,6 @@ const registerResponseReadiness = (
     if (["content-length", "content-encoding", "transfer-encoding"].some((name) => headers.has(name))) return false;
     responseHeaders(new Response(null, { headers }), outgoing);
     outgoing.flushHeaders();
-    // A quiet native stream needs transport activity to expose its abandoned connection.
-    // No API event or usage is emitted, and stop runs before selected body forwarding.
-    heartbeat = setInterval(pulse, 50);
     return true;
   });
   signal.addEventListener("abort", stop, { once: true });
@@ -278,7 +253,7 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
       let headerReadiness: ReturnType<typeof registerResponseReadiness> | null = null;
       try {
         request = incomingRequest(incoming, controller.signal);
-        headerReadiness = registerResponseReadiness(request, outgoing, controller.signal, fail);
+        headerReadiness = registerResponseReadiness(request, outgoing, controller.signal);
         const response = await handler(request, {
           remoteAddr: { transport: "tcp", hostname: incoming.socket.remoteAddress ?? "", port: incoming.socket.remotePort ?? 0 },
           completed,

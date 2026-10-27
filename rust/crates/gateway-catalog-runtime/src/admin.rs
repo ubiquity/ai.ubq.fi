@@ -257,7 +257,7 @@ impl CatalogRuntime {
             let next_runtime =
                 build_runtime_config(&next, default.as_ref(), old_effort.as_ref(), host.now_ms())
                     .map_err(runtime_error)?;
-            let revision = host.unique_id();
+            let revision = host.unique_id().map_err(lift)?;
             if store
                 .commit(AtomicTransition {
                     checks: vec![
@@ -338,13 +338,13 @@ impl CatalogRuntime {
             ("model_ids", json_source(&ids)),
             ("updated_at_ms", json_source(&now)),
         ]);
+        let revision = host.unique_id().map_err(lift)?;
         if store
             .commit(AtomicTransition {
                 checks: vec![],
                 mutations: vec![RecordMutation::Put {
                     key: state::whitelist_key(),
-                    record: encode_source_control_record(host.unique_id(), &row, None)
-                        .map_err(lift)?,
+                    record: encode_source_control_record(revision, &row, None).map_err(lift)?,
                 }],
             })
             .await

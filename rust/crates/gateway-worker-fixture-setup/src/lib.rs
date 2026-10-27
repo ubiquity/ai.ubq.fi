@@ -3,13 +3,13 @@
 
 use gateway_auth::{
     crypto::{Secret, base64url},
-    native::NATIVE_PUBLICATION_PATH,
     native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeTransportIdentity},
     native_replay::StoreNonceAuthority,
     provider_credentials::{
         CodexSourceAccount, CodexSourcePool, codex_source_pool_key, parse_codex_source_pool,
     },
 };
+use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority::{
     keys,
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
@@ -36,7 +36,7 @@ use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_worker::authority::RemoteAuthorityStore;
 
 fn nonce() -> Result<[u8; 32], GatewayError> {
-    gateway_worker::transport::random::random_bytes(32)?
+    gateway_worker_platform::random::random_bytes(32)?
         .try_into()
         .map_err(|_| invalid())
 }
@@ -50,7 +50,7 @@ pub async fn initialize(
 ) -> Result<(), GatewayError> {
     if initialized(store, identity, inputs).await? {
         if scenario == "paid" {
-            let now = gateway_worker::storage::now_ms()?;
+            let now = gateway_worker_storage::store::now_ms()?;
             if let Some(prepared) = after_runtime_bootstrap(store, identity, inputs, now).await? {
                 send_configuration(
                     store,
@@ -69,7 +69,7 @@ pub async fn initialize(
     if matches!(scenario, "codex" | "paid") {
         seed_pool(store).await?;
     }
-    let now = gateway_worker::storage::now_ms()?;
+    let now = gateway_worker_storage::store::now_ms()?;
     let body = fixture_owner_statement(identity)?;
     let nonce = base64url(&nonce()?);
     let time = now.to_string();
@@ -271,7 +271,7 @@ async fn seed_pool(store: &RemoteAuthorityStore) -> Result<(), GatewayError> {
         }
         return Ok(());
     }
-    let now = gateway_worker::storage::now_ms()?;
+    let now = gateway_worker_storage::store::now_ms()?;
     let pool = fixture_pool(now);
     let raw = pool.private_source_value();
     let parsed = parse_codex_source_pool(&raw)?.ok_or_else(invalid)?;
@@ -459,7 +459,7 @@ mod tests {
         let time = NOW.to_string();
         let mac = identity
             .sign(
-                gateway_auth::native::NATIVE_PUBLICATION_PATH,
+                gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH,
                 NOW,
                 &nonce,
                 &body,
@@ -468,7 +468,7 @@ mod tests {
         let replay = StoreNonceAuthority::new(store);
         let proof = NativeAuthenticator::new(identity, &replay)
             .authenticate(
-                gateway_auth::native::NATIVE_PUBLICATION_PATH,
+                gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH,
                 NativeAuthHeaders {
                     version: "1",
                     key_id: identity.key_id(),

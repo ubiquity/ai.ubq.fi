@@ -70,8 +70,8 @@ pub fn call_id_from_location(location: &str) -> Option<String> {
         })
 }
 
-pub fn principal_id(principal: &AuthPrincipal) -> String {
-    match &principal.method {
+pub fn principal_id(principal: &AuthPrincipal) -> gateway_core::identity::PrincipalId {
+    let scalar = match &principal.method {
         AuthMethod::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
         AuthMethod::GithubToken { owner, repo, .. } => format!(
             "github-repo:{}/{}",
@@ -79,8 +79,8 @@ pub fn principal_id(principal: &AuthPrincipal) -> String {
             repo.to_lowercase()
         ),
         AuthMethod::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
-        AuthMethod::PassportSession { claims } | AuthMethod::PassportBearer { claims } => {
-            format!("passport-user:{}", claims.sub)
+        AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {
+            return principal.method.principal_id(None);
         }
         AuthMethod::AuthTokensAllowlist => "auth-method:auth_tokens_allowlist".into(),
         AuthMethod::AdminAllowlist => "auth-method:admin_allowlist".into(),
@@ -95,7 +95,8 @@ pub fn principal_id(principal: &AuthPrincipal) -> String {
                 )
             })
             .unwrap_or_else(|| "local-auth-disabled".into()),
-    }
+    };
+    gateway_core::identity::PrincipalId::from_scalar(scalar)
 }
 
 /// Source Content-Length canonicality is checked before any actual body read.

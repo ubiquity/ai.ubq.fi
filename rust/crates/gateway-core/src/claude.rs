@@ -1,5 +1,5 @@
 //! Finite untrusted response text, never an accepted outcome or authorization proof.
-use crate::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct ClaudeErrorEvidence {

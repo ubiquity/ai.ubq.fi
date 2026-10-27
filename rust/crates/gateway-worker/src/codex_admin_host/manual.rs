@@ -1,10 +1,10 @@
 //! One explicit manual reset. Shared authority owns every intent, budget and promotion.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
-    transport::outbound::{PinnedDestination, send_http},
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
 use gateway_auth::{
     provider_credentials::{CodexSourceAccount, read_codex_source_pool},
     types::{AuthConfig, AuthResponse},
@@ -20,6 +20,7 @@ use gateway_authority::{
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
 };
+use gateway_worker_storage::store::now_ms;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 use worker::{Method, Url};
@@ -141,35 +142,8 @@ async fn run(
                 },
             )
             .await;
-            let code = match response {
-                Ok(mut response) if (200..300).contains(&response.status_code()) => response
-                    .bytes()
-                    .await
-                    .ok()
-                    .and_then(|bytes| consume_code(&bytes)),
-                Ok(mut response) => {
-                    crate::transport::body::discard_response(&mut response);
-                    None
-                }
-                Err(_) => None,
-            };
-            let state = match code.as_deref() {
-                Some("reset" | "already_redeemed") => ResetState::Verified,
-                Some("nothing_to_reset" | "no_credit") => ResetState::Rejected,
-                _ => ResetState::Unknown,
-            };
-            let error = if state == ResetState::Rejected {
-                code.as_deref()
-            } else if state == ResetState::Unknown {
-                Some("provider_outcome_unknown")
-            } else {
-                None
-            };
-            let receipt = match code.as_deref() {
-                Some("reset") => Some("upstream-reset"),
-                Some("already_redeemed") => Some("upstream-already-redeemed"),
-                _ => None,
-            };
+            let code = consume_response(response).await;
+            let (state, error, receipt) = reset_observation(code.as_deref());
             let observed = authority
                 .record_reset_outcome(&latest.into_inner(), state, receipt, error, now_ms()?)
                 .await?;
@@ -197,6 +171,36 @@ async fn run(
         .promote_manual_reset(&action, config, &verified, &observation)
         .await?;
     serde_json::to_value(promoted).map_err(|_| unavailable("Reset promotion response is invalid."))
+}
+
+async fn consume_response(
+    response: Result<worker::Response, crate::transport::outbound::DispatchFailure>,
+) -> Option<String> {
+    match response {
+        Ok(mut response) if (200..300).contains(&response.status_code()) => response
+            .bytes()
+            .await
+            .ok()
+            .and_then(|bytes| consume_code(&bytes)),
+        Ok(mut response) => {
+            gateway_worker_http_body::body::discard_response(&mut response);
+            None
+        }
+        Err(_) => None,
+    }
+}
+
+fn reset_observation(code: Option<&str>) -> (ResetState, Option<&str>, Option<&str>) {
+    match code {
+        Some("reset") => (ResetState::Verified, None, Some("upstream-reset")),
+        Some("already_redeemed") => (
+            ResetState::Verified,
+            None,
+            Some("upstream-already-redeemed"),
+        ),
+        Some(code @ ("nothing_to_reset" | "no_credit")) => (ResetState::Rejected, Some(code), None),
+        _ => (ResetState::Unknown, Some("provider_outcome_unknown"), None),
+    }
 }
 
 async fn account(
@@ -238,10 +242,9 @@ pub(super) fn headers(account: &CodexSourceAccount, content: bool) -> BTreeMap<S
     }
     headers
 }
-pub(super) fn endpoints(platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
-    let base = crate::host::setting(&platform.env, "CODEX_BASE_URL")
-        .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
-    let mut url = Url::parse(gateway_schema::util::js_trim(&base))
+pub(super) fn endpoints(_platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
+    let base = "https://chatgpt.com/backend-api/codex";
+    let mut url = Url::parse(gateway_schema::util::js_trim(base))
         .map_err(|_| unavailable("Reset base URL is invalid."))?;
     if url.scheme() != "https"
         || !url.username().is_empty()
@@ -298,7 +301,7 @@ where
     .await
     .map_err(|failure| failure.error)?;
     if !(200..300).contains(&response.status_code()) {
-        crate::transport::body::discard_response(&mut response);
+        gateway_worker_http_body::body::discard_response(&mut response);
         return Err(unavailable("Reset observation is unavailable."));
     }
     let bytes = response

@@ -1,0 +1,49 @@
+{
+  "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
+  "timeouts": [
+    8000
+  ],
+  "requests": [
+    {
+      "url": "https://api.anthropic.com/api/oauth/usage",
+      "method": "GET",
+      "redirect": "manual",
+      "headers": [
+        [
+          "accept",
+          "application/json"
+        ],
+        [
+          "anthropic-beta",
+          "oauth-2025-04-20"
+        ],
+        [
+          "anthropic-version",
+          "2023-06-01"
+        ],
+        [
+          "authorization",
+          "Bearer public-fixture-only"
+        ],
+        [
+          "content-type",
+          "application/json"
+        ],
+        [
+          "user-agent",
+          "claude-code/2.1.310"
+        ]
+      ],
+      "aborted": false
+    }
+  ],
+  "unsupported": {
+    "ok": false,
+    "kind": "unsupported_credential",
+    "status": null,
+    "observed_at_ms": 1800000000000,
+    "message": "Claude Console API keys do not expose the OAuth usage endpoint; gateway traffic continues to update the meter.",
+    "retry_after_ms": null
+  },
+  "unsupported_requests": 0
+}

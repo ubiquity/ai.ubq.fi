@@ -3,7 +3,7 @@ use gateway_claude_runtime_test_support::fixture::{
     Host, NOW, Store, account, head, raw, run, seed, selected,
 };
 
-use gateway_claude_runtime::{persistence::quota_key, pool::ClaudePoolSession, quota, response};
+use gateway_claude_runtime::{persistence::quota_key, pool::ClaudePoolSession, response};
 use gateway_core::claude::ClaudeErrorEvidence as ErrorEvidence;
 use gateway_provider_protocol::types::Headers;
 use serde_json::Value;
@@ -80,31 +80,39 @@ fn exact_bun_source_classification_vectors_preserve_all_detail_units() -> crate:
 }
 
 #[test]
-fn exact_bun_source_observation_vectors_preserve_missing_and_numeric_headers() {
+fn exact_bun_source_observation_vectors_preserve_missing_and_numeric_headers()
+-> crate::support::TestResult {
     let fixture = fixture();
-    let cases = fixture["observations"].as_array().unwrap();
+    let cases = crate::support::required(fixture["observations"].as_array())?;
     assert_eq!(cases.len(), 8);
     for (index, case) in cases.iter().enumerate() {
-        let expected: Option<quota::QuotaObservation> =
-            serde_json::from_str(&case["expected"].to_string()).unwrap();
+        let expected: Option<gateway_claude_usage_quota::QuotaObservation> =
+            serde_json::from_str(&case["expected"].to_string())?;
         assert_eq!(
             response::observe_headers(&headers(&case["headers"]), NOW),
             expected,
             "observation {index}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior() {
+fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior()
+-> crate::support::TestResult {
     let fixture = fixture();
-    let cases = fixture["states"].as_array().unwrap();
+    let cases = crate::support::required(fixture["states"].as_array())?;
     assert_eq!(cases.len(), 7);
     for (index, case) in cases.iter().enumerate() {
-        let expected: Option<quota::QuotaState> =
-            serde_json::from_str(&case["expected"].to_string()).unwrap();
-        assert_eq!(quota::parse_state(&case["raw"]), expected, "state {index}");
+        let expected: Option<gateway_claude_usage_quota::QuotaState> =
+            serde_json::from_str(&case["expected"].to_string())?;
+        assert_eq!(
+            gateway_claude_usage_quota::parse_state(&case["raw"]),
+            expected,
+            "state {index}"
+        );
     }
+    Ok(())
 }
 
 #[test]
@@ -135,7 +143,7 @@ fn exact_bun_source_outcomes_match_real_same_store_publication() -> crate::suppo
             ),
         ))?;
         run(session.after_outcome(&store, &host, head, evidence(case)?))?;
-        let expected: quota::QuotaState =
+        let expected: gateway_claude_usage_quota::QuotaState =
             serde_json::from_str(crate::support::required(case["expected_raw"].as_str())?)?;
         assert_eq!(
             crate::support::required(store.quota(&account))?,

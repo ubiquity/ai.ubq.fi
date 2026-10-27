@@ -1,10 +1,11 @@
-use gateway_auth::{
+use gateway_auth_contracts::{
     passkeys::*,
-    session_index,
     types::{AuthHost, AuthRequest},
     upstream::*,
 };
-use gateway_core::{error::GatewayError, state::*};
+use gateway_auth_passkeys::{passkeys::*, session_index};
+use gateway_core::state::*;
+use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -133,10 +134,10 @@ impl AuthHost for Host {
         ))
     }
 }
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture does not execute ceremonies",
@@ -145,7 +146,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture does not execute ceremonies",
@@ -201,4 +202,12 @@ pub fn install(
         );
     }
     Ok(())
+}
+
+// This legacy-only fixture has no JS Date runtime. Permanent session records
+// fail unavailable rather than gaining an ISO parser or fabricated date grant.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

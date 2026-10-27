@@ -200,7 +200,7 @@ fn run_actor() -> Result<(), GatewayError> {
         let sender = {
             let target = url::Url::parse(&origin)
                 .map_err(|_| unavailable())?
-                .join(gateway_auth::native::NATIVE_PUBLICATION_PATH)
+                .join(gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH)
                 .map_err(|_| unavailable())?;
             super::import_publication::ImportPublicationHttp::from_connected(
                 target.as_str(),

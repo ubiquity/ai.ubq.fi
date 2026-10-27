@@ -1,19 +1,19 @@
-use gateway_auth::{
-    crypto::base64url,
-    origin::same_origin_mutation,
-    passport::{
-        PASSPORT_COOKIE, PASSPORT_STATE_COOKIE, PassportClaims, PassportConfig, PassportService,
-        reset_jwks_cache, verify_jwt,
-    },
-    resolve::AuthService,
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::{
     types::{AuthConfig, AuthHost, AuthMethod, AuthRequest},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
+use gateway_auth_passkeys::origin::same_origin_mutation;
+use gateway_auth_passport::passport::{PassportService, reset_jwks_cache, verify_jwt};
+use gateway_auth_passport_contracts::passport::{
+    PASSPORT_COOKIE, PASSPORT_STATE_COOKIE, PassportClaims, PassportConfig,
 };
+use gateway_auth_primitives::crypto::base64url;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord,
+};
+use gateway_source::error::GatewayError;
 use rsa::{
     RsaPrivateKey,
     pkcs1v15::SigningKey,
@@ -404,11 +404,14 @@ fn callback_rejects_exchange_status_and_malformed_token() {
 }
 
 #[test]
-fn claim_signature_and_algorithm_failures_fail_closed() {
+fn claim_signature_and_algorithm_failures_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
     reset_jwks_cache();
     let config = PassportConfig::production();
     let public = private().to_public_key();
-    let keys = BTreeMap::from([("key-a".to_owned(), public)]);
+    let keys = BTreeMap::from([(
+        gateway_source::js_string::JsString16::from_utf8("key-a"),
+        public,
+    )]);
     let valid = token(&claims());
     assert!(verify_jwt(&valid, &config, 1_500, &keys).is_ok());
 
@@ -426,7 +429,10 @@ fn claim_signature_and_algorithm_failures_fail_closed() {
     cases.push(("empty-jti", mutate("jti", json!(""))));
     cases.push(("exp-before-iat", mutate("exp", json!(999))));
     let mut missing = claims();
-    missing.as_object_mut().unwrap().remove("jti");
+    missing
+        .as_object_mut()
+        .ok_or("missing claims object")?
+        .remove("jti");
     cases.push(("missing-jti", missing));
     for (name, claims) in cases {
         let token = token(&claims);
@@ -451,8 +457,9 @@ fn claim_signature_and_algorithm_failures_fail_closed() {
     let tampered = valid
         .rsplit_once('.')
         .map(|(prefix, _)| format!("{prefix}.AAAA"))
-        .unwrap();
+        .ok_or("missing synthetic JWT signature segment")?;
     assert!(verify_jwt(&tampered, &config, 1_500, &keys).is_err());
+    Ok(())
 }
 
 #[test]
@@ -511,7 +518,7 @@ fn jwks_transport_failure_and_non_success_status_are_unavailable() {
     );
 }
 
-fn assert_unauthorized(result: Result<gateway_auth::types::AuthPrincipal, GatewayError>) {
+fn assert_unauthorized(result: Result<gateway_auth_contracts::types::AuthPrincipal, GatewayError>) {
     let error = match result {
         Ok(_) => panic!("expected unauthorized"),
         Err(error) => error,
@@ -520,7 +527,8 @@ fn assert_unauthorized(result: Result<gateway_auth::types::AuthPrincipal, Gatewa
 }
 
 #[test]
-fn cookie_and_bearer_principals_map_to_the_passport_subject() {
+fn cookie_and_bearer_principals_map_to_the_passport_subject()
+-> Result<(), Box<dyn std::error::Error>> {
     reset_jwks_cache();
     let token = token(&claims());
     let host = Host::new(vec![public_jwk("key-a")], token.clone());
@@ -532,42 +540,44 @@ fn cookie_and_bearer_principals_map_to_the_passport_subject() {
         PASSPORT_COOKIE,
         &token,
     );
-    let principal = run(auth.authenticate_client(&cookie)).unwrap();
+    let principal = run(auth.authenticate_client(&cookie))?;
     assert!(matches!(
         principal.method,
         AuthMethod::PassportSession { .. }
     ));
     assert_eq!(
         principal.method.principal_id(None),
-        "passport-user:user-123"
+        gateway_core::identity::PrincipalId::from_scalar("passport-user:user-123".into())
     );
     let mut bearer = request("GET", "https://ai.ubq.fi/uos/auth");
     bearer
         .headers
         .insert("authorization".into(), format!("Bearer {token}"));
-    let principal = run(auth.authenticate_client(&bearer)).unwrap();
+    let principal = run(auth.authenticate_client(&bearer))?;
     assert!(matches!(
         principal.method,
         AuthMethod::PassportBearer { .. }
     ));
     assert_eq!(
         principal.method.principal_id(None),
-        "passport-user:user-123"
+        gateway_core::identity::PrincipalId::from_scalar("passport-user:user-123".into())
     );
-    let response = run(auth.handle_auth_route(&cookie)).unwrap().unwrap();
-    let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
+    let response = run(auth.handle_auth_route(&cookie))?.ok_or("missing auth report")?;
+    let body: Value = serde_json::from_slice(&response.body.to_bytes()?)?;
     assert_eq!(body["auth"]["principal"], "passport-user:user-123");
     assert_eq!(body["auth"]["method"]["kind"], "passport_session");
     assert_eq!(body["auth"]["token"]["present"], false);
+    Ok(())
 }
-
 #[test]
 fn invalid_jwt_shaped_bearer_never_falls_through_to_admin() {
     reset_jwks_cache();
     let host = Host::new(vec![public_jwk("key-a")], token(&claims()));
     let store = Store::default();
     let config = AuthConfig {
-        admin_tokens: vec![gateway_auth::crypto::Secret::new("fixture-admin".into())],
+        admin_tokens: vec![gateway_auth_primitives::crypto::Secret::new(
+            "fixture-admin".into(),
+        )],
         passport: Some(PassportConfig::production()),
         ..Default::default()
     };
@@ -664,7 +674,7 @@ fn same_origin_mutation_rejects_foreign_browser_markers() {
 fn preview_client_config_is_explicit_and_fail_closed() {
     let config = AuthConfig::default();
     let candidate = request("GET", "https://rust-candidate.ai.ubq.fi/auth/login");
-    assert!(gateway_auth::passport::config_for_request(&config, &candidate).is_none());
+    assert!(gateway_auth_passport::passport::config_for_request(&config, &candidate).is_none());
     let mut explicit = AuthConfig {
         passport: Some(PassportConfig {
             client_id: "candidate".into(),
@@ -674,22 +684,120 @@ fn preview_client_config_is_explicit_and_fail_closed() {
         }),
         ..Default::default()
     };
-    assert!(gateway_auth::passport::config_for_request(&explicit, &candidate).is_some());
+    assert!(gateway_auth_passport::passport::config_for_request(&explicit, &candidate).is_some());
     explicit.passport = None;
     let production = request("GET", "https://ai.ubq.fi/auth/login");
     assert_eq!(
-        gateway_auth::passport::config_for_request(&config, &production),
+        gateway_auth_passport::passport::config_for_request(&config, &production),
         Some(PassportConfig::production())
     );
 }
 
 #[test]
-fn claims_serde_keeps_the_required_wire_metadata() {
-    let parsed: PassportClaims = serde_json::from_value(claims()).unwrap();
+fn claims_serde_keeps_the_required_wire_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let parsed: PassportClaims = serde_json::from_value(claims())?;
     assert_eq!(parsed.sub, "user-123");
     assert!(parsed.is_admin);
     assert_eq!(parsed.client_id, "ai");
     assert_eq!(parsed.agent_token_id, None);
-    let shaped = gateway_auth::passport::method_json(&parsed, false);
+    let shaped = gateway_auth_passport::passport::method_json(&parsed, false);
     assert_eq!(shaped["principal"], "passport-user:user-123");
+    Ok(())
+}
+
+// This legacy-only fixture has no JS Date runtime. Permanent session records
+// fail unavailable rather than gaining an ISO parser or fabricated date grant.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
+}
+
+#[test]
+fn new_authentication_accepts_source_non_scalar_subject_jti_and_reports_them_losslessly()
+-> Result<(), Box<dyn std::error::Error>> {
+    use gateway_auth_passport_contracts::actor_data::PassportSessionData;
+    use gateway_source::{source_json::SourceJson, source_serialization::member};
+    reset_jwks_cache();
+    let header = base64url(br#"{"alg":"RS256","typ":"JWT","kid":"key-a"}"#);
+    let document = SourceJson::parse(
+        r#"{"iss":"https://passport.ubq.fi","sub":"\ud800\u0000","handle":"","isAdmin":true,"scopes":["\udfff"],"aud":"ai","clientId":"ai","auth":"sso","iat":1000,"exp":2000,"jti":"\udfff\u0000"}"#,
+    )?;
+    let payload = base64url(document.as_bytes());
+    let input = format!("{header}.{payload}");
+    let signature = SigningKey::<Sha256>::new(private()).sign(input.as_bytes());
+    let token = format!("{input}.{}", base64url(&signature.to_vec()));
+    let host = Host::new(vec![public_jwk("key-a")], token.clone());
+    let store = Store::default();
+    let config = config();
+    let auth = AuthService::new(&store, &host, &config);
+    let request = with_cookie(
+        request("GET", "https://ai.ubq.fi/uos/auth"),
+        PASSPORT_COOKIE,
+        &token,
+    );
+    let principal = run(auth.authenticate_client(&request))?;
+    let mut forwarded = request.clone();
+    forwarded.url = "http://ai.ubq.fi/uos/auth".into();
+    forwarded
+        .headers
+        .insert("x-forwarded-proto".into(), "https".into());
+    assert_eq!(
+        run(auth.authenticate_client(&forwarded))?
+            .method
+            .principal_id(None),
+        principal.method.principal_id(None)
+    );
+    forwarded.headers.remove("x-forwarded-proto");
+    assert_eq!(
+        run(auth.authenticate_client(&forwarded))
+            .err()
+            .ok_or("expected insecure cookie refusal")?
+            .status,
+        401
+    );
+    forwarded.url = "https://foreign.invalid/uos/auth".into();
+    assert_eq!(
+        run(auth.authenticate_client(&forwarded))
+            .err()
+            .ok_or("expected foreign cookie refusal")?
+            .status,
+        401
+    );
+    assert!(principal.is_admin);
+    assert!(!principal.is_super_admin);
+    assert!(serde_json::to_string(&principal.method).is_err());
+    let AuthMethod::PassportSession {
+        identity: PassportSessionData::Jwt(claims),
+    } = &principal.method
+    else {
+        return Err("source JWT DATA absent".into());
+    };
+    assert_eq!(claims.sub.as_units(), [0xd800, 0]);
+    assert_eq!(claims.jti.as_units(), [0xdfff, 0]);
+    assert_eq!(claims.exp, 2000);
+    let response = run(auth.handle_auth_route(&request))?.ok_or("report")?;
+    let document = SourceJson::parse_bytes(&response.body.to_bytes()?)?;
+    let auth = member(&document, "auth").ok_or("auth")?;
+    let method = member(&auth, "method").ok_or("method")?;
+    let user = member(&method, "user").ok_or("user")?;
+    assert_eq!(
+        member(&user, "sub")
+            .ok_or("sub")?
+            .deserialize::<gateway_source::js_string::JsString16>()?
+            .as_units(),
+        [0xd800, 0]
+    );
+    assert_eq!(
+        member(&user, "jti")
+            .ok_or("jti")?
+            .deserialize::<gateway_source::js_string::JsString16>()?
+            .as_units(),
+        [0xdfff, 0]
+    );
+    assert_eq!(
+        member(&user, "exp").ok_or("exp")?.deserialize::<i64>()?,
+        2000
+    );
+    Ok(())
 }

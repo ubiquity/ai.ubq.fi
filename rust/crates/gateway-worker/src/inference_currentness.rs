@@ -1,9 +1,5 @@
 //! Invocation-owned observation and renewal of one original ordinary admission.
-use crate::{
-    inference_lifecycle::Session,
-    storage::now_ms,
-    transport::outbound::{Cancellation, Deadline},
-};
+use crate::inference_lifecycle::Session;
 use futures_util::{
     future::{Either, select},
     task::AtomicWaker,
@@ -14,6 +10,9 @@ use gateway_routing_runtime::{
     currentness::ObservedRoutingLease, currentness::RoutingLeaseState,
     local_work::KERNEL_RENEWAL_INTERVAL_MS,
 };
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_storage::store::now_ms;
 use std::{
     cell::{Cell, RefCell},
     future::poll_fn,

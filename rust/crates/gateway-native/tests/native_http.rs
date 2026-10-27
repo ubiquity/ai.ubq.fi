@@ -2,8 +2,10 @@
 
 use gateway_auth::{
     crypto::base64url,
-    native::{NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES, NATIVE_RPC_PATH},
     native_auth::{NativeCapability, NativeTransportIdentity},
+};
+use gateway_auth_native_wire::native_read::{
+    NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES, NATIVE_RPC_PATH,
 };
 use serde_json::{Value, json};
 use std::{

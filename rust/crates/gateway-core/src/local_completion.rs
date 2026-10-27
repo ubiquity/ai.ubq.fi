@@ -1,18 +1,18 @@
 //! Finite data-only local-completion patch. This never constructs a live runtime handle.
 use crate::{
-    error::GatewayError,
     identity::{MAX_SAFE_INTEGER, RequestContext},
-    js_string::JsString16,
     lifecycle::DeliveryOutcome,
     local_work::{
         LocalSemanticOutcome, LocalTerminalObservation, LocalWorkPhase, journal_local_work,
     },
     source_control::decode_source_control_record,
-    source_json::SourceJson,
-    source_serialization as source,
     state::{RecordKey, StoredRecord},
     tuple_key::{ScalarKeyPart, TupleKey},
 };
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 
 /// Prepared only after the runtime's complete Journal decoder and genuine owned
 /// success boundary. Validating this data does not establish either of those facts.
@@ -215,10 +215,10 @@ mod tests {
     };
 
     // Data-factory fixtures are deliberately not evidence of a live runtime handle.
-    fn fixture() -> (RequestContext, SourceJson) {
+    fn fixture() -> Result<(RequestContext, SourceJson), GatewayError> {
         let context = RequestContext {
             request_id: RequestId("original".into()),
-            principal: PrincipalId("principal".into()),
+            principal: PrincipalId::from_scalar("principal".into()),
             key_id: None,
             route: "responses".into(),
             started_at_ms: 10,
@@ -229,8 +229,8 @@ mod tests {
             "finished":false,"recovering":false,"updated_at_ms":20,
             "extras_family":null,"extras_child_count":null,"extras_dispatch":null,"kernel_override":null,"children":[],
             "local_work":{"kind":"codex_responses_compaction","owner_nonce":"owner","binding_version":2,"phase":"running","terminal":null}
-        })).unwrap();
-        (context, document)
+        }))?;
+        Ok((context, document))
     }
     fn prepare(
         context: &RequestContext,
@@ -245,22 +245,20 @@ mod tests {
         )
     }
     #[test]
-    fn finite_patch_preserves_source_fields_and_existing_scalar_codec() {
-        let (context, before) = fixture();
-        let plan = prepare(&context, &before).unwrap();
+    fn finite_patch_preserves_source_fields_and_existing_scalar_codec()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (context, before) = fixture()?;
+        let plan = prepare(&context, &before)?;
         assert_eq!(
-            plan.classify(&before).unwrap(),
+            plan.classify(&before)?,
             LocalCompletedJournalState::Prepared
         );
-        let after = plan.completed_document(50).unwrap();
-        assert_eq!(
-            plan.classify(&after).unwrap(),
-            LocalCompletedJournalState::Applied
-        );
-        let local = journal_local_work(&after).unwrap().unwrap();
+        let after = plan.completed_document(50)?;
+        assert_eq!(plan.classify(&after)?, LocalCompletedJournalState::Applied);
+        let local = journal_local_work(&after)?.ok_or("missing local work fixture")?;
         assert_eq!(local.phase, LocalWorkPhase::TerminalPending);
         assert_eq!(
-            local.terminal.unwrap(),
+            local.terminal.ok_or("missing local terminal fixture")?,
             LocalTerminalObservation {
                 semantic: LocalSemanticOutcome::Completed,
                 reader_termination: None,
@@ -268,44 +266,47 @@ mod tests {
                 delivery: DeliveryOutcome::Unobserved
             }
         );
-        let raw = encode_source_control_record("next", &after, None).unwrap();
+        let raw = encode_source_control_record("next", &after, None)?;
         assert_eq!(raw.value_encoding, ValueEncoding::Json);
         assert_eq!(
-            plan.classify(&decode_source_control_record(&raw).unwrap())
-                .unwrap(),
+            plan.classify(&decode_source_control_record(&raw)?)?,
             LocalCompletedJournalState::Applied
         );
-        for (key, value) in before.object_entries().unwrap() {
-            let name = key.try_utf8().unwrap();
+        for (key, value) in before.object_entries()? {
+            let name = key.try_utf8()?;
             if !matches!(name.as_str(), "local_work" | "updated_at_ms") {
-                assert!(same_value(&value, &source::member(&after, &name).unwrap()));
+                assert!(same_value(
+                    &value,
+                    &source::member(&after, &name).ok_or("missing source fixture field")?
+                ));
             }
         }
+        Ok(())
     }
     #[test]
-    fn finite_data_codec_never_scalarizes_unrelated_lone_units() {
-        let (context, before) = fixture();
+    fn finite_data_codec_never_scalarizes_unrelated_lone_units()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (context, before) = fixture()?;
         let text = before
             .as_str()
             .replacen('{', r#"{"opaque":{"\ud800":"\udc00"},"#, 1);
-        let source = SourceJson::parse(&text).unwrap();
-        let plan = prepare(&context, &source).unwrap();
-        let after = plan.completed_document(50).unwrap();
-        let raw = encode_source_control_record("next", &after, None).unwrap();
+        let source = SourceJson::parse(&text)?;
+        let plan = prepare(&context, &source)?;
+        let after = plan.completed_document(50)?;
+        let raw = encode_source_control_record("next", &after, None)?;
         assert_eq!(raw.value_encoding, ValueEncoding::ProfileV2);
-        let actual = decode_source_control_record(&raw).unwrap();
+        let actual = decode_source_control_record(&raw)?;
         assert!(same_value(
-            &source::member(&source, "opaque").unwrap(),
-            &source::member(&actual, "opaque").unwrap()
+            &source::member(&source, "opaque").ok_or("missing source fixture field")?,
+            &source::member(&actual, "opaque").ok_or("missing source fixture field")?
         ));
-        assert_eq!(
-            plan.classify(&actual).unwrap(),
-            LocalCompletedJournalState::Applied
-        );
+        assert_eq!(plan.classify(&actual)?, LocalCompletedJournalState::Applied);
+        Ok(())
     }
     #[test]
-    fn changed_original_phase_or_recovery_never_mints_a_patch() {
-        let (context, before) = fixture();
+    fn changed_original_phase_or_recovery_never_mints_a_patch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (context, before) = fixture()?;
         for (field, value) in [
             ("recovering", "true"),
             ("finished", "true"),
@@ -315,7 +316,7 @@ mod tests {
             assert!(
                 prepare(
                     &context,
-                    &replace(&before, field, SourceJson::parse(value).unwrap()).unwrap()
+                    &replace(&before, field, SourceJson::parse(value)?)?
                 )
                 .is_err(),
                 "{field}"
@@ -324,17 +325,17 @@ mod tests {
         let mut wrong = context.clone();
         wrong.request_id = RequestId("other".into());
         assert!(prepare(&wrong, &before).is_err());
-        let plan = prepare(&context, &before).unwrap();
+        let plan = prepare(&context, &before)?;
         let changed = replace(
-            &plan.completed_document(50).unwrap(),
+            &plan.completed_document(50)?,
             "recovering",
-            SourceJson::parse("true").unwrap(),
-        )
-        .unwrap();
+            SourceJson::parse("true")?,
+        )?;
         assert_eq!(
-            plan.classify(&changed).unwrap(),
+            plan.classify(&changed)?,
             LocalCompletedJournalState::Conflict
         );
         assert!(plan.completed_document(29).is_err());
+        Ok(())
     }
 }

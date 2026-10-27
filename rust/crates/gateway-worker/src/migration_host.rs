@@ -60,7 +60,7 @@ impl gateway_profile_values::date::SourceDateHost for ProfileHost {
 }
 impl gateway_migration::profile_runtime::ProfileHost for ProfileHost {
     fn next_revision(&self) -> Result<String, GatewayError> {
-        crate::transport::random::opaque_token()
+        gateway_worker_platform::random::opaque_token()
     }
 }
 

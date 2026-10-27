@@ -364,7 +364,7 @@ impl Controls {
     }
 }
 fn revision<H: CatalogHost>(host: &H, checks: &Checks) -> Result<String, GatewayError> {
-    let revision = host.unique_id();
+    let revision = host.unique_id()?;
     text(&revision)?;
     if checks.0.values().flatten().any(|old| old == &revision) {
         return Err(missing("Paid publisher reused a source revision"));

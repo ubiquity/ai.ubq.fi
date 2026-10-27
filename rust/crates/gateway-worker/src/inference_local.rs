@@ -130,8 +130,7 @@ async fn start_inner(
                     &builder,
                     ResponseOptions {
                         stream,
-                        hybrid: crate::host::setting(&host.env, "JEV_COMPACTION_HYBRID").as_deref()
-                            != Some("0"),
+                        hybrid: true,
                     },
                 )
                 .await

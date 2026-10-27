@@ -432,7 +432,7 @@ impl ClaudePoolSession {
         {
             let now = host.now_ms();
             let binding = &head.selected.binding;
-            let event = host::AcceptedObservation {
+            let event = gateway_claude_usage_quota::observation::AcceptedObservation {
                 v: 1,
                 observation_id,
                 account_id: binding.account_id.clone(),

@@ -1,10 +1,10 @@
 use super::prepare_credential_catalog;
 use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native::NATIVE_PUBLICATION_PATH;
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
 };
 use gateway_auth::native_replay::StoreNonceAuthority;
+use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority::{
     keys,
     paid_control::{PaidRequestContext, PaidRoutingProjection, paid_projection_source_keys},
@@ -213,10 +213,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         NOW
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let n = self.sequence.get() + 1;
         self.sequence.set(n);
-        format!("real-publisher-{n}")
+        Ok(format!("real-publisher-{n}"))
     }
     async fn wait(&self, _: u32) -> Result<(), GatewayError> {
         panic!("unexpected catalog wait")

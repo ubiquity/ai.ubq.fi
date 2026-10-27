@@ -2,10 +2,10 @@ use super::*;
 use crate::live_bridge::socket::{LiveDialContext, NativeLiveConnector};
 use gateway_auth::{
     crypto::base64url,
-    native::*,
     native_auth::{NativeAuthHeaders, NativeNonceAuthority, NativeTransportIdentity},
     native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_AUTHORITY_PATH, NativeLiveAuthenticator},
 };
+use gateway_auth_native_wire::native_read::*;
 use gateway_authority::native_live::wire::{
     NativeLiveAccess, NativeLiveAuthorityRequest, NativeLiveAuthorityResponse, NativeLiveFence,
 };

@@ -11,10 +11,6 @@ use super::{
 };
 use gateway_auth::{
     crypto::base64url,
-    native::{
-        NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
-        NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
-    },
     native_auth::NativeTransportIdentity,
     native_import::{
         NativeImportAdmission, NativeImportKind, NativeImportTarget,
@@ -27,6 +23,10 @@ use gateway_auth::{
             result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
         },
     },
+};
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
+    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_core::error::GatewayError;
 use std::{

@@ -1,17 +1,7 @@
 //! Bind decoded streams to the original Worker request lifetime.
-use super::{
-    CEREBRAS_RATE_LIMIT_HEADERS, ResponseResult, apply_warnings, cerebras_error_body, copy_headers,
-    invalid, provider_correlation, set_header,
-};
-use super::{dispatch_attempts, interrupted, stream_failure};
-use crate::inference_lifecycle::finish_hook;
+use super::{ResponseResult, dispatch_attempts};
+use crate::inference_lifecycle::{Lifecycle, Usage, finish_hook};
 use crate::routing_host;
-use crate::storage::now_ms;
-use crate::transport::body;
-use crate::{
-    inference_lifecycle::{Lifecycle, Usage},
-    transport::outbound::{Cancellation, Deadline},
-};
 use gateway_admission::handoff::{Pending, enqueue};
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use gateway_local_refusal::routing_error::RoutingError;
@@ -23,12 +13,18 @@ use gateway_routing_runtime::types::PreparedWireRequest;
 use gateway_routing_runtime::{
     types::AttemptFailure, types::FailureOrigin, types::RefusalDecision, types::TransportState,
 };
+use gateway_worker_http_body::body;
+use gateway_worker_http_body::protocol::{
+    CEREBRAS_RATE_LIMIT_HEADERS, apply_warnings, cerebras_error_body, copy_headers, interrupted,
+    invalid, provider_correlation, set_header, stream_failure,
+};
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use gateway_worker_stream::relay::PrepareDisposition;
-use gateway_worker_stream::{
-    control::StreamControl,
-    relay::{PreparedRelay, TerminalObserver},
-};
+use gateway_worker_stream::relay::PreparedRelay;
+use gateway_worker_stream::relay::TerminalObserver;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Response, ResponseBody};
 
@@ -528,24 +524,6 @@ impl Reply<'_> {
     }
 }
 
-impl StreamControl for Cancellation {
-    type Deadline = Deadline;
-    fn signal(&self) -> worker::AbortSignal {
-        Cancellation::signal(self)
-    }
-    fn register_waker(&self, waker: &std::task::Waker) {
-        Cancellation::register_waker(self, waker);
-    }
-    fn client_aborted(&self) -> bool {
-        Cancellation::client_aborted(self)
-    }
-    fn set_timeout_ms(&self, milliseconds: i32) -> Result<Deadline, GatewayError> {
-        Cancellation::set_timeout_ms(self, milliseconds)
-    }
-    fn abort(&self) {
-        Cancellation::abort(self);
-    }
-}
 impl TerminalObserver for Lifecycle {
     fn observe_terminal(
         &self,
@@ -622,6 +600,12 @@ impl super::Inference<'_> {
                 .upstream
                 .stream()
                 .map_err(|_| invalid("Upstream stream is unavailable."))?;
+            // The existing predicate above checked the genuine synthetic/free-hop
+            // session and actual SSE head. No translated refusal or request flag
+            // can publish readiness; the real dispatch/admission already ran.
+            if selected.upstream.status_code() == 200 {
+                self.head.accepted_head();
+            }
             let deadline = owner
                 .get_mut()
                 .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?

@@ -1,14 +1,12 @@
 //! Actual fixed embeddings/jobs/SystemOne routes; M15 owns their source behavior.
-use crate::{
-    authority::RemoteAuthorityStore,
-    catalog::CatalogState,
-    extras_host::Host,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    inference::RequestResources,
-    routing_host,
-    storage::now_ms,
-    transport::body,
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::catalog::CatalogState;
+use crate::extras_host::Host;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::inference::RequestResources;
+use crate::routing_host;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_authority::kernel::KernelTerminal;
 use gateway_core::{
@@ -24,6 +22,8 @@ use gateway_extras_contract::types::{
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::{session::RoutingSession, types::RoutingInput};
+use gateway_worker_http_body::body;
+use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use std::rc::Rc;
 use worker::{Request, Response};
@@ -225,9 +225,9 @@ async fn request_body(
         body::request_bytes(
             request,
             if multipart {
-                crate::multipart::MULTIPART_BYTES
+                gateway_worker_http_body::multipart::MULTIPART_BYTES
             } else if edit {
-                crate::multipart::IMAGE_JSON_BYTES
+                gateway_worker_http_body::multipart::IMAGE_JSON_BYTES
             } else if *route == ExtrasRoute::SystemOne {
                 body::SYSTEM_ONE_BODY_MAX_BYTES
             } else {
@@ -238,12 +238,15 @@ async fn request_body(
         .map_err(|error| gateway_extras_contract::route::body_error(route, error))?
     };
     let (raw, multipart) = if multipart {
-        let (raw, files) = crate::multipart::parse(request, &bytes).await?;
+        let (raw, files) = gateway_worker_http_body::multipart::parse(request, &bytes).await?;
         (raw, Some(files))
     } else if matches!(route, ExtrasRoute::JobGet(_)) {
         (SourceJson::parse("null")?, None)
     } else if edit {
-        (crate::multipart::image_json(&bytes)?, None)
+        (
+            gateway_worker_http_body::multipart::image_json(&bytes)?,
+            None,
+        )
     } else {
         let raw = match gateway_schema::source_request::parse_http_body(&bytes) {
             Ok(raw) => raw,
