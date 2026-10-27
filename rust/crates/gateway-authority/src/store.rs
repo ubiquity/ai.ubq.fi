@@ -99,18 +99,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 }
 
-/// Only the named local release adapter observes this private read origin.
-pub(crate) enum ApiReleaseReadError {
-    Backend(GatewayError),
-    Record(GatewayError),
-}
-impl ApiReleaseReadError {
-    fn into_error(self) -> GatewayError {
-        match self {
-            Self::Backend(error) | Self::Record(error) => error,
-        }
-    }
-}
 fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {
     serde_json::from_value(row.json_value()?.clone())
         .map_err(|_| invalid("Malformed authority record."))
@@ -129,27 +117,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         &mut self,
         key: &RecordKey,
     ) -> Result<Option<&StoredRecord>, GatewayError> {
-        self.cached_record_classified(key)
-            .await
-            .map_err(ApiReleaseReadError::into_error)
-    }
-    async fn cached_record_classified(
-        &mut self,
-        key: &RecordKey,
-    ) -> Result<Option<&StoredRecord>, ApiReleaseReadError> {
         if !self.reads.contains_key(&key.0) {
-            let record = self
-                .store
-                .read(key)
-                .await
-                .map_err(ApiReleaseReadError::Backend)?;
+            let record = self.store.read(key).await?;
             if let Some(value) = &record {
-                value
-                    .validate_version()
-                    .map_err(ApiReleaseReadError::Record)?;
-                text(&value.revision).map_err(ApiReleaseReadError::Record)?;
+                value.validate_version()?;
+                text(&value.revision)?;
                 if let Some(expiry) = value.expires_at_ms {
-                    validate_time(expiry).map_err(ApiReleaseReadError::Record)?;
+                    validate_time(expiry)?;
                 }
             }
             self.reads.insert(key.0.clone(), record);
