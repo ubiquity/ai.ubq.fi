@@ -1,4 +1,3 @@
-use gateway_authority::reset_types::ResetCandidate;
 use gateway_authority_api_protocol::ApiUsageWindow;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_api_release::ApiReleaseOperations;
@@ -9,6 +8,7 @@ use gateway_authority_keys as keys;
 use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_authority_paid_records::{PaidCorrelation, PaidUsage, PaidWindow};
 use gateway_authority_paid_route::authorization::PaidAuthorization;
+use gateway_authority_reset_evidence::types::ResetCandidate;
 use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetCredit};
 use gateway_authority_reset_records::{ResetMode, ResetState, reset_invocation, utc_day};
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};

@@ -8,14 +8,13 @@ compile_error!("native-import-fixture is forbidden in non-debug production build
 pub const NATIVE_IMPORT_FIXTURE_ENABLED: bool = cfg!(feature = "native-import-fixture");
 
 pub mod cache_experiment;
-pub mod full_pool_reset;
+mod full_pool_reset;
 pub mod manual_reset;
 pub mod native_control;
 pub mod native_live;
 mod probes;
 pub mod reset;
 mod reset_recovery;
-pub mod reset_types;
 pub mod routing;
 mod source_models;
 pub mod store;

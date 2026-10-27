@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/gateway-authority-reset-permit",
+  "crates/gateway-authority-reset-evidence",
   "crates/gateway-authority-paid-test-support",
   "crates/gateway-authority-paid-backfill",
   "crates/gateway-authority-paid-ledger",
@@ -74,6 +76,8 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-reset-permit = { path = "crates/gateway-authority-reset-permit" }
+gateway-authority-reset-evidence = { path = "crates/gateway-authority-reset-evidence" }
 gateway-authority-paid-test-support = { path = "crates/gateway-authority-paid-test-support" }
 gateway-authority-paid-backfill = { path = "crates/gateway-authority-paid-backfill" }
 gateway-authority-paid-ledger = { path = "crates/gateway-authority-paid-ledger" }

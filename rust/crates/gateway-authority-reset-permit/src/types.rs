@@ -1,56 +1,9 @@
-use crate::reset_types::ResetCandidate;
-use gateway_authority_reset_records::ResetConfig;
-use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{AccountBinding, RequestContext};
+use gateway_authority_reset_evidence::{types::Facts, types::ResetCandidate};
+use gateway_authority_reset_records::full_pool::FullPoolShadowDecision;
+use gateway_authority_reset_records::full_pool::SourceResetCredit;
 use gateway_core::js_string::JsString16;
-use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct FullPoolFence {
-    pub slot: u64,
-    pub account_id_hash: String,
-    pub quota_generation: String,
-    pub routing_generation: u64,
-    pub quota_reset_at_ms: i64,
-}
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct FullPoolShadowDecision {
-    pub v: u8,
-    pub episode_hash: String,
-    pub created_at_ms: i64,
-    pub expires_at_ms: i64,
-    pub decision_reason: String,
-    pub selected_account_id_hash: Option<String>,
-    pub selected_credit_id_hash: Option<String>,
-    pub selected_credit_expires_at_ms: Option<i64>,
-    pub fences: Vec<FullPoolFence>,
-}
-
-/// Provider observations are not grants. Raw opaque IDs never serialize into audit KV.
-#[derive(Clone)]
-pub struct SourceResetCredit {
-    pub credit_id: JsString16,
-    pub status: JsString16,
-    pub reset_type: JsString16,
-    pub expires_at_ms: Option<i64>,
-}
-#[derive(Clone)]
-pub struct SourceResetInventory {
-    pub binding: AccountBinding,
-    pub observed_at_ms: i64,
-    pub available_count: i64,
-    pub credits: Vec<SourceResetCredit>,
-}
-pub trait SourceCreditCollation {
-    fn compare_credit_ids(
-        &self,
-        left: &JsString16,
-        right: &JsString16,
-    ) -> Result<Ordering, GatewayError>;
-}
-
+use gateway_core::{error::GatewayError, identity::AccountBinding, identity::RequestContext};
+use serde::Serialize;
 pub enum FullPoolPreparation {
     Declined { reason: String },
     Cached { decision: FullPoolShadowDecision },
@@ -66,22 +19,6 @@ pub enum FullPoolEvaluation {
     },
     Ready(Box<AutomaticResetPermit>),
 }
-#[derive(Clone)]
-pub(super) struct Member {
-    pub candidate: ResetCandidate,
-    pub administrative_hash: String,
-    pub enabled: bool,
-}
-#[derive(Clone)]
-pub(super) struct Facts {
-    pub proof: CohortProof,
-    pub original: RequestContext,
-    pub config: ResetConfig,
-    pub members: Vec<Member>,
-    pub fences: Vec<FullPoolFence>,
-    pub settings_version: String,
-    pub episode_hash: String,
-}
 pub struct FullPoolResetPlan {
     pub(super) facts: Facts,
     pub(super) audit_present: bool,
@@ -89,19 +26,19 @@ pub struct FullPoolResetPlan {
 impl FullPoolResetPlan {
     pub fn bindings(&self) -> impl Iterator<Item = &AccountBinding> {
         self.facts
-            .members
+            .members()
             .iter()
             .filter(|member| member.enabled)
             .map(|member| &member.candidate.binding)
     }
     pub fn original(&self) -> &RequestContext {
-        &self.facts.original
+        self.facts.original()
     }
 }
 
 /// Minted only by live evaluation in the current complete source transaction; never reconstructed from wire.
 /// ```compile_fail
-/// use gateway_authority::full_pool_reset::types::AutomaticResetPermit;
+/// use gateway_authority_reset_permit::types::AutomaticResetPermit;
 /// let _: AutomaticResetPermit = serde_json::from_str("{}").unwrap();
 /// ```
 pub struct AutomaticResetPermit {
@@ -112,7 +49,7 @@ pub struct AutomaticResetPermit {
     pub(super) observed_at_ms: i64,
 }
 impl AutomaticResetPermit {
-    pub(crate) fn candidate(&self) -> &ResetCandidate {
+    pub fn candidate(&self) -> &ResetCandidate {
         &self.candidate
     }
     pub fn binding(&self) -> &AccountBinding {
@@ -125,7 +62,7 @@ impl AutomaticResetPermit {
         &self.decision.episode_hash
     }
     pub fn original(&self) -> &RequestContext {
-        &self.facts.original
+        self.facts.original()
     }
     pub fn invocation(
         &self,
@@ -166,14 +103,35 @@ impl AutomaticResetPermit {
     }
 }
 
+impl AutomaticResetPermit {
+    /// Fixed current DATA only; every caller must keep these fences in its existing effect CAS.
+    pub async fn current_facts<S: gateway_core::state::AuthorityStore>(
+        &self,
+        store: &S,
+        now: i64,
+    ) -> Result<gateway_authority_reset_evidence::ResetFactsEvidence, GatewayError> {
+        self.check_deadline(now)?;
+        let evidence = gateway_authority_reset_evidence::capture_spend_facts(
+            store,
+            self.facts.proof(),
+            self.facts.original(),
+            now,
+        )
+        .await?;
+        if evidence.facts().config().mode != gateway_authority_reset_records::ResetMode::Live
+            || !evidence.facts().same(&self.facts)
+        {
+            return Err(super::declined("routing_fence_stale"));
+        }
+        Ok(evidence)
+    }
+}
 macro_rules! opaque_debug {
     ($($name:ty),+ $(,)?) => { $(impl std::fmt::Debug for $name {
         fn fmt(&self, formatter:&mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str(concat!(stringify!($name), "([opaque])")) }
     })+ };
 }
 opaque_debug!(
-    SourceResetCredit,
-    SourceResetInventory,
     FullPoolResetPlan,
     AutomaticResetPermit,
     FullPoolPreparation,

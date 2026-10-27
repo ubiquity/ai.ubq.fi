@@ -1,19 +1,16 @@
 //! Provider-outcome reconciliation and verified-reset recovery, with no provider I/O.
-use crate::reset::{ResetAuthorization, authorization_fences, check_record};
-use crate::reset_types::{FullPoolResetReconciliation, ResetCandidate};
-use crate::routing::read_view;
-use crate::store::Authority;
-use crate::{PROBE_LEASE_MS, add, invalid, next_generation, text, unavailable};
+use crate::{PROBE_LEASE_MS, add, invalid, next_generation, routing::read_view, store::Authority};
+use crate::{reset::ResetAuthorization, reset::authorization_fences, reset::check_record};
+use crate::{text, unavailable};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_reset_evidence::{types::FullPoolResetReconciliation, types::ResetCandidate};
+use gateway_authority_reset_permit::ResetPermitOperations;
 use gateway_authority_reset_records::{ResetRecord, ResetState, reset_invocation};
 use gateway_authority_routing_records::types::ProbeLease;
 use gateway_authority_routing_selection::types::AdmittedAccount;
-use gateway_core::{
-    error::GatewayError,
-    identity::{ActiveSelection, ActiveTransitionReason},
-    state::AuthorityStore,
-};
+use gateway_core::{error::GatewayError, identity::ActiveSelection};
+use gateway_core::{identity::ActiveTransitionReason, state::AuthorityStore};
 
 fn existing_reset_block_reason(row: &ResetRecord, now: i64) -> Result<Option<&str>, GatewayError> {
     let error = row.last_error_code.as_deref();
@@ -197,7 +194,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// A documented reset terminal grants a fenced probe, never recovered capacity.
     pub async fn elect_full_pool_reset(
         &self,
-        permit: &crate::full_pool_reset::types::AutomaticResetPermit,
+        permit: &gateway_authority_reset_permit::types::AutomaticResetPermit,
         expected: &ResetRecord,
     ) -> Result<Option<AdmittedAccount>, GatewayError> {
         let now = self.fresh_time(0)?;

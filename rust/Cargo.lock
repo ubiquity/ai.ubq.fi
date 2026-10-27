@@ -951,6 +951,8 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-evidence",
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-ledger",
  "gateway-authority-paid-admission",
@@ -1250,13 +1252,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-reset-evidence"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-reset-permit"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-evidence",
+ "gateway-authority-reset-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-reset-records"
 version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
  "gateway-core",
+ "gateway-schema",
  "serde",
- "sha2 0.11.0",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1777,6 +1814,8 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-reset-permit",
+ "gateway-authority-reset-evidence",
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-route",
  "gateway-authority-paid-evidence",

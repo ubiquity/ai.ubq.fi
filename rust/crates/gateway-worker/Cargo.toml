@@ -13,6 +13,8 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-authority-reset-permit = { path = "../gateway-authority-reset-permit" }
+gateway-authority-reset-evidence = { path = "../gateway-authority-reset-evidence" }
 gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
 gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }

@@ -1,19 +1,16 @@
 //! One source full-pool evaluation. Only shared opaque permits reach a consume.
 use super::{manual, source_inventory, source_inventory::SourceRuntime};
-use crate::{
-    authority::RemoteAuthorityStore, host::PlatformClock, host::PlatformHost, host::PlatformTokens,
-    storage::now_ms, transport::outbound::PinnedDestination, transport::outbound::send_http,
-};
-use gateway_auth::{
-    provider_credentials::CodexSourceAccount, provider_credentials::read_codex_source_pool,
-    resolve::AuthService, types::AuthConfig, types::AuthMethod, types::AuthRequest,
-};
-use gateway_authority::{
-    full_pool_reset::types::AutomaticResetPermit, full_pool_reset::types::FullPoolEvaluation,
-    full_pool_reset::types::FullPoolPreparation, full_pool_reset::types::SourceResetInventory,
-    reset_types::FullPoolResetReconciliation, store::Authority,
-};
-use gateway_authority_reset_records::{ResetClaim, ResetState};
+use crate::transport::outbound::send_http;
+use crate::{authority::RemoteAuthorityStore, host::PlatformClock, host::PlatformHost};
+use crate::{host::PlatformTokens, storage::now_ms, transport::outbound::PinnedDestination};
+use gateway_auth::provider_credentials::CodexSourceAccount;
+use gateway_auth::{provider_credentials::read_codex_source_pool, resolve::AuthService};
+use gateway_auth::{types::AuthConfig, types::AuthMethod, types::AuthRequest};
+use gateway_authority::store::Authority;
+use gateway_authority_reset_evidence::types::FullPoolResetReconciliation;
+use gateway_authority_reset_permit::{ResetPermitOperations, types::AutomaticResetPermit};
+use gateway_authority_reset_permit::{types::FullPoolEvaluation, types::FullPoolPreparation};
+use gateway_authority_reset_records::{ResetClaim, ResetState, full_pool::SourceResetInventory};
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
 use gateway_core::{error::GatewayError, identity::AccountBinding, identity::RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;

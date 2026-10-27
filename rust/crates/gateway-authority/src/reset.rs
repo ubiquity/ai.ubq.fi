@@ -1,20 +1,14 @@
 //! Banked-reset owner fencing and spend-once boundaries. No provider call occurs here.
-use crate::{
-    PROBE_LEASE_MS, add, invalid, next_generation, nonnegative,
-    routing::{read_view, validate_cohort},
-    store::{Authority, Transaction},
-    text, unavailable,
-};
+use crate::{PROBE_LEASE_MS, add, invalid, next_generation, nonnegative, routing::read_view};
+use crate::{routing::validate_cohort, store::Authority, store::Transaction, text, unavailable};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_authority_reset_records::{
-    AccountDayBudget, ResetClaim, ResetConfig, ResetCredit, ResetInvocation, ResetMode,
-    ResetRecord, ResetShadow, ResetState, hash, reset_invocation, utc_day,
-};
+use gateway_authority_reset_evidence::types::ResetCandidate;
+use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetCredit};
+use gateway_authority_reset_records::{ResetInvocation, ResetMode, ResetRecord, ResetShadow};
+use gateway_authority_reset_records::{ResetState, hash, reset_invocation, utc_day};
 use gateway_authority_routing_records::slot::class_name;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
-
-use crate::reset_types::ResetCandidate;
 
 pub(crate) async fn reset_fences<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
@@ -138,7 +132,7 @@ fn shadow_episode(candidate: &ResetCandidate) -> String {
 #[derive(Clone, Copy)]
 pub(crate) enum ResetAuthorization<'a> {
     Legacy(&'a ResetCandidate),
-    FullPool(&'a crate::full_pool_reset::types::AutomaticResetPermit),
+    FullPool(&'a gateway_authority_reset_permit::types::AutomaticResetPermit),
     ExistingLedger(
         &'a ResetCandidate,
         &'a gateway_core::identity::RequestContext,
@@ -444,7 +438,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Complete source audit permission, validated inside the existing shared spend transaction.
     pub async fn claim_full_pool_reset(
         &self,
-        permit: &crate::full_pool_reset::types::AutomaticResetPermit,
+        permit: &gateway_authority_reset_permit::types::AutomaticResetPermit,
     ) -> Result<ResetClaim, GatewayError> {
         let now = self.fresh_time(0)?;
         self.claim_reset_guarded(ResetAuthorization::FullPool(permit), now)
@@ -623,7 +617,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Complete source audit permission, validated inside the existing shared spend transaction.
     pub async fn prepare_full_pool_reset_submission(
         &self,
-        permit: &crate::full_pool_reset::types::AutomaticResetPermit,
+        permit: &gateway_authority_reset_permit::types::AutomaticResetPermit,
         expected: &ResetRecord,
     ) -> Result<ResetRecord, GatewayError> {
         let now = self.fresh_time(0)?;
@@ -717,7 +711,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Complete source audit permission, validated inside the existing shared spend transaction.
     pub async fn renew_full_pool_reset_before_redeem(
         &self,
-        permit: &crate::full_pool_reset::types::AutomaticResetPermit,
+        permit: &gateway_authority_reset_permit::types::AutomaticResetPermit,
         expected: &ResetRecord,
     ) -> Result<ResetRecord, GatewayError> {
         let now = self.fresh_time(0)?;

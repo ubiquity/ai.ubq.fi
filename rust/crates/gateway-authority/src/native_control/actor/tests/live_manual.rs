@@ -3,29 +3,22 @@ use crate::manual_reset::*;
 use crate::native_live::wire::*;
 use crate::native_live::*;
 use crate::reset::*;
-use crate::reset_types::*;
-use gateway_auth::{
-    native_auth::{
-        NativeAuthHeaders, NativeCapability, NativeNonceAuthority, NativeTransportIdentity,
-    },
-    native_live::NativeLiveAuthenticator,
-    provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
-};
-use gateway_authority_reset_records::{
-    AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetState,
-};
-use gateway_authority_routing_evidence::capacity::{
-    CapacityObservation, CapacityState, CapacityWindow, CapacityWindows,
-};
-use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
-use gateway_authority_routing_records::types::{
-    PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,
-};
+use gateway_auth::native_live::NativeLiveAuthenticator;
+use gateway_auth::provider_credentials::CodexSourceAccount;
+use gateway_auth::provider_credentials::CodexSourcePool;
+use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_auth::{native_auth::NativeAuthHeaders, native_auth::NativeCapability};
+use gateway_auth::{native_auth::NativeNonceAuthority, native_auth::NativeTransportIdentity};
+use gateway_authority_reset_records::ResetState;
+use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetMode};
+use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
+use gateway_authority_routing_evidence::{capacity::CapacityWindow, capacity::CapacityWindows};
+use gateway_authority_routing_records::{codec::normalize, codec::parse_routing_state};
+use gateway_authority_routing_records::{types::PoolAccount, types::QuotaBlock};
+use gateway_authority_routing_records::{types::QuotaBlockSource, types::SubscriptionPool};
 use gateway_authority_routing_selection::types::*;
-use gateway_core::{
-    identity::{ActiveSelection, ActiveTransitionReason, PoolVersionstamp},
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_core::{identity::ActiveSelection, identity::ActiveTransitionReason};
+use gateway_core::{identity::PoolVersionstamp, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use std::collections::BTreeSet;
 
 struct UniqueTokens(AtomicUsize);

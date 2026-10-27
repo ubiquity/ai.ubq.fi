@@ -2,10 +2,8 @@ use crate::{Row, Transform, decode, invalid, starts, unavailable};
 use gateway_authority_api_protocol::{ApiUsageRequest, ApiUsageWindow};
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelReservation, KernelWindow};
 use gateway_authority_paid_records::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate};
-use gateway_core::error::GatewayError;
-use gateway_core::{lifecycle::BillingState, value::PortableValue};
-use serde_json::Value;
-use serde_json::json;
+use gateway_core::{error::GatewayError, lifecycle::BillingState, value::PortableValue};
+use serde_json::{Value, json};
 
 pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     if crate::paid_controls::forward(row)? {
@@ -16,7 +14,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     }
     let p = &row.parts;
     if starts(p, &["uos_ai", "codex_reset_shadow_decision"]) {
-        gateway_authority::full_pool_reset::types::FullPoolShadowDecision::validate_record(
+        gateway_authority_reset_records::full_pool::FullPoolShadowDecision::validate_record(
             &row.key,
             &row.record,
         )?;

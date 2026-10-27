@@ -1,10 +1,10 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_core::source_control::decode_source_control_record;
-use gateway_core::{error::GatewayError, state::RecordMutation};
-use gateway_core::{source_control::encode_source_control_record, state::RevisionCheck};
-use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::StoredRecord};
-use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RecordKey};
+use gateway_core::state::RecordKey;
+use gateway_core::{error::GatewayError, source_control::decode_source_control_record};
+use gateway_core::{source_control::encode_source_control_record, state::RecordMutation};
+use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::RevisionCheck};
+use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::StoredRecord};
 use gateway_schema::aliases::SourceStringCollator;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
@@ -517,5 +517,19 @@ impl<S: gateway_core::query::QueryStore, I: TokenSource>
     type Tokens = I;
     fn paid_backfill(&self) -> gateway_authority_paid_backfill::PaidBackfillService<'_, S, I> {
         gateway_authority_paid_backfill::PaidBackfillService::new(&self.store, &self.tokens)
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_permit::ResetPermitFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_permit(&self) -> gateway_authority_reset_permit::ResetPermitService<'_, S, I> {
+        gateway_authority_reset_permit::ResetPermitService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
     }
 }

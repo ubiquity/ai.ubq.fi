@@ -1,10 +1,7 @@
 use super::{FullPoolFence, FullPoolShadowDecision, invalid};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::MAX_SAFE_INTEGER;
-use gateway_core::js_string::JsString16;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, StoredRecord};
 use gateway_core::value::ValueEncoding;
+use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16};
+use gateway_core::{source_json::SourceJson, state::RecordKey, state::StoredRecord};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -118,7 +115,7 @@ impl FullPoolShadowDecision {
     }
 }
 
-pub(super) fn episode_hash(settings: &str, fences: &[FullPoolFence]) -> String {
+pub fn episode_hash(settings: &str, fences: &[FullPoolFence]) -> String {
     let rows = fences
         .iter()
         .map(|fence| {
@@ -137,7 +134,7 @@ pub(super) fn episode_hash(settings: &str, fences: &[FullPoolFence]) -> String {
         "uos_ai\0codex_reset_shadow_episode\0{settings}\0{rows}"
     ))
 }
-pub(super) fn credit_hash(credit: &JsString16) -> String {
+pub fn credit_hash(credit: &JsString16) -> String {
     // This is exactly TextEncoder's specified hash input. The original ID stays
     // UTF16 in memory/wire; it is never replaced by this temporary byte encoding.
     let mut text = String::from("uos_ai\0codex_reset_credit\0");

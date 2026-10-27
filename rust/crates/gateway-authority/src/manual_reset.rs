@@ -1,32 +1,21 @@
 //! Explicit authenticated manual reset. Shares the existing redemption/day records.
 //! Provider usage/inventory/consume I/O belongs to the fixed admin host, outside transactions.
-use crate::{
-    capacity_rules,
-    native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    reset,
-    reset_types::{self},
-    routing::{self, RoutingView},
-    routing_rules,
-    store::{Authority, Transaction},
-};
-use gateway_auth::{
-    provider_credentials::{
-        codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
-    },
-    types::AuthConfig,
-};
+use crate::{native_control::actor, native_control::actor::NativeActorScope};
+use crate::{native_control::actor::NativeRenewalActor, native_control::actor::StoredNativeActor};
+use crate::{reset, routing, routing::RoutingView, store::Authority, store::Transaction};
+use gateway_auth::provider_credentials::codex_access_expiry_ms;
+use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_auth::{provider_credentials::parse_codex_source_pool, types::AuthConfig};
+use gateway_authority_capacity_policy as capacity_rules;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_authority_reset_records::{
-    AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation, ResetMode, ResetRecord, ResetState,
-};
-use gateway_authority_routing_evidence::capacity::{CapacityObservation, CapacityState};
-use gateway_core::{
-    error::GatewayError,
-    identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, MAX_SAFE_INTEGER},
-    state::{AuthorityStore, RecordKey},
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation};
+use gateway_authority_reset_records::{ResetMode, ResetRecord, ResetState};
+use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
+use gateway_core::tuple_key::TupleKey;
+use gateway_core::{error::GatewayError, identity::AccountBinding, identity::ActiveSelection};
+use gateway_core::{identity::ActiveTransitionReason, identity::MAX_SAFE_INTEGER};
+use gateway_core::{state::AuthorityStore, state::RecordKey, tuple_key::ScalarKeyPart};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -580,7 +569,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Err(error(409, "codex_reset_concurrent_update"));
             }
             for model in &models {
-                if let Some(next) = routing_rules::apply_capacity_observation(
+                if let Some(next) = capacity_rules::apply_capacity_observation(
                     &view.state,
                     &current_usage,
                     tx.now,

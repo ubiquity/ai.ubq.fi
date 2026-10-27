@@ -1,13 +1,14 @@
-use super::{Facts, SourceCreditCollation, SourceResetCredit, SourceResetInventory, declined};
+use super::declined;
+use super::{CreditCandidateData, SourceCreditCollation, SourceResetCredit, SourceResetInventory};
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16};
 use std::{cmp::Ordering, collections::BTreeSet};
 
-pub(super) struct Selected {
+pub struct Selected {
     pub member: usize,
     pub credit: SourceResetCredit,
     pub observed: i64,
 }
-pub(super) struct Selection {
+pub struct Selection {
     pub selected: Option<Selected>,
     pub reason: &'static str,
 }
@@ -19,14 +20,13 @@ fn nonblank(value: &JsString16) -> bool {
         !char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
     })
 }
-pub(super) fn select<H: SourceCreditCollation>(
-    facts: &Facts,
+pub fn select<H: SourceCreditCollation>(
+    facts: &CreditCandidateData,
     inventories: &[SourceResetInventory],
     host: &H,
     now: i64,
 ) -> Result<Selection, GatewayError> {
-    let expected: Vec<_> = facts
-        .members
+    let expected: Vec<_> = members
         .iter()
         .enumerate()
         .filter(|(_, member)| member.enabled)
@@ -41,7 +41,7 @@ pub(super) fn select<H: SourceCreditCollation>(
         let (member_index, member) = expected
             .iter()
             .copied()
-            .find(|(_, member)| member.candidate.binding == inventory.binding)
+            .find(|(_, member)| member.binding == inventory.binding)
             .ok_or_else(|| declined("inventory_unavailable"))?;
         if !slots.insert(inventory.binding.slot)
             || !(0..=MAX_SAFE_INTEGER).contains(&inventory.available_count)
@@ -104,7 +104,7 @@ pub(super) fn select<H: SourceCreditCollation>(
                                 .candidate
                                 .binding
                                 .slot
-                                .cmp(&facts.members[current.member].candidate.binding.slot)
+                                .cmp(&members[current.member].binding.slot)
                         });
                     (if order == Ordering::Equal {
                         host.compare_credit_ids(&credit.credit_id, &current.credit.credit_id)?
