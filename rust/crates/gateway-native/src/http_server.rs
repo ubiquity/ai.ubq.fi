@@ -253,7 +253,7 @@ impl NativeHttpService {
                     reason: Some(NativeControlReason::OwnerUnavailable),
                 })
             },
-            |handler| handler.renew(&proof, &envelope, &request.body, &context),
+            |handler| handler.renew(proof, &envelope, &request.body, &context),
         );
         let response = match result {
             Ok(response) => response,
