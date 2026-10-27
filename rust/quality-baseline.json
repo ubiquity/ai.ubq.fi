@@ -11,11 +11,11 @@
     "gateway-extras-runtime": 2440,
     "gateway-migration": 9759,
     "gateway-native": 22320,
-    "gateway-observability": 12243,
+    "gateway-observability": 12027,
     "gateway-providers": 9739,
     "gateway-routing-runtime": 7944,
     "gateway-schema": 7618,
-    "gateway-worker": 20294
+    "gateway-worker": 18849
   },
   "targets": {
     "gateway-authority/test/conformance": 5558,

@@ -69,7 +69,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         let at = store::now(self.host.as_ref())?;
         let raw_id = source::member(input, "id").and_then(|v| v.deserialize::<JsString16>().ok());
-        let id = crate::records::bounded_text(
+        let id = gateway_observability_request_records::request::bounded_text(
             raw_id.as_ref(),
             120,
             &gateway_core::js_string::JsString16::from_utf8(&store::uuid(self.host.as_ref())?),

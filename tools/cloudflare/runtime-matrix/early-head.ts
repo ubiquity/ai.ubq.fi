@@ -146,7 +146,8 @@ async function unchanged(context: MatrixContext, mode: "direct" | "nonstream" | 
     dispatches(await context.events(), marker).map((call) => call.provider),
     ["lithos"]
   );
-  context.cases.push(EARLY_HEAD_CASE_NAMES[mode === "direct" ? 5 : mode === "nonstream" ? 6 : 7]);
+  const names = { direct: EARLY_HEAD_CASE_NAMES[5], nonstream: EARLY_HEAD_CASE_NAMES[6], chat: EARLY_HEAD_CASE_NAMES[7] };
+  context.cases.push(names[mode]);
 }
 export async function runEarlyHeadWireCases(harness: MatrixHarness): Promise<void> {
   for (const mode of ["mixed400", "mixed503", "success", "no200", "jsonhead"] as const)

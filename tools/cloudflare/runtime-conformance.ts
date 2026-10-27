@@ -1,4 +1,5 @@
-import { EARLY_HEAD_CASE_NAMES, runEarlyHeadWireCases } from "./runtime-matrix/early-head.ts";
+import { runSelectedRuntimeCases } from "./runtime-matrix/selected-cases.ts";
+import { EARLY_HEAD_CASE_NAMES } from "./runtime-matrix/early-head.ts";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { createRequire } from "node:module";
@@ -9,12 +10,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liveCases } from "./fixtures/live-conformance.ts";
 import { isObject } from "./runtime-conformance-support.ts";
-import { abortBeforeOutput, precommitCases, precommitPaidCases, PRECOMMIT_CASE_NAMES } from "./runtime-matrix/precommit.ts";
+import { PRECOMMIT_CASE_NAMES } from "./runtime-matrix/precommit.ts";
 import { emitConformanceReceipt } from "./runtime-matrix/conformance-receipt.ts";
 import { fixtureConfig } from "./runtime-matrix/workerd-config.ts";
 import { failureCaptureCase, captureSuppressionCase } from "./fixtures/capture-conformance.ts";
 import { cerebrasPaymentCases, passportCases } from "./runtime-auth-conformance.ts";
-import { runProviderMatrixCases, runStreamRuntimeCases, STREAM_RUNTIME_CASE_NAMES, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
+import { runProviderMatrixCases, STREAM_RUNTIME_CASE_NAMES, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
 import { compactionFallbackCases, replayProviderCases, unicodeForwardingCases } from "./runtime-matrix/context-replay.ts";
 import { testNetworkArgv } from "../../scripts/test-network.ts";
 
@@ -771,37 +772,9 @@ async function inner(): Promise<void> {
     assert.equal(identity.release.git_sha, expectedSha);
     assert.equal(health.headers.get("x-uos-git-sha"), expectedSha);
     cases.push("exact_rust_source_identity");
-    if (earlyHeadWireOnly) {
-      await runEarlyHeadWireCases({ ...matrixContext, withScenario });
-      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
-        name: "early-head-wire",
-        expectedCases: EARLY_HEAD_CASE_NAMES,
-      });
-      return;
-    }
-    if (presemanticAbortOnly) {
-      await withScenario("precommit", abortBeforeOutput);
-      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
-        name: "presemantic-abort",
-        expectedCases: ["matrix_synthetic_presemantic_caller_abort_never_advances"],
-      });
-      return;
-    }
-    if (precommitOnly) {
-      await withScenario("precommit", precommitCases);
-      await withScenario("precommit-paid", precommitPaidCases);
-      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
-        name: "synthetic-precommit",
-        expectedCases: PRECOMMIT_CASE_NAMES,
-      });
-      return;
-    }
-    if (streamRuntimeOnly) {
-      await runStreamRuntimeCases({ ...matrixContext, withScenario });
-      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
-        name: "stream-runtime",
-        expectedCases: STREAM_RUNTIME_CASE_NAMES,
-      });
+    const selection = await runSelectedRuntimeCases({ ...matrixContext, withScenario }, extraArgs[0]);
+    if (selection) {
+      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, selection);
       return;
     }
     const preflight = await fetch(url("/v1/responses"), { method: "OPTIONS", headers: { origin: "https://ai.ubq.fi" } });
