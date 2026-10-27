@@ -6,13 +6,13 @@ use crate::{
         LocalSemanticOutcome, LocalTerminalObservation, LocalWorkPhase, journal_local_work,
     },
     source_control::decode_source_control_record,
-    source_serialization as source,
     state::{RecordKey, StoredRecord},
     tuple_key::{ScalarKeyPart, TupleKey},
 };
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 
 /// Prepared only after the runtime's complete Journal decoder and genuine owned
 /// success boundary. Validating this data does not establish either of those facts.
