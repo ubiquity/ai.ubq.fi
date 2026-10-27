@@ -116,9 +116,8 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         now_ms().unwrap_or(i64::MAX)
     }
-    fn unique_id(&self) -> String {
-        // Clock and platform RNG are validated by the enclosing public request.
-        random::opaque_token().expect("A catalog lease requires actual platform randomness")
+    fn unique_id(&self) -> Result<String, GatewayError> {
+        random::opaque_token()
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         if self.platform.cancellation.signal().aborted() {

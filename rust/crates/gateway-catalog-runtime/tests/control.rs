@@ -241,10 +241,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let sequence = self.sequence.get() + 1;
         self.sequence.set(sequence);
-        format!("observation-{sequence}")
+        Ok(format!("observation-{sequence}"))
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         self.store

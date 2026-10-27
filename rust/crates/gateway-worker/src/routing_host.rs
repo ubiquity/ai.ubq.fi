@@ -14,6 +14,7 @@ use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
+use gateway_wait_observation::outcome::WaitOutcome;
 use gateway_worker_storage::store::now_ms;
 use worker::Env;
 
@@ -48,27 +49,23 @@ impl RoutingHost for Host {
         self.platform.cancellation.signal().aborted()
     }
     fn cancellation_error(&self) -> GatewayError {
-        if self.platform.cancellation.client_aborted() {
-            gateway_admission::cancellation_error()
-        } else {
-            GatewayError::new(
-                504,
-                "The gateway request deadline expired.",
-                Some("gateway_timeout"),
-            )
-            .with_type("server_error")
-        }
+        self.platform.cancellation.routing_error()
     }
-    async fn wait(&self, milliseconds: i64) -> gateway_routing_runtime::types::WaitOutcome {
-        let started = gateway_worker_platform::clock::monotonic()
-            .expect("Routing requires the validated platform monotonic clock");
+    async fn wait(&self, milliseconds: i64) -> WaitOutcome {
+        let started = match gateway_worker_platform::clock::monotonic() {
+            Ok(started) => started,
+            Err(error) => {
+                return WaitOutcome::NotStarted {
+                    error: self
+                        .cancelled()
+                        .then(|| self.cancellation_error())
+                        .unwrap_or(error),
+                };
+            }
+        };
         let result = self.wait_result(milliseconds).await;
-        let ended = gateway_worker_platform::clock::monotonic()
-            .expect("Routing requires the validated platform monotonic clock");
-        let elapsed_ms = (ended.saturating_sub(started).as_secs_f64() * 1000.0)
-            .round()
-            .min(i64::MAX as f64) as i64;
-        gateway_routing_runtime::types::WaitOutcome { elapsed_ms, result }
+        let elapsed_ms = gateway_worker_platform::clock::elapsed_ms_since(started);
+        WaitOutcome::Attempted { elapsed_ms, result }
     }
     async fn credential(
         &self,

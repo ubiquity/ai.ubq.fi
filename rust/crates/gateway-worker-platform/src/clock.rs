@@ -26,3 +26,12 @@ pub fn monotonic() -> Result<Duration, GatewayError> {
         .ok_or_else(unavailable)?;
     Duration::try_from_secs_f64(milliseconds / 1000.0).map_err(|_| unavailable())
 }
+
+/// Observe elapsed host time at the original completion sample.
+pub fn elapsed_ms_since(started: Duration) -> Result<i64, GatewayError> {
+    monotonic().map(|ended| {
+        (ended.saturating_sub(started).as_secs_f64() * 1000.0)
+            .round()
+            .min(i64::MAX as f64) as i64
+    })
+}

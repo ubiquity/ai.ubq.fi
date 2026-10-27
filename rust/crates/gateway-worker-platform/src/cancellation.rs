@@ -85,6 +85,19 @@ impl Cancellation {
         self.incoming.aborted()
     }
 
+    pub fn routing_error(&self) -> GatewayError {
+        if self.client_aborted() {
+            gateway_admission::cancellation_error()
+        } else {
+            GatewayError::new(
+                504,
+                "The gateway request deadline expired.",
+                Some("gateway_timeout"),
+            )
+            .with_type("server_error")
+        }
+    }
+
     /// Remaining time computed from the route's absolute host-policy deadline.
     pub fn set_timeout_ms(&self, milliseconds: i32) -> Result<Deadline, GatewayError> {
         if milliseconds < 0 {

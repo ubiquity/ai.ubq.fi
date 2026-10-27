@@ -1386,6 +1386,7 @@ dependencies = [
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-wait-observation",
  "serde",
  "serde_json",
 ]
@@ -1400,6 +1401,7 @@ dependencies = [
  "gateway-providers",
  "gateway-routing-runtime",
  "gateway-schema",
+ "gateway-wait-observation",
  "serde",
  "serde_json",
 ]
@@ -1416,6 +1418,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-wait-observation"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
 ]
 
 [[package]]
@@ -1451,6 +1460,7 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-wait-observation",
  "gateway-worker-http-body",
  "gateway-worker-platform",
  "gateway-worker-storage",
