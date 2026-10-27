@@ -277,7 +277,7 @@ impl NativeBindings {
             PlatformHost,
         >,
         platform: &PlatformHost,
-    ) -> Result<gateway_authority::native_control::NativeRenewalFence, GatewayError> {
+    ) -> Result<gateway_native_authority_wire::renewal::NativeRenewalFence, GatewayError> {
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
             operation_id: gateway_worker_platform::random::opaque_token()?,

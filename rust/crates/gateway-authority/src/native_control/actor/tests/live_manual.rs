@@ -18,6 +18,8 @@ use gateway_authority_routing_selection::types::*;
 use gateway_contracts::identity::PoolVersionstamp;
 use gateway_contracts::{identity::ActiveSelection, identity::ActiveTransitionReason};
 use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_native_authority_wire::live::NativeLiveAuthorityResponse;
+use gateway_native_authority_wire::live::NativeLiveRetirement;
 use std::collections::BTreeSet;
 
 struct UniqueTokens(AtomicUsize);

@@ -814,7 +814,8 @@ const importFixture = () => {
   mkdirSync(environment.TMPDIR, { recursive: true });
   const directory = join(fixture.root, "rust/crates/gateway-native");
   const make = (name: string, kind: string, test: boolean) => {
-    const source = kind === "lib" ? "src/lib.rs" : `src/bin/${name}.rs`;
+    let source = kind === "lib" ? "src/lib.rs" : `src/bin/${name}.rs`;
+    if (kind === "test") source = `tests/${name}.rs`;
     const src = join(directory, source);
     const runtimePath = kind === "example" ? `examples/${name}` : name;
     const executable = join(target, "debug", test ? `deps/${name}-cargo-emitted` : runtimePath);
@@ -833,6 +834,7 @@ const importFixture = () => {
     };
   };
   const library = make("gateway_native", "lib", true);
+  const policy = make("import_policy", "test", true);
   const built = ["uos-native-owner-inspect", "uos-native", "uos-native-supervisor", "uos-native-request", "uos-native-connector", "uos-native-import"].map(
     (name) => make(name, "bin", false)
   );
@@ -842,16 +844,18 @@ const importFixture = () => {
   const run: CommandRunner = (command, environment) => {
     calls.push(command);
     if (command.argv[0] === "git") return fixture.run(command, environment);
-    if (command.argv.includes("--no-run")) return Promise.resolve({ code: 0, stdout: fixture.json([library]), stderr: "" });
+    if (command.argv.includes("--no-run")) return Promise.resolve({ code: 0, stdout: fixture.json([library, policy]), stderr: "" });
     if (command.argv.includes("--message-format=json")) return Promise.resolve({ code: 0, stdout: fixture.json(built), stderr: "" });
-    if (command.argv.includes("--list"))
-      return Promise.resolve({ code: 0, stdout: NATIVE_IMPORT_CASES.map((item) => item.name + ": test\n").join(""), stderr: "" });
+    if (command.argv.includes("--list")) {
+      const cases = NATIVE_IMPORT_CASES.filter((item) => "target" in item === (command.argv[0] === policy.executable));
+      return Promise.resolve({ code: 0, stdout: cases.map((item) => item.name + ": test\n").join(""), stderr: "" });
+    }
     assert.equal(command.argv[0], "/usr/bin/python3");
     assert.ok(command.ownedImportDriver);
     payloads.push(JSON.parse(command.argv.at(-1) ?? ""));
     return Promise.resolve({ code: 0, stdout: "test result: ok. 1 passed; 0 failed; 0 ignored;\n", stderr: "" });
   };
-  return { ...fixture, environment, calls, payloads, run, library, built };
+  return { ...fixture, environment, calls, payloads, run, library, policy, built };
 };
 
 test("finite native import stage is Darwin/native only and never changes production Worker features", () => {
@@ -878,7 +882,7 @@ test("finite optimized-debug import selector runs exactly11 cases with8 prelaunc
     assert.ok(JSON.stringify(payload.argv).includes("--exact"));
     assert.ok(payload.argv.includes(expected.name) || JSON.stringify(payload.argv).includes(expected.name));
     assert.ok(!("UNLISTED_CREDENTIAL_PROBE" in payload.environment));
-    if (expected.boundary === "prelaunch") assert.equal(payload.argv[0], fixture.library.executable);
+    if (expected.boundary === "prelaunch") assert.equal(payload.argv[0], "target" in expected ? fixture.policy.executable : fixture.library.executable);
     if (expected.boundary === "offline") assert.deepEqual(payload.argv.slice(0, 2), ["/usr/bin/sandbox-exec", "-f"]);
   }
   const compilation = fixture.calls.filter((command) => command.argv.includes("--message-format=json"));

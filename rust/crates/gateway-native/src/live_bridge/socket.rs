@@ -2,7 +2,7 @@ use super::{
     authority::{LiveAuthorization, NativeLiveAuthority},
     unavailable,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
 use std::{
     io::{self, Read, Write},
@@ -24,7 +24,7 @@ pub struct LiveDialContext {
     alive: Arc<AtomicBool>,
     downstream: TcpStream,
     deadline: Instant,
-    connector_frame: Option<crate::connector_protocol::ControlFrame>,
+    connector_frame: Option<gateway_native_connector::connector_protocol::ControlFrame>,
 }
 impl LiveDialContext {
     pub(super) fn new(alive: Arc<AtomicBool>, downstream: TcpStream, deadline: Instant) -> Self {
@@ -42,9 +42,9 @@ impl LiveDialContext {
             self.downstream.try_clone().map_err(|_| unavailable())?,
             self.deadline,
         );
-        let frame = crate::connector_protocol::ControlFrame::Connect {
+        let frame = gateway_native_connector::connector_protocol::ControlFrame::Connect {
             v: 1,
-            channel: crate::connector_protocol::Channel::ProviderLive,
+            channel: gateway_native_connector::connector_protocol::Channel::ProviderLive,
             action_ref: authorization.action_ref.clone(),
             connection_id: authorization.connection_id.clone(),
             authorization_ref: authorization.authorization_ref.clone(),
@@ -55,7 +55,7 @@ impl LiveDialContext {
     }
     pub(crate) fn connector_frame(
         &self,
-    ) -> Result<crate::connector_protocol::ControlFrame, GatewayError> {
+    ) -> Result<gateway_native_connector::connector_protocol::ControlFrame, GatewayError> {
         self.check()?;
         self.connector_frame.clone().ok_or_else(unavailable)
     }
@@ -137,7 +137,9 @@ pub(super) fn dial(
         let mut conn = ClientConnection::new(tls, server_name).map_err(|_| unavailable())?;
         // Only one charged WebSocket frame enters TLS at a time. Its complete
         // charge remains until StreamOwned::flush drains ciphertext as well.
-        conn.set_buffer_limit(Some(super::MAX_PAYLOAD_BYTES + 64));
+        conn.set_buffer_limit(Some(
+            gateway_native_live_buffer::limits::MAX_PAYLOAD_BYTES + 64,
+        ));
         let mut socket = DeadlineSocket {
             stream,
             deadline: Some(context.deadline()),
@@ -173,7 +175,7 @@ pub(super) fn dial(
         let mut socket = match tungstenite::client::client_with_config(
             request,
             stream,
-            Some(super::queue::websocket_config()),
+            Some(gateway_native_live_buffer::queue::websocket_config()),
         ) {
             Ok((socket, _)) => socket,
             Err(HandshakeError::Failure(tungstenite::Error::Http(response))) => {

@@ -1,5 +1,5 @@
 #[cfg(unix)]
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 #[cfg(unix)]
 fn main() {
     if let Err(error) = run() {
@@ -23,15 +23,12 @@ fn main() {
 
 #[cfg(unix)]
 fn run() -> Result<(), GatewayError> {
-    gateway_native::require_production_artifact()?;
-    use gateway_native::{
-        confinement::{NativeConfinement, enforce},
-        daemon_config::NativeDaemonConfig,
-        http_server::NativeHttpService,
-        nonce_sqlite::SqliteNonceStore,
-        supervisor::SourceId,
-        supervisor_data::{SupervisorData, SupervisorSourceConfig},
-    };
+    gateway_native_connector::artifact::require_production_artifact()?;
+    use gateway_native::{daemon_config::NativeDaemonConfig, http_server::NativeHttpService};
+    use gateway_native_confinement::confinement::{NativeConfinement, enforce};
+    use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
+    use gateway_native_supervisor::supervisor::SourceId;
+    use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
     use std::{net::TcpListener, path::PathBuf};
     let config = NativeDaemonConfig::read_stdin(std::io::stdin().lock())?;
     let replay_directory = config
@@ -184,7 +181,7 @@ fn source_unavailable(message: &str) -> GatewayError {
 #[cfg(unix)]
 fn prepare_owner_renewal(
     config: gateway_native::daemon_config::OwnerRenewalConfig,
-    identity: &gateway_auth::native_auth::NativeTransportIdentity,
+    identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     readonly_paths: &mut Vec<std::path::PathBuf>,
     unix_sockets: &mut Vec<std::path::PathBuf>,
 ) -> Result<
@@ -193,14 +190,15 @@ fn prepare_owner_renewal(
     >,
     GatewayError,
 > {
-    use gateway_auth::native_credentials::NativeOwnerId;
+    use gateway_auth_credentials::native_credentials::NativeOwnerId;
     use gateway_auth_native_wire::native_read::{
         NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
     };
     use gateway_native::{
         authority_http::NativeAuthorityHttp, managed_publication_http::NativeAccessPublicationHttp,
-        owner_renewal::NativeOwnerRenewalService, unix::NativeOwnerLocation,
+        owner_renewal::NativeOwnerRenewalService,
     };
+    use gateway_native_local_transport::unix::NativeOwnerLocation;
     let mut locations = Vec::new();
     for owner in config.owners() {
         let home = std::fs::canonicalize(owner.codex_home()).map_err(|_| renewal_unavailable())?;

@@ -1,7 +1,8 @@
 use super::*;
 use crate::live_bridge::NativeLiveOutcome;
-use gateway_auth::{crypto::base64url, native_live::AuthenticatedNativeLive};
-use std::{collections::BTreeSet, fs, net::Shutdown, path::PathBuf, sync::Mutex};
+use gateway_auth_native_proof::native_live::AuthenticatedNativeLive;
+use gateway_auth_primitives::crypto::base64url;
+use std::{collections::BTreeSet, fs, io::Read, net::Shutdown, path::PathBuf, sync::Mutex};
 
 #[derive(Default)]
 struct Observed {

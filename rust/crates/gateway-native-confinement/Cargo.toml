@@ -1,0 +1,17 @@
+[package]
+name = "gateway-native-confinement"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-source.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "=0.4.7"
+seccompiler = "=0.5.0"
+libc = "=0.2.191"
+
+[lints]
+workspace = true

@@ -1,4 +1,5 @@
 //! Genuine original Start, actual live custody and native durable receipt only.
+use super::NativeImportInputs;
 use super::{
     ExistingAccountImportStore,
     actor_channel::InheritedCustodyChannel,
@@ -7,16 +8,18 @@ use super::{
         AuthenticatedImportPublicationReply, ImportPublicationHttp, PreparedImportPublication,
     },
     live_custody::LiveImportCustody,
-    validation::{CatalogValidation, ImportValidation, ValidatedNativeImport, ValidationOutcome},
+    validation::{ImportValidation, ValidatedNativeImport, ValidationOutcome},
 };
-use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::import::effects::NativeImportClaim,
-    native_control::import::effects::NativeImportMode,
-    native_control::import::remote::AuthenticatedImportTerminal,
-    native_control::import::remote::RemoteImportAuthority,
+use crate::import_custody_protocol::unavailable;
+use gateway_authority::native_control::{
+    NativeRenewalCancellation,
+    import::{
+        effects::{NativeImportClaim, NativeImportMode},
+        remote::{AuthenticatedImportTerminal, RemoteImportAuthority},
+    },
 };
-use gateway_core::error::GatewayError;
+use gateway_native_import_source::catalog::CatalogValidation;
+use gateway_source::error::GatewayError;
 
 /// No caller-created document, Started DATA or receipt marker can construct it.
 /// This is still not final publication/completion authority.
@@ -46,9 +49,10 @@ impl VerifiedImportPublication<'_> {
     }
     pub(super) fn disposition(
         &self,
-    ) -> gateway_auth::native_import::publication::NativeImportPublicationDisposition {
+    ) -> gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition
+    {
         self.reply.as_ref().map(|reply| reply.publication().disposition)
-            .unwrap_or(gateway_auth::native_import::publication::NativeImportPublicationDisposition::AlreadyCurrent)
+            .unwrap_or(gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition::AlreadyCurrent)
     }
 }
 impl<'a> PreparedExistingImport<'a> {
@@ -57,7 +61,7 @@ impl<'a> PreparedExistingImport<'a> {
         authority: &RemoteImportAuthority<'_, C>,
         sender: &ImportPublicationHttp,
         store: &ExistingAccountImportStore,
-        context: &NativeImportContext<'_>,
+        context: &NativeImportInputs<'_>,
     ) -> Result<VerifiedImportPublication<'a>, GatewayError> {
         let result = (|| {
             authority.recheck_import_claim(&self.claim)?;
@@ -121,7 +125,7 @@ impl<'a> PreparedExistingImport<'a> {
     }
     pub(super) fn prepare<C: NativeRenewalCancellation>(
         authority: &RemoteImportAuthority<'_, C>,
-        context: &NativeImportContext<'a>,
+        context: &NativeImportInputs<'a>,
         store: &ExistingAccountImportStore,
         channel: InheritedCustodyChannel,
         mut validation: ImportValidation,
@@ -191,7 +195,7 @@ impl<'a> PreparedExistingImport<'a> {
 }
 fn require_catalog<C: NativeRenewalCancellation>(
     authority: &RemoteImportAuthority<'_, C>,
-    context: &NativeImportContext<'_>,
+    context: &NativeImportInputs<'_>,
     candidate: &ValidatedNativeImport<'_>,
 ) -> Result<(), GatewayError> {
     context.check()?;

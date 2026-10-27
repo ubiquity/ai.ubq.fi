@@ -1,10 +1,9 @@
 //! Trusted prelaunch authority. Owns child handles, never ancillary/provider I/O.
-use crate::{
-    connector_policy, connector_protocol::ControlError, daemon_config::NativeDaemonConfig,
-    http_server, nonce_sqlite::SqliteNonceStore,
-};
-use gateway_auth::crypto::sha256_hex;
-use gateway_core::error::GatewayError;
+use crate::daemon_config::NativeDaemonConfig;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_native_connector::{connector_policy, connector_protocol::ControlError};
+use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
+use gateway_source::error::GatewayError;
 use std::{
     fs,
     io::{Read, Write},
@@ -21,7 +20,7 @@ use std::{
 };
 
 pub fn run_native_supervisor() -> ! {
-    if crate::require_production_artifact().is_err() {
+    if gateway_native_connector::artifact::require_production_artifact().is_err() {
         std::process::exit(ControlError::UnsupportedPlatform.exit_code());
     }
     let code = match run() {
@@ -85,7 +84,7 @@ fn run() -> Result<(), ControlError> {
         let mut stream = stream.map_err(io_error)?;
         if active.fetch_add(1, Ordering::AcqRel) >= 64 {
             active.fetch_sub(1, Ordering::AcqRel);
-            let _ = http_server::write_error(
+            let _ = gateway_native_http_framing::response::write_error(
                 &mut stream,
                 GatewayError::unavailable(
                     "Native listener is at capacity",

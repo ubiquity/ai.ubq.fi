@@ -2,10 +2,10 @@
 //! No wire decoder, home discovery, refresh, network, service or restore operation.
 use crate::native_custody::{NativeCustody, OwnedNativeSnapshot};
 use gateway_auth::native_credentials::{NativeGeneration, OwnerFence};
-use gateway_source::error::GatewayError;
 use gateway_contracts::identity::MAX_SAFE_INTEGER;
-use gateway_native::transport::NativeOwnerTransport;
-use gateway_native::unix::{NativeOwnerLocation, UnixOwnerTransport};
+use gateway_native_local_transport::transport::NativeOwnerTransport;
+use gateway_native_local_transport::unix::{NativeOwnerLocation, UnixOwnerTransport};
+use gateway_source::error::GatewayError;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,

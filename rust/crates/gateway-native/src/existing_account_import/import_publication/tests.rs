@@ -1,17 +1,10 @@
 //! Actual TLS and response authentication only, never a durable completion issuer.
 use super::*;
-use gateway_auth::native_import::publication::NativeImportPublicationDisposition;
+use gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition;
 use gateway_auth_native_wire::publication_data::ImportPublicationDataV1;
-use gateway_core::source_json::SourceJson;
-use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::{Read, Write},
-    net::TcpListener,
-    sync::Arc,
-    thread,
-    time::Duration,
-};
+use gateway_native_https_test_support::publication::{Peer, PendingPeer, Response};
+use gateway_source::source_json::SourceJson;
+use std::{collections::BTreeSet, time::Duration};
 
 type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -30,7 +23,7 @@ fn identity() -> NativeTransportIdentity {
         "owner".into(),
         "epoch".into(),
         [43; 32],
-        BTreeSet::from([gateway_auth::native_auth::NativeCapability::CodexAuthImport]),
+        BTreeSet::from([gateway_auth_native_proof::native_auth::NativeCapability::CodexAuthImport]),
     )
     .unwrap()
 }
@@ -107,161 +100,27 @@ fn reply(command: &ImportPublicationCommandData) -> NativeImportPublication {
         },
     }
 }
-#[derive(Clone, Copy)]
-enum Response {
-    Valid,
-    LargeValid,
-    ForgedMac,
-    Dropped,
-    Redirect,
-    OversizedError,
-}
-struct Observed {
-    sni: String,
-    line: String,
-    headers: BTreeMap<String, String>,
-    body: Vec<u8>,
-}
-struct Peer {
-    socket: TcpStream,
-    task: thread::JoinHandle<Option<Observed>>,
-    listener: TcpListener,
-}
-impl Peer {
-    fn start(command: &ImportPublicationCommandData, response: Response) -> FixtureResult<Self> {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
-        let socket = TcpStream::connect(listener.local_addr()?)?;
-        let server = listener.try_clone()?;
-        let expected = command.bytes()?;
-        let mut publication = reply(command);
-        if matches!(response, Response::LargeValid) {
-            assert!(matches!(
-                command.catalog,
-                ImportCatalogData::AuthenticatedLimited { .. }
-            ));
-            let retained = "\u{1}".repeat(4096);
-            publication.publication.catalog_revision = Some(retained.clone());
-            publication.publication.runtime_revision = Some(retained.clone());
-            publication.publication.auth_generation_revision = Some(retained.clone());
-            publication.publication.paid_control_config_revision = Some(retained);
-        }
-        let valid_reply = serde_json::to_vec(&publication)?;
-        NativeImportPublication::parse_for(&valid_reply, &expected)?;
-        if matches!(response, Response::LargeValid) {
-            assert!(valid_reply.len() > 65_536);
-        }
-        let task = thread::spawn(move || {
-            let (socket, _) = server.accept().ok()?;
-            socket.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
-            socket
-                .set_write_timeout(Some(Duration::from_secs(3)))
-                .ok()?;
-            let cert = include_bytes!("../../../tests/fixtures/native-tls/leaf.der");
-            let key = include_bytes!("../../../tests/fixtures/native-tls/leaf.pk8.der");
-            let config = ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(
-                    vec![CertificateDer::from(cert.to_vec())],
-                    PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec())),
-                )
-                .ok()?;
-            let mut tls = StreamOwned::new(ServerConnection::new(Arc::new(config)).ok()?, socket);
-            let (line, headers, body) = read_request(&mut tls)?;
-            if body != expected {
-                return None;
-            }
-            let auth = identity();
-            let nonce = headers.get(NATIVE_NONCE_HEADER)?;
-            let time: i64 = headers.get(NATIVE_TIME_HEADER)?.parse().ok()?;
-            if headers.get(NATIVE_MAC_HEADER)?
-                != &auth
-                    .sign(NATIVE_PUBLICATION_PATH, time, nonce, &body)
-                    .ok()?
-            {
-                return None;
-            }
-            let observed = Observed {
-                sni: tls.conn.server_name()?.into(),
-                line,
-                headers,
-                body,
-            };
-            if matches!(response, Response::Dropped) {
-                return Some(observed);
-            }
-            let status = if matches!(response, Response::Redirect) {
-                302
-            } else if matches!(response, Response::OversizedError) {
-                503
-            } else {
-                200
-            };
-            let payload = if matches!(response, Response::OversizedError) {
-                vec![b'x'; 65_537]
-            } else {
-                valid_reply
-            };
-            let signature = if matches!(response, Response::Valid | Response::LargeValid) {
-                auth.sign_publication_response(
-                    observed.headers.get(NATIVE_NONCE_HEADER)?,
-                    &observed.body,
-                    status,
-                    &payload,
-                )
-                .ok()?
-            } else {
-                base64url(&[0; 32])
-            };
-            let head = format!(
-                "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nLocation: https://forbidden.invalid/collect\r\n{NATIVE_RESPONSE_MAC_HEADER}: {signature}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                payload.len()
-            );
-            let _ = tls
-                .write_all(head.as_bytes())
-                .and_then(|_| tls.write_all(&payload))
-                .and_then(|_| tls.flush());
-            Some(observed)
-        });
-        Ok(Self {
-            socket,
-            task,
-            listener,
-        })
+fn start_peer(command: &ImportPublicationCommandData, response: Response) -> FixtureResult<Peer> {
+    let peer = PendingPeer::bind()?;
+    let expected = command.bytes()?;
+    let mut publication = reply(command);
+    if matches!(response, Response::LargeValid) {
+        assert!(matches!(
+            command.catalog,
+            ImportCatalogData::AuthenticatedLimited { .. }
+        ));
+        let retained = "\u{1}".repeat(4096);
+        publication.publication.catalog_revision = Some(retained.clone());
+        publication.publication.runtime_revision = Some(retained.clone());
+        publication.publication.auth_generation_revision = Some(retained.clone());
+        publication.publication.paid_control_config_revision = Some(retained);
     }
-}
-
-fn read_request(
-    tls: &mut StreamOwned<ServerConnection, TcpStream>,
-) -> Option<(String, BTreeMap<String, String>, Vec<u8>)> {
-    let mut bytes = Vec::new();
-    loop {
-        if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-            let header = std::str::from_utf8(&bytes[..end]).ok()?;
-            let mut lines = header.split("\r\n");
-            let line = lines.next()?.to_owned();
-            let headers: BTreeMap<_, _> = lines
-                .map(|line| line.split_once(':'))
-                .collect::<Option<Vec<_>>>()?
-                .into_iter()
-                .map(|(name, value)| (name.to_ascii_lowercase(), value.trim().to_owned()))
-                .collect();
-            let length: usize = headers.get("content-length")?.parse().ok()?;
-            if bytes.len() >= end + 4 + length {
-                return Some((line, headers, bytes[end + 4..end + 4 + length].to_vec()));
-            }
-        }
-        if bytes.len()
-            > gateway_auth_native_wire::publication_command::import_publication_max_bytes() + 16_384
-        {
-            return None;
-        }
-        let mut chunk = [0; 8192];
-        let n = tls.read(&mut chunk).ok()?;
-        if n == 0 {
-            return None;
-        }
-        bytes.extend_from_slice(&chunk[..n]);
+    let valid_reply = serde_json::to_vec(&publication)?;
+    NativeImportPublication::parse_for(&valid_reply, &expected)?;
+    if matches!(response, Response::LargeValid) {
+        assert!(valid_reply.len() > 65_536);
     }
+    Ok(peer.start(expected, valid_reply, identity(), response))
 }
 #[test]
 fn actual_signed_publication_reply_matches_original_bytes_and_retains_old_limits()
@@ -276,7 +135,7 @@ fn actual_signed_publication_reply_matches_original_bytes_and_retains_old_limits
             socket,
             task,
             listener,
-        } = Peer::start(&command, response)?;
+        } = start_peer(&command, response)?;
         let sender = ImportPublicationHttp::fixture(
             "https://localhost/uos/native/publication",
             socket,
@@ -326,7 +185,7 @@ fn actual_unsigned_dropped_redirect_and_oversized_error_never_issue_authenticate
             socket,
             task,
             listener,
-        } = Peer::start(&command, response)?;
+        } = start_peer(&command, response)?;
         let sender = ImportPublicationHttp::fixture(
             "https://localhost/uos/native/publication",
             socket,
@@ -361,7 +220,7 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
         socket,
         task,
         listener: _,
-    } = Peer::start(&command, Response::LargeValid)?;
+    } = start_peer(&command, Response::LargeValid)?;
     let transport = PrivateHttps::from_connected(
         "https://localhost/uos/native/publication",
         NATIVE_PUBLICATION_PATH,
@@ -372,7 +231,7 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
         .to_owned()]),
     )?;
     let nonce = base64url(&[7; 32]);
-    let now = crate::http_server::now_ms()?;
+    let now = gateway_native_http_framing::response::now_ms()?;
     let id = identity();
     let headers = vec![
         (NATIVE_VERSION_HEADER.into(), "1".into()),

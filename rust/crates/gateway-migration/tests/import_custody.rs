@@ -2,7 +2,6 @@
 use gateway_core::{
     source_control::decode_source_control_record, state::AuthorityStore, state::StoredRecord,
 };
-use gateway_source::source_json::SourceJson;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
 use gateway_migration::{
     capture::{PrivateCapture, SourceEntry},
@@ -15,6 +14,7 @@ use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::CanonicalDates;
+use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 
 fn key(kind: &str, reference: &str) -> RecordKey {
@@ -381,13 +381,13 @@ fn unfinished_v3_does_not_require_missing_rows_or_reject_unrelated_generation_hi
 #[test]
 fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_authority::{
-        native_control::NativeRenewalContext, native_control::NativeRenewalFence,
-        native_control::custody::validate_native_control_custody,
-    };
-    use gateway_source::{js_string::JsString16, source_serialization as source};
+    use gateway_authority::native_control::custody::validate_native_control_custody;
     use gateway_contracts::model::ModelId;
     use gateway_core::source_control::encode_source_control_record;
+    use gateway_native_authority_wire::{
+        context::NativeRenewalContext, renewal::NativeRenewalFence,
+    };
+    use gateway_source::{js_string::JsString16, source_serialization as source};
     #[derive(serde::Serialize)]
     struct LegacyRenewalData {
         v: u8,

@@ -1,18 +1,15 @@
 //! Fixed native-only receiver and authenticated source-data boundary.
 //! No socket, refresh, provider effect or publication implementation.
-use gateway_authority_contracts::TokenSource;
-#[doc(hidden)]
-pub mod import_body;
 use crate::owner_control::NativeControlContext;
-use gateway_auth::native_import::{NativeImportKind, NativeImportMetadata};
+use gateway_auth_native_contracts::native_import::{NativeImportKind, NativeImportMetadata};
 use gateway_authority::{
     native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
     native_control::receiver::NativeRenewalAuthority,
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
-};
-use std::collections::BTreeMap;
+use gateway_authority_contracts::TokenSource;
+use gateway_core::state::AuthorityStore;
+use gateway_native_import_source::{body as import_body, result::NativeImportResult};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
 /// Read-only native credential DATA, not proof, effect authority or CF completion.
 /// Constructed only by dispatch from the one original-body decoder after binding.
@@ -54,34 +51,30 @@ fn check_original_document(
     proof.require_body(body, original.now_ms()?)
 }
 
+/// The supported type path does not expose its proof/body/original binding.
+/// ```compile_fail,E0451
+/// use gateway_native::{native_import::{NativeImportContext,NativeAuthImportData},owner_control::NativeControlContext};
+/// use gateway_authority::native_control::import::AuthenticatedNativeImport;
+/// fn forge<'a>(original: &'a NativeControlContext<'a>,proof: &'a AuthenticatedNativeImport,auth: NativeAuthImportData<'a>)->NativeImportContext<'a> {
+///     NativeImportContext { original,proof,auth }
+/// }
+/// ```
 pub struct NativeImportContext<'a> {
     original: &'a NativeControlContext<'a>,
     proof: &'a AuthenticatedNativeImport,
     auth: NativeAuthImportData<'a>,
 }
 impl<'a> NativeImportContext<'a> {
-    pub(crate) fn original_proof(&self) -> &'a AuthenticatedNativeImport {
-        self.proof
-    }
-    pub(crate) fn original_body(&self) -> &[u8] {
-        self.auth.body.raw_body()
-    }
-    pub(crate) fn deadline(&self) -> std::time::Instant {
-        let now = std::time::Instant::now();
-        let remaining = self
-            .original
-            .now_ms()
-            .ok()
-            .and_then(|ms| self.proof.deadline_ms().checked_sub(ms))
-            .and_then(|ms| u64::try_from(ms).ok())
-            .map(std::time::Duration::from_millis)
-            .unwrap_or_default();
-        self.original
-            .deadline()
-            .min(now.checked_add(remaining).unwrap_or(now))
-    }
-    pub(crate) fn now_ms(&self) -> Result<i64, GatewayError> {
-        self.original.now_ms()
+    /// Checks only the exact original-context identity; callers also retain document and authority checks.
+    pub fn require_original(
+        &self,
+        original: &NativeControlContext<'_>,
+    ) -> Result<(), GatewayError> {
+        self.check()?;
+        if !std::ptr::eq(self.original, original) {
+            return Err(binding_error());
+        }
+        Ok(())
     }
     pub fn auth_data(&self) -> &NativeAuthImportData<'_> {
         &self.auth
@@ -111,27 +104,21 @@ impl<'a> NativeImportContext<'a> {
         self.check()
     }
 }
-/// Native-only source result data, not a durable publication proof or CF completion grant.
-pub struct NativeImportResult {
-    pub status: u16,
-    pub headers: BTreeMap<String, String>,
-    pub body: SourceJson,
-    pub completion: NativeImportCompletion,
-}
-pub enum NativeImportCompletion {
-    Published {
-        publication_revision: String,
-        native_receipt_ref: String,
-    },
-    AlreadyCurrent {
-        publication_revision: String,
-        native_receipt_ref: String,
-    },
-    PendingUnknown,
-    Conflict,
-    Unavailable,
-    Refused,
-}
+/// Admitted borrows cannot escape the finite callback.
+/// ```compile_fail,E0521
+/// use gateway_native::{native_import::{NativeImportHandler,NativeImportContext},owner_control::NativeControlContext};
+/// use gateway_native_import_source::result::NativeImportResult;
+/// use gateway_auth_native_contracts::native_import::NativeImportMetadata;
+/// use gateway_authority::native_control::import::AuthenticatedNativeImport;
+/// use gateway_source::error::GatewayError;
+/// struct Keep(std::sync::Mutex<Option<&'static AuthenticatedNativeImport>>);
+/// impl NativeImportHandler for Keep {
+///     fn import_document(&self,proof:&AuthenticatedNativeImport,_:&NativeImportMetadata,_:&[u8],_:&NativeImportContext<'_>,_:&NativeControlContext<'_>)->Result<NativeImportResult,GatewayError> {
+///         *self.0.lock().unwrap()=Some(proof);
+///         Err(GatewayError::unavailable("refused","refused"))
+///     }
+/// }
+/// ```
 pub trait NativeImportHandler: Send + Sync {
     fn import_document(
         &self,
@@ -139,6 +126,7 @@ pub trait NativeImportHandler: Send + Sync {
         metadata: &NativeImportMetadata,
         original_body: &[u8],
         context: &NativeImportContext<'_>,
+        original: &NativeControlContext<'_>,
     ) -> Result<NativeImportResult, GatewayError>;
 }
 /// The only context-construction path binds the actual original cancellation and current proof.
@@ -146,7 +134,7 @@ pub async fn dispatch_import<
     S: AuthorityStore,
     I: TokenSource,
     C: NativeRenewalCancellation,
-    H: NativeImportHandler,
+    H: NativeImportHandler + ?Sized,
 >(
     handler: &H,
     authority: &NativeRenewalAuthority<'_, S, I, C>,
@@ -159,7 +147,8 @@ pub async fn dispatch_import<
     authority.recheck_import(proof).await?;
     check_original_document(proof, metadata, body, original)?;
     let context = decode_context(proof, metadata, body, original)?;
-    handler.import_document(proof, metadata, body, &context)
+    context.require_original(original)?;
+    handler.import_document(proof, metadata, body, &context, original)
 }
 /// Both fixed local/remote receivers reach this one original-body decoder only
 /// after their actual authority admission and finish-current exchange.

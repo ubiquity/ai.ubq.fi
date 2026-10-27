@@ -5,6 +5,7 @@ use gateway_auth::{
 };
 use gateway_authority_initial_owner::*;
 use gateway_core::{query::*, state::*};
+use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_migration::{
     engine::{PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner},
