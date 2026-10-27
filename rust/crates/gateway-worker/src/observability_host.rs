@@ -2,9 +2,10 @@
 use gateway_admin_runtime::capabilities::Context;
 use gateway_authority_capacity::CapacityOperations;
 use gateway_cache_experiment_runner::CacheRunOperations;
-use gateway_core::{error::GatewayError, identity::RequestId};
+use gateway_contracts::identity::RequestId;
 use gateway_observability::{ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity};
 use gateway_observability::{replay_crypto::ReplayBody, types::ObservabilityHost};
+use gateway_source::error::GatewayError;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 mod admin;
 mod diagnostics;
@@ -196,7 +197,7 @@ pub async fn error_diagnostics(
 pub struct Host;
 
 impl ObservabilityHost for Host {
-    fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, text: &gateway_source::js_string::JsString16) -> Option<i64> {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
@@ -230,7 +231,7 @@ impl ObservabilityHost for Host {
 }
 
 impl ObservabilityHost for RequestHost {
-    fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, text: &gateway_source::js_string::JsString16) -> Option<i64> {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 

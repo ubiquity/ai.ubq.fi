@@ -28,7 +28,7 @@ use gateway_authority_paid_control_records::{
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
-use gateway_core::identity::ActiveSelection;
+use gateway_contracts::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_source::error::GatewayError;
@@ -98,7 +98,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         &self,
         actor: &NativeRenewalActor,
         context: NativeRenewalContext,
-        expected: Option<&gateway_core::identity::AccountBinding>,
+        expected: Option<&gateway_contracts::identity::AccountBinding>,
     ) -> Result<NativeRenewalAction, GatewayError> {
         let scope = if matches!(context, NativeRenewalContext::CacheExperiment { .. }) {
             NativeActorScope::Admin

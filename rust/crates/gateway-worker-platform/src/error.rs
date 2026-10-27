@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 pub fn platform_error(message: &str, code: &str) -> GatewayError {
     GatewayError::new(502, message, Some(code)).with_type("server_error")

@@ -76,7 +76,7 @@ impl NativeImportStart<'_> {
 }
 pub(super) fn generation_key(
     row: &ImportActionRow,
-) -> Result<gateway_core::state::RecordKey, GatewayError> {
+) -> Result<gateway_kv_codec::key::RecordKey, GatewayError> {
     Ok(rows::key(
         "generation",
         &super::super::facts::digest(&(

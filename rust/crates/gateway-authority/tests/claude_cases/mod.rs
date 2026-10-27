@@ -3,8 +3,10 @@ use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidAdmission, PaidWindow};
 use gateway_authority_paid_route::authorization::PaidAuthorization;
 use gateway_authority_test_support::{TestResult, paid_request, paid_setup, reserve_paid};
-use gateway_core::{provider::PaidProvider, state::RecordKey};
-use gateway_core::{state::StoredRecord, value::PortableValue};
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::value::PortableValue;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::Tokens, authority::authority};
 use gateway_routing_runtime_test_support::{authority::policy, authority::run};
@@ -38,7 +40,7 @@ fn claude_quota(roster: &serde_json::Value, slot: usize, kind: &str) -> serde_js
     })
 }
 
-fn claude_key(roster: &serde_json::Value, slot: usize) -> gateway_core::state::RecordKey {
+fn claude_key(roster: &serde_json::Value, slot: usize) -> gateway_kv_codec::key::RecordKey {
     keys::claude_quota(
         roster["accounts"][slot]["account_id"].as_str().unwrap(),
         roster["accounts"][slot]["account_cohort_id"]
@@ -756,7 +758,8 @@ fn claude_existing_pending_attempt_cannot_reuse_expired_authorization() {
 
 #[test]
 fn claude_model_proof_retains_lone_units_and_never_matches_escape_text_or_other_model() {
-    use gateway_core::{model::ModelId, source_control::encode_source_control_record};
+    use gateway_contracts::model::ModelId;
+    use gateway_core::source_control::encode_source_control_record;
     use gateway_source::source_json::SourceJson;
     let store = MemoryStore::default();
     let roster = claude_setup(&store);

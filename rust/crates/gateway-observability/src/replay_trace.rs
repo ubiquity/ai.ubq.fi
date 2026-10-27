@@ -1,6 +1,6 @@
 //! Request-owned passive source upstream recorder. Hooks only consume bytes the transport already read.
 use base64::{Engine, engine::general_purpose::STANDARD};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use zeroize::Zeroizing;
@@ -117,7 +117,7 @@ impl UpstreamTrace {
                 ));
             }
             if attempt.started_at_ms < 0
-                || attempt.started_at_ms > gateway_core::identity::MAX_SAFE_INTEGER
+                || attempt.started_at_ms > gateway_contracts::identity::MAX_SAFE_INTEGER
                 || attempt
                     .chunk_times_ms
                     .iter()

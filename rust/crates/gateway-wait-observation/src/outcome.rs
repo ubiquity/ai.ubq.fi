@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 #[derive(Clone, Debug)]
 pub enum WaitOutcome {

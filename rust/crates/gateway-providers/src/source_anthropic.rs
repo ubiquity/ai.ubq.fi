@@ -5,7 +5,7 @@ use crate::{
     source_tools::{self, ToolMap},
     types::{ClaudeBodyOptions, PrepareOptions},
 };
-use gateway_core::{source_json::SourceJson, source_serialization as json};
+use gateway_source::{source_json::SourceJson, source_serialization as json};
 fn eq(value: &SourceJson, literal: &str) -> bool {
     s::canonical(value).is_ok_and(|value| value.as_str() == literal)
 }
@@ -19,7 +19,7 @@ fn only(value: &SourceJson, keys: &[&str]) -> bool {
 }
 fn base(raw: &SourceJson) -> bool {
     s::string(&s::get(raw, "model")).is_some_and(|model| {
-        crate::anthropic::is_claude_model(&gateway_core::model::ModelId::from_source(model))
+        crate::anthropic::is_claude_model(&gateway_contracts::model::ModelId::from_source(model))
     }) && s::present(raw, "store").is_none_or(|v| s::boolean(&v) == Some(false))
         && s::present(raw, "previous_response_id").is_none_or(|v| s::is_null(&v))
         && [
@@ -181,7 +181,7 @@ struct NativeBodyOptions<'a> {
     restored_native_messages: Option<&'a Vec<SourceJson>>,
     supports_native_effort: bool,
     supports_disabled_thinking: bool,
-    native_reasoning_efforts: Option<&'a Vec<gateway_core::js_string::JsString16>>,
+    native_reasoning_efforts: Option<&'a Vec<gateway_source::js_string::JsString16>>,
     catalog_max_output_tokens: Option<u64>,
 }
 impl<'a> From<&'a PrepareOptions> for NativeBodyOptions<'a> {
@@ -356,7 +356,7 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option
     let effort = if effort.as_units().iter().copied().eq("ultra".encode_utf16())
         && options.native_reasoning_efforts.is_none()
     {
-        gateway_core::js_string::JsString16::from_utf8("max")
+        gateway_source::js_string::JsString16::from_utf8("max")
     } else {
         effort
     };
@@ -365,7 +365,7 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Option
         .cloned()
         .unwrap_or_else(|| {
             ["low", "medium", "high", "xhigh", "max"]
-                .map(gateway_core::js_string::JsString16::from_utf8)
+                .map(gateway_source::js_string::JsString16::from_utf8)
                 .to_vec()
         });
     allowed.contains(&effort).then(|| {

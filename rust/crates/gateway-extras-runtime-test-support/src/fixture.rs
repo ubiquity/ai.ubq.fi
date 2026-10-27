@@ -1,9 +1,9 @@
-use gateway_core::error::GatewayError;
-use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_source::error::GatewayError;
+use gateway_core::{
+    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
-use gateway_core::tuple_key::TupleKey;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},

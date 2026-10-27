@@ -1,14 +1,12 @@
 //! Read-only adapter for the actual gateway-worker SQLite schema.
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_core::{
-    error::GatewayError,
-    identity::MAX_SAFE_INTEGER,
-    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
-        StoredRecord,
-    },
-    tuple_key::TupleKey,
+    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QueryStore,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
+    state::PORTABLE_STATE_VERSION, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, types::Value};
 use std::path::Path;
 

@@ -10,10 +10,8 @@ use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
     CredentialPublication, ProviderBinding,
 };
-use gateway_core::{
-    error::GatewayError,
-    state::{AuthorityStore, RevisionCheck},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_worker_platform::random;
 use gateway_worker_storage::store::now_ms;
 use std::{collections::BTreeMap, rc::Rc};
@@ -56,8 +54,8 @@ pub fn secrets(env: &Env) -> BTreeMap<String, String> {
 
 fn binding(provider: &str, secret: &str) -> ProviderBinding {
     if let Some(provider) = match provider {
-        "surplus" => Some(gateway_core::provider::PaidProvider::Surplus),
-        "openlux" => Some(gateway_core::provider::PaidProvider::Metered),
+        "surplus" => Some(gateway_contracts::provider::PaidProvider::Surplus),
+        "openlux" => Some(gateway_contracts::provider::PaidProvider::Metered),
         _ => None,
     } {
         return ProviderBinding {

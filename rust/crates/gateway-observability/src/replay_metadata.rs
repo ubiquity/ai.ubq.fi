@@ -5,12 +5,9 @@ use crate::{
     store,
     types::ObservabilityHost,
 };
-use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    source_json::SourceJson,
-    state::{RecordKey, RecordMutation, StoredRecord},
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub(crate) async fn replay_metadata_candidates(
         &self,

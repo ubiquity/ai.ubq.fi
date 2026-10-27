@@ -1,6 +1,6 @@
 use crate::scalar::error;
 
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_schema::util::js_trim;
 use serde_json::Value;
 

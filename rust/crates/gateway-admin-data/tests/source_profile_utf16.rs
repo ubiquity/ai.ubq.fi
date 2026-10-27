@@ -1,4 +1,5 @@
-use gateway_core::{error::GatewayError, source_json::SourceJson, value::PortableValue};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_kv_codec::value::PortableValue;
 use gateway_profile_source::codec::from_source_profile;
 use gateway_profile_source::codec::from_source_profile_with_host;
 use gateway_profile_source::codec::to_source_profile;

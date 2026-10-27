@@ -11,7 +11,7 @@ use gateway_admin_test_support::{
     runtime_store::Store,
 };
 use gateway_auth::types::AuthResponse;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_schema::catalog_store::codex_snapshot_key;
 use serde_json::{Value, json};
 use std::cell::RefCell;

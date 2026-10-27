@@ -6,10 +6,9 @@ use gateway_admin_runtime::{
     capabilities::{Context, ErrorDiagnostics, PricingSnapshot, RuntimeCapabilities},
 };
 use gateway_auth::types::{AuthMethod, AuthPrincipal, AuthResponseBody};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId,
-    source_control::encode_source_control_record, source_json::SourceJson, state::StoredRecord,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
+use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
 use gateway_schema::{
     catalog_store::{codex_snapshot_key, runtime_config_key},
     runtime_config::build_runtime_config,

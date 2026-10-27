@@ -3,13 +3,11 @@ use crate::{Mapping, Row, Transform, capture::SourceEntry, invalid, starts};
 use gateway_admin_data::policy::{self as migration, ImportOptions, Profile};
 use gateway_admin_runtime::capabilities::{Context, MigrationProfile, MigrationRequest};
 use gateway_auth::types::AuthResponse;
-use gateway_core::error::GatewayError;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::query::QueryStore;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::RecordKey;
+use gateway_kv_codec::{key::RecordKey, value::PortableValue};
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
-use gateway_core::value::PortableValue;
 use gateway_profile_source::codec::normalize_source_import_line_with_host;
 use gateway_profile_source::line::NormalizedEntry;
 use gateway_profile_values::date::SourceDateHost;
@@ -38,7 +36,7 @@ pub async fn execute_profile<S: QueryStore, H: ProfileHost>(
     request: MigrationRequest,
     context: Context,
 ) -> Result<AuthResponse, GatewayError> {
-    if !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&context.now_ms) {
+    if !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&context.now_ms) {
         return Err(invalid("Profile migration clock is invalid"));
     }
     let MigrationRequest::Import(input) = request else {

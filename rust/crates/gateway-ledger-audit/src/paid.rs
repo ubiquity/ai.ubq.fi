@@ -5,10 +5,8 @@ use gateway_admin_data::validate::positive;
 use gateway_admin_data::validate::reference;
 use gateway_admin_data::validate::source_fields as source;
 use gateway_admin_data::validate::under;
-use gateway_core::{
-    error::GatewayError, source_control::decode_source_control_record, source_json::SourceJson,
-    source_serialization,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson, source_serialization};
+use gateway_core::source_control::decode_source_control_record;
 use gateway_migration_ledger::rows::{DAY, ObservedRow, api_id, safe};
 use gateway_profile_values::{
     coercion::js_string,
@@ -124,7 +122,7 @@ pub fn inspect_paid_inventory(
     state.finish(known, unlimited)
 }
 pub(super) struct PaidAudit {
-    orphans: Vec<Vec<(usize, String, gateway_core::js_string::JsString16)>>,
+    orphans: Vec<Vec<(usize, String, gateway_source::js_string::JsString16)>>,
     now: i64,
     groups: Vec<(Audit, Option<GatewayError>)>,
     windows: BTreeMap<String, Value>,
@@ -195,7 +193,7 @@ impl PaidAudit {
                     // Full request validation above precedes this exact scalar projection.
                     self.requests.insert(
                         reference(&p[4..]),
-                        gateway_core::source_serialization::object(
+                        gateway_source::source_serialization::object(
                             [
                                 "key_id",
                                 "request_id",

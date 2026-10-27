@@ -1,5 +1,5 @@
 use super::*;
-use gateway_core::value::ValueEncoding;
+use gateway_kv_codec::value::ValueEncoding;
 
 fn units(values: &[u16]) -> JsString16 {
     JsString16::from_units(values.to_vec())

@@ -9,9 +9,9 @@ use gateway_auth::{
     resolve::AuthService,
     types::{AuthConfig, AuthPrincipal, AuthRequest, AuthResponse},
 };
-use gateway_core::{
-    error::GatewayError, identity::RequestId, source_json::SourceJson, state::AuthorityStore,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::identity::RequestId;
+use gateway_core::state::AuthorityStore;
 use gateway_live_runtime::{
     mapping::LiveRuntime,
     protocol::{LiveRoute, live_route},
@@ -288,14 +288,14 @@ async fn administrative_route(
     // Custody is minted at the original authenticated boundary, never from
     // the administrative module's normalized Context or a later timestamp.
     let principal = auth.authenticate_admin(auth_request).await?;
-    let original_context = gateway_core::identity::RequestContext {
+    let original_context = gateway_contracts::identity::RequestContext {
         request_id: request_id.clone(),
-        principal: gateway_core::identity::PrincipalId(
+        principal: gateway_contracts::identity::PrincipalId(
             gateway_authority::native_control::actor::principal_id(&principal),
         ),
         key_id: match &principal.method {
             gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => {
-                Some(gateway_core::identity::ApiKeyId(key_id.clone()))
+                Some(gateway_contracts::identity::ApiKeyId(key_id.clone()))
             }
             _ => None,
         },

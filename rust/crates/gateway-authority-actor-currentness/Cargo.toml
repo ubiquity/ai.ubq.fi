@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 gateway-auth = { path = "../gateway-auth" }
 gateway-auth-attestation = { path = "../gateway-auth-attestation" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
@@ -22,6 +24,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
 
 [lints]

@@ -1,7 +1,7 @@
 //! Ordinary source-shaped capacity data and its existing finite decoder.
 use gateway_authority_contracts::invalid;
 use gateway_authority_routing_records::codec::{safe_integer, safe_ms};
-use gateway_core::identity::RoutingAccountHash;
+use gateway_contracts::identity::RoutingAccountHash;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

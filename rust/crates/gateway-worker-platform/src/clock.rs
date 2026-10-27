@@ -1,5 +1,5 @@
 //! Actual platform monotonic time; no caller clock or policy callback.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::time::Duration;
 use worker::{
     js_sys::{Function, Reflect},

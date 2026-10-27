@@ -22,12 +22,13 @@ use gateway_authority_paid_control_records::{
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::LiveRouteSelection;
-use gateway_core::identity::PoolVersionstamp;
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_contracts::model::ModelId;
 use gateway_core::{
-    model::ModelId, source_control::decode_source_control_record,
-    source_control::encode_source_control_record, value::ValueEncoding,
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
 };
+use gateway_kv_codec::value::ValueEncoding;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;
 use std::collections::BTreeSet;

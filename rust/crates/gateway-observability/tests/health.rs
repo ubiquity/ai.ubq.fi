@@ -219,7 +219,7 @@ fn stale_claude_binding_and_store_failures_never_create_routing_evidence() {
     let memory = Memory::default();
     let host = Host::default();
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
-    let row_key = gateway_core::tuple_key::TupleKey::from_json_parts(&[json!("source-binding")])
+    let row_key = gateway_kv_codec::tuple_key::TupleKey::from_json_parts(&[json!("source-binding")])
         .unwrap()
         .to_record_key();
     memory.rows.borrow_mut().insert(

@@ -15,7 +15,7 @@ use gateway_authority_routing_records::{
         SubscriptionPool,
     },
 };
-use gateway_core::{
+use gateway_contracts::{
     identity::ActiveSelection, identity::ActiveTransitionReason, identity::CredentialVersion,
     identity::PoolVersionstamp, identity::RoutingAccountHash, identity::SubscriptionSelectionHash,
     model::ModelId, provider::CodexQuotaClass,

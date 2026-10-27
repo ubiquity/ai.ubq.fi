@@ -1,8 +1,9 @@
 use crate::catalog::{equals, trim, whitespace};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
 use serde::Serialize;
 
 const REQUEST_KEYS: &[&str] = &[

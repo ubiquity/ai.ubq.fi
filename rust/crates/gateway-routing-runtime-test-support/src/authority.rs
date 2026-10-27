@@ -9,12 +9,16 @@ use gateway_authority_routing_records::{
 use gateway_authority_routing_selection::{
     SelectionOperations, types::AdmittedAccount, types::RouteSelection,
 };
-use gateway_core::{
-    error::GatewayError, identity::ApiKeyId, identity::PoolVersionstamp,
-    identity::RoutingAccountHash, identity::SubscriptionSelectionHash, provider::CodexQuotaClass,
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RecordMutation, state::StoredRecord, tuple_key::TupleKey,
+use gateway_contracts::{
+    identity::ApiKeyId, identity::PoolVersionstamp, identity::RoutingAccountHash,
+    identity::SubscriptionSelectionHash, provider::CodexQuotaClass,
 };
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
+};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use std::{
     collections::BTreeMap, collections::BTreeSet, future::Future, sync::Arc, sync::Mutex,
@@ -203,8 +207,8 @@ struct FixtureCollator;
 impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
     fn compare(
         &self,
-        left: &gateway_core::js_string::JsString16,
-        right: &gateway_core::js_string::JsString16,
+        left: &gateway_source::js_string::JsString16,
+        right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         // Fixed test input ordering only; pinned locale-equivalence survivors are tested separately.
         Ok(left.as_units().cmp(right.as_units()))

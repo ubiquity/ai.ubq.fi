@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Capacity projection has one finite defining crate - 2026-10-27
+
+The structural capacity leaf moves the existing finite JSON capacity validation, chart/history projection and folding into `gateway-capacity-projection`. It defines the five existing scalar data helpers and depends only on `gateway-core` and `serde_json`. Observability retains event identity, privacy selection, storage, currentness, authority acceptance and all effects; recovery and Worker consumers import the defining data functions directly. Bodies, thresholds, ordering, comparator errors and wire shapes remain source-compatible.
+
+This registration is a mechanical integration candidate for the separately owned leaf. Root integration and final acceptance remain separate; observability is still oversized and this transfer does not complete that family or the Rust port.
+
 ## Passport browser sign-in uses revocable permanent app sessions - 2026-10-27
 
 The Bun gateway requests an explicitly opted-in persistent Passport app grant only through a fresh browser SSO code exchange, using PKCE S256 and the existing fixed issuer, client, audience, origin and callback. Its host-only HttpOnly/Secure/SameSite cookie contains a random local session identifier; existing private KV stores its SHA-256 key and the app-scoped upstream grant without a time-based expiry or a saved administrator-role authority. Every authenticated request introspects the grant against Passport's current user. Demotion denies admin access, deletion or authoritative revocation removes local authority, and temporary verification failures return 503 while retaining the saved session. Legacy JWT cookies remain verification-only until their normal expiry and cannot create permanent grants.
@@ -2679,6 +2685,14 @@ The actual platform owns the single completion sample and unchanged saturating, 
 These data and platform operations add no timer, callback, serialized authority, provider classification, retry or fallback. One original admission, actual delivery and exactly one settlement remain unchanged. Affected compiler and runtime receipts are stale until the exact source passes scoped clock and cancellation tests, structural and strict staged checks, separately preserved shipping and fixture builds, and the unchanged real three-second upstream-cancellation case before the remaining stream cases.
 
 The complete source UTF16 collation operation and its private native-absence test are defined by `gateway-worker-platform::source_collator`; alias selection remains in its existing schema owner. The selected HTTP failure detail and Responses-frame encoder are defined by `gateway-worker-web::http_failure`. Their existing field, null, partial-read, error, UUID and clock behavior is unchanged; bounded reads, safe-header capture and the capture effect remain with the request owner. These relocations provide room for the atomic Passport foundation without increasing a recorded ceiling. The actual incoming cancellation signal remains distinct from the child controller signal, including direct usage.
+
+## Compaction C1 separates portable definitions from async effects - 2026-10-27
+
+The source-compatible compaction family now defines immutable text/model/finite host data in `gateway-compaction-source`, transcript parsing and the entire state fitting ladder in `gateway-compaction-history`, and pure rendering/hybrid projections/opaque summary fitting in `gateway-compaction-render`. Retained `gateway-compaction` owns the actual async decisions, windows, residue concurrency and response builder. Original fixtures and synthetic hosts live in the dev-only `gateway-compaction-test-support`. Each estimator consumer imports the sole `gateway-prompt-policy` definition directly. The cycle closes by defining pure `truncated_result` in the renderer; no forwarding facade or production test-support edge is introduced.
+
+Reason: the original 3143-line P1 compaction crate exceeds the physical owned-source cap. This preserves the original thirteen tests, fixture bytes, private UTF-16 storage and opaque fit construction while giving each cohesive owner a bounded crate. The candidate starts at unaccepted P1 `b8f203ed2a6f4abe6621f406cd1468ee99f6eba6` and ancestry-merges required unaccepted M60 `cb24be5e1ee79f53c23ae0e687956ba7860acabb`; neither input nor this structural extraction is a release acceptance receipt. Worker changes are defining type imports and the direct source dependency only, preserving original lifecycle/transport ownership.
+
+Reversal risk: a render/history backedge, externally constructed fit, exposed runtime orchestration, duplicated estimator or runtime dependency on test support would undo the responsibility and privacy boundaries. Direct Cloud Linux/WASM results do not establish canonical ARM64/confinement, controlled workerd, Mac client or final production acceptance, and this change makes no compile-performance claim.
 
 ## Authority record foundations preserve private operations - 2026-10-27
 

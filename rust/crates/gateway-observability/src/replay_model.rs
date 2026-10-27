@@ -10,13 +10,8 @@ use base64::{
         DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::URL_SAFE_NO_PAD,
     },
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
-    state::RecordKey,
-    tuple_key::{KeyPart, TupleKey},
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub const PAYLOAD_TTL: i64 = 48 * 60 * 60 * 1000;

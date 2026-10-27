@@ -2,10 +2,9 @@ use crate::{input::NOW, store::Store};
 use gateway_auth::crypto::Secret;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_core::{
-    identity::{ApiKeyId, PoolVersionstamp},
-    state::{RecordKey, StoredRecord},
-};
+use gateway_contracts::{identity::ApiKeyId, identity::PoolVersionstamp};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
 use serde_json::Value;
 use std::collections::BTreeMap;
 pub fn seed_key(store: &Store) {

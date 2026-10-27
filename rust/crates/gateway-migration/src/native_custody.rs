@@ -7,9 +7,9 @@ use gateway_auth::native_credentials::{NativeGeneration, OwnerFence, verify_fenc
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, CodexSourcePool, ManagedNativeSource, parse_codex_source_pool,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::tuple_key::TupleKey;
-use gateway_core::{query::QueryStore, value::PortableValue};
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::{tuple_key::TupleKey, value::PortableValue};
+use gateway_core::query::QueryStore;
 use std::future::Future;
 
 /// Implemented by a configured, fixed local owner host, never a capture decoder.

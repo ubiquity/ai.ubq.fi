@@ -8,6 +8,9 @@ publish.workspace = true
 [dependencies]
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }

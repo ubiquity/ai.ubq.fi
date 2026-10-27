@@ -4,9 +4,9 @@ use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_records::{PaidAttempt, PaidReservation};
 use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_authority_test_support::TestResult;
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_core::source_control::decode_source_control_record;
-use gateway_core::value::ValueEncoding;
+use gateway_kv_codec::value::ValueEncoding;
 use gateway_source::source_json::SourceJson;
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, js_string::JsString16};
@@ -192,7 +192,7 @@ fn ordinary_source_v3_guard_keeps_exact_active_paid_binding_and_missing_history_
     };
     let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut journal = decode_source_control_record(&store.row(&key).unwrap()).unwrap();
-    let original: gateway_core::identity::RequestContext = source::member(&journal, "context")
+    let original: gateway_contracts::identity::RequestContext = source::member(&journal, "context")
         .unwrap()
         .deserialize()
         .unwrap();

@@ -11,19 +11,20 @@ use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
 use gateway_authority_kernel_protocol::KernelDefaults;
 use gateway_authority_keys as keys;
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_core::query::QueryStore;
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, RecordMutation, StoredRecord};
+use gateway_core::{state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_schema::reasoning::ModelReasoning;
 use gateway_schema::runtime_config::{
     build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
 };
 use gateway_schema::snapshot::ModelSnapshot;
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
 use serde_json::json;
 
 fn response(model: &ModelId, effort: &JsString16, defaults: &KernelDefaults) -> SourceJson {

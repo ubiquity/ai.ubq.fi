@@ -11,8 +11,8 @@ use gateway_cache_experiment_records::{model::STEPS, model::Sample, model::Targe
 use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_cache_experiment_runner::io::{ExperimentIo, ReadSample};
 
-use gateway_core::identity::PoolVersionstamp;
-use gateway_core::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart::String as Text, tuple_key::TupleKey};
 use gateway_routing_runtime_test_support::authority::{MemoryStore, TestAuthority, authority, run};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
@@ -23,10 +23,10 @@ fn fixture_error(message: &str) -> GatewayError {
     GatewayError::new(500, message, Some("invalid_test_fixture"))
 }
 
-fn key(parts: &[&str]) -> gateway_core::state::RecordKey {
+fn key(parts: &[&str]) -> gateway_kv_codec::key::RecordKey {
     TupleKey::from_scalar_parts(&parts.iter().map(|s| Text(s)).collect::<Vec<_>>()).to_record_key()
 }
-fn experiment_key(kind: &str, target: &TargetBinding) -> gateway_core::state::RecordKey {
+fn experiment_key(kind: &str, target: &TargetBinding) -> gateway_kv_codec::key::RecordKey {
     key(&[
         "uos_ai",
         "prompt_cache_scope_experiment",
@@ -94,7 +94,7 @@ struct Io {
     unchanged: bool,
     rotate_on_first: bool,
     discards: Cell<u32>,
-    steal_cycle_on_first: Option<(gateway_core::state::RecordKey, i64)>,
+    steal_cycle_on_first: Option<(gateway_kv_codec::key::RecordKey, i64)>,
     quota_on_first: bool,
     fail_recovery_probe: bool,
     refresh_error_after_rotation: Option<bool>,
@@ -318,7 +318,8 @@ fn source_inventory_fingerprints_and_nondefault_target_match_actual_typescript()
 
 #[test]
 fn scalar_campaign_preserves_opaque_unrelated_catalog_metadata_through_promotion() {
-    use gateway_core::{source_control, value::ValueEncoding};
+    use gateway_core::source_control;
+    use gateway_kv_codec::value::ValueEncoding;
     use gateway_source::{
         js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };

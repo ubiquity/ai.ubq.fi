@@ -1,6 +1,6 @@
 //! Ordinary reset records, immutable source identities and pure inventory selection; never a spend permit.
 use gateway_authority_contracts::{DAY_MS, nonnegative, text, unavailable};
-use gateway_core::identity::AccountBinding;
+use gateway_contracts::identity::AccountBinding;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

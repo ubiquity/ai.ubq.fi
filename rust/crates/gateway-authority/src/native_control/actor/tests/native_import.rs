@@ -19,7 +19,7 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_core::identity::PoolVersionstamp;
+use gateway_contracts::identity::PoolVersionstamp;
 use std::collections::BTreeSet;
 struct Cancel;
 impl NativeRenewalCancellation for Cancel {

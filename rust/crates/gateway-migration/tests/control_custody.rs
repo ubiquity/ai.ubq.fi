@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_core::{state::*, value::PortableValue};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{key::RecordKey, value::PortableValue};
 use gateway_migration::{
     capture::{PrivateCapture, SourceEntry},
     engine::{adopt_empty, prepare},
@@ -274,12 +275,12 @@ fn actual_audit_profile_v2_split_surrogate_survives_restart_and_latest_inverse()
     );
     let audit_key = RecordKey(sample["key"].as_str().unwrap().into());
     let audit: StoredRecord = serde_json::from_value(sample["record"].clone()).unwrap();
-    let expected = gateway_core::source_json::SourceJson::parse(
+    let expected = gateway_source::source_json::SourceJson::parse(
         sample["expected_source_json"].as_str().unwrap(),
     )
     .unwrap();
     assert_eq!(
-        gateway_core::source_json::SourceJson::from_portable_json(
+        gateway_source::source_json::SourceJson::from_portable_json(
             &audit.profile_v2_value().unwrap()
         )
         .unwrap(),
@@ -316,7 +317,7 @@ fn actual_audit_profile_v2_split_surrogate_survives_restart_and_latest_inverse()
     assert_eq!(restored.revision, audit.revision);
     assert_eq!(restored.expires_at_ms, audit.expires_at_ms);
     assert_eq!(
-        gateway_core::source_json::SourceJson::from_portable_json(
+        gateway_source::source_json::SourceJson::from_portable_json(
             &restored.profile_v2_value().unwrap()
         )
         .unwrap(),

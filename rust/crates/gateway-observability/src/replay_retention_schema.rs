@@ -5,11 +5,9 @@ use crate::{
     store,
     types::ObservabilityHost,
 };
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{AuthorityStore, RecordKey, RecordMutation, StoredRecord},
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::state::{AuthorityStore, RecordMutation, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 pub const OVERHEAD: f64 = 8192.0;
@@ -31,7 +29,7 @@ impl RetentionLimits {
     /// Source's injectable test seam; the public runtime always uses Default.
     pub fn for_fixture(bytes: u64) -> Self {
         Self {
-            budget: bytes.clamp(65_536, gateway_core::identity::MAX_SAFE_INTEGER as u64) as f64,
+            budget: bytes.clamp(65_536, gateway_contracts::identity::MAX_SAFE_INTEGER as u64) as f64,
         }
     }
     pub(crate) fn reserve(self) -> f64 {

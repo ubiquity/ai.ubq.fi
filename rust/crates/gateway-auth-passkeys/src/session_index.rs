@@ -1,7 +1,8 @@
 // Private source-session revision metadata, never a bearer or authorization proof.
 use gateway_auth_contracts::passkeys::PasskeySession;
 use gateway_auth_primitives::{crypto::sha256_hex, store};
-use gateway_core::state::{AuthorityStore, RecordKey, StoredRecord};
+use gateway_core::state::{AuthorityStore, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -70,7 +71,7 @@ pub fn validate_custody_record(key: &RecordKey, record: &StoredRecord) -> Result
         || *key != index_key(&fence.session_digest)?
         || record.revision != fence.session_revision
         || record.expires_at_ms != Some(fence.expires_at_ms)
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&fence.expires_at_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&fence.expires_at_ms)
     {
         return Err(invalid());
     }

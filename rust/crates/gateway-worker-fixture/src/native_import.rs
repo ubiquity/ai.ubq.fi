@@ -21,12 +21,13 @@ use gateway_authority::{
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::{
+    identity::PoolVersionstamp, identity::PrincipalId, identity::RequestContext,
+    identity::RequestId,
+};
 use gateway_core::{
-    identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
 use gateway_worker::authority::RemoteAuthorityStore;
 use gateway_worker_fixture_setup::invalid;

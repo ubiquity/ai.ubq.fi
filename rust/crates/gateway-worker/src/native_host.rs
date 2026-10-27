@@ -18,7 +18,7 @@ use gateway_auth_native_wire::{
     native_read::NativeRpcEnvelope, native_read::NativeRpcResponse,
 };
 use gateway_authority::{native_control::receiver::NativeRenewalAuthority, store::Authority};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use serde::Deserialize;
 use std::{collections::BTreeSet, rc::Rc};
@@ -121,7 +121,7 @@ impl NativeBindings {
         &self,
         fence: &gateway_routing_runtime::types::CredentialFence,
         platform: &PlatformHost,
-        original: &gateway_core::identity::RequestContext,
+        original: &gateway_contracts::identity::RequestContext,
     ) -> Result<gateway_routing_runtime::types::RefreshOutcome, GatewayError> {
         let gateway_routing_runtime::types::CredentialFence::Codex {
             admission,
@@ -239,7 +239,7 @@ impl NativeBindings {
         permit: &gateway_cache_experiment_dispatch::RefreshPermit,
         platform: &PlatformHost,
         config: &gateway_auth::types::AuthConfig,
-    ) -> Result<gateway_core::identity::PoolVersionstamp, GatewayError> {
+    ) -> Result<gateway_contracts::identity::PoolVersionstamp, GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::store::Authority::with_clock(
             platform.store.clone(),
@@ -262,7 +262,7 @@ impl NativeBindings {
             .prepare_cache_experiment_renewal(actor, permit)
             .await?;
         let verified = self.complete_renewal(&action, &receiver, platform).await?;
-        Ok(gateway_core::identity::PoolVersionstamp(
+        Ok(gateway_contracts::identity::PoolVersionstamp(
             verified.source_revision,
         ))
     }

@@ -15,11 +15,15 @@ use gateway_authority_routing_selection::{
     SelectionFactory, SelectionOperations, SelectionService,
     types::{AdmittedAccount, CohortProof, RouteSelection},
 };
-use gateway_core::{
+use gateway_contracts::{
     identity::ActiveSelection, identity::PoolVersionstamp, model::ModelId,
-    provider::CodexQuotaClass, state::AtomicTransition, state::AuthorityStore,
-    state::CommitOutcome, state::RecordKey, state::RecordMutation, state::StoredRecord,
+    provider::CodexQuotaClass,
 };
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::{Value, json};

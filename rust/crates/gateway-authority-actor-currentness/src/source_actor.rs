@@ -14,10 +14,11 @@ use gateway_authority_actor_records::{
 };
 use gateway_authority_contracts::{text, validate_time};
 use gateway_authority_keys as keys;
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext};
 use gateway_core::{
-    identity::{PrincipalId, RequestContext},
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck},
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RevisionCheck,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde_json::json;
 

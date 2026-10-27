@@ -1,13 +1,13 @@
 use gateway_authority_api_quota::ApiQuotaOperations;
-use gateway_core::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::sqlite_store;
+use gateway_source::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use fixture::{Directory, run};
-    use gateway_core::identity::{ApiKeyId, RequestId};
+    use gateway_contracts::{identity::ApiKeyId, identity::RequestId};
     use gateway_migration::{
         capture::PrivateCapture,
         engine::{adopt_empty, prepare},

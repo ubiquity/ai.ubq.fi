@@ -1,6 +1,6 @@
 //! Dynamic metadata resolution: source-specific reasoning precedence, widest sourced context.
 use crate::{reasoning::advertised_effort, util::*};
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MetadataHint {

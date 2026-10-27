@@ -2,9 +2,9 @@
 mod backend;
 use gateway_authority_contracts::{AuthorityClock, invalid, positive, unavailable, validate_time};
 use gateway_authority_keys as keys;
-use gateway_core::{
-    model::ModelId, state::AuthorityStore, state::RevisionCheck, value::PortableValue,
-};
+use gateway_contracts::model::ModelId;
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_kv_codec::value::PortableValue;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -105,7 +105,7 @@ fn safe_integer(value: &SourceJson) -> Option<i64> {
     let number = source::number(value)?;
     (number.is_finite()
         && number.fract() == 0.0
-        && number.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+        && number.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
         .then_some(number as i64)
 }
 fn parse_binding(value: &SourceJson) -> Result<Binding, GatewayError> {
@@ -250,7 +250,7 @@ fn applicable(value: &SourceJson, binding: &Binding, model: &ModelId, now: i64) 
                 number.is_finite()
                     && number.fract() == 0.0
                     && *number > 0.0
-                    && *number <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+                    && *number <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
             })
             .map(|n| n as i64)
     };

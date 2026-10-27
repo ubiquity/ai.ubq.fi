@@ -6,12 +6,15 @@ use gateway_authority_routing_evidence::{
     reader::{RoutingEvidence, RoutingEvidenceReader, RoutingReadMode},
 };
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_core::{
+use gateway_contracts::{
     identity::AccountBinding, identity::ActiveSelection, identity::MAX_SAFE_INTEGER,
-    identity::PoolVersionstamp, model::ModelId, source_control::encode_source_control_record,
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RevisionCheck, state::StoredRecord, value::PortableValue, value::ValueEncoding,
+    identity::PoolVersionstamp, model::ModelId,
 };
+use gateway_core::{
+    source_control::encode_source_control_record, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RevisionCheck, state::StoredRecord,
+};
+use gateway_kv_codec::{key::RecordKey, value::PortableValue, value::ValueEncoding};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{

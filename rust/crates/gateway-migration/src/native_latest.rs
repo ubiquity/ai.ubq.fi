@@ -13,11 +13,10 @@ use crate::{
     staged::CanonicalRecord,
     starts, unavailable,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::state::RecordKey;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_core::state::StoredRecord;
-use gateway_core::tuple_key::TupleKey;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -169,7 +168,7 @@ fn control_row(key: &RecordKey, p: &[Value], record: &StoredRecord) -> Result<bo
                 || p[4] != marker.call_id
                 || marker.schema_version != 1
                 || ![404, 410].contains(&marker.upstream_status)
-                || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&marker.created_at_ms)
+                || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&marker.created_at_ms)
                 || record.expires_at_ms.is_some()
             {
                 return Err(invalid("Pending live-call retirement custody is malformed"));

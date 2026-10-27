@@ -1,8 +1,6 @@
 use gateway_auth::types::AuthPrincipal;
-use gateway_core::{
-    error::GatewayError, identity::RequestContext, lifecycle::SemanticTerminal, model::ModelId,
-    source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::{identity::RequestContext, lifecycle::SemanticTerminal, model::ModelId};
 use gateway_providers::{
     extras::MultipartFile,
     types::{PrepareOptions, PreparedRequest},

@@ -76,13 +76,13 @@ fn paid_limit_updates_and_disabling_preserve_source_pricing_without_provider_rei
             let record: ApiKeyRecord = decode_record(&row).unwrap();
             assert_eq!(
                 record.paid_fallback_model_ids,
-                [gateway_core::model::ModelId::from_scalar("paid-model")]
+                [gateway_contracts::model::ModelId::from_scalar("paid-model")]
             );
             assert_eq!(record.paid_fallback_quota_per_credit, 1_000_000);
             assert_eq!(record.paid_fallback_pricing_checked_at_ms, Some(1_000_000));
             assert_eq!(
                 record.paid_fallback_max_exposure_microcredits
-                    [&gateway_core::model::ModelId::from_scalar("paid-model")],
+                    [&gateway_contracts::model::ModelId::from_scalar("paid-model")],
                 1000
             );
         }

@@ -1,7 +1,8 @@
 use super::{FullPoolFence, FullPoolShadowDecision, invalid};
-use gateway_core::state::RecordKey;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_core::state::StoredRecord;
-use gateway_core::{identity::MAX_SAFE_INTEGER, value::ValueEncoding};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::value::ValueEncoding;
 use gateway_source::error::GatewayError;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde_json::Value;

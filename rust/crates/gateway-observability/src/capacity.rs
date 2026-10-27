@@ -1,12 +1,17 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
-use crate::{ObservabilityRuntime, capacity_shapes as shape, host_types::ClaudeAccountReadback};
-use crate::{health, replay_values::SourceObject, store, types::ObservabilityHost};
-use crate::{host_types::CapacityAccountRef, host_types::CapacityProbe};
+use crate::host_types::{CapacityAccountRef, CapacityProbe, ClaudeAccountReadback};
+use crate::{
+    ObservabilityRuntime, health, replay_values::SourceObject, store, types::ObservabilityHost,
+};
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
 use gateway_authority_capacity::CapacityOperations;
-use gateway_core::source_serialization as source;
-use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};
+use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
+use gateway_capacity_projection::shapes as shape;
+use gateway_core::query::QueryStore;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 
 fn view(
@@ -46,7 +51,7 @@ pub fn claude_source(
     account: &ClaudeAccountReadback,
     health: &Value,
     at: i64,
-    dates: &impl Fn(&gateway_core::js_string::JsString16) -> Option<i64>,
+    dates: &impl Fn(&gateway_source::js_string::JsString16) -> Option<i64>,
 ) -> Result<SourceJson, GatewayError> {
     let empty = SourceJson::parse("{}")?;
     let quota = SourceObject::parse(account.quota.as_ref().unwrap_or(&empty))?;
@@ -235,7 +240,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if accounts.len() > 2
             || accounts.iter().any(|a| {
                 !(1..=2).contains(&a.slot)
-                    || store::trim(&a.account_id).is_empty()
+                    || trim(&a.account_id).is_empty()
                     || !slots.insert(a.slot)
             })
         {
@@ -279,7 +284,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     account_id: account.account_id,
                 },
                 state: serde_json::from_value(source["state"].clone()).map_err(|_| invalid())?,
-                source_observed_at_ms: store::safe_i64(&source["source_observed_at_ms"]),
+                source_observed_at_ms: safe_i64(&source["source_observed_at_ms"]),
                 snapshot_at_ms: at,
                 windows: serde_json::from_value(source["windows"].clone())
                     .map_err(|_| invalid())?,
@@ -354,9 +359,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let Some(lease) = lease else {
             let snapshot = self
                 .wait_capacity_snapshot(
-                    cached
-                        .as_ref()
-                        .and_then(|s| store::safe_i64(&s["snapshot_at_ms"])),
+                    cached.as_ref().and_then(|s| safe_i64(&s["snapshot_at_ms"])),
                 )
                 .await
                 .unwrap_or(None)
@@ -404,8 +407,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 history.push(point);
                 history.sort_by_key(|p| {
                     (
-                        store::safe_i64(&p["bucket_start_at_ms"]),
-                        store::safe_i64(&p["sampled_at_ms"]),
+                        safe_i64(&p["bucket_start_at_ms"]),
+                        safe_i64(&p["sampled_at_ms"]),
                     )
                 });
             }
@@ -474,7 +477,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 .is_some_and(|u| u.fresh(at))
         });
         let fresh = cached["cache_state"] != "unavailable"
-            && store::safe_i64(&cached["snapshot_at_ms"]).is_some_and(|t| at - t < 30000);
+            && gateway_capacity_projection::scalars::safe_i64(&cached["snapshot_at_ms"])
+                .is_some_and(|t| at - t < 30000);
         let mut body = if !live && fresh && usage_fresh {
             cached
         } else {
@@ -520,14 +524,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .unwrap_or_default();
         if !remote.is_empty() {
             let local = body["history"].as_array().cloned().unwrap_or_default();
-            body["history"] = json!(crate::capacity_math::merge_remote_history(
+            body["history"] = json!(gateway_capacity_projection::math::merge_remote_history(
                 &local,
                 &remote,
                 |a, b| self.host.compare_labels(a, b)
             )?);
         }
         let mut document = crate::replay_values::SourceObject::parse(
-            &gateway_core::source_json::SourceJson::from_serializable(&body)?,
+            &gateway_source::source_json::SourceJson::from_serializable(&body)?,
         )?;
         document.set("claude_accounts", &source_accounts)?;
         document.set("claude", &source_active)?;
@@ -544,7 +548,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             window_days.min(365)
         };
         let at = store::now(self.host.as_ref())?;
-        let window = i64::from(days) * store::DAY;
+        let window = i64::from(days) * DAY;
         let points = self
             .capacity_rollup_points((at - window).max(0), at)
             .await

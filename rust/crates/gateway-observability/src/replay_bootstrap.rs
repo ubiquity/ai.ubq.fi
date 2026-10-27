@@ -3,10 +3,9 @@ use crate::{
     ObservabilityRuntime, replay_model as model, replay_retention_schema as schema,
     replay_values::read_json_record, store, types::ObservabilityHost,
 };
+use gateway_source::error::GatewayError;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    state::RecordMutation,
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordMutation,
 };
 use std::collections::{BTreeMap, BTreeSet};
 const PREFIXES: [&str; 7] = [
@@ -245,7 +244,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                 )?;
                                 if !["fingerprint", "reason"].iter().all(|f| {
                                     source.get(f).is_some_and(|v| {
-                                        v.deserialize::<gateway_core::js_string::JsString16>()
+                                        v.deserialize::<gateway_source::js_string::JsString16>()
                                             .is_ok()
                                     })
                                 }) {

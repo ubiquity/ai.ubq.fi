@@ -3,7 +3,8 @@ use crate::{
     aliases::{LEGACY_SYNTHETIC_MODEL, SYNTHETIC_MODEL, SourceStringCollator},
     util::{normalized_string, positive_integer, push_unique},
 };
-use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -170,8 +171,8 @@ impl AccountModelsStore {
         model: &ModelId,
         at_ms: i64,
         collator: &dyn SourceStringCollator,
-    ) -> Result<Self, gateway_core::error::GatewayError> {
-        use gateway_core::source_serialization as source;
+    ) -> Result<Self, gateway_source::error::GatewayError> {
+        use gateway_source::source_serialization as source;
         let mut next = self.clone();
         let entries = next.unsupported.entry(account.into()).or_default();
         entries.insert(model.clone(), at_ms);
@@ -239,7 +240,7 @@ impl AccountModelsStore {
     }
     pub fn parse(value: &SourceJson) -> Option<Self> {
         use crate::model_control as c;
-        use gateway_core::source_serialization as source;
+        use gateway_source::source_serialization as source;
         let accounts = c::get(value, "accounts").filter(c::is_record);
         let unsupported = c::get(value, "unsupported").filter(c::is_record);
         if accounts.is_none() && unsupported.is_none() {
@@ -309,7 +310,7 @@ impl AccountModelsStore {
         Some(store)
     }
     pub fn to_source_json(&self) -> SourceJson {
-        use gateway_core::{js_string::JsString16, source_serialization as source};
+        use gateway_source::{js_string::JsString16, source_serialization as source};
         let rows = self
             .unsupported
             .iter()

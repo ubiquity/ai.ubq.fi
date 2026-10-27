@@ -1,7 +1,7 @@
 //! Fixed owner-renewal coordination in the existing authority store.
 //! Wire selectors and fence DTOs are observations, never permissions to mutate native state.
 use gateway_auth::native_auth::AuthenticatedNativeOwner;
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -31,7 +31,7 @@ pub enum NativeRenewalContext {
         slot: u64,
     },
     LiveCreate {
-        binding: gateway_core::identity::AccountBinding,
+        binding: gateway_contracts::identity::AccountBinding,
         active_generation: u64,
         model_utf16: Option<Vec<u16>>,
     },

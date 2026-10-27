@@ -9,23 +9,25 @@ use gateway_auth::{
     provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
     types::AuthResponse,
 };
-use gateway_core::{
-    error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+use gateway_capacity_projection::scalars::{is_record, safe_i64, trim};
+use gateway_core::query::QueryStore;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-fn reset_key(hash: &str) -> gateway_core::state::RecordKey {
+fn reset_key(hash: &str) -> gateway_kv_codec::key::RecordKey {
     gateway_authority_keys::reset_usage(hash)
 }
-fn marker_key() -> gateway_core::state::RecordKey {
+fn marker_key() -> gateway_kv_codec::key::RecordKey {
     store::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"
     ]))
 }
-fn legacy_key() -> gateway_core::state::RecordKey {
+fn legacy_key() -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
 }
 fn legacy_opt_out(value: Option<&Value>) -> bool {
@@ -36,11 +38,11 @@ fn nonempty(v: &Value, max: usize) -> bool {
         .is_some_and(|s| !s.is_empty() && s.encode_utf16().count() <= max)
 }
 pub fn parse_shadow_decision(v: &Value) -> Option<Value> {
-    if !store::is_record(v)
+    if !is_record(v)
         || v["v"] != 1
         || !nonempty(&v["episode_hash"], 512)
         || !nonempty(&v["decision_reason"], 128)
-        || store::safe_i64(&v["created_at_ms"])? > store::safe_i64(&v["expires_at_ms"])?
+        || safe_i64(&v["created_at_ms"])? > safe_i64(&v["expires_at_ms"])?
     {
         return None;
     }
@@ -51,7 +53,7 @@ pub fn parse_shadow_decision(v: &Value) -> Option<Value> {
     }
     if !v
         .get("selected_credit_expires_at_ms")
-        .is_some_and(|v| v.is_null() || store::safe_i64(v).is_some())
+        .is_some_and(|v| v.is_null() || safe_i64(v).is_some())
         || v["selected_account_id_hash"].is_null() != v["selected_credit_id_hash"].is_null()
     {
         return None;
@@ -60,12 +62,12 @@ pub fn parse_shadow_decision(v: &Value) -> Option<Value> {
     let mut slots = BTreeSet::new();
     let mut fences = Vec::new();
     for f in raw {
-        let slot = store::safe_i64(&f["slot"])?;
+        let slot = safe_i64(&f["slot"])?;
         if !slots.insert(slot)
             || !nonempty(&f["account_id_hash"], 512)
             || !nonempty(&f["quota_generation"], 512)
-            || store::safe_i64(&f["routing_generation"]).is_none()
-            || store::safe_i64(&f["quota_reset_at_ms"]).is_none()
+            || safe_i64(&f["routing_generation"]).is_none()
+            || safe_i64(&f["quota_reset_at_ms"]).is_none()
         {
             return None;
         }
@@ -175,7 +177,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if accounts.len() > 2
             || accounts.iter().any(|a| {
                 !(1..=2).contains(&a.slot)
-                    || store::trim(&a.account_id).is_empty()
+                    || trim(&a.account_id).is_empty()
                     || !slots.insert(a.slot)
             })
         {
@@ -301,8 +303,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         .collect();
         let mut error = None;
         decisions.sort_by(|a, b| {
-            store::safe_i64(&b["created_at_ms"])
-                .cmp(&store::safe_i64(&a["created_at_ms"]))
+            safe_i64(&b["created_at_ms"])
+                .cmp(&safe_i64(&a["created_at_ms"]))
                 .then_with(|| {
                     match self.host.compare_labels(
                         a["episode_hash"].as_str().unwrap_or(""),

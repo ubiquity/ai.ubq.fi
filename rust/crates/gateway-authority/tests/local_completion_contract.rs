@@ -7,12 +7,16 @@ use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal, Kerne
 use gateway_authority_keys as keys;
 use gateway_authority_local_completion::LocalCompletedIntentOutcome;
 use gateway_authority_local_completion::LocalCompletionOperations;
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
-use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::state::{
-    AtomicTransition, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_contracts::{
+    identity::ApiKeyId, identity::PrincipalId, identity::RequestContext, identity::RequestId,
 };
-use gateway_core::{local_completion::LocalCompletedJournalPlan, state::AuthorityStore};
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_core::state::AuthorityStore;
+use gateway_core::{
+    state::AtomicTransition, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
+use gateway_local_journal::local_completion::LocalCompletedJournalPlan;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use std::{
     cell::{Cell, RefCell},
@@ -592,7 +596,7 @@ fn real_dispatched_original_is_noop_with_no_api_compensation() {
         assert!(
             run(authority.dispatch_api_key(
                 api,
-                gateway_core::provider::UpstreamProvider::Surplus,
+                gateway_contracts::provider::UpstreamProvider::Surplus,
                 1_500
             ))
             .unwrap()
@@ -638,7 +642,7 @@ fn dispatched_foreign_or_malformed_original_never_becomes_local_intent() {
         run(
             Authority::new(f.store.clone(), f.store.clone()).dispatch_api_key(
                 api,
-                gateway_core::provider::UpstreamProvider::Surplus,
+                gateway_contracts::provider::UpstreamProvider::Surplus,
                 1_500,
             ),
         )

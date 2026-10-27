@@ -3,7 +3,7 @@
 use crate::quota::{
     metered_quota_runway_view, model_projection_numbers, public_quota_view, summarize_windows,
 };
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

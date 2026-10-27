@@ -1,7 +1,7 @@
 //! Pure validation of source routing identities; a valid value is not a capability.
 use gateway_authority_contracts::{generation, invalid, text};
 use gateway_authority_routing_records::types::SubscriptionPool;
-use gateway_core::identity::AccountBinding;
+use gateway_contracts::identity::AccountBinding;
 use gateway_source::error::GatewayError;
 use std::collections::BTreeSet;
 

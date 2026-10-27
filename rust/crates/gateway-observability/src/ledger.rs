@@ -1,16 +1,19 @@
 //! Source analytics.ts and admin/error-log.ts. This is the existing request ledger.
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, lifecycle::DeliveryOutcome, query::QueryStore,
-    source_json::SourceJson, source_serialization as source,
+use gateway_capacity_projection::scalars::{DAY, trim};
+use gateway_contracts::lifecycle::DeliveryOutcome;
+use gateway_core::query::QueryStore;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub mod terminal_rollup;
 
-pub const REQUEST_RETENTION_MS: i64 = 365 * store::DAY;
-pub const ERROR_RETENTION_MS: i64 = 7 * store::DAY;
+pub const REQUEST_RETENTION_MS: i64 = 365 * DAY;
+pub const ERROR_RETENTION_MS: i64 = 7 * DAY;
 fn integer(value: Option<&Value>, fallback: f64) -> f64 {
     value
         .and_then(Value::as_f64)
@@ -20,7 +23,7 @@ fn integer(value: Option<&Value>, fallback: f64) -> f64 {
 }
 /// Explicit typed normalization. Surrogate-bearing leaves never pass through Value.
 pub fn normalize_request_record(
-    input: &gateway_core::source_json::SourceJson,
+    input: &gateway_source::source_json::SourceJson,
     key_id: &str,
     request_id: &str,
     created_at_ms: f64,
@@ -29,7 +32,7 @@ pub fn normalize_request_record(
     gateway_observability_request_records::request::RequestLogRecord::normalize(
         input,
         key_id,
-        &gateway_core::js_string::JsString16::from_utf8(request_id),
+        &gateway_source::js_string::JsString16::from_utf8(request_id),
         created_at_ms,
     )
 }
@@ -64,7 +67,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         key_id: &str,
         input: &SourceJson,
     ) -> Result<(), GatewayError> {
-        if store::trim(key_id).is_empty() {
+        if trim(key_id).is_empty() {
             return Ok(());
         }
         let at = store::now(self.host.as_ref())?;
@@ -72,7 +75,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let id = gateway_observability_request_records::request::bounded_text(
             raw_id.as_ref(),
             120,
-            &gateway_core::js_string::JsString16::from_utf8(&store::uuid(self.host.as_ref())?),
+            &gateway_source::js_string::JsString16::from_utf8(&store::uuid(self.host.as_ref())?),
         );
         let created = gateway_observability_request_records::request::number(
             source::member(input, "created_at_ms").as_ref(),
@@ -106,7 +109,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         self.mutate_request_log(
             key_id,
             created_at_ms as f64,
-            &gateway_core::js_string::JsString16::from_utf8(request_id),
+            &gateway_source::js_string::JsString16::from_utf8(request_id),
             patch,
             true,
         )
@@ -116,20 +119,20 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         key_id: &str,
         created: f64,
-        request_id: &gateway_core::js_string::JsString16,
+        request_id: &gateway_source::js_string::JsString16,
         patch: &SourceJson,
         only_existing: bool,
     ) -> Result<(), GatewayError> {
-        if store::trim(key_id).is_empty() {
+        if trim(key_id).is_empty() {
             return Ok(());
         }
-        let key = gateway_core::tuple_key::TupleKey::from_parts(&[
-            gateway_core::tuple_key::KeyPart::String("uos_ai".into()),
-            gateway_core::tuple_key::KeyPart::String("paid_fallback".into()),
-            gateway_core::tuple_key::KeyPart::String("ledger".into()),
-            gateway_core::tuple_key::KeyPart::String(key_id.into()),
-            gateway_core::tuple_key::KeyPart::Number(created),
-            gateway_core::tuple_key::KeyPart::source_string_utf16(request_id.as_units()),
+        let key = gateway_kv_codec::tuple_key::TupleKey::from_parts(&[
+            gateway_kv_codec::tuple_key::KeyPart::String("uos_ai".into()),
+            gateway_kv_codec::tuple_key::KeyPart::String("paid_fallback".into()),
+            gateway_kv_codec::tuple_key::KeyPart::String("ledger".into()),
+            gateway_kv_codec::tuple_key::KeyPart::String(key_id.into()),
+            gateway_kv_codec::tuple_key::KeyPart::Number(created),
+            gateway_kv_codec::tuple_key::KeyPart::source_string_utf16(request_id.as_units()),
         ])?
         .to_record_key();
         for _ in 0..3 {
@@ -161,7 +164,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     created,
                 )?;
             let expiry = (created + REQUEST_RETENTION_MS as f64).max((at + 1) as f64);
-            if !expiry.is_finite() || expiry > gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+            if !expiry.is_finite() || expiry > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
+            {
                 return Err(store::error("Request retention overflow"));
             }
             let expiry = expiry as i64;
@@ -188,8 +192,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         key_id: &str,
         limit: u32,
-    ) -> Result<Vec<gateway_core::source_json::SourceJson>, GatewayError> {
-        if store::trim(key_id).is_empty() {
+    ) -> Result<Vec<gateway_source::source_json::SourceJson>, GatewayError> {
+        if trim(key_id).is_empty() {
             return Ok(Vec::new());
         }
         let at = store::now(self.host.as_ref())?;

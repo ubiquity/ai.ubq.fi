@@ -2,11 +2,12 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
 use gateway_auth::api_keys::ApiKeyPolicy;
 use gateway_auth::crypto::Secret;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
-use gateway_core::lifecycle::SemanticTerminal;
-use gateway_core::state::RecordKey;
-use gateway_core::tuple_key::TupleKey;
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
+    identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
+    lifecycle::SemanticTerminal,
+};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_extras_runtime_test_support::fixture::{Memory, error};
 
 use gateway_extras_contract::types::{
@@ -117,7 +118,7 @@ impl ExtrasHost for Host {
             ..Default::default()
         }))
     }
-    async fn image_base_model(&self) -> Result<Option<gateway_core::model::ModelId>, GatewayError> {
+    async fn image_base_model(&self) -> Result<Option<gateway_contracts::model::ModelId>, GatewayError> {
         Ok(Some("gpt-fixture-host".into()))
     }
     async fn dispatch(
@@ -255,7 +256,7 @@ fn request<'a>(
 ) -> ExtrasRequest<'a> {
     ExtrasRequest {
         route,
-        body: gateway_core::source_json::SourceJson::from_serializable(&body).unwrap(),
+        body: gateway_source::source_json::SourceJson::from_serializable(&body).unwrap(),
         multipart: None,
         raw_body_bytes: 1,
         idempotency_key: None,
@@ -915,7 +916,7 @@ fn cache_timestamp_projection_preserves_source_negative_zero_key_identity() {
         .collect();
     assert_eq!(indexes.len(), 1);
     let parts = indexes[0].decoded_parts().unwrap();
-    let gateway_core::tuple_key::DecodedKeyPart::Number(at) = parts[3] else {
+    let gateway_kv_codec::tuple_key::DecodedKeyPart::Number(at) = parts[3] else {
         panic!("timestamp")
     };
     assert_eq!(at.to_bits(), (-0.0f64).to_bits());
@@ -989,6 +990,6 @@ fn actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins
     );
 }
 
-fn scalar_source(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar_source(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value.deserialize().expect("actual scalar fixture output")
 }

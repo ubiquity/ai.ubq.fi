@@ -10,9 +10,10 @@ use gateway_authority_routing_records::{slot::class_name, types::ProbeCircuit, t
 use gateway_authority_routing_records::{types::QuotaBlock, types::RoutingState};
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
 use gateway_authority_routing_selection::{types::LiveAccountSelection, types::ScopedOverageProbe};
-use gateway_core::identity::RoutingAccountHash;
-use gateway_core::{identity::AccountBinding, identity::ActiveSelection};
-use gateway_core::{provider::CodexQuotaClass, state::AuthorityStore};
+use gateway_contracts::identity::RoutingAccountHash;
+use gateway_contracts::provider::CodexQuotaClass;
+use gateway_contracts::{identity::AccountBinding, identity::ActiveSelection};
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;

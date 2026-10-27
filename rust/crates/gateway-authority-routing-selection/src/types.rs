@@ -1,8 +1,8 @@
 //! Source selection DTOs and the opaque cohort capability minted only by checked selection.
 use gateway_authority_routing_records::types::ProbeLease;
-use gateway_core::identity::AccountBinding;
-use gateway_core::model::ModelId;
-use gateway_core::provider::CodexQuotaClass;
+use gateway_contracts::identity::AccountBinding;
+use gateway_contracts::model::ModelId;
+use gateway_contracts::provider::CodexQuotaClass;
 use gateway_core::state::RevisionCheck;
 use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};

@@ -15,7 +15,7 @@ pub fn signature_input(
         || !key
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&time)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&time)
         || !digest(body_sha256)
     {
         return Err(invalid());

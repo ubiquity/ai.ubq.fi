@@ -17,11 +17,11 @@ use gateway_authority_paid_control_records::{
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::AdmittedAccount;
-use gateway_core::identity::RequestContext;
-use gateway_core::local_work::journal_local_work;
-use gateway_core::model::ModelId;
-use gateway_core::provider::UpstreamProvider;
+use gateway_contracts::identity::RequestContext;
+use gateway_contracts::model::ModelId;
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_local_journal::local_work::journal_local_work;
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;

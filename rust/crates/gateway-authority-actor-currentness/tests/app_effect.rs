@@ -10,10 +10,12 @@ use gateway_authority_actor_currentness::app::ActorService;
 use gateway_authority_actor_records::{
     legacy::config_digest, scope::NativeActorScope, source::StoredNativeActorV2,
 };
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{
     cell::{Cell, RefCell},

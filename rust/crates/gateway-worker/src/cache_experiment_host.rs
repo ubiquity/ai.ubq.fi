@@ -14,12 +14,13 @@ use gateway_authority::{native_control::actor::NativeRenewalActor, store::Author
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
 use gateway_cache_experiment_records::{model::failed, model::unavailable};
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_observability::{
     ObservabilityRuntime,
     types::{HealthEvent, HealthTarget, ObservabilityHost},
 };
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
 use gateway_worker_platform::random;

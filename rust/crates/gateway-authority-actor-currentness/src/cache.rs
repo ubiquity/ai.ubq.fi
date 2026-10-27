@@ -1,9 +1,10 @@
 //! Private metadata/expiry cache for fixed actor families; no public storage surface.
 use gateway_authority_contracts::{invalid, text, validate_time};
 use gateway_core::{
-    source_control::decode_source_control_record,
-    state::{AuthorityStore, RecordKey, RevisionCheck, StoredRecord},
+    source_control::decode_source_control_record, state::AuthorityStore, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;

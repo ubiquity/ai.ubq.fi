@@ -1,10 +1,11 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::source_control::decode_source_control_record;
+use gateway_core::source_control::encode_source_control_record;
 use gateway_core::state::StoredRecord;
-use gateway_core::{source_control::encode_source_control_record, state::RecordKey};
 use gateway_core::{state::AtomicTransition, state::RecordMutation};
 use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
 use gateway_schema::aliases::SourceStringCollator;
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;

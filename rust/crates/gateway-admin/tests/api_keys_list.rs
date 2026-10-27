@@ -9,12 +9,13 @@ use gateway_auth::{
     types::{AuthConfig, AuthHost, AuthRequest, AuthResponse},
     upstream::*,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    state::*,
+    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QuerySelector,
+    query::QueryStore, state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,

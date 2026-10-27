@@ -1,8 +1,8 @@
 //! Source read-only reset-credit and overage displays. These GETs never authorize a redemption.
 use super::{RequestHost, unavailable};
 use gateway_auth::provider_credentials::CodexSourceAccount;
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_observability::host_types::{CapacityAccountRef, ResetCreditDiagnostic};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 fn field(value: &SourceJson, name: &str) -> Option<SourceJson> {
@@ -21,7 +21,7 @@ fn counter(value: &SourceJson) -> Option<i64> {
         .filter(|n| {
             n.is_finite()
                 && n.fract() == 0.0
-                && (0.0..=gateway_core::identity::MAX_SAFE_INTEGER as f64).contains(n)
+                && (0.0..=gateway_contracts::identity::MAX_SAFE_INTEGER as f64).contains(n)
         })
         .map(|n| n as i64)
 }
@@ -175,7 +175,8 @@ impl RequestHost {
                 let parsed = worker::js_sys::Date::parse(&text);
                 if !parsed.is_finite()
                     || parsed.fract() != 0.0
-                    || !(0.0..=gateway_core::identity::MAX_SAFE_INTEGER as f64).contains(&parsed)
+                    || !(0.0..=gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
+                        .contains(&parsed)
                 {
                     return Ok(None);
                 }
@@ -230,7 +231,7 @@ impl RequestHost {
             return Ok(None);
         };
         let value = document.deserialize::<Value>()?;
-        Ok(gateway_observability::capacity_shapes::parse_codex_overage(
+        Ok(gateway_capacity_projection::shapes::parse_codex_overage(
             &value,
         ))
     }

@@ -1,5 +1,5 @@
 //! Exact client-facing extras failures, without transport or ledger side effects.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 pub fn invalid_state() -> GatewayError {
     GatewayError::unavailable(
         "Embeddings durable state is invalid.",

@@ -4,14 +4,13 @@ use crate::host::PlatformHost;
 use crate::observability_host;
 use crate::observability_host::CaptureInput;
 use futures_util::Stream;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    lifecycle::{BodyOutcome, ReaderTermination, SemanticTerminal, TransportObservation},
-    model::ModelId,
-    provider::UpstreamProvider,
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
+};
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_observability::{
     replay_producer::{ClientFailureObservation, FailureObservation, should_persist},
@@ -47,7 +46,7 @@ pub struct Capture {
 }
 #[derive(Clone)]
 struct TerminalRequest {
-    context: gateway_core::identity::RequestContext,
+    context: gateway_contracts::identity::RequestContext,
     model: Option<JsString16>,
     reasoning: Option<JsString16>,
     prompt_cache_key_present: bool,
@@ -107,7 +106,7 @@ impl Capture {
     }
     pub async fn begin(
         &self,
-        context: &gateway_core::identity::RequestContext,
+        context: &gateway_contracts::identity::RequestContext,
         model: &ModelId,
         raw: &SourceJson,
         stream: bool,
@@ -120,7 +119,7 @@ impl Capture {
     }
     pub(crate) async fn begin_local(
         &self,
-        context: &gateway_core::identity::RequestContext,
+        context: &gateway_contracts::identity::RequestContext,
         raw: &SourceJson,
         stream: bool,
     ) {
@@ -132,7 +131,7 @@ impl Capture {
     }
     async fn begin_request(
         &self,
-        context: &gateway_core::identity::RequestContext,
+        context: &gateway_contracts::identity::RequestContext,
         model: Option<&JsString16>,
         raw: &SourceJson,
         stream: bool,
@@ -198,7 +197,7 @@ impl Capture {
                 wire.terminal.clone(),
             )
         };
-        let extracted = gateway_core::source_usage::extract_usage_tokens(usage);
+        let extracted = gateway_contracts::source_usage::extract_usage_tokens(usage);
         let completed = self.local_completed.get() || source_completed(observation);
         let mut event = gateway_observability::prompt::PromptEvent {
             provider: Some(provider.clone()),
@@ -263,7 +262,7 @@ impl Capture {
                 let at = now_ms()?;
                 let mut patch = serde_json::json!({"status_code":status,"provider":provider,"completed_at_ms":at,"latency_ms":at.saturating_sub(request.context.started_at_ms).max(0),"input_tokens":extracted.as_ref().and_then(|usage|usage.input_tokens),"output_tokens":extracted.as_ref().and_then(|usage|usage.output_tokens),"provider_request_id":self.provider_request_id.borrow().clone()});
                 if let Some(paid) = paid {
-                    let billing = match paid.billing_state { gateway_core::lifecycle::BillingState::Pending => "pending", gateway_core::lifecycle::BillingState::Settled => "reconciled", gateway_core::lifecycle::BillingState::NotBilled => "not_billed", gateway_core::lifecycle::BillingState::Unresolved => "unresolved" };
+                    let billing = match paid.billing_state { gateway_contracts::lifecycle::BillingState::Pending => "pending", gateway_contracts::lifecycle::BillingState::Settled => "reconciled", gateway_contracts::lifecycle::BillingState::NotBilled => "not_billed", gateway_contracts::lifecycle::BillingState::Unresolved => "unresolved" };
                     patch["billing_status"] = serde_json::json!(billing);
                     patch["provider_request_id"] = serde_json::json!(paid.provider_request_id);
                     patch["provider_quota"] = serde_json::json!(paid.provider_quota);

@@ -11,7 +11,8 @@ use gateway_auth::{
     store,
     types::{AuthHost, AuthMethod, AuthRequest, AuthResponse, invalid},
 };
-use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::query::QueryStore;
 use serde_json::json;
 use url::Url;
 
@@ -201,7 +202,7 @@ fn parse_body(
                 .parse::<u64>()
                 .ok()
                 .filter(|length| {
-                    *length <= gateway_core::identity::MAX_SAFE_INTEGER as u64
+                    *length <= gateway_contracts::identity::MAX_SAFE_INTEGER as u64
                         && length.to_string() == value
                 })
                 .is_none_or(|length| length > 32 * 1024 * 1024)

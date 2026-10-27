@@ -1,6 +1,6 @@
 //! Authoritative source-wire errors; diagnostics never replace the original body.
 use crate::inference_capture::Capture;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_routing_runtime::types::{RoutingError, SourceRefusalBody};
 use std::rc::Rc;
 use worker::Response;
@@ -45,10 +45,10 @@ fn unavailable() -> GatewayError {
 
 /// Retain actual plan pricing data and the existing Messages cost requirement.
 pub(crate) fn pricing_metadata(
-    pricing: Option<&gateway_core::source_json::SourceJson>,
+    pricing: Option<&gateway_source::source_json::SourceJson>,
     require_provider_cost: bool,
-) -> Result<Option<gateway_core::source_json::SourceJson>, GatewayError> {
-    use gateway_core::{
+) -> Result<Option<gateway_source::source_json::SourceJson>, GatewayError> {
+    use gateway_source::{
         js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
     if !require_provider_cost {

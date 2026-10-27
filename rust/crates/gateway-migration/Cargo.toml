@@ -15,6 +15,10 @@ gateway-authority-paid-control-records = { path = "../gateway-authority-paid-con
 gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
+gateway-source-graph.workspace = true
 gateway-source-audit.workspace = true
 gateway-profile-source.workspace = true
 gateway-migration-ledger.workspace = true

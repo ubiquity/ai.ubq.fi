@@ -6,14 +6,13 @@ use gateway_catalog_provider::host::{
 };
 use gateway_catalog_provider::providers;
 use gateway_catalog_runtime::state::{self, source_key};
-use gateway_core::error::GatewayError;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
-use gateway_core::tuple_key::TupleKey;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_routing_runtime_test_support::source_catalog::{self, Collator};
 use gateway_schema::catalog_cache::{self, CatalogResponse};
 use gateway_schema::catalog_store;
@@ -1452,10 +1451,9 @@ fn pre_save_selection_read_cannot_replace_newer_pending_or_current_catalog_views
 
 #[test]
 fn versioned_union_and_persisted_account_evidence_keep_source_model_and_effort_units() {
-    use gateway_core::{
-        source_control::decode_source_control_record, source_serialization as source,
-        value::ValueEncoding,
-    };
+    use gateway_core::source_control::decode_source_control_record;
+    use gateway_source::source_serialization as source;
+    use gateway_kv_codec::value::ValueEncoding;
     let store = Store::new();
     let host = Host::new(&store);
     let runtime = CatalogRuntime::new();

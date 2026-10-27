@@ -1,7 +1,7 @@
 //! Actual proof-bearing reset candidates and admitted existing-only outcomes.
 use gateway_authority_reset_records::{ResetConfig, full_pool::FullPoolFence};
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
-use gateway_core::{identity::AccountBinding, identity::RequestContext};
+use gateway_contracts::{identity::AccountBinding, identity::RequestContext};
 
 #[derive(Clone, Debug)]
 pub struct ResetCandidate {

@@ -14,9 +14,9 @@ use gateway_authority_routing_selection::types::CohortProof;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_json, fixture_row};
-use gateway_core::identity::PrincipalId;
-use gateway_core::state::RecordKey;
-use gateway_core::{identity::RequestContext, identity::RequestId, provider::CodexQuotaClass};
+use gateway_contracts::identity::PrincipalId;
+use gateway_contracts::{identity::RequestContext, identity::RequestId, provider::CodexQuotaClass};
+use gateway_kv_codec::key::RecordKey;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::admitted};
 use gateway_routing_runtime_test_support::{authority::authority, authority::block};
@@ -125,7 +125,7 @@ fn claim(authority: &TestAuthority, permit: &AutomaticResetPermit) -> ResetRecor
     };
     record
 }
-fn budget_key(permit: &AutomaticResetPermit) -> gateway_core::state::RecordKey {
+fn budget_key(permit: &AutomaticResetPermit) -> gateway_kv_codec::key::RecordKey {
     keys::reset_day(
         &permit.invocation().unwrap().identity.account_id_hash,
         &utc_day(NOW).unwrap(),

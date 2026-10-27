@@ -1,6 +1,6 @@
 //! src/request-policy.ts:98-163,412-451,565-613; tiers are deliberately open UTF16 strings.
 use crate::model_control as control;
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

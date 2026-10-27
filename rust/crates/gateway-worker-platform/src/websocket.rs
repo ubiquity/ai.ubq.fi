@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use worker::{Method, Request};
 
 pub const LIVE_SIDEBAND_MAX_BYTES: usize = 4 * 1024 * 1024;

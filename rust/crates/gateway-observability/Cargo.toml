@@ -6,15 +6,19 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source.workspace = true
 gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-capacity = { path = "../gateway-authority-capacity" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 gateway-quota-projection.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-claude-usage-history.workspace = true
 gateway-claude-usage-history-records.workspace = true
 gateway-observability-request-records.workspace = true
+gateway-capacity-projection.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-schema = { path = "../gateway-schema" }
 gateway-auth = { path = "../gateway-auth" }

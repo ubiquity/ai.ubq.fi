@@ -22,7 +22,7 @@ struct LegacyAction {
     metadata: NativeImportMetadata,
     target: NativeImportTarget,
     actor: StoredNativeActor,
-    context: gateway_core::identity::RequestContext,
+    context: gateway_contracts::identity::RequestContext,
     created_at_ms: i64,
     deadline_ms: i64,
     facts: LegacyFacts,
@@ -37,7 +37,7 @@ fn exact<T: Serialize>(value: &SourceJson, row: &T) -> Result<(), GatewayError> 
 fn common(
     kind: (u8, NativeImportKind),
     selection: (&NativeImportMetadata, &NativeImportTarget),
-    original: (&StoredNativeActor, &gateway_core::identity::RequestContext),
+    original: (&StoredNativeActor, &gateway_contracts::identity::RequestContext),
     lifetime: (i64, i64),
     id: &str,
 ) -> Result<(), GatewayError> {
@@ -84,7 +84,7 @@ pub(in crate::native_control) fn validate_custody(
             return Err(unavailable());
         };
         if row.facts.account_id_hash != *account_id_hash
-            || row.facts.slot > gateway_core::identity::MAX_SAFE_INTEGER as u64
+            || row.facts.slot > gateway_contracts::identity::MAX_SAFE_INTEGER as u64
         {
             return Err(unavailable());
         }

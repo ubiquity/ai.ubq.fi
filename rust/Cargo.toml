@@ -64,7 +64,18 @@ members = [
   "crates/gateway-quality",
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
+  "crates/gateway-capacity-projection",
+  "crates/gateway-contracts",
+  "crates/gateway-kv-codec",
+  "crates/gateway-source-graph",
+  "crates/gateway-local-journal",
+  "crates/gateway-redaction",
   "crates/gateway-compaction",
+  "crates/gateway-compaction-source",
+  "crates/gateway-compaction-history",
+  "crates/gateway-compaction-render",
+  "crates/gateway-compaction-test-support",
+  "crates/gateway-prompt-policy",
   "crates/gateway-schema",
   "crates/gateway-providers",
   "crates/gateway-authority",
@@ -186,7 +197,18 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
 wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
+gateway-capacity-projection = { path = "crates/gateway-capacity-projection" }
+gateway-contracts = { path = "crates/gateway-contracts" }
+gateway-kv-codec = { path = "crates/gateway-kv-codec" }
+gateway-source-graph = { path = "crates/gateway-source-graph" }
+gateway-local-journal = { path = "crates/gateway-local-journal" }
+gateway-redaction = { path = "crates/gateway-redaction" }
 gateway-compaction = { path = "crates/gateway-compaction" }
+gateway-compaction-source = { path = "crates/gateway-compaction-source" }
+gateway-compaction-history = { path = "crates/gateway-compaction-history" }
+gateway-compaction-render = { path = "crates/gateway-compaction-render" }
+gateway-compaction-test-support = { path = "crates/gateway-compaction-test-support" }
+gateway-prompt-policy = { path = "crates/gateway-prompt-policy" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }

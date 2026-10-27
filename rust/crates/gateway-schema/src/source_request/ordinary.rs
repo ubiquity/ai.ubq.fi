@@ -7,7 +7,7 @@ use super::{
     reasoning::parse_effort,
 };
 use crate::request::{RequestExtensions, RequestSurface};
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 #[derive(Clone, Debug)]
 pub struct OrdinarySourceRequest {
     document: SourceRequestDocument,

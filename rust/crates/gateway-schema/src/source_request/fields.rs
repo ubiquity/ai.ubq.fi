@@ -8,7 +8,7 @@ use crate::{
     allowlists::*,
     request::{RequestExtensions, RequestSurface},
 };
-use gateway_core::{source_json::SourceJson, source_serialization as source};
+use gateway_source::{source_json::SourceJson, source_serialization as source};
 fn invalid(message: impl AsRef<str>, param: Option<&str>) -> SourceRequestError {
     SourceRequestError::scalar(message.as_ref(), param)
 }

@@ -3,11 +3,10 @@ use gateway_admin_contracts::source_input as input;
 use gateway_auth::crypto::uuid_from_random;
 use gateway_auth::store;
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{AuthorityStore, RecordKey, RecordMutation, StoredRecord};
+use gateway_core::{state::AuthorityStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

@@ -4,7 +4,7 @@ use crate::{
     host::{PlatformClock, PlatformTokens},
     routing_host,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptUsage, PreparedAttempt},
@@ -25,16 +25,16 @@ pub(crate) struct Lifecycle {
     pub(crate) provider_request_id: Option<String>,
     pub(crate) status: u16,
     pub(crate) store: RemoteAuthorityStore,
-    pub(crate) pricing: Option<gateway_core::source_json::SourceJson>,
+    pub(crate) pricing: Option<gateway_source::source_json::SourceJson>,
 }
 
 impl Lifecycle {
     pub(crate) async fn observe_terminal(
         &self,
-        observation: gateway_core::lifecycle::TransportObservation,
+        observation: gateway_contracts::lifecycle::TransportObservation,
         usage: Option<Value>,
     ) -> Result<(), GatewayError> {
-        let extracted = gateway_core::source_usage::extract_usage_tokens(usage.as_ref());
+        let extracted = gateway_contracts::source_usage::extract_usage_tokens(usage.as_ref());
         let paid = match &self.attempt.paid {
             Some(reservation) => {
                 crate::paid_lookup::terminal_usage(
@@ -63,7 +63,7 @@ impl Lifecycle {
     }
     pub(crate) async fn finish(
         &self,
-        observation: gateway_core::lifecycle::TransportObservation,
+        observation: gateway_contracts::lifecycle::TransportObservation,
         usage: Option<Value>,
     ) -> Result<(), GatewayError> {
         self.observe_terminal(observation, usage).await?;

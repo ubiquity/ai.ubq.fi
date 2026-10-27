@@ -5,11 +5,10 @@ use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelReservation};
 use gateway_authority_keys as keys;
-use gateway_core::{
-    lifecycle::{DeliveryOutcome, SemanticTerminal, TransportObservation},
-    state::RecordKey,
-    tuple_key::{ScalarKeyPart, TupleKey},
+use gateway_contracts::{
+    lifecycle::DeliveryOutcome, lifecycle::SemanticTerminal, lifecycle::TransportObservation,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_routing_runtime::{
     currentness::RoutingLeaseState,
     local_work::{LocalAdmissionInput, LocalRequestMetadata},

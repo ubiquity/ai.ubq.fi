@@ -3,7 +3,7 @@ use gateway_admin_runtime::{
     claude_generation::{StateChange, StateGeneration},
 };
 use gateway_auth::crypto::sha256_hex;
-use gateway_core::js_string::JsString16;
+use gateway_source::js_string::JsString16;
 use std::sync::Arc;
 
 fn credential() -> Credential {

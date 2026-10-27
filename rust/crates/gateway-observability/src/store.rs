@@ -1,21 +1,13 @@
 use crate::types::ObservabilityHost;
 use gateway_auth::crypto::uuid_from_random;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::{DecodedKeyPart, TupleKey},
+    query::QueryEntry, query::QueryRequest, query::QuerySelector, query::QueryStore,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
-/// Source utils.isRecord deliberately includes arrays in the JSON domain.
-pub(crate) fn is_record(value: &Value) -> bool {
-    value.is_object() || value.is_array()
-}
-
-pub(crate) const DAY: i64 = 86_400_000;
 pub(crate) fn error(message: impl Into<String>) -> GatewayError {
     GatewayError::unavailable(message, "observability_state_invalid")
 }
@@ -62,7 +54,7 @@ pub(crate) fn value(row: Option<&StoredRecord>, now: i64) -> Result<Option<&Valu
 }
 pub(crate) fn now<H: ObservabilityHost>(host: &H) -> Result<i64, GatewayError> {
     let now = host.now_ms();
-    if (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now) {
+    if (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now) {
         Ok(now)
     } else {
         Err(error("Invalid observation clock"))
@@ -164,17 +156,4 @@ pub(crate) async fn scan_selector<S: QueryStore>(
         cursor = Some(next);
     }
     Ok(rows)
-}
-pub(crate) fn js_whitespace(c: char) -> bool {
-    matches!(c,'\u{0009}'..='\u{000d}'|' '|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}')
-}
-pub(crate) fn trim(s: &str) -> &str {
-    s.trim_matches(js_whitespace)
-}
-pub(crate) fn safe_i64(v: &Value) -> Option<i64> {
-    v.as_f64()
-        .filter(|n| {
-            n.is_finite() && n.fract() == 0.0 && (0.0..=9_007_199_254_740_991.0).contains(n)
-        })
-        .map(|n| n as i64)
 }

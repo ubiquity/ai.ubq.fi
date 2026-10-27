@@ -2,7 +2,8 @@
 use gateway_authority_contracts::{invalid, text, validate_time};
 use gateway_core::state::RevisionCheck;
 use gateway_core::{state::AtomicTransition, state::StoredRecord};
-use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RecordKey};
+use gateway_core::{state::AuthorityStore, state::CommitOutcome};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 pub(crate) struct ReadTransaction<'a, S> {

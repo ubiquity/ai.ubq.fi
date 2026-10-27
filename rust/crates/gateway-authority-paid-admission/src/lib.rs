@@ -14,8 +14,9 @@ use gateway_authority_paid_records::{ReconciliationGate, pending_id, validate_at
 use gateway_authority_paid_route::PaidRoutingReceipt;
 use gateway_authority_paid_route::{PaidRouteService, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::{identity::MicrocreditLimit, lifecycle::PaidTerminalState};
-use gateway_core::{lifecycle::BillingState, lifecycle::DispatchState, state::AuthorityStore};
+use gateway_contracts::{identity::MicrocreditLimit, lifecycle::PaidTerminalState};
+use gateway_contracts::{lifecycle::BillingState, lifecycle::DispatchState};
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 async fn read_gate<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
@@ -58,7 +59,7 @@ struct PaidWindowDraft {
     limit: MicrocreditLimit,
     reset: i64,
     version: String,
-    window_key: gateway_core::state::RecordKey,
+    window_key: gateway_kv_codec::key::RecordKey,
     window: Option<PaidWindow>,
     exposure: i64,
 }
@@ -112,7 +113,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> PaidAdmissionService<'a, S, I> {
         &self,
         tx: &mut Transaction<'_, S, I>,
         proof: &gateway_authority_claude_proof::ClaudeCohortProof,
-        model: &gateway_core::model::ModelId,
+        model: &gateway_contracts::model::ModelId,
         now: i64,
     ) -> Result<(), GatewayError> {
         let fail = || {
@@ -340,7 +341,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> PaidAdmissionService<'a, S, I> {
         tx: &mut Transaction<'_, S, I>,
         input: &PaidRequest,
         policy: &ApiKeyPolicy,
-        key: &gateway_core::state::RecordKey,
+        key: &gateway_kv_codec::key::RecordKey,
         draft: PaidWindowDraft,
         now: i64,
     ) -> Result<PaidAdmission, GatewayError> {

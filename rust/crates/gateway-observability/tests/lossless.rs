@@ -1,12 +1,10 @@
 mod support;
 use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context};
-use gateway_core::{
-    js_string::JsString16,
-    lifecycle::DeliveryOutcome,
-    source_json::SourceJson,
-    state::StoredRecord,
-    tuple_key::{DecodedKeyPart, TupleKey},
-    value::{PortableValue, ValueEncoding},
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::lifecycle::DeliveryOutcome;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{
+    tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue, value::ValueEncoding,
 };
 use gateway_observability::{
     ObservabilityRuntime, ledger::ErrorObservation, records::record_source_json,
@@ -96,7 +94,7 @@ fn source_tuple_uses_usv_key_bytes_while_the_logical_request_id_keeps_its_units(
         .next()
         .map(|(key, value)| (key.clone(), value.clone()))
         .unwrap();
-    let parts = TupleKey::from_record_key(&gateway_core::state::RecordKey(row.0))
+    let parts = TupleKey::from_record_key(&gateway_kv_codec::key::RecordKey(row.0))
         .unwrap()
         .decoded_parts()
         .unwrap();
@@ -179,7 +177,7 @@ fn source_created_time_signed_zero_keeps_two_distinct_tuple_keys() {
     assert_eq!(memory.rows.borrow().len(), 2);
     let mut signs = Vec::new();
     for (key, record) in memory.rows.borrow().iter() {
-        let parts = TupleKey::from_record_key(&gateway_core::state::RecordKey(key.clone()))
+        let parts = TupleKey::from_record_key(&gateway_kv_codec::key::RecordKey(key.clone()))
             .unwrap()
             .decoded_parts()
             .unwrap();

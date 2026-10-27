@@ -2,7 +2,9 @@
 use crate::CatalogRuntime;
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
 use gateway_catalog_provider::model::uses_openrouter;
-use gateway_core::{error::GatewayError, model::ModelId, query::QueryStore};
+use gateway_source::error::GatewayError;
+use gateway_contracts::model::ModelId;
+use gateway_core::query::QueryStore;
 use gateway_schema::{
     catalog::CatalogInput,
     reasoning::js_trim_source,

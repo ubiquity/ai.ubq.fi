@@ -3,8 +3,7 @@ use crate::coercion::js_number;
 use crate::scalar::error;
 
 use chrono::{DateTime, NaiveDate};
-use gateway_core::error::GatewayError;
-use gateway_core::source_json::SourceJson;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 
 fn date(value: Option<&Value>) -> Result<Option<i64>, GatewayError> {

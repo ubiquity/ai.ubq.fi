@@ -1,7 +1,8 @@
 //! Raw source metadata and effective normalized views are distinct contracts.
 //! Owner parse-None/default behavior does not authorize rewriting captured data.
 use crate::*;
-use gateway_core::{source_control::decode_source_control_record, value::ValueEncoding};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_kv_codec::value::ValueEncoding;
 
 pub(crate) fn named_key(parts: &[Value]) -> bool {
     (parts.len() == 2

@@ -1,9 +1,8 @@
 //! Profile NDJSON conversion; never loads a VM-specific value codec or executes JavaScript.
 
-use gateway_core::{
-    error::GatewayError,
-    state::RecordKey,
-    tuple_key::{BigIntKey, KeyPart, TupleKey},
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::BigIntKey, tuple_key::KeyPart, tuple_key::TupleKey,
     value::PortableValue,
 };
 use gateway_profile_values::{

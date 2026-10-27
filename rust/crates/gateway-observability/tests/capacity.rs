@@ -13,8 +13,10 @@ use gateway_auth::{
 };
 use gateway_authority::store::Authority;
 use gateway_authority_keys as keys;
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, state::StoredRecord};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::state::StoredRecord;
 use gateway_observability::{ObservabilityRuntime, host_types::*, types::ObservabilityHost};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{
     cell::Cell,

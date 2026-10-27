@@ -1,13 +1,17 @@
-use gateway_source::error::GatewayError;
-use gateway_core::health::{HealthResponse, ReleaseIdentity};
-use gateway_core::identity::{MAX_SAFE_INTEGER, MicrocreditLimit, Microcredits};
-use gateway_core::lifecycle::{
-    BodyOutcome, DeliveryOutcome, ReaderTermination, TransportObservation,
+use gateway_contracts::{health::HealthResponse, health::ReleaseIdentity};
+use gateway_contracts::{
+    identity::MAX_SAFE_INTEGER, identity::MicrocreditLimit, identity::Microcredits,
 };
-use gateway_core::provider::{
-    CodexQuotaClass, OveragePermission, PaidProvider, SelectableProviderId, UpstreamProvider,
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
+    lifecycle::TransportObservation,
+};
+use gateway_contracts::{
+    provider::CodexQuotaClass, provider::OveragePermission, provider::PaidProvider,
+    provider::SelectableProviderId, provider::UpstreamProvider,
 };
 use gateway_core::state::StoredRecord;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 
 #[test]
@@ -115,7 +119,7 @@ fn health_requires_full_build_identity_and_matches_source_envelope() {
 fn unknown_state_version_fails_closed() {
     let record = StoredRecord {
         schema_version: 2,
-        value_encoding: gateway_core::value::ValueEncoding::Json,
+        value_encoding: gateway_kv_codec::value::ValueEncoding::Json,
         revision: "0".to_owned(),
         value: json!({}),
         expires_at_ms: None,

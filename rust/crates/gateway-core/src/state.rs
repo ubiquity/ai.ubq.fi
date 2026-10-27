@@ -5,6 +5,7 @@ use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 
 pub const PORTABLE_STATE_VERSION: u32 = 1;
@@ -13,22 +14,22 @@ pub const PORTABLE_STATE_VERSION: u32 = 1;
 pub struct StoredRecord {
     pub schema_version: u32,
     #[serde(default)]
-    pub value_encoding: crate::value::ValueEncoding,
+    pub value_encoding: gateway_kv_codec::value::ValueEncoding,
     pub revision: String,
     pub value: serde_json::Value,
     /// Absolute expiry, never a refreshed relative TTL. None means retained indefinitely.
-    pub expires_at_ms: Option<crate::identity::UnixMillis>,
+    pub expires_at_ms: Option<gateway_contracts::identity::UnixMillis>,
 }
 
 impl StoredRecord {
     pub fn json(
         revision: impl Into<String>,
         value: serde_json::Value,
-        expires_at_ms: Option<crate::identity::UnixMillis>,
+        expires_at_ms: Option<gateway_contracts::identity::UnixMillis>,
     ) -> Self {
         Self {
             schema_version: PORTABLE_STATE_VERSION,
-            value_encoding: crate::value::ValueEncoding::Json,
+            value_encoding: gateway_kv_codec::value::ValueEncoding::Json,
             revision: revision.into(),
             value,
             expires_at_ms,
@@ -36,8 +37,8 @@ impl StoredRecord {
     }
     pub fn profile(
         revision: impl Into<String>,
-        value: crate::value::PortableValue,
-        expires_at_ms: Option<crate::identity::UnixMillis>,
+        value: gateway_kv_codec::value::PortableValue,
+        expires_at_ms: Option<gateway_contracts::identity::UnixMillis>,
     ) -> Result<Self, GatewayError> {
         value.validate_for_storage()?;
         let value = serde_json::to_value(value).map_err(|_| {
@@ -45,7 +46,7 @@ impl StoredRecord {
         })?;
         Ok(Self {
             schema_version: PORTABLE_STATE_VERSION,
-            value_encoding: crate::value::ValueEncoding::ProfileV1,
+            value_encoding: gateway_kv_codec::value::ValueEncoding::ProfileV1,
             revision: revision.into(),
             value,
             expires_at_ms,
@@ -53,7 +54,7 @@ impl StoredRecord {
     }
     pub fn json_value(&self) -> Result<&serde_json::Value, GatewayError> {
         self.validate_version()?;
-        if self.value_encoding != crate::value::ValueEncoding::Json {
+        if self.value_encoding != gateway_kv_codec::value::ValueEncoding::Json {
             return Err(GatewayError::unavailable(
                 "A JSON record was required.",
                 "incompatible_value_encoding",
@@ -63,8 +64,8 @@ impl StoredRecord {
     }
     pub fn profile_v2(
         revision: impl Into<String>,
-        value: crate::value::PortableValue,
-        expires_at_ms: Option<crate::identity::UnixMillis>,
+        value: gateway_kv_codec::value::PortableValue,
+        expires_at_ms: Option<gateway_contracts::identity::UnixMillis>,
     ) -> Result<Self, GatewayError> {
         value.validate_for_storage_v2()?;
         let value = serde_json::to_value(value).map_err(|_| {
@@ -72,22 +73,22 @@ impl StoredRecord {
         })?;
         Ok(Self {
             schema_version: PORTABLE_STATE_VERSION,
-            value_encoding: crate::value::ValueEncoding::ProfileV2,
+            value_encoding: gateway_kv_codec::value::ValueEncoding::ProfileV2,
             revision: revision.into(),
             value,
             expires_at_ms,
         })
     }
-    pub fn profile_v2_value(&self) -> Result<crate::value::PortableValue, GatewayError> {
+    pub fn profile_v2_value(&self) -> Result<gateway_kv_codec::value::PortableValue, GatewayError> {
         self.validate_version()?;
-        if self.value_encoding != crate::value::ValueEncoding::ProfileV2 {
+        if self.value_encoding != gateway_kv_codec::value::ValueEncoding::ProfileV2 {
             return Err(GatewayError::unavailable(
                 "An explicit ProfileV2 record was required",
                 "incompatible_value_encoding",
             ));
         }
-        let value: crate::value::PortableValue = serde_json::from_value(self.value.clone())
-            .map_err(|_| {
+        let value: gateway_kv_codec::value::PortableValue =
+            serde_json::from_value(self.value.clone()).map_err(|_| {
                 GatewayError::unavailable("Typed value decoding failed.", "portable_value_invalid")
             })?;
         value.validate_for_storage_v2()?;
@@ -100,8 +101,8 @@ impl StoredRecord {
     }
     pub fn source_graph(
         revision: impl Into<String>,
-        graph: crate::source_graph::SourceGraph,
-        expires_at_ms: Option<crate::identity::UnixMillis>,
+        graph: gateway_source_graph::graph::SourceGraph,
+        expires_at_ms: Option<gateway_contracts::identity::UnixMillis>,
     ) -> Result<Self, GatewayError> {
         graph.validate_for_storage()?;
         let value = serde_json::to_value(graph).map_err(|_| {
@@ -112,15 +113,17 @@ impl StoredRecord {
         })?;
         Ok(Self {
             schema_version: PORTABLE_STATE_VERSION,
-            value_encoding: crate::value::ValueEncoding::SourceGraphV1,
+            value_encoding: gateway_kv_codec::value::ValueEncoding::SourceGraphV1,
             revision: revision.into(),
             value,
             expires_at_ms,
         })
     }
-    pub fn source_graph_value(&self) -> Result<crate::source_graph::SourceGraph, GatewayError> {
+    pub fn source_graph_value(
+        &self,
+    ) -> Result<gateway_source_graph::graph::SourceGraph, GatewayError> {
         self.validate_version()?;
-        if self.value_encoding != crate::value::ValueEncoding::SourceGraphV1 {
+        if self.value_encoding != gateway_kv_codec::value::ValueEncoding::SourceGraphV1 {
             return Err(GatewayError::unavailable(
                 "An explicit SourceGraphV1 record was required.",
                 "incompatible_value_encoding",
@@ -128,9 +131,11 @@ impl StoredRecord {
         }
         self.decode_source_graph()
     }
-    fn decode_source_graph(&self) -> Result<crate::source_graph::SourceGraph, GatewayError> {
-        let graph: crate::source_graph::SourceGraph = serde_json::from_value(self.value.clone())
-            .map_err(|_| {
+    fn decode_source_graph(
+        &self,
+    ) -> Result<gateway_source_graph::graph::SourceGraph, GatewayError> {
+        let graph: gateway_source_graph::graph::SourceGraph =
+            serde_json::from_value(self.value.clone()).map_err(|_| {
                 GatewayError::unavailable(
                     "Native source graph decoding failed.",
                     "source_graph_invalid",
@@ -139,14 +144,14 @@ impl StoredRecord {
         graph.validate_for_storage()?;
         Ok(graph)
     }
-    pub fn portable_value(&self) -> Result<crate::value::PortableValue, GatewayError> {
+    pub fn portable_value(&self) -> Result<gateway_kv_codec::value::PortableValue, GatewayError> {
         self.validate_version()?;
         match self.value_encoding {
-            crate::value::ValueEncoding::Json => {
-                Ok(crate::value::PortableValue::from_json(&self.value))
-            }
-            crate::value::ValueEncoding::ProfileV1 => {
-                let decoded: crate::value::PortableValue =
+            gateway_kv_codec::value::ValueEncoding::Json => Ok(
+                gateway_kv_codec::value::PortableValue::from_json(&self.value),
+            ),
+            gateway_kv_codec::value::ValueEncoding::ProfileV1 => {
+                let decoded: gateway_kv_codec::value::PortableValue =
                     serde_json::from_value(self.value.clone()).map_err(|_| {
                         GatewayError::unavailable(
                             "Typed value decoding failed.",
@@ -156,30 +161,33 @@ impl StoredRecord {
                 decoded.validate_for_storage()?;
                 Ok(decoded)
             }
-            crate::value::ValueEncoding::ProfileV2 => self.profile_v2_value(),
-            crate::value::ValueEncoding::SourceGraphV1 => Err(GatewayError::unavailable(
-                "A tree record was required.",
-                "incompatible_value_encoding",
-            )),
+            gateway_kv_codec::value::ValueEncoding::ProfileV2 => self.profile_v2_value(),
+            gateway_kv_codec::value::ValueEncoding::SourceGraphV1 => {
+                Err(GatewayError::unavailable(
+                    "A tree record was required.",
+                    "incompatible_value_encoding",
+                ))
+            }
         }
     }
     pub fn validate_version(&self) -> Result<(), GatewayError> {
         if self.schema_version == PORTABLE_STATE_VERSION {
-            if self.value_encoding == crate::value::ValueEncoding::SourceGraphV1 {
+            if self.value_encoding == gateway_kv_codec::value::ValueEncoding::SourceGraphV1 {
                 self.decode_source_graph()?;
             }
             if matches!(
                 self.value_encoding,
-                crate::value::ValueEncoding::ProfileV1 | crate::value::ValueEncoding::ProfileV2
+                gateway_kv_codec::value::ValueEncoding::ProfileV1
+                    | gateway_kv_codec::value::ValueEncoding::ProfileV2
             ) {
-                let decoded: crate::value::PortableValue =
+                let decoded: gateway_kv_codec::value::PortableValue =
                     serde_json::from_value(self.value.clone()).map_err(|_| {
                         GatewayError::unavailable(
                             "Typed value decoding failed.",
                             "portable_value_invalid",
                         )
                     })?;
-                if self.value_encoding == crate::value::ValueEncoding::ProfileV2 {
+                if self.value_encoding == gateway_kv_codec::value::ValueEncoding::ProfileV2 {
                     decoded.validate_for_storage_v2()?;
                 } else {
                     decoded.validate_for_storage()?;
@@ -200,10 +208,6 @@ pub enum CommitOutcome {
     Committed,
     Conflict,
 }
-
-/// Key encoding is owned by the versioned portable-state adapter, not a legacy KV codec.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecordKey(pub String);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionCheck {

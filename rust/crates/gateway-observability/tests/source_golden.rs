@@ -1,5 +1,6 @@
 //! 131 cases executed against frozen source with pinned Bun1.4, no dotenv/install and OS network denial.
-use gateway_observability::{api, capacity_shapes, health, types::HealthProvider};
+use gateway_capacity_projection::shapes;
+use gateway_observability::{api, health, types::HealthProvider};
 use serde_json::{Value, json};
 // Bun JSON has one Number kind; serde_json distinguishes integral and float encodings.
 // Compare numeric values, while retaining every key, array position, and nonnumeric type.
@@ -52,10 +53,8 @@ fn frozen_typescript_source_parser_and_projection_goldens() {
         let input = &case["input"];
         let expected = &case["expected"];
         let actual = match case["op"].as_str().unwrap() {
-            "capacity_usage" => capacity_shapes::parse_codex_usage(input).unwrap_or(Value::Null),
-            "capacity_overage" => {
-                capacity_shapes::parse_codex_overage(input).unwrap_or(Value::Null)
-            }
+            "capacity_usage" => shapes::parse_codex_usage(input).unwrap_or(Value::Null),
+            "capacity_overage" => shapes::parse_codex_overage(input).unwrap_or(Value::Null),
             "health_parse" => {
                 let mut value = serde_json::to_value(health::parse_observation(input)).unwrap();
                 // The source returns the accepted input; omitted optional fields remain absent.

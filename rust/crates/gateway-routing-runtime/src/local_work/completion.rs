@@ -2,9 +2,10 @@
 use super::*;
 use crate::types::RoutingError;
 use gateway_authority_local_completion::{LocalCompletedIntentOutcome, LocalCompletionOperations};
-use gateway_core::{lifecycle::BodyOutcome, lifecycle::DeliveryOutcome};
-use gateway_core::{lifecycle::ReaderTermination, local_completion::LocalCompletedJournalPlan};
+use gateway_contracts::lifecycle::ReaderTermination;
+use gateway_contracts::{lifecycle::BodyOutcome, lifecycle::DeliveryOutcome};
 use gateway_core::{state::AtomicTransition, state::CommitOutcome, state::RevisionCheck};
+use gateway_local_journal::local_completion::LocalCompletedJournalPlan;
 
 pub struct PendingLocalCompletion<S, I, C, H> {
     original: Option<LocalWorkHandle<S, I, C, H>>,

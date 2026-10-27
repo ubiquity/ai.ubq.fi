@@ -1,11 +1,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_core::{
-    source_control::decode_source_control_record,
-    source_json::SourceJson,
-    state::{AuthorityStore, RecordKey, StoredRecord},
-    tuple_key::TupleKey,
-    value::PortableValue,
+    source_control::decode_source_control_record, state::AuthorityStore, state::StoredRecord,
 };
+use gateway_source::source_json::SourceJson;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
 use gateway_migration::{
     capture::{PrivateCapture, SourceEntry},
     engine::{adopt_empty, prepare},
@@ -387,10 +385,9 @@ fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch()
         native_control::NativeRenewalContext, native_control::NativeRenewalFence,
         native_control::custody::validate_native_control_custody,
     };
-    use gateway_core::{
-        js_string::JsString16, model::ModelId, source_control::encode_source_control_record,
-        source_serialization as source,
-    };
+    use gateway_source::{js_string::JsString16, source_serialization as source};
+    use gateway_contracts::model::ModelId;
+    use gateway_core::source_control::encode_source_control_record;
     #[derive(serde::Serialize)]
     struct LegacyRenewalData {
         v: u8,

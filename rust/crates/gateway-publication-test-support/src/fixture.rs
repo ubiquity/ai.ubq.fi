@@ -10,11 +10,12 @@ use gateway_auth::provider_credentials::{
 use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::PoolVersionstamp;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, bootstrap_fixture_owner, fixture_owner_statement,
 };
@@ -22,6 +23,7 @@ use gateway_publication_policy::protocol::{
     PublicationCarrier, PublicationRequest, PublicationResponse,
 };
 use gateway_publication_transport::transport::PublicationReceiver;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;

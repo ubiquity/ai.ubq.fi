@@ -11,10 +11,9 @@ use gateway_authority_actor_records::{
     legacy::config_digest, scope::NativeActorScope, source::StoredNativeActorV2,
 };
 use gateway_authority_keys as keys;
-use gateway_core::{
-    identity::{PrincipalId, RequestContext},
-    state::{AuthorityStore, RecordKey, RevisionCheck},
-};
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext};
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::Deserialize;
 use serde_json::json;

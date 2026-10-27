@@ -1,6 +1,6 @@
 //! Exact API policy/window/request data and pure identity guards; no reservation is minted here.
 use gateway_authority_contracts::{add, invalid, nonnegative, positive, text};
-use gateway_core::{
+use gateway_contracts::{
     identity::ApiKeyId, identity::RequestId, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_source::error::GatewayError;

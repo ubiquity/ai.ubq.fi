@@ -2,17 +2,16 @@
 use crate::{
     ObservabilityRuntime, records::valid_usage_rollup_source, store, types::ObservabilityHost,
 };
+use gateway_capacity_projection::scalars::trim;
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, source_usage::UsageTokens};
 use gateway_core::{
-    error::GatewayError,
-    identity::MAX_SAFE_INTEGER,
-    js_string::JsString16,
-    query::QueryStore,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::RecordMutation,
+};
+use gateway_kv_codec::{tuple_key::KeyPart, tuple_key::TupleKey};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    source_usage::UsageTokens,
-    state::RecordMutation,
-    tuple_key::{KeyPart, TupleKey},
 };
 use serde_json::{Value, json};
 
@@ -50,7 +49,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .model
             .map(gateway_observability_request_records::request::trim)
             .unwrap_or_default();
-        let provider = input.provider.map(store::trim).unwrap_or_default();
+        let provider = input
+            .provider
+            .map(gateway_capacity_projection::scalars::trim)
+            .unwrap_or_default();
         if model.as_units().is_empty()
             || provider.is_empty()
             || matches!(provider, "gateway" | "mixed" | "metered" | "surplus")
@@ -66,7 +68,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             return Ok(false);
         };
         let now = store::now(self.host.as_ref())?;
-        let request = store::trim(input.request_id);
+        let request = trim(input.request_id);
         let request = if request.is_empty() {
             store::uuid(self.host.as_ref())?
         } else {

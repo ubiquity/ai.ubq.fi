@@ -13,8 +13,9 @@ use gateway_authority_actor_records::{
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_core::identity::RequestContext;
-use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
+use gateway_contracts::identity::RequestContext;
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 

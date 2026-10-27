@@ -1,20 +1,18 @@
 //! Source cache/prompt-analytics-{core,read}.ts v2 hard namespace.
 use crate::{ObservabilityRuntime, counters, store, types::ObservabilityHost};
 use gateway_auth::crypto::sha256_hex;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::QueryStore,
-    state::{RecordKey, RecordMutation},
-};
+use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
+use gateway_core::{query::QueryStore, state::RecordMutation};
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 type StoredPromptBucket = (i64, Option<Value>, BTreeMap<String, u64>);
 
 pub const BUCKET_MS: i64 = 900_000;
-pub const WINDOW_MS: i64 = 7 * store::DAY;
-pub const RETENTION_MS: i64 = 8 * store::DAY;
+pub const WINDOW_MS: i64 = 7 * DAY;
+pub const RETENTION_MS: i64 = 8 * DAY;
 pub const PROVIDERS: [&str; 3] = ["chatgpt_codex", "metered", "surplus"];
 pub const ROUTES: [&str; 2] = ["responses", "chat.completions"];
 pub const DIMENSIONS: [&str; 6] = [
@@ -54,7 +52,10 @@ pub struct PromptEvent {
 }
 impl PromptEvent {
     /// Map one already-extracted shared usage result; this does not parse or validate raw upstream JSON.
-    pub fn set_source_usage(&mut self, usage: Option<&gateway_core::source_usage::UsageTokens>) {
+    pub fn set_source_usage(
+        &mut self,
+        usage: Option<&gateway_contracts::source_usage::UsageTokens>,
+    ) {
         self.usage_telemetry_status = usage
             .map_or("missing", |usage| usage.status.as_str())
             .into();
@@ -67,13 +68,13 @@ impl PromptEvent {
     }
 }
 pub(crate) fn known_release(release: &str) -> Option<String> {
-    let s = store::trim(release);
+    let s = trim(release);
     (s.len() >= 7 && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
         .then(|| s.to_ascii_lowercase())
 }
 pub(crate) fn model_text(value: Option<&str>) -> Option<&str> {
     value
-        .map(store::trim)
+        .map(trim)
         .filter(|value| model_source(Some(&JsString16::from_utf8(value))).is_some())
 }
 fn model_source(value: Option<&JsString16>) -> Option<JsString16> {
@@ -164,7 +165,7 @@ fn cohort(event: &PromptEvent) -> Vec<Value> {
         .unwrap_or("unspecified");
     let fallback = match event.fallback_reason.as_deref() {
         Some(v @ ("none" | "primary_429" | "primary_quota_blocked" | "other")) => v,
-        Some(v) if !store::trim(v).is_empty() => "other",
+        Some(v) if !trim(v).is_empty() => "other",
         _ => "none",
     };
     vec![
@@ -312,7 +313,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let admitted = store::value(m.as_ref(), at)? == Some(&Value::Bool(true));
                 let count = match store::value(card.as_ref(), at)? {
                     None => 0,
-                    Some(v) => store::safe_i64(v)
+                    Some(v) => safe_i64(v)
                         .filter(|v| *v <= 32)
                         .ok_or_else(|| store::error("Invalid prompt cohort cardinality"))?,
                 };
@@ -407,7 +408,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     store::scan(self.store.as_ref(), prefix(name), false, at, usize::MAX).await?
                 {
                     let p = store::parts(&entry.key)?;
-                    let Some(bucket) = p.get(4).and_then(store::safe_i64) else {
+                    let Some(bucket) = p.get(4).and_then(safe_i64) else {
                         continue;
                     };
                     if bucket < start || bucket > current {
@@ -535,7 +536,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     let p = store::parts(&row.key)?;
                     let offset = if name == "legacy" { 3 } else { 4 };
                     if p.get(offset)
-                        .and_then(store::safe_i64)
+                        .and_then(safe_i64)
                         .is_some_and(|b| b <= cutoff)
                     {
                         writes.push(RecordMutation::Delete {

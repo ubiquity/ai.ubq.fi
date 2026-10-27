@@ -14,6 +14,7 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-source.workspace = true
 gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
 gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
 gateway-auth-contracts.workspace = true
@@ -40,6 +41,8 @@ gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" 
 gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-claude-usage-runtime.workspace = true
 gateway-claude-usage-admin.workspace = true
@@ -57,7 +60,9 @@ gateway-extras-contract.workspace = true
 gateway-catalog-provider.workspace = true
 gateway-worker-stream.workspace = true
 gateway-auth-native-wire.workspace = true
+gateway-capacity-projection.workspace = true
 gateway-compaction.workspace = true
+gateway-compaction-source.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true

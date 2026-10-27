@@ -10,9 +10,8 @@ use gateway_auth_passport_contracts::passport::{
     PASSPORT_COOKIE, PASSPORT_STATE_COOKIE, PassportClaims, PassportConfig,
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord,
-};
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use rsa::{
     RsaPrivateKey,
@@ -547,7 +546,7 @@ fn cookie_and_bearer_principals_map_to_the_passport_subject()
     ));
     assert_eq!(
         principal.method.principal_id(None),
-        gateway_core::identity::PrincipalId::from_scalar("passport-user:user-123".into())
+        gateway_contracts::identity::PrincipalId::from_scalar("passport-user:user-123".into())
     );
     let mut bearer = request("GET", "https://ai.ubq.fi/uos/auth");
     bearer
@@ -560,7 +559,7 @@ fn cookie_and_bearer_principals_map_to_the_passport_subject()
     ));
     assert_eq!(
         principal.method.principal_id(None),
-        gateway_core::identity::PrincipalId::from_scalar("passport-user:user-123".into())
+        gateway_contracts::identity::PrincipalId::from_scalar("passport-user:user-123".into())
     );
     let response = run(auth.handle_auth_route(&cookie))?.ok_or("missing auth report")?;
     let body: Value = serde_json::from_slice(&response.body.to_bytes()?)?;

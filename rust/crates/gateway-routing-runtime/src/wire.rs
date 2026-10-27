@@ -4,10 +4,10 @@ use crate::{
         CredentialFence, PreparedWireRequest, PublishedCredential, RoutingInput, RoutingResult,
     },
 };
-use gateway_core::{
-    js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
-    source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_providers::{
     source_request::prepare_source_request,
     types::{
@@ -99,7 +99,7 @@ fn ordinary_context(
             .and_then(|value| source::string(&value))
             .filter(|value| !value.as_units().is_empty())
             .ok_or_else(|| {
-                gateway_core::error::GatewayError::unavailable(
+                gateway_source::error::GatewayError::unavailable(
                     "The validated runtime default reasoning control is unavailable.",
                     "runtime_config_invalid",
                 )

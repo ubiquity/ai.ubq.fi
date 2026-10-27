@@ -6,7 +6,10 @@ use gateway_auth_primitives::{
     api_keys,
     crypto::{Secret, base64url},
 };
-use gateway_core::state::*;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::{
@@ -27,7 +30,7 @@ fn authentication_requires_declared_json_and_never_guesses_profile_tags()
     );
     let typed = StoredRecord::profile(
         "typed",
-        gateway_core::value::PortableValue::from_json(&ambiguous),
+        gateway_kv_codec::value::PortableValue::from_json(&ambiguous),
         None,
     )?;
     let error = gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&typed), 1)
@@ -169,7 +172,7 @@ fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit()
             key.0,
             StoredRecord::profile(
                 "typed-profile",
-                gateway_core::value::PortableValue::from_json(&value),
+                gateway_kv_codec::value::PortableValue::from_json(&value),
                 None,
             )?,
         );

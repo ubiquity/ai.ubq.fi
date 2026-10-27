@@ -4,7 +4,7 @@ use crate::catalog_host::Host;
 use crate::host::PlatformHost;
 use gateway_catalog_provider::host::CatalogHost;
 use gateway_catalog_runtime::CatalogRuntime;
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
 use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
@@ -147,7 +147,7 @@ impl CatalogState {
     pub async fn decision_models(
         &self,
         store: &RemoteAuthorityStore,
-    ) -> Result<Vec<gateway_core::model::ModelId>, GatewayError> {
+    ) -> Result<Vec<gateway_contracts::model::ModelId>, GatewayError> {
         let publication = self.host.publication().await?;
         let state = self
             .service
@@ -179,11 +179,11 @@ impl CatalogState {
             .flat_map(|snapshot| snapshot.models)
             .filter(gateway_decision_protocol::catalog::decision_model)
             .filter_map(|row| {
-                gateway_core::source_serialization::member(&row, "id")
+                gateway_source::source_serialization::member(&row, "id")
                     .as_ref()
-                    .and_then(gateway_core::source_serialization::string)
+                    .and_then(gateway_source::source_serialization::string)
             })
-            .map(gateway_core::model::ModelId::from_source)
+            .map(gateway_contracts::model::ModelId::from_source)
             .collect())
     }
     pub async fn native_models(

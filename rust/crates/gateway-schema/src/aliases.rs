@@ -1,7 +1,5 @@
 //! Latest Flash aliases resolve only from injected cached catalog observations.
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 /// Constructor-owned synchronous source locale ordering; no model or authority normalization.
@@ -52,13 +50,13 @@ pub const LITHOS_IDS: &[&str] = &[
     "moonshotai/Kimi-K3-ultra-chat",
 ];
 pub const DEEPSEEK_IDS: &[&str] = &["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro"];
-fn lower_units(model: &ModelId) -> Vec<u16> {
+fn lower_units(model: &gateway_contracts::model::ModelId) -> Vec<u16> {
     let units = crate::source_request::trim(model.as_js_string());
-    gateway_core::js_string_case::lowercase_source(&units)
+    gateway_source::js_string_case::lowercase_source(&units)
         .as_units()
         .to_vec()
 }
-pub fn direct_deepseek_model(model: &ModelId) -> Option<ModelId> {
+pub fn direct_deepseek_model(model: &gateway_contracts::model::ModelId) -> Option<gateway_contracts::model::ModelId> {
     let lower = lower_units(model);
     let same = |s: &str| lower.iter().copied().eq(s.encode_utf16());
     if same("deepseek-flash") || same("deepseek-v4-flash") {
@@ -69,7 +67,7 @@ pub fn direct_deepseek_model(model: &ModelId) -> Option<ModelId> {
         None
     }
 }
-pub fn is_synthetic(model: &ModelId) -> bool {
+pub fn is_synthetic(model: &gateway_contracts::model::ModelId) -> bool {
     let lower = lower_units(model);
     [SYNTHETIC_MODEL, LEGACY_SYNTHETIC_MODEL]
         .iter()
@@ -77,11 +75,11 @@ pub fn is_synthetic(model: &ModelId) -> bool {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FlashAliases {
-    pub lithos: ModelId,
-    pub deepseek: ModelId,
-    pub openrouter: ModelId,
-    pub surplus: ModelId,
-    pub openlux: ModelId,
+    pub lithos: gateway_contracts::model::ModelId,
+    pub deepseek: gateway_contracts::model::ModelId,
+    pub openrouter: gateway_contracts::model::ModelId,
+    pub surplus: gateway_contracts::model::ModelId,
+    pub openlux: gateway_contracts::model::ModelId,
 }
 impl Default for FlashAliases {
     fn default() -> Self {
@@ -189,7 +187,7 @@ fn latest_alias_id(id: &str) -> bool {
                 })
     })
 }
-fn latest_source(id: &ModelId) -> bool {
+fn latest_source(id: &gateway_contracts::model::ModelId) -> bool {
     let lower = lower_units(id);
     if lower.first() != Some(&126) {
         return false;
@@ -215,7 +213,7 @@ fn latest_source(id: &ModelId) -> bool {
     }
     false
 }
-fn simple_source(id: &ModelId) -> bool {
+fn simple_source(id: &gateway_contracts::model::ModelId) -> bool {
     let units = id.as_js_string().as_units();
     if units.first() != Some(&126) {
         return false;
@@ -238,7 +236,7 @@ fn simple_source(id: &ModelId) -> bool {
         .map(|u| if (65..=90).contains(&u) { u + 32 } else { u })
         .eq("deepseek-flash-latest".encode_utf16())
 }
-fn source_candidate(id: &ModelId, year: u32) -> Option<FlashCandidate> {
+fn source_candidate(id: &gateway_contracts::model::ModelId, year: u32) -> Option<FlashCandidate> {
     let lower = lower_units(id);
     for word in lower.split(|u| matches!(*u, 45 | 58)) {
         if [
@@ -265,7 +263,7 @@ fn provider_alias(
     models: &[SourceJson],
     year: u32,
     collator: &dyn SourceStringCollator,
-) -> Result<Option<ModelId>, GatewayError> {
+) -> Result<Option<gateway_contracts::model::ModelId>, GatewayError> {
     let ids = models
         .iter()
         .filter_map(|row| {
@@ -273,10 +271,10 @@ fn provider_alias(
                 .as_ref()
                 .and_then(crate::model_control::string)
         })
-        .map(|id| ModelId::from_source(crate::source_request::trim(&id)))
+        .map(|id| gateway_contracts::model::ModelId::from_source(crate::source_request::trim(&id)))
         .collect::<Vec<_>>();
     let latest = ids.iter().filter(|id| latest_source(id)).cloned().collect();
-    let latest = sort_source(latest, &|left: &ModelId, right: &ModelId| {
+    let latest = sort_source(latest, &|left: &gateway_contracts::model::ModelId, right: &gateway_contracts::model::ModelId| {
         let priority = (!simple_source(left)).cmp(&(!simple_source(right)));
         if priority == Ordering::Equal {
             collator.compare(left.as_js_string(), right.as_js_string())
@@ -287,7 +285,7 @@ fn provider_alias(
     if let Some(id) = latest.into_iter().next() {
         return Ok(Some(id));
     }
-    let mut newest: Option<(&ModelId, FlashCandidate)> = None;
+    let mut newest: Option<(&gateway_contracts::model::ModelId, FlashCandidate)> = None;
     for id in &ids {
         if let Some(candidate) = source_candidate(id, year)
             && newest
@@ -319,7 +317,7 @@ pub fn resolve_flash_aliases(
 ) -> Result<FlashAliases, GatewayError> {
     let fallback = FlashAliases::default();
     let choose =
-        |models: Option<&[SourceJson]>, fallback: ModelId| -> Result<ModelId, GatewayError> {
+        |models: Option<&[SourceJson]>, fallback: gateway_contracts::model::ModelId| -> Result<gateway_contracts::model::ModelId, GatewayError> {
             Ok(match models {
                 Some(models) => provider_alias(models, utc_year, collator)?.unwrap_or(fallback),
                 None => fallback,

@@ -12,7 +12,7 @@ use gateway_auth_native_wire::{
     native_read::{NATIVE_MAX_BODY_BYTES, NATIVE_RENEWAL_AUTHORITY_PATH},
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 fn nonce() -> String {
     base64url(&[9; 32])
 }

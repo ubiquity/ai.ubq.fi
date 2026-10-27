@@ -8,8 +8,10 @@ use crate::{
     routing_host,
 };
 use futures_util::{Stream, task::AtomicWaker};
-use gateway_compaction::types::{CompactionOutcome, ResponseOptions};
-use gateway_core::lifecycle::{BodyOutcome, ReaderTermination, TransportObservation};
+use gateway_compaction_source::types::{CompactionOutcome, ResponseOptions};
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::TransportObservation,
+};
 use gateway_routing_runtime::{
     local_work::{
         LocalAdmissionInput, LocalRequestMetadata, LocalWorkHandle,

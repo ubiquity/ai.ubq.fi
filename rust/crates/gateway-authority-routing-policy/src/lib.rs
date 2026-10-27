@@ -5,7 +5,7 @@ use gateway_authority_routing_evidence::{
     capacity::CapacityStore, models::ModelAvailability, reader::RoutingEvidence,
 };
 use gateway_authority_routing_records::types::{ProbeCircuit, RoutingState, SubscriptionPool};
-use gateway_core::{
+use gateway_contracts::{
     identity::AccountBinding, identity::ActiveSelection, identity::ActiveTransitionReason,
     identity::RoutingAccountHash, model::ModelId, provider::CodexQuotaClass,
 };

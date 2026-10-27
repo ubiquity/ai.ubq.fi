@@ -3,13 +3,12 @@
 
 use futures_util::StreamExt;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QuerySelector,
+    query::QueryStore, state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use gateway_worker_http_body::body::request_bytes;
 use gateway_worker_storage::store::SqliteAuthorityStore;
 use serde::{Deserialize, Serialize};
@@ -189,7 +188,7 @@ enum StoreResponse {
     ProfileMigration {
         status: u16,
         headers: std::collections::BTreeMap<String, String>,
-        body: gateway_core::source_json::SourceJson,
+        body: gateway_source::source_json::SourceJson,
     },
     Read {
         record: Option<StoredRecord>,
@@ -249,7 +248,7 @@ impl DurableObject for GatewayAuthority {
                     Ok(StoreResponse::ProfileMigration {
                         status: result.status,
                         headers: result.headers,
-                        body: gateway_core::source_json::SourceJson::parse_bytes(
+                        body: gateway_source::source_json::SourceJson::parse_bytes(
                             &result.body.to_bytes()?,
                         )?,
                     })
@@ -512,7 +511,7 @@ impl QueryStore for RemoteAuthorityStore {
                     if !validated.accepts_record(&entry.key, &entry.record)? {
                         return Err(unavailable("authority_wire_invalid"));
                     }
-                    let tuple = gateway_core::tuple_key::TupleKey::from_record_key(&entry.key)?;
+                    let tuple = gateway_kv_codec::tuple_key::TupleKey::from_record_key(&entry.key)?;
                     if previous.as_ref().is_some_and(|old| {
                         if reverse {
                             tuple >= *old

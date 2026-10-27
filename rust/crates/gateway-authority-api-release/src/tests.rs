@@ -3,11 +3,11 @@ use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::{ApiKeyPolicy, ApiUsageRequest, ApiUsageState};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_keys as keys;
+use gateway_contracts::{identity::ApiKeyId, identity::RequestId, provider::UpstreamProvider};
 use gateway_core::{
-    identity::{ApiKeyId, RequestId},
-    provider::UpstreamProvider,
-    state::{AtomicTransition, CommitOutcome, RecordKey, RecordMutation, StoredRecord},
+    state::AtomicTransition, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
