@@ -1,5 +1,4 @@
 //! Source-profile writes and their secretless derived indexes share one CAS.
-use crate::{invalid, key, starts};
 use gateway_core::error::GatewayError;
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
@@ -7,6 +6,7 @@ use gateway_core::{
     query::QueryStore,
     state::{AtomicTransition, RecordMutation, RevisionCheck},
 };
+use gateway_migration_data::{invalid, key, starts};
 use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};

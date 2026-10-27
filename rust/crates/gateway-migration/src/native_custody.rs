@@ -1,6 +1,4 @@
 //! Trusted offline/native preparation only; the common candidate never receives refresh material.
-use crate::engine::PreparedAdoption;
-use crate::engine::prepare_native;
 use crate::invalid;
 use crate::parts;
 use crate::starts;
@@ -19,6 +17,8 @@ use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_prepare::engine::PreparedAdoption;
+use gateway_migration_prepare::engine::prepare_native;
 use std::future::Future;
 
 /// Implemented by a configured, fixed local owner host, never a capture decoder.

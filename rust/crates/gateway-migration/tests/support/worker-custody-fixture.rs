@@ -21,7 +21,7 @@ struct Export {
 struct Candidate {
     operation: &'static str,
     capture: gateway_migration_data::native_capture::NativeCapture,
-    adoption_receipt: gateway_migration::engine::AdoptionReceipt,
+    adoption_receipt: gateway_migration_prepare::engine::AdoptionReceipt,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
@@ -73,14 +73,14 @@ struct Selector {
 fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
     use gateway_auth::provider_credentials::codex_source_pool_key;
     use gateway_core::state::AuthorityStore;
-    use gateway_migration::engine::adopt_empty;
-    use gateway_migration::engine::prepare_native;
     use gateway_migration::native_custody::export_native_rollback_with_custody;
     use gateway_migration::native_custody::sanitize_native_capture;
     use gateway_migration_data::custody::ArtifactContext;
     use gateway_migration_fixture_custody::{host, staged};
     use gateway_migration_fixture_inputs::{inputs, producers};
     use gateway_migration_fixture_port::{executor::support_run, port};
+    use gateway_migration_prepare::engine::adopt_empty;
+    use gateway_migration_prepare::engine::prepare_native;
     assert_eq!(
         std::env::args_os().len(),
         1,

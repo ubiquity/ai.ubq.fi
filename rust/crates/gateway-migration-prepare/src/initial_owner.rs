@@ -1,10 +1,6 @@
 //! Finite private initial-owner consumer. Physical custody is a local attestation,
 //! never reconstructed from captured records or reread by this portable module.
-use crate::{
-    decode,
-    engine::{AdoptionReceipt, PreparedAdoption},
-    json,
-};
+use crate::engine::{AdoptionReceipt, PreparedAdoption};
 use gateway_authority::initial_control_owner::{
     InitialAdoptionAccountFacts, InitialAdoptionFacts, InitialControlOwnerReceipt,
     PreparedInitialControlOwner,
@@ -14,6 +10,7 @@ use gateway_core::query::{QueryRequest, QueryStore};
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome};
+use gateway_migration_data::{decode, json};
 use serde::Serialize;
 use std::cell::Cell;
 

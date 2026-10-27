@@ -12,8 +12,6 @@ use gateway_core::{
     state::*,
     tuple_key::TupleKey,
 };
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare_native;
 use gateway_migration::native_custody::NativeCustody;
 use gateway_migration::native_custody::OwnedNativeSnapshot;
 use gateway_migration::native_custody::export_native_rollback_with_custody;
@@ -25,6 +23,8 @@ use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
 use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_native::{

@@ -1,4 +1,3 @@
-use crate::{Row, Transform, decode, invalid, json, key, parts, starts};
 use gateway_auth::passkeys::{PasskeyCredential, PasskeyUser};
 use gateway_authority::{
     kernel::{KernelDefaults, KernelReservation, KernelWindow},
@@ -11,6 +10,9 @@ use gateway_core::error::GatewayError;
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::{identity::ApiKeyId, lifecycle::BillingState};
+use gateway_migration_data::{
+    RowData as Row, Transform, decode, invalid, json, key, parts, starts,
+};
 use serde_json::Value;
 use serde_json::json;
 use std::{
@@ -19,7 +21,7 @@ use std::{
 };
 
 #[derive(Default)]
-pub(super) struct PaidAccounting {
+struct PaidAccounting {
     settled_microcredits: i64,
     reserved_microcredits: i64,
     pending_count: i64,
@@ -27,7 +29,7 @@ pub(super) struct PaidAccounting {
     policy_version: String,
 }
 
-pub(super) fn account_paid(
+fn account_paid(
     accounting: &mut BTreeMap<(String, i64), PaidAccounting>,
     attempt: &PaidAttempt,
 ) -> Result<(), GatewayError> {
@@ -63,7 +65,7 @@ pub(super) fn account_paid(
     Ok(())
 }
 
-pub(super) fn derive_paid_window(
+fn derive_paid_window(
     key_id: &str,
     window_reset_at_ms: i64,
     limit_microcredits: i64,
@@ -469,7 +471,7 @@ impl ReservationIndexes {
     }
 }
 
-pub(crate) fn bind(
+pub fn bind(
     rows: &mut [Row],
     now: i64,
     revision: &str,
@@ -517,4 +519,4 @@ pub(crate) fn bind(
 }
 
 #[cfg(all(unix, not(target_arch = "wasm32")))]
-pub(crate) mod disk;
+pub mod disk;

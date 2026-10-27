@@ -11,7 +11,13 @@ pub async fn execute_profile<S: QueryStore>(
     request: gateway_admin_runtime::capabilities::MigrationRequest,
     context: gateway_admin_runtime::capabilities::Context,
 ) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
-    gateway_migration::profile_runtime::execute_profile(store, &ProfileHost, request, context).await
+    gateway_migration_profile::profile_runtime::execute_profile(
+        store,
+        &ProfileHost,
+        request,
+        context,
+    )
+    .await
 }
 
 struct ProfileHost;
@@ -57,7 +63,7 @@ impl gateway_profile_values::date::SourceDateHost for ProfileHost {
         Ok(time.is_finite().then_some(time as i64))
     }
 }
-impl gateway_migration::profile_runtime::ProfileHost for ProfileHost {
+impl gateway_migration_profile::profile_runtime::ProfileHost for ProfileHost {
     fn next_revision(&self) -> Result<String, GatewayError> {
         crate::transport::random::opaque_token()
     }

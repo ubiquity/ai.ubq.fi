@@ -6,9 +6,6 @@ use gateway_core::{
     tuple_key::TupleKey,
     value::PortableValue,
 };
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare;
-use gateway_migration::engine::prepare_native;
 use gateway_migration::inverse::export_rollback_bundle;
 use gateway_migration::native_inverse::export_native_latest;
 use gateway_migration::native_inverse::export_native_rollback_bundle;
@@ -18,6 +15,9 @@ use gateway_migration_data::custody::ArtifactContext;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
+use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;

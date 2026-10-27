@@ -1,12 +1,13 @@
 //! Private stopped-file preparation. No full-capture payload collection, VM,
 //! database, public import route, or capability is created by these spool files.
-use crate::core_state::{CoreStateCapture, CoreStateManifest};
 use crate::native_custody::NativeCustody;
 use crate::{Transform, digest, invalid, json, starts};
 use gateway_core::error::GatewayError;
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_core_state::CoreStateCapture;
+use gateway_migration_core_state::CoreStateManifest;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
@@ -98,7 +99,7 @@ impl Captured {
     /// a credential. The returned capture still needs the existing preparation
     /// and custody gates before any adoption.
     pub fn core_capture(&self) -> Result<CoreStateCapture, MigrationError> {
-        crate::core_state::select_spool(&self.header, &self.entries)
+        gateway_migration_core_state::select_spool(&self.header, &self.entries)
     }
     /// Select and prepare the bounded core in one private offline operation.
     /// The returned plan still needs the existing staged adoption and activation gates.
@@ -191,7 +192,7 @@ impl Captured {
         }
         reader.verify_end()?;
         let projected = projected.seal()?;
-        let (bound, derived) = crate::indexes::disk::bind_spooled(
+        let (bound, derived) = gateway_migration_indexes::disk::bind_spooled(
             &projected,
             self.header.captured_at_ms,
             &revision,

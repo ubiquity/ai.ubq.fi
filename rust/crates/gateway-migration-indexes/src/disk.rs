@@ -1,10 +1,10 @@
 //! Same index predicates, with native-private independent cursor lookups.
 use super::{ReservationIndexes, bind_identity, derive_basics};
-use crate::{Row, Transform, decode, invalid, parts, starts};
 use gateway_core::{
     error::GatewayError,
     state::{RecordKey, StoredRecord},
 };
+use gateway_migration_data::{RowData as Row, Transform, decode, invalid, parts, starts};
 use gateway_migration_spool::rows::{RowSpool, RowWriter};
 use std::{
     borrow::Cow,
@@ -12,7 +12,7 @@ use std::{
     path::Path,
 };
 type BoundRows = (RowSpool, Vec<(RecordKey, StoredRecord)>);
-pub(crate) fn bind_spooled(
+pub fn bind_spooled(
     rows: &RowSpool,
     now: i64,
     revision: &str,

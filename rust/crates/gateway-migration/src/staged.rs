@@ -1,6 +1,9 @@
 //! Private offline operator data, never an HTTP/admin capability. The host must
 //! hold a NEW empty target unpublished and quiescent until seal and reconciliation.
-use crate::{decode, engine::PreparedAdoption, invalid, json, key};
+use crate::decode;
+use crate::invalid;
+use crate::json;
+use crate::key;
 use gateway_authority::{
     initial_control_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts},
     paid_control::PaidControlOwner,
@@ -17,6 +20,7 @@ use gateway_migration_data::staged::{
     CanonicalRecord, STAGED_BATCH_MAX_BYTES, StageBatch, StageHeader, StageOwnerBinding,
     StageReceipt, StageRequest, bounded, extend, initial,
 };
+use gateway_migration_prepare::engine::PreparedAdoption;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::{BTreeSet, VecDeque};
@@ -84,39 +88,8 @@ impl StageRows {
 }
 impl StagePlan {
     pub fn from_prepared(prepared: PreparedAdoption) -> Result<Self, GatewayError> {
-        if prepared.manifest.native_revision.is_none() {
-            return Err(invalid(
-                "Staged adoption requires a complete native capture",
-            ));
-        }
-        let mut rows = Vec::new();
-        for row in prepared.rows {
-            rows.push(CanonicalRecord {
-                key: gateway_migration_data::manifest::mapping_key(
-                    &prepared.manifest.capture_id,
-                    &row.key.0,
-                ),
-                record: gateway_migration_data::manifest::mapping_record(
-                    &row,
-                    &prepared.manifest.capture_id,
-                )?,
-            });
-            rows.push(CanonicalRecord {
-                key: row.key,
-                record: row.record,
-            });
-        }
-        rows.extend(
-            prepared
-                .derived
-                .into_iter()
-                .map(|(key, record)| CanonicalRecord { key, record }),
-        );
-        rows.sort_by(|a, b| a.key.0.cmp(&b.key.0));
-        if rows.windows(2).any(|p| p[0].key == p[1].key) {
-            return Err(invalid("Staged canonical inventory has duplicate keys"));
-        }
-        let mut digest = initial(&prepared.manifest.capture_id);
+        let (manifest, rows) = prepared.stage_records()?;
+        let mut digest = initial(&manifest.capture_id);
         let mut encoded = VecDeque::new();
         for row in rows {
             let size = bounded(&row)?;
@@ -127,7 +100,7 @@ impl StagePlan {
             encoded.push_back((row, size));
         }
         let header = StageHeader {
-            manifest: prepared.manifest,
+            manifest,
             records: encoded.len(),
             digest,
         };

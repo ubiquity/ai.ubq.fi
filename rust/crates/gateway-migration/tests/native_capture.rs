@@ -1,8 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
 use gateway_core::{query::*, source_graph::GraphNode, state::*, tuple_key::TupleKey};
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare_native;
 use gateway_migration::inverse::export_latest;
 use gateway_migration::native_inverse::export_native_latest;
 use gateway_migration::native_inverse::export_native_rollback_bundle;
@@ -12,6 +10,8 @@ use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
 use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use serde_json::json;

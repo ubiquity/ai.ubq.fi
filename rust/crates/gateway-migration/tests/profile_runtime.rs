@@ -8,11 +8,11 @@ use gateway_core::{
     state::*,
     value::{PortableValue, ValueEncoding},
 };
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare;
-use gateway_migration::profile_runtime::ProfileHost;
-use gateway_migration::profile_runtime::execute_profile;
 use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
+use gateway_migration_profile::profile_runtime::ProfileHost;
+use gateway_migration_profile::profile_runtime::execute_profile;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;

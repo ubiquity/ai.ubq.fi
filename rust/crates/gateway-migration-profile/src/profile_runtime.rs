@@ -1,6 +1,4 @@
 //! Existing public profile import, distinct from stopped complete-state adoption.
-use crate::invalid;
-use crate::starts;
 use gateway_admin_data::policy::{self as migration, ImportOptions, Profile};
 use gateway_admin_runtime::capabilities::{Context, MigrationProfile, MigrationRequest};
 use gateway_auth::types::AuthResponse;
@@ -8,6 +6,8 @@ use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
 use gateway_core::value::PortableValue;
+use gateway_migration_data::invalid;
+use gateway_migration_data::starts;
 use gateway_profile_source::codec::normalize_source_import_line_with_host;
 use gateway_profile_source::line::NormalizedEntry;
 use gateway_profile_values::date::SourceDateHost;
@@ -40,7 +40,8 @@ pub async fn execute_profile<S: QueryStore, H: ProfileHost>(
         return Err(invalid("Profile migration clock is invalid"));
     }
     let MigrationRequest::Import(input) = request else {
-        return crate::profile_validate::validate(store, context.now_ms).await;
+        return gateway_migration_validation::profile_validate::validate(store, context.now_ms)
+            .await;
     };
     if input.ndjson.len() > 5 * 1024 * 1024 {
         return Err(GatewayError::new(

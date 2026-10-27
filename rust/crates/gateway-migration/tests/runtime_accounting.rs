@@ -2,10 +2,10 @@
 use gateway_admin_contracts::operations::AdminHost as _;
 use gateway_auth::store::key;
 use gateway_core::identity::RequestId;
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare;
 use gateway_migration::inverse::export_latest;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::Directory;
 use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::runtime::AdminHost;

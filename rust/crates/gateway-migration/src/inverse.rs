@@ -411,7 +411,7 @@ async fn export_internal<S: QueryStore>(
     };
     // A private export is not a successful rollback until every latest source/index
     // invariant can be re-adopted. This reads no old database or backup.
-    crate::engine::prepare(&result, &CanonicalDates)?;
+    gateway_migration_prepare::engine::prepare(&result, &CanonicalDates)?;
     Ok((result, controls))
 }
 

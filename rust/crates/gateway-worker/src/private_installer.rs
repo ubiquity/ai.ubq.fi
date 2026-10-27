@@ -5,8 +5,8 @@ use gateway_authority::initial_control_owner::{
     PreparedInitialControlOwner,
 };
 use gateway_core::error::GatewayError;
-use gateway_migration::engine::PreparedAdoption;
 use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_prepare::engine::PreparedAdoption;
 use serde::Deserialize;
 use worker::{
     Env, js_sys,
@@ -67,14 +67,15 @@ impl RustInitialControlInstaller {
             .map_err(|_| rejected())?;
             let store =
                 crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| rejected())?;
-            let receipt = gateway_migration::engine::adopt_empty_with_initial_control_owner(
-                &store,
-                &prepared.adoption,
-                &prepared.owner,
-                crate::storage::now_ms().map_err(|_| rejected())?,
-            )
-            .await
-            .map_err(|_| rejected())?;
+            let receipt =
+                gateway_migration_prepare::engine::adopt_empty_with_initial_control_owner(
+                    &store,
+                    &prepared.adoption,
+                    &prepared.owner,
+                    crate::storage::now_ms().map_err(|_| rejected())?,
+                )
+                .await
+                .map_err(|_| rejected())?;
             // Preserve Installed versus read-only Reconciled without claiming
             // that a lost-response readback performed a new atomic commit.
             let encoded = serde_json::to_string(&receipt).map_err(|_| rejected())?;
@@ -130,7 +131,8 @@ pub(crate) fn prepare(
     let capture = decode_capture(exact_input)?;
     // Migration independently derives capture/source/native/pool/projection
     // facts and compares them through the opaque owner's finite facts method.
-    let adoption = gateway_migration::engine::prepare_native(&capture).map_err(|_| refused())?;
+    let adoption =
+        gateway_migration_prepare::engine::prepare_native(&capture).map_err(|_| refused())?;
     Ok(PreparedPrivateInstallation { adoption, owner })
 }
 

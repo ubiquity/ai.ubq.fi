@@ -1,8 +1,3 @@
-use crate::Row;
-use crate::Transform;
-use crate::digest;
-use crate::invalid;
-use crate::json;
 use gateway_admin_data::inventory::SliceInventory;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
@@ -11,8 +6,13 @@ use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_data::RowData as Row;
+use gateway_migration_data::Transform;
 use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::digest;
 use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::invalid;
+use gateway_migration_data::json;
 use gateway_migration_data::manifest::{
     Manifest, manifest_key, mapping_checksum, mapping_key, mapping_record,
 };
@@ -27,6 +27,53 @@ pub struct PreparedAdoption {
     pub(crate) derived: Vec<(RecordKey, StoredRecord)>,
 }
 impl PreparedAdoption {
+    /// Consume a genuinely prepared capture into canonical staged DATA only.
+    /// No raw parts, transition, owner/currentness value or new proof is returned.
+    pub fn stage_records(
+        self,
+    ) -> Result<
+        (
+            Manifest,
+            Vec<gateway_migration_data::staged::CanonicalRecord>,
+        ),
+        GatewayError,
+    > {
+        use gateway_migration_data::staged::CanonicalRecord;
+        let prepared = self;
+        if prepared.manifest.native_revision.is_none() {
+            return Err(invalid(
+                "Staged adoption requires a complete native capture",
+            ));
+        }
+        let mut rows = Vec::new();
+        for row in prepared.rows {
+            rows.push(CanonicalRecord {
+                key: gateway_migration_data::manifest::mapping_key(
+                    &prepared.manifest.capture_id,
+                    &row.key.0,
+                ),
+                record: gateway_migration_data::manifest::mapping_record(
+                    &row,
+                    &prepared.manifest.capture_id,
+                )?,
+            });
+            rows.push(CanonicalRecord {
+                key: row.key,
+                record: row.record,
+            });
+        }
+        rows.extend(
+            prepared
+                .derived
+                .into_iter()
+                .map(|(key, record)| CanonicalRecord { key, record }),
+        );
+        rows.sort_by(|a, b| a.key.0.cmp(&b.key.0));
+        if rows.windows(2).any(|p| p[0].key == p[1].key) {
+            return Err(invalid("Staged canonical inventory has duplicate keys"));
+        }
+        Ok((prepared.manifest, rows))
+    }
     pub fn source_rows(&self) -> usize {
         self.manifest.source_rows
     }
@@ -49,7 +96,7 @@ pub struct AdoptionReceipt {
     pub atomic_committed: bool,
 }
 fn validate_source_inventories(
-    rows: Vec<Row>,
+    rows: Vec<gateway_migration_data::ValidatedRow>,
     now: i64,
 ) -> Result<(Vec<Row>, gateway_admin_data::report::Audit), GatewayError> {
     use {gateway_migration_ledger::rows::ObservedRow, gateway_source_audit::driver as audit};
@@ -59,7 +106,8 @@ fn validate_source_inventories(
     let mut mappings = Vec::new();
     let mut expired = Vec::new();
     let mut order = Vec::new();
-    for row in rows {
+    for checked in rows {
+        let row = checked.into_data();
         let live = row.record.expires_at_ms.is_none_or(|e| e > now);
         order.push(live);
         if live {
@@ -121,10 +169,6 @@ pub(crate) fn prepare_rows(
     captured_at_ms: i64,
     native_revision: Option<gateway_migration_data::native_capture::NativeRevision>,
 ) -> Result<PreparedAdoption, MigrationError> {
-    let rows = rows
-        .into_iter()
-        .map(gateway_migration_data::ValidatedRow::into_data)
-        .collect();
     let (mut rows, audited) = validate_source_inventories(rows, captured_at_ms)?;
     if !audited.errors.is_empty() {
         return Err(MigrationError::SourceInventory(audited));
@@ -133,7 +177,7 @@ pub(crate) fn prepare_rows(
         gateway_migration_projection::projection::forward(row)?;
     }
     let revision = format!("capture:{capture_id}");
-    let derived = crate::indexes::bind(&mut rows, captured_at_ms, &revision)?;
+    let derived = gateway_migration_indexes::bind(&mut rows, captured_at_ms, &revision)?;
     let mut derived_digests = BTreeMap::new();
     for (key, record) in &derived {
         if rows.iter().any(|r| r.key == *key)

@@ -1,10 +1,14 @@
 //! Source validation views of current common authority records, never a backup ledger.
-use crate::*;
 use gateway_admin_data::policy::logical_fields;
 use gateway_auth::types::AuthResponse;
+use gateway_core::{
+    error::GatewayError, source_json::SourceJson, state::StoredRecord, tuple_key::TupleKey,
+};
 use gateway_core::{query::*, value::PortableValue};
+use gateway_migration_data::{invalid, parts, private_source_key, starts};
 use gateway_migration_ledger::rows::ObservedRow;
 use gateway_source_audit::driver as audit;
+use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -119,10 +123,7 @@ pub(crate) async fn source_rows<S: QueryStore>(
     Ok(rows)
 }
 
-pub(crate) async fn validate<S: QueryStore>(
-    store: &S,
-    now: i64,
-) -> Result<AuthResponse, GatewayError> {
+pub async fn validate<S: QueryStore>(store: &S, now: i64) -> Result<AuthResponse, GatewayError> {
     let rows = source_rows(store, now).await?;
     let mut audited = audit::inspect_source_rows(&rows, true, now)?;
     crate::profile_reset::audit(&rows, &mut audited.errors)?;

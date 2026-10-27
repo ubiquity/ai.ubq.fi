@@ -1,6 +1,5 @@
 //! Latest native logical state; original VM bytes are never replayed as new state.
 use crate::digest;
-use crate::engine::prepare_native;
 use crate::invalid;
 use crate::parts;
 use crate::unavailable;
@@ -16,6 +15,7 @@ use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeKind;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_prepare::engine::prepare_native;
 use serde::Serialize;
 
 pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {

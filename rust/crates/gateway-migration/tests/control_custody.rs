@@ -1,12 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_core::{state::*, value::PortableValue};
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare;
 use gateway_migration::inverse::export_latest;
 use gateway_migration::inverse::export_rollback_bundle;
 use gateway_migration_data::capture::PrivateCapture;
 use gateway_migration_data::capture::SourceEntry;
 use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;

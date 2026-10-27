@@ -9,11 +9,11 @@ use gateway_core::{
     source_serialization as source,
     value::PortableValue,
 };
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare;
 use gateway_migration::inverse::export_latest;
 use gateway_migration_data::capture::PrivateCapture;
 use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::from_source_profile;

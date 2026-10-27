@@ -34,7 +34,7 @@ struct Receipt {
     selected_capture_sha256: String,
     selected_capture_path: String,
     selected_capture_bytes: u64,
-    manifest: gateway_migration::core_state::CoreStateManifest,
+    manifest: gateway_migration_core_state::CoreStateManifest,
     eof: bool,
     spool_directory: String,
     target_touched: bool,

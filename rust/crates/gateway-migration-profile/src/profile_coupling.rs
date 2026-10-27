@@ -1,5 +1,4 @@
 //! Same-authority reservation and paid-event indexes for public profile writes.
-use crate::{Transform, invalid, key, parts, starts};
 use gateway_core::error::GatewayError;
 use gateway_core::{
     query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
@@ -7,6 +6,7 @@ use gateway_core::{
         AtomicTransition, CommitOutcome, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
     },
 };
+use gateway_migration_data::{Transform, invalid, key, parts, starts};
 use gateway_migration_ledger::{kernel, rows::ObservedRow};
 use serde_json::Value;
 use serde_json::json;

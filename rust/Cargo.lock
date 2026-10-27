@@ -1127,6 +1127,10 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-profile",
+ "gateway-migration-core-state",
+ "gateway-migration-prepare",
+ "gateway-migration-indexes",
  "gateway-migration-spool",
  "gateway-migration-values",
  "gateway-migration-projection",
@@ -1172,6 +1176,18 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-migration-core-state"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-graph",
+ "gateway-migration-spool",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1246,11 +1262,69 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-migration-indexes"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-migration-spool",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-migration-ledger"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
  "gateway-profile-values",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-prepare"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-indexes",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-profile-values",
+ "gateway-source-audit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-profile"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-data",
+ "gateway-admin-keys",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-migration-validation",
+ "gateway-migration-values",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "gateway-schema",
+ "gateway-source-audit",
+ "serde",
  "serde_json",
 ]
 
@@ -1300,6 +1374,24 @@ dependencies = [
  "gateway-admin-contracts",
  "gateway-core",
  "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-validation"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-migration-values",
+ "gateway-schema",
+ "gateway-source-audit",
  "serde",
  "serde_json",
 ]
@@ -1561,6 +1653,8 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-profile",
+ "gateway-migration-prepare",
  "gateway-migration-data",
  "futures-util",
  "gateway-admin",

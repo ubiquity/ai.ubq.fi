@@ -1,17 +1,17 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
 use gateway_core::{state::AuthorityStore, tuple_key::TupleKey};
-use gateway_migration::core_state::CORE_STATE_DO_ROW_WRITE_LIMIT;
-use gateway_migration::engine::adopt_empty;
-use gateway_migration::engine::prepare_native;
 use gateway_migration::native_custody::NativeCustody;
 use gateway_migration::native_custody::OwnedNativeSnapshot;
 use gateway_migration::native_inverse::export_native_latest;
 use gateway_migration::native_stage::Captured;
+use gateway_migration_core_state::CORE_STATE_DO_ROW_WRITE_LIMIT;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_data::native_capture::NativeRevision;
 use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use serde_json::{Value, json};

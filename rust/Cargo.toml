@@ -27,6 +27,11 @@ members = [
   "crates/gateway-migration-projection",
   "crates/gateway-migration-values",
   "crates/gateway-migration-spool",
+  "crates/gateway-migration-indexes",
+  "crates/gateway-migration-prepare",
+  "crates/gateway-migration-profile",
+  "crates/gateway-migration-validation",
+  "crates/gateway-migration-core-state",
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
@@ -94,6 +99,11 @@ gateway-migration-data = { path = "crates/gateway-migration-data" }
 gateway-migration-projection = { path = "crates/gateway-migration-projection" }
 gateway-migration-values = { path = "crates/gateway-migration-values" }
 gateway-migration-spool = { path = "crates/gateway-migration-spool" }
+gateway-migration-indexes = { path = "crates/gateway-migration-indexes" }
+gateway-migration-prepare = { path = "crates/gateway-migration-prepare" }
+gateway-migration-profile = { path = "crates/gateway-migration-profile" }
+gateway-migration-validation = { path = "crates/gateway-migration-validation" }
+gateway-migration-core-state = { path = "crates/gateway-migration-core-state" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }
