@@ -5,13 +5,10 @@ use gateway_auth::{
     native_credentials::{NativeGeneration, NativeOwnerId, OwnerFence, parse_native_document},
     provider_credentials::*,
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_graph::{GraphAtom, GraphNode, SourceGraph},
-    state::*,
-    tuple_key::TupleKey,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_migration::{
     engine::adopt_empty,
     graph_transport,
@@ -512,7 +509,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
         Tokens(std::sync::atomic::AtomicU64::new(1)),
         Clock,
     );
-    let model = gateway_core::model::ModelId::from_scalar("gpt-6.1-sol");
+    let model = gateway_contracts::model::ModelId::from_scalar("gpt-6.1-sol");
     let selected = run(authority.select_account(
         &model,
         gateway_authority::routing::model_quota_class(&model),

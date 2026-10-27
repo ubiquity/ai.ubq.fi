@@ -9,9 +9,9 @@ use gateway_authority::{
     routing_types::*,
     store::{Authority, AuthorityClock},
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
 use serde_json::{Value, json};
 use std::sync::{
@@ -22,10 +22,10 @@ use std::sync::{
 #[derive(Clone, Default)]
 struct CapturedStore {
     inner: MemoryStore,
-    writes: Arc<Mutex<Vec<Vec<RecordKey>>>>,
+    writes: Arc<Mutex<Vec<Vec<gateway_kv_codec::key::RecordKey>>>>,
     tokens: Tokens,
     refuse_routing: Arc<AtomicBool>,
-    after_capacity: Arc<Mutex<Option<(RecordKey, Value)>>>,
+    after_capacity: Arc<Mutex<Option<(gateway_kv_codec::key::RecordKey, Value)>>>,
 }
 impl AuthorityClock for CapturedStore {
     fn now_ms(&self) -> Result<i64, GatewayError> {
@@ -33,7 +33,7 @@ impl AuthorityClock for CapturedStore {
     }
 }
 impl AuthorityStore for CapturedStore {
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+    async fn read(&self, key: &gateway_kv_codec::key::RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         self.inner.read(key).await
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
@@ -148,7 +148,7 @@ fn setup_access_pool(
     let revision = store.inner.row(&codex_source_pool_key()).unwrap().revision;
     let pool = SubscriptionPool {
         v: 1,
-        pool_versionstamp: gateway_core::identity::PoolVersionstamp(revision),
+        pool_versionstamp: gateway_contracts::identity::PoolVersionstamp(revision),
         accounts: source
             .accounts
             .iter()
@@ -369,7 +369,7 @@ fn c_survives_stopped_r_step_and_existing_event_retries_after_store_restart() {
     let (store, authority) = setup();
     run(authority.select_account(
         &"gpt-test".into(),
-        gateway_core::provider::CodexQuotaClass::Standard,
+        gateway_contracts::provider::CodexQuotaClass::Standard,
         NOW,
     ))
     .unwrap();
@@ -408,7 +408,7 @@ fn accepted_c_is_not_rolled_back_or_applied_to_successor_r() {
     let (store, authority) = setup();
     run(authority.select_account(
         &"gpt-test".into(),
-        gateway_core::provider::CodexQuotaClass::Standard,
+        gateway_contracts::provider::CodexQuotaClass::Standard,
         NOW,
     ))
     .unwrap();
@@ -449,14 +449,14 @@ fn unavailable_and_stale_samples_cannot_mint_quota_invalidity_reset_or_paid_auth
         assert!(
             !run(authority.materialize_capacity_quota_blocks(
                 &"gpt-test".into(),
-                gateway_core::provider::CodexQuotaClass::Standard,
+                gateway_contracts::provider::CodexQuotaClass::Standard,
                 NOW
             ))
             .unwrap()
         );
         let RouteSelection::Eligible(a) = run(authority.select_account(
             &"gpt-test".into(),
-            gateway_core::provider::CodexQuotaClass::Standard,
+            gateway_contracts::provider::CodexQuotaClass::Standard,
             NOW,
         ))
         .unwrap() else {
@@ -517,7 +517,7 @@ fn capacity_materialization_reconciles_a_newer_sample_over_stale_ambiguous_reset
     let (store, authority) = setup();
     run(authority.select_account(
         &"gpt-test".into(),
-        gateway_core::provider::CodexQuotaClass::Standard,
+        gateway_contracts::provider::CodexQuotaClass::Standard,
         NOW,
     ))
     .unwrap();
@@ -533,14 +533,14 @@ fn capacity_materialization_reconciles_a_newer_sample_over_stale_ambiguous_reset
     assert!(
         run(authority.materialize_capacity_quota_blocks(
             &"gpt-test".into(),
-            gateway_core::provider::CodexQuotaClass::Standard,
+            gateway_contracts::provider::CodexQuotaClass::Standard,
             NOW + 1000
         ))
         .unwrap()
     );
     let state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
     let block = state.slots[0]
-        .quota_block_for(gateway_core::provider::CodexQuotaClass::Standard)
+        .quota_block_for(gateway_contracts::provider::CodexQuotaClass::Standard)
         .unwrap();
     assert!(!block.reset_ambiguous);
     assert!(block.reset_is_stable);
@@ -558,7 +558,7 @@ fn capacity_materialization_reconciles_a_newer_sample_over_stale_ambiguous_reset
 
 #[test]
 fn capacity_materialization_cannot_replace_a_newer_live_quota_signal() {
-    use gateway_core::provider::CodexQuotaClass;
+    use gateway_contracts::provider::CodexQuotaClass;
     let (store, authority) = setup();
     run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap();
     let mut state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
@@ -601,7 +601,7 @@ fn capacity_materialization_cannot_replace_a_newer_live_quota_signal() {
 
 #[test]
 fn capacity_materialization_refuses_owned_probe_and_preserves_foreign_class_lease() {
-    use gateway_core::provider::CodexQuotaClass;
+    use gateway_contracts::provider::CodexQuotaClass;
     for class in [CodexQuotaClass::Standard, CodexQuotaClass::Spark] {
         let (store, authority) = setup();
         run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap();

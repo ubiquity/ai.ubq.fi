@@ -10,11 +10,12 @@ use gateway_auth::provider_credentials::{
 use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
 use gateway_authority::keys;
 use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::PoolVersionstamp;
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, bootstrap_fixture_owner, fixture_owner_statement,
 };

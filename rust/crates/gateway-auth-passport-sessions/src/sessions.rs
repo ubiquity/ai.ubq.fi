@@ -10,10 +10,9 @@ use gateway_auth_primitives::{
 };
 use gateway_core::{
     source_control,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 

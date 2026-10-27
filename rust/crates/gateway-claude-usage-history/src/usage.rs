@@ -5,14 +5,14 @@ use crate::{
 use gateway_auth::{crypto::sha256_hex, store};
 use gateway_claude_usage_history_records::{HOUR_MS, LIMIT, Point, object::SourceObject};
 use gateway_claude_usage_protocol::snapshot::{Meter, read_meter, safe_time};
-use gateway_core::{
-    error::GatewayError,
-    query::{QuerySelector, QueryStore},
-    source_control::decode_source_control_record,
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{RecordKey, StoredRecord},
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_core::{
+    query::QuerySelector, query::QueryStore, source_control::decode_source_control_record,
+    state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 #[derive(Clone, Deserialize, Serialize)]
@@ -22,7 +22,7 @@ struct Rollup {
     account_id: String,
     account_cohort_id: String,
     credential_kind: gateway_claude_usage_history_records::types::CredentialKind,
-    workspace_id: Option<gateway_core::js_string::JsString16>,
+    workspace_id: Option<gateway_source::js_string::JsString16>,
     meter: Meter,
     samples: u64,
     first_observed_at_ms: i64,
@@ -48,7 +48,7 @@ fn valid(v: &SourceJson) -> Option<Rollup> {
         .iter()
         .all(|n| safe_time(*n as f64))
         || r.samples == 0
-        || r.samples > gateway_core::identity::MAX_SAFE_INTEGER as u64
+        || r.samples > gateway_contracts::identity::MAX_SAFE_INTEGER as u64
         || r.bucket_start_at_ms % HOUR_MS != 0
         || r.first_observed_at_ms > r.last_observed_at_ms
         || meter.observed_at_ms != r.last_observed_at_ms

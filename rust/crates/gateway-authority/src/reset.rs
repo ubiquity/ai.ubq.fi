@@ -5,7 +5,8 @@ use crate::{
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_core::state::AuthorityStore;
 use sha2::{Digest, Sha256};
 
 pub(crate) fn hash(value: &str) -> String {
@@ -162,7 +163,7 @@ pub(crate) enum ResetAuthorization<'a> {
     FullPool(&'a crate::full_pool_reset::types::AutomaticResetPermit),
     ExistingLedger(
         &'a ResetCandidate,
-        &'a gateway_core::identity::RequestContext,
+        &'a gateway_contracts::identity::RequestContext,
     ),
 }
 impl<'a> ResetAuthorization<'a> {

@@ -14,6 +14,9 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-claude-usage-runtime.workspace = true
 gateway-claude-usage-admin.workspace = true

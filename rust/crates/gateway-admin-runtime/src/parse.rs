@@ -4,7 +4,8 @@ use gateway_admin_contracts::fields::{
 };
 use gateway_admin_contracts::{operations::AdminInput, source_input as source_body};
 use gateway_auth::types::invalid;
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_profile_values::coercion::js_number;
 use serde_json::Value;
 use std::collections::BTreeSet;

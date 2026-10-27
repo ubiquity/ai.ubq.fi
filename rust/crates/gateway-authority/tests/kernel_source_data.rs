@@ -1,11 +1,9 @@
 use gateway_authority::kernel::{KernelPolicy, KernelWindow};
 use gateway_authority::keys;
-use gateway_core::{
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
 use gateway_routing_runtime_test_support::authority as support;
 use serde::Deserialize;
 
@@ -216,7 +214,7 @@ fn source_expiry_number_is_not_clamped_or_narrowed_to_scalar_integer() {
 
 #[test]
 fn live_named_policy_number_and_zero_index_decode_preserve_original_retention() {
-    use gateway_core::identity::RequestId;
+    use gateway_contracts::identity::RequestId;
     use support::{MemoryStore, NOW, authority, run};
     for (expiry, admitted) in [("1e100", true), ("-1", true), ("0", false), ("900", false)] {
         let store = MemoryStore::default();

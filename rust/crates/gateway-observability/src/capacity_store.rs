@@ -4,9 +4,10 @@ use crate::{
     capacity_math, capacity_shapes as shape, store,
     types::ObservabilityHost,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::query::{QuerySelector, QueryStore};
-use gateway_core::state::{RecordKey, RecordMutation, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_core::{state::RecordMutation, state::StoredRecord};
 use serde_json::{Value, json};
 pub(crate) fn key(name: &str) -> RecordKey {
     store::key(json!(["uos_ai", "provider_capacity", "v1", name]))

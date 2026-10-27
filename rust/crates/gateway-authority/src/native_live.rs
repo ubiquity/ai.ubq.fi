@@ -14,10 +14,11 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
-use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation},
-    tuple_key::{ScalarKeyPart, ScalarKeyPart::String as Text, TupleKey},
+use gateway_source::error::GatewayError;
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::ScalarKeyPart::String as Text,
+    tuple_key::TupleKey,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -528,7 +529,7 @@ pub fn validate_live_custody(
                 || row.account_id.is_empty()
                 || row.call_id.is_empty()
                 || row.mapping_revision.is_empty()
-                || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
+                || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
                 || row.actor.principal().is_empty()
             {
                 return Err(fail());
@@ -544,7 +545,7 @@ pub fn validate_live_custody(
                 || row.owner_epoch.is_empty()
                 || row.key_fingerprint.len() != 64
                 || row.call_id.is_empty()
-                || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
+                || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&row.created_at_ms)
                 || row.upstream_status.is_some_and(|s| s != 404 && s != 410)
                 || (row.retired && row.upstream_status.is_none())
             {

@@ -1,5 +1,6 @@
 //! The owner publishes references, never bearer tokens, into this catalog boundary.
-use gateway_core::{error::GatewayError, js_string::JsString16, state::RevisionCheck};
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_core::state::RevisionCheck;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, future::Future};
 

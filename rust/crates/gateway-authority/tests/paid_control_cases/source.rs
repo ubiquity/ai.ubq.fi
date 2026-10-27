@@ -1,22 +1,22 @@
 use super::*;
 use crate::TestResult;
 use gateway_authority::paid_types::{PaidAttempt, PaidReservation};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId,
-    source_control::decode_source_control_record, source_json::SourceJson,
-    source_serialization as source, value::ValueEncoding,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_core::source_control::decode_source_control_record;
 
-fn logical(units: &[u16]) -> ModelId {
-    ModelId::from_source(JsString16::from_units(units.to_vec()))
+fn logical(units: &[u16]) -> gateway_contracts::model::ModelId {
+    gateway_contracts::model::ModelId::from_source(JsString16::from_units(units.to_vec()))
 }
-fn row<T: serde::de::DeserializeOwned>(store: &MemoryStore, key: &RecordKey) -> T {
+fn row<T: serde::de::DeserializeOwned>(store: &MemoryStore, key: &gateway_kv_codec::key::RecordKey) -> T {
     decode_source_control_record(&store.row(key).unwrap())
         .unwrap()
         .deserialize()
         .unwrap()
 }
-fn setup(model: ModelId) -> (MemoryStore, TestAuthority, PaidRequest) {
+fn setup(model: gateway_contracts::model::ModelId) -> (MemoryStore, TestAuthority, PaidRequest) {
     let store = MemoryStore::default();
     paid_setup(&store);
     let mut input = paid_request("source-control", PaidProvider::Surplus);
@@ -62,7 +62,7 @@ fn source_policy_keys_and_reasoning_round_trip_without_logical_model_conflation(
         logical(&[0xdc00]),
         logical(&[0xfffd]),
         logical(&[0xd83d, 0xde00]),
-        ModelId::from_scalar(r"\ud800"),
+        gateway_contracts::model::ModelId::from_scalar(r"\ud800"),
     ];
     let store = MemoryStore::default();
     let mut expected = policy();
@@ -75,7 +75,7 @@ fn source_policy_keys_and_reasoning_round_trip_without_logical_model_conflation(
         .collect();
     seed_source(&store, keys::api_policy("key-a"), &expected);
     let stored = store.row(&keys::api_policy("key-a")).unwrap();
-    assert_eq!(stored.value_encoding, ValueEncoding::ProfileV2);
+    assert_eq!(stored.value_encoding, gateway_kv_codec::value::ValueEncoding::ProfileV2);
     let actual: gateway_authority::quota::ApiKeyPolicy = row(&store, &keys::api_policy("key-a"));
     assert_eq!(actual, expected);
     assert_eq!(actual.paid_fallback_max_exposure_microcredits.len(), 5);
@@ -114,7 +114,7 @@ fn source_paid_attempt_writes_exact_model_effort_and_not_transient_prompt() {
         logical(&[0xdc00]),
         logical(&[0xfffd]),
         logical(&[0xd83d, 0xde00]),
-        ModelId::from_scalar(r"\ud800"),
+        gateway_contracts::model::ModelId::from_scalar(r"\ud800"),
     ] {
         let (store, authority, input) = setup(model.clone());
         let mut context = context(&input);
@@ -187,7 +187,7 @@ fn ordinary_source_v3_guard_keeps_exact_active_paid_binding_and_missing_history_
     };
     let key = super::super::paid_original::journal_key(&input.request_id.0);
     let mut journal = decode_source_control_record(&store.row(&key).unwrap()).unwrap();
-    let original: gateway_core::identity::RequestContext = source::member(&journal, "context")
+    let original: gateway_contracts::identity::RequestContext = source::member(&journal, "context")
         .unwrap()
         .deserialize()
         .unwrap();

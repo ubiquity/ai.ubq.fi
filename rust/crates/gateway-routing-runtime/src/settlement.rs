@@ -4,8 +4,8 @@ use crate::{
 };
 use gateway_authority::kernel::KernelTerminal;
 use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::lifecycle::{SemanticTerminal, TransportObservation};
+use gateway_source::error::GatewayError;
+use gateway_contracts::lifecycle::{SemanticTerminal, TransportObservation};
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 
@@ -27,13 +27,13 @@ pub(crate) async fn finish_record<
     if let Some(local) = old
         .local_work
         .as_ref()
-        .filter(|local| local.phase != gateway_core::local_work::LocalWorkPhase::ProviderPlanned)
+        .filter(|local| local.phase != gateway_local_journal::local_work::LocalWorkPhase::ProviderPlanned)
     {
         let local_observation =
             local
                 .terminal
-                .unwrap_or(gateway_core::local_work::LocalTerminalObservation {
-                    semantic: gateway_core::local_work::LocalSemanticOutcome::Incomplete,
+                .unwrap_or(gateway_local_journal::local_work::LocalTerminalObservation {
+                    semantic: gateway_local_journal::local_work::LocalSemanticOutcome::Incomplete,
                     reader_termination: observed.reader_termination,
                     body: observed.body,
                     delivery: observed.delivery,
@@ -199,7 +199,7 @@ pub async fn recover_pending<
         }
         let (old, row) = journal::load(&store, id).await?;
         let local_pending = row.local_work.as_ref().is_some_and(|local| {
-            local.phase == gateway_core::local_work::LocalWorkPhase::TerminalPending
+            local.phase == gateway_local_journal::local_work::LocalWorkPhase::TerminalPending
         });
         if !row.finished
             && row.terminal_intent.is_none()
@@ -222,7 +222,7 @@ pub async fn recover_pending<
             |j| {
                 if j.terminal_intent.is_none()
                     && !j.local_work.as_ref().is_some_and(|local| {
-                        local.phase == gateway_core::local_work::LocalWorkPhase::TerminalPending
+                        local.phase == gateway_local_journal::local_work::LocalWorkPhase::TerminalPending
                     })
                     && j.lease_expires_at_ms > now
                 {

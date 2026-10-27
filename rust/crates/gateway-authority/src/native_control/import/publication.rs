@@ -22,11 +22,11 @@ use gateway_auth_native_wire::{
     publication_command::{ImportPublicationCommandData, import_publication_max_bytes},
     publication_data::{ImportCatalogDisposition, ImportPublicationDataV1},
 };
-use gateway_core::provider::PaidProvider;
+use gateway_contracts::provider::PaidProvider;
 use gateway_core::source_control::encode_source_control_record;
-use gateway_core::source_json::SourceJson;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
 use gateway_schema::catalog_store;
 pub struct PreparedNativeImportPublication<'c, 'a, S, I, C> {
     control: &'c NativeRenewalAuthority<'a, S, I, C>,

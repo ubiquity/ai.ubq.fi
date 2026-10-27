@@ -1,12 +1,8 @@
 //! Logical JSON leaves for declared replay record schemas, with explicit ProfileV2 text.
 use crate::store;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
-    state::{RecordKey, RecordMutation, StoredRecord},
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_kv_codec::{key::RecordKey, value::PortableValue, value::ValueEncoding};
+use gateway_core::state::{RecordMutation, StoredRecord};
 use serde::Serialize;
 
 #[derive(Clone)]

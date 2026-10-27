@@ -13,14 +13,11 @@ use gateway_auth::{
     crypto::Secret,
     types::{AuthHost, AuthResponse},
 };
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -256,7 +253,7 @@ async fn prepare_paid_fixture_custody(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
     use gateway_authority::{keys, paid_control, paid_types::PaidRoutingPolicy};
-    use gateway_core::provider::PaidProvider;
+    use gateway_contracts::provider::PaidProvider;
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
         fixture_owner_statement,
@@ -399,7 +396,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
             paid_control::PaidRequestContext,
             paid_types::{PaidAuthorization, PaidRequest},
         };
-        use gateway_core::{
+        use gateway_contracts::{
             identity::{ApiKeyId, PaidAttemptId, RequestId},
             provider::PaidProvider,
         };
@@ -503,9 +500,9 @@ async fn bind_paid_fixture_original(
 ) -> Result<gateway_authority::paid_control::PaidRoutingReceipt, GatewayError> {
     // Controlled authority regression: use the canonical finite original
     // fixture chain, not a route-only receipt or a Worker-runtime claim.
-    let original = gateway_core::identity::RequestContext {
+    let original = gateway_contracts::identity::RequestContext {
         request_id: request.request_id.clone(),
-        principal: gateway_core::identity::PrincipalId("fixture-original-principal".into()),
+        principal: gateway_contracts::identity::PrincipalId("fixture-original-principal".into()),
         key_id: Some(request.key_id.clone()),
         route: request.route.clone(),
         started_at_ms: request.created_at_ms,

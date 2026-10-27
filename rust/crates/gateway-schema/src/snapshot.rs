@@ -1,6 +1,7 @@
 //! Full uploaded snapshot normalization and evidence-preserving refresh projection.
 use crate::{model_control as c, prompt_cache, reasoning::advertised_effort};
-use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelSnapshot {
@@ -107,7 +108,7 @@ pub fn normalize_snapshot(
             if let Some(value) = c::get(item, key) {
                 if value.as_str() == "null" {
                     c::set(&mut model, key, value);
-                } else if let Some(n) = gateway_core::source_serialization::number(&value)
+                } else if let Some(n) = gateway_source::source_serialization::number(&value)
                     .filter(|n| n.is_finite() && *n >= 0.0)
                 {
                     let n = n.trunc();
@@ -163,7 +164,7 @@ pub fn normalize_snapshot(
                 c::set(
                     &mut model,
                     "reasoning_effort_wire_map",
-                    gateway_core::source_serialization::object_keys(wire).expect("source wire map"),
+                    gateway_source::source_serialization::object_keys(wire).expect("source wire map"),
                 );
             }
         }
@@ -198,7 +199,7 @@ pub fn normalize_snapshot(
         .or_else(|| {
             c::get(value, "updated_at_ms")
                 .as_ref()
-                .and_then(gateway_core::source_serialization::number)
+                .and_then(gateway_source::source_serialization::number)
                 .filter(|n| n.is_finite())
                 .map(|n| n.trunc() as i64)
         })

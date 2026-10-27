@@ -1,5 +1,5 @@
 //! Exact source error strings may themselves contain non-scalar UTF16 units.
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 
 #[derive(Clone, Debug)]
@@ -103,8 +103,8 @@ impl SourceRequestError {
                         .with_type(&fields.kind);
                 if let Some(param) = fields.param {
                     error = error.with_param(Some(&param));
-                } else if gateway_core::source_serialization::member(&self.body, "error")
-                    .and_then(|body| gateway_core::source_serialization::member(&body, "param"))
+                } else if gateway_source::source_serialization::member(&self.body, "error")
+                    .and_then(|body| gateway_source::source_serialization::member(&body, "param"))
                     .is_some()
                 {
                     error = error.with_param(None);

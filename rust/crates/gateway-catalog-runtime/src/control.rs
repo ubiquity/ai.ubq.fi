@@ -10,20 +10,16 @@ use gateway_authority::{
     paid_types::PaidRoutingPolicy,
 };
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider, CredentialPublication};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId, provider::PaidProvider};
 use gateway_core::{
-    error::GatewayError,
-    identity::MAX_SAFE_INTEGER,
-    model::ModelId,
-    provider::PaidProvider,
     query::QueryStore,
     source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{
-        AtomicTransition, CommitOutcome, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
-    },
-    tuple_key::TupleKey,
+    state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord},
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_providers::policy::{DeepseekHop, PaidRoutingInput, paid_order, resolve_paid_route};
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},

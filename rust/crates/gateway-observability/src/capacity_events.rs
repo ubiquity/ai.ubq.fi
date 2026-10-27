@@ -5,7 +5,8 @@ use crate::{
     store,
     types::ObservabilityHost,
 };
-use gateway_core::{error::GatewayError, query::QueryStore};
+use gateway_source::error::GatewayError;
+use gateway_core::query::QueryStore;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 fn text(v: &Value, max: usize) -> bool {
@@ -70,7 +71,7 @@ pub fn valid_event(kind: &str, v: &Value) -> bool {
         .abs()
             <= 0.001
 }
-pub fn event_key(kind: &str, id: &str) -> gateway_core::state::RecordKey {
+pub fn event_key(kind: &str, id: &str) -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["uos_ai", "provider_capacity", "v1", kind, id]))
 }
 pub fn parse_shadow(value: &Value) -> Option<Value> {

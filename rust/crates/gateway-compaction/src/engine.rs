@@ -6,7 +6,7 @@ use crate::{
     types::{CompactionFailure, CompactionHost, CompactionStats, FailureKind, JEV_TIMEOUT_MS},
 };
 use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 use std::collections::{BTreeMap, BTreeSet};
 fn failed(detail: &'static str) -> CompactionFailure {
     CompactionFailure::new(FailureKind::JevFailed, detail)

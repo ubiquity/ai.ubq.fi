@@ -1,11 +1,12 @@
 //! Source-shaped serial routing records and proof capabilities.
-use gateway_core::identity::{
-    AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
-    SubscriptionSelectionHash,
+use gateway_contracts::{
+    identity::AccountBinding, identity::CredentialVersion, identity::PoolVersionstamp,
+    identity::RoutingAccountHash, identity::SubscriptionSelectionHash,
 };
-use gateway_core::provider::CodexQuotaClass;
+use gateway_contracts::provider::CodexQuotaClass;
 use gateway_core::state::RevisionCheck;
-use gateway_core::{js_string::JsString16, model::ModelId};
+use gateway_source::js_string::JsString16;
+use gateway_contracts::model::ModelId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

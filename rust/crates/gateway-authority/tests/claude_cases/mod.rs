@@ -1,8 +1,8 @@
 use super::*;
 use crate::TestResult;
-use gateway_core::js_string::JsString16;
+use gateway_source::js_string::JsString16;
 use gateway_core::state::StoredRecord;
-use gateway_core::value::PortableValue;
+use gateway_kv_codec::value::PortableValue;
 
 fn claude_roster() -> serde_json::Value {
     let fingerprints = [
@@ -32,7 +32,7 @@ fn claude_quota(roster: &serde_json::Value, slot: usize, kind: &str) -> serde_js
     })
 }
 
-fn claude_key(roster: &serde_json::Value, slot: usize) -> gateway_core::state::RecordKey {
+fn claude_key(roster: &serde_json::Value, slot: usize) -> gateway_kv_codec::key::RecordKey {
     keys::claude_quota(
         roster["accounts"][slot]["account_id"].as_str().unwrap(),
         roster["accounts"][slot]["account_cohort_id"]
@@ -750,12 +750,11 @@ fn claude_existing_pending_attempt_cannot_reuse_expired_authorization() {
 
 #[test]
 fn claude_model_proof_retains_lone_units_and_never_matches_escape_text_or_other_model() {
-    use gateway_core::{
-        model::ModelId, source_control::encode_source_control_record, source_json::SourceJson,
-    };
+    use gateway_core::source_control::encode_source_control_record;
+    use gateway_source::source_json::SourceJson;
     let store = MemoryStore::default();
     let roster = claude_setup(&store);
-    let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    let model = gateway_contracts::model::ModelId::from_source(JsString16::from_units(vec![0xd800]));
     let generation = roster["accounts"][1]["evidence_generation"]
         .as_str()
         .unwrap();
@@ -774,7 +773,7 @@ fn claude_model_proof_retains_lone_units_and_never_matches_escape_text_or_other_
     );
     assert!(
         run(authority.prove_claude_unavailable(
-            &ModelId::from_source(JsString16::from_units(vec![0xdc00])),
+            &gateway_contracts::model::ModelId::from_source(JsString16::from_units(vec![0xdc00])),
             NOW
         ))
         .unwrap()

@@ -6,17 +6,14 @@ use gateway_authority::{
     quota::ApiReservation,
     store::{Authority, AuthorityClock, TokenSource},
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination};
+use gateway_local_journal::local_work::{LocalSemanticOutcome, LocalTerminalObservation};
 use gateway_core::{
-    error::GatewayError,
-    lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
-    local_work::{LocalSemanticOutcome, LocalTerminalObservation},
     query::{QueryPage, QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_routing_runtime::{
     custody,
     local_work::{

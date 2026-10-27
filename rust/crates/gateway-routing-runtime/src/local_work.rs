@@ -10,15 +10,14 @@ use gateway_authority::kernel::{KernelReservation, KernelTerminal};
 use gateway_authority::keys;
 use gateway_authority::quota::{ApiReservation, ApiUsageRequest, ApiUsageState};
 use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};
-use gateway_core::lifecycle::TransportObservation;
-use gateway_core::local_work::{
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_local_journal::local_work::{
     LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase, LocalWorkRecord,
     SOURCE_REQUEST_BINDING_DOMAIN, SOURCE_REQUEST_BINDING_VERSION,
 };
 use gateway_core::query::QueryStore;
-use gateway_core::source_json::SourceJson;
 use gateway_core::state::{AuthorityStore, StoredRecord};
 use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
 
@@ -98,7 +97,7 @@ pub const KERNEL_RENEWAL_INTERVAL_MS: i64 = 60_000;
 
 /// Binding v2 deliberately does not change any legacy ordinary v1 digest.
 pub fn original_source_digest(original: &SourceJson) -> Result<String, GatewayError> {
-    let canonical = gateway_core::source_serialization::canonical(original)?;
+    let canonical = gateway_source::source_serialization::canonical(original)?;
     let mut bytes = SOURCE_REQUEST_BINDING_DOMAIN.to_vec();
     bytes.extend_from_slice(canonical.as_bytes());
     Ok(sha256_hex(&bytes))
@@ -214,7 +213,7 @@ impl<
                     semantic: LocalSemanticOutcome::Incomplete,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::OriginalBinding {
                     context,
@@ -253,7 +252,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&handle)),
             )
@@ -485,7 +484,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&self)),
             )
@@ -512,7 +511,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&self)),
             )
@@ -601,7 +600,7 @@ impl<
             semantic: LocalSemanticOutcome::Incomplete,
             reader_termination: None,
             body: None,
-            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+            delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
         };
         journal::change(
             &original.store,

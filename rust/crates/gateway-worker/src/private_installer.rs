@@ -4,7 +4,7 @@ use gateway_authority::initial_control_owner::{
     INITIAL_AUTHORITY_BINDING, INITIAL_AUTHORITY_OBJECT, InitialControlOwnerDeployment,
     PreparedInitialControlOwner,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_migration::{engine::PreparedAdoption, native_capture::NativeCapture};
 use serde::Deserialize;
 use worker::{

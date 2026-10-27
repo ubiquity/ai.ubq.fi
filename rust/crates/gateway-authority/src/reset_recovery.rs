@@ -10,11 +10,9 @@ use crate::{
     store::{Authority, TokenSource},
     text, unavailable,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::{ActiveSelection, ActiveTransitionReason},
-    state::AuthorityStore,
-};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::{ActiveSelection, ActiveTransitionReason};
+use gateway_core::state::AuthorityStore;
 
 fn existing_reset_block_reason(row: &ResetRecord, now: i64) -> Result<Option<&str>, GatewayError> {
     let error = row.last_error_code.as_deref();
@@ -33,7 +31,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub async fn reconcile_full_pool_reset(
         &self,
         proof: &crate::routing_types::CohortProof,
-        original: &gateway_core::identity::RequestContext,
+        original: &gateway_contracts::identity::RequestContext,
     ) -> Result<FullPoolResetReconciliation, GatewayError> {
         if !self.migrate_full_pool_reset_settings().await? {
             return Ok(FullPoolResetReconciliation::Blocked {

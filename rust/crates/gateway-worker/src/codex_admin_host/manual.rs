@@ -17,9 +17,8 @@ use gateway_authority::{
     routing_types::CapacityObservation,
     store::Authority,
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_core::state::AuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
@@ -367,7 +366,7 @@ fn unavailable(message: &str) -> GatewayError {
 
 pub(super) fn consume_code(bytes: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(bytes);
-    let value = gateway_core::source_json::SourceJson::parse(
+    let value = gateway_source::source_json::SourceJson::parse(
         text.strip_prefix('\u{feff}').unwrap_or(&text),
     )
     .ok()?;

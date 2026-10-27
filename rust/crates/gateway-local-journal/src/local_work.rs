@@ -1,5 +1,7 @@
 //! Data-only local-origin custody. No row or imported nonce mints a live handle.
-use crate::lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination};
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
+};
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
 use gateway_source::source_serialization as source;

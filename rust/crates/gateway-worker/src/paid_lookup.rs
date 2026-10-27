@@ -4,7 +4,9 @@ use crate::host::provider_secret;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
 use gateway_authority::paid_types::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
-use gateway_core::{error::GatewayError, provider::PaidProvider, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::state::AuthorityStore;
 use gateway_providers::paid_lookup::{
     LookupPlan, LookupStep, OVERALL_TIMEOUT_MS, TokenLog, plan_lookup,
 };
@@ -45,8 +47,8 @@ pub(crate) async fn stored_attempt(
 pub(crate) async fn terminal_usage(
     store: &RemoteAuthorityStore,
     reservation: &PaidReservation,
-    usage: Option<&gateway_core::source_usage::UsageTokens>,
-    pricing: Option<&gateway_core::source_json::SourceJson>,
+    usage: Option<&gateway_contracts::source_usage::UsageTokens>,
+    pricing: Option<&gateway_source::source_json::SourceJson>,
 ) -> Result<Option<PaidUsage>, GatewayError> {
     if reservation.provider != PaidProvider::Surplus {
         return Ok(None);

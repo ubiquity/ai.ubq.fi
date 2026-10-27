@@ -3,7 +3,8 @@ use crate::{
     quota::ApiReservation,
     store::{Authority, TokenSource},
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_core::state::AuthorityStore;
 
 #[derive(Clone, Copy)]
 pub(crate) enum ReleaseFailureOrigin {

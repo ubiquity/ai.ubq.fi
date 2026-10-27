@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-local-journal.workspace = true
+gateway-source.workspace = true
 gateway-wait-observation.workspace = true
 gateway-decision-protocol.workspace = true
 gateway-extras-contract.workspace = true

@@ -15,9 +15,11 @@ use crate::{
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, codex_source_pool_key, read_codex_source_pool,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash};
-use gateway_core::model::ModelId;
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
+    identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
+    model::ModelId,
+};
 use gateway_core::state::AuthorityStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

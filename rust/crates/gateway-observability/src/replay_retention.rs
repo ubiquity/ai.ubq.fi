@@ -5,16 +5,13 @@ use crate::{
     store,
     types::ObservabilityHost,
 };
-use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    state::{RecordMutation, StoredRecord},
-    value::PortableValue,
-};
+use gateway_source::error::GatewayError;
+use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::value::PortableValue;
 use serde_json::{Value, json};
 pub(crate) struct Reservation {
     pub row: schema::Accounting,
-    pub key: gateway_core::state::RecordKey,
+    pub key: gateway_kv_codec::key::RecordKey,
 }
 pub(crate) enum Admission {
     Reserved(Reservation),
@@ -217,7 +214,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let actual = manifest
             .stored_bytes
             .ok_or_else(|| store::error("Replay stored charge is missing"))?;
-        let document = gateway_core::source_json::SourceJson::from_serializable(status)?;
+        let document = gateway_source::source_json::SourceJson::from_serializable(status)?;
         let bytes = schema::metadata_charge(&document);
         let at = manifest.captured_at_ms as i64;
         self.prune_replay_metadata(limits, at, 1.0, bytes, 16)

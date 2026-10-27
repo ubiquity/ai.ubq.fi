@@ -1,7 +1,8 @@
-use gateway_core::{
-    error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16,
-    source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

@@ -10,11 +10,13 @@ use gateway_authority::{
     kernel::KernelTerminal,
     store::{Authority, AuthorityClock, TokenSource},
 };
-use gateway_core::{
-    error::GatewayError, lifecycle::TransportObservation, model::ModelId,
-    provider::UpstreamProvider, query::QueryStore, source_json::SourceJson,
-    source_serialization as source,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::{
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
+};
+use gateway_core::query::QueryStore;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 

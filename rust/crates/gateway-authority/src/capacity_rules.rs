@@ -7,7 +7,8 @@ use crate::{
         CapacityWindow, CapacityWindows,
     },
 };
-use gateway_core::{error::GatewayError, identity::RoutingAccountHash, model::ModelId};
+use gateway_source::error::GatewayError;
+use gateway_contracts::{identity::RoutingAccountHash, model::ModelId};
 use serde_json::Value;
 pub const CAPACITY_MAX_AGE_MS: i64 = 30 * crate::MINUTE_MS;
 fn optional_time(value: &Value, name: &str) -> Option<i64> {

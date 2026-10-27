@@ -1,10 +1,9 @@
 //! The existing shared source usage family includes paid AND ordinary providers.
 //! M39 owns its value predicate; this adapter adds only physical-key/metadata custody.
 use crate::*;
-use gateway_core::{
-    identity::MAX_SAFE_INTEGER, js_string::JsString16, model::ModelId,
-    source_serialization as source, tuple_key::DecodedKeyPart,
-};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
+use gateway_source::{js_string::JsString16, source_serialization as source};
+use gateway_kv_codec::tuple_key::DecodedKeyPart;
 
 pub(crate) fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayError> {
     record.validate_version()?;

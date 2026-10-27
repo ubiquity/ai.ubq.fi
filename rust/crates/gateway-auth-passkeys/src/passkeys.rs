@@ -12,7 +12,8 @@ use gateway_auth_primitives::{
     error::{conflict, invalid, unauthorized},
     store,
 };
-use gateway_core::state::{AuthorityStore, RecordKey, RecordMutation};
+use gateway_core::state::{AuthorityStore, RecordMutation};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 

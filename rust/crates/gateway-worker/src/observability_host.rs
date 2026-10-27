@@ -1,6 +1,7 @@
 //! Real platform primitives for request-owned observational reads and writes.
 use gateway_admin_runtime::capabilities::Context;
-use gateway_core::{error::GatewayError, identity::RequestId};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::RequestId;
 use gateway_observability::{
     ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity, replay_crypto::ReplayBody,
     types::ObservabilityHost,
@@ -199,7 +200,7 @@ pub async fn error_diagnostics(
 pub struct Host;
 
 impl ObservabilityHost for Host {
-    fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, text: &gateway_source::js_string::JsString16) -> Option<i64> {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
@@ -233,7 +234,7 @@ impl ObservabilityHost for Host {
 }
 
 impl ObservabilityHost for RequestHost {
-    fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, text: &gateway_source::js_string::JsString16) -> Option<i64> {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 

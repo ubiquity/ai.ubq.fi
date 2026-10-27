@@ -13,10 +13,11 @@ use gateway_claude_usage_runtime::{
     collect::{self, Refresh},
     fetch::{self, Response, ResultData, UsageHost},
 };
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source, state::StoredRecord,
+    source_serialization as source,
 };
+use gateway_core::state::StoredRecord;
 use serde::Deserialize;
 use serde_json::json;
 use std::{

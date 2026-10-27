@@ -5,7 +5,8 @@ use crate::{
     routing_types::{AdmittedAccount, CohortProof},
     text, unavailable,
 };
-use gateway_core::{error::GatewayError, identity::AccountBinding};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::AccountBinding;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

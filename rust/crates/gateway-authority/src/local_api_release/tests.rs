@@ -3,11 +3,9 @@ use crate::{
     keys,
     quota::{ApiKeyPolicy, ApiUsageRequest, ApiUsageState},
 };
-use gateway_core::{
-    identity::{ApiKeyId, RequestId},
-    provider::UpstreamProvider,
-    state::{AtomicTransition, CommitOutcome, RecordKey, RecordMutation, StoredRecord},
-};
+use gateway_contracts::{identity::ApiKeyId, identity::RequestId, provider::UpstreamProvider};
+use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,

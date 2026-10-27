@@ -18,12 +18,11 @@ use crate::{
     inference_capture::Capture, inference_currentness::CurrentnessGuard, inference_local::Start,
 };
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
-use gateway_core::{
-    claude::ClaudeErrorEvidence,
-    error::GatewayError,
-    identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
-    provider::UpstreamProvider,
+use gateway_contracts::{
+    claude::ClaudeErrorEvidence, identity::ApiKeyId, identity::PrincipalId,
+    identity::RequestContext, identity::RequestId, provider::UpstreamProvider,
 };
+use gateway_source::error::GatewayError;
 use gateway_observability::replay_trace::{AttemptTrace, TraceTerminal};
 use gateway_providers::types::Headers;
 use gateway_routing_runtime::{
@@ -393,7 +392,7 @@ pub async fn run(
         client_version,
         request_id,
         // Compaction requests use the selected provider, like ordinary inference.
-        false,
+        local_compaction: false,
         permit,
     }))
     .await

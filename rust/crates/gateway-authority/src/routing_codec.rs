@@ -6,8 +6,8 @@ use crate::{
         SubscriptionPool,
     },
 };
-use gateway_core::{
-    error::GatewayError,
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
     identity::{CredentialVersion, MAX_SAFE_INTEGER, RoutingAccountHash},
     provider::CodexQuotaClass,
 };

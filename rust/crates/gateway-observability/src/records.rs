@@ -1,14 +1,11 @@
 //! Explicit source records: only these declared text fields may use ProfileV2 strings.
 use crate::{ledger::ErrorObservation, store, types::ObservabilityHost};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::{
-        decode_source_control_record, encode_source_control_record, source_json_tree,
-    },
-    source_json::SourceJson,
-    state::{RecordKey, RecordMutation, StoredRecord},
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    source_control::source_json_tree, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability_request_records::request::bounded_text;
 use serde::Serialize;
 
@@ -46,7 +43,7 @@ pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayErr
         stream: Option<bool>,
         terminal_type: JsString16,
         failure_kind: JsString16,
-        delivery_outcome: gateway_core::lifecycle::DeliveryOutcome,
+        delivery_outcome: gateway_contracts::lifecycle::DeliveryOutcome,
         created_at_ms: i64,
         latency_ms: i64,
         git_sha: &'a Option<String>,
@@ -118,14 +115,14 @@ pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, Gatew
         field(name)?.deserialize::<f64>()?;
     }
     field("stream")?.deserialize::<Option<bool>>()?;
-    field("delivery_outcome")?.deserialize::<gateway_core::lifecycle::DeliveryOutcome>()?;
+    field("delivery_outcome")?.deserialize::<gateway_contracts::lifecycle::DeliveryOutcome>()?;
     Ok(document)
 }
 
 /// Exact source isPaidFallbackUsageRollup predicate over real UTF16 strings.
 /// Data validation only; model/provider membership and accounting authority are external.
 pub fn valid_usage_rollup_source(document: &SourceJson) -> bool {
-    let field = |name| gateway_core::source_serialization::member(document, name);
+    let field = |name| gateway_source::source_serialization::member(document, name);
     let number = |name| field(name).and_then(|value| value.deserialize::<f64>().ok());
     number("v") == Some(1.0)
         && ["model", "provider"].iter().all(|name| {
@@ -149,7 +146,7 @@ pub fn valid_usage_rollup_source(document: &SourceJson) -> bool {
                 value.is_finite()
                     && value.fract() == 0.0
                     && value >= 0.0
-                    && value <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+                    && value <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
             })
         })
         && ["quota_sum", "spend_microcredits"]

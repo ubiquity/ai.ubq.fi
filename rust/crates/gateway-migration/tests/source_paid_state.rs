@@ -1,14 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Source-shaped stopped input exercises M20's real projection/reader/inverse.
 //! This does not replace the separately required actual M19 writer fixture.
-use gateway_core::{
-    js_string::JsString16,
-    model::ModelId,
-    source_control::{encode_source_control_record, source_json_tree},
-    source_json::SourceJson,
-    source_serialization as source,
-    value::PortableValue,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
+use gateway_core::source_control::{encode_source_control_record, source_json_tree};
+use gateway_kv_codec::value::PortableValue;
 use gateway_migration::{
     capture::{PrivateCapture, SourceEntry},
     engine::{adopt_empty, prepare},

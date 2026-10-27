@@ -1,7 +1,7 @@
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -9,7 +9,7 @@ use serde_json::Value;
 /// All call sites construct first-party arrays of strings and finite JSON numbers.
 /// Identity/ordering belong exclusively to the shared source-compatible tuple codec.
 pub fn key(parts: Value) -> RecordKey {
-    gateway_core::tuple_key::TupleKey::from_json_parts(
+    gateway_kv_codec::tuple_key::TupleKey::from_json_parts(
         parts
             .as_array()
             .expect("first-party tuple-key constructor requires an array"),

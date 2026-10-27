@@ -13,10 +13,11 @@ use crate::{
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
 use gateway_auth::types::AuthConfig;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::AccountBinding;
-use gateway_core::state::{AuthorityStore, RecordKey};
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::AccountBinding;
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use serde_json::Value;
 
 /// One or two explicitly configured independent native owners. No environment/default lookup.

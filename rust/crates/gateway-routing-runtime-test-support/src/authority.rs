@@ -4,15 +4,15 @@ use gateway_authority::routing_types::{
     AdmittedAccount, PoolAccount, QuotaBlock, QuotaBlockSource, RouteSelection, SubscriptionPool,
 };
 use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::{
-    error::GatewayError,
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
     identity::{ApiKeyId, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash},
     provider::CodexQuotaClass,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::TupleKey,
 };
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
+};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -205,8 +205,8 @@ struct FixtureCollator;
 impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
     fn compare(
         &self,
-        left: &gateway_core::js_string::JsString16,
-        right: &gateway_core::js_string::JsString16,
+        left: &gateway_source::js_string::JsString16,
+        right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         // Fixed test input ordering only; pinned locale-equivalence survivors are tested separately.
         Ok(left.as_units().cmp(right.as_units()))

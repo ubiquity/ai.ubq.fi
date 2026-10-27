@@ -9,15 +9,11 @@ use gateway_authority::{
     keys,
     paid_types::{PaidAttempt, PaidWindow, ReconciliationGate},
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, lifecycle::BillingState, model::ModelId};
 use gateway_core::{
-    error::GatewayError,
-    identity::MAX_SAFE_INTEGER,
-    lifecycle::BillingState,
-    model::ModelId,
-    query::QueryStore,
-    source_control::decode_source_control_record,
-    source_json::SourceJson,
-    state::{RecordMutation, RevisionCheck},
+    query::QueryStore, source_control::decode_source_control_record, state::RecordMutation,
+    state::RevisionCheck,
 };
 use gateway_schema::{catalog_store::codex_snapshot_key, snapshot::ModelSnapshot};
 use serde_json::{Value, json};
@@ -485,7 +481,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     async fn delete_history_prefix(
         &self,
         id: &str,
-        prefix: gateway_core::state::RecordKey,
+        prefix: gateway_kv_codec::key::RecordKey,
         guard: &RevisionCheck,
     ) -> Result<(), GatewayError> {
         use gateway_core::query::{QueryRequest, QuerySelector};

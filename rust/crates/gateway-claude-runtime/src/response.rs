@@ -2,9 +2,8 @@
 use gateway_claude_usage_quota::{
     Exhaustion, QuotaObservation, QuotaWindow, STANDARD_FAMILIES, StandardWindow, WINDOWS,
 };
-use gateway_core::{
-    claude::ClaudeErrorEvidence as ErrorEvidence, js_string::JsString16, source_json::SourceJson,
-};
+use gateway_contracts::claude::ClaudeErrorEvidence as ErrorEvidence;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use gateway_providers::types::Headers;
 use gateway_schema::util::js_trim;
 use serde_json::Value;
@@ -80,7 +79,7 @@ fn nonnegative(raw: Option<&str>) -> Option<f64> {
 fn reset_header(raw: Option<&str>) -> Option<f64> {
     nonnegative(raw)
         .filter(|n| {
-            *n > 0.0 && n.fract() == 0.0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+            *n > 0.0 && n.fract() == 0.0 && *n <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
         })
         .map(|seconds| seconds * 1000.0)
 }
@@ -189,7 +188,7 @@ pub fn classify_headers(
 pub fn refine_error(
     mut result: Classification,
     evidence: &ErrorEvidence,
-) -> Result<Classification, gateway_core::error::GatewayError> {
+) -> Result<Classification, gateway_source::error::GatewayError> {
     if !evidence.complete()
         || matches!(
             result.kind,

@@ -4,7 +4,8 @@ use crate::{
     types::*,
 };
 use gateway_auth::types::AuthPrincipal;
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_core::state::AuthorityStore;
 
 /// Minted only after authenticated mapping and current-account resolution. No serialization.
 pub struct PreparedSideband<S, A> {
@@ -100,7 +101,7 @@ impl<S: AuthorityStore> LiveRuntime<S> {
         &self,
         mut response: LiveResponse<B>,
         account: &str,
-        principal: &gateway_core::identity::PrincipalId,
+        principal: &gateway_contracts::identity::PrincipalId,
         now: i64,
     ) -> LiveResponse<B> {
         let location = response.headers.get("location").cloned();

@@ -91,7 +91,7 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
     );
     // Inspect only the finite operation selector, then deserialize the ORIGINAL
     // raw document. Untagged serde buffering must not erase NativeCapture SourceJson.
-    let initial: gateway_core::source_json::SourceJson = port::read()?;
+    let initial: gateway_source::source_json::SourceJson = port::read()?;
     let selector: Selector = initial.deserialize()?;
     let init: Initialize = if selector.operation.is_none() {
         initial.deserialize()?

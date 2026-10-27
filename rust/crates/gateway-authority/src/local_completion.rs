@@ -6,13 +6,13 @@ use crate::{
     quota::{ApiReservation, ApiUsageRequest, ApiUsageState},
     store::{Authority, TokenSource, Transaction},
 };
-use gateway_core::{
-    error::GatewayError,
-    local_completion::{LocalCompletedJournalPlan, LocalCompletedJournalState},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::AuthorityStore,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_local_journal::local_completion::{
+    LocalCompletedJournalPlan, LocalCompletedJournalState,
+};
+use gateway_core::state::AuthorityStore;
 
 #[derive(Debug)]
 pub enum LocalCompletedIntentOutcome {

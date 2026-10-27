@@ -4,14 +4,12 @@ use crate::paid::source_records::decode_paid_rollup_record;
 use crate::paid::source_usage::surplus_usage_from_source;
 use crate::paid_types::PaidCorrelation;
 use crate::paid_types::PaidRollup;
-use gateway_core::{
-    js_string::JsString16,
-    model::ModelId,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    value::ValueEncoding,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_kv_codec::value::ValueEncoding;
 
 fn model(units: &[u16]) -> ModelId {
     ModelId::from_source(JsString16::from_units(units.to_vec()))
@@ -221,7 +219,7 @@ fn keyed_paid_decoder_retains_expired_data_but_refuses_wrong_key_metadata_and_en
     let mut invalid = row.clone();
     invalid.schema_version = 999;
     assert!(decode_paid_attempt_record(&key("a"), &invalid).is_err());
-    let invalid = StoredRecord::profile("seed", gateway_core::value::PortableValue::Null, None)?;
+    let invalid = StoredRecord::profile("seed", gateway_kv_codec::value::PortableValue::Null, None)?;
     assert!(decode_paid_attempt_record(&key("a"), &invalid).is_err());
     Ok(())
 }
@@ -232,7 +230,7 @@ fn source_pricing_keeps_absent_null_and_malformed_utf16_cache_leaves_distinct() 
     row.reservation.provider = PaidProvider::Surplus;
     let raw = json!({"input_tokens":10,"output_tokens":3,"total_tokens":13,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":1}});
     let usage =
-        gateway_core::source_usage::extract_usage_tokens(Some(&raw)).ok_or("missing value")?;
+        gateway_contracts::source_usage::extract_usage_tokens(Some(&raw)).ok_or("missing value")?;
     for text in [
         r#"{"input_price_per_token":0.001,"output_price_per_token":0.002}"#,
         r#"{"input_price_per_token":0.001,"output_price_per_token":0.002,"cache_read_price_per_token":null,"cache_write_price_per_token":null}"#,
@@ -253,7 +251,7 @@ fn source_pricing_keeps_absent_null_and_malformed_utf16_cache_leaves_distinct() 
         ])?;
         assert!(surplus_usage_from_source(&row, Some(&usage), Some(&pricing)).is_none());
     }
-    let malformed = gateway_core::source_usage::extract_usage_tokens(Some(
+    let malformed = gateway_contracts::source_usage::extract_usage_tokens(Some(
         &json!({"input_tokens":10,"output_tokens":3,"buyer_cost_micro":"bad"}),
     ))
     .ok_or("missing value")?;

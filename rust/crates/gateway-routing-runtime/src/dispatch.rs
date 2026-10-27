@@ -11,9 +11,11 @@ use crate::{
 };
 use gateway_authority::kernel::KernelTerminal;
 use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
-use gateway_core::provider::UpstreamProvider;
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
+    lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation},
+    provider::UpstreamProvider,
+};
 use gateway_core::query::QueryStore;
 use gateway_providers::policy::{HopDecision, HopFailure};
 
@@ -464,7 +466,7 @@ impl<
     }
     async fn lithos_refusal(
         &self,
-        model: &gateway_core::model::ModelId,
+        model: &gateway_contracts::model::ModelId,
         failure: &AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let now = self.now()?;

@@ -10,9 +10,10 @@ use gateway_auth::resolve::AuthService;
 use gateway_auth::session_index;
 use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_auth::upstream;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::RequestContext;
-use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::RequestContext;
+use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -518,7 +519,7 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
             let policy_key = keys::api_policy(key_id);
             let normalized: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
             if let Some(normalized) = &normalized {
-                normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
+                normalized.validate(&gateway_contracts::identity::ApiKeyId(key_id.clone()), tx.now)?;
             }
             if policy.key_id != *key_id
                 || tx.revision(&key).as_ref() != Some(hash_revision)

@@ -6,10 +6,12 @@ use crate::{
     unavailable,
 };
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
-    source_serialization as source, state::AuthorityStore,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
 use gateway_schema::selection::AccountModelsStore;
 use serde_json::Value;
 use std::collections::BTreeMap;

@@ -6,9 +6,10 @@ use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_sourc
 use gateway_auth::types::AuthPrincipal;
 use gateway_authority::paid_types::{PaidReservation, PaidUsage};
 use gateway_authority::routing_types::CohortProof;
-use gateway_core::error::GatewayError;
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::state::{AuthorityStore, RecordKey};
+use gateway_source::error::GatewayError;
+use gateway_contracts::provider::{PaidProvider, UpstreamProvider};
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::key::RecordKey;
 use gateway_providers::types::{AuthMaterial, PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
@@ -25,7 +26,7 @@ pub struct Host {
     pub platform: PlatformHost,
     context: std::rc::Rc<worker::Context>,
     claude: crate::claude_host::Binding,
-    original: gateway_core::identity::RequestContext,
+    original: gateway_contracts::identity::RequestContext,
 }
 
 fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
@@ -144,7 +145,7 @@ impl RoutingHost for Host {
         &self,
         fence: &CredentialFence,
         principal: &AuthPrincipal,
-        model: &gateway_core::model::ModelId,
+        model: &gateway_contracts::model::ModelId,
     ) -> Result<(), GatewayError> {
         match fence {
             CredentialFence::Claude { .. } => {
@@ -227,9 +228,9 @@ impl RoutingHost for Host {
     async fn select_claude(
         &self,
         principal: &AuthPrincipal,
-        model: &gateway_core::model::ModelId,
-        raw: &gateway_core::source_json::SourceJson,
-        effective_effort: Option<&gateway_core::js_string::JsString16>,
+        model: &gateway_contracts::model::ModelId,
+        raw: &gateway_source::source_json::SourceJson,
+        effective_effort: Option<&gateway_source::js_string::JsString16>,
     ) -> Result<ClaudeSelection, GatewayError> {
         self.claude
             .select(principal, model, raw, effective_effort)
@@ -238,7 +239,7 @@ impl RoutingHost for Host {
     async fn observe_claude_response(
         &self,
         fence: &CredentialFence,
-        model: &gateway_core::model::ModelId,
+        model: &gateway_contracts::model::ModelId,
         response: gateway_routing_runtime::types::ResponseHead,
     ) -> Result<Self::ClaudeHead, GatewayError> {
         self.claude.observe(fence, model, response).await
@@ -246,14 +247,14 @@ impl RoutingHost for Host {
     async fn finish_claude_response(
         &self,
         head: Self::ClaudeHead,
-        evidence: gateway_core::claude::ClaudeErrorEvidence,
+        evidence: gateway_contracts::claude::ClaudeErrorEvidence,
     ) -> Result<gateway_routing_runtime::types::ClaudeOutcome, GatewayError> {
         self.claude.finish(head, evidence).await
     }
     async fn recover_codex(
         &self,
         proof: &CohortProof,
-        model: &gateway_core::model::ModelId,
+        model: &gateway_contracts::model::ModelId,
     ) -> Result<CodexRecovery, GatewayError> {
         let config = crate::host::auth_config(&self.platform.env);
         let check_original = || async {
@@ -349,7 +350,7 @@ impl Host {
         store: RemoteAuthorityStore,
         platform: PlatformHost,
         context: std::rc::Rc<worker::Context>,
-        original: gateway_core::identity::RequestContext,
+        original: gateway_contracts::identity::RequestContext,
     ) -> Self {
         let claude =
             crate::claude_host::Binding::new(store.clone(), platform.clone(), context.clone());

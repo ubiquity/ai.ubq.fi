@@ -5,9 +5,9 @@ use crate::paid_types::PaidCorrelation;
 use crate::paid_types::PaidRollup;
 use crate::paid_types::PaidUsage;
 use crate::paid_types::PaidWindow;
-use gateway_core::{
-    provider::PaidProvider,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -144,7 +144,7 @@ fn run<F: Future>(future: F) -> F::Output {
     }
 }
 fn decode_json<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, GatewayError> {
-    gateway_core::source_json::SourceJson::from_serializable(&value)?.deserialize()
+    gateway_source::source_json::SourceJson::from_serializable(&value)?.deserialize()
 }
 fn request(id: &str, settled: bool) -> Value {
     json!({"v":3,"reservation":{"key_id":"key","request_id":format!("original-{id}"),"attempt_id":id,"provider":"metered","window_reset_at_ms":NOW,"created_at_ms":NOW-1000,"reserved_microcredits":10},
@@ -666,11 +666,11 @@ fn shared_surplus_usage_adapter_matches_all_actual_source_pricing_cases() -> Tes
         row.reservation.attempt_id.0 = case["attempt_id"].as_str().ok_or("missing value")?.into();
         row.model = case["model"].as_str().ok_or("missing value")?.into();
         row.quota_per_credit = case["quota_per_credit"].as_i64().ok_or("missing value")?;
-        let usage = gateway_core::source_usage::extract_usage_tokens(Some(&case["raw"]));
+        let usage = gateway_contracts::source_usage::extract_usage_tokens(Some(&case["raw"]));
         let pricing = case
             .get("pricing")
             .filter(|value| !value.is_null())
-            .map(gateway_core::source_json::SourceJson::from_serializable)
+            .map(gateway_source::source_json::SourceJson::from_serializable)
             .transpose()?;
         let actual = surplus_usage_from_source(&row, usage.as_ref(), pricing.as_ref());
         let expected = &case["expected"];

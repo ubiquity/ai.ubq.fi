@@ -6,7 +6,7 @@ fn retained_429_actor_reply_carries_real_projection_and_lossless_source() {
         let f = Fixture::new();
         f.catalog_seed();
         let key = gateway_schema::catalog_store::codex_snapshot_key();
-        let catalog=gateway_core::source_json::SourceJson::parse(r#"{"models":[{"slug":"model-a"}],"source":"\ud800","updated_at_ms":1234,"client_version":null}"#).unwrap();
+        let catalog=gateway_source::source_json::SourceJson::parse(r#"{"models":[{"slug":"model-a"}],"source":"\ud800","updated_at_ms":1234,"client_version":null}"#).unwrap();
         f.store.rows.lock().unwrap().insert(
             key.0,
             gateway_core::source_control::encode_source_control_record(

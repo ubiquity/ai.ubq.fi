@@ -8,7 +8,8 @@ use crate::{
 };
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::types::AuthResponse;
-use gateway_core::{error::GatewayError, query::QueryStore};
+use gateway_source::error::GatewayError;
+use gateway_core::query::QueryStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;

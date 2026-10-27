@@ -1,6 +1,6 @@
 //! Exact chart transitions and hourly research folds from source capacity-history/rollups.
 use crate::capacity_shapes::{BUCKET_MS, HOUR_MS, source};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 pub fn same_cohort(a: &Value, b: &Value) -> bool {
     a["account_cohort_id"].is_string() && a["account_cohort_id"] == b["account_cohort_id"]

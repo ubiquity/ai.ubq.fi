@@ -14,13 +14,11 @@ use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::RequestContext;
-use gateway_core::local_work::journal_local_work;
-use gateway_core::model::ModelId;
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
+use gateway_contracts::{identity::RequestContext, model::ModelId, provider::UpstreamProvider};
+use gateway_local_journal::local_work::journal_local_work;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_schema::catalog_store::runtime_config_key;
 use serde::Deserialize;

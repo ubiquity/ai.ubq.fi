@@ -1,11 +1,10 @@
 //! Source-profile writes and their secretless derived indexes share one CAS.
 use crate::{invalid, key, starts};
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
-use gateway_core::state::StoredRecord;
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::key::RecordKey;
 use gateway_core::{
     query::QueryStore,
-    state::{AtomicTransition, RecordMutation, RevisionCheck},
+    state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord},
 };
 use serde_json::Value;
 use serde_json::json;

@@ -4,20 +4,21 @@ use gateway_authority::kernel::KernelReservation;
 use gateway_authority::paid_types::{PaidCorrelation, PaidReservation, PaidUsage};
 use gateway_authority::quota::ApiReservation;
 use gateway_authority::store::TokenSource;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PaidAttemptId, RequestContext};
-use gateway_core::lifecycle::TransportObservation;
-use gateway_core::local_work::{LocalWorkRecord, journal_local_work};
-use gateway_core::model::ModelId;
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_contracts::{identity::PaidAttemptId, identity::RequestContext};
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_local_journal::local_work::{LocalWorkRecord, journal_local_work};
+use gateway_contracts::model::ModelId;
+use gateway_contracts::provider::UpstreamProvider;
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

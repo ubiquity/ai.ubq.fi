@@ -5,10 +5,9 @@ use gateway_auth::{
     crypto::base64url, native_credentials::parse_native_document,
     provider_credentials::codex_source_pool_key, store::key,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::source_graph::{GraphAtom, GraphNode, SourceGraph};
-use gateway_core::tuple_key::TupleKey;
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration::graph_transport;
 use gateway_migration::native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue};
 use serde::Serialize;
@@ -24,7 +23,7 @@ impl FixtureTime {
         let deadline = origin
             .checked_add(300_000)
             .ok_or_else(|| error("Fixture time overflow"))?;
-        if origin < 1200 || deadline > gateway_core::identity::MAX_SAFE_INTEGER {
+        if origin < 1200 || deadline > gateway_contracts::identity::MAX_SAFE_INTEGER {
             return Err(error("Fixture time is outside its safe range"));
         }
         Ok(Self { origin, deadline })

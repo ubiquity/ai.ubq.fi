@@ -2,10 +2,8 @@
 use futures_util::StreamExt;
 use gateway_auth_contracts::{types::{AuthConfig, AuthHost}, upstream::{AuthUpstreamRequest, AuthUpstreamResponse}, webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto}};
 use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::crypto;
-use gateway_worker_platform::random;
+use gateway_source::error::GatewayError;
+use gateway_worker_platform::{cancellation::Cancellation, crypto, random};
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Method, Request, RequestInit, RequestRedirect, Response, Url};
 
@@ -62,7 +60,7 @@ pub struct PlatformHost {
     pub env: Env,
     pub native: crate::native_host::NativeBindings,
     pub original: gateway_auth_contracts::types::AuthRequest,
-    pub request_id: gateway_core::identity::RequestId,
+    pub request_id: gateway_contracts::identity::RequestId,
 }
 
 #[derive(Clone, Copy)]

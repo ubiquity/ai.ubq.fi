@@ -10,10 +10,10 @@ use crate::{
     routing_types::CohortProof,
     store::{Authority, TokenSource, Transaction},
 };
-use gateway_core::{
-    error::GatewayError, identity::RequestContext, source_json::SourceJson, state::AuthorityStore,
-    value::ValueEncoding,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::identity::RequestContext;
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::value::ValueEncoding;
 use types::{
     AutomaticResetPermit, Facts, FullPoolEvaluation, FullPoolFence, FullPoolPreparation,
     FullPoolResetPlan, FullPoolShadowDecision, Member, SourceCreditCollation, SourceResetCredit,

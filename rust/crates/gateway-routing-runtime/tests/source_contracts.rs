@@ -1,12 +1,10 @@
-use gateway_core::{
-    js_string::JsString16,
-    lifecycle::{
-        BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
-    },
-    model::ModelId,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
+    lifecycle::SemanticTerminal, lifecycle::TransportObservation, model::ModelId,
     provider::UpstreamProvider,
-    source_json::SourceJson,
-    source_serialization as source,
 };
 use gateway_providers::policy::HopFailure;
 use gateway_routing_runtime::{
@@ -62,7 +60,8 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
 
 fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> {
     use gateway_authority::{keys, paid_control::*};
-    use gateway_core::{provider::PaidProvider, state::AuthorityStore};
+    use gateway_contracts::provider::PaidProvider;
+    use gateway_core::state::AuthorityStore;
     let mut request = input(id, model, &["surplus", "openlux"]);
     let models = ["paid-model", "deepseek-v4.1-flash"]
         .map(|id| {
@@ -231,7 +230,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
 #[test]
 fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
     use gateway_authority::{keys, quota::ApiReservation, store::Authority};
-    use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+    use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 
     run(async {
         let store = Store::new();
@@ -338,7 +337,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
             reservation.attempt_id.0,
             gateway_providers::policy::paid_hop_identity(
                 "synthetic-paid",
-                gateway_core::provider::PaidProvider::Surplus
+                gateway_contracts::provider::PaidProvider::Surplus
             )
         );
         session.before_dispatch(&first).await?;

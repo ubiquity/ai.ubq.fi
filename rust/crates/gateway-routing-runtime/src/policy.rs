@@ -1,10 +1,12 @@
 use crate::types::{RoutingInput, RoutingResult};
 use chrono::{DateTime, Datelike, Utc};
-use gateway_core::error::GatewayError;
-use gateway_core::model::ModelId;
-use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
+use gateway_contracts::{
+    model::ModelId,
+    provider::{CodexQuotaClass, PaidProvider, UpstreamProvider},
+};
 use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput, PaidRoutingPlan};
 use gateway_providers::types::ClientSurface;
 use gateway_schema::{

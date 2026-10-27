@@ -9,10 +9,11 @@ use crate::{
         PreparedRequest, ResponseDecode,
     },
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
-    source_json::SourceJson, source_serialization as json,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as json,
 };
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_schema::{
     request::RequestSurface,
     source_request::{SourceModelRequest, SourceRequestDocument, error::SourceRequestError},

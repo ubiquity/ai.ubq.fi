@@ -10,13 +10,12 @@ use gateway_admin_contracts::{
 use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
 use gateway_authority::{kernel::KernelDefaults, keys};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::model::ModelId;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use gateway_core::query::QueryStore;
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, RecordMutation, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_core::{state::RecordMutation, state::StoredRecord};
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_schema::reasoning::ModelReasoning;
 use gateway_schema::runtime_config::{

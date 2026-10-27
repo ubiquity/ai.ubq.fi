@@ -5,13 +5,11 @@ use crate::{
     store::{Authority, TokenSource},
     text, unavailable,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, RequestId},
-    model::ModelId,
-    provider::UpstreamProvider,
-    state::AuthorityStore,
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
+    identity::ApiKeyId, identity::RequestId, model::ModelId, provider::UpstreamProvider,
 };
+use gateway_core::state::AuthorityStore;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

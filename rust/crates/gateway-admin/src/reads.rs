@@ -9,13 +9,13 @@ use gateway_auth::{
     store,
     types::{AuthResponse, invalid},
 };
-use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{RecordKey, StoredRecord},
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_core::{
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
 use serde_json::json;
 
 /// Each storage call is bounded; source list endpoints exhaust the cursor rather than truncate silently.
@@ -303,7 +303,7 @@ pub async fn key_changes<S: QueryStore>(
                 .trim()
                 .parse::<u64>()
                 .ok()
-                .filter(|n| *n > 0 && *n <= gateway_core::identity::MAX_SAFE_INTEGER as u64)
+                .filter(|n| *n > 0 && *n <= gateway_contracts::identity::MAX_SAFE_INTEGER as u64)
                 .ok_or_else(|| invalid("limit must be a positive integer"))?
                 .min(50) as u32
         }

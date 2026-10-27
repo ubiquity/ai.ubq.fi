@@ -2,12 +2,12 @@
 mod support;
 use gateway_admin_runtime::capabilities::{CodexRequest, Context, ProviderRequest};
 use gateway_auth::crypto::sha256_hex;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
     query::{QueryPage, QueryRequest, QueryStore},
-    source_json::SourceJson,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability::{
     ObservabilityRuntime,
     capacity_shapes::{history_point, unavailable_snapshot},

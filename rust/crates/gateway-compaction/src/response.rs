@@ -10,7 +10,7 @@ use crate::{
         RESIDUE_TIMEOUT_MS, ResponseOptions, SUMMARY_CHAR_CAP,
     },
 };
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 use std::collections::{BTreeMap, BTreeSet};
 fn failed(kind: FailureKind, detail: &'static str) -> CompactionFailure {
     CompactionFailure::new(kind, detail)

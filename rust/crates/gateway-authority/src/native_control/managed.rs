@@ -23,10 +23,10 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-use gateway_core::{
-    error::GatewayError,
-    identity::PoolVersionstamp,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
 use serde::Deserialize;
 use serde_json::Value;

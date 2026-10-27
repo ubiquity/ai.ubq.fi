@@ -4,10 +4,9 @@ use gateway_authority::{
     keys,
     routing_types::{PoolAccount, SubscriptionPool},
 };
-use gateway_core::{
-    identity::{ApiKeyId, PoolVersionstamp},
-    state::{RecordKey, StoredRecord},
-};
+use gateway_contracts::identity::{ApiKeyId, PoolVersionstamp};
+use gateway_kv_codec::key::RecordKey;
+use gateway_core::state::StoredRecord;
 use serde_json::Value;
 use std::collections::BTreeMap;
 pub fn seed_key(store: &Store) {

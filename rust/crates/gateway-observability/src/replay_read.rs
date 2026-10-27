@@ -8,13 +8,12 @@ use crate::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_auth::types::AuthResponse;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
     query::{QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    state::{RecordKey, RecordMutation, StoredRecord},
-    value::{PortableValue, ValueEncoding},
+    state::{RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::{key::RecordKey, value::PortableValue, value::ValueEncoding};
 use serde::Serialize;
 const MANIFEST_FIELDS: &[&str] = &[
     "version",
@@ -47,7 +46,7 @@ fn manifest_from_row(row: &StoredRecord) -> Result<Option<Manifest>, GatewayErro
         PortableValue::Object(entries) => entries
             .into_iter()
             .filter(|(key, _)| MANIFEST_FIELDS.contains(&key.as_str()))
-            .map(|(key, value)| (gateway_core::js_string::JsString16::from_utf8(&key), value))
+            .map(|(key, value)| (gateway_source::js_string::JsString16::from_utf8(&key), value))
             .collect(),
         PortableValue::ObjectUtf16(entries) => entries
             .into_iter()
@@ -114,14 +113,14 @@ fn valid_ledger(value: &SourceJson) -> bool {
     }
     for field in ["last_skip_reason", "bootstrap_cursor", "accounting_error"] {
         if !row.get(field).is_some_and(|v| {
-            v.deserialize::<Option<gateway_core::js_string::JsString16>>()
+            v.deserialize::<Option<gateway_source::js_string::JsString16>>()
                 .is_ok()
         }) {
             return false;
         }
     }
     row.get("bootstrap_sweep").is_none_or(|v| {
-        v.deserialize::<Option<gateway_core::js_string::JsString16>>()
+        v.deserialize::<Option<gateway_source::js_string::JsString16>>()
             .is_ok()
     })
 }
@@ -320,7 +319,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if after < 0 || before < after || cursor.is_some_and(|s| !model::cursor_shape(s)) {
             return Err(invalid());
         }
-        if before >= gateway_core::identity::MAX_SAFE_INTEGER {
+        if before >= gateway_contracts::identity::MAX_SAFE_INTEGER {
             return Err(failed());
         }
         let result = async {

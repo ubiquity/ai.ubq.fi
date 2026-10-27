@@ -1,6 +1,7 @@
-use gateway_core::{
-    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
 use gateway_providers::{extras, types::PrepareOptions};
 fn parse(raw: &str) -> SourceJson {
     SourceJson::parse(raw).unwrap()

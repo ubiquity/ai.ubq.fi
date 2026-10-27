@@ -7,19 +7,19 @@ use crate::{
     store::{Authority, TokenSource, Transaction},
 };
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::{MAX_SAFE_INTEGER, RequestContext};
 use gateway_core::state::AuthorityStore;
 use serde_json::{Value, json};
 
-fn marker_key() -> gateway_core::state::RecordKey {
+fn marker_key() -> gateway_kv_codec::key::RecordKey {
     gateway_auth::store::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"
     ]))
 }
-fn legacy_key() -> gateway_core::state::RecordKey {
+fn legacy_key() -> gateway_kv_codec::key::RecordKey {
     gateway_auth::store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
 }
 fn opt_out(value: Option<&Value>) -> bool {

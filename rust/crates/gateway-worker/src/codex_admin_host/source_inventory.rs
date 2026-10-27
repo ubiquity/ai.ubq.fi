@@ -2,12 +2,8 @@
 use gateway_authority::full_pool_reset::types::{
     SourceCreditCollation, SourceResetCredit, SourceResetInventory,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::{AccountBinding, MAX_SAFE_INTEGER},
-    js_string::JsString16,
-    source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::identity::{AccountBinding, MAX_SAFE_INTEGER};
 use std::{cmp::Ordering, collections::BTreeSet};
 use wasm_bindgen::{JsCast, JsValue};
 use worker::js_sys::{self, Function, JsString, Reflect};
@@ -239,7 +235,7 @@ impl SourceCreditCollation for SourceRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gateway_core::identity::{CredentialVersion, PoolVersionstamp, RoutingAccountHash};
+    use gateway_contracts::identity::{CredentialVersion, PoolVersionstamp, RoutingAccountHash};
     fn binding() -> AccountBinding {
         AccountBinding {
             slot: 0,

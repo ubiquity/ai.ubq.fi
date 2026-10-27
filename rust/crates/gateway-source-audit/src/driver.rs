@@ -5,7 +5,7 @@ use gateway_admin_data::reset::inspect_reset_row;
 use gateway_admin_data::reset::inspect_reset_usage;
 use gateway_admin_data::validate::source_fields;
 use gateway_admin_data::validate::under;
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_ledger_audit::{paid, stream::observe_coupled, usage};
 use gateway_migration_ledger::{counter::valid_api_window, rows::ObservedRow};
 use gateway_profile_values::scalar::{error, integer, text};

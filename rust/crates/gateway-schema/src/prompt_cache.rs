@@ -1,6 +1,5 @@
 //! Observed prompt cache metadata is distinct from the official request control schema.
-use gateway_core::error::GatewayError;
-use serde_json::Value;
+use {gateway_source::error::GatewayError, serde_json::Value};
 pub const SCOPE_PROFILE: &str = "responses_implicit_input_text_keyed_cycle_isolated_v5";
 pub const CODEX_PROVIDER: &str = "codex_chatgpt";
 pub fn normalize_breakpoint(
@@ -8,7 +7,7 @@ pub fn normalize_breakpoint(
     param: &str,
 ) -> Result<Option<Value>, GatewayError> {
     let value = value
-        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .map(gateway_source::source_json::SourceJson::from_serializable)
         .transpose()?;
     crate::source_request::normalized::normalize_breakpoint(value.as_ref(), param)
         .map_err(crate::source_request::error::SourceRequestError::into_scalar)?
@@ -18,39 +17,39 @@ pub fn normalize_breakpoint(
 
 pub fn validate_prompt_cache_controls(body: &Value) -> Result<(), GatewayError> {
     crate::source_request::fields::validate_prompt_cache_controls(
-        &gateway_core::source_json::SourceJson::from_serializable(body)?,
+        &gateway_source::source_json::SourceJson::from_serializable(body)?,
     )
     .map_err(crate::source_request::error::SourceRequestError::into_scalar)
 }
 
-fn scalar_source(value: &Value) -> Option<gateway_core::source_json::SourceJson> {
-    gateway_core::source_json::SourceJson::from_serializable(value).ok()
+fn scalar_source(value: &Value) -> Option<gateway_source::source_json::SourceJson> {
+    gateway_source::source_json::SourceJson::from_serializable(value).ok()
 }
-fn scalar_result(value: Option<gateway_core::source_json::SourceJson>) -> Option<Value> {
+fn scalar_result(value: Option<gateway_source::source_json::SourceJson>) -> Option<Value> {
     value?.deserialize().ok()
 }
 pub fn normalize_capabilities_source(
-    value: Option<&gateway_core::source_json::SourceJson>,
-) -> Option<gateway_core::source_json::SourceJson> {
+    value: Option<&gateway_source::source_json::SourceJson>,
+) -> Option<gateway_source::source_json::SourceJson> {
     crate::source_request::cache_metadata::normalize_capabilities_source(value)
 }
 pub fn compact_capabilities_source(
-    value: Option<&gateway_core::source_json::SourceJson>,
-) -> Option<gateway_core::source_json::SourceJson> {
+    value: Option<&gateway_source::source_json::SourceJson>,
+) -> Option<gateway_source::source_json::SourceJson> {
     crate::source_request::cache_metadata::compact_capabilities_source(value)
 }
 pub fn normalize_scope_source(
-    value: &gateway_core::source_json::SourceJson,
-) -> Option<gateway_core::source_json::SourceJson> {
+    value: &gateway_source::source_json::SourceJson,
+) -> Option<gateway_source::source_json::SourceJson> {
     crate::source_request::cache_metadata::normalize_scope_source(value)
 }
 pub fn merge_capabilities_source(
-    previous: Option<&gateway_core::source_json::SourceJson>,
-    next: Option<&gateway_core::source_json::SourceJson>,
-) -> Option<gateway_core::source_json::SourceJson> {
+    previous: Option<&gateway_source::source_json::SourceJson>,
+    next: Option<&gateway_source::source_json::SourceJson>,
+) -> Option<gateway_source::source_json::SourceJson> {
     crate::source_request::cache_metadata::merge_capabilities_source(previous, next)
 }
-pub fn concrete_scope_source(value: &gateway_core::source_json::SourceJson, cycles: i64) -> bool {
+pub fn concrete_scope_source(value: &gateway_source::source_json::SourceJson, cycles: i64) -> bool {
     crate::source_request::cache_metadata::concrete_scope_source(value, cycles)
 }
 pub fn normalize_capabilities(value: Option<&Value>) -> Option<Value> {
@@ -79,17 +78,17 @@ pub fn validate_known_unsupported(
     input: &[Value],
     input_key: &str,
 ) -> Result<(), GatewayError> {
-    let body = gateway_core::source_json::SourceJson::from_serializable(body)?;
+    let body = gateway_source::source_json::SourceJson::from_serializable(body)?;
     let input = input
         .iter()
-        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .map(gateway_source::source_json::SourceJson::from_serializable)
         .collect::<Result<Vec<_>, _>>()?;
     let prompt_cache = record
         .and_then(|record| record.get("prompt_cache"))
-        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .map(gateway_source::source_json::SourceJson::from_serializable)
         .transpose()?;
     crate::source_request::cache_capability::validate_known_unsupported_prompt_cache(
-        &gateway_core::js_string::JsString16::from_utf8(model),
+        &gateway_source::js_string::JsString16::from_utf8(model),
         prompt_cache.as_ref(),
         &body,
         &input,

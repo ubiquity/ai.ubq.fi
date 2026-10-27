@@ -4,10 +4,13 @@ use gateway_auth::{
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
 use gateway_authority::initial_control_owner::*;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::*, source_graph::*, state::*,
-    tuple_key::TupleKey,
+    query::{QueryPage, QueryRequest, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
 };
+use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_migration::{
     engine::{PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner},
     graph_transport,

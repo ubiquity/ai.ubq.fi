@@ -4,7 +4,7 @@ use gateway_claude_usage_runtime::{
     collect::Refresh,
     fetch::{Failure, ResultData},
 };
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde::Deserialize;

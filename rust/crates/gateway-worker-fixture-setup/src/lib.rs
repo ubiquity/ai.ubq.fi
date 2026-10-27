@@ -15,14 +15,10 @@ use gateway_authority::{
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
     routing_types::{PoolAccount, SubscriptionPool},
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::PoolVersionstamp,
-    provider::PaidProvider,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+use gateway_source::error::GatewayError;
+use gateway_contracts::{identity::PoolVersionstamp, provider::PaidProvider};
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
 use gateway_publication::sender::NativePublicationSender;
 use gateway_publication_policy::control_publication::{
@@ -369,13 +365,11 @@ mod tests {
         native_replay::StoreNonceAuthority,
     };
     use gateway_authority::{keys, paid_control::PaidControlConfig};
-    use gateway_core::{
-        error::GatewayError,
-        state::{
-            AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation,
-            StoredRecord,
-        },
+    use gateway_source::error::GatewayError;
+    use gateway_core::state::{
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
     };
+    use gateway_kv_codec::key::RecordKey;
     use gateway_publication_policy::control_publication::{
         PreparedConfigurationPublication, bootstrap_fixture_owner, fixture_owner_statement,
         runtime_config_key,

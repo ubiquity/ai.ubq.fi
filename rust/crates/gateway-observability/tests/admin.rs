@@ -1,12 +1,9 @@
 mod support;
 use gateway_admin_runtime::capabilities::{Context, ProviderRequest};
 use gateway_auth::crypto::sha256_hex;
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{RecordKey, StoredRecord},
-    tuple_key::TupleKey,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_core::state::StoredRecord;
 use gateway_observability::{
     ObservabilityRuntime,
     api::*,

@@ -6,7 +6,7 @@ use gateway_auth::native_auth::{
     AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity,
 };
 use gateway_auth::native_credentials::{NativeCredentials, NativeOwnerId};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::state::AuthorityStore;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, conflict,

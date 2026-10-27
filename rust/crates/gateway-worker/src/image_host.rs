@@ -4,7 +4,8 @@ use crate::host::PlatformHost;
 use crate::transport::outbound;
 use crate::transport::outbound::DispatchAttempt;
 use crate::transport::outbound::PinnedDestination;
-use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ImageKind, UpstreamResponse,
 };
@@ -210,7 +211,7 @@ impl Images {
             headers.insert(
                 "x-uos-upstream".into(),
                 gateway_providers::policy::direct_provider_label(
-                    gateway_core::provider::UpstreamProvider::ChatgptCodex,
+                    gateway_contracts::provider::UpstreamProvider::ChatgptCodex,
                 )
                 .into(),
             );

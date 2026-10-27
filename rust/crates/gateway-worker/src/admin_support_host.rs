@@ -4,7 +4,7 @@ use gateway_admin_runtime::{
     capabilities::{Context, ErrorDiagnostics, PricingSnapshot, SupervisorBriefTarget},
 };
 use gateway_catalog_runtime::admin::AdminCatalogOperation;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use worker::Method;
@@ -38,9 +38,9 @@ impl Binding {
             .map_err(catalogue_error)?;
         let subscriptions = picker::subscriptions(&self.catalog.store).await;
         picker::project(
-            &gateway_core::source_serialization::member(&response.body, "data").unwrap_or_else(
+            &gateway_source::source_serialization::member(&response.body, "data").unwrap_or_else(
                 || {
-                    gateway_core::source_json::SourceJson::parse("null")
+                    gateway_source::source_json::SourceJson::parse("null")
                         .expect("null is source JSON")
                 },
             ),
@@ -53,7 +53,7 @@ impl Binding {
     }
     pub async fn pricing(
         &self,
-        models: &[gateway_core::model::ModelId],
+        models: &[gateway_contracts::model::ModelId],
     ) -> Result<PricingSnapshot, GatewayError> {
         let ratios = pricing::fetch(self, pricing::Metadata::Ratios).await?;
         let status = pricing::fetch(self, pricing::Metadata::Status).await?;
@@ -183,7 +183,7 @@ fn catalogue_error(
 
 #[cfg(test)]
 mod catalogue_tests {
-    use gateway_core::error::GatewayError;
+    use gateway_source::error::GatewayError;
 
     #[test]
     fn catalogue_lift_preserves_the_exact_original_gateway_error()
@@ -198,7 +198,7 @@ mod catalogue_tests {
         let actual = super::catalogue_error(source);
         assert_eq!(actual, original);
         assert_eq!(
-            gateway_core::source_json::SourceJson::from_serializable(&actual.envelope)?.as_bytes(),
+            gateway_source::source_json::SourceJson::from_serializable(&actual.envelope)?.as_bytes(),
             expected
         );
         Ok(())

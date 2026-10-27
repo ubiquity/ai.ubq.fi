@@ -1,6 +1,6 @@
-use gateway_core::{
-    state::RecordKey,
-    tuple_key::{BigIntKey, DecodedKeyPart, KeyPart, TupleKey},
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::BigIntKey, tuple_key::DecodedKeyPart, tuple_key::KeyPart,
+    tuple_key::TupleKey,
 };
 
 #[test]

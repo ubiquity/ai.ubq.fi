@@ -1,6 +1,6 @@
 use crate::types::*;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -70,7 +70,7 @@ pub fn call_id_from_location(location: &str) -> Option<String> {
         })
 }
 
-pub fn principal_id(principal: &AuthPrincipal) -> gateway_core::identity::PrincipalId {
+pub fn principal_id(principal: &AuthPrincipal) -> gateway_contracts::identity::PrincipalId {
     let scalar = match &principal.method {
         AuthMethod::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
         AuthMethod::GithubToken { owner, repo, .. } => format!(
@@ -96,7 +96,7 @@ pub fn principal_id(principal: &AuthPrincipal) -> gateway_core::identity::Princi
             })
             .unwrap_or_else(|| "local-auth-disabled".into()),
     };
-    gateway_core::identity::PrincipalId::from_scalar(scalar)
+    gateway_contracts::identity::PrincipalId::from_scalar(scalar)
 }
 
 /// Source Content-Length canonicality is checked before any actual body read.

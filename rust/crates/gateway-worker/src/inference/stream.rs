@@ -3,7 +3,8 @@ use super::{ResponseResult, dispatch_attempts};
 use crate::inference_lifecycle::{Lifecycle, Usage, finish_hook};
 use crate::routing_host;
 use gateway_admission::handoff::{Pending, enqueue};
-use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use gateway_source::error::GatewayError;
+use gateway_contracts::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use gateway_providers::response::decode_response;
 use gateway_providers::types::Headers;
 use gateway_providers::types::{DecodePlan, ProviderEvent};
@@ -16,8 +17,7 @@ use gateway_worker_http_body::protocol::{
     CEREBRAS_RATE_LIMIT_HEADERS, apply_warnings, cerebras_error_body, copy_headers, interrupted,
     invalid, provider_correlation, set_header, stream_failure,
 };
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_platform::cancellation::{Cancellation, Deadline};
 use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use gateway_worker_stream::relay::PrepareDisposition;
@@ -525,7 +525,7 @@ impl Reply<'_> {
 impl TerminalObserver for Lifecycle {
     fn observe_terminal(
         &self,
-        observation: gateway_core::lifecycle::TransportObservation,
+        observation: gateway_contracts::lifecycle::TransportObservation,
         usage: Option<serde_json::Value>,
     ) -> impl std::future::Future<Output = Result<(), GatewayError>> {
         Lifecycle::observe_terminal(self, observation, usage)

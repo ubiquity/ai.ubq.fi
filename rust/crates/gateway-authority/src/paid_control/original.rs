@@ -8,14 +8,12 @@ use crate::{
     quota::{ApiReservation, ApiUsageRequest, ApiUsageState},
     store::{Authority, TokenSource, Transaction},
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::RequestContext,
-    local_work::{LocalWorkPhase, journal_local_work},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::AuthorityStore,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::identity::RequestContext;
+use gateway_local_journal::local_work::{LocalWorkPhase, journal_local_work};
+use gateway_core::state::AuthorityStore;
 use serde::de::DeserializeOwned;
 
 fn field<T: DeserializeOwned>(value: &SourceJson, name: &str) -> Option<T> {

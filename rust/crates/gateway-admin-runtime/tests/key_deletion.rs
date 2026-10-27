@@ -7,10 +7,8 @@ use gateway_admin_test_support::{
     runtime_store::Store,
 };
 use gateway_auth::types::{AuthConfig, AuthRequest};
-use gateway_core::{
-    model::ModelId,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation},
-};
+use gateway_contracts::model::ModelId;
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
 use serde_json::json;
 use std::collections::BTreeMap;
 type TestResult = Result<(), Box<dyn std::error::Error>>;

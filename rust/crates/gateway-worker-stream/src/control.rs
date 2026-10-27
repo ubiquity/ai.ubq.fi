@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::task::Waker;
 
 pub const ATTEMPT_DEADLINE_MS: i32 = 1_800_000;

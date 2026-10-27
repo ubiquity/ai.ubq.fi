@@ -1,11 +1,8 @@
 //! Real original action/Start/publication then readonly source response DATA.
 use super::publication::synthetic_config;
 use super::*;
-use gateway_core::{
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 
 fn second_account(f: &Fixture) {

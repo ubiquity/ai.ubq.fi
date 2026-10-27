@@ -1,9 +1,9 @@
 //! Source key families encoded by the single shared tuple codec; no JSON identity fallback.
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
-use gateway_core::tuple_key::{
-    ScalarKeyPart::{self, Number, String as Text},
-    TupleKey,
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{
+    tuple_key::ScalarKeyPart, tuple_key::ScalarKeyPart::Number,
+    tuple_key::ScalarKeyPart::String as Text, tuple_key::TupleKey,
 };
 
 fn key(parts: &[ScalarKeyPart<'_>]) -> RecordKey {
@@ -122,8 +122,8 @@ pub fn kernel_policy(owner: &str, repo: Option<&str>) -> RecordKey {
 /// Physical source policy identity only. Callers retain the exact logical labels;
 /// a collided tuple key does not grant ownership of an existing policy/window.
 pub fn kernel_policy_source(
-    owner: &gateway_core::js_string::JsString16,
-    repo: Option<&gateway_core::js_string::JsString16>,
+    owner: &gateway_source::js_string::JsString16,
+    repo: Option<&gateway_source::js_string::JsString16>,
 ) -> Result<RecordKey, GatewayError> {
     kernel_source_key(
         if repo.is_some() {
@@ -138,10 +138,10 @@ pub fn kernel_policy_source(
 
 fn kernel_source_key(
     family: &str,
-    owner: &gateway_core::js_string::JsString16,
-    repo: Option<&gateway_core::js_string::JsString16>,
+    owner: &gateway_source::js_string::JsString16,
+    repo: Option<&gateway_source::js_string::JsString16>,
 ) -> Result<RecordKey, GatewayError> {
-    use gateway_core::tuple_key::KeyPart;
+    use gateway_kv_codec::tuple_key::KeyPart;
     let mut parts = vec![
         KeyPart::String("uos_ai".into()),
         KeyPart::String("kernel_quota".into()),
@@ -192,8 +192,8 @@ pub fn kernel_window(owner: &str, repo: Option<&str>) -> RecordKey {
 /// Same pinned source tuple conversion as the policy overload, with no label
 /// normalization or inference about logical policy/window ownership.
 pub fn kernel_window_source(
-    owner: &gateway_core::js_string::JsString16,
-    repo: Option<&gateway_core::js_string::JsString16>,
+    owner: &gateway_source::js_string::JsString16,
+    repo: Option<&gateway_source::js_string::JsString16>,
 ) -> Result<RecordKey, GatewayError> {
     kernel_source_key(
         if repo.is_some() {
@@ -252,10 +252,10 @@ pub fn paid_control_config() -> RecordKey {
         Text("paid_control_config"),
     ])
 }
-pub fn paid_control_observation(provider: gateway_core::provider::PaidProvider) -> RecordKey {
+pub fn paid_control_observation(provider: gateway_contracts::provider::PaidProvider) -> RecordKey {
     let provider = match provider {
-        gateway_core::provider::PaidProvider::Surplus => "surplus",
-        gateway_core::provider::PaidProvider::Metered => "openlux",
+        gateway_contracts::provider::PaidProvider::Surplus => "surplus",
+        gateway_contracts::provider::PaidProvider::Metered => "openlux",
     };
     key(&[
         Text("uos_ai"),
@@ -337,14 +337,14 @@ pub fn paid_rollup(bucket: i64, model: &str, provider: &str, shard: u8) -> Recor
 /// share the existing TextEncoder key bytes; callers retain each logical label.
 pub fn paid_rollup_model(
     bucket: i64,
-    model: &gateway_core::model::ModelId,
+    model: &gateway_contracts::model::ModelId,
     provider: &str,
     shard: u8,
 ) -> RecordKey {
     paid_rollup_source(
         bucket as f64,
         model,
-        &gateway_core::js_string::JsString16::from_utf8(provider),
+        &gateway_source::js_string::JsString16::from_utf8(provider),
         f64::from(shard),
     )
     .expect("Integer bucket/shard and source string parts are finite tuple inputs")
@@ -354,11 +354,11 @@ pub fn paid_rollup_model(
 /// Callers retain the source value predicate and bucket/shard guards.
 pub fn paid_rollup_source(
     bucket: f64,
-    model: &gateway_core::model::ModelId,
-    provider: &gateway_core::js_string::JsString16,
+    model: &gateway_contracts::model::ModelId,
+    provider: &gateway_source::js_string::JsString16,
     shard: f64,
 ) -> Result<RecordKey, GatewayError> {
-    use gateway_core::tuple_key::KeyPart;
+    use gateway_kv_codec::tuple_key::KeyPart;
     Ok(TupleKey::from_parts(&[
         KeyPart::String("uos_ai".into()),
         KeyPart::String("paid_fallback".into()),

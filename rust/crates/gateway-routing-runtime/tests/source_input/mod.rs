@@ -1,7 +1,7 @@
 //! Pure request data shared by planner-only and stateful integration fixtures.
 use super::{RoutingInput, fixture_json};
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_providers::types::ClientSurface;
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
@@ -62,7 +62,7 @@ pub fn input(id: &str, model: &str, providers: &[&str]) -> RoutingInput {
             started_at_ms: NOW,
         },
         principal,
-        raw: gateway_core::source_json::SourceJson::from_serializable(
+        raw: gateway_source::source_json::SourceJson::from_serializable(
             &json!({"model":model,"input":"source fixture","reasoning":{"effort":"none"}}),
         )
         .unwrap(),

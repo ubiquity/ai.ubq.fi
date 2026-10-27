@@ -1,5 +1,5 @@
 //! Exact source v5 campaign vocabulary; these records contain no credentials.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub const PROVIDER: &str = "codex_chatgpt";

@@ -7,7 +7,7 @@ use crate::{
     transcript,
     types::{CompactionHost, FailureKind, ResponseOptions},
 };
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::Deserialize;
 use std::{
     cell::{Cell, RefCell},

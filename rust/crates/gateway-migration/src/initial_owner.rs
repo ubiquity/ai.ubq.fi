@@ -9,9 +9,9 @@ use gateway_authority::initial_control_owner::{
     InitialAdoptionAccountFacts, InitialAdoptionFacts, InitialControlOwnerReceipt,
     PreparedInitialControlOwner,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::query::{QueryRequest, QueryStore};
-use gateway_core::state::RecordKey;
+use gateway_kv_codec::key::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome};
 use serde::Serialize;

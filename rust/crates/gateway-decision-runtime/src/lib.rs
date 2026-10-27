@@ -1,6 +1,6 @@
-use gateway_core::{
-    error::GatewayError, lifecycle::SemanticTerminal, query::QueryStore, source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::lifecycle::SemanticTerminal;
+use gateway_core::query::QueryStore;
 use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider,
     ExtrasRequest, ExtrasResponse, ExtrasRoute, HealthKind, HealthObservation, PreparedCall,
@@ -204,7 +204,7 @@ fn finish<H: ExtrasHost>(
                     let usage = if decisions {
                         gateway_decision_protocol::response::usage(&payload)
                     } else {
-                        gateway_core::source_serialization::member(&payload, "usage")
+                        gateway_source::source_serialization::member(&payload, "usage")
                             .as_ref()
                             .and_then(extras::source_systemone_usage)
                     };

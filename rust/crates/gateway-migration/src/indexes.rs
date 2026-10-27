@@ -7,10 +7,10 @@ use gateway_authority::{
     paid_types::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate},
     quota::{ApiUsageRequest, ApiUsageState, ApiUsageWindow},
 };
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::key::RecordKey;
 use gateway_core::state::StoredRecord;
-use gateway_core::{identity::ApiKeyId, lifecycle::BillingState};
+use gateway_contracts::{identity::ApiKeyId, lifecycle::BillingState};
 use serde_json::Value;
 use serde_json::json;
 use std::{
@@ -137,7 +137,7 @@ fn derive_basics<'a>(
             .collect();
         let normalized = gateway_authority::routing_types::SubscriptionPool {
             v: 1,
-            pool_versionstamp: gateway_core::identity::PoolVersionstamp(source.revision.clone()),
+            pool_versionstamp: gateway_contracts::identity::PoolVersionstamp(source.revision.clone()),
             accounts,
         };
         derived.push((

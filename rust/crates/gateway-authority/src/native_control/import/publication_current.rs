@@ -17,7 +17,8 @@ use gateway_auth::provider_credentials::{
 use gateway_auth_native_wire::publication_data::{
     ImportCatalogDisposition, ImportPublicationDataV1,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_core::state::AuthorityStore;
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 use serde_json::Value;
 
@@ -25,7 +26,7 @@ use serde_json::Value;
 #[derive(Debug, PartialEq)]
 pub(crate) struct NativeImportModelsProjection {
     pub(crate) count: usize,
-    pub(crate) source: gateway_core::js_string::JsString16,
+    pub(crate) source: gateway_source::js_string::JsString16,
     pub(crate) updated_at_ms: i64,
     pub(crate) client_version: Option<String>,
 }
@@ -67,7 +68,7 @@ pub(super) async fn completion_metadata<
             return Err(unavailable());
         }
         record.validate_version()?;
-        let sort_key = gateway_core::tuple_key::TupleKey::from_record_key(&key)?;
+        let sort_key = gateway_kv_codec::tuple_key::TupleKey::from_record_key(&key)?;
         let payload = serde_json::to_string(&record.value).map_err(|_| unavailable())?;
         let encoding = serde_json::to_value(record.value_encoding).map_err(|_| unavailable())?;
         let encoding = encoding.as_str().ok_or_else(unavailable)?;
@@ -282,7 +283,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
     let catalog: Option<ModelSnapshot> = tx
         .read_source_control(&catalog_store::codex_snapshot_key())
         .await?;
-    let _: Option<gateway_core::source_json::SourceJson> = tx
+    let _: Option<gateway_source::source_json::SourceJson> = tx
         .read_source_control(&catalog_store::runtime_config_key())
         .await?;
     let generation_value: Option<String> = tx.read(&catalog_store::auth_generation_key()).await?;

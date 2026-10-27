@@ -1,4 +1,4 @@
-use gateway_core::provider::UpstreamProvider;
+use gateway_contracts::provider::UpstreamProvider;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

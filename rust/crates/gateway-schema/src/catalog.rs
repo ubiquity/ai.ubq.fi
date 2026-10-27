@@ -3,8 +3,8 @@ use crate::metadata::{MetadataHint, MetadataSources, ResolvedMetadata, resolve_m
 use crate::selection::{ModelWhitelist, ProviderSelection};
 use crate::{aliases::FLASH_ORDER, model_control as c, reasoning::ModelReasoning};
 use crate::{snapshot::ModelSnapshot, source_request::error::SourceRequestError};
-use gateway_core::{
-    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -21,7 +21,7 @@ pub struct CatalogInput {
     pub snapshot: Option<ModelSnapshot>,
     pub full_snapshot: Option<ModelSnapshot>,
     pub providers: BTreeMap<String, ProviderCatalog>,
-    pub enrichment: BTreeMap<ModelId, MetadataHint>,
+    pub enrichment: BTreeMap<gateway_contracts::model::ModelId, MetadataHint>,
     pub selection: Option<ProviderSelection>,
     pub whitelist: Option<ModelWhitelist>,
 }
@@ -50,7 +50,7 @@ impl CatalogInput {
     }
     pub fn metadata(
         &self,
-        id: &ModelId,
+        id: &gateway_contracts::model::ModelId,
         codex: Option<&SourceJson>,
         provider: Option<MetadataHint>,
         subscription: bool,
@@ -182,7 +182,7 @@ pub fn filter_whitelist(
             };
             id.is_some_and(|id| {
                 let id = if native { c::trim(&id) } else { id };
-                ModelWhitelist::permits(whitelist, &ModelId::from_source(id))
+                ModelWhitelist::permits(whitelist, &gateway_contracts::model::ModelId::from_source(id))
             })
         })
         .collect()
@@ -216,7 +216,7 @@ impl RequestModelMetadata {
 }
 pub fn request_model_metadata(
     input: &CatalogInput,
-    model: &ModelId,
+    model: &gateway_contracts::model::ModelId,
     responses: bool,
     now_ms: i64,
 ) -> RequestModelMetadata {
@@ -328,7 +328,7 @@ pub fn request_model_metadata(
     }
 }
 pub fn validate_model_available(
-    model: &ModelId,
+    model: &gateway_contracts::model::ModelId,
     responses: bool,
     metadata: &RequestModelMetadata,
 ) -> Result<(), SourceRequestError> {

@@ -19,12 +19,12 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, MAX_SAFE_INTEGER},
-    state::{AuthorityStore, RecordKey},
-    tuple_key::{ScalarKeyPart, TupleKey},
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::{
+    AccountBinding, ActiveSelection, ActiveTransitionReason, MAX_SAFE_INTEGER,
 };
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -539,14 +539,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let mut models = Vec::new();
             if capacity_rules::capacity_headroom_for_observation(usage, None).unwrap_or(0.0) > 0.0 {
-                models.push(gateway_core::model::ModelId::from_scalar("standard"));
+                models.push(gateway_contracts::model::ModelId::from_scalar("standard"));
             }
             for limit in &usage.additional_rate_limits {
-                let model = gateway_core::model::ModelId::from_scalar(&limit.limit_name);
+                let model = gateway_contracts::model::ModelId::from_scalar(&limit.limit_name);
                 if !matches!(
                     routing::model_quota_class(&model),
-                    gateway_core::provider::CodexQuotaClass::Standard
-                        | gateway_core::provider::CodexQuotaClass::Unknown
+                    gateway_contracts::provider::CodexQuotaClass::Standard
+                        | gateway_contracts::provider::CodexQuotaClass::Unknown
                 ) && capacity_rules::capacity_headroom_for_observation(usage, Some(&model))
                     .unwrap_or(0.0)
                     > 0.0

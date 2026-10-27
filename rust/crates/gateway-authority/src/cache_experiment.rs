@@ -53,13 +53,13 @@ pub struct RefreshContext {
 /// ```
 pub struct RefreshPermit {
     context: RefreshContext,
-    binding: gateway_core::identity::AccountBinding,
+    binding: gateway_contracts::identity::AccountBinding,
 }
 impl RefreshPermit {
     pub fn context(&self) -> &RefreshContext {
         &self.context
     }
-    pub fn binding(&self) -> &gateway_core::identity::AccountBinding {
+    pub fn binding(&self) -> &gateway_contracts::identity::AccountBinding {
         &self.binding
     }
 }
@@ -74,7 +74,7 @@ pub(crate) async fn validate_refresh_context<
     tx: &mut crate::store::Transaction<'_, S, I>,
     context: &RefreshContext,
     now: i64,
-) -> Result<(), gateway_core::error::GatewayError> {
+) -> Result<(), gateway_source::error::GatewayError> {
     use model::{failed, sample_signal};
     context.target.validate()?;
     if context.v != 1

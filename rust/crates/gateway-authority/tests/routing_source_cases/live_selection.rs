@@ -1,6 +1,6 @@
 use crate::support::*;
 use gateway_authority::routing::LiveRouteSelection;
-use gateway_core::js_string::JsString16;
+use gateway_source::js_string::JsString16;
 
 #[test]
 fn optional_and_unpaired_source_models_remain_selection_only() {

@@ -9,11 +9,8 @@ use crate::inference::RequestResources;
 use crate::routing_host;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_authority::kernel::KernelTerminal;
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
-    source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_extras_contract::errors::rendering as invalid;
 use gateway_extras_contract::family::ExtrasFamily;
 use gateway_extras_contract::types::{
@@ -174,13 +171,13 @@ async fn completed_result(
 
 fn completion(
     kernel: KernelDisposition,
-    terminal: Option<gateway_core::lifecycle::SemanticTerminal>,
+    terminal: Option<gateway_contracts::lifecycle::SemanticTerminal>,
 ) -> (KernelTerminal, &'static str) {
     match kernel {
         KernelDisposition::Completed => (KernelTerminal::Committed, "extras_source_completed"),
         KernelDisposition::Incomplete(reason) => (KernelTerminal::Released, reason),
         KernelDisposition::FromAggregate
-            if terminal == Some(gateway_core::lifecycle::SemanticTerminal::Completed) =>
+            if terminal == Some(gateway_contracts::lifecycle::SemanticTerminal::Completed) =>
         {
             (KernelTerminal::Committed, "images_source_completed")
         }

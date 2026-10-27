@@ -23,12 +23,9 @@ use gateway_authority::{
     routing_types::{PoolAccount, SubscriptionPool},
     store::{Authority, AuthorityClock, TokenSource},
 };
-use gateway_core::{
-    identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+use gateway_contracts::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
 use gateway_worker::authority::RemoteAuthorityStore;
 use gateway_worker_fixture_setup::invalid;

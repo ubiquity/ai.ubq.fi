@@ -8,7 +8,9 @@ use crate::{
     store::{Authority, TokenSource},
     text, unavailable,
 };
-use gateway_core::{error::GatewayError, identity::RoutingAccountHash, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::RoutingAccountHash;
+use gateway_core::state::AuthorityStore;
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Administrative R-only half-open transition, not provider reset proof or an election.

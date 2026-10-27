@@ -1,5 +1,6 @@
 use gateway_admin_runtime::capabilities::Context;
-use gateway_core::{error::GatewayError, state::RevisionCheck};
+use gateway_source::error::GatewayError;
+use gateway_core::state::RevisionCheck;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 
@@ -98,7 +99,7 @@ pub enum HealthWrite {
 
 /// The fixed host owns real clock/wait/RNG. Pure storage algorithms never call a provider.
 pub trait ObservabilityHost {
-    fn parse_claude_usage_date(&self, _value: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, _value: &gateway_source::js_string::JsString16) -> Option<i64> {
         None
     }
     /// Finite shared collector, invoked only from the existing capacity capture.

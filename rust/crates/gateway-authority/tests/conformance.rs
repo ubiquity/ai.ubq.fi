@@ -24,10 +24,12 @@ use gateway_authority::{
     },
     routing_types::RouteSelection,
 };
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, PoolVersionstamp, RequestId};
-use gateway_core::lifecycle::{BillingState, PaidTerminalState};
-use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
-use gateway_core::state::{AuthorityStore, RecordKey, StoredRecord};
+use gateway_contracts::{
+    identity::{ApiKeyId, PaidAttemptId, PoolVersionstamp, RequestId},
+    lifecycle::{BillingState, PaidTerminalState},
+    provider::{CodexQuotaClass, PaidProvider, UpstreamProvider},
+};
+use gateway_core::state::{AuthorityStore, StoredRecord};
 use gateway_routing_runtime_test_support::authority::{
     MemoryStore, NOW, TestAuthority, Tokens, admin_hash, admitted, authority, block, policy, pool,
     routing_hash, run, seed_pool, source_account,
@@ -36,10 +38,10 @@ use serde::de::DeserializeOwned;
 use std::sync::atomic::Ordering;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-fn fixture_row(store: &MemoryStore, key: &RecordKey) -> TestResult<StoredRecord> {
+fn fixture_row(store: &MemoryStore, key: &gateway_kv_codec::key::RecordKey) -> TestResult<StoredRecord> {
     store.row(key).ok_or_else(|| "expected fixture row".into())
 }
-fn fixture_json<T: DeserializeOwned>(store: &MemoryStore, key: &RecordKey) -> TestResult<T> {
+fn fixture_json<T: DeserializeOwned>(store: &MemoryStore, key: &gateway_kv_codec::key::RecordKey) -> TestResult<T> {
     Ok(serde_json::from_value(fixture_row(store, key)?.value)?)
 }
 fn id(value: &str) -> RequestId {
@@ -71,7 +73,7 @@ async fn reserve_paid(
     input: &PaidRequest,
     authorization: &PaidAuthorization,
     now: i64,
-) -> Result<PaidAdmission, gateway_core::error::GatewayError> {
+) -> Result<PaidAdmission, gateway_source::error::GatewayError> {
     authority.store().clock(now);
     let context = paid_control_cases::context(input);
     let receipt = paid_original::authorize(authority, input, &context, now).await?;
@@ -816,10 +818,8 @@ fn expired_paid_detail_clears_its_marker_without_refunding_retained_exposure() -
 
 #[test]
 fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() -> TestResult {
-    use gateway_core::{
-        state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord},
-        value::PortableValue,
-    };
+    use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
+    use gateway_kv_codec::value::PortableValue;
     let store = MemoryStore::default();
     let typed = StoredRecord::profile(
         "typed-import",

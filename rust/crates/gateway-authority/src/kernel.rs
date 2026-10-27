@@ -5,10 +5,12 @@ use crate::{
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
-use gateway_core::{
-    error::GatewayError, identity::RequestId, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source, state::AuthorityStore,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_contracts::identity::RequestId;
+use gateway_core::state::AuthorityStore;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -133,7 +135,7 @@ fn source_safe(value: &SourceJson, positive: bool) -> Option<i64> {
     (n.is_finite()
         && n.fract() == 0.0
         && n >= if positive { 1.0 } else { 0.0 }
-        && n <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+        && n <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
         .then_some(n as i64)
 }
 
@@ -204,10 +206,10 @@ impl KernelPolicy<JsString16, f64> {
         let limit = source_numeric(&get("usage_limit_requests")?)?.trunc();
         if !window.is_finite()
             || window <= 0.0
-            || window > gateway_core::identity::MAX_SAFE_INTEGER as f64
+            || window > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
             || !limit.is_finite()
             || (limit != -1.0 && limit < 0.0)
-            || limit > gateway_core::identity::MAX_SAFE_INTEGER as f64
+            || limit > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
         {
             return None;
         }
@@ -267,7 +269,7 @@ impl KernelWindow<JsString16> {
 
 async fn read_kernel_policy<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
-    key: &gateway_core::state::RecordKey,
+    key: &gateway_kv_codec::key::RecordKey,
     owner: &str,
     repo: Option<&str>,
 ) -> Result<Option<KernelPolicy<String, f64>>, GatewayError> {
@@ -302,7 +304,7 @@ async fn read_kernel_policy<S: AuthorityStore, I: TokenSource>(
 
 async fn read_kernel_window<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
-    key: &gateway_core::state::RecordKey,
+    key: &gateway_kv_codec::key::RecordKey,
     owner: &str,
     repo: Option<&str>,
 ) -> Result<Option<KernelWindow>, GatewayError> {

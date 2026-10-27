@@ -13,11 +13,12 @@ use gateway_authority::paid_types::{
 };
 use gateway_authority::routing_types::RouteSelection;
 use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::provider::UpstreamProvider::{ChatgptCodex, ClaudeCode};
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
+use gateway_contracts::{
+    provider::UpstreamProvider::ChatgptCodex, provider::UpstreamProvider::ClaudeCode,
+};
+use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::query::QueryStore;
-use gateway_core::{identity::PaidAttemptId, model::ModelId};
+use gateway_contracts::{identity::PaidAttemptId, model::ModelId};
 use gateway_providers::types::ClientSurface;
 use gateway_schema::source_request::error::SourceRequestError;
 
@@ -160,7 +161,7 @@ impl<
                         body,
                     } => {
                         return Err(RoutingError {
-                            error: Box::new(GatewayError::new(
+                            error: Box::new(gateway_source::error::GatewayError::new(
                                 status,
                                 "Claude subscription request was refused.",
                                 Some("claude_code_refused"),
@@ -171,7 +172,7 @@ impl<
                     }
                     ClaudeSelection::InternalServerError => {
                         return Err(RoutingError {
-                            error: Box::new(GatewayError::new(500, "Internal Server Error", None)),
+                            error: Box::new(gateway_source::error::GatewayError::new(500, "Internal Server Error", None)),
                             headers: gateway_providers::types::Headers::from([(
                                 "Content-Type".into(),
                                 "text/plain; charset=utf-8".into(),
@@ -285,7 +286,7 @@ impl<
                     let mut units = "The model '".encode_utf16().collect::<Vec<_>>();
                     units.extend_from_slice(model.as_js_string().as_units());
                     units.extend("' is not available for these subscriptions.".encode_utf16());
-                    gateway_core::js_string::JsString16::from_units(units)
+                    gateway_source::js_string::JsString16::from_units(units)
                 });
                 return Err(SourceRequestError::new(
                     404,
@@ -329,7 +330,7 @@ impl<
         // Local schema/credential failure cannot create paid exposure.
         self.prepare(upstream, &model, &credential, "validation")?;
         let key = self.input.context.key_id.clone().ok_or_else(|| {
-            GatewayError::new(
+            gateway_source::error::GatewayError::new(
                 403,
                 "Paid inference requires an eligible stored API key.",
                 Some("paid_fallback_unavailable"),

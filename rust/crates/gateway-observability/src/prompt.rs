@@ -1,12 +1,9 @@
 //! Source cache/prompt-analytics-{core,read}.ts v2 hard namespace.
 use crate::{ObservabilityRuntime, counters, store, types::ObservabilityHost};
 use gateway_auth::crypto::sha256_hex;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::QueryStore,
-    state::{RecordKey, RecordMutation},
-};
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_core::{query::QueryStore, state::RecordMutation};
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -54,7 +51,7 @@ pub struct PromptEvent {
 }
 impl PromptEvent {
     /// Map one already-extracted shared usage result; this does not parse or validate raw upstream JSON.
-    pub fn set_source_usage(&mut self, usage: Option<&gateway_core::source_usage::UsageTokens>) {
+    pub fn set_source_usage(&mut self, usage: Option<&gateway_contracts::source_usage::UsageTokens>) {
         self.usage_telemetry_status = usage
             .map_or("missing", |usage| usage.status.as_str())
             .into();

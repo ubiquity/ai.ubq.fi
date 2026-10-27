@@ -19,7 +19,7 @@ use gateway_auth::{
         CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
     },
 };
-use gateway_core::identity::PoolVersionstamp;
+use gateway_contracts::identity::PoolVersionstamp;
 use std::collections::BTreeSet;
 struct Cancel;
 impl NativeRenewalCancellation for Cancel {

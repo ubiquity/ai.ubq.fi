@@ -2,18 +2,16 @@
 use crate::{
     ObservabilityRuntime, records::valid_usage_rollup_source, store, types::ObservabilityHost,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::MAX_SAFE_INTEGER,
-    js_string::JsString16,
-    query::QueryStore,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    source_usage::UsageTokens,
-    state::RecordMutation,
-    tuple_key::{KeyPart, TupleKey},
 };
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, source_usage::UsageTokens};
+use gateway_core::{
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::RecordMutation,
+};
+use gateway_kv_codec::tuple_key::{KeyPart, TupleKey};
 use serde_json::{Value, json};
 
 pub struct TerminalUsageRollup<'a> {

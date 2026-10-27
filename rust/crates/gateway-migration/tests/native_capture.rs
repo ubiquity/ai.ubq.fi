@@ -1,6 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
-use gateway_core::{query::*, source_graph::GraphNode, state::*, tuple_key::TupleKey};
+use gateway_core::{
+    query::{QueryRequest, QuerySelector},
+    state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord},
+};
+use gateway_source_graph::graph::GraphNode;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_migration::native_capture::NativeRevision;
 use gateway_migration::{
     engine::adopt_empty,
@@ -21,7 +26,7 @@ fn graph_key(index: i64) -> RecordKey {
 }
 struct Tokens(std::sync::atomic::AtomicU64);
 impl gateway_authority::store::TokenSource for Tokens {
-    fn next_token(&self) -> Result<String, gateway_core::error::GatewayError> {
+    fn next_token(&self) -> Result<String, gateway_source::error::GatewayError> {
         Ok(format!(
             "native-fixture-{}",
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
@@ -30,7 +35,7 @@ impl gateway_authority::store::TokenSource for Tokens {
 }
 struct Clock;
 impl gateway_authority::store::AuthorityClock for Clock {
-    fn now_ms(&self) -> Result<i64, gateway_core::error::GatewayError> {
+    fn now_ms(&self) -> Result<i64, gateway_source::error::GatewayError> {
         Ok(2300)
     }
 }
@@ -57,8 +62,8 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
         Clock,
     );
     let admission = run(authority.reserve_api_key(
-        &gateway_core::identity::ApiKeyId("offline-key".into()),
-        &gateway_core::identity::RequestId("native-post-restart-admission".into()),
+        &gateway_contracts::identity::ApiKeyId("offline-key".into()),
+        &gateway_contracts::identity::RequestId("native-post-restart-admission".into()),
         "responses",
         2300,
     ))?;
@@ -147,7 +152,7 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
 
 #[test]
 fn source_graph_wire_matches_the_independent_bun_native_corpus() {
-    use gateway_core::source_json::SourceJson;
+    use gateway_source::source_json::SourceJson;
     let corpus = SourceJson::parse(include_str!(
         "../../gateway-core/tests/fixtures/source-graph-native.json"
     ))
@@ -225,7 +230,7 @@ fn malformed_raw_keys_graphs_counters_queues_and_business_aliases_are_atomic_ref
 fn pending_retirement_and_suppressed_mapping_remain_only_in_private_custody() {
     let mut input = fixture();
     let mapping = key(json!(["uos_ai", "codex_live_calls", "v1", "fixture-call"]));
-    input.entries.push(NativeEntry{raw_key:TupleKey::from_record_key(&mapping).unwrap().sort_bytes().to_vec(),value:NativeValue::SourceGraphV1(gateway_core::source_json::SourceJson::parse(r#"{"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":[["account_id",{"type":"string","value":"fixture-account"}],["principal_id",{"type":"string","value":"fixture-principal"}]]}]}"#).unwrap()),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:3600000});
+    input.entries.push(NativeEntry{raw_key:TupleKey::from_record_key(&mapping).unwrap().sort_bytes().to_vec(),value:NativeValue::SourceGraphV1(gateway_source::source_json::SourceJson::parse(r#"{"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":[["account_id",{"type":"string","value":"fixture-account"}],["principal_id",{"type":"string","value":"fixture-principal"}]]}]}"#).unwrap()),revision:NativeRevision{version:"14".into(),sequence:"0".into()},expiration_ms:3600000});
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("retirement.sqlite3"));
     run(adopt_empty(&store, &prepare_native(&input).unwrap())).unwrap();

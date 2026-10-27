@@ -1,9 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::*,
-    value::PortableValue,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::value::PortableValue;
 use gateway_migration::{
     capture::{PrivateCapture, SourceEntry},
     engine::{adopt_empty, prepare},

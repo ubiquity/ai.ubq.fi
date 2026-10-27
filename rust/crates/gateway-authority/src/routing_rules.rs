@@ -6,7 +6,8 @@ use crate::{
     routing_codec::CLASSES,
     routing_types::{CapacityObservation, QuotaBlock, RoutingSlot, RoutingState},
 };
-use gateway_core::{error::GatewayError, model::ModelId, provider::CodexQuotaClass};
+use gateway_source::error::GatewayError;
+use gateway_contracts::{model::ModelId, provider::CodexQuotaClass};
 use std::collections::BTreeMap;
 
 impl RoutingSlot {

@@ -5,7 +5,9 @@ use crate::{
     types::*,
 };
 use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::{claude::ClaudeErrorEvidence, error::GatewayError, query::QueryStore};
+use gateway_contracts::claude::ClaudeErrorEvidence;
+use gateway_source::error::GatewayError;
+use gateway_core::query::QueryStore;
 
 impl<
     S: QueryStore + Clone,
@@ -161,13 +163,13 @@ impl<
             ClaudeOutcome::WorkspaceContinuation(publication) => {
                 // Disabled thinking preserves the original refusal without any
                 // re-encoding, dropped flag, or follow-up transport.
-                if gateway_core::source_serialization::member(attempt.request.body(), "thinking")
+                if gateway_source::source_serialization::member(attempt.request.body(), "thinking")
                     .and_then(|thinking| {
-                        gateway_core::source_serialization::member(&thinking, "type")
+                        gateway_source::source_serialization::member(&thinking, "type")
                     })
-                    .and_then(|kind| gateway_core::source_serialization::string(&kind))
+                    .and_then(|kind| gateway_source::source_serialization::string(&kind))
                     .is_some_and(|kind| {
-                        kind == gateway_core::js_string::JsString16::from_utf8("disabled")
+                        kind == gateway_source::js_string::JsString16::from_utf8("disabled")
                     })
                     || record.workspace_continuations != 0
                 {

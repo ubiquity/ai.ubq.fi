@@ -25,10 +25,10 @@ fn source_model_learning_preserves_raw_catalogs_and_unknown_metadata() {
     assert!(result["unsupported"].get(&routing_hash("a").0).is_none());
     assert_eq!(
         AccountModelsStore::parse(
-            &gateway_core::source_json::SourceJson::from_serializable(&result).unwrap()
+            &gateway_source::source_json::SourceJson::from_serializable(&result).unwrap()
         )
         .unwrap()
-        .unsupported["a"][&gateway_core::model::ModelId::from_scalar("gpt-test")],
+        .unsupported["a"][&gateway_contracts::model::ModelId::from_scalar("gpt-test")],
         NOW
     );
 }
@@ -176,10 +176,10 @@ fn source_selection_shrink_and_empty_defaults_keep_sticky_active_identity() {
 
 #[test]
 fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -> TestResult {
-    use gateway_core::{
-        js_string::JsString16, model::ModelId, source_control, source_json::SourceJson,
-        source_serialization as source, value::ValueEncoding,
+    use gateway_source::{
+        js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
+    use gateway_core::source_control;
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let raw = SourceJson::parse(&r#"{"accounts":{},"unsupported":{"other":{"\udc00":NOW}},"source_metadata":{"retain":"\ud800"}}"#.replace("NOW", &NOW.to_string()))?;
@@ -188,7 +188,7 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
         source_control::encode_source_control_record("source-before-learn", &raw, None)?,
     );
     let authority = authority(&store);
-    let high = ModelId::from_source(JsString16::from_units(vec![0xd800]));
+    let high = gateway_contracts::model::ModelId::from_source(JsString16::from_units(vec![0xd800]));
     let RouteSelection::Eligible(admission) =
         run(authority.select_account(&high, CodexQuotaClass::Standard, NOW))?
     else {
@@ -221,7 +221,7 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
         NOW
     ))?);
     let stored = fixture_row(&store, &keys::models())?;
-    assert_eq!(stored.value_encoding, ValueEncoding::ProfileV2);
+    assert_eq!(stored.value_encoding, gateway_kv_codec::value::ValueEncoding::ProfileV2);
     let learned = source_control::decode_source_control_record(&stored)?;
     for field in ["accounts", "source_metadata"] {
         assert_eq!(source::member(&learned, field), source::member(&raw, field));
@@ -237,7 +237,7 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
     assert_eq!(parsed.unsupported["a"][&high], NOW);
     assert!(
         !parsed.unsupported["a"]
-            .contains_key(&ModelId::from_source(JsString16::from_units(vec![0xdc00])))
+            .contains_key(&gateway_contracts::model::ModelId::from_source(JsString16::from_units(vec![0xdc00])))
     );
     assert!(source::member(&unsupported, &routing_hash("a").0).is_none());
     Ok(())
@@ -245,11 +245,11 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
 
 #[test]
 fn opaque_model_full_pool_proof_retains_exact_model_and_current_credential_fence() {
-    use gateway_core::{js_string::JsString16, model::ModelId};
+    use gateway_source::js_string::JsString16;
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
-    let model = ModelId::from_source(JsString16::from_units(vec![0xdc00, 0xd83d, 0xde80]));
+    let model = gateway_contracts::model::ModelId::from_source(JsString16::from_units(vec![0xdc00, 0xd83d, 0xde80]));
     let RouteSelection::Eligible(first) =
         run(authority.select_account(&model, CodexQuotaClass::Standard, NOW)).unwrap()
     else {
@@ -280,27 +280,27 @@ fn opaque_model_full_pool_proof_retains_exact_model_and_current_credential_fence
 #[test]
 fn model_quota_class_uses_source_comparison_projection_without_changing_identity() {
     use gateway_authority::routing::model_quota_class;
-    use gateway_core::{js_string::JsString16, model::ModelId};
+    use gateway_source::js_string::JsString16;
     // Pinned Bun1.4.0 oracle af9107c1: Kelvin-sign lower-case is significant to the spark class.
     for (model, expected) in [
         (
-            ModelId::from_scalar("gpt-5.3-codex-spark"),
+            gateway_contracts::model::ModelId::from_scalar("gpt-5.3-codex-spark"),
             CodexQuotaClass::Spark,
         ),
         (
-            ModelId::from_scalar("gpt-5.3-codex-sparK"),
+            gateway_contracts::model::ModelId::from_scalar("gpt-5.3-codex-sparK"),
             CodexQuotaClass::Spark,
         ),
         (
-            ModelId::from_scalar(" \u{feff}gpt-reserve\u{a0}"),
+            gateway_contracts::model::ModelId::from_scalar(" \u{feff}gpt-reserve\u{a0}"),
             CodexQuotaClass::Reserve,
         ),
         (
-            ModelId::from_source(JsString16::from_units(vec![0xd800])),
+            gateway_contracts::model::ModelId::from_source(JsString16::from_units(vec![0xd800])),
             CodexQuotaClass::Standard,
         ),
         (
-            ModelId::from_scalar(&"x".repeat(4097)),
+            gateway_contracts::model::ModelId::from_scalar(&"x".repeat(4097)),
             CodexQuotaClass::Standard,
         ),
     ] {

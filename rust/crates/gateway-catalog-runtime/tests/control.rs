@@ -11,13 +11,11 @@ use gateway_catalog_provider::host::{
 };
 use gateway_catalog_runtime::CatalogRuntime;
 use gateway_catalog_runtime::state;
-use gateway_core::error::GatewayError;
-use gateway_core::provider::PaidProvider;
-use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
-use gateway_core::source_control::decode_source_control_record;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::{
+    query::{QueryPage, QueryRequest, QueryStore},
+    source_control::decode_source_control_record,
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_schema::{
     catalog_store, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
@@ -55,12 +53,12 @@ impl Store {
             before_policy: Rc::default(),
         }
     }
-    fn put(&self, key: RecordKey, revision: &str, value: Value) {
+    fn put(&self, key: gateway_kv_codec::key::RecordKey, revision: &str, value: Value) {
         self.rows
             .borrow_mut()
             .insert(key.0, StoredRecord::json(revision, value, None));
     }
-    fn get(&self, key: &RecordKey) -> Option<StoredRecord> {
+    fn get(&self, key: &gateway_kv_codec::key::RecordKey) -> Option<StoredRecord> {
         self.rows
             .borrow()
             .get(&key.0)
@@ -125,10 +123,10 @@ impl Store {
     }
     // Reuse the established authority fixture's full journal writer and actual
     // reserve_api_key/bind_paid_original_request flow; do not clone its DTO.
-    fn row(&self, key: &RecordKey) -> Option<StoredRecord> {
+    fn row(&self, key: &gateway_kv_codec::key::RecordKey) -> Option<StoredRecord> {
         self.get(key)
     }
-    fn seed(&self, key: RecordKey, value: &Value) {
+    fn seed(&self, key: gateway_kv_codec::key::RecordKey, value: &Value) {
         self.put(key, "original-fixture", value.clone());
     }
     fn projection(&self) -> PaidRoutingProjection {
@@ -139,7 +137,7 @@ impl Store {
     }
 }
 impl AuthorityStore for Store {
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+    async fn read(&self, key: &gateway_kv_codec::key::RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         Ok(self.get(key))
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
@@ -350,7 +348,7 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     assert_eq!(policy.policy.v, 2);
     assert_eq!(
         policy.policy.models[&"gpt-known".into()],
-        vec![PaidProvider::Surplus, PaidProvider::Metered]
+        vec![gateway_contracts::provider::PaidProvider::Surplus, gateway_contracts::provider::PaidProvider::Metered]
     );
     assert_eq!(
         receipt.revision(),
@@ -367,7 +365,7 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     );
     let observation: PaidProviderObservation = decode_source_control_record(
         &store
-            .get(&keys::paid_control_observation(PaidProvider::Surplus))
+            .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
             .unwrap(),
     )
     .unwrap()
@@ -384,7 +382,7 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     assert!(observation.source_checks.is_empty());
     let openlux: PaidProviderObservation = decode_source_control_record(
         &store
-            .get(&keys::paid_control_observation(PaidProvider::Metered))
+            .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Metered))
             .unwrap(),
     )
     .unwrap()
@@ -406,7 +404,7 @@ fn retained_stale_catalog_is_usable_without_invented_refresh_expiry() {
     assert_eq!(host.requests.borrow().len(), count);
     assert_eq!(
         store.projection().policy.models[&"paid-only".into()],
-        vec![PaidProvider::Surplus]
+        vec![gateway_contracts::provider::PaidProvider::Surplus]
     );
     assert!(
         store
@@ -432,12 +430,12 @@ fn failed_openlux_discovery_preserves_explicit_known_codex_missing_catalog_fallb
     let projection = store.projection();
     assert_eq!(
         projection.policy.models[&"gpt-known".into()],
-        vec![PaidProvider::Metered]
+        vec![gateway_contracts::provider::PaidProvider::Metered]
     );
     assert!(projection.provenance.openlux_observation_revision.is_none());
     assert!(
         store
-            .get(&keys::paid_control_observation(PaidProvider::Metered))
+            .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Metered))
             .is_none()
     );
 }
@@ -489,11 +487,11 @@ fn superseded_configuration_during_fetch_cannot_publish_an_observation() {
         })),
     });
     assert!(
-        run(runtime.publish_paid_observation(&store, &host, PaidProvider::Surplus, true)).is_err()
+        run(runtime.publish_paid_observation(&store, &host, gateway_contracts::provider::PaidProvider::Surplus, true)).is_err()
     );
     assert!(
         store
-            .get(&keys::paid_control_observation(PaidProvider::Surplus))
+            .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
             .is_none()
     );
 }
@@ -520,7 +518,7 @@ fn source_selection_change_across_await_fails_the_original_projection_cas() {
     assert!(store.get(&keys::paid_routing()).is_none());
     assert!(
         store
-            .get(&keys::paid_control_observation(PaidProvider::Surplus))
+            .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
             .is_none()
     );
 }
@@ -557,16 +555,16 @@ fn newer_observation_wins_and_older_awaited_producer_cannot_roll_it_back() {
     let mut first = std::pin::pin!(runtime.publish_paid_observation(
         &store,
         &host,
-        PaidProvider::Surplus,
+        gateway_contracts::provider::PaidProvider::Surplus,
         true
     ));
     let mut cx = Context::from_waker(Waker::noop());
     assert!(first.as_mut().poll(&mut cx).is_pending());
     let second =
-        run(runtime.publish_paid_observation(&store, &host, PaidProvider::Surplus, true)).unwrap();
+        run(runtime.publish_paid_observation(&store, &host, gateway_contracts::provider::PaidProvider::Surplus, true)).unwrap();
     assert!(run(first).is_err());
     let row = store
-        .get(&keys::paid_control_observation(PaidProvider::Surplus))
+        .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
         .unwrap();
     assert_eq!(Some(row.revision.as_str()), second.revision());
     assert_eq!(row.value["models"][0]["id"], "newer");
@@ -580,7 +578,7 @@ fn publication_replaces_full_model_map_and_never_retains_removed_permissions() {
     host.queue(surplus("old-paid-model"));
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
     host.queue(surplus("new-paid-model"));
-    run(runtime.publish_paid_observation(&store, &host, PaidProvider::Surplus, true)).unwrap();
+    run(runtime.publish_paid_observation(&store, &host, gateway_contracts::provider::PaidProvider::Surplus, true)).unwrap();
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
     assert!(
         !store
@@ -665,7 +663,7 @@ fn synthetic_possible_index_does_not_change_ordinary_provider_selection() {
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
     assert_eq!(
         store.projection().policy.models[&"deepseek-v4.1-flash".into()],
-        vec![PaidProvider::Surplus]
+        vec![gateway_contracts::provider::PaidProvider::Surplus]
     );
     assert!(!store.projection().policy.codex_enabled);
     let selection = store.get(&state::selection_key()).unwrap();
@@ -707,7 +705,7 @@ fn only_actual_source_deadlines_constrain_a_projection() {
     );
     let observation: PaidProviderObservation = decode_source_control_record(
         &store
-            .get(&keys::paid_control_observation(PaidProvider::Surplus))
+            .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
             .unwrap(),
     )
     .unwrap()
@@ -744,9 +742,9 @@ fn custody_metadata_contains_only_the_observed_routing_fields() {
     response["data"][0]["description"] = json!("unrelated provider prose");
     response["data"][0]["created"] = json!(12345);
     host.queue(response);
-    run(runtime.publish_paid_observation(&store, &host, PaidProvider::Surplus, true)).unwrap();
+    run(runtime.publish_paid_observation(&store, &host, gateway_contracts::provider::PaidProvider::Surplus, true)).unwrap();
     let observation = store
-        .get(&keys::paid_control_observation(PaidProvider::Surplus))
+        .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
         .unwrap()
         .value;
     assert!(observation["models"][0].get("description").is_none());
@@ -777,10 +775,10 @@ impl gateway_authority::store::AuthorityClock for Clock {
 }
 fn paid_request(
     store: &Store,
-    provider: PaidProvider,
+    provider: gateway_contracts::provider::PaidProvider,
     model: &str,
 ) -> gateway_authority::paid_types::PaidRequest {
-    use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
+    use gateway_contracts::identity::{ApiKeyId, PaidAttemptId, RequestId};
     gateway_authority::paid_types::PaidRequest {
         key_id: ApiKeyId("fixture-key".into()),
         request_id: RequestId("fixture-request".into()),
@@ -795,14 +793,14 @@ fn paid_request(
     }
 }
 fn set_source_field(body: &mut SourceJson, key: &str, value: SourceJson) {
-    let mut fields = gateway_core::source_serialization::entries(body).unwrap();
-    let key = gateway_core::js_string::JsString16::from_utf8(key);
+    let mut fields = gateway_source::source_serialization::entries(body).unwrap();
+    let key = gateway_source::js_string::JsString16::from_utf8(key);
     if let Some((_, old)) = fields.iter_mut().find(|(name, _)| name == &key) {
         *old = value;
     } else {
         fields.push((key, value));
     }
-    *body = gateway_core::source_serialization::object_keys(fields).unwrap();
+    *body = gateway_source::source_serialization::object_keys(fields).unwrap();
 }
 fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
     Ok(PaidRequestContext {
@@ -829,7 +827,7 @@ fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale
     let runtime = CatalogRuntime::new();
     host.queue(surplus("paid-only"));
     run(runtime.publish_paid_routing(&store, &host))?;
-    let request = paid_request(&store, PaidProvider::Surplus, "paid-only");
+    let request = paid_request(&store, gateway_contracts::provider::PaidProvider::Surplus, "paid-only");
     store.put(
         keys::api_policy(&request.key_id.0),
         "key-policy",
@@ -913,7 +911,7 @@ fn coarse_union_never_authorizes_the_wrong_client_endpoint() -> TestResult {
             .models
             .contains_key(&"paid-only".into())
     );
-    let request = paid_request(&store, PaidProvider::Metered, "paid-only");
+    let request = paid_request(&store, gateway_contracts::provider::PaidProvider::Metered, "paid-only");
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
     assert!(
@@ -941,7 +939,7 @@ fn ordinary_tool_request_cannot_use_a_coarse_non_tool_surplus_permission() -> Te
             .models
             .contains_key(&"paid-only".into())
     );
-    let request = paid_request(&store, PaidProvider::Surplus, "paid-only");
+    let request = paid_request(&store, gateway_contracts::provider::PaidProvider::Surplus, "paid-only");
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
     let mut context = context("paid-only")?;
@@ -968,7 +966,7 @@ fn synthetic_override_requires_the_server_owned_hop_not_a_body_shortcut() -> Tes
     let runtime = CatalogRuntime::new();
     host.queue(surplus("deepseek-v4.1-flash"));
     run(runtime.publish_paid_routing(&store, &host))?;
-    let request = paid_request(&store, PaidProvider::Surplus, "deepseek-v4.1-flash");
+    let request = paid_request(&store, gateway_contracts::provider::PaidProvider::Surplus, "deepseek-v4.1-flash");
     let authority =
         Authority::with_clock(store.clone(), Tokens(Cell::new(0)), Clock(store.now.get()));
     let mut ordinary = context("deepseek-v4.1-flash")?;
@@ -1129,19 +1127,19 @@ mod native_configuration {
             host.publication.borrow_mut().providers.insert(
                 CatalogProvider::Surplus,
                 ProviderBinding {
-                    identity: inputs.binding(PaidProvider::Surplus).unwrap(),
+                    identity: inputs.binding(gateway_contracts::provider::PaidProvider::Surplus).unwrap(),
                 },
             );
             assert_eq!(
                 config.surplus_binding,
-                inputs.binding(PaidProvider::Surplus)
+                inputs.binding(gateway_contracts::provider::PaidProvider::Surplus)
             );
             let runtime = CatalogRuntime::new();
             host.queue(surplus("actual-owned-model"));
             runtime.publish_paid_routing(&store, &host).await.unwrap();
             assert_eq!(
                 store.projection().policy.models[&"actual-owned-model".into()],
-                vec![PaidProvider::Surplus]
+                vec![gateway_contracts::provider::PaidProvider::Surplus]
             );
             let retained = serde_json::to_string(&*store.rows.borrow()).unwrap();
             assert!(!retained.contains("fixture-actual-surplus-secret"));
@@ -1168,14 +1166,14 @@ mod native_configuration {
                 .unwrap();
             assert!(
                 store
-                    .get(&keys::paid_control_observation(PaidProvider::Surplus))
+                    .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
                     .is_none()
             );
             assert!(runtime.publish_paid_routing(&store, &host).await.is_err());
             host.publication.borrow_mut().providers.insert(
                 CatalogProvider::Surplus,
                 ProviderBinding {
-                    identity: next.binding(PaidProvider::Surplus).unwrap(),
+                    identity: next.binding(gateway_contracts::provider::PaidProvider::Surplus).unwrap(),
                 },
             );
             host.queue(surplus("new-owned-model"));
@@ -1183,7 +1181,7 @@ mod native_configuration {
             // A configuration rotation changes spend custody; an explicit metadata refresh
             // is the source operation that replaces a still-fresh public model snapshot.
             runtime
-                .publish_paid_observation(&store, &host, PaidProvider::Surplus, true)
+                .publish_paid_observation(&store, &host, gateway_contracts::provider::PaidProvider::Surplus, true)
                 .await
                 .unwrap();
             runtime.publish_paid_routing(&store, &host).await.unwrap();
@@ -1207,7 +1205,9 @@ mod native_configuration {
 
 #[test]
 fn source_paid_observation_and_projection_preserve_opaque_models_without_new_authority() {
-    use gateway_core::{js_string::JsString16, model::ModelId, value::ValueEncoding};
+    use gateway_source::js_string::JsString16;
+    use gateway_contracts::model::ModelId;
+    use gateway_kv_codec::value::ValueEncoding;
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
@@ -1216,12 +1216,12 @@ fn source_paid_observation_and_projection_preserve_opaque_models_without_new_aut
     host.queue_source(SourceJson::parse(r#"{"data":[{"id":"\ud800","supported_parameters":["tools","tool_choice"],"supported_features":["tools"],"pricing":{"prompt":"0.001","completion":"0.002"}}]}"#).unwrap());
     run(runtime.publish_paid_routing(&store, &host)).unwrap();
     let observation = store
-        .get(&keys::paid_control_observation(PaidProvider::Surplus))
+        .get(&keys::paid_control_observation(gateway_contracts::provider::PaidProvider::Surplus))
         .unwrap();
     assert_eq!(observation.value_encoding, ValueEncoding::ProfileV2);
     assert_eq!(
         store.projection().policy.models.get(&model),
-        Some(&vec![PaidProvider::Surplus])
+        Some(&vec![gateway_contracts::provider::PaidProvider::Surplus])
     );
     assert!(
         !store

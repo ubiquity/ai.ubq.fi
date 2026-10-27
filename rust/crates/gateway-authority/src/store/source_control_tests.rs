@@ -1,9 +1,7 @@
 use super::*;
-use gateway_core::{
-    js_string::JsString16,
-    model::ModelId,
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_source::js_string::JsString16;
+use gateway_contracts::model::ModelId;
+use gateway_kv_codec::value::{PortableValue, ValueEncoding};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Cell, RefCell},

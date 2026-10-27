@@ -17,7 +17,8 @@ use gateway_authority::{
     native_control::actor::{NativeActorScope, NativeRenewalActor},
     store::Authority,
 };
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_observability::{
     ObservabilityRuntime,
     types::{HealthEvent, HealthTarget, ObservabilityHost},

@@ -1,13 +1,11 @@
 use crate::{invalid, text, validate_time};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_schema::aliases::SourceStringCollator;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
@@ -38,8 +36,8 @@ static MISSING_SOURCE_STRING_COLLATOR: MissingSourceStringCollator = MissingSour
 impl SourceStringCollator for MissingSourceStringCollator {
     fn compare(
         &self,
-        _left: &gateway_core::js_string::JsString16,
-        _right: &gateway_core::js_string::JsString16,
+        _left: &gateway_source::js_string::JsString16,
+        _right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(GatewayError::unavailable(
             "Source string comparison requires the trusted runtime capability.",
@@ -231,7 +229,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         self.cached_record(&key)
             .await?
             .map(|row| match row.value_encoding {
-                gateway_core::value::ValueEncoding::ProfileV2 => Ok(
+                gateway_kv_codec::value::ValueEncoding::ProfileV2 => Ok(
                     crate::claude::quota_proof_metadata(&row.profile_v2_value()?),
                 ),
                 _ => SourceJson::from_serializable(row.json_value()?),
@@ -372,10 +370,10 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
     /// keys, the only allowed patch, None retention and the :pending revision.
     pub(crate) fn put_local_completed_journal(
         &mut self,
-        plan: &gateway_core::local_completion::LocalCompletedJournalPlan,
+        plan: &gateway_local_journal::local_completion::LocalCompletedJournalPlan,
         now: i64,
     ) -> Result<(), GatewayError> {
-        use gateway_core::local_completion::LocalCompletedJournalState;
+        use gateway_local_journal::local_completion::LocalCompletedJournalState;
         let journal_key = plan.journal_key();
         let pending_key = plan.pending_key();
         let journal = self

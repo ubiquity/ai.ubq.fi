@@ -1,7 +1,7 @@
 //! Fixed secretless receipts from native publication and the actual Worker transport.
 use crate::types::{HealthProvider, HealthTarget};
 use gateway_claude_usage_history_records::types::CredentialKind;
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -76,7 +76,7 @@ pub struct ClaudeAccountReadback {
     pub credential: CredentialMetadata,
     pub workspace: Option<WorkspaceMetadata>,
     /// Validated source quota state, without pool proof or credential fields.
-    pub quota: Option<gateway_core::source_json::SourceJson>,
+    pub quota: Option<gateway_source::source_json::SourceJson>,
 }
 #[derive(Clone, Debug)]
 pub struct ClaudeRosterReadback {
@@ -108,7 +108,7 @@ pub struct ActiveProbe {
     pub provider: ProbeProvider,
     pub content_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<gateway_core::js_string::JsString16>,
+    pub error: Option<gateway_source::js_string::JsString16>,
 }
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]

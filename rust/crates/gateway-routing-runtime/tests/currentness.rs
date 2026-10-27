@@ -6,11 +6,8 @@ use gateway_authority::{
     quota::ApiReservation,
     store::{Authority, AuthorityClock},
 };
-use gateway_core::{
-    lifecycle::{DeliveryOutcome, SemanticTerminal, TransportObservation},
-    state::RecordKey,
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_contracts::lifecycle::{DeliveryOutcome, SemanticTerminal, TransportObservation};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_routing_runtime::{
     currentness::RoutingLeaseState,
     local_work::{LocalAdmissionInput, LocalRequestMetadata},

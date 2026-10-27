@@ -6,13 +6,13 @@ use gateway_admin_contracts::routes::AdminOperation;
 use gateway_auth::{store::key, types::AuthHost};
 use gateway_authority::keys::{api_request, api_window};
 use gateway_authority::store::Authority;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{ApiKeyId, RequestId};
-use gateway_core::source_graph::GraphNode;
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::{ApiKeyId, RequestId};
+use gateway_source_graph::graph::GraphNode;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_migration_test_support::fixture::{RUNTIME_CASES, Receipt};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -85,7 +85,7 @@ fn admin(body: Value, now_ms: i64) -> Result<AdminInput, GatewayError> {
     Ok(AdminInput {
         parameter: None,
         query: Default::default(),
-        body: gateway_core::source_json::SourceJson::from_serializable(&body)?,
+        body: gateway_source::source_json::SourceJson::from_serializable(&body)?,
         actor: gateway_auth::types::AuthPrincipal {
             token: None,
             method: gateway_auth::types::AuthMethod::AdminAllowlist,

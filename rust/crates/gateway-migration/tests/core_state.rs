@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
-use gateway_core::{state::AuthorityStore, tuple_key::TupleKey};
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration::{
     core_state::CORE_STATE_DO_ROW_WRITE_LIMIT,
     engine::adopt_empty,
@@ -50,7 +51,7 @@ fn graph(value: Value) -> NativeValue {
     let mut nodes = Vec::new();
     let root = atom(value, &mut nodes);
     NativeValue::SourceGraphV1(
-        gateway_core::source_json::SourceJson::from_serializable(&json!({
+        gateway_source::source_json::SourceJson::from_serializable(&json!({
             "root": root,
             "nodes": nodes
         }))
@@ -403,8 +404,8 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
         support_clock::Clock,
     );
     let reservation = run(authority.reserve_api_key(
-        &gateway_core::identity::ApiKeyId("core-key".into()),
-        &gateway_core::identity::RequestId("post-restart".into()),
+        &gateway_contracts::identity::ApiKeyId("core-key".into()),
+        &gateway_contracts::identity::RequestId("post-restart".into()),
         "responses",
         2300,
     ))?;
@@ -416,7 +417,7 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
         gateway_authority::paid::source_records::decode_paid_attempt_record(&paid_key, &paid)?;
     assert_eq!(
         paid.billing_state,
-        gateway_core::lifecycle::BillingState::Unresolved
+        gateway_contracts::lifecycle::BillingState::Unresolved
     );
     assert_eq!(paid.reservation.reserved_microcredits, 5);
     let gate = run(store.read(&gateway_authority::keys::paid_gate()))?
@@ -495,8 +496,8 @@ impl NativeCustody for NoCustody {
     async fn observe(
         &self,
         _: &str,
-    ) -> Result<OwnedNativeSnapshot, gateway_core::error::GatewayError> {
-        Err(gateway_core::error::GatewayError::unavailable(
+    ) -> Result<OwnedNativeSnapshot, gateway_source::error::GatewayError> {
+        Err(gateway_source::error::GatewayError::unavailable(
             "no native custody in synthetic core-state fixture",
             "migration_native_custody_required",
         ))
@@ -504,7 +505,7 @@ impl NativeCustody for NoCustody {
 }
 
 mod support_clock {
-    use gateway_core::error::GatewayError;
+    use gateway_source::error::GatewayError;
     pub struct Tokens(pub std::sync::atomic::AtomicU64);
     impl gateway_authority::store::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {

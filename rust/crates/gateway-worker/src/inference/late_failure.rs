@@ -1,7 +1,7 @@
 //! Approved post-head HTTP failure encoding; original failure DATA stays internal.
 use crate::inference_capture::Capture;
 use futures_util::StreamExt;
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

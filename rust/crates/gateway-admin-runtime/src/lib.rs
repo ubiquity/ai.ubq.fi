@@ -22,7 +22,8 @@ use gateway_admin_contracts::{
 };
 use gateway_auth::types::{AuthHost, AuthResponse, invalid};
 use gateway_auth_native_wire::native_read::NativeReadRequest;
-use gateway_core::{error::GatewayError, query::QueryStore, state::RevisionCheck};
+use gateway_source::error::GatewayError;
+use gateway_core::{query::QueryStore, state::RevisionCheck};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Default)]
@@ -48,7 +49,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
         if !input.actor.is_admin {
             return Err(gateway_auth::types::unauthorized());
         }
-        if !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&input.now_ms) {
+        if !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&input.now_ms) {
             return Err(invalid("Admin request clock is invalid"));
         }
         let context = Context {
@@ -114,7 +115,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     }
                     ClaudeAuthDelete => ClaudeRequest::DeleteAccount {
                         account_id: fields::first(&input.query, "account_id")
-                            .map(gateway_core::js_string::JsString16::from_utf8),
+                            .map(gateway_source::js_string::JsString16::from_utf8),
                     },
                     ClaudeAccountSelect => {
                         let id = source_body::member(&input.body, "account_id")
@@ -176,7 +177,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
     }
     async fn paid_key_policy(
         &self,
-        body: &gateway_core::source_json::SourceJson,
+        body: &gateway_source::source_json::SourceJson,
     ) -> Result<PaidKeyFields, GatewayError> {
         self.paid_policy(body).await
     }
@@ -264,7 +265,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             CodexOverageGet => CodexRequest::OverageSettings,
             CodexResetShadowList => CodexRequest::ShadowDecisions,
             CodexResetConsume => {
-                let fields = gateway_core::source_serialization::entries(&input.body)
+                let fields = gateway_source::source_serialization::entries(&input.body)
                     .ok_or_else(|| invalid("Only account_id_hash is accepted."))?;
                 let hash = source_body::member(&input.body, "account_id_hash")
                     .as_ref()
@@ -529,7 +530,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             && ["sampledAtMs", "generatedAtMs"].into_iter().all(|name| {
                 body.get(name)
                     .and_then(Value::as_i64)
-                    .is_some_and(|n| (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&n))
+                    .is_some_and(|n| (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&n))
             })
             && transcript.and_then(Value::as_object).is_some_and(|v| {
                 v.keys()

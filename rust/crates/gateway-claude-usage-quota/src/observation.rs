@@ -1,6 +1,6 @@
 //! Accepted-observation data and its source producer codec; this type carries no current-account proof.
 use crate::QuotaObservation;
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

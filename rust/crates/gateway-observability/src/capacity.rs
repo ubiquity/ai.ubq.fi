@@ -6,9 +6,10 @@ use crate::{
 };
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
-use gateway_core::{
-    error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_core::query::QueryStore;
 use serde_json::{Value, json};
 
 fn view(
@@ -48,7 +49,7 @@ pub fn claude_source(
     account: &ClaudeAccountReadback,
     health: &Value,
     at: i64,
-    dates: &impl Fn(&gateway_core::js_string::JsString16) -> Option<i64>,
+    dates: &impl Fn(&gateway_source::js_string::JsString16) -> Option<i64>,
 ) -> Result<SourceJson, GatewayError> {
     let empty = SourceJson::parse("{}")?;
     let quota = SourceObject::parse(account.quota.as_ref().unwrap_or(&empty))?;
@@ -529,7 +530,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             )?);
         }
         let mut document = crate::replay_values::SourceObject::parse(
-            &gateway_core::source_json::SourceJson::from_serializable(&body)?,
+            &gateway_source::source_json::SourceJson::from_serializable(&body)?,
         )?;
         document.set("claude_accounts", &source_accounts)?;
         document.set("claude", &source_active)?;

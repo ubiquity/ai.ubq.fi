@@ -1,5 +1,5 @@
 //! Finite portable host boundary. No credentials, caller endpoint or admission identity.
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, future::Future};
 

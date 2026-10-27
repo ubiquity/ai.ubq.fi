@@ -14,11 +14,14 @@ use gateway_auth::{
     },
     upstream::*,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, query::*,
-    source_control::decode_source_control_record, source_json::SourceJson, state::*,
-    value::ValueEncoding,
+    query::QueryPage, query::QueryRequest, query::QueryStore,
+    source_control::decode_source_control_record, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, value::ValueEncoding};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},

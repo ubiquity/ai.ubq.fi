@@ -5,7 +5,7 @@ use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
 use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_pool};
 use gateway_authority::{routing::LiveAccountSelection, store::Authority};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_live_runtime::types::LiveAccount;
 use gateway_worker_storage::store::now_ms;
 

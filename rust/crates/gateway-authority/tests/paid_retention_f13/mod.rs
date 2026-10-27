@@ -8,9 +8,9 @@ use gateway_authority::{
     paid_control::*,
     paid_types::{PaidAdmission, PaidAuthorization, PaidRequest, PaidRoutingPolicy},
 };
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::state::{AuthorityStore, RecordKey};
+use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, identity::RequestId};
+use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
+use gateway_core::state::AuthorityStore;
 use gateway_providers::types::ClientSurface;
 use serde_json::{Value, json};
 use support::*;
@@ -19,20 +19,20 @@ pub fn context(input: &PaidRequest) -> PaidRequestContext {
         ("model", input.model.to_source_json().unwrap()),
         (
             "stream",
-            gateway_core::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
+            gateway_source::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
         ),
     ];
     if let Some(effort) = &input.reasoning {
         fields.push((
             "reasoning",
-            gateway_core::source_serialization::object(vec![(
+            gateway_source::source_serialization::object(vec![(
                 "effort",
                 effort.to_source_json().unwrap(),
             )])
             .unwrap(),
         ));
     }
-    let body = gateway_core::source_serialization::object(fields).unwrap();
+    let body = gateway_source::source_serialization::object(fields).unwrap();
     PaidRequestContext {
         original_model: input.model.clone(),
         body,
@@ -45,7 +45,7 @@ pub fn context(input: &PaidRequest) -> PaidRequestContext {
     }
 }
 
-fn revision(store: &MemoryStore, key: &RecordKey) -> Option<String> {
+fn revision(store: &MemoryStore, key: &gateway_kv_codec::key::RecordKey) -> Option<String> {
     store.row(key).map(|row| row.revision)
 }
 
@@ -101,7 +101,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     );
-    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_core::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
+    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_source::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         store.seed(
             keys::paid_control_observation(provider),
@@ -272,7 +272,7 @@ fn f13_expired_history_must_not_recreate_a_retained_logical_paid_attempt() {
 fn original_context(
     store: &MemoryStore,
     input: &PaidRequest,
-) -> gateway_core::identity::RequestContext {
+) -> gateway_contracts::identity::RequestContext {
     serde_json::from_value(
         store
             .row(&super::paid_original::journal_key(&input.request_id.0))
@@ -627,9 +627,9 @@ fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() -> TestResu
 }
 
 fn local_phase_record(
-    phase: gateway_core::local_work::LocalWorkPhase,
-) -> gateway_core::local_work::LocalWorkRecord {
-    use gateway_core::local_work::{
+    phase: gateway_local_journal::local_work::LocalWorkPhase,
+) -> gateway_local_journal::local_work::LocalWorkRecord {
+    use gateway_local_journal::local_work::{
         LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase,
         LocalWorkRecord, SOURCE_REQUEST_BINDING_VERSION,
     };
@@ -646,20 +646,20 @@ fn local_phase_record(
             semantic: LocalSemanticOutcome::Incomplete,
             reader_termination: None,
             body: None,
-            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+            delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
         }),
     }
 }
 fn set_local_phase(
     store: &MemoryStore,
     input: &PaidRequest,
-    phase: gateway_core::local_work::LocalWorkPhase,
+    phase: gateway_local_journal::local_work::LocalWorkPhase,
 ) {
     let key = super::paid_original::journal_key(&input.request_id.0);
     let mut journal = store.row(&key).unwrap().value;
     journal["v"] = json!(2);
     journal["local_work"] = serde_json::to_value(local_phase_record(phase)).unwrap();
-    if phase == gateway_core::local_work::LocalWorkPhase::Terminal {
+    if phase == gateway_local_journal::local_work::LocalWorkPhase::Terminal {
         journal["finished"] = json!(true);
     }
     store.seed(key, &journal);
@@ -667,7 +667,7 @@ fn set_local_phase(
 #[test]
 fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatched_api() -> TestResult
 {
-    use gateway_core::local_work::LocalWorkPhase;
+    use gateway_local_journal::local_work::LocalWorkPhase;
     for local in [false, true] {
         for dispatched in [false, true] {
             let (store, authority, input, _) = setup();
@@ -719,7 +719,7 @@ fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatche
 }
 #[test]
 fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() {
-    use gateway_core::local_work::{LocalWorkPhase, journal_local_work};
+    use gateway_local_journal::local_work::{LocalWorkPhase, journal_local_work};
     for phase in [
         LocalWorkPhase::Admitting,
         LocalWorkPhase::Running,
@@ -736,7 +736,7 @@ fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() 
             .value;
         assert_eq!(
             journal_local_work(
-                &gateway_core::source_json::SourceJson::from_serializable(&row).unwrap()
+                &gateway_source::source_json::SourceJson::from_serializable(&row).unwrap()
             )
             .unwrap()
             .unwrap()
@@ -765,7 +765,7 @@ fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() 
 }
 #[test]
 fn f13_local_phase_malformed_missing_and_phase_only_permission_are_refused() {
-    use gateway_core::local_work::LocalWorkPhase;
+    use gateway_local_journal::local_work::LocalWorkPhase;
     for defect in [
         "missing_extension",
         "missing_owner",
@@ -813,7 +813,7 @@ fn f13_local_phase_malformed_missing_and_phase_only_permission_are_refused() {
 }
 #[test]
 fn f13_local_phase_nonplanned_or_malformed_active_dispatch_cannot_add_exposure() -> TestResult {
-    use gateway_core::local_work::LocalWorkPhase;
+    use gateway_local_journal::local_work::LocalWorkPhase;
     for malformed in [false, true] {
         let (store, authority, input, pre) = setup();
         let PaidAdmission::Reserved(paid) =

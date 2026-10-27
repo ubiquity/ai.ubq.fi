@@ -13,7 +13,7 @@ use gateway_admin_test_support::{
 };
 use gateway_auth::types::AuthResponse;
 use gateway_auth_native_wire::native_read::NativeReadRequest;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 type TestResult = Result<(), Box<dyn std::error::Error>>;

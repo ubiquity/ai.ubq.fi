@@ -1,9 +1,7 @@
 //! Source paid-fallback/ledger-stats.ts. Measurement cannot move a paid balance.
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_core::{
-    error::GatewayError,
-    query::{QuerySelector, QueryStore},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::query::{QuerySelector, QueryStore};
 use serde_json::{Value, json};
 const BUDGET: i64 = 5 * 1024 * 1024 * 1024;
 fn prefix() -> Vec<Value> {
@@ -17,7 +15,7 @@ fn prefix() -> Vec<Value> {
 fn day(at: i64) -> i64 {
     at.max(0) / store::DAY * store::DAY
 }
-fn key(at: i64) -> gateway_core::state::RecordKey {
+fn key(at: i64) -> gateway_kv_codec::key::RecordKey {
     let mut p = prefix();
     p.push(json!(day(at)));
     store::key(json!(p))

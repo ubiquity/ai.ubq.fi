@@ -2,12 +2,9 @@
 //! clock/currentness reconstruction, expiry renewal or storage operation occurs here.
 use super::{PaidAttempt, PaidRollup, provider_label, validate_attempt};
 use crate::{invalid, keys, text, validate_time};
-use gateway_core::{
-    error::GatewayError,
-    source_control::decode_source_control_record,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{DecodedKeyPart, TupleKey},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::{source_control::decode_source_control_record, state::StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 
 fn metadata(record: &StoredRecord) -> Result<(), GatewayError> {
     record.validate_version()?;

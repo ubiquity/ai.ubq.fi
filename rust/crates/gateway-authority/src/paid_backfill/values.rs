@@ -1,5 +1,6 @@
 use crate::{PAID_RETENTION_MS, add, nonnegative, paid_types::PaidAttempt, validate_time};
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use serde_json::{Value, json};
 
 pub(super) fn expiry(anchor: i64, now: i64) -> Result<i64, GatewayError> {
@@ -37,9 +38,9 @@ pub(super) fn window_anchor(value: &Value) -> Option<i64> {
     }
     safe(&value["window_reset_at_ms"], 1)
 }
-fn source_safe(value: Option<&gateway_core::source_json::SourceJson>, minimum: i64) -> Option<i64> {
+fn source_safe(value: Option<&gateway_source::source_json::SourceJson>, minimum: i64) -> Option<i64> {
     value
-        .and_then(gateway_core::source_serialization::number)
+        .and_then(gateway_source::source_serialization::number)
         .filter(|number| {
             number.is_finite()
                 && number.fract() == 0.0
@@ -48,13 +49,13 @@ fn source_safe(value: Option<&gateway_core::source_json::SourceJson>, minimum: i
         })
         .map(|number| number as i64)
 }
-fn source_finite(value: Option<&gateway_core::source_json::SourceJson>) -> Option<f64> {
+fn source_finite(value: Option<&gateway_source::source_json::SourceJson>) -> Option<f64> {
     value
-        .and_then(gateway_core::source_serialization::number)
+        .and_then(gateway_source::source_serialization::number)
         .filter(|number| number.is_finite() && *number >= 0.0)
 }
-fn valid_rollup(value: &gateway_core::source_json::SourceJson) -> bool {
-    use gateway_core::source_serialization as source;
+fn valid_rollup(value: &gateway_source::source_json::SourceJson) -> bool {
+    use gateway_source::source_serialization as source;
     source::member(value, "v").as_ref().and_then(source::number) == Some(1.0)
         && ["model", "provider"].iter().all(|field| {
             source::member(value, field)
@@ -81,14 +82,14 @@ fn valid_rollup(value: &gateway_core::source_json::SourceJson) -> bool {
 /// The sole historical merge engine. Model labels and unknown source leaves never
 /// enter Value; numeric accumulation and source invalid-row replacement are unchanged.
 pub(super) fn merge_source_rollup(
-    existing: Option<&gateway_core::source_json::SourceJson>,
+    existing: Option<&gateway_source::source_json::SourceJson>,
     row: &PaidAttempt,
-    model: &gateway_core::model::ModelId,
+    model: &gateway_contracts::model::ModelId,
     provider: &str,
     bucket: i64,
     now: i64,
-) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
-    use gateway_core::{source_json::SourceJson, source_serialization as source};
+) -> Result<gateway_source::source_json::SourceJson, GatewayError> {
+    use gateway_source::{source_json::SourceJson, source_serialization as source};
     let existing = existing.filter(|value| valid_rollup(value));
     let field = |name: &str| existing.and_then(|value| source::member(value, name));
     let count = |name: &str| source_safe(field(name).as_ref(), 0).unwrap_or(0);
@@ -176,7 +177,7 @@ pub(super) fn merge_rollup(
     now: i64,
 ) -> Result<Value, GatewayError> {
     let existing = existing
-        .map(gateway_core::source_json::SourceJson::from_serializable)
+        .map(gateway_source::source_json::SourceJson::from_serializable)
         .transpose()?;
     merge_source_rollup(existing.as_ref(), row, &model.into(), provider, bucket, now)?.deserialize()
 }

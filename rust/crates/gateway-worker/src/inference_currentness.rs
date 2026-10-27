@@ -4,14 +4,13 @@ use futures_util::{
     future::{Either, select},
     task::AtomicWaker,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_routing_runtime::{
     currentness::{ObservedRoutingLease, RoutingLeaseState},
     local_work::KERNEL_RENEWAL_INTERVAL_MS,
     types::RoutingError,
 };
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_platform::cancellation::{Cancellation, Deadline};
 use gateway_worker_storage::store::now_ms;
 use std::{
     cell::{Cell, RefCell},

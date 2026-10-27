@@ -15,10 +15,8 @@ use gateway_auth::{
     native_live::NativeLiveAuthenticator,
     provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
 };
-use gateway_core::{
-    identity::{ActiveSelection, ActiveTransitionReason, PoolVersionstamp},
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_contracts::identity::{ActiveSelection, ActiveTransitionReason, PoolVersionstamp};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use std::collections::BTreeSet;
 
 struct UniqueTokens(AtomicUsize);

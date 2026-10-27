@@ -2,7 +2,8 @@
 //! The host owns the strong paid-attempt read, current spend key, HTTP and one
 //! overall deadline. These plans cannot be deserialized from client input.
 use crate::types::Headers;
-use gateway_core::{error::GatewayError, provider::PaidProvider};
+use gateway_source::error::GatewayError;
+use gateway_contracts::provider::PaidProvider;
 use serde_json::Value;
 use url::Url;
 

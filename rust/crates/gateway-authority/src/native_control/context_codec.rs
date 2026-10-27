@@ -1,6 +1,6 @@
 //! Named context codec: stream typed fields before serde's internal-tag buffer can lose RawValue.
 use super::NativeRenewalContext;
-use gateway_core::{identity::AccountBinding, model::ModelId};
+use gateway_contracts::{identity::AccountBinding, model::ModelId};
 use serde::{
     Deserialize, Deserializer,
     de::{Error, MapAccess, Visitor},
@@ -170,7 +170,7 @@ impl<'de> Deserialize<'de> for NativeRenewalContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gateway_core::{
+    use gateway_source::{
         js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
     #[test]

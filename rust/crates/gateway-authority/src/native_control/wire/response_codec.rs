@@ -160,7 +160,8 @@ impl<'de> Deserialize<'de> for Response {
 mod tests {
     use super::*;
     use crate::native_control::NativeRenewalContext;
-    use gateway_core::{js_string::JsString16, model::ModelId};
+    use gateway_source::js_string::JsString16;
+    use gateway_contracts::model::ModelId;
 
     fn fence() -> NativeRenewalFence {
         NativeRenewalFence {

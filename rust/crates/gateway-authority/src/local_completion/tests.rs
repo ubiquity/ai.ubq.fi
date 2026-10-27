@@ -1,10 +1,11 @@
 use super::*;
 use crate::kernel::KernelWindow;
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
-use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::state::{
-    AtomicTransition, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
+use gateway_core::{
+    source_control::{decode_source_control_record, encode_source_control_record},
+    state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
@@ -583,7 +584,7 @@ fn real_dispatched_original_is_noop_with_no_api_compensation() {
         assert!(
             run(authority.dispatch_api_key(
                 api,
-                gateway_core::provider::UpstreamProvider::Surplus,
+                gateway_contracts::provider::UpstreamProvider::Surplus,
                 1_500
             ))
             .unwrap()
@@ -629,7 +630,7 @@ fn dispatched_foreign_or_malformed_original_never_becomes_local_intent() {
         run(
             Authority::new(f.store.clone(), f.store.clone()).dispatch_api_key(
                 api,
-                gateway_core::provider::UpstreamProvider::Surplus,
+                gateway_contracts::provider::UpstreamProvider::Surplus,
                 1_500,
             ),
         )

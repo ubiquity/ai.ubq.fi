@@ -15,15 +15,15 @@ use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
-use gateway_core::source_control::decode_source_control_record;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, identity::RequestId};
+use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
+use gateway_core::{
+    query::{QueryPage, QueryRequest, QueryStore},
+    source_control::decode_source_control_record,
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
     fixture_owner_statement, runtime_config_key,

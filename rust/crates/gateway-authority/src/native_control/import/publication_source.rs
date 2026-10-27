@@ -13,12 +13,11 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::publication_command as command;
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_core::{
-    identity::PoolVersionstamp,
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
-    state::{RecordMutation, StoredRecord},
+    source_control::encode_source_control_record, state::RecordMutation, state::StoredRecord,
 };
+use gateway_source::source_json::SourceJson;
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 use serde_json::{Value, json};
 

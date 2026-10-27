@@ -1,4 +1,5 @@
-use gateway_core::{source_json::SourceJson, source_usage::extract_source_usage_tokens};
+use gateway_source::source_json::SourceJson;
+use gateway_contracts::source_usage::extract_source_usage_tokens;
 use gateway_observability::prompt::PromptEvent;
 use serde_json::{Value, json};
 
@@ -83,7 +84,7 @@ fn absent_usage_clears_prior_counts_and_explicit_null_stays_invalid() {
         ]),
         json!(["missing", null, null, null, false])
     );
-    let usage = gateway_core::source_usage::extract_usage_tokens(Some(&Value::Null)).unwrap();
+    let usage = gateway_contracts::source_usage::extract_usage_tokens(Some(&Value::Null)).unwrap();
     event.set_source_usage(Some(&usage));
     assert_eq!(event.usage_telemetry_status, "invalid");
     assert_eq!(event.input_tokens, None);

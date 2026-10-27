@@ -1,8 +1,8 @@
 //! Source model/metadata views over the one core JSON and UTF16 implementation.
-use gateway_core::{
-    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use serde::Serialize;
+use {gateway_contracts::model::ModelId, serde::Serialize};
 
 pub(crate) fn json<T: Serialize + ?Sized>(value: &T) -> SourceJson {
     SourceJson::from_serializable(value).expect("typed model control is valid source JSON")

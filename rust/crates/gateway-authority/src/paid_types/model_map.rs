@@ -1,5 +1,6 @@
 //! Model-key object serde opts into the shared source string/object grammar.
-use gateway_core::{model::ModelId, source_json::SourceJson, source_serialization as source};
+use gateway_contracts::model::ModelId;
+use gateway_source::{source_json::SourceJson, source_serialization as source};
 use serde::{Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use std::collections::BTreeMap;
 
@@ -15,7 +16,7 @@ pub fn serialize<S: Serializer, T: Serialize>(
                 SourceJson::from_serializable(value)?,
             ))
         })
-        .collect::<Result<Vec<_>, gateway_core::error::GatewayError>>()
+        .collect::<Result<Vec<_>, gateway_source::error::GatewayError>>()
         .map_err(serde::ser::Error::custom)?;
     let raw = source::object_keys(fields).map_err(serde::ser::Error::custom)?;
     let fields = source::entries(&raw)

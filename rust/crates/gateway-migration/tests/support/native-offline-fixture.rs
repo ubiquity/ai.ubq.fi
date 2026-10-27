@@ -1,5 +1,5 @@
 //! Fixed synthetic source -> one persisted authority -> latest native inverse.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
 #[cfg(not(target_arch = "wasm32"))]
@@ -13,7 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     use fixture::{Directory, run};
     use gateway_auth::store::key;
-    use gateway_core::{source_graph::GraphNode, state::*};
+    use gateway_source_graph::graph::GraphNode;
+    use gateway_core::state::StoredRecord;
     use gateway_migration::{
         engine::adopt_empty,
         native_capture::{NativeCapture, prepare_native},
@@ -54,8 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Clock,
     );
     run(authority.reserve_api_key(
-        &gateway_core::identity::ApiKeyId("offline-key".into()),
-        &gateway_core::identity::RequestId("native-post-restart-admission".into()),
+        &gateway_contracts::identity::ApiKeyId("offline-key".into()),
+        &gateway_contracts::identity::RequestId("native-post-restart-admission".into()),
         "responses",
         2300,
     ))?;

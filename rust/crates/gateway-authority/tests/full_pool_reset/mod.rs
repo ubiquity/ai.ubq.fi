@@ -7,12 +7,10 @@ use gateway_authority::{
     reset_types::{ResetConfig, ResetMode, reset_invocation},
     routing_types::RouteSelection,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
-use gateway_core::js_string::JsString16;
-use gateway_core::provider::CodexQuotaClass;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, StoredRecord};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
+use gateway_contracts::provider::CodexQuotaClass;
+use gateway_core::state::StoredRecord;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 
@@ -83,7 +81,7 @@ fn setup_with_config(mode: Option<ResetMode>) -> TestResult<ResetSetup> {
     );
     Ok((store, authority, proof))
 }
-fn assert_history_unchanged(store: &MemoryStore, key: &RecordKey, saved: &StoredRecord) {
+fn assert_history_unchanged(store: &MemoryStore, key: &gateway_kv_codec::key::RecordKey, saved: &StoredRecord) {
     let current = store.row(key).expect("historical shadow row must remain");
     assert_eq!(current.schema_version, saved.schema_version);
     assert_eq!(current.value_encoding, saved.value_encoding);
@@ -285,7 +283,7 @@ fn unexpired_shadow_is_cached_without_requesting_new_inventory() -> TestResult {
 
 #[test]
 fn cached_profile_audit_preserves_unrelated_utf16_source_leaves() -> TestResult {
-    use gateway_core::value::PortableValue;
+    use gateway_kv_codec::value::PortableValue;
     let (store, authority, proof) = setup(ResetMode::Shadow)?;
     let first = plan(&authority, &proof)?;
     let rows = observations(&first, None);

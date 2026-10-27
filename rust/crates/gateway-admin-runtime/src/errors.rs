@@ -5,12 +5,9 @@ use crate::{
 };
 use gateway_admin_contracts::{fields, operations::AdminInput};
 use gateway_auth::types::{AuthHost, AuthResponse, invalid};
-use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::{query::QueryStore, state::StoredRecord};
+use gateway_kv_codec::value::{PortableValue, ValueEncoding};
 use gateway_profile_values::coercion::js_number;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

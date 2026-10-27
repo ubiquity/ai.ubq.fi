@@ -9,23 +9,24 @@ use gateway_auth::{
     provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
     types::AuthResponse,
 };
-use gateway_core::{
-    error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_core::query::QueryStore;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-fn reset_key(hash: &str) -> gateway_core::state::RecordKey {
+fn reset_key(hash: &str) -> gateway_kv_codec::key::RecordKey {
     gateway_authority::keys::reset_usage(hash)
 }
-fn marker_key() -> gateway_core::state::RecordKey {
+fn marker_key() -> gateway_kv_codec::key::RecordKey {
     store::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"
     ]))
 }
-fn legacy_key() -> gateway_core::state::RecordKey {
+fn legacy_key() -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
 }
 fn legacy_opt_out(value: Option<&Value>) -> bool {

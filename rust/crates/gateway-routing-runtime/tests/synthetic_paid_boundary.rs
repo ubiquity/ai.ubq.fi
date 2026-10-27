@@ -8,12 +8,11 @@ use gateway_authority::{
     },
     paid_types::PaidRoutingPolicy,
 };
-use gateway_core::{
-    lifecycle::TransportObservation,
-    provider::{PaidProvider, UpstreamProvider},
-    source_json::SourceJson,
-    state::AuthorityStore,
+use gateway_contracts::{
+    lifecycle::TransportObservation, provider::PaidProvider, provider::UpstreamProvider,
 };
+use gateway_source::source_json::SourceJson;
+use gateway_core::state::AuthorityStore;
 use gateway_providers::policy::{HopFailure, paid_hop_identity};
 use gateway_routing_runtime::{
     session::RoutingSession,

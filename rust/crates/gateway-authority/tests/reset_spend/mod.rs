@@ -8,10 +8,9 @@ use gateway_authority::{
     reset_types::{AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetRecord, ResetState},
     routing_types::{CohortProof, RouteSelection},
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
-use gateway_core::js_string::JsString16;
-use gateway_core::provider::CodexQuotaClass;
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
+use gateway_contracts::provider::CodexQuotaClass;
 use serde_json::json;
 use std::cmp::Ordering;
 
@@ -115,7 +114,7 @@ fn claim(authority: &TestAuthority, permit: &AutomaticResetPermit) -> ResetRecor
     };
     record
 }
-fn budget_key(permit: &AutomaticResetPermit) -> gateway_core::state::RecordKey {
+fn budget_key(permit: &AutomaticResetPermit) -> gateway_kv_codec::key::RecordKey {
     keys::reset_day(
         &permit.invocation().unwrap().identity.account_id_hash,
         &utc_day(NOW).unwrap(),

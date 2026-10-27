@@ -14,11 +14,9 @@ use gateway_authority::{
     paid_control::PaidControlOwner,
     routing_types::{PoolAccount, SubscriptionPool},
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::PoolVersionstamp,
-    state::{AuthorityStore, RecordMutation, RevisionCheck},
-};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::state::{AuthorityStore, RecordMutation, RevisionCheck};
 use gateway_publication_policy::control_publication::{conflict, unavailable, verify_owner};
 use serde_json::json;
 

@@ -6,10 +6,9 @@ use crate::host::provider_secret;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
 use gateway_compaction::types::{CompactionFailure, CompactionHost, FailureKind};
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_http_body::body;
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::random;
+use gateway_worker_platform::{cancellation::Cancellation, random};
 use protocol::{Call, RequestPlan};
 use worker::Method;
 

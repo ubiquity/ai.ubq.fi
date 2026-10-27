@@ -10,14 +10,13 @@ use crate::{
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
-use gateway_core::{
-    error::GatewayError,
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_contracts::{
     identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, RoutingAccountHash},
-    js_string::JsString16,
     model::ModelId,
     provider::{CodexQuotaClass, OveragePermission},
-    state::AuthorityStore,
 };
+use gateway_core::state::AuthorityStore;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
@@ -38,7 +37,7 @@ pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
 }
 // Only finite ASCII class comparisons consume this projection; original model data is untouched.
 fn lower_control_units(units: &[u16]) -> Vec<u16> {
-    gateway_core::js_string_case::lowercase_source(&JsString16::from_units(units.to_vec()))
+    gateway_source::js_string_case::lowercase_source(&JsString16::from_units(units.to_vec()))
         .as_units()
         .to_vec()
 }
@@ -61,7 +60,7 @@ pub struct LiveAccountSelection {
     pub active_generation: u64,
     pub quota_class: CodexQuotaClass,
     pub probe_required: bool,
-    pub model: Option<gateway_core::js_string::JsString16>,
+    pub model: Option<gateway_source::js_string::JsString16>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum LiveRouteSelection {
@@ -147,7 +146,7 @@ pub(crate) struct RoutingView {
     pub state: RoutingState,
     pub active: Option<ActiveSelection>,
     models: ModelAvailability,
-    models_source: gateway_core::source_json::SourceJson,
+    models_source: gateway_source::source_json::SourceJson,
     source_ids: BTreeMap<String, String>,
     pub(crate) capacity: CapacityStore,
     pub(crate) overage: BTreeMap<String, bool>,
@@ -501,7 +500,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Live preserves the source optional model and never mints an inference/quota/paid proof.
     pub async fn select_live_account(
         &self,
-        model: Option<&gateway_core::js_string::JsString16>,
+        model: Option<&gateway_source::js_string::JsString16>,
         now: i64,
     ) -> Result<LiveRouteSelection, GatewayError> {
         let lexical = model

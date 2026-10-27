@@ -2,9 +2,8 @@ use crate::{
     reset_types::{ResetCandidate, ResetConfig},
     routing_types::CohortProof,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{AccountBinding, RequestContext};
-use gateway_core::js_string::JsString16;
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_contracts::identity::{AccountBinding, RequestContext};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
@@ -151,14 +150,14 @@ impl AutomaticResetPermit {
         }
         Ok(())
     }
-    pub fn consume_body(&self) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
+    pub fn consume_body(&self) -> Result<gateway_source::source_json::SourceJson, GatewayError> {
         #[derive(Serialize)]
         struct Body<'a> {
             redeem_request_id: &'a str,
             credit_id: &'a JsString16,
         }
         let invocation = self.invocation()?;
-        gateway_core::source_json::SourceJson::from_serializable(&Body {
+        gateway_source::source_json::SourceJson::from_serializable(&Body {
             redeem_request_id: &invocation.idempotency_key,
             credit_id: &self.credit.credit_id,
         })

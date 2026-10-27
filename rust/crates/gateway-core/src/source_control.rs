@@ -1,9 +1,7 @@
 //! Finite JSON-tree conversion for explicitly selected control record families.
 //! This data codec never reads storage, validates a family, renews expiry or grants authority.
-use crate::{
-    state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
-};
+use crate::state::StoredRecord;
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;

@@ -8,10 +8,11 @@ use gateway_auth_primitives::{
     crypto::{Secret, sha256_hex},
     store,
 };
-use gateway_core::{
-    identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
-    state::{AuthorityStore, RecordKey},
+use gateway_contracts::identity::{
+    CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash,
 };
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

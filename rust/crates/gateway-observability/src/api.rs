@@ -2,9 +2,8 @@
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
 use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context, ProviderRequest};
 use gateway_auth::types::AuthResponse;
-use gateway_core::error::GatewayError;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::query::{QuerySelector, QueryStore};
-use gateway_core::source_json::SourceJson;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 const HOUR: i64 = 3_600_000;
@@ -13,7 +12,7 @@ fn signed_safe(v: &Value) -> bool {
         .is_some_and(|n| n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0)
 }
 pub fn valid_usage_rollup(v: &Value) -> bool {
-    gateway_core::source_json::SourceJson::from_serializable(v)
+    gateway_source::source_json::SourceJson::from_serializable(v)
         .is_ok_and(|document| crate::records::valid_usage_rollup_source(&document))
 }
 
@@ -245,7 +244,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let _ = self
             .record_projection_stats(days, reads as u64, rollup_count as u64)
             .await;
-        let mut fields = gateway_core::source_serialization::entries(&body)
+        let mut fields = gateway_source::source_serialization::entries(&body)
             .ok_or_else(|| store::error("Invalid source projection response"))?;
         fields.extend([
             ("balance_window_days".into(),SourceJson::from_serializable(&balance_days)?),
@@ -255,7 +254,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         ]);
         Ok(AuthResponse::source_json(
             200,
-            gateway_core::source_serialization::object_keys(fields)?,
+            gateway_source::source_serialization::object_keys(fields)?,
         ))
     }
     pub async fn analytics(
@@ -271,12 +270,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             AnalyticsRequest::PaidHistory { key_id, limit } => {
                 #[derive(serde::Serialize)]
                 struct History {
-                    data: Vec<gateway_core::source_json::SourceJson>,
+                    data: Vec<gateway_source::source_json::SourceJson>,
                 }
                 let data = self.request_logs(&key_id, limit).await?;
                 Ok(AuthResponse::source_json(
                     200,
-                    gateway_core::source_json::SourceJson::from_serializable(&History { data })?,
+                    gateway_source::source_json::SourceJson::from_serializable(&History { data })?,
                 ))
             }
             AnalyticsRequest::QuotaProjection {

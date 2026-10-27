@@ -1,13 +1,10 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_admin_contracts::operations::{AdminHost as _, AdminInput};
 use gateway_auth::{crypto::sha256_base64url, store::key};
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, RequestId},
-    source_json::SourceJson,
-    state::*,
-    value::PortableValue,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::identity::{ApiKeyId, RequestId};
+use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::value::PortableValue;
 use gateway_migration::capture::{PrivateCapture, SourceEntry};
 use gateway_migration::engine::{adopt_empty, prepare};
 use gateway_migration::error::MigrationError;
@@ -515,15 +512,15 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly()
         for (index, bytes) in chunks.iter().enumerate() {
             let key = chunk_key("0.163.0", "body-fixture", index, is_source);
             let decoded =
-                gateway_core::tuple_key::TupleKey::from_record_key(&key)?.decoded_parts()?;
+                gateway_kv_codec::tuple_key::TupleKey::from_record_key(&key)?.decoded_parts()?;
             let parts = Value::Array(
                 decoded
                     .into_iter()
                     .map(|p| match p {
-                        gateway_core::tuple_key::DecodedKeyPart::String(v) => {
+                        gateway_kv_codec::tuple_key::DecodedKeyPart::String(v) => {
                             String::from_utf8(v).map(|v| json!(v))
                         }
-                        gateway_core::tuple_key::DecodedKeyPart::Number(v) => Ok(json!(v)),
+                        gateway_kv_codec::tuple_key::DecodedKeyPart::Number(v) => Ok(json!(v)),
                         _ => panic!("fixture key"),
                     })
                     .collect::<Result<Vec<_>, _>>()?,
@@ -632,7 +629,7 @@ fn admin_input(body: Value) -> Result<AdminInput, GatewayError> {
     Ok(AdminInput {
         parameter: None,
         query: Default::default(),
-        body: gateway_core::source_json::SourceJson::from_serializable(&body)?,
+        body: gateway_source::source_json::SourceJson::from_serializable(&body)?,
         actor: gateway_auth::types::AuthPrincipal {
             token: None,
             method: gateway_auth::types::AuthMethod::AdminAllowlist,

@@ -6,13 +6,13 @@ use crate::{
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::model::ModelId;
-use gateway_core::provider::PaidProvider;
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
-use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
+use gateway_contracts::{model::ModelId, provider::PaidProvider};
+use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput};
 use gateway_providers::types::ClientSurface;
 use gateway_schema::{catalog_store, selection::ProviderSelection};
@@ -158,7 +158,7 @@ pub struct PaidRoutingReceipt {
     pub(crate) request: PaidRequest,
     pub(crate) context: PaidRequestContext,
     pub(crate) checks: Vec<RevisionCheck>,
-    pub(crate) original_request: Option<gateway_core::identity::RequestContext>,
+    pub(crate) original_request: Option<gateway_contracts::identity::RequestContext>,
     pub(crate) existing_paid: Option<crate::paid_types::PaidReservation>,
     owner_id: String,
     owner_epoch: String,

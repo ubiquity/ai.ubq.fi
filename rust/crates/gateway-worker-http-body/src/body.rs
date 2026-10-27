@@ -1,5 +1,5 @@
 use futures_util::StreamExt;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use worker::{AbortSignal, Request, Response, ResponseBody};
 
@@ -94,7 +94,7 @@ pub async fn request_bytes(
         let length = length
             .parse::<u64>()
             .ok()
-            .filter(|length| *length <= gateway_core::identity::MAX_SAFE_INTEGER as u64);
+            .filter(|length| *length <= gateway_contracts::identity::MAX_SAFE_INTEGER as u64);
         if !canonical || length.is_none_or(|length| length > max_bytes as u64) {
             cancel_body(raw_body).await;
             return Err(invalid_json());

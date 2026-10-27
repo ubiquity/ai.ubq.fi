@@ -4,7 +4,7 @@ use crate::{
     types::{CompactionFailure, CompactionHost},
 };
 use futures_util::{StreamExt, stream};
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 use serde::Serialize;
 use std::{cmp::Reverse, collections::BTreeMap};
 pub const CHUNK_CHARS: usize = 150_000;

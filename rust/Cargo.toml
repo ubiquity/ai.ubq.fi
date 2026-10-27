@@ -25,6 +25,11 @@ members = [
   "crates/gateway-quality",
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
+  "crates/gateway-contracts",
+  "crates/gateway-kv-codec",
+  "crates/gateway-source-graph",
+  "crates/gateway-local-journal",
+  "crates/gateway-redaction",
   "crates/gateway-compaction",
   "crates/gateway-schema",
   "crates/gateway-providers",
@@ -113,6 +118,11 @@ serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
 wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
+gateway-contracts = { path = "crates/gateway-contracts" }
+gateway-kv-codec = { path = "crates/gateway-kv-codec" }
+gateway-source-graph = { path = "crates/gateway-source-graph" }
+gateway-local-journal = { path = "crates/gateway-local-journal" }
+gateway-redaction = { path = "crates/gateway-redaction" }
 gateway-compaction = { path = "crates/gateway-compaction" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }

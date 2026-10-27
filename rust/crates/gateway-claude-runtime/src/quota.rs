@@ -5,10 +5,12 @@ use gateway_claude_usage_quota::{
     AUTH_INVALID_PROOF_TTL_MS, CONFIG_COOLDOWN_MS, Exhaustion, MIN_BLOCK_MS, PoolProof, QuotaError,
     QuotaObservation, QuotaState, RESET_MARGIN_MS, TRANSIENT_COOLDOWN_MS,
 };
-use gateway_core::{js_string::JsString16, model::ModelId, state::AuthorityStore};
+use gateway_source::js_string::JsString16;
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
 use std::collections::BTreeMap;
 fn safe_integer(n: f64) -> bool {
-    n.is_finite() && n.fract() == 0.0 && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+    n.is_finite() && n.fract() == 0.0 && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
 }
 pub(crate) struct Outcome<'a> {
     pub model: &'a ModelId,
@@ -190,7 +192,7 @@ pub async fn record_usage<S: AuthorityStore, H: AuthHost>(
     binding: &AccountBinding,
     observation: Option<&QuotaObservation>,
     usage: &gateway_claude_usage_protocol::state::UsageState,
-) -> Result<Option<QuotaState>, gateway_core::error::GatewayError> {
+) -> Result<Option<QuotaState>, gateway_source::error::GatewayError> {
     use gateway_auth::store::{check, commit};
     use gateway_core::state::RecordMutation;
     let now = usage.attempted_at_ms;
@@ -272,7 +274,7 @@ fn merge_observation(next: &mut QuotaState, observation: &QuotaObservation) {
         }
     }
     if let Some(snapshot) = &observation.usage_snapshot {
-        let at = |s: &gateway_core::source_json::SourceJson| {
+        let at = |s: &gateway_source::source_json::SourceJson| {
             gateway_claude_usage_protocol::snapshot::provenance(s).map(|(_, at)| at)
         };
         if next

@@ -2,10 +2,11 @@
 use gateway_admin_data::inventory::AuditInventory;
 use gateway_admin_data::inventory::SliceInventory;
 use gateway_admin_data::validate::source_fields;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_control::decode_source_control_record,
-    source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_core::source_control::decode_source_control_record;
 use gateway_migration_ledger::rows::ObservedRow;
 use serde_json::json;
 

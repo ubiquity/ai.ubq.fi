@@ -1,10 +1,9 @@
+use gateway_source::error::GatewayError;
 use gateway_core::{
-    error::GatewayError,
     query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability::types::ObservabilityHost;
 use std::{
     cell::{Cell, RefCell},
@@ -164,8 +163,8 @@ struct MissingSourceCollator;
 impl gateway_schema::aliases::SourceStringCollator for MissingSourceCollator {
     fn compare(
         &self,
-        _left: &gateway_core::js_string::JsString16,
-        _right: &gateway_core::js_string::JsString16,
+        _left: &gateway_source::js_string::JsString16,
+        _right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture has no captured source ordering.",

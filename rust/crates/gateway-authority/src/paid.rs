@@ -14,13 +14,13 @@ use crate::{
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
-use gateway_core::{
-    error::GatewayError,
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
     identity::{ApiKeyId, MicrocreditLimit, PaidAttemptId},
     lifecycle::{BillingState, DispatchState, PaidTerminalState},
     provider::PaidProvider,
-    state::AuthorityStore,
 };
+use gateway_core::state::AuthorityStore;
 pub mod source_records;
 pub mod source_usage;
 
@@ -618,7 +618,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     (usage.provider_quota * 1_000_000.0 / row.quota_per_credit as f64).round();
                 if !value.is_finite()
                     || value < 0.0
-                    || value > gateway_core::identity::MAX_SAFE_INTEGER as f64
+                    || value > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
                 {
                     return Err(invalid("Provider spend is outside the safe integer range."));
                 }
@@ -628,7 +628,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 keys::paid_window(&reservation.key_id.0, reservation.window_reset_at_ms);
             let window: Option<PaidWindow> = tx.read(&window_key).await?;
             let bucket = reservation.created_at_ms / 3_600_000 * 3_600_000;
-            let model = gateway_core::model::ModelId::from_source(
+            let model = gateway_contracts::model::ModelId::from_source(
                 gateway_schema::reasoning::js_trim_source(row.model.as_js_string()),
             );
             let rollup_key = keys::paid_rollup_model(

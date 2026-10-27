@@ -21,15 +21,11 @@ use gateway_auth::provider_credentials::{
 };
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
-use gateway_core::identity::PoolVersionstamp;
-use gateway_core::js_string::JsString16;
-use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
-use gateway_core::{
-    model::ModelId,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    value::ValueEncoding,
-};
+use gateway_contracts::{identity::PoolVersionstamp, model::ModelId};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_kv_codec::value::ValueEncoding;
 use std::collections::BTreeSet;
 
 struct Sequence(AtomicUsize);
@@ -695,7 +691,7 @@ fn source_custody_case(template: &rows::ActionRow, case: usize, units: Vec<u16>)
         slot: 0,
     };
     let context_document = SourceJson::from_serializable(&row.fence.context)?;
-    let _: ModelId = gateway_core::source_serialization::member(&context_document, "model")
+    let _: ModelId = gateway_source::source_serialization::member(&context_document, "model")
         .ok_or("missing value")?
         .deserialize()?;
     let _: NativeRenewalContext = serde_json::from_str(context_document.as_str())

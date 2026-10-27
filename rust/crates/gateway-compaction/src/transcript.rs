@@ -5,7 +5,7 @@ use crate::{
     text::{self, Text},
     types::{CompactionFailure, CompactionStats},
 };
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use std::{collections::BTreeMap, rc::Rc};
 pub const SUMMARY_MARKER: &str = "# fast-jev-compaction memory summary";

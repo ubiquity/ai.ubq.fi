@@ -23,7 +23,8 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_core::state::AuthorityStore;
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 #[derive(Clone, Copy)]
 enum TerminalProjection {

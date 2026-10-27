@@ -1,16 +1,14 @@
 use gateway_authority::store::TokenSource;
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_core::{
-    js_string::JsString16,
-    model::ModelId,
-    provider::UpstreamProvider,
     source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
-    value::ValueEncoding,
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck},
+};
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey, value::ValueEncoding,
 };
 use gateway_providers::{
     source_request::prepare_source_request,

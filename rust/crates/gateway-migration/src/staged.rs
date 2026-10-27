@@ -5,10 +5,9 @@ use gateway_authority::{
     initial_control_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts},
     paid_control::PaidControlOwner,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_core::state::StoredRecord;
-use gateway_core::tuple_key::TupleKey;
 use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck},
@@ -20,8 +19,7 @@ use std::collections::{BTreeSet, VecDeque};
 pub const STAGED_BATCH_MAX_BYTES: usize = crate::operational::PRIVATE_WIRE_MAX_BYTES;
 const PREFERRED_BATCH_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) mod record_key_wire {
-    use gateway_core::state::RecordKey;
-    use gateway_core::tuple_key::TupleKey;
+    use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
     use serde::Deserialize;
     pub fn serialize<S: serde::Serializer>(
         key: &RecordKey,
@@ -726,10 +724,10 @@ fn validate_owner_binding(binding: &StageOwnerBinding) -> Result<(), GatewayErro
                 || !hex(&account.access_generation, 64)
                 || !accounts.insert(account.account_id_hash.clone())
         })
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.source_captured_at_ms)
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.custody_observed_at_ms)
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.valid_through_ms)
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&binding.bound_at_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&binding.source_captured_at_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&binding.custody_observed_at_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&binding.valid_through_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&binding.bound_at_ms)
         || binding.source_captured_at_ms > binding.custody_observed_at_ms
         || binding.valid_through_ms < binding.custody_observed_at_ms
         || binding.bound_at_ms < binding.custody_observed_at_ms

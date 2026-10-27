@@ -2,11 +2,9 @@ use gateway_auth::{
     api_keys::ApiKeyPolicy,
     types::{AuthMethod, AuthPrincipal},
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::{PrincipalId, RequestContext, RequestId},
-    model::ModelId,
-    source_json::SourceJson,
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::{
+    identity::PrincipalId, identity::RequestContext, identity::RequestId, model::ModelId,
 };
 use gateway_extras_contract::types::{
     DispatchFailure, ExtrasDispatch, ExtrasHost, ExtrasProvider, ExtrasRequest, ExtrasRoute,

@@ -11,7 +11,9 @@ use gateway_authority::{
     routing_types::{PoolAccount, SubscriptionPool},
     store::{Authority, AuthorityClock, TokenSource},
 };
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, state::StoredRecord};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::state::StoredRecord;
 use gateway_observability::{ObservabilityRuntime, host_types::*, types::ObservabilityHost};
 use serde_json::{Value, json};
 use std::{

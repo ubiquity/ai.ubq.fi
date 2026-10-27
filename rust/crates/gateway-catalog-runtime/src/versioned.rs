@@ -3,10 +3,11 @@ use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
     CatalogProvider, CodexAccount, CredentialPublication, unavailable,
 };
-use gateway_core::{
-    error::GatewayError, model::ModelId, query::QueryStore, source_json::SourceJson,
-    source_serialization as source,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
+use gateway_core::query::QueryStore;
 use gateway_schema::{
     catalog_cache::{self, CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,

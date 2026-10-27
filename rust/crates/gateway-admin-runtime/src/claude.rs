@@ -7,14 +7,15 @@ use gateway_auth::{
     store::{check, commit},
     types::AuthHost,
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
 };
+use gateway_core::{
+    source_control::{decode_source_control_record, encode_source_control_record},
+    state::{AuthorityStore, RecordMutation, RevisionCheck, StoredRecord},
+};
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use source_secret::ClaudeSourceSecret;
@@ -311,7 +312,7 @@ pub fn parse_source_roster(value: &SourceJson) -> Result<AccountStore, GatewayEr
         .ok_or_else(invalid)?;
     let time = member(value, "updated_at_ms")
         .and_then(|v| v.deserialize::<i64>().ok())
-        .filter(|v| *v > 0 && *v <= gateway_core::identity::MAX_SAFE_INTEGER)
+        .filter(|v| *v > 0 && *v <= gateway_contracts::identity::MAX_SAFE_INTEGER)
         .ok_or_else(invalid)?;
     Ok(AccountStore {
         v: 1,

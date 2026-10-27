@@ -6,7 +6,9 @@ use gateway_authority::{
     routing_types::{CapacityState, CohortProof, RouteSelection},
     store::{Authority, TokenSource},
 };
-use gateway_core::{error::GatewayError, model::ModelId, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
 use gateway_observability::{
     capacity_shapes,
     host_types::{CapacityAccountRef, CapacityProbe},

@@ -1,11 +1,14 @@
 //! Independent paid attempt, semantic terminal and billing record contracts.
 use crate::claude::ClaudeCohortProof;
 use crate::routing_types::CohortProof;
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-use gateway_core::{js_string::JsString16, model::ModelId};
+use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, identity::RequestId};
+use gateway_source::js_string::JsString16;
+use gateway_contracts::model::ModelId;
 pub mod model_map;
-use gateway_core::lifecycle::{BillingState, DispatchState, PaidTerminalState};
-use gateway_core::provider::PaidProvider;
+use gateway_contracts::{
+    lifecycle::{BillingState, DispatchState, PaidTerminalState},
+    provider::PaidProvider,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -178,7 +181,7 @@ fn serialize_rollup_spend<S: serde::Serializer>(
     if !value.is_finite() || *value < 0.0 {
         return Err(serde::ser::Error::custom("Invalid source aggregate spend"));
     }
-    if value.fract() == 0.0 && *value <= gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+    if value.fract() == 0.0 && *value <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64 {
         serializer.serialize_i64(*value as i64)
     } else {
         serializer.serialize_f64(*value)

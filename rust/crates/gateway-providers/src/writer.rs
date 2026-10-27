@@ -1,7 +1,7 @@
 //! Ordered Responses item lifecycles shared by Chat and native Messages decoders.
 use crate::{source as s, tools, types::*};
-use gateway_core::lifecycle::SemanticTerminal;
-use gateway_core::source_json::SourceJson;
+use gateway_contracts::lifecycle::SemanticTerminal;
+use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug)]

@@ -1,7 +1,7 @@
 //! Original admin-contract clock, entropy and denied host capabilities.
 use gateway_auth::types::AuthHost;
 use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::cell::Cell;
 
 #[derive(Default)]

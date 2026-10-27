@@ -3,13 +3,14 @@ use super::{PreparedTarget, model::*};
 use crate::store::{Authority, TokenSource, Transaction};
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::model::ModelId;
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
-use gateway_core::state::{AuthorityStore, RecordKey};
-use gateway_core::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart::String as Text, tuple_key::TupleKey};
 use gateway_schema::{runtime_config::normalize_runtime_config, snapshot::ModelSnapshot};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

@@ -1,6 +1,6 @@
 //! Actual source-aware provider parser output; no network or JavaScript projector.
 use gateway_catalog_provider::{host::CatalogProvider, providers};
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 fn parse(value: &str) -> SourceJson {
@@ -69,7 +69,7 @@ fn scalar_surplus_prices_and_source_text_filter_are_unchanged() {
 
 #[test]
 fn metadata_join_uses_the_shared_contextual_lowercase_and_preserves_opaque_exact_tiers() {
-    use gateway_core::model::ModelId;
+    use gateway_contracts::model::ModelId;
     let rows = vec![
         parse(r#"{"id":"vendor/ΟΣ\ud800","context_window_tokens":10}"#),
         parse(r#"{"id":"vendor/other\udc00","context_window_tokens":20}"#),

@@ -14,7 +14,7 @@ use gateway_claude_usage_admin::{
     check_target_cohort, matching_target, readback::subscription_block, select_source_account,
     submitted_workspace,
 };
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

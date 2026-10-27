@@ -2,15 +2,13 @@ use gateway_auth::types::AuthMethod;
 use gateway_authority::{
     REQUEST_LEASE_MS, kernel::KernelPolicy, keys, quota::ApiReservation, store::Authority,
 };
+use gateway_source::error::GatewayError;
+use gateway_contracts::lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination};
 use gateway_core::{
-    error::GatewayError,
-    lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
     query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_routing_runtime::{
     local_work::{
         completion::response::{LocalAccountingProgress, LocalSelectedResponse, LocalWireKind},
@@ -472,7 +470,7 @@ fn source_release_noops_do_not_refund_dispatched_or_require_a_missing_request_ro
             _ => {
                 run(authority.dispatch_api_key(
                     &reservation,
-                    gateway_core::provider::UpstreamProvider::ChatgptCodex,
+                    gateway_contracts::provider::UpstreamProvider::ChatgptCodex,
                     NOW,
                 ))
                 .unwrap();
