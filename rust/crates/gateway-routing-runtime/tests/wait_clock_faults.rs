@@ -1,4 +1,4 @@
-use gateway_authority::store::AuthorityClock;
+use gateway_authority_contracts::AuthorityClock;
 use gateway_core::{
     error::GatewayError,
     lifecycle::TransportObservation,

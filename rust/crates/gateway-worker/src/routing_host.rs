@@ -4,8 +4,8 @@ use crate::host::PlatformHost;
 use gateway_auth::crypto::Secret;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_auth::types::AuthPrincipal;
-use gateway_authority::paid_types::{PaidReservation, PaidUsage};
-use gateway_authority::routing_types::CohortProof;
+use gateway_authority_paid_records::{PaidReservation, PaidUsage};
+use gateway_authority_routing_selection::types::CohortProof;
 use gateway_core::error::GatewayError;
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::state::{AuthorityStore, RecordKey};
@@ -291,8 +291,9 @@ impl RoutingHost for Host {
         )
         .await?;
         let current_proof = match selection {
-            Some(gateway_authority::routing_types::RouteSelection::QuotaBlocked {
-                proof, ..
+            Some(gateway_authority_routing_selection::types::RouteSelection::QuotaBlocked {
+                proof,
+                ..
             }) => proof,
             Some(_) => return Ok(CodexRecovery::Reselect),
             None => proof.clone(),
@@ -404,18 +405,18 @@ impl Host {
         .ok_or_else(|| unavailable("The paid provider credential is not configured."))?;
         let owner = self
             .store
-            .read(&gateway_authority::keys::paid_control_owner())
+            .read(&gateway_authority_keys::paid_control_owner())
             .await?
             .ok_or_else(|| unavailable("The paid control owner is not configured."))?;
         let configuration = self
             .store
-            .read(&gateway_authority::keys::paid_control_config())
+            .read(&gateway_authority_keys::paid_control_config())
             .await?
             .ok_or_else(|| unavailable("The paid control configuration is not published."))?;
-        let owner: gateway_authority::paid_control::PaidControlOwner =
+        let owner: paid_records::PaidControlOwner =
             serde_json::from_value(owner.json_value()?.clone())
                 .map_err(|_| unavailable("The paid control owner is invalid."))?;
-        let configuration: gateway_authority::paid_control::PaidControlConfig =
+        let configuration: paid_records::PaidControlConfig =
             serde_json::from_value(configuration.json_value()?.clone())
                 .map_err(|_| unavailable("The paid control configuration is invalid."))?;
         let binding = gateway_publication_policy::control_publication::configured_paid_binding(
@@ -428,7 +429,7 @@ impl Host {
             configuration.openlux_binding.as_ref()
         };
         if owner.v != 1
-            || configuration.v != gateway_authority::paid_control::PAID_CONTROL_CONFIG_VERSION
+            || configuration.v != paid_records::PAID_CONTROL_CONFIG_VERSION
             || owner.owner_id != configuration.owner_id
             || owner.owner_epoch != configuration.owner_epoch
             || expected != Some(&binding)

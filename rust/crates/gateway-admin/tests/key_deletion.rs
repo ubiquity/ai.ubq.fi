@@ -13,6 +13,9 @@ use gateway_auth::{
     crypto::Secret,
     types::{AuthHost, AuthResponse},
 };
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_core::{
     error::GatewayError,
     source_json::SourceJson,
@@ -210,7 +213,7 @@ struct PaidRaceStore<'a> {
 }
 
 struct PaidFixtureClock;
-impl gateway_authority::store::AuthorityClock for PaidFixtureClock {
+impl gateway_authority_contracts::AuthorityClock for PaidFixtureClock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(1_000_000)
     }
@@ -222,10 +225,7 @@ async fn paid_fixture_owner_proof(
     identity: &gateway_auth::native_auth::NativeTransportIdentity,
     body: &[u8],
 ) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
-    use gateway_auth::{
-        crypto::base64url, native_auth::*,
-        native_replay::StoreNonceAuthority,
-    };
+    use gateway_auth::{crypto::base64url, native_auth::*, native_replay::StoreNonceAuthority};
     use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
     let nonce = base64url(&host.random_bytes(32).unwrap());
     let time = host.now_ms().to_string();
@@ -255,7 +255,8 @@ async fn prepare_paid_fixture_custody(
     host: &Host,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-    use gateway_authority::{keys, paid_control, paid_types::PaidRoutingPolicy};
+    use gateway_authority_keys as keys;
+    use gateway_authority_paid_control_records::{self as paid_control, PaidRoutingPolicy};
     use gateway_core::provider::PaidProvider;
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
@@ -314,7 +315,7 @@ async fn prepare_paid_fixture_custody(
         StoredRecord::json("race-observation", serde_json::to_value(observation)?, None),
     );
     let mut source_checks = Vec::new();
-    for key in paid_control::paid_projection_source_keys() {
+    for key in gateway_authority_paid_evidence::paid_projection_source_keys() {
         source_checks.push(paid_control::PaidSourceCheck {
             expected_revision: store.read(&key).await?.map(|row| row.revision),
             key: key.0,
@@ -349,7 +350,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
         self.store.read(key).await
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let attempt = gateway_authority::keys::paid_attempt(&self.key_id, "racing-attempt");
+        let attempt = gateway_authority_keys::paid_attempt(&self.key_id, "racing-attempt");
         if transition
             .mutations
             .iter()
@@ -395,10 +396,9 @@ impl AuthorityStore for PaidRaceStore<'_> {
 fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission()
 -> Result<(), Box<dyn std::error::Error>> {
     run(async {
-        use gateway_authority::{
-            paid_control::PaidRequestContext,
-            paid_types::{PaidAuthorization, PaidRequest},
-        };
+        use gateway_authority_paid_control_records::PaidRequestContext;
+        use gateway_authority_paid_records::PaidRequest;
+        use gateway_authority_paid_route::authorization::PaidAuthorization;
         use gateway_core::{
             identity::{ApiKeyId, PaidAttemptId, RequestId},
             provider::PaidProvider,
@@ -483,10 +483,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         );
         assert!(
             store
-                .read(&gateway_authority::keys::paid_attempt(
-                    &id,
-                    "racing-attempt"
-                ))
+                .read(&gateway_authority_keys::paid_attempt(&id, "racing-attempt"))
                 .await?
                 .is_none()
         );
@@ -498,9 +495,9 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
 async fn bind_paid_fixture_original(
     authority: &gateway_authority::store::Authority<PaidRaceStore<'_>, &Host>,
     store: &Store,
-    request: &gateway_authority::paid_types::PaidRequest,
-    receipt: &gateway_authority::paid_control::PaidRoutingReceipt,
-) -> Result<gateway_authority::paid_control::PaidRoutingReceipt, GatewayError> {
+    request: &gateway_authority_paid_records::PaidRequest,
+    receipt: &gateway_authority_paid_route::PaidRoutingReceipt,
+) -> Result<gateway_authority_paid_route::PaidRoutingReceipt, GatewayError> {
     // Controlled authority regression: use the canonical finite original
     // fixture chain, not a route-only receipt or a Worker-runtime claim.
     let original = gateway_core::identity::RequestContext {
@@ -534,7 +531,7 @@ async fn bind_paid_fixture_original(
                 "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
                 "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
                 "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,
-                "lease_expires_at_ms":1_000_000+gateway_authority::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
+                "lease_expires_at_ms":1_000_000+gateway_authority_contracts::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
                 "extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null
             }),
             None,

@@ -1,18 +1,11 @@
 //! Data-only custody of the actual private routing journal. Never mints a runtime capability.
-use crate::{
-    journal::{self, Journal},
-    types::CredentialFence,
-};
-use gateway_core::{
-    error::GatewayError,
-    identity::MAX_SAFE_INTEGER,
-    model::ModelId,
-    provider::{PaidProvider, UpstreamProvider},
-    source_control::decode_source_control_record,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{DecodedKeyPart, TupleKey},
-};
-use std::collections::{BTreeMap, BTreeSet};
+use crate::{journal, journal::Journal, types::CredentialFence};
+use gateway_authority_contracts::TokenSource;
+use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, model::ModelId};
+use gateway_core::{provider::PaidProvider, provider::UpstreamProvider};
+use gateway_core::{source_control::decode_source_control_record, state::RecordKey};
+use gateway_core::{state::StoredRecord, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use std::{collections::BTreeMap, collections::BTreeSet};
 
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
@@ -196,7 +189,7 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
         Some(
             row.context
                 .started_at_ms
-                .checked_add(gateway_authority::PAID_RETENTION_MS)
+                .checked_add(gateway_authority_contracts::PAID_RETENTION_MS)
                 .ok_or_else(invalid)?,
         )
     } else {
@@ -406,7 +399,7 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
 mod tests {
     type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
     use super::*;
-    use gateway_authority::store::TokenSource;
+
     use gateway_core::{
         identity::{PrincipalId, RequestContext, RequestId},
         local_work::{
@@ -515,8 +508,9 @@ mod tests {
         );
         journal.terminal_intent = finished.then(Default::default);
         journal.finished = finished;
-        let expiry = finished
-            .then_some(journal.context.started_at_ms + gateway_authority::PAID_RETENTION_MS);
+        let expiry = finished.then_some(
+            journal.context.started_at_ms + gateway_authority_contracts::PAID_RETENTION_MS,
+        );
         Ok((
             journal::key(&journal.context.request_id.0),
             StoredRecord::json("fixture-revision", serde_json::to_value(journal)?, expiry),
@@ -623,7 +617,7 @@ mod tests {
                 .ok_or("missing finished session row")?;
             assert_eq!(
                 session.expires_at_ms,
-                Some(1_800_000_000_000 + gateway_authority::PAID_RETENTION_MS)
+                Some(1_800_000_000_000 + gateway_authority_contracts::PAID_RETENTION_MS)
             );
             validate_journal_rows(
                 finished

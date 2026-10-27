@@ -4,7 +4,7 @@ use crate::{
     session::RoutingSession,
     types::*,
 };
-use gateway_authority::store::{AuthorityClock, TokenSource};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::{claude::ClaudeErrorEvidence, error::GatewayError, query::QueryStore};
 
 impl<

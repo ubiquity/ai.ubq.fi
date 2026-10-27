@@ -1,21 +1,21 @@
-use crate::{
-    classify,
-    journal::{self, AttemptRecord, BillingUsage, Journal, Phase, unavailable},
-    session::RoutingSession,
-    settlement,
-    types::{
-        AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin, PreparedAttempt,
-        RecoveredSession, RefreshOutcome, RefusalDecision, RevisionCheckWire, RoutingHost,
-        RoutingResult, TransportState,
-    },
-};
-use gateway_authority::kernel::KernelTerminal;
-use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
+use crate::{classify, journal, settlement, types::RoutingHost, types::RoutingResult};
+use crate::{journal::AttemptRecord, journal::BillingUsage, journal::Journal, journal::Phase};
+use crate::{journal::unavailable, session::RoutingSession, types::AttemptFailure};
+use crate::{types::AttemptUsage, types::CredentialFence, types::FailureOrigin};
+use crate::{types::PreparedAttempt, types::RecoveredSession, types::TransportState};
+use crate::{types::RefreshOutcome, types::RefusalDecision, types::RevisionCheckWire};
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_authority_paid_route::PaidRouteOperations;
+use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
+use gateway_authority_routing_signal::SignalOperations;
 use gateway_core::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::query::QueryStore;
-use gateway_providers::policy::{HopDecision, HopFailure};
+use gateway_core::{error::GatewayError, provider::UpstreamProvider, query::QueryStore};
+use gateway_providers::{policy::HopDecision, policy::HopFailure};
 
 impl<
     S: QueryStore + Clone,
@@ -140,7 +140,7 @@ impl<
                     .into());
                 }
             };
-            let input = gateway_authority::paid_types::PaidRequest {
+            let input = gateway_authority_paid_records::PaidRequest {
                 key_id: reservation.key_id.clone(),
                 request_id: reservation.request_id.clone(),
                 attempt_id: reservation.attempt_id.clone(),
@@ -173,7 +173,7 @@ impl<
                 .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
-                gateway_authority::paid_types::PaidAuthorization::DirectPaidModel
+                gateway_authority_paid_route::authorization::PaidAuthorization::DirectPaidModel
             } else {
                 self.paid_authorization(row).await?
             };
@@ -182,7 +182,7 @@ impl<
                 .reserve_paid(&input, &authorization, &receipt, self.now()?)
                 .await?
             {
-                gateway_authority::paid_types::PaidAdmission::Existing(current)
+                gateway_authority_paid_records::PaidAdmission::Existing(current)
                     if current == *reservation => {}
                 _ => {
                     return Err(unavailable("The paid reservation changed before dispatch.").into());
@@ -409,7 +409,7 @@ impl<
         &self,
         row: &Journal,
         record: &AttemptRecord,
-        admission: &gateway_authority::routing_types::AdmittedAccount,
+        admission: &AdmittedAccount,
         failure: &AttemptFailure,
     ) -> RoutingResult<bool> {
         if let Some(block) = classify::codex_quota(

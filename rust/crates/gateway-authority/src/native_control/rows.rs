@@ -1,9 +1,6 @@
 use super::NativeRenewalFence;
-use gateway_core::{
-    error::GatewayError,
-    state::RecordKey,
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_core::{state::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub(super) fn key(kind: &str, id: &str) -> RecordKey {
@@ -53,7 +50,7 @@ pub(super) fn conflict() -> GatewayError {
     )
 }
 
-use super::actor::StoredNativeActor as Actor;
+use gateway_authority_actor_records::legacy::StoredNativeActor as Actor;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

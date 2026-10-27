@@ -6,6 +6,41 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
+gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
+gateway-source.workspace = true
+gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
+gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }
+gateway-cache-experiment-evidence = { path = "../gateway-cache-experiment-evidence" }
+gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
+gateway-authority-reset-recovery = { path = "../gateway-authority-reset-recovery" }
+gateway-authority-reset-spend = { path = "../gateway-authority-reset-spend" }
+gateway-authority-reset-claim = { path = "../gateway-authority-reset-claim" }
+gateway-authority-reset-permit = { path = "../gateway-authority-reset-permit" }
+gateway-authority-reset-evidence = { path = "../gateway-authority-reset-evidence" }
+gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
+gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
+gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission" }
+gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-routing-policy = { path = "../gateway-authority-routing-policy" }
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-claude-proof = { path = "../gateway-authority-claude-proof" }
+gateway-authority-capacity = { path = "../gateway-authority-capacity" }
+gateway-authority-capacity-policy = { path = "../gateway-authority-capacity-policy" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-kernel = { path = "../gateway-authority-kernel" }
+gateway-authority-local-completion = { path = "../gateway-authority-local-completion" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-authority-api-release = { path = "../gateway-authority-api-release" }
+gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-auth-native-wire.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
@@ -17,6 +52,10 @@ serde_json.workspace = true
 sha2 = "=0.11.0"
 
 [dev-dependencies]
+gateway-authority-paid-test-support.workspace = true
+gateway-source.workspace = true
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
+gateway-authority-test-support = { path = "../gateway-authority-test-support" }
 gateway-routing-runtime-test-support.workspace = true
 
 [target.'cfg(unix)'.dependencies]

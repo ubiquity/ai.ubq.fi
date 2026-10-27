@@ -17,11 +17,12 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
     NATIVE_VERSION_HEADER,
 };
-use gateway_authority::native_control::{
-    NativeRenewalCancellation,
-    receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
+use gateway_authority::store::Authority;
+use gateway_authority::{
+    native_control::NativeRenewalCancellation, native_control::receiver::NativeRenewalAuthority,
+    native_control::receiver::RegisteredRenewalOwner,
 };
-use gateway_authority::store::{Authority, TokenSource};
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use std::{
     io::{Read, Write},

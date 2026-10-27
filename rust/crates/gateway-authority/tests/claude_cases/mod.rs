@@ -1,8 +1,14 @@
-use super::*;
-use crate::TestResult;
-use gateway_core::js_string::JsString16;
-use gateway_core::state::StoredRecord;
-use gateway_core::value::PortableValue;
+use gateway_authority_claude_proof::ClaudeProofOperations;
+use gateway_authority_keys as keys;
+use gateway_authority_paid_records::{PaidAdmission, PaidWindow};
+use gateway_authority_paid_route::authorization::PaidAuthorization;
+use gateway_authority_test_support::{TestResult, paid_request, paid_setup, reserve_paid};
+use gateway_core::{provider::PaidProvider, state::RecordKey};
+use gateway_core::{state::StoredRecord, value::PortableValue};
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
+use gateway_routing_runtime_test_support::{authority::Tokens, authority::authority};
+use gateway_routing_runtime_test_support::{authority::policy, authority::run};
+use gateway_source::js_string::JsString16;
 
 fn claude_roster() -> serde_json::Value {
     let fingerprints = [
@@ -750,9 +756,8 @@ fn claude_existing_pending_attempt_cannot_reuse_expired_authorization() {
 
 #[test]
 fn claude_model_proof_retains_lone_units_and_never_matches_escape_text_or_other_model() {
-    use gateway_core::{
-        model::ModelId, source_control::encode_source_control_record, source_json::SourceJson,
-    };
+    use gateway_core::{model::ModelId, source_control::encode_source_control_record};
+    use gateway_source::source_json::SourceJson;
     let store = MemoryStore::default();
     let roster = claude_setup(&store);
     let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));

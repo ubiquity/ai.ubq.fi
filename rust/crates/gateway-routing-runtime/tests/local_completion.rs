@@ -1,7 +1,11 @@
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    REQUEST_LEASE_MS, kernel::KernelPolicy, keys, quota::ApiReservation, store::Authority,
-};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::REQUEST_LEASE_MS;
+use gateway_authority_kernel_protocol::KernelPolicy;
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
@@ -49,7 +53,7 @@ fn admission(store: &Store, id: &str, kernel: bool) -> LocalAdmissionInput {
                 owner: "owner".into(),
                 repo: Some("repo".into()),
                 usage_limit_requests: 10,
-                window_ms: gateway_authority::DAY_MS,
+                window_ms: gateway_authority_contracts::DAY_MS,
                 expires_at_ms: -1,
             },
         );

@@ -1,5 +1,5 @@
 //! Exact source redemption/day validation; no redemption or promotion capability is minted.
-use gateway_authority::reset_types::{ResetRecord, ResetState};
+use gateway_authority_reset_records::{ResetRecord, ResetState};
 use gateway_migration_ledger::rows::{ObservedRow, starts};
 use serde_json::Value;
 
@@ -129,7 +129,7 @@ pub(crate) fn audit(
         .iter()
         .filter(|r| starts(&r.parts, &["uos_ai", "codex_reset_shadow_decision"]))
     {
-        if gateway_authority::full_pool_reset::types::FullPoolShadowDecision::validate_record(
+        if gateway_authority_reset_records::full_pool::FullPoolShadowDecision::validate_record(
             &row.key,
             &row.record,
         )

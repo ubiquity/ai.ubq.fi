@@ -5,6 +5,7 @@ use crate::{
 };
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
+use gateway_authority_capacity::CapacityOperations;
 use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
 use gateway_capacity_projection::shapes as shape;
 use gateway_core::query::QueryStore;
@@ -169,7 +170,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         account: Option<&CapacityAccountRef>,
         slot: u8,
-        fence: Option<&gateway_authority::capacity::CodexCapacityObservationFence>,
+        fence: Option<&gateway_authority_capacity::CodexCapacityObservationFence>,
         at: i64,
     ) -> Result<Value, GatewayError> {
         let Some(account) = account else {
@@ -277,8 +278,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let source = if account.slot == 1 { &one } else { &two };
             let invalid =
                 || store::error("Capacity source observation does not match authority DTO");
-            observations.push(gateway_authority::capacity::CodexCapacitySample {
-                account: gateway_authority::capacity::CodexCapacityAccountRef {
+            observations.push(gateway_authority_capacity::CodexCapacitySample {
+                account: gateway_authority_capacity::CodexCapacityAccountRef {
                     source_slot: account.slot,
                     account_id: account.account_id,
                 },

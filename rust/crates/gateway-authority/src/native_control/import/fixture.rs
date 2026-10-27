@@ -2,7 +2,7 @@
 use super::remote::RemoteImportAuthority;
 use super::{NativeRenewalCancellation, remote_tls::Roots, unavailable};
 use gateway_auth::native_auth::NativeTransportIdentity;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::net::SocketAddr;
 use std::net::TcpStream;
 use std::time::Instant;

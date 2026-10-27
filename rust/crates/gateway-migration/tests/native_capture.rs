@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::{query::*, source_graph::GraphNode, state::*, tuple_key::TupleKey};
 use gateway_migration::native_capture::NativeRevision;
 use gateway_migration::{
@@ -20,7 +21,7 @@ fn graph_key(index: i64) -> RecordKey {
     key(json!(["default", "native-graph", index]))
 }
 struct Tokens(std::sync::atomic::AtomicU64);
-impl gateway_authority::store::TokenSource for Tokens {
+impl gateway_authority_contracts::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, gateway_core::error::GatewayError> {
         Ok(format!(
             "native-fixture-{}",
@@ -29,7 +30,7 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, gateway_core::error::GatewayError> {
         Ok(2300)
     }

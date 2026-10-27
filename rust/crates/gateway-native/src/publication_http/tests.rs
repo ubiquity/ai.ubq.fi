@@ -1,7 +1,7 @@
 use super::*;
 use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
 use gateway_auth_native_wire::native_read::NATIVE_RESPONSE_MAC_HEADER;
-use gateway_authority::paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
+use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_publication::sender::NativePublicationSender;
 use gateway_publication::wire::{
     PreparedPublicationCommand, PublicationDisposition, PublicationReceipt,

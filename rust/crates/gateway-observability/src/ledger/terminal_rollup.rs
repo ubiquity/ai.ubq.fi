@@ -91,7 +91,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ),
             KeyPart::source_string_utf16(model.as_units()),
             KeyPart::String(provider.into()),
-            KeyPart::Number(f64::from(gateway_authority::paid::rollup_shard(&request))),
+            KeyPart::Number(f64::from(gateway_authority_paid_records::rollup_shard(
+                &request,
+            ))),
         ])?
         .to_record_key();
         for _ in 0..3 {

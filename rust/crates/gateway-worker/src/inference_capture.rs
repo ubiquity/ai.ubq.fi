@@ -184,7 +184,7 @@ impl Capture {
         &self,
         observation: TransportObservation,
         usage: Option<&serde_json::Value>,
-        paid: Option<&gateway_authority::paid_types::PaidAttempt>,
+        paid: Option<&gateway_authority_paid_records::PaidAttempt>,
     ) {
         let Some(request) = self.terminal_request.borrow().clone() else {
             return;
@@ -490,7 +490,7 @@ impl Capture {
         &self,
         observation: TransportObservation,
         usage: Option<&serde_json::Value>,
-        paid: Option<&gateway_authority::paid_types::PaidAttempt>,
+        paid: Option<&gateway_authority_paid_records::PaidAttempt>,
     ) {
         if self.deferred_http.get() && self.expects_provisional_stream() {
             return;

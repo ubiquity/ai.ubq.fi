@@ -1,13 +1,14 @@
-use crate::{
-    journal::{self, Journal, Phase},
-    types::{RecoveredSession, RevisionCheckWire, RoutingHost},
-};
-use gateway_authority::kernel::KernelTerminal;
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::lifecycle::{SemanticTerminal, TransportObservation};
-use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::state::{AuthorityStore, RevisionCheck};
+use crate::{journal, journal::Journal, journal::Phase, types::RecoveredSession};
+use crate::{types::RevisionCheckWire, types::RoutingHost};
+use gateway_authority::store::Authority;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal};
+use gateway_core::{lifecycle::TransportObservation, query::QueryRequest, query::QuerySelector};
+use gateway_core::{query::QueryStore, state::AuthorityStore, state::RevisionCheck};
 
 pub(crate) async fn finish_record<
     S: AuthorityStore + Clone,

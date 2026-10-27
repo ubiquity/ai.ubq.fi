@@ -7,6 +7,10 @@ publish.workspace = true
 
 [dependencies]
 gateway-source.workspace = true
+gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-capacity = { path = "../gateway-authority-capacity" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-quota-projection.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-claude-usage-history.workspace = true
@@ -33,6 +37,10 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-admin.workspace = true
 gateway-claude-runtime.workspace = true
 gateway-claude-usage-runtime.workspace = true

@@ -14,8 +14,9 @@ use gateway_auth::{
 use gateway_auth_native_wire::publication_command::{
     ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData,
 };
-use gateway_authority::native_control::import::{
-    AuthenticatedNativeImport, remote::AuthenticatedImportTerminal,
+use gateway_authority::{
+    native_control::import::AuthenticatedNativeImport,
+    native_control::import::remote::AuthenticatedImportTerminal,
 };
 use gateway_core::error::GatewayError;
 

@@ -1,13 +1,12 @@
 //! Finite admin delegation; the actor and prepared target belong to this original request only.
 use super::RequestHost;
-use gateway_authority::native_control::actor::{NativeActorScope, NativeRenewalActor};
+use gateway_authority::native_control::actor::NativeRenewalActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_paid_backfill::PaidBackfillOperations;
 use gateway_core::error::GatewayError;
-use gateway_observability::{
-    host_types::{
-        CacheExperimentTarget, PaidBackfillReceipt, PaidRequestBackfill, PaidWindowBackfill,
-    },
-    types::ObservabilityHost,
-};
+use gateway_observability::host_types::PaidWindowBackfill;
+use gateway_observability::{host_types::CacheExperimentTarget, types::ObservabilityHost};
+use gateway_observability::{host_types::PaidBackfillReceipt, host_types::PaidRequestBackfill};
 
 pub(super) fn auth_required() -> GatewayError {
     GatewayError::unavailable(
@@ -86,7 +85,7 @@ impl RequestHost {
     /// Take once after Stage 0; the authority still rechecks target, cohort, release and leases.
     pub(crate) fn take_cache_target(
         &self,
-    ) -> Result<gateway_authority::cache_experiment::PreparedTarget, GatewayError> {
+    ) -> Result<gateway_cache_experiment_runner::PreparedTarget, GatewayError> {
         self.admin_actor()?;
         self.prepared_cache_target
             .borrow_mut()

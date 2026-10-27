@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_auth::store::key;
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::{state::AuthorityStore, tuple_key::TupleKey};
 use gateway_migration::{
     core_state::CORE_STATE_DO_ROW_WRITE_LIMIT,
@@ -410,16 +411,17 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
     ))?;
     assert_eq!(reservation.request_id.0, "post-restart");
     drop(authority);
-    let paid_key = gateway_authority::keys::paid_attempt("core-key", "current");
+    let paid_key = gateway_authority_keys::paid_attempt("core-key", "current");
     let paid = run(store.read(&paid_key))?.ok_or("Expected retained fixture row")?;
-    let paid =
-        gateway_authority::paid::source_records::decode_paid_attempt_record(&paid_key, &paid)?;
+    let paid = gateway_authority_paid_records::source_records::decode_paid_attempt_record(
+        &paid_key, &paid,
+    )?;
     assert_eq!(
         paid.billing_state,
         gateway_core::lifecycle::BillingState::Unresolved
     );
     assert_eq!(paid.reservation.reserved_microcredits, 5);
-    let gate = run(store.read(&gateway_authority::keys::paid_gate()))?
+    let gate = run(store.read(&gateway_authority_keys::paid_gate()))?
         .ok_or("Expected retained fixture row")?;
     assert_eq!(
         gate.json_value()?["pending"]
@@ -436,7 +438,7 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
             .iter()
             .any(|entry| entry.raw_key == paid_sort)
     );
-    let paid_window = gateway_authority::keys::paid_window("core-key", 3000);
+    let paid_window = gateway_authority_keys::paid_window("core-key", 3000);
     let paid_window_sort = TupleKey::from_record_key(&paid_window)?
         .sort_bytes()
         .to_vec();
@@ -506,7 +508,7 @@ impl NativeCustody for NoCustody {
 mod support_clock {
     use gateway_core::error::GatewayError;
     pub struct Tokens(pub std::sync::atomic::AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "core-fixture-{}",
@@ -515,7 +517,7 @@ mod support_clock {
         }
     }
     pub struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }

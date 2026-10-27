@@ -141,7 +141,7 @@ impl AdminHost for ClaimedDeletion<'_> {
         // This finite fixture's only possible paid ledger is the racing attempt.
         assert!(
             self.store
-                .read(&gateway_authority::keys::paid_attempt(id, "racing-attempt"))
+                .read(&gateway_authority_keys::paid_attempt(id, "racing-attempt"))
                 .await?
                 .is_none()
         );

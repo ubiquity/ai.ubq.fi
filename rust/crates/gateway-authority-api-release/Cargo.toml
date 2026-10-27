@@ -1,0 +1,22 @@
+[package]
+name = "gateway-authority-api-release"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-source.workspace = true
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-core = { path = "../gateway-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
+gateway-authority = { path = "../gateway-authority" }
+
+[lints]
+workspace = true

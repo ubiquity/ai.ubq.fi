@@ -1,11 +1,10 @@
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    REQUEST_LEASE_MS,
-    kernel::{KernelPolicy, KernelReservation},
-    keys,
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock},
-};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS};
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::{KernelPolicy, KernelReservation};
+use gateway_authority_keys as keys;
 use gateway_core::{
     lifecycle::{DeliveryOutcome, SemanticTerminal, TransportObservation},
     state::RecordKey,
@@ -43,7 +42,7 @@ fn kernel_input(store: &Store, id: &str) -> gateway_routing_runtime::types::Rout
             owner: "owner".into(),
             repo: Some("repo".into()),
             usage_limit_requests: 10,
-            window_ms: gateway_authority::DAY_MS,
+            window_ms: gateway_authority_contracts::DAY_MS,
             expires_at_ms: -1,
         },
     );
@@ -133,7 +132,7 @@ fn live_session_refuses_a_released_actual_kernel_despite_an_unchanged_journal() 
     run(
         Authority::with_clock(store.clone(), store.clone(), store.clone()).settle_kernel(
             &kernel,
-            gateway_authority::kernel::KernelTerminal::Released,
+            gateway_authority_kernel_protocol::KernelTerminal::Released,
             "fixture",
             NOW,
         ),

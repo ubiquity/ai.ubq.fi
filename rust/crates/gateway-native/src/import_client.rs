@@ -12,14 +12,11 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_VERSION_HEADER, NATIVE_WIRE_VERSION,
 };
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation,
-        actor::NativeRenewalActor,
-        import::PreparedNativeImport,
-        receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
-    },
-    store::{Authority, TokenSource},
+    native_control::NativeRenewalCancellation, native_control::actor::NativeRenewalActor,
+    native_control::import::PreparedNativeImport, native_control::receiver::NativeRenewalAuthority,
+    native_control::receiver::RegisteredRenewalOwner, store::Authority,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
 

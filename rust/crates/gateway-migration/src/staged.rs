@@ -1,10 +1,8 @@
 //! Private offline operator data, never an HTTP/admin capability. The host must
 //! hold a NEW empty target unpublished and quiescent until seal and reconciliation.
 use crate::{decode, engine::PreparedAdoption, invalid, json, key};
-use gateway_authority::{
-    initial_control_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts},
-    paid_control::PaidControlOwner,
-};
+use gateway_authority_initial_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts};
+use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_core::error::GatewayError;
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
@@ -790,7 +788,7 @@ async fn sealed_owner_facts<S: QueryStore>(
         .await?
         .ok_or_else(owner_refused)?;
     let normalized = store
-        .read(&gateway_authority::keys::pool())
+        .read(&gateway_authority_keys::pool())
         .await?
         .ok_or_else(owner_refused)?;
     if source.revision != binding.source_pool_revision
@@ -800,7 +798,7 @@ async fn sealed_owner_facts<S: QueryStore>(
     }
     let pool = gateway_auth::provider_credentials::parse_codex_source_pool(source.json_value()?)?
         .ok_or_else(owner_refused)?;
-    let routing: gateway_authority::routing_types::SubscriptionPool =
+    let routing: gateway_authority_routing_records::types::SubscriptionPool =
         decode(normalized.json_value()?)?;
     if routing.v != 1
         || routing.pool_versionstamp.0 != source.revision
@@ -887,7 +885,7 @@ async fn bind_owner<S: QueryStore>(
     validate_owner_binding(binding)?;
     let (manifest, manifest_record, source, normalized) =
         sealed_owner_facts(store, binding).await?;
-    let owner_key = gateway_authority::keys::paid_control_owner();
+    let owner_key = gateway_authority_keys::paid_control_owner();
     let expected =
         serde_json::to_value(owner_from_binding(binding)).map_err(|_| owner_refused())?;
     let exact = |record: &StoredRecord| {
@@ -913,7 +911,7 @@ async fn bind_owner<S: QueryStore>(
                 gateway_auth::provider_credentials::codex_source_pool_key(),
                 Some(source.revision),
             ),
-            check(gateway_authority::keys::pool(), Some(normalized.revision)),
+            check(gateway_authority_keys::pool(), Some(normalized.revision)),
             check(owner_key.clone(), None),
         ],
         mutations: vec![RecordMutation::Put {

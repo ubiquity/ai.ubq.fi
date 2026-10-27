@@ -10,12 +10,13 @@ use gateway_auth::{
     types::{AuthConfig, AuthResponse},
 };
 use gateway_authority::{
-    capacity_rules::parse_capacity_observation,
-    manual_reset::{ManualResetPreparation, ManualResetTarget},
-    native_control::actor::NativeRenewalActor,
-    reset_types::{ResetClaim, ResetState},
-    routing_types::CapacityObservation,
-    store::Authority,
+    manual_reset::ManualResetPreparation, manual_reset::ManualResetTarget,
+    native_control::actor::NativeRenewalActor, store::Authority,
+};
+use gateway_authority_reset_records::{ResetClaim, ResetState};
+use gateway_authority_reset_spend::ResetSpendOperations;
+use gateway_authority_routing_evidence::{
+    capacity::CapacityObservation, capacity::parse_capacity_observation,
 };
 use gateway_core::state::AuthorityStore;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
@@ -70,7 +71,7 @@ async fn run(
     };
     let invocation = action.invocation()?;
     let previous = store
-        .read(&gateway_authority::keys::reset_redemption(
+        .read(&gateway_authority_keys::reset_redemption(
             &invocation.identity.account_id_hash,
             &invocation.identity.quota_generation,
         ))

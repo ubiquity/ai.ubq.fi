@@ -6,6 +6,15 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-source-audit.workspace = true
 gateway-profile-source.workspace = true
 gateway-migration-ledger.workspace = true
@@ -53,6 +62,13 @@ name = "worker-custody-fixture"
 path = "tests/support/worker-custody-fixture.rs"
 
 [dev-dependencies]
+gateway-migration-test-support.workspace = true
 
+gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-kernel = { path = "../gateway-authority-kernel" }
+gateway-authority-api-release = { path = "../gateway-authority-api-release" }
+gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 [lints]
 workspace = true

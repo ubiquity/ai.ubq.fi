@@ -1,17 +1,13 @@
-use crate::types::{RoutingInput, RoutingResult};
+use crate::{types::RoutingInput, types::RoutingResult};
 use chrono::{DateTime, Datelike, Utc};
-use gateway_core::error::GatewayError;
-use gateway_core::model::ModelId;
-use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
-use gateway_core::source_json::SourceJson;
 use gateway_core::source_serialization as source;
-use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput, PaidRoutingPlan};
-use gateway_providers::types::ClientSurface;
-use gateway_schema::{
-    aliases,
-    request::{RequestExtensions, RequestSurface},
-    source_request::{SourceModelRequest, SourceRequestDocument, error::SourceRequestError},
-};
+use gateway_core::{error::GatewayError, model::ModelId, provider::CodexQuotaClass};
+use gateway_core::{provider::PaidProvider, provider::UpstreamProvider, source_json::SourceJson};
+use gateway_providers::{policy, policy::DeepseekHop, policy::PaidRoutingInput};
+use gateway_providers::{policy::PaidRoutingPlan, types::ClientSurface};
+use gateway_schema::source_request::error::SourceRequestError;
+use gateway_schema::{aliases, request::RequestExtensions, request::RequestSurface};
+use gateway_schema::{source_request::SourceModelRequest, source_request::SourceRequestDocument};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -56,7 +52,7 @@ pub(crate) fn admission_plan(input: &RoutingInput) -> RoutePlan {
     }
 }
 pub fn class(model: &ModelId) -> CodexQuotaClass {
-    gateway_authority::routing::model_quota_class(model)
+    gateway_authority_routing_evidence::models::model_quota_class(model)
 }
 fn ids(rows: &[SourceJson]) -> Vec<ModelId> {
     rows.iter()

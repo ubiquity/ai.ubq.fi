@@ -1,6 +1,6 @@
 //! Source kernel auth projection and missing-policy queue, on the common authority.
 use gateway_auth::{crypto::base64url, store, types::AuthHost};
-use gateway_authority::keys;
+use gateway_authority_keys as keys;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_migration_ledger::kernel::normalize_policy;
 use serde::{Deserialize, Serialize};

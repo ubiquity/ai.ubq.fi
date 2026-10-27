@@ -1,7 +1,8 @@
 //! Fixed owner-renewal coordination in the existing authority store.
 //! Wire selectors and fence DTOs are observations, never permissions to mutate native state.
 use gateway_auth::native_auth::AuthenticatedNativeOwner;
-use gateway_core::{error::GatewayError, model::ModelId};
+use gateway_core::model::ModelId;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 
@@ -39,7 +40,7 @@ pub enum NativeRenewalContext {
         mapping_revision: String,
     },
     CacheExperiment {
-        context: Box<crate::cache_experiment::RefreshContext>,
+        context: Box<gateway_cache_experiment_records::RefreshContext>,
     },
 }
 fn fence_v2<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {

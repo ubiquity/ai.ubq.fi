@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-admin-contracts.workspace = true
 gateway-admin-kernel.workspace = true
 gateway-admin-keys.workspace = true
@@ -17,6 +21,11 @@ serde_json.workspace = true
 url = "=2.5.8"
 
 [dev-dependencies]
+gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission" }
+gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
+gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
+gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-auth-contracts.workspace = true
 gateway-auth-primitives.workspace = true
 gateway-auth-passport-contracts.workspace = true

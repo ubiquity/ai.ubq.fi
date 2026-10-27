@@ -5,15 +5,11 @@ use gateway_auth::{
     native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
 };
 use gateway_auth_native_wire::native_read::*;
-use gateway_authority::{
-    cache_experiment::{
-        RefreshContext,
-        model::{
-            PROFILE, PROVIDER, SLOTS, STEPS, Sample, TELEMETRY_PROVIDER, TargetBinding, Usage,
-        },
-    },
-    native_control::NativeRenewalContext,
-};
+use gateway_authority::native_control::NativeRenewalContext;
+use gateway_cache_experiment_records::model::Usage;
+use gateway_cache_experiment_records::{RefreshContext, model::PROFILE, model::PROVIDER};
+use gateway_cache_experiment_records::{model::SLOTS, model::STEPS, model::Sample};
+use gateway_cache_experiment_records::{model::TELEMETRY_PROVIDER, model::TargetBinding};
 use gateway_core::identity::{
     AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
 };

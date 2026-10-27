@@ -1,5 +1,5 @@
 use crate::input::NOW;
-use gateway_authority::store::{AuthorityClock, TokenSource};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::{
     error::GatewayError,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},

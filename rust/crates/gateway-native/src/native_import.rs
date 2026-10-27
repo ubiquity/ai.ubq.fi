@@ -1,15 +1,13 @@
 //! Fixed native-only receiver and authenticated source-data boundary.
 //! No socket, refresh, provider effect or publication implementation.
+use gateway_authority_contracts::TokenSource;
 #[doc(hidden)]
 pub mod import_body;
 use crate::owner_control::NativeControlContext;
 use gateway_auth::native_import::{NativeImportKind, NativeImportMetadata};
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation, import::AuthenticatedNativeImport,
-        receiver::NativeRenewalAuthority,
-    },
-    store::TokenSource,
+    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
+    native_control::receiver::NativeRenewalAuthority,
 };
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,

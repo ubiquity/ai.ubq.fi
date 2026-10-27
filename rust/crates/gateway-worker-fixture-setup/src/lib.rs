@@ -10,11 +10,11 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-use gateway_authority::{
-    keys,
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    routing_types::{PoolAccount, SubscriptionPool},
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     error::GatewayError,
     identity::PoolVersionstamp,
@@ -368,7 +368,7 @@ mod tests {
         native_auth::{NativeAuthHeaders, NativeAuthenticator},
         native_replay::StoreNonceAuthority,
     };
-    use gateway_authority::{keys, paid_control::PaidControlConfig};
+    use gateway_authority_keys as keys;
     use gateway_core::{
         error::GatewayError,
         state::{

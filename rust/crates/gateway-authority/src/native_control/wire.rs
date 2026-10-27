@@ -5,7 +5,7 @@ use gateway_auth::{
     native_auth::NativeAuthHeaders,
 };
 use gateway_auth_native_wire::control::NATIVE_CONTROL_MAX_BYTES;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub const NATIVE_RENEWAL_AUTHORITY_PATH: &str = "/uos/native/renewal-authority";

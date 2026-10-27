@@ -1,82 +1,26 @@
 //! Explicit authenticated manual reset. Shares the existing redemption/day records.
 //! Provider usage/inventory/consume I/O belongs to the fixed admin host, outside transactions.
-use crate::{
-    capacity_rules, keys,
-    native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    reset,
-    reset_types::{
-        self, AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation, ResetMode, ResetRecord,
-        ResetState,
-    },
-    routing::{self, RoutingView},
-    routing_rules,
-    routing_types::{CapacityObservation, CapacityState},
-    store::{Authority, TokenSource, Transaction},
-};
-use gateway_auth::{
-    provider_credentials::{
-        codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
-    },
-    types::AuthConfig,
-};
-use gateway_core::{
-    error::GatewayError,
-    identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, MAX_SAFE_INTEGER},
-    state::{AuthorityStore, RecordKey},
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
-use serde::{Deserialize, Serialize};
+use crate::native_control::actor;
+use crate::native_control::actor::NativeRenewalActor;
+use crate::{routing, routing::RoutingView, store::Authority, store::Transaction};
+use gateway_auth::provider_credentials::codex_access_expiry_ms;
+use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_auth::{provider_credentials::parse_codex_source_pool, types::AuthConfig};
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_capacity_policy as capacity_rules;
+use gateway_authority_contracts::TokenSource;
+use gateway_authority_keys as keys;
+use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation};
+use gateway_authority_reset_records::{ResetMode, ResetRecord, ResetState};
+use gateway_authority_reset_records::{manual::ManualIntent, manual::ManualResetPromotion};
+use gateway_authority_reset_records::{manual::intent_key, manual::parse_manual_intent};
+use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
+use gateway_core::{identity::AccountBinding, identity::ActiveSelection};
+use gateway_core::{identity::ActiveTransitionReason, state::AuthorityStore};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
-pub fn intent_key(hash: &str) -> RecordKey {
-    TupleKey::from_scalar_parts(&[
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("codex_manual_reset"),
-        ScalarKeyPart::String("v1"),
-        ScalarKeyPart::String(hash),
-    ])
-    .to_record_key()
-}
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManualIntent {
-    pub v: u8,
-    pub account_id_hash: String,
-    pub credential_version: String,
-    pub quota_reset_at_ms: i64,
-    pub routing_generation: u64,
-    pub created_at_ms: i64,
-    pub promoted_at_ms: Option<i64>,
-    pub quota_signal_at_ms: Option<i64>,
-}
-pub fn parse_manual_intent(value: &Value) -> Result<ManualIntent, GatewayError> {
-    if value.as_object().is_none_or(|v| v.len() != 8) {
-        return Err(error(409, "codex_reset_intent_invalid"));
-    }
-    let row: ManualIntent = serde_json::from_value(value.clone())
-        .map_err(|_| error(409, "codex_reset_intent_invalid"))?;
-    let valid_hash = |s: &str| {
-        s.len() == 64
-            && s.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    };
-    if row.v != 1
-        || !valid_hash(&row.account_id_hash)
-        || !valid_hash(&row.credential_version)
-        || !(0..=MAX_SAFE_INTEGER).contains(&row.quota_reset_at_ms)
-        || !(0..=MAX_SAFE_INTEGER).contains(&row.created_at_ms)
-        || row.routing_generation > MAX_SAFE_INTEGER as u64
-        || row
-            .promoted_at_ms
-            .is_some_and(|v| v < row.created_at_ms || v > MAX_SAFE_INTEGER)
-        || row
-            .quota_signal_at_ms
-            .is_some_and(|v| !(0..=MAX_SAFE_INTEGER).contains(&v))
-    {
-        return Err(error(409, "codex_reset_intent_invalid"));
-    }
-    Ok(row)
-}
 /// Minted only from a real admin actor. No serde/public constructor.
 pub struct ManualResetTarget {
     actor: StoredNativeActor,
@@ -113,7 +57,7 @@ impl ManualResetAction {
         &self.target
     }
     pub fn invocation(&self) -> Result<ResetInvocation, GatewayError> {
-        reset_types::reset_invocation(
+        gateway_authority_reset_records::reset_invocation(
             &self.intent.account_id_hash,
             &self.intent.credential_version,
             self.intent.quota_reset_at_ms,
@@ -124,12 +68,6 @@ pub enum ManualResetPreparation {
     NeedsUsage(ManualResetTarget),
     Ready(ManualResetAction),
 }
-#[derive(Debug, Deserialize, Serialize)]
-pub struct ManualResetPromotion {
-    pub reset_status: String,
-    pub active_account_id_hash: String,
-}
-
 async fn policy<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<(), GatewayError> {
@@ -279,7 +217,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 actor: actor.stored().clone(),
                 account_id: account,
                 hash: hash.into(),
-                binding: view.binding(index),
+                binding: view.policy().binding(index),
             };
             let prior = read_intent(&mut tx, hash).await?;
             let result = if let Some(intent) = prior.filter(|r| r.promoted_at_ms.is_none()) {
@@ -290,7 +228,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             } else {
                 let existing = read_intent(&mut tx, hash).await?;
                 if existing.is_some_and(|r| {
-                    reset::utc_day(r.created_at_ms).ok() == reset::utc_day(tx.now).ok()
+                    gateway_authority_reset_records::utc_day(r.created_at_ms).ok()
+                        == gateway_authority_reset_records::utc_day(tx.now).ok()
                 }) {
                     return Err(error(409, "codex_reset_already_completed"));
                 }
@@ -323,7 +262,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let quota = deadline(usage, tx.now)?;
         if prior.as_ref().is_some_and(|r| {
             r.quota_reset_at_ms == quota
-                || reset::utc_day(r.created_at_ms).ok() == reset::utc_day(tx.now).ok()
+                || gateway_authority_reset_records::utc_day(r.created_at_ms).ok()
+                    == gateway_authority_reset_records::utc_day(tx.now).ok()
         }) {
             return Err(error(409, "codex_reset_already_completed"));
         }
@@ -350,7 +290,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 actor: target.actor.clone(),
                 account_id: target.account_id.clone(),
                 hash: target.hash.clone(),
-                binding: view.binding(index),
+                binding: view.policy().binding(index),
             },
             intent,
         })
@@ -476,7 +416,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .read(&key)
                 .await?
                 .ok_or_else(|| error(409, "stale_owner"))?;
-            reset::check_record(&row, expected)?;
+            gateway_authority_reset_records::check_record(&row, expected)?;
             if row.identity != invocation.identity
                 || row.state
                     != if renew {
@@ -485,7 +425,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         ResetState::Claimed
                     }
                 || row.lease_expires_at_ms <= tx.now
-                || reset::utc_day(row.created_at_ms)? != reset::utc_day(tx.now)?
+                || gateway_authority_reset_records::utc_day(row.created_at_ms)?
+                    != gateway_authority_reset_records::utc_day(tx.now)?
             {
                 return Err(error(409, "stale_owner"));
             }
@@ -533,7 +474,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 ))
                 .await?
                 .ok_or_else(|| error(409, "codex_reset_unverified"))?;
-            reset::check_record(&row, verified)?;
+            gateway_authority_reset_records::check_record(&row, verified)?;
             if row.state != ResetState::Verified || row.identity != invocation.identity {
                 return Err(error(409, "codex_reset_unverified"));
             }
@@ -544,7 +485,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             for limit in &usage.additional_rate_limits {
                 let model = gateway_core::model::ModelId::from_scalar(&limit.limit_name);
                 if !matches!(
-                    routing::model_quota_class(&model),
+                    gateway_authority_routing_evidence::models::model_quota_class(&model),
                     gateway_core::provider::CodexQuotaClass::Standard
                         | gateway_core::provider::CodexQuotaClass::Unknown
                 ) && capacity_rules::capacity_headroom_for_observation(usage, Some(&model))
@@ -575,7 +516,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Err(error(409, "codex_reset_concurrent_update"));
             }
             for model in &models {
-                if let Some(next) = routing_rules::apply_capacity_observation(
+                if let Some(next) = capacity_rules::apply_capacity_observation(
                     &view.state,
                     &current_usage,
                     tx.now,
@@ -587,12 +528,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             if models.iter().any(|model| {
                 view.state.slots[index]
-                    .quota_block_for(routing::model_quota_class(model))
+                    .quota_block_for(
+                        gateway_authority_routing_evidence::models::model_quota_class(model),
+                    )
                     .is_some_and(|b| b.blocked_until_ms > tx.now)
             }) {
                 return Err(error(409, "codex_reset_concurrent_update"));
             }
-            let capacity = crate::capacity_rules::plan_capacity_observation_store(
+            let capacity = gateway_authority_capacity_policy::plan_capacity_observation_store(
                 tx.revision(&keys::capacity()),
                 &view.capacity,
                 std::slice::from_ref(&current_usage),
@@ -601,7 +544,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             .capacity;
             let active = ActiveSelection {
                 v: 1,
-                binding: view.binding(index),
+                binding: view.policy().binding(index),
                 generation: crate::next_generation(
                     view.active.as_ref().map_or(0, |a| a.generation),
                 )?,
@@ -630,7 +573,7 @@ async fn manual_budget<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     hash: &str,
 ) -> Result<AccountDayBudget, GatewayError> {
-    let day = reset::utc_day(tx.now)?;
+    let day = gateway_authority_reset_records::utc_day(tx.now)?;
     let budget: AccountDayBudget =
         tx.read(&keys::reset_day(hash, &day))
             .await?

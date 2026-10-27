@@ -3,7 +3,7 @@
 use crate::store;
 use gateway_admin_contracts::{fields, source_input as body};
 use gateway_auth::types::invalid;
-use gateway_authority::kernel::{KernelPolicy, KernelWindow};
+use gateway_authority_kernel_protocol::{KernelPolicy, KernelWindow};
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,

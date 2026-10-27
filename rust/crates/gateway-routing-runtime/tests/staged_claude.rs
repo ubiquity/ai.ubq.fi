@@ -1,4 +1,4 @@
-use gateway_authority::store::TokenSource;
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{
     js_string::JsString16,
     model::ModelId,
@@ -374,7 +374,7 @@ fn named_journal_preserves_scalar_null_and_utf16_workspace_and_exact_owner_fence
             custody::validate_journal_row(&key, &final_row).unwrap();
             assert_eq!(
                 final_row.expires_at_ms,
-                Some(NOW + gateway_authority::PAID_RETENTION_MS)
+                Some(NOW + gateway_authority_contracts::PAID_RETENTION_MS)
             );
         }
     });

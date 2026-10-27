@@ -9,7 +9,8 @@ use gateway_admin_contracts::{
 };
 use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
-use gateway_authority::{kernel::KernelDefaults, keys};
+use gateway_authority_kernel_protocol::KernelDefaults;
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::model::ModelId;

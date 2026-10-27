@@ -1,12 +1,13 @@
-use gateway_authority::kernel::{KernelPolicy, KernelWindow};
-use gateway_authority::keys;
+use gateway_authority_kernel::KernelOperations;
+use gateway_authority_kernel_protocol::{KernelPolicy, KernelWindow};
+use gateway_authority_keys as keys;
 use gateway_core::{
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
 };
 use gateway_routing_runtime_test_support::authority as support;
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -244,7 +245,7 @@ fn live_named_policy_number_and_zero_index_decode_preserve_original_retention() 
         if admitted {
             assert_eq!(
                 after.expires_at_ms,
-                Some(NOW + 60000 + gateway_authority::QUOTA_RETENTION_MS)
+                Some(NOW + 60000 + gateway_authority_contracts::QUOTA_RETENTION_MS)
             );
             let window: KernelWindow = serde_json::from_value(after.value).unwrap();
             assert_eq!(window.reserved_requests, 1);

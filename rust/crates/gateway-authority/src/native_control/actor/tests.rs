@@ -55,7 +55,7 @@ impl Store {
         *self.race.lock().unwrap() = Some((key, value));
     }
 }
-impl crate::store::AuthorityClock for Store {
+impl gateway_authority_contracts::AuthorityClock for Store {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(self.now.load(Ordering::SeqCst))
     }
@@ -249,7 +249,7 @@ fn api_setup(store: &Store, expiry: i64) -> String {
     store.seed(
         keys::api_policy("api-fixture"),
         "policy-1",
-        crate::quota::ApiKeyPolicy {
+        gateway_authority_api_protocol::ApiKeyPolicy {
             v: 3,
             key_id: ApiKeyId("api-fixture".into()),
             expires_at_ms: expiry,

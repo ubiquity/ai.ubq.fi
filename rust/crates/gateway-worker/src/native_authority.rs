@@ -14,15 +14,10 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation, NativeRenewalControl,
-        receiver::NativeRenewalAuthority,
-        wire::{
-            NativeRenewalAuthorityRequest as RenewalRequest,
-            NativeRenewalAuthorityResponse as RenewalResponse,
-        },
-    },
-    store::Authority,
+    native_control::NativeRenewalCancellation, native_control::NativeRenewalControl,
+    native_control::receiver::NativeRenewalAuthority,
+    native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest,
+    native_control::wire::NativeRenewalAuthorityResponse as RenewalResponse, store::Authority,
 };
 use gateway_core::error::GatewayError;
 use gateway_worker_http_body::body::request_bytes;

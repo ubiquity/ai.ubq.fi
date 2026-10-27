@@ -4,8 +4,9 @@ use super::{
     owner_runtime::OwnedRuntime,
 };
 use crate::import_custody_protocol::{Header, unavailable};
-use gateway_authority::native_control::import::{
-    custody_session::VerifiedCurrentImportStarted, remote::VerifiedCurrentImportTerminal,
+use gateway_authority::{
+    native_control::import::custody_session::VerifiedCurrentImportStarted,
+    native_control::import::remote::VerifiedCurrentImportTerminal,
 };
 use gateway_core::error::GatewayError;
 use std::time::{Duration, Instant};

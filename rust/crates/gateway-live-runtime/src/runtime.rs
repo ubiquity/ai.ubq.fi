@@ -4,6 +4,7 @@ use crate::{
     types::*,
 };
 use gateway_auth::types::AuthPrincipal;
+use gateway_authority_routing_selection::SelectionOperations;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 
 /// Minted only after authenticated mapping and current-account resolution. No serialization.

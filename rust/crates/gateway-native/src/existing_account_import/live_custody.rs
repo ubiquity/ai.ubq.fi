@@ -4,11 +4,12 @@ use crate::{
     import_custody_protocol::{self as wire, Frame, Header, Release, Stopped, unavailable},
     native_import::NativeImportContext,
 };
-use gateway_authority::native_control::import::{
-    AuthenticatedNativeImport,
-    custody_session::ImportCustodyStartedRequest,
-    effects::{NativeImportBinding, NativeImportStart},
-    remote::AuthenticatedImportTerminal,
+use gateway_authority::{
+    native_control::import::AuthenticatedNativeImport,
+    native_control::import::custody_session::ImportCustodyStartedRequest,
+    native_control::import::effects::NativeImportBinding,
+    native_control::import::effects::NativeImportStart,
+    native_control::import::remote::AuthenticatedImportTerminal,
 };
 use gateway_core::error::GatewayError;
 use std::{
