@@ -1,5 +1,6 @@
 use crate::{AdminRuntime, capabilities::RuntimeCapabilities, store};
-use gateway_admin::{operations::PaidKeyFields, source_input as input};
+use gateway_admin_contracts::{operations::PaidKeyFields, source_input as input};
+use gateway_admin_keys::keys::current_record;
 use gateway_auth::{
     store::{check, commit, put},
     types::{AuthHost, conflict, invalid},
@@ -176,7 +177,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let now = self.host.now_ms();
         let id_key = gateway_auth::api_keys::id_key(id);
         let id_row = self.store.read(&id_key).await?;
-        let value = gateway_admin::keys::current_record(&id_key, id_row.as_ref(), now)?
+        let value = current_record(&id_key, id_row.as_ref(), now)?
             .ok_or_else(|| GatewayError::new(404, "Not found", Some("not_found")))?;
         if value.policy.revoked_at_ms.is_none() {
             return Err(invalid("Only revoked keys can be deleted"));
@@ -186,7 +187,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let prior_value = store::value(prior.as_ref(), now)?;
         let local = id == "local-development";
         let guard = if !local && prior_value.is_some() {
-            let row = prior.expect("present ordinary guard");
+            let row = prior.ok_or_else(|| store::corrupt("Paid deletion guard is missing"))?;
             if row
                 .json_value()?
                 .get("created_at_ms")
@@ -241,113 +242,118 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 .ok_or_else(|| store::corrupt("Paid deletion guard changed after claim"))?
         };
         let guard_check = check(&dk, Some(&guard));
-        let result = async {
-            let gate_key = keys::paid_gate();
-            let gate_row = self.store.read(&gate_key).await?;
-            let gate: ReconciliationGate = store::value(gate_row.as_ref(), now)?
-                .map(|v| serde_json::from_value(v).map_err(|_| outstanding()))
-                .transpose()?
-                .unwrap_or_default();
-            if gate.pending.values().any(|p| p.key_id.0 == id) {
-                return Err(outstanding());
-            }
-            let pending = store::scan(
-                self.store,
-                store::key(json!(["uos_ai", "paid_fallback", "v3", "pending", id])),
-                false,
-                now,
-            )
-            .await?;
-            if !pending.is_empty() {
-                return Err(outstanding());
-            }
-            let attempts = store::scan(
-                self.store,
-                store::key(json!(["uos_ai", "paid_fallback", "v3", "request", id])),
-                false,
-                now,
-            )
-            .await?;
-            let windows = store::scan(
-                self.store,
-                store::key(json!(["uos_ai", "paid_fallback", "v3", "window", id])),
-                false,
-                now,
-            )
-            .await?;
-            for entry in &attempts {
-                let row: PaidAttempt = serde_json::from_value(entry.record.json_value()?.clone())
-                    .map_err(|_| outstanding())?;
-                if row.v != 3
-                    || row.reservation.key_id.0 != id
-                    || entry.key != keys::paid_attempt(id, &row.reservation.attempt_id.0)
-                    || matches!(
-                        row.billing_state,
-                        BillingState::Pending | BillingState::Unresolved
-                    )
-                {
-                    return Err(outstanding());
-                }
-            }
-            for entry in &windows {
-                let row: PaidWindow = serde_json::from_value(entry.record.json_value()?.clone())
-                    .map_err(|_| outstanding())?;
-                if row.v != 3
-                    || row.key_id.0 != id
-                    || entry.key != keys::paid_window(id, row.window_reset_at_ms)
-                    || row.pending_count != 0
-                    || row.reserved_microcredits != 0
-                    || row.settled_microcredits < 0
-                {
-                    return Err(outstanding());
-                }
-            }
-            // Every removed row is observed and fenced in its own bounded authority commit.
-            // The retained guard blocks new paid admissions throughout cleanup and the key CAS.
-            for entry in attempts.into_iter().chain(windows) {
-                if !commit(
-                    self.store,
-                    vec![guard_check.clone(), check(&entry.key, Some(&entry.record))],
-                    vec![RecordMutation::Delete { key: entry.key }],
-                )
-                .await?
-                {
-                    return Err(conflict(
-                        "Paid fallback state changed during deletion; retry",
-                    ));
-                }
-            }
-            let lease_key = keys::paid_lease(id);
-            let lease = self.store.read(&lease_key).await?;
-            if lease.is_some()
-                && !commit(
-                    self.store,
-                    vec![guard_check.clone(), check(&lease_key, lease.as_ref())],
-                    vec![RecordMutation::Delete {
-                        key: lease_key.clone(),
-                    }],
-                )
-                .await?
-            {
-                return Err(conflict(
-                    "Paid reconciliation lease changed during deletion",
-                ));
-            }
-            Ok(vec![
-                guard_check.clone(),
-                check(&gate_key, gate_row.as_ref()),
-                RevisionCheck {
-                    key: lease_key,
-                    expected_revision: None,
-                },
-            ])
-        }
-        .await;
+        let result = self.prepare_paid_deletion(id, &guard_check, now).await;
         if result.is_err() && local {
             self.abort_deletion(id, std::slice::from_ref(&guard_check))
                 .await?;
         }
         result
+    }
+    async fn prepare_paid_deletion(
+        &self,
+        id: &str,
+        guard_check: &RevisionCheck,
+        now: i64,
+    ) -> Result<Vec<RevisionCheck>, GatewayError> {
+        let gate_key = keys::paid_gate();
+        let gate_row = self.store.read(&gate_key).await?;
+        let gate: ReconciliationGate = store::value(gate_row.as_ref(), now)?
+            .map(|v| serde_json::from_value(v).map_err(|_| outstanding()))
+            .transpose()?
+            .unwrap_or_default();
+        if gate.pending.values().any(|p| p.key_id.0 == id) {
+            return Err(outstanding());
+        }
+        let pending = store::scan(
+            self.store,
+            store::key(json!(["uos_ai", "paid_fallback", "v3", "pending", id])),
+            false,
+            now,
+        )
+        .await?;
+        if !pending.is_empty() {
+            return Err(outstanding());
+        }
+        let attempts = store::scan(
+            self.store,
+            store::key(json!(["uos_ai", "paid_fallback", "v3", "request", id])),
+            false,
+            now,
+        )
+        .await?;
+        let windows = store::scan(
+            self.store,
+            store::key(json!(["uos_ai", "paid_fallback", "v3", "window", id])),
+            false,
+            now,
+        )
+        .await?;
+        for entry in &attempts {
+            let row: PaidAttempt = serde_json::from_value(entry.record.json_value()?.clone())
+                .map_err(|_| outstanding())?;
+            if row.v != 3
+                || row.reservation.key_id.0 != id
+                || entry.key != keys::paid_attempt(id, &row.reservation.attempt_id.0)
+                || matches!(
+                    row.billing_state,
+                    BillingState::Pending | BillingState::Unresolved
+                )
+            {
+                return Err(outstanding());
+            }
+        }
+        for entry in &windows {
+            let row: PaidWindow = serde_json::from_value(entry.record.json_value()?.clone())
+                .map_err(|_| outstanding())?;
+            if row.v != 3
+                || row.key_id.0 != id
+                || entry.key != keys::paid_window(id, row.window_reset_at_ms)
+                || row.pending_count != 0
+                || row.reserved_microcredits != 0
+                || row.settled_microcredits < 0
+            {
+                return Err(outstanding());
+            }
+        }
+        // Every removed row is observed and fenced in its own bounded authority commit.
+        // The retained guard blocks new paid admissions throughout cleanup and the key CAS.
+        for entry in attempts.into_iter().chain(windows) {
+            if !commit(
+                self.store,
+                vec![guard_check.clone(), check(&entry.key, Some(&entry.record))],
+                vec![RecordMutation::Delete { key: entry.key }],
+            )
+            .await?
+            {
+                return Err(conflict(
+                    "Paid fallback state changed during deletion; retry",
+                ));
+            }
+        }
+        let lease_key = keys::paid_lease(id);
+        let lease = self.store.read(&lease_key).await?;
+        if lease.is_some()
+            && !commit(
+                self.store,
+                vec![guard_check.clone(), check(&lease_key, lease.as_ref())],
+                vec![RecordMutation::Delete {
+                    key: lease_key.clone(),
+                }],
+            )
+            .await?
+        {
+            return Err(conflict(
+                "Paid reconciliation lease changed during deletion",
+            ));
+        }
+        Ok(vec![
+            guard_check.clone(),
+            check(&gate_key, gate_row.as_ref()),
+            RevisionCheck {
+                key: lease_key,
+                expected_revision: None,
+            },
+        ])
     }
     /// After the same key/hash/policy/audit CAS deletes the key, remove only source-owned history.
     pub async fn finish_deletion(
@@ -430,9 +436,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let guard = self.deletion_fence(id, prepared).await?;
         let id_key = gateway_auth::api_keys::id_key(id);
         let id_row = self.store.read(&id_key).await?;
-        let Some(key_value) =
-            gateway_admin::keys::current_record(&id_key, id_row.as_ref(), self.host.now_ms())?
-        else {
+        let Some(key_value) = current_record(&id_key, id_row.as_ref(), self.host.now_ms())? else {
             return Ok(());
         };
         if key_value.policy.revoked_at_ms.is_none() {

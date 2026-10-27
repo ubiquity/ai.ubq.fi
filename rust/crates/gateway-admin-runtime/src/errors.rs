@@ -1,9 +1,10 @@
 use crate::{
     AdminRuntime,
     capabilities::{Context, RuntimeCapabilities},
-    parse, store,
+    store,
 };
-use gateway_admin::operations::AdminInput;
+use gateway_admin_contracts::fields;
+use gateway_admin_contracts::operations::AdminInput;
 use gateway_auth::types::{AuthHost, AuthResponse, invalid};
 use gateway_core::{
     error::GatewayError,
@@ -153,7 +154,7 @@ fn wire_value(value: &PortableValue) -> Result<PortableValue, GatewayError> {
 }
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
     pub(crate) async fn errors(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
-        let limit = match parse::first(&input.query, "limit") {
+        let limit = match fields::first(&input.query, "limit") {
             None => 100,
             Some(s) => {
                 let n = gateway_admin_data::profile::js_number(&Value::String(s.into()));

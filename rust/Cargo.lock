@@ -842,7 +842,10 @@ dependencies = [
 name = "gateway-admin"
 version = "0.1.0"
 dependencies = [
+ "gateway-admin-contracts",
  "gateway-admin-data",
+ "gateway-admin-kernel",
+ "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-authority",
@@ -852,6 +855,18 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "gateway-admin-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -868,11 +883,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-admin-kernel"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-admin-keys"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-admin-runtime"
 version = "0.1.0"
 dependencies = [
  "gateway-admin",
+ "gateway-admin-contracts",
  "gateway-admin-data",
+ "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-authority",
@@ -886,9 +929,15 @@ dependencies = [
 name = "gateway-admin-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-admin",
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-authority",
  "gateway-core",
  "gateway-schema",
+ "serde_json",
 ]
 
 [[package]]
@@ -1064,7 +1113,9 @@ name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
  "gateway-admin",
+ "gateway-admin-contracts",
  "gateway-admin-data",
+ "gateway-admin-keys",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
@@ -1294,7 +1345,9 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-admin",
+ "gateway-admin-contracts",
  "gateway-admin-data",
+ "gateway-admin-kernel",
  "gateway-admin-runtime",
  "gateway-admission",
  "gateway-auth",

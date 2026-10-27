@@ -1,4 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
+use gateway_admin_contracts::operations::{AdminHost as _, AdminInput};
 use gateway_admin_data::profile::{
     CanonicalDates, SourceDateHost,
     source::{from_source_profile as from_profile, to_source_profile as to_profile},
@@ -628,8 +629,8 @@ impl gateway_auth::types::AuthHost for AdminHost {
 }
 struct Capabilities;
 impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
-fn admin_input(body: Value) -> Result<gateway_admin::operations::AdminInput, GatewayError> {
-    Ok(gateway_admin::operations::AdminInput {
+fn admin_input(body: Value) -> Result<AdminInput, GatewayError> {
+    Ok(AdminInput {
         parameter: None,
         query: Default::default(),
         body: gateway_core::source_json::SourceJson::from_serializable(&body)?,
@@ -646,7 +647,6 @@ fn admin_input(body: Value) -> Result<gateway_admin::operations::AdminInput, Gat
 #[test]
 fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_admin::operations::AdminHost;
     let directory = Directory::new();
     let path = directory.file("admin.sqlite3");
     let (input, _) = fixture();
@@ -664,7 +664,7 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
         config: &config,
     };
     let response = run(runtime.execute(
-        gateway_admin::routes::AdminOperation::DebugGet,
+        gateway_admin_contracts::routes::AdminOperation::DebugGet,
         admin_input(Value::Null)?,
     ))?;
     assert_eq!(
@@ -675,7 +675,7 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
         "codex_429"
     );
     run(runtime.execute(
-        gateway_admin::routes::AdminOperation::DebugSet,
+        gateway_admin_contracts::routes::AdminOperation::DebugSet,
         admin_input(json!({"scenario":"normal","duration_ms":0}))?,
     ))?;
     let inverse = run(export_latest(&store, 2300))?;

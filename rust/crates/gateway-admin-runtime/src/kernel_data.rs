@@ -1,7 +1,8 @@
 //! Named kernel administrative source-data views and finite record codecs only.
 //! No reservation/index permission, new namespace, or generic storage interpretation.
-use crate::{parse, store};
-use gateway_admin::source_input as body;
+use crate::store;
+use gateway_admin_contracts::fields;
+use gateway_admin_contracts::source_input as body;
 use gateway_auth::types::invalid;
 use gateway_authority::kernel::{KernelPolicy, KernelWindow};
 use gateway_core::{
@@ -85,10 +86,10 @@ fn scalar(value: &SourceJson) -> Option<Value> {
     value.deserialize().ok()
 }
 pub(crate) fn limit(value: &SourceJson) -> Option<i64> {
-    scalar(value).as_ref().and_then(parse::limit)
+    scalar(value).as_ref().and_then(fields::limit)
 }
 pub(crate) fn positive(value: &SourceJson) -> Option<i64> {
-    scalar(value).as_ref().and_then(parse::positive)
+    scalar(value).as_ref().and_then(fields::positive)
 }
 pub(crate) fn expiry(value: &SourceJson, now: i64) -> Option<f64> {
     let value = scalar(value)?;

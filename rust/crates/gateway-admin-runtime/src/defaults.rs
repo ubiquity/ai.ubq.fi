@@ -2,9 +2,12 @@ use crate::{
     AdminRuntime,
     capabilities::RuntimeCapabilities,
     kernel::{default_limit_key, default_window_key},
-    parse, store,
+    store,
 };
-use gateway_admin::{operations::AdminInput, routes::AdminOperation, source_input as source_body};
+use gateway_admin_contracts::fields;
+use gateway_admin_contracts::{
+    operations::AdminInput, routes::AdminOperation, source_input as source_body,
+};
 use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
 use gateway_authority::{kernel::KernelDefaults, keys};
@@ -73,11 +76,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         if let Some(error) = validate_defaults_fields(body)? {
             return Ok(error);
         }
-        let limit=source_body::member(body,"kernel_policy_limit_requests").as_ref().map(|value|parse::source_limit(value).ok_or_else(||invalid("kernel_policy_limit_requests must be a non-negative number or -1 for unlimited"))).transpose()?;
+        let limit=source_body::member(body,"kernel_policy_limit_requests").as_ref().map(|value|fields::source_limit(value).ok_or_else(||invalid("kernel_policy_limit_requests must be a non-negative number or -1 for unlimited"))).transpose()?;
         let window = source_body::member(body, "kernel_policy_window_ms")
             .as_ref()
             .map(|value| {
-                parse::source_positive(value)
+                fields::source_positive(value)
                     .ok_or_else(|| invalid("kernel_policy_window_ms must be a positive number"))
             })
             .transpose()?;
@@ -221,7 +224,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
 }
 
 fn validate_defaults_fields(body: &SourceJson) -> Result<Option<AuthResponse>, GatewayError> {
-    let fields = parse::source_entries(body).ok_or_else(|| invalid("Invalid JSON body"))?;
+    let fields = fields::source_entries(body).ok_or_else(|| invalid("Invalid JSON body"))?;
     for (name, _) in fields {
         if ![
             "model",
@@ -276,7 +279,7 @@ fn defaults_runtime(
         ));
     }
     if let Some(raw) = source_body::member(body, "model") {
-        model = parse::source_text(Some(&raw))
+        model = fields::source_text(Some(&raw))
             .filter(|text| {
                 !text
                     .as_units()
@@ -308,7 +311,7 @@ fn defaults_runtime(
         .ok_or_else(|| invalid("model is not in the stored Codex model list"))?;
     let reasoning = ModelReasoning::from_record(Some(record));
     effort = if let Some(raw) = source_body::member(body, "reasoning_effort") {
-        parse::source_text(Some(&raw))
+        fields::source_text(Some(&raw))
             .ok_or_else(|| invalid("reasoning_effort must be a non-empty string"))?
     } else {
         reasoning

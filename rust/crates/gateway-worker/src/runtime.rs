@@ -269,7 +269,7 @@ async fn administrative_route(
     // Source authenticates an administrative route before its handler can
     // read a body. Resolve the route first so unmatched or wrong-method
     // paths, including the source paid-fallbacks 405, stay body-free.
-    let admin_route = gateway_admin::routes::match_route(request.method().as_ref(), path);
+    let admin_route = gateway_admin_contracts::routes::match_route(request.method().as_ref(), path);
     if admin_route.is_some() && !matches!(request.method(), Method::Get | Method::Head) {
         auth.authenticate_admin(auth_request).await?;
         auth_request.body = body::inference_bytes(request).await?;

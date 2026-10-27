@@ -2494,3 +2494,11 @@ Reversal risk: removing the retry window or lowering it below the restart interv
 Reason: a live iOS steer reached a `1,032,954`-token estimate against the LithosAI `1,032,192`-token budget, only 762 tokens over, and could not be sent. The request carried a 961,798-byte adopted compaction summary plus 2,730,984 serialized bytes of history. Messages before that summary are redundant after Codex has adopted it; retaining them made a long thread unusable on DeepSeek while the same client could continue with GPT. The reduction preserves the adopted summary, the current steer, the complete tool schema, and all post-summary messages.
 
 Reversal risk: removing this reduction restores the hard steer failure for long adopted summaries. Dropping post-summary messages, rewriting the summary, applying this to `truncation: "disabled"`, or admitting a still-over-budget projection would lose current work or dispatch an oversized request. The version bump distinguishes this aggregate behavior from v1 in logs and tests.
+
+## Admin Rust code uses defining contract, key, kernel and dispatch crates - 2026-10-25
+
+Administrative operation types, source field parsers and audit records are defined in `gateway-admin-contracts`; API-key transactions are defined in `gateway-admin-keys`; kernel authentication projection and public-key administration are defined in `gateway-admin-kernel`. `gateway-admin` retains authenticated HTTP dispatch and authority-backed list responses. Consumers import each item from its defining module without re-exports. Scalar/query parsers remain data-to-data operations and do not authorize an administrative request.
+
+Reason: the original 2,471-line admin crate exceeded the owner's 1,000-line limit. The partition keeps the existing authorization-before-parsing order, atomic key/policy/audit transaction, paid-deletion fences, source UTF16 encodings and exact route responses. The admin integration tests remain independent targets with common fixtures in the bounded dev-only support crate.
+
+Reversal risk: moving these owners back into the dispatcher restores oversized-crate debt; forwarding their public names would violate the defining-module rule. The split does not transfer credential, state-conversion, service-activation or deployment authority.

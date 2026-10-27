@@ -14,8 +14,9 @@ mod state;
 mod store;
 
 use capabilities::*;
-use gateway_admin::{
-    operations::{AdminHost, AdminInput, PaidKeyFields},
+use gateway_admin_contracts::fields;
+use gateway_admin_contracts::{
+    operations::{AdminHost, AdminInput, PaidKeyFields, missing_capability},
     routes::AdminOperation,
     source_input as source_body,
 };
@@ -80,7 +81,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     },
                     ModelsCatalog => CatalogRequest::Catalog,
                     ModelsRefresh => CatalogRequest::Refresh,
-                    _ => return Err(gateway_admin::operations::missing_capability(operation)),
+                    _ => return Err(missing_capability(operation)),
                 };
                 self.capabilities.catalog(request, context).await
             }
@@ -96,13 +97,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                     HealthProviders => ProviderRequest::PassiveHealth,
                     HealthUpstream => ProviderRequest::UpstreamHealth,
                     Capacity => ProviderRequest::Capacity {
-                        live: parse::first(&input.query, "refresh") == Some("live"),
+                        live: fields::first(&input.query, "refresh") == Some("live"),
                     },
                     CapacityObservations => ProviderRequest::Observations {
                         document: input.body,
                     },
                     CapacityRollups => ProviderRequest::Rollups { query: input.query },
-                    _ => return Err(gateway_admin::operations::missing_capability(operation)),
+                    _ => return Err(missing_capability(operation)),
                 };
                 self.capabilities.provider(request, context).await
             }
@@ -114,7 +115,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                         ClaudeRequest::SetCredential(parse::claude_source(&input.body)?)
                     }
                     ClaudeAuthDelete => ClaudeRequest::DeleteAccount {
-                        account_id: parse::first(&input.query, "account_id")
+                        account_id: fields::first(&input.query, "account_id")
                             .map(gateway_core::js_string::JsString16::from_utf8),
                     },
                     ClaudeAccountSelect => {
@@ -141,7 +142,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                             cohort_id,
                         }
                     }
-                    _ => return Err(gateway_admin::operations::missing_capability(operation)),
+                    _ => return Err(missing_capability(operation)),
                 };
                 self.capabilities.claude(request, context).await
             }
@@ -161,7 +162,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
                 self.dispatch_supervisor(operation, input, context).await
             }
             // AdminService owns these operations; never duplicate key/passkey/public-key writers.
-            _ => Err(gateway_admin::operations::missing_capability(operation)),
+            _ => Err(missing_capability(operation)),
         }
     }
     async fn prepare_key_deletion(&self, key_id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
@@ -196,11 +197,11 @@ fn supervisor_target(
     use AdminOperation::SupervisorOutput;
     let (source_id, thread_id) = if operation == SupervisorOutput {
         (
-            parse::first(&input.query, "source")
+            fields::first(&input.query, "source")
                 .unwrap_or("")
                 .trim_matches(gateway_schema::util::js_whitespace)
                 .to_owned(),
-            parse::first(&input.query, "id")
+            fields::first(&input.query, "id")
                 .unwrap_or("")
                 .trim_matches(gateway_schema::util::js_whitespace)
                 .to_owned(),
@@ -347,7 +348,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 }
                 CodexRequest::RunCacheExperiment
             }
-            _ => return Err(gateway_admin::operations::missing_capability(operation)),
+            _ => return Err(missing_capability(operation)),
         };
         self.capabilities.codex(request, context).await
     }
@@ -389,10 +390,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     .await
             }
             QuotaProjection => {
-                let window = parse_int_prefix(parse::first(&input.query, "window_days"))
+                let window = parse_int_prefix(fields::first(&input.query, "window_days"))
                     .filter(|n| [7, 30, 90].contains(n))
                     .unwrap_or(30);
-                let balance = parse::first(&input.query, "balance_window_days")
+                let balance = fields::first(&input.query, "balance_window_days")
                     .and_then(|s| {
                         s.trim_matches(gateway_schema::util::js_whitespace)
                             .parse::<f64>()
@@ -411,7 +412,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     .await
             }
             QuotaProjectionBackfill => {
-                let limit = parse_int_prefix(parse::first(&input.query, "limit"))
+                let limit = parse_int_prefix(fields::first(&input.query, "limit"))
                     .filter(|n| *n > 0)
                     .unwrap_or(5000)
                     .min(10000) as u32;
@@ -436,7 +437,8 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 {
                     return Err(GatewayError::new(404, "Not found", Some("not_found")));
                 }
-                let limit = parse::bounded_positive(parse::first(&input.query, "limit"), 20, 100)?;
+                let limit =
+                    fields::bounded_positive(fields::first(&input.query, "limit"), 20, 100)?;
                 self.capabilities
                     .analytics(
                         AnalyticsRequest::PaidHistory {
@@ -447,7 +449,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     )
                     .await
             }
-            _ => Err(gateway_admin::operations::missing_capability(operation)),
+            _ => Err(missing_capability(operation)),
         }
     }
     async fn dispatch_supervisor(
@@ -468,7 +470,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     thread_id,
                 } = target;
                 let request = {
-                    let cursor: String = parse::first(&input.query, "cursor")
+                    let cursor: String = fields::first(&input.query, "cursor")
                         .unwrap_or("")
                         .trim_matches(gateway_schema::util::js_whitespace)
                         .chars()
@@ -482,7 +484,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 };
                 self.native_response(request, context).await
             }
-            _ => Err(gateway_admin::operations::missing_capability(operation)),
+            _ => Err(missing_capability(operation)),
         }
     }
     async fn supervisor_brief_response(
