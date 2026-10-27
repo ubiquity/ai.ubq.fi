@@ -116,7 +116,11 @@ async function synthetic(context: MatrixContext, mode: "mixed400" | "mixed503" |
   const original = object(log.native_http_failure);
   assert.equal(original.status, mode === "mixed400" ? 400 : 503);
   assert.equal(original.body_complete, true);
-  assert.equal(object(original.headers)["retry-after"], "17");
+  const safe = object(original.headers);
+  assert.equal(safe["retry-after"], mode === "mixed503" ? "r".repeat(512) : "17");
+  assert.equal(original.headers_truncated, mode === "mixed503");
+  assert.equal(safe["set-cookie"], undefined);
+  assert.equal(safe.authorization, undefined);
   assert.equal(object(original.error).code, "matrix_head_refusal");
   assert(!state.semantic_committed);
   context.cases.push(EARLY_HEAD_CASE_NAMES[mode === "mixed400" ? 0 : 1]);

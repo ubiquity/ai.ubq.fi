@@ -520,9 +520,14 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
     }
     if ((provider === "lithos" && mode === "no200") || (provider === "openrouter" && ["mixed400", "mixed503", "no200"].includes(mode))) {
       const status = provider === "lithos" || mode === "mixed503" ? 503 : 400;
+      const headers = new Headers({ "retry-after": mode === "mixed503" ? "r".repeat(513) : "17", "x-request-id": "early-" + provider });
+      if (mode === "mixed503") {
+        headers.set("set-cookie", "fixture-redaction-canary");
+        headers.set("authorization", "fixture-redaction-canary");
+      }
       return Response.json(
         { error: { code: "matrix_head_refusal", message: mode, type: status >= 500 ? "server_error" : "invalid_request_error" } },
-        { status, headers: { "retry-after": "17", "x-request-id": "early-" + provider } }
+        { status, headers }
       );
     }
   }

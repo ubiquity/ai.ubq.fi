@@ -24,8 +24,9 @@ pub fn normalize_request_record(
     key_id: &str,
     request_id: &str,
     created_at_ms: f64,
-) -> Result<Option<crate::records::RequestLogRecord>, GatewayError> {
-    crate::records::RequestLogRecord::normalize(
+) -> Result<Option<gateway_observability_request_records::request::RequestLogRecord>, GatewayError>
+{
+    gateway_observability_request_records::request::RequestLogRecord::normalize(
         input,
         key_id,
         &gateway_core::js_string::JsString16::from_utf8(request_id),
@@ -73,8 +74,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             120,
             &gateway_core::js_string::JsString16::from_utf8(&store::uuid(self.host.as_ref())?),
         );
-        let created =
-            crate::records::number(source::member(input, "created_at_ms").as_ref(), at as f64);
+        let created = gateway_observability_request_records::request::number(
+            source::member(input, "created_at_ms").as_ref(),
+            at as f64,
+        );
         self.mutate_request_log(key_id, created, &id, input, false)
             .await
     }
@@ -136,24 +139,27 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 .as_ref()
                 .filter(|r| r.expires_at_ms.is_none_or(|t| t > at))
             {
-                Some(row) => crate::records::RequestLogRecord::normalize(
-                    &crate::records::record_source_json(row)?,
-                    key_id,
-                    request_id,
-                    created,
-                )?,
+                Some(row) => {
+                    gateway_observability_request_records::request::RequestLogRecord::normalize(
+                        &crate::records::record_source_json(row)?,
+                        key_id,
+                        request_id,
+                        created,
+                    )?
+                }
                 None => None,
             };
             if only_existing && existing.is_none() {
                 return Ok(());
             }
-            let record = crate::records::merge_request_fields_source(
-                existing.as_ref(),
-                patch,
-                key_id,
-                request_id,
-                created,
-            )?;
+            let record =
+                gateway_observability_request_records::request::merge_request_fields_source(
+                    existing.as_ref(),
+                    patch,
+                    key_id,
+                    request_id,
+                    created,
+                )?;
             let expiry = (created + REQUEST_RETENTION_MS as f64).max((at + 1) as f64);
             if !expiry.is_finite() || expiry > gateway_core::identity::MAX_SAFE_INTEGER as f64 {
                 return Err(store::error("Request retention overflow"));
