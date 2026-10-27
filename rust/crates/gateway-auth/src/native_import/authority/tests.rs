@@ -1,11 +1,9 @@
 use super::*;
 use super::{completion::*, result::*};
-use crate::{
-    crypto::base64url,
-    native::{NATIVE_MAX_BODY_BYTES, NATIVE_RENEWAL_AUTHORITY_PATH, signature_input},
-    native_control::{
-        NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_MAX_BYTES, authority_response_input,
-    },
+use crate::{crypto::base64url, native::signature_input, native_control::authority_response_input};
+use gateway_auth_native_wire::{
+    control::{NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_MAX_BYTES},
+    native_read::{NATIVE_MAX_BODY_BYTES, NATIVE_RENEWAL_AUTHORITY_PATH},
 };
 fn nonce() -> String {
     base64url(&[9; 32])

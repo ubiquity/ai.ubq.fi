@@ -2,13 +2,15 @@
 //! and finite validators are shared with authentication without a reverse edge.
 use super::unavailable;
 #[cfg(test)]
-use gateway_auth::native_import::publication::command::{
+use gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES;
+#[cfg(test)]
+use gateway_auth_native_wire::publication_command::{
     ACCESS_MAX_BYTES, ImportAccessDocument, ImportPublicationCommandData,
     import_publication_max_bytes,
 };
-use gateway_auth::native_import::publication::{
-    command::{ImportCatalogData, SNAPSHOT_MAX_BYTES},
-    data::ImportCatalogDisposition,
+use gateway_auth_native_wire::{
+    publication_command::{ImportCatalogData, SNAPSHOT_MAX_BYTES},
+    publication_data::ImportCatalogDisposition,
 };
 use gateway_core::{error::GatewayError, source_json::SourceJson};
 
@@ -116,7 +118,7 @@ mod tests {
         assert!(ImportPublicationCommandData::parse(&bytes).is_err());
         row.document.access_token.push('x');
         assert!(row.bytes().is_err());
-        assert!(import_publication_max_bytes() < gateway_auth::native::NATIVE_MAX_BODY_BYTES);
+        assert!(import_publication_max_bytes() < NATIVE_MAX_BODY_BYTES);
     }
     #[test]
     fn duplicated_version_and_escaped_authority_text_fit_computed_envelope() {

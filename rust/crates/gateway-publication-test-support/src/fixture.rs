@@ -1,5 +1,4 @@
 use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native::NATIVE_RPC_PATH;
 use gateway_auth::native_auth::{
     AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
     NativeNonceAuthority, NativeTransportIdentity,
@@ -8,6 +7,7 @@ use gateway_auth::native_credentials::{NativeCredentials, NativeOwnerId};
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
 };
+use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
 use gateway_authority::keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::error::GatewayError;

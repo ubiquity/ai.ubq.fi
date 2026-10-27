@@ -4,7 +4,6 @@ use super::{foundation_tests::assert_owned_canonical_directory, *};
 use crate::http_server::import_http_tests as base;
 use gateway_auth::{
     crypto::{Secret, base64url, sha256_hex},
-    native::*,
     native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
     native_import::*,
     passkeys::{self, PasskeySession, PasskeyUser},
@@ -15,6 +14,7 @@ use gateway_auth::{
     session_index,
     types::AuthRequest,
 };
+use gateway_auth_native_wire::native_read::*;
 use gateway_authority::keys;
 use gateway_authority::native_control::{
     actor,
@@ -538,8 +538,8 @@ fn read_request(
                 .map(|v| v.parse().ok())
                 .unwrap_or(Some(0))?;
             if len
-                > gateway_auth::native_import::publication::command::import_publication_max_bytes()
-                    .max(gateway_auth::native::NATIVE_MAX_BODY_BYTES)
+                > gateway_auth_native_wire::publication_command::import_publication_max_bytes()
+                    .max(gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES)
             {
                 return None;
             }

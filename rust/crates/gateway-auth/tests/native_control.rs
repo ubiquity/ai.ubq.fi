@@ -1,9 +1,8 @@
 use gateway_auth::{
     crypto::base64url,
-    native::*,
     native_auth::{NativeCapability, NativeTransportIdentity},
-    native_control::*,
 };
+use gateway_auth_native_wire::{control::*, native_read::*};
 use std::collections::BTreeSet;
 
 const REQUEST: &[u8] = br#"{"v":1,"operation_id":"operation-1","request":{"operation":"codex_renew_access","action_ref":"action-1"}}"#;

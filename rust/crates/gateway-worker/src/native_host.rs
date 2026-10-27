@@ -7,17 +7,19 @@ use crate::{
 };
 use gateway_auth::{
     crypto::{base64url, decode_base64url},
-    native::{
+    native_auth::{NativeCapability, NativeTransportIdentity},
+    types::AuthResponse,
+};
+use gateway_auth_native_wire::{
+    control::{
+        NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope,
+        NativeControlResponse, unverified,
+    },
+    native_read::{
         AuthStream, NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES,
         NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH, NATIVE_WIRE_VERSION, NativeReadRequest,
         NativeRpcEnvelope, NativeRpcResponse,
     },
-    native_auth::{NativeCapability, NativeTransportIdentity},
-    native_control::{
-        NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope,
-        NativeControlResponse, unverified,
-    },
-    types::AuthResponse,
 };
 use gateway_core::error::GatewayError;
 use serde::Deserialize;
@@ -281,7 +283,7 @@ impl NativeBindings {
         >,
         platform: &PlatformHost,
     ) -> Result<gateway_authority::native_control::NativeRenewalFence, GatewayError> {
-        use gateway_auth::native_control::{NativeControlDisposition, NativeControlRequest};
+        use gateway_auth_native_wire::control::{NativeControlDisposition, NativeControlRequest};
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
             operation_id: crate::transport::random::opaque_token()?,
@@ -420,8 +422,9 @@ impl NativeBindings {
             crate::host::PlatformTokens,
             crate::host::PlatformClock,
         );
-        let gateway_auth::native_control::NativeControlRequest::CodexRenewAccess { action_ref } =
-            &envelope.request;
+        let gateway_auth_native_wire::control::NativeControlRequest::CodexRenewAccess {
+            action_ref,
+        } = &envelope.request;
         self.renewal_owners()?
             .for_action(&authority, action_ref)
             .await?;

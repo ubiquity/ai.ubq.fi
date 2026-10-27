@@ -10,16 +10,16 @@ use crate::{
     paid_control::{PaidControlConfig, PaidControlOwner, PaidSourceCheck},
     routing::LiveRouteSelection,
 };
-use gateway_auth::native::NATIVE_CONTROL_PATH;
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
     NativeTransportIdentity,
 };
-use gateway_auth::native_control::{NativeControlEnvelope, NativeControlRequest};
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
     ManagedNativeSource, codex_source_pool_key,
 };
+use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
+use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::identity::PoolVersionstamp;
 use gateway_core::js_string::JsString16;
@@ -197,7 +197,7 @@ async fn publication_proof(
     body: &[u8],
     n: u8,
 ) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
-    let path = gateway_auth::native::NATIVE_PUBLICATION_PATH;
+    let path = gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
     let nonce = gateway_auth::crypto::base64url(&[n; 32]);
     let mac = identity.sign(path, 1_000_000, &nonce, body).unwrap();
     NativeAuthenticator::new(identity, &Nonces::default())

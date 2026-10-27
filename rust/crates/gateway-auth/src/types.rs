@@ -121,7 +121,7 @@ pub struct AuthResponse {
     /// overwrites another or weakens their exact attributes.
     pub set_cookies: Vec<String>,
     pub body: AuthResponseBody,
-    pub stream: Option<crate::native::AuthStream>,
+    pub stream: Option<gateway_auth_native_wire::native_read::AuthStream>,
 }
 
 impl AuthResponse {
@@ -149,7 +149,10 @@ impl AuthResponse {
             stream: None,
         }
     }
-    pub fn with_stream(mut self, stream: crate::native::AuthStream) -> Self {
+    pub fn with_stream(
+        mut self,
+        stream: gateway_auth_native_wire::native_read::AuthStream,
+    ) -> Self {
         self.stream = Some(stream);
         self
     }

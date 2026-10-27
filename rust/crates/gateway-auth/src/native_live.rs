@@ -2,11 +2,11 @@
 //! URL, bearer, filesystem path or serialized permission crosses this boundary.
 use crate::{
     crypto::{base64url, decode_base64url, sha256_hex},
-    native::{NATIVE_AUTH_WINDOW_MS, NATIVE_WIRE_VERSION},
     native_auth::{
         NativeAuthHeaders, NativeCapability, NativeNonceAuthority, NativeTransportIdentity,
     },
 };
+use gateway_auth_native_wire::native_read::{NATIVE_AUTH_WINDOW_MS, NATIVE_WIRE_VERSION};
 use gateway_core::error::GatewayError;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;

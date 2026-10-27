@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-auth-native-wire.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-providers = { path = "../gateway-providers" }

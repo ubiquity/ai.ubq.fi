@@ -3,7 +3,7 @@ use crate::{
     authority::RemoteAuthorityStore,
     transport::{HeaderLimits, body::request_bytes, bounded_headers},
 };
-use gateway_auth::native::NATIVE_MAX_BODY_BYTES;
+use gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES;
 use gateway_core::error::GatewayError;
 use gateway_publication_policy::protocol::{OwnedNativeAuthHeaders, PublicationRequest};
 use gateway_publication_transport::transport::PublicationReceiver;

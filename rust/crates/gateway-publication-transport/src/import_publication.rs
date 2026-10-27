@@ -1,12 +1,12 @@
 //! Fixed authenticated sanitized import publication. The constructor inputs and
 //! original authority own the decision; wire DATA never supplies config or KV.
 use crate::transport::{PublicationReceiver, borrowed_headers};
-use gateway_auth::{
-    native::{NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER},
-    native_import::publication::{
-        NativeImportPublication, NativeImportPublicationDisposition,
-        command::{ImportPublicationCommandData, import_publication_max_bytes},
-    },
+use gateway_auth::native_import::publication::{
+    NativeImportPublication, NativeImportPublicationDisposition,
+};
+use gateway_auth_native_wire::{
+    native_read::{NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER},
+    publication_command::{ImportPublicationCommandData, import_publication_max_bytes},
 };
 use gateway_authority::{
     native_control::{NativeRenewalCancellation, receiver::NativeRenewalAuthority},

@@ -217,7 +217,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn native(
         &self,
-        request: gateway_auth::native::NativeReadRequest,
+        request: gateway_auth_native_wire::native_read::NativeReadRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;

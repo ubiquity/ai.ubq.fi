@@ -182,7 +182,7 @@ pub(super) fn fixed_authority_client<'a, C: NativeRenewalCancellation>(
     #[cfg(not(feature = "native-import-fixture"))]
     {
         let target = origin
-            .join(gateway_auth::native::NATIVE_RENEWAL_AUTHORITY_PATH)
+            .join(gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH)
             .map_err(|_| unavailable())?;
         gateway_authority::native_control::import::remote::RemoteImportAuthority::from_connected(
             target.as_str(),

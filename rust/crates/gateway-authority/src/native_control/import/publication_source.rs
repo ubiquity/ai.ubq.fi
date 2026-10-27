@@ -3,12 +3,12 @@ use super::*;
 use crate::{keys, store::Transaction};
 use gateway_auth::{
     crypto::Secret,
-    native_import::publication::command::{ImportCatalogData, ImportPublicationCommandData},
     provider_credentials::{
         CodexNativeOwner, CodexSourceAccount, MANAGED_NATIVE_SOURCE_VERSION, ManagedNativeSource,
         codex_source_pool_key, parse_codex_source_pool,
     },
 };
+use gateway_auth_native_wire::publication_command as command;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     identity::PoolVersionstamp,
@@ -30,7 +30,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
     control: &NativeRenewalAuthority<'_, S, I, C>,
     tx: &mut Transaction<'_, S, I>,
     row: &ImportActionRow,
-    wire: &ImportPublicationCommandData,
+    wire: &command::ImportPublicationCommandData,
 ) -> Result<SourcePlan, GatewayError> {
     let source_key = codex_source_pool_key();
     let raw: Value = tx.read(&source_key).await?.ok_or_else(unavailable)?;
@@ -115,7 +115,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
     let runtime_source: Option<SourceJson> = tx.read_source_control(&runtime_key).await?;
     let _: Option<Value> = tx.read(&generation_key).await?;
     match &wire.catalog {
-        ImportCatalogData::AuthenticatedLimited {
+        command::ImportCatalogData::AuthenticatedLimited {
             upstream_status: 429,
         } => {
             if current.is_none() {
@@ -129,7 +129,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
                 auth_generation_revision: tx.revision(&generation_key),
             })
         }
-        ImportCatalogData::Normalized {
+        command::ImportCatalogData::Normalized {
             snapshot,
             client_version,
             ..

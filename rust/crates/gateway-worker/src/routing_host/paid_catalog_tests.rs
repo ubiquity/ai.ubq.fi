@@ -1,10 +1,10 @@
 use super::prepare_credential_catalog;
 use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native::NATIVE_PUBLICATION_PATH;
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
 };
 use gateway_auth::native_replay::StoreNonceAuthority;
+use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority::{
     keys,
     paid_control::{PaidRequestContext, PaidRoutingProjection, paid_projection_source_keys},

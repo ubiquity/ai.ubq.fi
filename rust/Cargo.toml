@@ -11,6 +11,7 @@ members = [
   "crates/gateway-admission",
   "crates/gateway-catalog-runtime",
   "crates/gateway-auth",
+  "crates/gateway-auth-native-wire",
   "crates/gateway-admin",
   "crates/gateway-admin-data",
   "crates/gateway-admin-runtime",
@@ -61,6 +62,7 @@ gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
+gateway-auth-native-wire = { path = "crates/gateway-auth-native-wire" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }

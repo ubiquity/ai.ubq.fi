@@ -845,6 +845,7 @@ dependencies = [
  "gateway-admin-data",
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-providers",
@@ -875,6 +876,7 @@ dependencies = [
  "gateway-admin-data",
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-schema",
@@ -904,6 +906,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
+ "gateway-auth-native-wire",
  "gateway-core",
  "getrandom 0.2.16",
  "getrandom 0.3.4",
@@ -922,11 +925,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-auth-native-wire"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority-routing-records",
+ "gateway-auth-native-wire",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
@@ -969,6 +982,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-native",
@@ -1078,6 +1092,7 @@ dependencies = [
  "gateway-admin-data",
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-authority-routing-records",
  "gateway-claude-runtime",
@@ -1109,6 +1124,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-authority-routing-records",
  "gateway-core",
@@ -1193,6 +1209,7 @@ name = "gateway-publication"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-authority-routing-records",
  "gateway-core",
@@ -1208,6 +1225,7 @@ name = "gateway-publication-policy"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "serde",
@@ -1219,6 +1237,7 @@ name = "gateway-publication-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-authority-routing-records",
  "gateway-core",
@@ -1233,6 +1252,7 @@ name = "gateway-publication-transport"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-publication",
@@ -1316,6 +1336,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-admission",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-authority-routing-records",
  "gateway-capacity-recovery",
@@ -1362,6 +1383,7 @@ name = "gateway-worker-fixture-setup"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-authority-routing-records",
  "gateway-core",

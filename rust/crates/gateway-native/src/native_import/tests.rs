@@ -2,7 +2,6 @@
 use super::*;
 use gateway_auth::{
     crypto::{Secret, base64url, sha256_hex},
-    native::*,
     native_auth::{
         NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
         NativeTransportIdentity,
@@ -17,6 +16,7 @@ use gateway_auth::{
     types::{AuthConfig, AuthHost, AuthRequest},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
 };
+use gateway_auth_native_wire::native_read::*;
 use gateway_authority::keys;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, actor,

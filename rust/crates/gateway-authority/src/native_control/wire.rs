@@ -3,8 +3,8 @@ use super::{NativeRenewalFence, NativeRenewalMode};
 use gateway_auth::{
     crypto::{base64url, decode_base64url},
     native_auth::NativeAuthHeaders,
-    native_control::NATIVE_CONTROL_MAX_BYTES,
 };
+use gateway_auth_native_wire::control::NATIVE_CONTROL_MAX_BYTES;
 use gateway_core::error::GatewayError;
 use serde::{Deserialize, Serialize};
 

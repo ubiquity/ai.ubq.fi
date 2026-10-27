@@ -2,9 +2,9 @@ use super::*;
 use crate::managed_publication_http::NativeAccessPublicationHttp;
 use gateway_auth::{
     crypto::Secret,
-    native::*,
     native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
 };
+use gateway_auth_native_wire::native_read::*;
 use gateway_authority::{
     cache_experiment::{
         RefreshContext,

@@ -1,8 +1,7 @@
 //! Actual TLS and response authentication only, never a durable completion issuer.
 use super::*;
-use gateway_auth::native_import::publication::{
-    NativeImportPublicationDisposition, data::ImportPublicationDataV1,
-};
+use gateway_auth::native_import::publication::NativeImportPublicationDisposition;
+use gateway_auth_native_wire::publication_data::ImportPublicationDataV1;
 use gateway_core::source_json::SourceJson;
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{
@@ -252,8 +251,7 @@ fn read_request(
             }
         }
         if bytes.len()
-            > gateway_auth::native_import::publication::command::import_publication_max_bytes()
-                + 16_384
+            > gateway_auth_native_wire::publication_command::import_publication_max_bytes() + 16_384
         {
             return None;
         }

@@ -14,6 +14,7 @@ entrypoint = []
 
 [dependencies]
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-auth-native-wire.workspace = true
 gateway-compaction.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
