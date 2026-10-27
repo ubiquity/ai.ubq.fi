@@ -26,7 +26,7 @@ fn estimate(
 #[test]
 fn calibrated_estimator_preserves_all_nine_frozen_source_goldens() -> TestResult {
     let fixture = source(include_str!(
-        "../../gateway-compaction/tests/fixtures/source-v1.json"
+        "../../gateway-compaction-test-support/tests/fixtures/source-v1.json"
     ))?;
     let cases = json::member(&fixture, "tokens")
         .and_then(|value| json::array(&value))

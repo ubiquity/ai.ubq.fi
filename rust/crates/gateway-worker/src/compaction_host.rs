@@ -9,7 +9,7 @@ use crate::{
         random,
     },
 };
-use gateway_compaction::types::{CompactionFailure, CompactionHost, FailureKind};
+use gateway_compaction_source::types::{CompactionFailure, CompactionHost, FailureKind};
 use gateway_core::{error::GatewayError, source_json::SourceJson};
 use protocol::{Call, RequestPlan};
 use worker::Method;
