@@ -1,8 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_admin_contracts::operations::{AdminHost as _, AdminInput};
-use gateway_admin_data::profile::source::{
-    from_source_profile as from_profile, to_source_profile as to_profile,
-};
 use gateway_auth::{crypto::sha256_base64url, store::key};
 use gateway_core::{
     error::GatewayError,
@@ -18,6 +15,8 @@ use gateway_migration::inverse::{ArtifactContext, export_latest, export_rollback
 use gateway_migration::projection::known_source_family;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_profile_source::codec::from_source_profile as from_profile;
+use gateway_profile_source::codec::to_source_profile as to_profile;
 use gateway_profile_values::date::{CanonicalDates, SourceDateHost};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1011,12 +1010,12 @@ fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts() {
     ))
     .unwrap();
     let output = run(export_latest(&store, 2300)).unwrap();
-    let before = gateway_admin_data::profile::normalize_import_line(
+    let before = gateway_profile_source::line::normalize_import_line(
         &serde_json::to_string(&input.entries[0]).unwrap(),
     )
     .unwrap()
     .unwrap();
-    let after = gateway_admin_data::profile::normalize_import_line(
+    let after = gateway_profile_source::line::normalize_import_line(
         &serde_json::to_string(&output.entries[0]).unwrap(),
     )
     .unwrap()

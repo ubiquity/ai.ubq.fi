@@ -1,8 +1,10 @@
 //! Source validation views of current common authority records, never a backup ledger.
 use crate::*;
-use gateway_admin_data::migration::{ObservedRow, audit, logical_fields};
+use gateway_admin_data::policy::logical_fields;
 use gateway_auth::types::AuthResponse;
 use gateway_core::{query::*, value::PortableValue};
+use gateway_migration_ledger::rows::ObservedRow;
+use gateway_source_audit::driver as audit;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -165,7 +167,7 @@ pub(crate) async fn validate<S: QueryStore>(
                 ],
             ) && r.parts.len() > 4
                 && r.record.json_value().is_ok_and(|v| {
-                    gateway_admin_data::migration::counter::valid_baseline(v)
+                    gateway_migration_ledger::counter::valid_baseline(v)
                         && !v["reconciled_at_ms"].is_null()
                 })
         })

@@ -1,10 +1,13 @@
-use super::{ObservedRow, check, key, put};
+use crate::{
+    rows::{DAY, ObservedRow, api_id, safe},
+    transition::{check, key, put},
+};
 use gateway_core::{
     error::GatewayError,
     state::{AtomicTransition, RevisionCheck},
     value::PortableValue,
 };
-use gateway_profile_values::scalar::{error, integer, text};
+use gateway_profile_values::scalar::{error, integer, number, text};
 use serde_json::{Value, json};
 
 pub fn current_legacy_usage(record: &Value, now: i64) -> Option<i64> {
@@ -23,7 +26,7 @@ pub fn migration_policy_now(record: &Value, now: i64) -> Option<i64> {
 }
 pub fn valid_baseline(value: &Value) -> bool {
     value["version"] == 1
-        && super::audit::api_id(value.get("key_id"))
+        && api_id(value.get("key_id"))
         && text(value, "policy_version").is_some_and(|s| !s.is_empty())
         && [
             "window_start_ms",
@@ -96,7 +99,7 @@ pub fn plan_counter_handoff(
     let existing = window
         .map(ObservedRow::value)
         .transpose()?
-        .filter(|v| super::audit::valid_api_window(v));
+        .filter(|v| valid_api_window(v));
     if existing.is_some_and(|w| {
         text(w, "key_id") != Some(key_id)
             || text(w, "policy_version") != Some(version)
@@ -186,7 +189,7 @@ pub fn plan_counter_handoff(
         }
     };
     let expiry = reset
-        .checked_add(7 * super::retention::DAY)
+        .checked_add(7 * DAY)
         .and_then(|v| v.checked_add(now.saturating_sub(reset).max(0)))
         .ok_or_else(|| error("Counter migration retention overflow."))?;
     Ok(CounterPlan {
@@ -205,4 +208,20 @@ pub fn plan_counter_handoff(
             ],
         },
     })
+}
+
+pub fn valid_api_window(v: &Value) -> bool {
+    v["v"] == 3
+        && text(v, "key_id").is_some_and(|s| !s.is_empty())
+        && text(v, "policy_version").is_some_and(|s| !s.is_empty())
+        && [
+            "window_start_ms",
+            "window_reset_at_ms",
+            "committed_requests",
+            "reserved_requests",
+            "updated_at_ms",
+        ]
+        .iter()
+        .all(|f| safe(v.get(f)))
+        && number(v, "window_reset_at_ms") > number(v, "window_start_ms")
 }

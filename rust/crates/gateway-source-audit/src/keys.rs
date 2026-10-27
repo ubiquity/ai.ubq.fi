@@ -1,11 +1,14 @@
-use super::{
-    Audit, AuditInventory, SliceInventory, api_id, reference, source_fields as source, under,
-};
-use crate::migration::ObservedRow;
+use gateway_admin_data::inventory::AuditInventory;
+use gateway_admin_data::inventory::SliceInventory;
+use gateway_admin_data::report::Audit;
+use gateway_admin_data::validate::reference;
+use gateway_admin_data::validate::source_fields as source;
+use gateway_admin_data::validate::under;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_control::decode_source_control_record,
     source_json::SourceJson,
 };
+use gateway_migration_ledger::rows::{ObservedRow, api_id};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -140,7 +143,7 @@ pub(super) fn visit_key_pairs_with(
             baselines.count("api_key_bounded_counter_baselines_v2");
             match row.value() {
                 Ok(value) => {
-                    if super::super::counter::valid_baseline(value)
+                    if gateway_migration_ledger::counter::valid_baseline(value)
                         && !value["reconciled_at_ms"].is_null()
                     {
                         baselines.count("api_key_bounded_counter_reconciled_baselines_v2");

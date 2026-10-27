@@ -1,6 +1,5 @@
 //! Source: src/quota-projection.ts at dc6be2c3; caller supplies locale comparison explicitly.
-mod refill;
-pub mod source;
+use crate::refill;
 
 use gateway_profile_values::scalar::{json_number, number, positive, present, text};
 use serde_json::{Value, json};
@@ -133,7 +132,7 @@ pub fn group_paid_fallback_usage_rollups(rollups: &[Value], compare: LocaleCompa
     result
 }
 
-fn summarize_windows(all_buckets: &[Value], now_ms: f64) -> Vec<Value> {
+pub(crate) fn summarize_windows(all_buckets: &[Value], now_ms: f64) -> Vec<Value> {
     WINDOW_DAYS.iter().map(|days| {
         let start=((now_ms-f64::from(*days)*24.0*HOUR_MS)/HOUR_MS).floor()*HOUR_MS;
         let buckets:Vec<&Value>=all_buckets.iter().filter(|row|number(row,"bucket_start_at_ms").is_some_and(|v|v>=start)).collect();
@@ -205,7 +204,7 @@ fn project_runway_numbers(
     }).collect()
 }
 
-fn model_projection_numbers(
+pub(crate) fn model_projection_numbers(
     metered: bool,
     paid: bool,
     windows: &[Value],

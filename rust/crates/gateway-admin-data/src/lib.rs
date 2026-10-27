@@ -1,4 +1,6 @@
-//! Pure admin calculations and offline migration plans. No clocks, storage or network are read.
-pub mod migration;
-pub mod profile;
-pub mod projection;
+//! Ordinary source policy, replayable inventory and audit report data.
+pub mod inventory;
+pub mod policy;
+pub mod report;
+pub mod reset;
+pub mod validate;

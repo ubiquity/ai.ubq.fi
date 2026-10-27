@@ -1,7 +1,6 @@
-use super::starts;
+use gateway_migration_ledger::rows::{DAY, starts};
 use gateway_profile_values::scalar::integer;
 use serde_json::Value;
-pub const DAY: i64 = 86_400_000;
 pub const USAGE_RETENTION: i64 = 7 * DAY;
 pub const REQUEST_RETENTION: i64 = 365 * DAY;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,12 +1,15 @@
-use super::{
-    Audit, AuditInventory, SliceInventory, api_id, positive, reference, safe,
-    source_fields as source, under,
-};
-use crate::migration::ObservedRow;
+use gateway_admin_data::inventory::AuditInventory;
+use gateway_admin_data::inventory::SliceInventory;
+use gateway_admin_data::report::Audit;
+use gateway_admin_data::validate::positive;
+use gateway_admin_data::validate::reference;
+use gateway_admin_data::validate::source_fields as source;
+use gateway_admin_data::validate::under;
 use gateway_core::{
     error::GatewayError, source_control::decode_source_control_record, source_json::SourceJson,
     source_serialization,
 };
+use gateway_migration_ledger::rows::{DAY, ObservedRow, api_id, safe};
 use gateway_profile_values::{
     coercion::js_string,
     scalar::{integer, number, text},
@@ -389,7 +392,7 @@ impl PaidAudit {
         }
         for (r, w) in &self.windows {
             if integer(w, "window_reset_at_ms")
-                .and_then(|reset| reset.checked_add((365 - 32) * super::super::retention::DAY))
+                .and_then(|reset| reset.checked_add((365 - 32) * DAY))
                 .is_some_and(|cutoff| cutoff <= self.now)
             {
                 continue;

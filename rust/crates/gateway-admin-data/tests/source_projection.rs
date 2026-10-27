@@ -1,10 +1,11 @@
 mod source_fixture;
 
-use gateway_admin_data::projection::{project_quota, source::project_quota_source};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_quota_projection::quota::project_quota;
+use gateway_quota_projection::source::project_quota_source;
 use gateway_schema::aliases::SourceStringCollator;
 use serde_json::Value;
 use source_fixture::{CapturedCollator, assert_source_eq, fixture};

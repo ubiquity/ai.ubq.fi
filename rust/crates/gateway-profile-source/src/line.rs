@@ -1,9 +1,8 @@
 //! Profile NDJSON conversion; never loads a VM-specific value codec or executes JavaScript.
-pub mod source;
 
-use crate::migration::NormalizedEntry;
 use gateway_core::{
     error::GatewayError,
+    state::RecordKey,
     tuple_key::{BigIntKey, KeyPart, TupleKey},
     value::PortableValue,
 };
@@ -15,6 +14,13 @@ use gateway_profile_values::{
 };
 use serde_json::{Value, json};
 
+#[derive(Clone, Debug)]
+pub struct NormalizedEntry {
+    pub key: RecordKey,
+    pub parts: Vec<Value>,
+    pub value: PortableValue,
+    pub raw: Value,
+}
 pub fn normalize_import_line(line: &str) -> Result<Option<NormalizedEntry>, GatewayError> {
     normalize_import_line_with_host(line, &CanonicalDates)
 }

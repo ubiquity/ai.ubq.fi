@@ -234,7 +234,7 @@ pub(crate) fn validate_entry(entry: &NativeEntry, version: i64) -> Result<Row, G
     let source_value = if record.value_encoding == ValueEncoding::SourceGraphV1 {
         SourceJson::parse("null")?
     } else {
-        gateway_admin_data::profile::source::to_source_profile(&record.portable_value()?)?
+        gateway_profile_source::codec::to_source_profile(&record.portable_value()?)?
     };
     Ok(Row {
         key,

@@ -1,4 +1,3 @@
-use gateway_admin_data::migration::{ObservedRow, audit};
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,
@@ -10,6 +9,8 @@ use gateway_core::{
     state::StoredRecord,
     value::{PortableValue, ValueEncoding},
 };
+use gateway_ledger_audit as audit;
+use gateway_migration_ledger::rows::ObservedRow;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
@@ -43,7 +44,7 @@ fn inventory(request: &SourceJson) -> Vec<ObservedRow> {
         row(json!(["uos_ai","paid_fallback","v3","pending","fixture-key","fixture-attempt"]), &SourceJson::parse(r#"{"created_at_ms":100,"next_reconciliation_at_ms":200}"#).unwrap()),
     ]
 }
-fn inspect(rows: &[ObservedRow]) -> audit::Audit {
+fn inspect(rows: &[ObservedRow]) -> gateway_admin_data::report::Audit {
     inspect_paid(
         rows,
         &BTreeSet::from(["fixture-key".into()]),
@@ -158,7 +159,7 @@ fn scalar_paid_source_stays_json_and_wrong_physical_codec_is_not_reinterpreted()
 
 // Independent decoded row lifetimes model the replayable native spool contract.
 struct Replay<'a>(&'a [ObservedRow]);
-impl audit::AuditInventory for Replay<'_> {
+impl gateway_admin_data::inventory::AuditInventory for Replay<'_> {
     fn visit(
         &self,
         callback: &mut dyn FnMut(&ObservedRow) -> Result<(), GatewayError>,
@@ -175,7 +176,7 @@ fn inspect_paid(
     known: &BTreeSet<String>,
     unlimited: &BTreeSet<String>,
     now: i64,
-) -> Result<audit::Audit, GatewayError> {
+) -> Result<gateway_admin_data::report::Audit, GatewayError> {
     let result = audit::paid::inspect_paid(rows, known, unlimited, now);
     let replay = audit::paid::inspect_paid_inventory(&Replay(rows), known, unlimited, now);
     assert_eq!(format!("{result:?}"), format!("{replay:?}"));

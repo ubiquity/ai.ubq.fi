@@ -1,6 +1,8 @@
 //! Native-private immutable row frames. Never a database/runtime or wire codec.
 use crate::native_capture::NativeEntry;
 use crate::*;
+use gateway_admin_data::inventory::AuditInventory;
+use gateway_migration_ledger::rows::ObservedRow;
 use serde::de::DeserializeOwned;
 use std::{
     fs::{File, OpenOptions},
@@ -305,12 +307,10 @@ pub(crate) struct RowInventory<'a> {
     pub rows: &'a Spool<Row>,
     pub now: i64,
 }
-impl gateway_admin_data::migration::audit::AuditInventory for RowInventory<'_> {
+impl AuditInventory for RowInventory<'_> {
     fn visit(
         &self,
-        callback: &mut dyn FnMut(
-            &gateway_admin_data::migration::ObservedRow,
-        ) -> Result<(), GatewayError>,
+        callback: &mut dyn FnMut(&ObservedRow) -> Result<(), GatewayError>,
     ) -> Result<(), GatewayError> {
         let mut reader = self.rows.reader()?;
         while let Some(row) = reader.next()? {
@@ -319,7 +319,7 @@ impl gateway_admin_data::migration::audit::AuditInventory for RowInventory<'_> {
                 .expires_at_ms
                 .is_none_or(|expiry| expiry > self.now)
             {
-                callback(&gateway_admin_data::migration::ObservedRow {
+                callback(&ObservedRow {
                     key: row.key,
                     parts: row.parts,
                     record: row.record,

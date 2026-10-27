@@ -1,5 +1,5 @@
 use crate::*;
-use gateway_admin_data::profile::source::normalize_source_import_line_with_host;
+use gateway_profile_source::codec::normalize_source_import_line_with_host;
 use gateway_profile_values::date::SourceDateHost;
 use std::collections::BTreeSet;
 
@@ -122,7 +122,7 @@ fn validate_complete_binary_views(input: &SourceJson) -> Result<(), GatewayError
                 .ok_or_else(|| invalid("Full capture binary view requires explicit byteLength"))?
                 .deserialize::<f64>()?;
             let gateway_core::value::PortableValue::Binary { bytes, .. } =
-                gateway_admin_data::profile::source::from_source_profile(input)?
+                gateway_profile_source::codec::from_source_profile(input)?
             else {
                 return Err(invalid("Capture binary value is malformed"));
             };

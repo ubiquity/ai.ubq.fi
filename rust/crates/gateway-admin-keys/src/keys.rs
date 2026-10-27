@@ -87,7 +87,7 @@ fn usage_window(id: &str, window: i64, now: i64) -> ApiUsageWindow {
 /// Complete named DTO decode; callers retain their original key/expiry/currentness guards.
 pub fn decode_record(record: &StoredRecord) -> Result<ApiKeyRecord, GatewayError> {
     let source = decode_source_control_record(record)?;
-    if !gateway_admin_data::migration::audit::keys::valid_source_key_policy(&source, true) {
+    if !gateway_source_audit::keys::valid_source_key_policy(&source, true) {
         return Err(GatewayError::unavailable(
             "API key state is corrupt",
             "api_key_policy_invalid",

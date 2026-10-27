@@ -1,5 +1,6 @@
-use gateway_admin_data::{profile, projection};
+use gateway_profile_source::line as profile;
 use gateway_profile_values::codec::{from_profile, to_profile};
+use gateway_quota_projection::quota as projection;
 use serde_json::Value;
 
 // Both wire formats use JavaScript numbers. Integer/f64 JSON representations
@@ -34,7 +35,7 @@ fn kernel_policy_normalization_matches_frozen_bun_source() {
         serde_json::from_str(include_str!("fixtures/kernel-policy-golden.json")).unwrap();
     assert_eq!(cases.len(), 30);
     for case in cases {
-        let result = gateway_admin_data::migration::kernel::normalize_policy(
+        let result = gateway_migration_ledger::kernel::normalize_policy(
             &case["value"],
             case["scope"].as_str().unwrap(),
             case["owner"].as_str().unwrap(),

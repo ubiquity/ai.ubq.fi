@@ -1,7 +1,10 @@
-use super::{ObservedRow, check, key, put, starts};
+use crate::{
+    rows::{DAY, ObservedRow, starts},
+    transition::{check, key, put},
+};
 use gateway_core::{
     error::GatewayError,
-    state::{AtomicTransition, RecordMutation},
+    state::{AtomicTransition, RecordMutation, RevisionCheck},
 };
 use gateway_profile_values::{
     coercion::js_number,
@@ -204,7 +207,7 @@ pub fn reconcile_imported_window(
     }
     value["reserved_requests"] = json!(count);
     let expiry = integer(&value, "usage_reset_at_ms")
-        .and_then(|t| t.checked_add(7 * super::retention::DAY))
+        .and_then(|t| t.checked_add(7 * DAY))
         .ok_or_else(|| error("Kernel retention overflows."))?
         .max(now.saturating_add(1));
     Ok(Some(AtomicTransition {
@@ -331,17 +334,17 @@ pub fn plan_legacy_kernel(
     let window_key = key(&policy_parts)?;
     let mut checks = vec![
         check(legacy),
-        super::RevisionCheck {
+        RevisionCheck {
             key: policy_key.clone(),
             expected_revision: policy.map(|r| r.record.revision.clone()),
         },
-        super::RevisionCheck {
+        RevisionCheck {
             key: window_key.clone(),
             expected_revision: window.map(|r| r.record.revision.clone()),
         },
     ];
     if let Some(policy) = policy
-        && super::audit::valid_kernel_policy(policy.value()?, scope, owner, repo)
+        && normalize_policy(policy.value()?, scope, owner, repo).is_some()
     {
         return Ok(AtomicTransition {
             checks,
