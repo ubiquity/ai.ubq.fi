@@ -21,7 +21,6 @@ const REMOTE_PUSH_TIMEOUT_MS = 5_000;
 const REMOTE_CAPACITY_OBSERVATION_PATH = "/admin/providers/capacity/observations";
 
 /** The host id the pushed rows are stored under; the default names the one Mac companion. */
-const CAPACITY_OBSERVATION_HOST_ENV = "UOS_CAPACITY_OBSERVATION_HOST_ID";
 const DEFAULT_CAPACITY_OBSERVATION_HOST_ID = "mac";
 
 // Cloudflare returns 403 code 1010 to the default fetch user agent. The
@@ -63,17 +62,6 @@ const readAdminToken = (): string | null => {
       .map((entry) => entry.trim())
       .find(Boolean);
     return token ?? null;
-  } catch {
-    return null;
-  }
-};
-
-/** The configured host id, `mac` when unset, or null when the configured value is not a valid host id. */
-const readCapacityObservationHostId = (): string | null => {
-  try {
-    const configured = process.env[CAPACITY_OBSERVATION_HOST_ENV]?.trim();
-    if (!configured) return DEFAULT_CAPACITY_OBSERVATION_HOST_ID;
-    return isRemoteCapacityHostId(configured) ? configured : null;
   } catch {
     return null;
   }
@@ -255,7 +243,7 @@ export const proxyAdminChartSource = async (
     return json(200, { ...localPayload, five_xx_buckets: overlay.five_xx_buckets }, { "Cache-Control": "no-store" });
   }
   const isMacCompanionService = deps.isMacCompanionService ?? isMacCompanionServiceListener;
-  const hostId = deps.hostId === undefined ? readCapacityObservationHostId() : deps.hostId;
+  const hostId = deps.hostId === undefined ? DEFAULT_CAPACITY_OBSERVATION_HOST_ID : deps.hostId;
   if (isMacCompanionService() && isRemoteCapacityHostId(hostId)) {
     startCapacityPush(localPayload, hostId, remoteOrigin, token, fetcher, deps.pushState ?? processPushState);
   }

@@ -11,7 +11,6 @@ use super::{publication, publication_current, unavailable};
 use crate::store::TokenSource;
 use gateway_auth::native_import::{NativeImportKind, NativeImportMetadata};
 use gateway_auth::{
-    native::NATIVE_RENEWAL_AUTHORITY_PATH,
     native_auth::{
         AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
     },
@@ -23,6 +22,7 @@ use gateway_auth::{
         result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
     },
 };
+use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 #[derive(Clone, Copy)]

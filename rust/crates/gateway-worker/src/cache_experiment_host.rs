@@ -203,8 +203,7 @@ impl ExperimentIo for Host<'_> {
         let timeout = i32::try_from(deadline.saturating_sub(now_ms()?))
             .map_err(|_| failed("Prompt-cache scope experiment deadline is invalid."))?;
         let timer = cancellation.set_timeout_ms(timeout)?;
-        let base = crate::host::setting(&self.platform.env, "CODEX_BASE_URL")
-            .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
+        let base = "https://chatgpt.com/backend-api/codex";
         let target =
             PinnedDestination::new(&format!("{}/responses", base.trim().trim_end_matches('/')))?;
         let headers = BTreeMap::from([

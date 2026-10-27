@@ -1,13 +1,13 @@
-use gateway_auth::{
+use gateway_auth::resolve::AuthService;
+use gateway_auth_attestation::upstream::*;
+use gateway_auth_contracts::{passkeys::*, types::*, upstream::*};
+use gateway_auth_passkeys::{origin::*, passkeys::*};
+use gateway_auth_primitives::{
     api_keys,
     crypto::{Secret, base64url},
-    origin::*,
-    passkeys::*,
-    resolve::AuthService,
-    types::*,
-    upstream::*,
 };
-use gateway_core::{error::GatewayError, state::*};
+use gateway_core::state::*;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -17,24 +17,27 @@ use std::{
 };
 
 #[test]
-fn authentication_requires_declared_json_and_never_guesses_profile_tags() {
+fn authentication_requires_declared_json_and_never_guesses_profile_tags()
+-> Result<(), Box<dyn std::error::Error>> {
     let ambiguous = json!({"type":"binary","value":{"kind":"Uint8Array","bytes":[1,2],"byte_offset":0,"byte_length":2}});
     let plain = StoredRecord::json("plain", ambiguous.clone(), None);
     assert_eq!(
-        gateway_auth::store::decode::<serde_json::Value>(Some(&plain), 1).unwrap(),
+        gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&plain), 1)?,
         Some(ambiguous.clone())
     );
     let typed = StoredRecord::profile(
         "typed",
         gateway_core::value::PortableValue::from_json(&ambiguous),
         None,
-    )
-    .unwrap();
-    let error = gateway_auth::store::decode::<serde_json::Value>(Some(&typed), 1).unwrap_err();
+    )?;
+    let error = gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&typed), 1)
+        .err()
+        .ok_or("expected fixture refusal")?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("incompatible_value_encoding")
     );
+    Ok(())
 }
 
 fn run<F: Future>(future: F) -> F::Output {
@@ -143,9 +146,12 @@ fn insert<T: serde::Serialize>(store: &Store, key: RecordKey, value: &T) {
 }
 
 #[test]
-fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit() {
+fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
-        use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
+        use gateway_auth_credentials::provider_credentials::{
+            codex_source_pool_key, read_codex_source_pool,
+        };
         let store = Store::default();
         let key = codex_source_pool_key();
         let value = json!({"accounts":[{"account_id":"fixture","access_token":"fixture-access","refresh_token":"fixture-refresh","updated_at_ms":1}],"updated_at_ms":2});
@@ -153,30 +159,33 @@ fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit() {
             key.0.clone(),
             StoredRecord::json("exact-current-generation", value.clone(), Some(100)),
         );
-        let snapshot = read_codex_source_pool(&store, 99).await.unwrap().unwrap();
+        let snapshot = read_codex_source_pool(&store, 99)
+            .await?
+            .ok_or("missing fixture record")?;
         assert_eq!(snapshot.revision, "exact-current-generation");
         assert_eq!(snapshot.pool.accounts[0].account_id, "fixture");
-        assert!(read_codex_source_pool(&store, 100).await.unwrap().is_none());
+        assert!(read_codex_source_pool(&store, 100).await?.is_none());
         store.rows.borrow_mut().insert(
             key.0,
             StoredRecord::profile(
                 "typed-profile",
                 gateway_core::value::PortableValue::from_json(&value),
                 None,
-            )
-            .unwrap(),
+            )?,
         );
         assert_eq!(
             read_codex_source_pool(&store, 99)
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected fixture refusal")?
                 .envelope
                 .error
                 .code
                 .as_deref(),
             Some("incompatible_value_encoding")
         );
-    });
+        Ok(())
+    })
 }
 
 #[test]
@@ -370,12 +379,13 @@ fn failed_assertion_consumes_challenge_without_creating_session() {
 }
 
 #[test]
-fn api_key_authentication_is_quota_free_and_secret_debug_is_redacted() {
+fn api_key_authentication_is_quota_free_and_secret_debug_is_redacted()
+-> Result<(), Box<dyn std::error::Error>> {
     run(async {
         let token = format!("u_{}", "ab".repeat(32));
         assert!(api_keys::api_key_shape(&token));
         assert!(!api_keys::api_key_shape(&token.to_ascii_uppercase()));
-        let hash = gateway_auth::crypto::sha256_base64url(token.as_bytes());
+        let hash = gateway_auth_primitives::crypto::sha256_base64url(token.as_bytes());
         let store = Store::default();
         let record = api_keys::ApiKeyHashRecord {
             id: "key".into(),
@@ -406,11 +416,13 @@ fn api_key_authentication_is_quota_free_and_secret_debug_is_redacted() {
         assert_eq!(
             api_keys::authenticate(&store, &token, 1_000_000)
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected fixture refusal")?
                 .status,
             401
         );
-    });
+        Ok(())
+    })
 }
 
 #[test]
@@ -466,10 +478,10 @@ fn deno_console_requires_real_title_and_exact_candidate_is_prepared_only() {
     assert!(!deno_token_shape("uos_ai_session_012345678901234567890"));
 }
 
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -478,7 +490,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -488,16 +500,21 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
 }
 
 #[test]
-fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection() {
-    use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
+fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection()
+-> Result<(), Box<dyn std::error::Error>> {
+    use gateway_core::source_control::encode_source_control_record;
+    use gateway_source::source_json::SourceJson;
     let fixture: serde_json::Value =
-        serde_json::from_str(include_str!("fixtures/kernel-source-public.json")).unwrap();
-    let pem = fixture["pem"].as_str().unwrap();
+        serde_json::from_str(include_str!("fixtures/kernel-source-public.json"))?;
+    let pem = fixture["pem"]
+        .as_str()
+        .ok_or("missing kernel fixture string")?;
     let good = SourceJson::from_serializable(
         &json!({"app_id":1,"pem":pem,"owner":"fixture","added_at_ms":1}),
-    )
-    .unwrap();
-    let invalid=SourceJson::parse(r#"{"app_id":2,"pem":"-----BEGIN PUBLIC KEY-----\ud800-----END PUBLIC KEY-----","owner":"\udc00","added_at_ms":1}"#).unwrap();
+    )?;
+    let invalid = SourceJson::parse(
+        r#"{"app_id":2,"pem":"-----BEGIN PUBLIC KEY-----\ud800-----END PUBLIC KEY-----","owner":"\udc00","added_at_ms":1}"#,
+    )?;
     let key = kernel_public_keys_key();
     run(async {
         for source in [
@@ -508,10 +525,9 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
             let host = Host::default();
             let row = encode_source_control_record(
                 "exact-revision",
-                &SourceJson::parse(&source).unwrap(),
+                &SourceJson::parse(&source)?,
                 Some(1_000_001),
-            )
-            .unwrap();
+            )?;
             store.rows.borrow_mut().insert(key.0.clone(), row.clone());
             let cfg = AuthConfig {
                 production: true,
@@ -523,14 +539,21 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
                 .insert("authorization".into(), "Bearer ghp_fixture".into());
             req.headers.insert(
                 "x-ubiquity-kernel-token".into(),
-                fixture["jwt"].as_str().unwrap().into(),
+                fixture["jwt"]
+                    .as_str()
+                    .ok_or("missing kernel fixture string")?
+                    .into(),
             );
             // The genuine RSA signature passes, then the pre-existing injected
             // host refuses its GitHub lookup. No network or authority is minted.
-            let error = service.authenticate_client(&req).await.unwrap_err();
+            let error = service
+                .authenticate_client(&req)
+                .await
+                .err()
+                .ok_or("expected kernel fixture refusal")?;
             assert_eq!(error.status, 502);
             assert_eq!(error.envelope.error.code.as_deref(), Some("bad_gateway"));
-            assert_eq!(store.read(&key).await.unwrap(), Some(row));
+            assert_eq!(store.read(&key).await?, Some(row));
         }
         let store = Store::default();
         let host = Host::default();
@@ -544,26 +567,39 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
             .insert("authorization".into(), "Bearer ghp_fixture".into());
         req.headers.insert(
             "x-ubiquity-kernel-token".into(),
-            fixture["jwt"].as_str().unwrap().into(),
+            fixture["jwt"]
+                .as_str()
+                .ok_or("missing kernel fixture string")?
+                .into(),
         );
-        let bad = SourceJson::parse(&format!("[{}]", invalid.as_str())).unwrap();
+        let bad = SourceJson::parse(&format!("[{}]", invalid.as_str()))?;
         store.rows.borrow_mut().insert(
             key.0.clone(),
-            encode_source_control_record("invalid-pem", &bad, None).unwrap(),
+            encode_source_control_record("invalid-pem", &bad, None)?,
         );
         // Source skips an invalid imported PEM after persistence. The existing
         // no-public-key response remains, not a row/profile decoding failure.
         assert_eq!(
-            service.authenticate_client(&req).await.unwrap_err().status,
+            service
+                .authenticate_client(&req)
+                .await
+                .err()
+                .ok_or("expected kernel fixture refusal")?
+                .status,
             500
         );
-        let good = SourceJson::parse(&format!("[{}]", good.as_str())).unwrap();
+        let good = SourceJson::parse(&format!("[{}]", good.as_str()))?;
         store.rows.borrow_mut().insert(
             key.0.clone(),
-            encode_source_control_record("expired", &good, Some(1_000_000)).unwrap(),
+            encode_source_control_record("expired", &good, Some(1_000_000))?,
         );
         assert_eq!(
-            service.authenticate_client(&req).await.unwrap_err().status,
+            service
+                .authenticate_client(&req)
+                .await
+                .err()
+                .ok_or("expected kernel fixture refusal")?
+                .status,
             500
         );
         store.rows.borrow_mut().insert(
@@ -574,12 +610,22 @@ fn named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection(
             service
                 .authenticate_client(&req)
                 .await
-                .unwrap_err()
+                .err()
+                .ok_or("expected kernel fixture refusal")?
                 .envelope
                 .error
                 .code
                 .as_deref(),
             Some("auth_state_corrupt")
         );
-    });
+        Ok(())
+    })
+}
+
+// This legacy-only fixture has no JS Date runtime. Permanent session records
+// fail unavailable rather than gaining an ISO parser or fabricated date grant.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

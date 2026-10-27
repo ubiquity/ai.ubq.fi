@@ -21,7 +21,6 @@ import { type ApiKeyPolicy, ApiKeyQuotaDispatchError, type ApiKeyUsageReservatio
 import { runtimeDeploymentId, runtimeGitSha } from "../config.ts";
 import { openaiError, withCors as withCorsHeaders, withoutBody } from "../http.ts";
 import { type InferenceAdmissionResult } from "../inference-admission.ts";
-import { handleJevResponsesCompaction, isJevCompactionRequest } from "../jev_compaction/compaction.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "../kernel/usage.ts";
 import { handleResponses } from "../responses-handler.ts";
 import { handleChatCompletions } from "../chat/envelope.ts";
@@ -528,24 +527,7 @@ const handleTerminalRoute = async (
     return await finishTerminalResponse(response, "chat.completions", true, true);
   };
   const runResponsesRoute = async (): Promise<Response> => {
-    // Header-marked Codex compaction is answered locally by Jev; the body is
-    // read only for a recognized request. When Jev cannot serve the session
-    // (for example a decision state that stays over its cap after every
-    // reduction stage, or a decision failure), fall through to the ordinary
-    // provider route so the client still receives a compaction instead of a
-    // 502. Both attempts share one inference lifetime: settling a failed local
-    // compaction first would release the reservation needed by every fallback
-    // provider before any of them can dispatch.
-    const response = await executeInference(async () => {
-      if (isJevCompactionRequest(req)) {
-        const compactionSignal = usageContext.downstreamSignal ?? callerSignal;
-        const compaction = await handleJevResponsesCompaction(req.clone(), { signal: compactionSignal });
-        if (compaction.ok || compactionSignal.aborted) return compaction;
-        await compaction.body?.cancel();
-        console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: compaction.status }));
-      }
-      return await handleResponses(req, usageContext);
-    });
+    const response = await executeInference(() => handleResponses(req, usageContext));
     return await finishTerminalResponse(response, "responses", true, true);
   };
   const runDecisionsRoute = async (): Promise<Response> => {

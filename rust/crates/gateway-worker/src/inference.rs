@@ -380,16 +380,6 @@ pub async fn run(
             })
         })
         .unwrap_or_else(|| "0.100.0".into());
-    let local_compaction = responses
-        && crate::host::setting(&host.env, "JEV_COMPACTION_DISABLED").as_deref() != Some("1")
-        && gateway_compaction::is_responses_compaction(
-            request
-                .headers()
-                .get("x-codex-turn-metadata")
-                .ok()
-                .flatten()
-                .as_deref(),
-        );
     let capture = Capture::new(request, &bytes, store.clone(), host, context.clone());
     task::drive(task::RequestTask::start(OwnedRequest {
         bytes,
@@ -402,7 +392,8 @@ pub async fn run(
         responses,
         client_version,
         request_id,
-        local_compaction,
+        // Compaction requests use the selected provider, like ordinary inference.
+        false,
         permit,
     }))
     .await

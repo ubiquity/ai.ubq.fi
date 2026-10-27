@@ -205,8 +205,7 @@ impl RequestHost {
         let mut last = None;
         let mut contributed = false;
         for account in accounts {
-            let base = crate::host::setting(&self.platform.env, "CODEX_BASE_URL")
-                .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
+            let base = "https://chatgpt.com/backend-api/codex";
             let base = base.trim().trim_end_matches('/');
             let target = worker::Url::parse(&format!("{base}/models"));
             let Ok(mut target) = target else {
@@ -521,9 +520,8 @@ impl RequestHost {
                 "Capacity GET no longer matches its credential owner.",
             ));
         }
-        let base = crate::host::setting(&self.platform.env, "CODEX_BASE_URL")
-            .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
-        let url = worker::Url::parse(&base)
+        let base = "https://chatgpt.com/backend-api/codex";
+        let url = worker::Url::parse(base)
             .and_then(|u| u.join("/backend-api/wham/usage"))
             .map_err(|_| unavailable("Capacity source URL is invalid."))?;
         let mut headers = codex_headers(current);

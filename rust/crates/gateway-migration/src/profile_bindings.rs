@@ -59,7 +59,7 @@ async fn bind_api<S: QueryStore>(
     }
     for row in [previous, Some(record)].into_iter().flatten() {
         if let Ok(value) = row.json_value()
-            && gateway_admin_data::migration::audit::api_id(value.get("id"))
+            && gateway_migration_ledger::rows::api_id(value.get("id"))
             && let Some(id) = value.get("id").and_then(Value::as_str)
         {
             ids.insert(id.into());
@@ -88,9 +88,8 @@ async fn bind_api<S: QueryStore>(
                 })
                 && hash == parsed.policy
                 && row.as_ref().is_some_and(|r| {
-                    r.json_value().is_ok_and(|v| {
-                        gateway_admin_data::migration::audit::keys::valid_key_policy(v, true)
-                    })
+                    r.json_value()
+                        .is_ok_and(|v| gateway_source_audit::keys::valid_key_policy(v, true))
                 })
             {
                 policy = Some(gateway_admin_keys::keys::authority_policy(&parsed, now));

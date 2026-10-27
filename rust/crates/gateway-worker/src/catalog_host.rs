@@ -3,7 +3,6 @@ use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
 use crate::host::provider_secret;
 use crate::host::response_bytes;
-use crate::host::setting;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
@@ -319,8 +318,7 @@ impl Host {
                 if let Some(etag) = if_none_match {
                     headers.insert("If-None-Match".into(), etag);
                 }
-                let base = setting(&self.env, "CODEX_BASE_URL")
-                    .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
+                let base = "https://chatgpt.com/backend-api/codex";
                 let base = base.trim().trim_end_matches('/');
                 let mut target = Url::parse(&format!("{base}/models"))
                     .map_err(|_| unavailable("Codex model URL is invalid."))?;

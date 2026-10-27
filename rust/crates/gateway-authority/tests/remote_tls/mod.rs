@@ -1,11 +1,11 @@
 //! Actual import-private fixed TLS exchange; never a proof/permission constructor.
-use gateway_auth::{
-    crypto::{base64url, decode_base64url},
-    native::{
+use gateway_auth::crypto::{base64url, decode_base64url};
+use gateway_auth_native_wire::{
+    control::{NATIVE_CONTROL_ERROR_MAX_BYTES, NATIVE_RENEWAL_MAX_MS},
+    native_read::{
         NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
         NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
     },
-    native_control::{NATIVE_CONTROL_ERROR_MAX_BYTES, NATIVE_RENEWAL_MAX_MS},
 };
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER};
 use std::{

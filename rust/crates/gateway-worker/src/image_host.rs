@@ -37,9 +37,7 @@ impl Images {
     pub fn new(admission: Handle, platform: PlatformHost, default_model: Option<ModelId>) -> Self {
         Self {
             admission,
-            model: crate::host::provider_secret(&platform.env, "IMAGE_BASE_MODEL")
-                .map(ModelId::from)
-                .or(default_model),
+            model: default_model,
             platform,
             children: RefCell::new(None),
         }

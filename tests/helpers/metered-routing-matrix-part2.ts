@@ -2,6 +2,7 @@ import type { SequenceStep } from "./sequence.ts";
 // Metered paid fallback routing matrix, part 2 of 2, moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
+import { codexResetUsageKey } from "../../src/codex/reset-settings.ts";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   type CodexAuthPoolState,
@@ -998,6 +999,11 @@ export const runMeteredPaidFallbackMatrixPart2 = async (step: SequenceStep): Pro
     });
 
     await step("Metered HTTP errors use OpenAI envelopes without changing routing", async (step) => {
+      // This matrix isolates paid error normalization from automatic reset inventory.
+      const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+      for (const account of authPool.accounts) {
+        kvStore.set(keyToString(codexResetUsageKey(await sha256Hex(account.account_id))), { enabled: false });
+      }
       const cases = [
         {
           name: "responses preserves an existing error envelope and 429",

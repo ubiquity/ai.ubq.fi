@@ -3,13 +3,13 @@
 
 use gateway_auth::{
     crypto::{Secret, base64url},
-    native::NATIVE_PUBLICATION_PATH,
     native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeTransportIdentity},
     native_replay::StoreNonceAuthority,
     provider_credentials::{
         CodexSourceAccount, CodexSourcePool, codex_source_pool_key, parse_codex_source_pool,
     },
 };
+use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority::{
     keys,
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
@@ -459,7 +459,7 @@ mod tests {
         let time = NOW.to_string();
         let mac = identity
             .sign(
-                gateway_auth::native::NATIVE_PUBLICATION_PATH,
+                gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH,
                 NOW,
                 &nonce,
                 &body,
@@ -468,7 +468,7 @@ mod tests {
         let replay = StoreNonceAuthority::new(store);
         let proof = NativeAuthenticator::new(identity, &replay)
             .authenticate(
-                gateway_auth::native::NATIVE_PUBLICATION_PATH,
+                gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH,
                 NativeAuthHeaders {
                     version: "1",
                     key_id: identity.key_id(),

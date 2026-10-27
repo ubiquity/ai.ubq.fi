@@ -1,0 +1,11 @@
+{
+  "prefix_mapping": {
+    "gateway_core::error": "gateway_source::error",
+    "gateway_core::js_string": "gateway_source::js_string",
+    "gateway_core::js_string_case": "gateway_source::js_string_case",
+    "gateway_core::source_json": "gateway_source::source_json",
+    "gateway_core::source_serialization": "gateway_source::source_serialization"
+  },
+  "conversion": "SourceJson::from_portable_json(&value) -> value.to_source_json() (PortableValue owner)",
+  "new_package": "gateway-source"
+}

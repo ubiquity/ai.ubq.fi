@@ -1,12 +1,6 @@
 //! Only actual platform clock, RNG, WebCrypto and fixed authentication reads.
-use crate::transport::outbound::PinnedDestination;
-use crate::transport::outbound::send_http;
 use futures_util::StreamExt;
-use gateway_auth::{
-    types::{AuthConfig, AuthHost},
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
-};
+use gateway_auth_contracts::{types::{AuthConfig, AuthHost}, upstream::{AuthUpstreamRequest, AuthUpstreamResponse}, webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto}};
 use gateway_authority::store::{AuthorityClock, TokenSource};
 use gateway_core::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
@@ -67,7 +61,7 @@ pub struct PlatformHost {
     pub store: crate::authority::RemoteAuthorityStore,
     pub env: Env,
     pub native: crate::native_host::NativeBindings,
-    pub original: gateway_auth::types::AuthRequest,
+    pub original: gateway_auth_contracts::types::AuthRequest,
     pub request_id: gateway_core::identity::RequestId,
 }
 
@@ -145,27 +139,9 @@ impl AuthHost for PlatformHost {
         &self,
         request: AuthUpstreamRequest,
     ) -> Result<AuthUpstreamResponse, GatewayError> {
-        let headers = request.headers().into_iter().collect::<BTreeMap<_, _>>();
-        let destination = PinnedDestination::new(&request.url())?;
-        let method = match request.method() {
-            "POST" => Method::Post,
-            _ => Method::Get,
-        };
-        let body = request.body()?;
-        let mut response = send_http(
-            &destination,
-            method,
-            &headers,
-            &body,
-            &self.cancellation,
-            || async { Ok(()) },
-        )
-        .await
-        .map_err(|failure| failure.error)?;
-        let status = response.status_code();
-        let body = response_bytes(&mut response, 4 * 1024 * 1024).await?;
-        Ok(AuthUpstreamResponse { status, body })
+        crate::auth_passport_host::fetch(self, request).await
     }
+
     async fn kernel_principal(
         &self,
         owner: &str,

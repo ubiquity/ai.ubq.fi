@@ -1,8 +1,6 @@
 use super::*;
-use gateway_auth::{
-    native::NATIVE_RPC_PATH,
-    native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeNonceAuthority},
-};
+use gateway_auth::native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeNonceAuthority};
+use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
 use serde_json::{Value, json};
 use std::{
     future::Future,

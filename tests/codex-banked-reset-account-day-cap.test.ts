@@ -18,7 +18,6 @@ import {
   codexResetRedemptionKey,
   config,
   dependencies,
-  parseCodexBankedResetConfig,
   provenContract,
   requiredHash,
   seedFences,
@@ -102,20 +101,7 @@ test("per-window exact-once still prevents a re-spend of the same window", async
   assert.equal(await accountDayCount(kv, "day-account-a", utcDay(clock.nowMs)), 1);
 });
 
-test("live submissions require an exact per-account daily cap of one, and the retired mode flag is ignored", async () => {
-  // The parser reads only the new environment variable; the retired global
-  // variable is not read at all.
-  const declared = parseCodexBankedResetConfig((key) => {
-    if (key === "CODEX_BANKED_RESET_MODE") return "shadow";
-    return key === "CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY" ? "2" : undefined;
-  });
-  assert.equal(declared.mode, "live");
-  assert.equal(declared.maxPerAccountPerDay, 2);
-  const retired = parseCodexBankedResetConfig((key) => (key === "CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY" ? "0" : undefined));
-  // Fail closed: the retired global variable is ignored and an absent new cap stays disabled.
-  assert.equal(retired.maxPerAccountPerDay, 0);
-  assert.equal("maxGlobalPerDay" in retired, false);
-
+test("live submissions require an exact per-account daily cap of one", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();

@@ -1,0 +1,27 @@
+{
+  "status": "source-only; pending compiler lease",
+  "scope": {
+    "protocol.rs": "principal_id DATA producer only",
+    "gateway-live-runtime/runtime.rs": "relay principal parameter/write_mapping argument and source-unit comparison only; account/retirement/await/effect bodies unchanged",
+    "lifecycle.rs": "named pure principal DATA return type only",
+    "gateway-worker/runtime.rs": "authentication_route POST-body exclusion for the three Passport browser routes only"
+  },
+  "files": [
+    {
+      "path": "rust/crates/gateway-live-runtime/src/protocol.rs",
+      "input_sha256": "158b1109b6acc509a2b609d5b45e8d94428ef1df1aac32143b76846c94dd9b65"
+    },
+    {
+      "path": "rust/crates/gateway-live-runtime/src/runtime.rs",
+      "input_sha256": "a2dbac01d236d3d930e2d72a6fe9ffa2c75141270ac83e25315e27be424d0df8"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/lifecycle.rs",
+      "input_sha256": "4db38faccef7c57f11e419ff1eb08d723531adb3bc732b1da63054da98958c40"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/runtime.rs",
+      "input_sha256": "94418d6be175e5fb6441c6361f37d2c877892536006935edf6546eb79df345fc"
+    }
+  ]
+}

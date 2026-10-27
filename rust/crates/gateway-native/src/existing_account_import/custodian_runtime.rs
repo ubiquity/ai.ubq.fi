@@ -145,7 +145,7 @@ impl CustodianRuntime {
         let remaining = fresh
             .deadline_ms()
             .checked_sub(now)
-            .filter(|ms| *ms > 0 && *ms <= gateway_auth::native_control::NATIVE_RENEWAL_MAX_MS)
+            .filter(|ms| *ms > 0 && *ms <= gateway_auth_native_wire::control::NATIVE_RENEWAL_MAX_MS)
             .ok_or_else(unavailable)?;
         let deadline = peer
             .deadline()

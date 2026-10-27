@@ -17,6 +17,11 @@ serde_json.workspace = true
 url = "=2.5.8"
 
 [dev-dependencies]
+gateway-auth-contracts.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-passport-contracts.workspace = true
+gateway-source.workspace = true
+gateway-auth-native-wire.workspace = true
 gateway-admin-test-support.workspace = true
 gateway-publication-policy.workspace = true
 gateway-providers = { path = "../gateway-providers" }

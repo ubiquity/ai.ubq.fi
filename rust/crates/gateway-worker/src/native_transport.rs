@@ -1,15 +1,14 @@
 //! Constructor-only native transport. Service bindings use a synthetic origin;
 //! HTTPS carriers pin their origin before any request-owned input is available.
 use crate::host::PlatformHost;
-use gateway_auth::{
-    crypto::base64url,
-    native::{
+use gateway_auth::{crypto::base64url, native_auth::NativeTransportIdentity};
+use gateway_auth_native_wire::{
+    control::{NATIVE_CONTROL_MAX_BYTES, unverified},
+    native_read::{
         NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,
         NATIVE_MAX_BODY_BYTES, NATIVE_NONCE_HEADER, NATIVE_RPC_PATH, NATIVE_TIME_HEADER,
         NATIVE_VERSION_HEADER,
     },
-    native_auth::NativeTransportIdentity,
-    native_control::{NATIVE_CONTROL_MAX_BYTES, unverified},
 };
 use gateway_core::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;

@@ -2,13 +2,13 @@
 //! Only an access projection is encoded; physical refresh material stays native.
 use gateway_auth::crypto::{Secret, base64url};
 use gateway_auth::managed_access::ManagedAccessProjection;
-use gateway_auth::native::{
-    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
-    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
-};
 use gateway_auth::native_auth::NativeTransportIdentity;
 use gateway_auth::native_credentials::native_refresh_time_ns;
 use gateway_auth::provider_credentials::{codex_credential_identity, valid_native_generation};
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
+    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+};
 use gateway_core::error::GatewayError;
 use gateway_publication::wire::PublicationDisposition;
 use gateway_publication_policy::protocol::{

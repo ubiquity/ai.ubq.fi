@@ -16,6 +16,8 @@ const ALIASES = new Map([
   ["#kv", "src/storage/kv.ts"],
 ]);
 const UNTRACKED_ROOTS = [".cargo/", "src/", "scripts/", "tests/", "ops/", "benchmarks/", "tools/", "static/", "rust/"];
+const PRIVATE_COPY_CONTROLLER = "tests/private-bun-copy-confinement.test.ts";
+const PRIVATE_COPY_PRODUCT = "tools/cloudflare/private-bun-copy.ts";
 const WORKER_RUNTIME_TEST = "tests/native-authority-workerd.test.ts";
 const WORKER_RUNTIME_INPUT = /^(?:tests\/fixtures\/native-authority\/|tools\/worker-test-runtime\/|scripts\/prepare-worker-test-runtime\.ts$)/;
 const WORKER_RUNTIME_FIXTURES = ["tests/fixtures/native-authority/fixture-worker.mjs", "tests/fixtures/native-authority/bun-client.ts"];
@@ -178,11 +180,19 @@ export const selectAffectedTestFiles = (changedPaths: readonly string[], candida
     candidateTests.includes(WORKER_RUNTIME_TEST) &&
     workerRuntimeTestExists(root) &&
     ([...changed].some((path) => WORKER_RUNTIME_INPUT.test(path)) || WORKER_RUNTIME_FIXTURES.some((path) => testTouchesChangedPath(path, changed, root)));
+  const privateCopyChanged =
+    candidateTests.includes(PRIVATE_COPY_CONTROLLER) &&
+    existsSync(resolve(root, PRIVATE_COPY_CONTROLLER)) &&
+    testTouchesChangedPath(PRIVATE_COPY_PRODUCT, changed, root);
   return uniqueSorted(
     candidateTests
       .map(normalizePath)
       .filter(
-        (testPath) => changed.has(testPath) || testTouchesChangedPath(testPath, changed, root) || (testPath === WORKER_RUNTIME_TEST && workerInputsChanged)
+        (testPath) =>
+          changed.has(testPath) ||
+          testTouchesChangedPath(testPath, changed, root) ||
+          (testPath === WORKER_RUNTIME_TEST && workerInputsChanged) ||
+          (testPath === PRIVATE_COPY_CONTROLLER && privateCopyChanged)
       )
   );
 };

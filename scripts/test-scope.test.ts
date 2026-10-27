@@ -754,6 +754,30 @@ test("parser launcher and staged Clippy tests are in the selected quality profil
   }
 });
 
+describe("private-copy trusted controller source selection", () => {
+  const controller = "tests/private-bun-copy-confinement.test.ts";
+  const producer = "tools/cloudflare/private-bun-copy.ts";
+  const create = (present = true) => {
+    const root = mkdtempSync(join(fixture, "private-controller-"));
+    mkdirSync(join(root, "tools/cloudflare"), { recursive: true });
+    mkdirSync(join(root, "tests"));
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, producer), "import '../../src/snapshot.ts';\n");
+    writeFileSync(join(root, "src/snapshot.ts"), "export const snapshot = 1;\n");
+    if (present) writeFileSync(join(root, controller), "// Launches fixed product path through an OS child.\n");
+    return root;
+  };
+  test("producer and transitive source changes select the existing controller without importing product code", () => {
+    const root = create();
+    for (const path of [producer, "src/snapshot.ts"]) expect(selectAffectedTestFiles([path], [controller], root)).toEqual([controller]);
+    expect(selectAffectedTestFiles(["src/foreign.ts"], [controller], root)).toEqual([]);
+  });
+  test("missing controller and neighboring candidates cannot acquire synthetic controller coverage", () => {
+    expect(selectAffectedTestFiles([producer], [controller], create(false))).toEqual([]);
+    expect(selectAffectedTestFiles([producer], [controller + ".other"], create())).toEqual([]);
+  });
+});
+
 test.each([".cargo/config", ".cargo/config.toml"])("root Cargo config %s selects Rust jobs without unrelated TS tests", (path) => {
   const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, path);
   expect(ci.status).toBe(0);

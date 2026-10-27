@@ -1,0 +1,4019 @@
+{
+  "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
+  "cases": [
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "fixture-0",
+        "account_id": "account",
+        "account_cohort_id": "cohort",
+        "credential_kind": "oauth",
+        "workspace_id": null,
+        "source_observed_at_ms": 7200000,
+        "sampled_at_ms": 7200000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "windows": {},
+          "standard": {},
+          "representative_claim": null,
+          "observed_at_ms": 7200000,
+          "usage_snapshot": {
+            "v": 1,
+            "observed_at_ms": 7200000,
+            "payload": {
+              "limits": [
+                {
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "percent": 121.5,
+                  "resets_at": null,
+                  "severity": "raw",
+                  "is_active": true,
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  }
+                },
+                {
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "percent": 121.5,
+                  "resets_at": null,
+                  "severity": "raw",
+                  "is_active": true,
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  }
+                }
+              ]
+            },
+            "meters": [
+              {
+                "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                "label": "weekly · future\ud800 · model\udfff",
+                "kind": "future\ud800",
+                "group": "weekly",
+                "scope": {
+                  "model": {
+                    "display_name": "model\udfff"
+                  }
+                },
+                "severity": "raw",
+                "is_active": true,
+                "used_percent": 121.5,
+                "resets_at": null,
+                "reset_at_ms": null,
+                "observed_at_ms": 7200000
+              },
+              {
+                "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                "label": "weekly · future\ud800 · model\udfff",
+                "kind": "future\ud800",
+                "group": "weekly",
+                "scope": {
+                  "model": {
+                    "display_name": "model\udfff"
+                  }
+                },
+                "severity": "raw",
+                "is_active": true,
+                "used_percent": 121.5,
+                "resets_at": null,
+                "reset_at_ms": null,
+                "observed_at_ms": 7200000
+              }
+            ]
+          }
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "account",
+            "cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7200000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    }
+                  ]
+                },
+                "standard": []
+              }
+            ],
+            "flags": {
+              "normal": 1,
+              "unavailable": false,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "140a493bef8d141b632adcbe3c00fd8e1cabcc93b65b0d42d1d1d85277b4a8e4"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7200000
+            },
+            "samples": 1,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7200000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "66ce6238dcae338a2884c3ebf7d3ebc9f0448a8d3ed1a22a87b8a373c5058f73"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7200000
+            },
+            "samples": 1,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7200000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        }
+      ],
+      "history": {
+        "v": 1,
+        "bucket_ms": 900000,
+        "retention_ms": 604800000,
+        "stale_after_ms": 1800000,
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7200000,
+            "source_observed_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7200000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                }
+              ]
+            },
+            "standard": []
+          }
+        ]
+      },
+      "usage_rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7200000
+            },
+            "samples": 1,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7200000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7200000
+            },
+            "samples": 1,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7200000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          }
+        ]
+      },
+      "rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": []
+      }
+    },
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "fixture-1",
+        "account_id": "account",
+        "account_cohort_id": "cohort",
+        "credential_kind": "oauth",
+        "workspace_id": null,
+        "source_observed_at_ms": 7230000,
+        "sampled_at_ms": 7230000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "windows": {},
+          "standard": {},
+          "representative_claim": null,
+          "observed_at_ms": 7230000,
+          "usage_snapshot": {
+            "v": 1,
+            "observed_at_ms": 7230000,
+            "payload": {
+              "limits": [
+                {
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "percent": -4,
+                  "resets_at": null,
+                  "severity": "raw",
+                  "is_active": true,
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  }
+                },
+                {
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "percent": 121.5,
+                  "resets_at": null,
+                  "severity": "raw",
+                  "is_active": true,
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  }
+                }
+              ]
+            },
+            "meters": [
+              {
+                "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                "label": "weekly · future\ud800 · model\udfff",
+                "kind": "future\ud800",
+                "group": "weekly",
+                "scope": {
+                  "model": {
+                    "display_name": "model\udfff"
+                  }
+                },
+                "severity": "raw",
+                "is_active": true,
+                "used_percent": -4,
+                "resets_at": null,
+                "reset_at_ms": null,
+                "observed_at_ms": 7230000
+              },
+              {
+                "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                "label": "weekly · future\ud800 · model\udfff",
+                "kind": "future\ud800",
+                "group": "weekly",
+                "scope": {
+                  "model": {
+                    "display_name": "model\udfff"
+                  }
+                },
+                "severity": "raw",
+                "is_active": true,
+                "used_percent": 121.5,
+                "resets_at": null,
+                "reset_at_ms": null,
+                "observed_at_ms": 7230000
+              }
+            ]
+          }
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "account",
+            "cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7200000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7230000,
+                "source_observed_at_ms": 7230000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7230000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": -4,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": -4,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    }
+                  ]
+                },
+                "standard": []
+              }
+            ],
+            "flags": {
+              "normal": 2,
+              "unavailable": false,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "140a493bef8d141b632adcbe3c00fd8e1cabcc93b65b0d42d1d1d85277b4a8e4"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "66ce6238dcae338a2884c3ebf7d3ebc9f0448a8d3ed1a22a87b8a373c5058f73"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        }
+      ],
+      "history": {
+        "v": 1,
+        "bucket_ms": 900000,
+        "retention_ms": 604800000,
+        "stale_after_ms": 1800000,
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7200000,
+            "source_observed_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7200000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7230000,
+            "source_observed_at_ms": 7230000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7230000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": -4,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": -4,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                }
+              ]
+            },
+            "standard": []
+          }
+        ]
+      },
+      "usage_rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          }
+        ]
+      },
+      "rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": []
+      }
+    },
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "fixture-2",
+        "account_id": "account",
+        "account_cohort_id": "cohort",
+        "credential_kind": "oauth",
+        "workspace_id": null,
+        "source_observed_at_ms": 7260000,
+        "sampled_at_ms": 7260000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "windows": {},
+          "standard": {},
+          "representative_claim": null,
+          "observed_at_ms": 7260000,
+          "usage_snapshot": {
+            "v": 1,
+            "observed_at_ms": 7260000,
+            "payload": {
+              "limits": []
+            },
+            "meters": []
+          }
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "account",
+            "cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7200000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7230000,
+                "source_observed_at_ms": 7230000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7230000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": -4,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": -4,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7260000,
+                "source_observed_at_ms": 7260000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7260000,
+                  "payload": {
+                    "limits": []
+                  },
+                  "meters": []
+                },
+                "standard": []
+              }
+            ],
+            "flags": {
+              "normal": 2,
+              "unavailable": false,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false,
+              "usage": true
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "140a493bef8d141b632adcbe3c00fd8e1cabcc93b65b0d42d1d1d85277b4a8e4"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "66ce6238dcae338a2884c3ebf7d3ebc9f0448a8d3ed1a22a87b8a373c5058f73"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        }
+      ],
+      "history": {
+        "v": 1,
+        "bucket_ms": 900000,
+        "retention_ms": 604800000,
+        "stale_after_ms": 1800000,
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7200000,
+            "source_observed_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7200000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7230000,
+            "source_observed_at_ms": 7230000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7230000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": -4,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": -4,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7260000,
+            "source_observed_at_ms": 7260000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7260000,
+              "payload": {
+                "limits": []
+              },
+              "meters": []
+            },
+            "standard": []
+          }
+        ]
+      },
+      "usage_rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          }
+        ]
+      },
+      "rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": []
+      }
+    },
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "fixture-3",
+        "account_id": "account",
+        "account_cohort_id": "cohort",
+        "credential_kind": "oauth",
+        "workspace_id": null,
+        "source_observed_at_ms": 7290000,
+        "sampled_at_ms": 7290000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "windows": {},
+          "standard": {},
+          "representative_claim": null,
+          "observed_at_ms": 7290000,
+          "usage_snapshot": {
+            "v": 1,
+            "observed_at_ms": 7290000,
+            "payload": {
+              "limits": [
+                {
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "percent": 121.5,
+                  "resets_at": "1970-01-01T03:00:00Z",
+                  "severity": "raw",
+                  "is_active": true,
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  }
+                }
+              ]
+            },
+            "meters": [
+              {
+                "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                "label": "weekly · future\ud800 · model\udfff",
+                "kind": "future\ud800",
+                "group": "weekly",
+                "scope": {
+                  "model": {
+                    "display_name": "model\udfff"
+                  }
+                },
+                "severity": "raw",
+                "is_active": true,
+                "used_percent": 121.5,
+                "resets_at": "1970-01-01T03:00:00Z",
+                "reset_at_ms": 10800000,
+                "observed_at_ms": 7290000
+              }
+            ]
+          }
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "account",
+            "cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7200000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7230000,
+                "source_observed_at_ms": 7230000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7230000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": -4,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": -4,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7260000,
+                "source_observed_at_ms": 7260000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7260000,
+                  "payload": {
+                    "limits": []
+                  },
+                  "meters": []
+                },
+                "standard": []
+              }
+            ],
+            "flags": {
+              "normal": 2,
+              "unavailable": false,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false,
+              "usage": true
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "140a493bef8d141b632adcbe3c00fd8e1cabcc93b65b0d42d1d1d85277b4a8e4"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "66ce6238dcae338a2884c3ebf7d3ebc9f0448a8d3ed1a22a87b8a373c5058f73"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        }
+      ],
+      "history": {
+        "v": 1,
+        "bucket_ms": 900000,
+        "retention_ms": 604800000,
+        "stale_after_ms": 1800000,
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7200000,
+            "source_observed_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7200000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7230000,
+            "source_observed_at_ms": 7230000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7230000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": -4,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": -4,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7260000,
+            "source_observed_at_ms": 7260000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7260000,
+              "payload": {
+                "limits": []
+              },
+              "meters": []
+            },
+            "standard": []
+          }
+        ]
+      },
+      "usage_rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          }
+        ]
+      },
+      "rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": []
+      }
+    },
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "fixture-4",
+        "account_id": "account",
+        "account_cohort_id": "cohort",
+        "credential_kind": "oauth",
+        "workspace_id": null,
+        "source_observed_at_ms": 7320000,
+        "sampled_at_ms": 7320000,
+        "response_status": 200,
+        "state": "unavailable",
+        "observation": {
+          "windows": {
+            "5h": {
+              "status": null,
+              "utilization": 0.1,
+              "reset_at_ms": null,
+              "observed_at_ms": 7320000
+            }
+          },
+          "standard": {},
+          "representative_claim": null,
+          "observed_at_ms": 7320000,
+          "usage_snapshot": {
+            "v": 1,
+            "observed_at_ms": 7320000,
+            "payload": {
+              "five_hour": {
+                "utilization": 10,
+                "resets_at": null
+              },
+              "limits": []
+            },
+            "meters": []
+          }
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "account",
+            "cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7200000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7230000,
+                "source_observed_at_ms": 7230000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7230000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": -4,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": -4,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7260000,
+                "source_observed_at_ms": 7260000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7260000,
+                  "payload": {
+                    "limits": []
+                  },
+                  "meters": []
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "c598855151739efa679587575adf72e8b20ced7d0cefc3b8fca51f63b5e10936",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7320000,
+                "source_observed_at_ms": 7320000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "unavailable",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": {
+                    "status": null,
+                    "used_percent": 10,
+                    "reset_at_ms": null,
+                    "observed_at_ms": 7320000
+                  },
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7320000,
+                  "payload": {
+                    "five_hour": {
+                      "utilization": 10,
+                      "resets_at": null
+                    },
+                    "limits": []
+                  },
+                  "meters": []
+                },
+                "standard": []
+              }
+            ],
+            "flags": {
+              "normal": 2,
+              "unavailable": true,
+              "recovery": false,
+              "five_hour": false,
+              "seven_day": false,
+              "usage": true
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "140a493bef8d141b632adcbe3c00fd8e1cabcc93b65b0d42d1d1d85277b4a8e4"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "66ce6238dcae338a2884c3ebf7d3ebc9f0448a8d3ed1a22a87b8a373c5058f73"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "account",
+            "cohort",
+            "five_hour",
+            "unknown"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "window": "five_hour",
+            "reset_at_ms": null,
+            "samples": 1,
+            "available_sample_count": 0,
+            "unavailable_sample_count": 1,
+            "first_source_observed_at_ms": 7320000,
+            "last_source_observed_at_ms": 7320000,
+            "first_sampled_at_ms": 7320000,
+            "last_sampled_at_ms": 7320000,
+            "min_used_percent": 10,
+            "max_used_percent": 10,
+            "last_used_percent": 10,
+            "last_status": null
+          },
+          "expires_at_ms": null
+        }
+      ],
+      "history": {
+        "v": 1,
+        "bucket_ms": 900000,
+        "retention_ms": 604800000,
+        "stale_after_ms": 1800000,
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7200000,
+            "source_observed_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7200000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7230000,
+            "source_observed_at_ms": 7230000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7230000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": -4,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": -4,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7260000,
+            "source_observed_at_ms": 7260000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7260000,
+              "payload": {
+                "limits": []
+              },
+              "meters": []
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "c598855151739efa679587575adf72e8b20ced7d0cefc3b8fca51f63b5e10936",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7320000,
+            "source_observed_at_ms": 7320000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "unavailable",
+            "response_status": 200,
+            "windows": {
+              "five_hour": {
+                "status": null,
+                "used_percent": 10,
+                "reset_at_ms": null,
+                "observed_at_ms": 7320000
+              },
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7320000,
+              "payload": {
+                "five_hour": {
+                  "utilization": 10,
+                  "resets_at": null
+                },
+                "limits": []
+              },
+              "meters": []
+            },
+            "standard": []
+          }
+        ]
+      },
+      "usage_rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          }
+        ]
+      },
+      "rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "window": "five_hour",
+            "reset_at_ms": null,
+            "samples": 1,
+            "available_sample_count": 0,
+            "unavailable_sample_count": 1,
+            "first_source_observed_at_ms": 7320000,
+            "last_source_observed_at_ms": 7320000,
+            "first_sampled_at_ms": 7320000,
+            "last_sampled_at_ms": 7320000,
+            "min_used_percent": 10,
+            "max_used_percent": 10,
+            "last_used_percent": 10,
+            "last_status": null
+          }
+        ]
+      }
+    },
+    {
+      "event": {
+        "v": 1,
+        "observation_id": "fixture-5",
+        "account_id": "account",
+        "account_cohort_id": "cohort",
+        "credential_kind": "oauth",
+        "workspace_id": null,
+        "source_observed_at_ms": 7350000,
+        "sampled_at_ms": 7350000,
+        "response_status": 200,
+        "state": "available",
+        "observation": {
+          "windows": {
+            "5h": {
+              "status": null,
+              "utilization": 0.2,
+              "reset_at_ms": null,
+              "observed_at_ms": 7350000
+            }
+          },
+          "standard": {},
+          "representative_claim": null,
+          "observed_at_ms": 7350000,
+          "usage_snapshot": {
+            "v": 1,
+            "observed_at_ms": 7350000,
+            "payload": {
+              "five_hour": {
+                "utilization": 20,
+                "resets_at": null
+              },
+              "limits": []
+            },
+            "meters": []
+          }
+        }
+      },
+      "rows": [
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "history",
+            7200000,
+            "account",
+            "cohort"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "points": [
+              {
+                "v": 1,
+                "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7200000,
+                "source_observed_at_ms": 7200000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7200000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7200000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7230000,
+                "source_observed_at_ms": 7230000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7230000,
+                  "payload": {
+                    "limits": [
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": -4,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "future\ud800",
+                        "group": "weekly",
+                        "percent": 121.5,
+                        "resets_at": null,
+                        "severity": "raw",
+                        "is_active": true,
+                        "scope": {
+                          "model": {
+                            "display_name": "model\udfff"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "meters": [
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": -4,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    },
+                    {
+                      "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                      "label": "weekly · future\ud800 · model\udfff",
+                      "kind": "future\ud800",
+                      "group": "weekly",
+                      "scope": {
+                        "model": {
+                          "display_name": "model\udfff"
+                        }
+                      },
+                      "severity": "raw",
+                      "is_active": true,
+                      "used_percent": 121.5,
+                      "resets_at": null,
+                      "reset_at_ms": null,
+                      "observed_at_ms": 7230000
+                    }
+                  ]
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7260000,
+                "source_observed_at_ms": 7260000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": null,
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7260000,
+                  "payload": {
+                    "limits": []
+                  },
+                  "meters": []
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "c598855151739efa679587575adf72e8b20ced7d0cefc3b8fca51f63b5e10936",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7320000,
+                "source_observed_at_ms": 7320000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "unavailable",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": {
+                    "status": null,
+                    "used_percent": 10,
+                    "reset_at_ms": null,
+                    "observed_at_ms": 7320000
+                  },
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7320000,
+                  "payload": {
+                    "five_hour": {
+                      "utilization": 10,
+                      "resets_at": null
+                    },
+                    "limits": []
+                  },
+                  "meters": []
+                },
+                "standard": []
+              },
+              {
+                "v": 1,
+                "point_id": "fe1bd6e024a6b736db39a9765b0955d201049dafbd741e38e53dc1336108d0ef",
+                "bucket_start_at_ms": 7200000,
+                "sampled_at_ms": 7350000,
+                "source_observed_at_ms": 7350000,
+                "account_id": "account",
+                "account_cohort_id": "cohort",
+                "credential_kind": "oauth",
+                "workspace_id": null,
+                "state": "available",
+                "response_status": 200,
+                "windows": {
+                  "five_hour": {
+                    "status": null,
+                    "used_percent": 20,
+                    "reset_at_ms": null,
+                    "observed_at_ms": 7350000
+                  },
+                  "seven_day": null
+                },
+                "usage_snapshot": {
+                  "v": 1,
+                  "observed_at_ms": 7350000,
+                  "payload": {
+                    "five_hour": {
+                      "utilization": 20,
+                      "resets_at": null
+                    },
+                    "limits": []
+                  },
+                  "meters": []
+                },
+                "standard": []
+              }
+            ],
+            "flags": {
+              "normal": 2,
+              "unavailable": true,
+              "recovery": true,
+              "five_hour": false,
+              "seven_day": false,
+              "usage": true
+            }
+          },
+          "expires_at_ms": 612900000
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "140a493bef8d141b632adcbe3c00fd8e1cabcc93b65b0d42d1d1d85277b4a8e4"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "usage_rollup",
+            7200000,
+            "account",
+            "cohort",
+            "66ce6238dcae338a2884c3ebf7d3ebc9f0448a8d3ed1a22a87b8a373c5058f73"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          },
+          "expires_at_ms": null
+        },
+        {
+          "key": [
+            "uos_ai",
+            "provider_capacity",
+            "claude",
+            "v1",
+            "rollup",
+            7200000,
+            "account",
+            "cohort",
+            "five_hour",
+            "unknown"
+          ],
+          "value": {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "window": "five_hour",
+            "reset_at_ms": null,
+            "samples": 2,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 1,
+            "first_source_observed_at_ms": 7320000,
+            "last_source_observed_at_ms": 7350000,
+            "first_sampled_at_ms": 7320000,
+            "last_sampled_at_ms": 7350000,
+            "min_used_percent": 10,
+            "max_used_percent": 20,
+            "last_used_percent": 20,
+            "last_status": null
+          },
+          "expires_at_ms": null
+        }
+      ],
+      "history": {
+        "v": 1,
+        "bucket_ms": 900000,
+        "retention_ms": 604800000,
+        "stale_after_ms": 1800000,
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "point_id": "9d1688761db76842577ed4abb5767c72e283922215d2900b7ab99e494ef16e0c",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7200000,
+            "source_observed_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7200000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7200000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "7f305eccfc0c25165d629c1177f8bc8bd5b4fe710054a180c0f07d8d91be6ff3",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7230000,
+            "source_observed_at_ms": 7230000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7230000,
+              "payload": {
+                "limits": [
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": -4,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "future\ud800",
+                    "group": "weekly",
+                    "percent": 121.5,
+                    "resets_at": null,
+                    "severity": "raw",
+                    "is_active": true,
+                    "scope": {
+                      "model": {
+                        "display_name": "model\udfff"
+                      }
+                    }
+                  }
+                ]
+              },
+              "meters": [
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": -4,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                },
+                {
+                  "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+                  "label": "weekly · future\ud800 · model\udfff",
+                  "kind": "future\ud800",
+                  "group": "weekly",
+                  "scope": {
+                    "model": {
+                      "display_name": "model\udfff"
+                    }
+                  },
+                  "severity": "raw",
+                  "is_active": true,
+                  "used_percent": 121.5,
+                  "resets_at": null,
+                  "reset_at_ms": null,
+                  "observed_at_ms": 7230000
+                }
+              ]
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "6d3544a8542a35f562e76d477b3ca034dda39b1382e37b6a445f0f0f7e011082",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7260000,
+            "source_observed_at_ms": 7260000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": null,
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7260000,
+              "payload": {
+                "limits": []
+              },
+              "meters": []
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "c598855151739efa679587575adf72e8b20ced7d0cefc3b8fca51f63b5e10936",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7320000,
+            "source_observed_at_ms": 7320000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "unavailable",
+            "response_status": 200,
+            "windows": {
+              "five_hour": {
+                "status": null,
+                "used_percent": 10,
+                "reset_at_ms": null,
+                "observed_at_ms": 7320000
+              },
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7320000,
+              "payload": {
+                "five_hour": {
+                  "utilization": 10,
+                  "resets_at": null
+                },
+                "limits": []
+              },
+              "meters": []
+            },
+            "standard": []
+          },
+          {
+            "v": 1,
+            "point_id": "fe1bd6e024a6b736db39a9765b0955d201049dafbd741e38e53dc1336108d0ef",
+            "bucket_start_at_ms": 7200000,
+            "sampled_at_ms": 7350000,
+            "source_observed_at_ms": 7350000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "state": "available",
+            "response_status": 200,
+            "windows": {
+              "five_hour": {
+                "status": null,
+                "used_percent": 20,
+                "reset_at_ms": null,
+                "observed_at_ms": 7350000
+              },
+              "seven_day": null
+            },
+            "usage_snapshot": {
+              "v": 1,
+              "observed_at_ms": 7350000,
+              "payload": {
+                "five_hour": {
+                  "utilization": 20,
+                  "resets_at": null
+                },
+                "limits": []
+              },
+              "meters": []
+            },
+            "standard": []
+          }
+        ]
+      },
+      "usage_rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:0",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": -4,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": -4,
+            "max_used_percent": 121.5
+          },
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "meter": {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"model\\udfff\"}}]:1",
+              "label": "weekly · future\ud800 · model\udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "model\udfff"
+                }
+              },
+              "severity": "raw",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 7230000
+            },
+            "samples": 2,
+            "first_observed_at_ms": 7200000,
+            "last_observed_at_ms": 7230000,
+            "min_used_percent": 121.5,
+            "max_used_percent": 121.5
+          }
+        ]
+      },
+      "rollups": {
+        "scan": "ok",
+        "truncated": false,
+        "points": [
+          {
+            "v": 1,
+            "bucket_start_at_ms": 7200000,
+            "account_id": "account",
+            "account_cohort_id": "cohort",
+            "credential_kind": "oauth",
+            "workspace_id": null,
+            "window": "five_hour",
+            "reset_at_ms": null,
+            "samples": 2,
+            "available_sample_count": 1,
+            "unavailable_sample_count": 1,
+            "first_source_observed_at_ms": 7320000,
+            "last_source_observed_at_ms": 7350000,
+            "first_sampled_at_ms": 7320000,
+            "last_sampled_at_ms": 7350000,
+            "min_used_percent": 10,
+            "max_used_percent": 20,
+            "last_used_percent": 20,
+            "last_status": null
+          }
+        ]
+      }
+    }
+  ]
+}
