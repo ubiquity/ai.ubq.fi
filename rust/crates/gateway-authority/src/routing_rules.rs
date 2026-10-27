@@ -2,8 +2,8 @@
 use crate::{
     capacity_rules::{capacity_headroom_for_observation, capacity_observation_is_fresh},
     next_generation,
-    routing_types::CapacityObservation,
 };
+use gateway_authority_routing_evidence::capacity::CapacityObservation;
 use gateway_authority_routing_records::types::RoutingState;
 use gateway_core::{error::GatewayError, model::ModelId, provider::CodexQuotaClass};
 

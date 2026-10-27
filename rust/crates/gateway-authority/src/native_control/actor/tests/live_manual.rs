@@ -10,6 +10,9 @@ use gateway_auth::{
     native_live::NativeLiveAuthenticator,
     provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
 };
+use gateway_authority_routing_evidence::capacity::{
+    CapacityObservation, CapacityState, CapacityWindow, CapacityWindows,
+};
 use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
 use gateway_authority_routing_records::types::{
     PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,

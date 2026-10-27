@@ -1,25 +1,17 @@
 //! One explicit manual reset. Shared authority owns every intent, budget and promotion.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
-    transport::outbound::{PinnedDestination, send_http},
-};
-use gateway_auth::{
-    provider_credentials::{CodexSourceAccount, read_codex_source_pool},
-    types::{AuthConfig, AuthResponse},
-};
-use gateway_authority::{
-    capacity_rules::parse_capacity_observation,
-    manual_reset::{ManualResetPreparation, ManualResetTarget},
-    native_control::actor::NativeRenewalActor,
-    reset_types::{ResetClaim, ResetState},
-    routing_types::CapacityObservation,
-    store::Authority,
-};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
-};
+use crate::transport::outbound::send_http;
+use crate::{authority::RemoteAuthorityStore, host::PlatformClock, host::PlatformHost};
+use crate::{host::PlatformTokens, storage::now_ms, transport::outbound::PinnedDestination};
+use gateway_auth::provider_credentials::CodexSourceAccount;
+use gateway_auth::types::AuthResponse;
+use gateway_auth::{provider_credentials::read_codex_source_pool, types::AuthConfig};
+use gateway_authority::{manual_reset::ManualResetPreparation, manual_reset::ManualResetTarget};
+use gateway_authority::{native_control::actor::NativeRenewalActor, reset_types::ResetClaim};
+use gateway_authority::{reset_types::ResetState, store::Authority};
+use gateway_authority_routing_evidence::capacity::CapacityObservation;
+use gateway_authority_routing_evidence::capacity::parse_capacity_observation;
+use gateway_core::state::AuthorityStore;
+use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 use worker::{Method, Url};

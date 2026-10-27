@@ -75,7 +75,7 @@ pub(super) async fn read<
     let raw: Value = tx.read(&key).await?.ok_or_else(unavailable)?;
     let source = parse_codex_source_pool(&raw)?.ok_or_else(unavailable)?;
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(unavailable)?;
-    crate::routing::validate_pool(&normalized)?;
+    gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
     if normalized.pool_versionstamp.0 != tx.revision(&key).ok_or_else(unavailable)?
         || normalized.accounts.len() != source.accounts.len()
     {

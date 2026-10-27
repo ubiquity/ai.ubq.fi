@@ -104,7 +104,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
             active_generation,
             ..
         } => {
-            crate::routing::validate_binding(binding)?;
+            gateway_authority_routing_evidence::validation::validate_binding(binding)?;
             if *active_generation == 0
                 || *active_generation > gateway_core::identity::MAX_SAFE_INTEGER as u64
             {

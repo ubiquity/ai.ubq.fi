@@ -1,4 +1,7 @@
 use crate::TestResult;
+use gateway_authority_routing_evidence::capacity::{
+    CapacityObservation, CapacityStore, normalize_capacity_window,
+};
 use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 mod live_selection;

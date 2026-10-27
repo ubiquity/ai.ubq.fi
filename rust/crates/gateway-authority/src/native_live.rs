@@ -188,7 +188,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let pool = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        crate::routing::validate_pool(&normalized)?;
+        gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
         let (slot, account) = pool
             .accounts
             .iter()

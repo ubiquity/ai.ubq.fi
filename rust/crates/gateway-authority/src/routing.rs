@@ -1,16 +1,17 @@
 //! Global serial subscription selection; source routing-serial.ts and routing-evaluation.ts.
 use crate::{
-    capacity_rules::{capacity_for, parse_capacity_store},
-    generation, invalid, next_generation, nonnegative,
-    routing_types::{
-        AdmittedAccount, CapacityStore, CohortProof, ModelAvailability, RouteSelection,
-    },
+    capacity_rules::capacity_for,
+    invalid, next_generation, nonnegative,
+    routing_types::{AdmittedAccount, CohortProof, RouteSelection},
     store::{Authority, Transaction},
     text, unavailable,
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
+use gateway_authority_routing_evidence::capacity::CapacityStore;
+use gateway_authority_routing_evidence::models::ModelAvailability;
+use gateway_authority_routing_evidence::validation::validate_binding;
+use gateway_authority_routing_records::codec::parse_routing_state;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_records::types::{
     ProbeCircuit, ProbeLease, QuotaBlock, RoutingState, SubscriptionPool,
@@ -20,10 +21,10 @@ use gateway_core::{
     identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, RoutingAccountHash},
     js_string::JsString16,
     model::ModelId,
-    provider::{CodexQuotaClass, OveragePermission},
+    provider::CodexQuotaClass,
     state::AuthorityStore,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
     let trimmed = gateway_schema::reasoning::js_trim_source(model.as_js_string());
@@ -75,32 +76,6 @@ pub enum LiveRouteSelection {
     CredentialsInvalid,
     ModelUnavailable { detail: Option<JsString16> },
     RoutingUnavailable,
-}
-
-pub(crate) fn validate_binding(binding: &AccountBinding) -> Result<(), GatewayError> {
-    text(&binding.account_id_hash.0)?;
-    text(&binding.credential_version.0)?;
-    text(&binding.pool_versionstamp.0)?;
-    generation(binding.slot)?;
-    generation(binding.routing_generation)?;
-    Ok(())
-}
-
-pub(crate) fn validate_pool(pool: &SubscriptionPool) -> Result<(), GatewayError> {
-    if pool.v != 1 || pool.accounts.is_empty() {
-        return Err(invalid("Codex subscription pool is missing or malformed."));
-    }
-    text(&pool.pool_versionstamp.0)?;
-    let mut identities = BTreeSet::new();
-    for account in &pool.accounts {
-        text(&account.account_id_hash.0)?;
-        text(&account.admin_account_hash.0)?;
-        text(&account.credential_version.0)?;
-        if !identities.insert(&account.account_id_hash.0) {
-            return Err(invalid("Duplicate Codex account identity."));
-        }
-    }
-    Ok(())
 }
 
 fn unavailable_model(
@@ -163,75 +138,34 @@ async fn read_view_for<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     read_active: bool,
 ) -> Result<RoutingView, GatewayError> {
-    let mut pool: SubscriptionPool = tx
-        .read(&keys::pool())
-        .await?
-        .ok_or_else(|| unavailable("codex_routing_unavailable", "Codex pool is unavailable."))?;
-    validate_pool(&pool)?;
-    let state = normalize(
-        &pool,
-        tx.read::<serde_json::Value>(&keys::routing())
-            .await?
-            .as_ref()
-            .map(parse_routing_state)
-            .transpose()?,
-        tx.now,
-    )?;
-    let active: Option<ActiveSelection> = if read_active {
-        tx.read(&keys::active()).await?
+    let now = tx.now;
+    let mode = if read_active {
+        gateway_authority_routing_evidence::reader::RoutingReadMode::GlobalSelection
     } else {
-        None
+        gateway_authority_routing_evidence::reader::RoutingReadMode::PinnedObservation
     };
-    if let Some(active) = &active {
-        validate_binding(&active.binding)?;
-        if active.v != 1 || active.generation == 0 {
-            return Err(invalid("Malformed active Codex selection."));
+    let evidence = {
+        let reader = tx.routing_read_store();
+        gateway_authority_routing_evidence::reader::RoutingEvidenceReader::new(&reader, now)?
+            .read(mode)
+            .await?
+    };
+    for check in evidence.revision_checks() {
+        if !tx.expect(&check.key, &check.expected_revision) {
+            return Err(invalid(
+                "Routing evidence conflicts with an existing transaction fence.",
+            ));
         }
-        generation(active.generation)?;
-    }
-    let capacity = tx
-        .read::<serde_json::Value>(&keys::capacity())
-        .await?
-        .as_ref()
-        .map(parse_capacity_store)
-        .transpose()?
-        .unwrap_or_default();
-    let source_models = crate::source_models::load(tx, &pool).await?;
-    let selection: Option<serde_json::Value> = tx.read(&keys::provider_selection()).await?;
-    let selection = selection
-        .as_ref()
-        .filter(|value| !value.is_null())
-        .map(|value| {
-            gateway_schema::selection::ProviderSelection::normalize(value)
-                .ok_or_else(|| invalid("Current source provider selection is malformed."))
-        })
-        .transpose()?;
-    for account in &mut pool.accounts {
-        // Source selection determines this cohort, never a stale normalized projection flag.
-        // Current native credential invalidity/leases/quota remain separate evaluation rules.
-        account.enabled = selection
-            .as_ref()
-            .is_none_or(|selection| selection.account_eligible(&account.admin_account_hash.0));
-    }
-    let mut overage = BTreeMap::new();
-    for account in &pool.accounts {
-        let setting: Option<serde_json::Value> = tx
-            .read(&keys::overage(&account.admin_account_hash.0))
-            .await?;
-        overage.insert(
-            account.account_id_hash.0.clone(),
-            OveragePermission::from_stored_record(setting.as_ref()).allows_dispatch(),
-        );
     }
     Ok(RoutingView {
-        pool,
-        state,
-        active,
-        capacity,
-        models: source_models.models,
-        models_source: source_models.raw,
-        source_ids: source_models.ids,
-        overage,
+        pool: evidence.pool().clone(),
+        state: evidence.state().clone(),
+        active: evidence.active().cloned(),
+        models: evidence.models().clone(),
+        models_source: evidence.models_source().clone(),
+        source_ids: evidence.source_ids().clone(),
+        capacity: evidence.capacity().clone(),
+        overage: evidence.overage().clone(),
     })
 }
 

@@ -1,11 +1,8 @@
 //! Fixed trusted sampler capability. Data-plane requests cannot construct its source fence.
 use crate::{
-    capacity_rules::{merge_capacity, parse_capacity_observation, parse_capacity_store},
+    capacity_rules::merge_capacity,
     invalid,
     routing_rules::apply_capacity_observation,
-    routing_types::{
-        CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityWindows,
-    },
     store::{Authority, Transaction},
     text, unavailable,
 };
@@ -15,6 +12,10 @@ use gateway_auth::provider_credentials::{
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
+use gateway_authority_routing_evidence::capacity::{
+    CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityWindows,
+    parse_capacity_observation, parse_capacity_store,
+};
 use gateway_authority_routing_records::codec::parse_routing_state;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::error::GatewayError;
@@ -153,7 +154,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             return Err(changed());
         }
         let pool: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(changed)?;
-        crate::routing::validate_pool(&pool)?;
+        gateway_authority_routing_evidence::validation::validate_pool(&pool)?;
         if pool.pool_versionstamp.0 != snapshot.revision
             || pool.accounts.len() != snapshot.pool.accounts.len()
         {

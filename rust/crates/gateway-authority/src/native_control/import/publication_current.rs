@@ -233,7 +233,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
     let raw: Value = tx.read(&source_key).await?.ok_or_else(unavailable)?;
     let source = parse_codex_source_pool(&raw)?.ok_or_else(unavailable)?;
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(unavailable)?;
-    crate::routing::validate_pool(&normalized)?;
+    gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
     if tx.revision(&source_key).as_deref() != Some(publication.source_revision.as_str())
         || tx.revision(&keys::pool()).as_deref() != Some(publication.normalized_revision.as_str())
         || publication.source_revision != publication.publication_revision

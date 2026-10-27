@@ -28,6 +28,7 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }

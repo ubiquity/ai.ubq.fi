@@ -10,7 +10,6 @@ use crate::{
     },
     routing::{self, RoutingView},
     routing_rules,
-    routing_types::{CapacityObservation, CapacityState},
     store::{Authority, Transaction},
 };
 use gateway_auth::{
@@ -21,6 +20,7 @@ use gateway_auth::{
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_routing_evidence::capacity::{CapacityObservation, CapacityState};
 use gateway_core::{
     error::GatewayError,
     identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, MAX_SAFE_INTEGER},

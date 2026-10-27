@@ -185,6 +185,13 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             .transpose()
     }
 
+    pub(crate) fn routing_read_store(&mut self) -> RoutingReadStore<'_, S> {
+        RoutingReadStore {
+            store: self.store,
+            reads: std::cell::RefCell::new(&mut self.reads),
+        }
+    }
+
     /// Explicit lossless opt-in for named control families. The caller still owns
     /// the exact key, DTO/version and currentness checks; data grants no authority.
     pub(crate) async fn read_source_control<T: DeserializeOwned>(
@@ -421,5 +428,33 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_local_completion::Loca
         &self,
     ) -> gateway_authority_local_completion::LocalCompletionService<'_, S, I> {
         gateway_authority_local_completion::LocalCompletionService::new(&self.store, &self.tokens)
+    }
+}
+
+/// Private fixed-reader bridge. No mutation or raw store reference crosses this boundary.
+pub(crate) struct RoutingReadStore<'a, S> {
+    store: &'a S,
+    reads: std::cell::RefCell<&'a mut BTreeMap<String, Option<StoredRecord>>>,
+}
+impl<S: AuthorityStore> AuthorityStore for RoutingReadStore<'_, S> {
+    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        let missing = !self.reads.borrow().contains_key(&key.0);
+        if missing {
+            let record = self.store.read(key).await?;
+            if let Some(row) = &record {
+                row.validate_version()?;
+                text(&row.revision)?;
+                if let Some(expiry) = row.expires_at_ms {
+                    validate_time(expiry)?;
+                }
+            }
+            self.reads.borrow_mut().insert(key.0.clone(), record);
+        }
+        Ok(self.reads.borrow().get(&key.0).cloned().flatten())
+    }
+    async fn commit(&self, _transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        Err(invalid(
+            "Routing evidence reader has no mutation authority.",
+        ))
     }
 }

@@ -1,86 +1,10 @@
 //! Source-shaped capacity records, selection results and private proof capabilities.
 use gateway_authority_routing_records::types::ProbeLease;
-use gateway_core::identity::{AccountBinding, RoutingAccountHash};
+use gateway_core::identity::AccountBinding;
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::RevisionCheck;
 use gateway_core::{js_string::JsString16, model::ModelId};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CapacityStore {
-    pub v: u32,
-    pub updated_at_ms: i64,
-    pub observations: Vec<CapacityObservation>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CapacityWindow {
-    pub limit_window_seconds: Option<i64>,
-    pub used_percent: Option<f64>,
-    pub reset_at_ms: Option<i64>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CapacityAdditionalRateLimit {
-    pub limit_name: String,
-    pub metered_feature: Option<String>,
-    pub windows: CapacityWindows,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-pub struct CapacityWindows {
-    pub primary: Option<CapacityWindow>,
-    pub secondary: Option<CapacityWindow>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapacityState {
-    Available,
-    Stale,
-    Unavailable,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct CapacityObservation {
-    pub slot: u8,
-    pub account_id_hash: RoutingAccountHash,
-    pub state: CapacityState,
-    pub source_observed_at_ms: Option<i64>,
-    pub snapshot_at_ms: i64,
-    pub windows: CapacityWindows,
-    pub additional_rate_limits: Vec<CapacityAdditionalRateLimit>,
-}
-
-impl Default for CapacityStore {
-    fn default() -> Self {
-        Self {
-            v: 1,
-            updated_at_ms: 0,
-            observations: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AccountCatalog {
-    pub client_version: String,
-    pub models: Vec<ModelId>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnsupportedModel {
-    pub observed_at_ms: i64,
-    pub detail: JsString16,
-}
-
-/// Transient hash-keyed view; the source account-model row uses raw account IDs.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ModelAvailability {
-    pub catalogs: BTreeMap<String, AccountCatalog>,
-    pub unsupported: BTreeMap<String, BTreeMap<ModelId, UnsupportedModel>>,
-}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AdmittedAccount {

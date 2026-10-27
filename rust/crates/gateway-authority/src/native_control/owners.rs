@@ -75,7 +75,7 @@ impl RegisteredRenewalOwners {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let source = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        crate::routing::validate_pool(&normalized)?;
+        gateway_authority_routing_evidence::validation::validate_pool(&normalized)?;
         if normalized.pool_versionstamp.0 != tx.revision(&source_key).ok_or_else(fail)?
             || normalized.accounts.len() != source.accounts.len()
         {

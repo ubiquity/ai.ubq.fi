@@ -13,6 +13,7 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
 gateway-authority-kernel = { path = "../gateway-authority-kernel" }
 gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }

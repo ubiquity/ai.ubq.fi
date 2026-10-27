@@ -79,7 +79,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     } else if starts(p, &["uos_ai", "codex_account_routing"]) {
         gateway_authority_routing_records::codec::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {
-        gateway_authority::capacity_rules::parse_capacity_store(&v)?;
+        gateway_authority_routing_evidence::capacity::parse_capacity_store(&v)?;
     } else if starts(p, &["uos_ai", "codex_manual_reset"]) {
         let intent = gateway_authority::manual_reset::parse_manual_intent(&v)?;
         if p.len() != 4

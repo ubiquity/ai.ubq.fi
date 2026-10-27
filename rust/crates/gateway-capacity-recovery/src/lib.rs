@@ -3,10 +3,11 @@
 use gateway_auth::provider_credentials::{CodexSourceSnapshot, read_codex_source_pool};
 use gateway_authority::{
     capacity::{CodexCapacityAccountRef, CodexCapacitySample},
-    routing_types::{CapacityState, CohortProof, RouteSelection},
+    routing_types::{CohortProof, RouteSelection},
     store::Authority,
 };
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_routing_evidence::capacity::CapacityState;
 use gateway_core::{error::GatewayError, model::ModelId, state::AuthorityStore};
 use gateway_observability::{
     capacity_shapes,
