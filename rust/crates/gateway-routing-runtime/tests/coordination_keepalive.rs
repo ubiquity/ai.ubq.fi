@@ -2,10 +2,10 @@ use gateway_auth::types::AuthMethod;
 use gateway_authority::{
     REQUEST_LEASE_MS,
     kernel::KernelPolicy,
-    keys,
     quota::ApiReservation,
     store::{Authority, AuthorityClock, TokenSource},
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     query::{QueryPage, QueryRequest, QueryStore},

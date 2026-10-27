@@ -161,11 +161,11 @@ fn hot_selection_uses_check_only_identity_and_never_balances_to_sibling() {
     let authority = authority(&store);
     let first = admitted(&authority);
     let r = store
-        .row(&gateway_authority::keys::routing())
+        .row(&gateway_authority_keys::routing())
         .unwrap()
         .revision;
     let a = store
-        .row(&gateway_authority::keys::active())
+        .row(&gateway_authority_keys::active())
         .unwrap()
         .revision;
     let RouteSelection::Eligible(second) = run(authority.select_account(
@@ -179,14 +179,14 @@ fn hot_selection_uses_check_only_identity_and_never_balances_to_sibling() {
     assert_eq!(first.binding, second.binding);
     assert_eq!(
         store
-            .row(&gateway_authority::keys::routing())
+            .row(&gateway_authority_keys::routing())
             .unwrap()
             .revision,
         r
     );
     assert_eq!(
         store
-            .row(&gateway_authority::keys::active())
+            .row(&gateway_authority_keys::active())
             .unwrap()
             .revision,
         a

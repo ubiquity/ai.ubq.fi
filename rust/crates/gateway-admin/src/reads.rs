@@ -140,7 +140,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         now,
     )?;
     let window = store
-        .read(&gateway_authority::keys::api_window(
+        .read(&gateway_authority_keys::api_window(
             &record.policy.id,
             &format!("v3:{}", record.policy.window_ms),
             start,
@@ -188,7 +188,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         value = omit_field(value, "usage_requests");
     }
     let paid = store
-        .read(&gateway_authority::keys::paid_window(
+        .read(&gateway_authority_keys::paid_window(
             &record.policy.id,
             reset,
         ))

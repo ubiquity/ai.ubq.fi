@@ -1,6 +1,6 @@
 //! Provider-outcome reconciliation and verified-reset recovery, with no provider I/O.
 use crate::{
-    PROBE_LEASE_MS, add, invalid, keys, next_generation,
+    PROBE_LEASE_MS, add, invalid, next_generation,
     reset::{ResetAuthorization, authorization_fences, check_record},
     reset_types::{
         FullPoolResetReconciliation, ResetCandidate, ResetRecord, ResetState, reset_invocation,
@@ -10,6 +10,7 @@ use crate::{
     store::{Authority, TokenSource},
     text, unavailable,
 };
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::ProbeLease;
 use gateway_core::{
     error::GatewayError,

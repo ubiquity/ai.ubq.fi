@@ -302,7 +302,7 @@ pub fn seed_pool(store: &MemoryStore, pool: &SubscriptionPool) {
         &source.private_source_value(),
         &pool.pool_versionstamp.0,
     );
-    store.seed(gateway_authority::keys::pool(), pool);
+    store.seed(gateway_authority_keys::pool(), pool);
 }
 pub fn policy() -> ApiKeyPolicy {
     ApiKeyPolicy {

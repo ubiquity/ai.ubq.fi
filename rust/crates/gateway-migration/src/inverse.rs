@@ -287,7 +287,7 @@ fn authority_control(
     record: &StoredRecord,
     now_ms: i64,
 ) -> Result<bool, GatewayError> {
-    if *key == gateway_authority::keys::kernel_defaults() {
+    if *key == gateway_authority_keys::kernel_defaults() {
         let mut expected = gateway_authority::kernel::KernelDefaults::default();
         if let Some(source) =
             all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)

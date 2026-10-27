@@ -111,7 +111,7 @@ impl FullPoolShadowDecision {
             }
             _ => return Err(invalid()),
         };
-        if *key != crate::keys::reset_shadow(&decision.episode_hash) {
+        if *key != gateway_authority_keys::reset_shadow(&decision.episode_hash) {
             return Err(invalid());
         }
         Ok(decision)

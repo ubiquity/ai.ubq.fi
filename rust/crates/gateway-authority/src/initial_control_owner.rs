@@ -1,8 +1,9 @@
 //! Initial installation by the private account operator, never native MAC publication.
 //! The deployment seal is produced after independent local physical custody checks.
 //! Neither a signed identity nor a captured row can construct installation authority.
-use crate::{keys, paid_control::PaidControlOwner};
+use crate::paid_control::PaidControlOwner;
 use gateway_auth::{crypto::sha256_hex, native_auth::NativeTransportIdentity};
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::MAX_SAFE_INTEGER;
 use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};

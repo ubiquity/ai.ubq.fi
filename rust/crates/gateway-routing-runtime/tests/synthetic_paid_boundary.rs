@@ -1,6 +1,5 @@
 //! Fake-only paid boundary derived from source_contracts.rs:63-171,321-373 at 08431133.
 use gateway_authority::{
-    keys,
     paid_control::{
         PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
         PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
@@ -8,6 +7,7 @@ use gateway_authority::{
     },
     paid_types::PaidRoutingPolicy,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     lifecycle::TransportObservation,
     provider::{PaidProvider, UpstreamProvider},

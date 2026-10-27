@@ -1,11 +1,11 @@
 //! Fixed same-authority derived control metadata; these DTOs grant no write capability.
 use crate::{
-    keys,
     paid_types::{PaidRequest, PaidRoutingPolicy},
     positive,
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::model::ModelId;
 use gateway_core::provider::PaidProvider;

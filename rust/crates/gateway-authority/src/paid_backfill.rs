@@ -1,11 +1,11 @@
 //! Source historical paid usage and retention, owned by the existing atomic authority.
 //! Cursors are progress hints only; request markers and revision checks prevent double folds.
 use crate::{
-    keys,
     paid_types::PaidAttempt,
     store::{Authority, TokenSource},
     validate_time,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     query::{QueryPage, QueryRequest, QuerySelector, QueryStore},

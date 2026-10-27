@@ -1,7 +1,7 @@
 //! Explicit authenticated manual reset. Shares the existing redemption/day records.
 //! Provider usage/inventory/consume I/O belongs to the fixed admin host, outside transactions.
 use crate::{
-    capacity_rules, keys,
+    capacity_rules,
     native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
     reset,
     reset_types::{
@@ -19,6 +19,7 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, MAX_SAFE_INTEGER},

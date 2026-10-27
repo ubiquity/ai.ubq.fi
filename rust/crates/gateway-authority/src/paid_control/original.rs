@@ -3,11 +3,11 @@
 use super::{PaidRoutingReceipt, control_error, source_key};
 use crate::{
     kernel::KernelReservation,
-    keys,
     paid_types::{PaidAttempt, PaidRequest, PaidReservation},
     quota::{ApiReservation, ApiUsageRequest, ApiUsageState},
     store::{Authority, TokenSource, Transaction},
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     identity::RequestContext,

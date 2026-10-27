@@ -5,13 +5,13 @@ use super::{
     rows::{self, ActionRow, fail},
 };
 use crate::{
-    keys,
     routing::LiveAccountSelection,
     store::{Authority, TokenSource, Transaction},
 };
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
 use gateway_auth::types::AuthConfig;
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::AccountBinding;

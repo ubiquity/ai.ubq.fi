@@ -61,7 +61,8 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
 }
 
 fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> {
-    use gateway_authority::{keys, paid_control::*};
+    use gateway_authority::paid_control::*;
+    use gateway_authority_keys as keys;
     use gateway_core::{provider::PaidProvider, state::AuthorityStore};
     let mut request = input(id, model, &["surplus", "openlux"]);
     let models = ["paid-model", "deepseek-v4.1-flash"]
@@ -215,9 +216,9 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
         )
         .await?;
         let attempt = next_attempt(&session).await?;
-        let mut config = store.value(gateway_authority::keys::paid_control_config());
+        let mut config = store.value(gateway_authority_keys::paid_control_config());
         config["generation"] = json!("next-generation");
-        store.seed(gateway_authority::keys::paid_control_config(), config);
+        store.seed(gateway_authority_keys::paid_control_config(), config);
         assert!(session.before_dispatch(&attempt).await.is_err());
         let mut failure = refusal(499, TransportState::NotStarted);
         failure.cancelled = true;
@@ -230,7 +231,8 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
 
 #[test]
 fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
-    use gateway_authority::{keys, quota::ApiReservation, store::Authority};
+    use gateway_authority::{quota::ApiReservation, store::Authority};
+    use gateway_authority_keys as keys;
     use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
 
     run(async {
@@ -270,7 +272,7 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
 
 #[test]
 fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult {
-    use gateway_authority::keys;
+    use gateway_authority_keys as keys;
     use gateway_core::state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
     };
@@ -1027,7 +1029,7 @@ fn codex_generic429_is_not_paid_or_account_exhaustion() {
             session.refusal(&attempt, failure).await.unwrap(),
             RefusalDecision::Return
         );
-        let active = store.value(gateway_authority::keys::active());
+        let active = store.value(gateway_authority_keys::active());
         assert_eq!(
             active["account_id_hash"],
             source_account("a").identity().routing_account_hash.0

@@ -6,11 +6,11 @@ use gateway_auth::native_auth::{
 use gateway_auth::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority::{
-    keys,
     paid_control::{PaidRequestContext, PaidRoutingProjection, paid_projection_source_keys},
     paid_types::PaidRequest,
     store::{Authority, TokenSource},
 };
+use gateway_authority_keys as keys;
 use gateway_catalog_runtime::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,

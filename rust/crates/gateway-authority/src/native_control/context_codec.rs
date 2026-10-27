@@ -31,7 +31,7 @@ struct Fields {
     model_utf16: Option<Option<Vec<u16>>>,
     call_id: Option<String>,
     mapping_revision: Option<String>,
-    context: Option<Box<crate::cache_experiment::RefreshContext>>,
+    context: Option<Box<gateway_cache_experiment_records::RefreshContext>>,
 }
 fn set<T, E: Error>(slot: &mut Option<T>, value: T, name: &'static str) -> Result<(), E> {
     if slot.replace(value).is_some() {

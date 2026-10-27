@@ -212,7 +212,7 @@ fn installation_is_one_complete_atomic_commit_and_exact_retry_does_not_rewrite()
     assert_eq!(store.commits.get(), 1);
     assert!(
         owner.matches_current_owner(
-            run(store.read(&gateway_authority::keys::paid_control_owner()))
+            run(store.read(&gateway_authority_keys::paid_control_owner()))
                 .unwrap()
                 .as_ref()
         )
@@ -285,7 +285,7 @@ fn wrong_capture_pool_generation_projection_and_expiry_have_no_effect() {
         );
         assert_eq!(store.commits.get(), 0);
         assert!(
-            run(store.read(&gateway_authority::keys::paid_control_owner()))
+            run(store.read(&gateway_authority_keys::paid_control_owner()))
                 .unwrap()
                 .is_none()
         );
@@ -337,7 +337,7 @@ fn capture_after_custody_observation_is_refused_before_effects() {
     );
     assert_eq!(store.commits.get(), 0);
     assert!(
-        run(store.read(&gateway_authority::keys::paid_control_owner()))
+        run(store.read(&gateway_authority_keys::paid_control_owner()))
             .unwrap()
             .is_none()
     );
@@ -359,7 +359,7 @@ fn occupied_conflicting_and_failed_targets_never_gain_partial_adoption() {
         .is_err()
     );
     assert!(
-        run(store.read(&gateway_authority::keys::paid_control_owner()))
+        run(store.read(&gateway_authority_keys::paid_control_owner()))
             .unwrap()
             .is_none()
     );
@@ -370,7 +370,7 @@ fn occupied_conflicting_and_failed_targets_never_gain_partial_adoption() {
     );
     let directory = Directory::new();
     let store = Store::new(&directory, 0);
-    let key = gateway_authority::keys::paid_control_owner();
+    let key = gateway_authority_keys::paid_control_owner();
     let existing = StoredRecord::json("foreign", json!({"v":1}), None);
     store.inner.put(key.clone(), existing.clone());
     assert!(
@@ -441,7 +441,7 @@ fn lost_response_reconciles_without_commit_and_ordinary_adoption_stays_owner_fre
     let store = Store::new(&directory, 0);
     run(adopt_empty(&store, &fixture.prepared)).unwrap();
     assert!(
-        run(store.read(&gateway_authority::keys::paid_control_owner()))
+        run(store.read(&gateway_authority_keys::paid_control_owner()))
             .unwrap()
             .is_none()
     );

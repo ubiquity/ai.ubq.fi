@@ -410,7 +410,7 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
     ))?;
     assert_eq!(reservation.request_id.0, "post-restart");
     drop(authority);
-    let paid_key = gateway_authority::keys::paid_attempt("core-key", "current");
+    let paid_key = gateway_authority_keys::paid_attempt("core-key", "current");
     let paid = run(store.read(&paid_key))?.ok_or("Expected retained fixture row")?;
     let paid =
         gateway_authority::paid::source_records::decode_paid_attempt_record(&paid_key, &paid)?;
@@ -419,7 +419,7 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
         gateway_core::lifecycle::BillingState::Unresolved
     );
     assert_eq!(paid.reservation.reserved_microcredits, 5);
-    let gate = run(store.read(&gateway_authority::keys::paid_gate()))?
+    let gate = run(store.read(&gateway_authority_keys::paid_gate()))?
         .ok_or("Expected retained fixture row")?;
     assert_eq!(
         gate.json_value()?["pending"]
@@ -436,7 +436,7 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
             .iter()
             .any(|entry| entry.raw_key == paid_sort)
     );
-    let paid_window = gateway_authority::keys::paid_window("core-key", 3000);
+    let paid_window = gateway_authority_keys::paid_window("core-key", 3000);
     let paid_window_sort = TupleKey::from_record_key(&paid_window)?
         .sort_bytes()
         .to_vec();

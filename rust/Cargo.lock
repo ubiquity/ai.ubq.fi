@@ -842,6 +842,7 @@ dependencies = [
 name = "gateway-admin"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-admin-data",
  "gateway-admin-test-support",
  "gateway-auth",
@@ -872,6 +873,7 @@ dependencies = [
 name = "gateway-admin-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-admin",
  "gateway-admin-data",
  "gateway-admin-test-support",
@@ -937,6 +939,8 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-cache-experiment-records",
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-authority-routing-records",
  "gateway-auth-native-wire",
@@ -954,6 +958,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-keys"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+]
+
+[[package]]
 name = "gateway-authority-routing-records"
 version = "0.1.0"
 dependencies = [
@@ -963,9 +974,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-cache-experiment-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-authority",
  "gateway-authority-routing-records",
@@ -980,6 +1002,7 @@ dependencies = [
 name = "gateway-catalog-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-auth-native-wire",
@@ -1088,6 +1111,7 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-admin",
  "gateway-admin-data",
  "gateway-admin-runtime",
@@ -1122,6 +1146,7 @@ dependencies = [
 name = "gateway-native"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "futures-executor",
  "gateway-auth",
  "gateway-auth-native-wire",
@@ -1164,6 +1189,7 @@ dependencies = [
 name = "gateway-observability"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "aes-gcm",
  "base64 0.22.1",
  "flate2",
@@ -1208,6 +1234,7 @@ dependencies = [
 name = "gateway-publication"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
@@ -1224,6 +1251,7 @@ dependencies = [
 name = "gateway-publication-policy"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
@@ -1236,6 +1264,7 @@ dependencies = [
 name = "gateway-publication-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
@@ -1285,6 +1314,7 @@ dependencies = [
 name = "gateway-routing-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "chrono",
  "futures-util",
  "gateway-auth",
@@ -1302,6 +1332,7 @@ dependencies = [
 name = "gateway-routing-runtime-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-authority",
  "gateway-authority-routing-records",
@@ -1330,6 +1361,8 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-cache-experiment-records",
+ "gateway-authority-keys",
  "futures-util",
  "gateway-admin",
  "gateway-admin-data",
@@ -1366,6 +1399,7 @@ dependencies = [
 name = "gateway-worker-fixture"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-authority",
  "gateway-authority-routing-records",
@@ -1382,6 +1416,7 @@ dependencies = [
 name = "gateway-worker-fixture-setup"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-keys",
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",

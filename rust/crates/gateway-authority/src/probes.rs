@@ -1,6 +1,6 @@
 //! Bounded routing and scoped overage probe transitions.
 use crate::{
-    PROBE_LEASE_MS, add, invalid, keys,
+    PROBE_LEASE_MS, add, invalid,
     native_control::actor::{self, NativeActorScope, NativeRenewalActor},
     next_generation, nonnegative,
     routing::{read_view, validate_cohort},
@@ -8,6 +8,7 @@ use crate::{
     store::{Authority, TokenSource},
     text, unavailable,
 };
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_records::types::{ProbeLease, QuotaBlock};
 use gateway_core::{error::GatewayError, identity::RoutingAccountHash, state::AuthorityStore};

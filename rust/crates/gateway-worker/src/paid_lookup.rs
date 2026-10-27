@@ -28,7 +28,7 @@ pub(crate) async fn stored_attempt(
     reservation: &PaidReservation,
 ) -> Result<PaidAttempt, GatewayError> {
     let key =
-        gateway_authority::keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
+        gateway_authority_keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
     let row = store
         .read(&key)
         .await?

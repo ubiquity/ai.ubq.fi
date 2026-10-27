@@ -39,7 +39,7 @@ pub enum NativeRenewalContext {
         mapping_revision: String,
     },
     CacheExperiment {
-        context: Box<crate::cache_experiment::RefreshContext>,
+        context: Box<gateway_cache_experiment_records::RefreshContext>,
     },
 }
 fn fence_v2<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {

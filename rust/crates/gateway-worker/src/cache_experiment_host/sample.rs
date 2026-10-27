@@ -36,7 +36,7 @@ pub(super) fn event_type(event: &SourceJson) -> Result<Option<String>, GatewayEr
                     .is_none_or(|character| !gateway_schema::util::js_whitespace(character))
             })
         })
-        .ok_or_else(|| gateway_authority::cache_experiment::model::failed(
+        .ok_or_else(|| gateway_cache_experiment_records::model::failed(
             "Prompt-cache scope experiment stream failed: Upstream emitted a Responses SSE event without a type."
         ))?;
     Ok(kind
@@ -118,7 +118,7 @@ pub(super) fn completed(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gateway_authority::cache_experiment::model::Signal;
+    use gateway_cache_experiment_records::model::Signal;
     use serde_json::{Value, json};
 
     #[test]

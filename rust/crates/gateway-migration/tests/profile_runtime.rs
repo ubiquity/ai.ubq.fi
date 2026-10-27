@@ -200,7 +200,7 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
         &prepare(&source, &CanonicalDates).unwrap(),
     ))
     .unwrap();
-    let policy = gateway_authority::keys::api_policy("offline-key");
+    let policy = gateway_authority_keys::api_policy("offline-key");
     assert!(run(store.read(&policy)).unwrap().is_some());
     let key = gateway_auth::api_keys::id_key("offline-key");
     let mut malformed = run(store.read(&key))

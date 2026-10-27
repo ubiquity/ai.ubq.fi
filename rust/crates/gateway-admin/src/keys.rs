@@ -39,10 +39,10 @@ pub struct ApiKeyRecord {
 }
 
 pub fn authority_policy_key(id: &str) -> RecordKey {
-    gateway_authority::keys::api_policy(id)
+    gateway_authority_keys::api_policy(id)
 }
 pub fn deletion_key(id: &str) -> RecordKey {
-    gateway_authority::keys::paid_deletion(id)
+    gateway_authority_keys::paid_deletion(id)
 }
 pub fn authority_policy(record: &ApiKeyRecord, now: i64) -> AuthorityKeyPolicy {
     AuthorityKeyPolicy {
@@ -445,7 +445,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
         let pk = authority_policy_key(&id);
         let pr = self.store.read(&pk).await?;
         let ir = self.store.read(&ik).await?;
-        let wk = gateway_authority::keys::api_window(&id, &format!("v3:{window}"), now);
+        let wk = gateway_authority_keys::api_window(&id, &format!("v3:{window}"), now);
         let wr = self.store.read(&wk).await?;
         let mut checks = vec![
             store::check(&hk, hr.as_ref()),
@@ -625,7 +625,7 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     record.policy.usage_reset_at_ms = now + new_window;
                     record.policy.usage_requests = 0;
                     let wk =
-                        gateway_authority::keys::api_window(id, &format!("v3:{new_window}"), now);
+                        gateway_authority_keys::api_window(id, &format!("v3:{new_window}"), now);
                     let wr = self.store.read(&wk).await?;
                     // Never overwrite a live reservation when a reset shares its exact clock/window identity.
                     if wr

@@ -1,13 +1,11 @@
 //! The source-owned cache campaign shares the existing transactional authority.
 //! A campaign is not inference admission, account election or another paid ledger.
-pub mod model;
 mod promotion;
 pub mod run;
 mod state;
 mod target;
 pub mod transport;
-use model::{Sample, TargetBinding};
-use serde::{Deserialize, Serialize};
+use gateway_cache_experiment_records::{RefreshContext, model::TargetBinding};
 
 /// Prepared immediately before the immutable-release telemetry gate. Never caller JSON.
 pub struct PreparedTarget {
@@ -29,23 +27,6 @@ impl PreparedTarget {
     }
 }
 
-/// Closed private renewal context; only the source fifth-row transition mints its permit.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RefreshContext {
-    pub v: u8,
-    pub release_git_sha: String,
-    pub target: TargetBinding,
-    pub campaign_owner: String,
-    pub cycle_owner: String,
-    pub cycle: u8,
-    pub source_pool_revision: String,
-    pub slot: u8,
-    pub state_revision: String,
-    pub cycle_lease_revision: String,
-    pub campaign_lease_revision: String,
-    pub prefix: [Sample; 5],
-}
 /// Deserializing a stored context cannot manufacture an operation permit.
 /// ```compile_fail
 /// use gateway_authority::cache_experiment::RefreshPermit;
@@ -75,7 +56,7 @@ pub(crate) async fn validate_refresh_context<
     context: &RefreshContext,
     now: i64,
 ) -> Result<(), gateway_core::error::GatewayError> {
-    use model::{failed, sample_signal};
+    use gateway_cache_experiment_records::model::{failed, sample_signal};
     context.target.validate()?;
     if context.v != 1
         || !release_valid(&context.release_git_sha)

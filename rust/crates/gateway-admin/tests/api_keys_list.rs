@@ -212,7 +212,7 @@ fn seeded_store() -> Store {
         panic!("API key record is a put");
     };
     store.rows.borrow_mut().insert(key.0, record);
-    let window = gateway_authority::keys::api_window("key-1", "v3:1000", 1000);
+    let window = gateway_authority_keys::api_window("key-1", "v3:1000", 1000);
     store.rows.borrow_mut().insert(
         window.0,
         StoredRecord::json(

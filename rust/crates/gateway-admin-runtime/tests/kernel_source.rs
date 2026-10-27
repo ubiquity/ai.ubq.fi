@@ -372,7 +372,7 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
         "responses",
         NOW,
     ))?;
-    let key = gateway_authority::keys::kernel_window("owner", Some("repo"));
+    let key = gateway_authority_keys::kernel_window("owner", Some("repo"));
     let live = store.rows.borrow()[&key.0].clone();
     assert_eq!(
         live.expires_at_ms,
@@ -440,7 +440,7 @@ fn positive_mapless_source_view_is_not_a_writable_or_live_bound_window()
         AdminOperation::KernelUsageSet,
         input(selector(&label, "repo", true)),
     ))?;
-    let key = gateway_authority::keys::kernel_window("owner", Some("repo"));
+    let key = gateway_authority_keys::kernel_window("owner", Some("repo"));
     let before = store.rows.borrow()[&key.0].clone();
     let mut document = decode_source_control_record(&before)?;
     body::set(&mut document, "reserved_requests", body::json(&1));
@@ -520,7 +520,7 @@ fn queue_keeps_original_broader_labels_and_actual_source_presence_filter() {
         ),
         &fixture.initial_response.body,
     );
-    let key = gateway_authority::keys::kernel_policy_source(&fixture.policy_owner, None).unwrap();
+    let key = gateway_authority_keys::kernel_policy_source(&fixture.policy_owner, None).unwrap();
     store.rows.borrow_mut().insert(
         key.0,
         encode_source_control_record("source-presence-only", &fixture.policy_value, None).unwrap(),

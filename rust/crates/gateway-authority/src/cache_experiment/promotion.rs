@@ -1,13 +1,16 @@
 //! Source catalog and compact runtime publication is one fenced atomic transition.
 use super::{
-    model::*,
     state::{CyclePermit, record_key},
     target::{catalog_key, json as source_json, runtime_key, set_member},
 };
 use crate::store::{Authority, TokenSource};
 use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_cache_experiment_records::model::{
+    LEASE_MS, Outcome, PROVIDER, Reason, TargetBinding, failed, unavailable,
+};
 use gateway_core::{
-    error::GatewayError, model::ModelId, source_json::SourceJson, state::AuthorityStore,
+    error::GatewayError, gateway_cache_experiment_records::model::ModelId, source_json::SourceJson,
+    state::AuthorityStore,
 };
 use gateway_schema::runtime_config::{
     build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,

@@ -1,8 +1,6 @@
 use super::*;
-use crate::{
-    keys,
-    quota::{ApiKeyPolicy, ApiUsageRequest, ApiUsageState},
-};
+use crate::quota::{ApiKeyPolicy, ApiUsageRequest, ApiUsageState};
+use gateway_authority_keys as keys;
 use gateway_core::{
     identity::{ApiKeyId, RequestId},
     provider::UpstreamProvider,

@@ -1,8 +1,5 @@
 //! Original-request identity, rechecked from fixed source rows. Never a native operation grant.
-use crate::{
-    keys,
-    store::{Authority, TokenSource, Transaction},
-};
+use crate::store::{Authority, TokenSource, Transaction};
 use gateway_auth::api_keys;
 use gateway_auth::crypto::{decode_base64url, sha256_hex};
 use gateway_auth::passkeys::{self, PasskeySession, PasskeyUser};
@@ -10,6 +7,7 @@ use gateway_auth::resolve::AuthService;
 use gateway_auth::session_index;
 use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_auth::upstream;
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::RequestContext;
 use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};

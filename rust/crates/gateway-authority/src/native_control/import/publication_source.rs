@@ -1,6 +1,6 @@
 //! Fixed source/normalized/catalog mutations for one verified original import.
 use super::*;
-use crate::{keys, store::Transaction};
+use crate::store::Transaction;
 use gateway_auth::{
     crypto::Secret,
     provider_credentials::{
@@ -9,6 +9,7 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::publication_command as command;
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     identity::PoolVersionstamp,

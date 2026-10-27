@@ -82,7 +82,7 @@ fn latest_paid_projection_preserves_current_model_effort_and_source_only_fields(
     run(adopt_empty(&store, &prepare(&capture, &CanonicalDates)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
-    let key = gateway_authority::keys::paid_attempt(key_id, attempt_id);
+    let key = gateway_authority_keys::paid_attempt(key_id, attempt_id);
     let original = run(gateway_core::state::AuthorityStore::read(&store, &key))?
         .ok_or("Expected retained fixture row")?;
     let mut current =

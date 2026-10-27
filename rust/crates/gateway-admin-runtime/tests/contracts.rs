@@ -499,7 +499,7 @@ fn deletion_refuses_pending_markers_and_returns_actual_guard_fences() {
         .0,
     );
     let fences = run(service.prepare_key_deletion("key")).unwrap();
-    let guard = gateway_authority::keys::paid_deletion("key");
+    let guard = gateway_authority_keys::paid_deletion("key");
     assert!(
         fences
             .iter()

@@ -205,9 +205,9 @@ fn only_matched_existing_ascii_hash_enters_unchanged_boolean_keys_no_checks_and_
         let memory = AuditMemory::default();
         let runtime = ObservabilityRuntime::new(memory.clone(), host(vec![]));
         let key = if overage {
-            gateway_authority::keys::overage(&hash)
+            gateway_authority_keys::overage(&hash)
         } else {
-            gateway_authority::keys::reset_usage(&hash)
+            gateway_authority_keys::reset_usage(&hash)
         };
         for flag in [true, false] {
             let quoted = serde_json::to_string(&hash).unwrap();

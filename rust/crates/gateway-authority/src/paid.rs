@@ -1,6 +1,6 @@
 //! Paid ledger v3: exposure, terminal evidence and correlated billing are independent.
 use crate::{
-    DAY_MS, PAID_RETENTION_MS, add, invalid, keys, nonnegative,
+    DAY_MS, PAID_RETENTION_MS, add, invalid, nonnegative,
     paid_control::PaidRoutingReceipt,
     paid_types::{
         PaidAdmission, PaidAttempt, PaidAuthorization, PaidCorrelation, PaidRequest,
@@ -14,6 +14,7 @@ use crate::{
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, MicrocreditLimit, PaidAttemptId},

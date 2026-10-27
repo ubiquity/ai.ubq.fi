@@ -14,7 +14,6 @@ pub mod claude;
 pub mod full_pool_reset;
 pub mod initial_control_owner;
 pub mod kernel;
-pub mod keys;
 pub mod local_api_release;
 pub mod local_completion;
 pub mod manual_reset;

@@ -1,10 +1,11 @@
 //! API-key dispatch charging and kernel semantic quota are independent source contracts.
 use crate::{
-    QUOTA_RETENTION_MS, REQUEST_LEASE_MS, add, invalid, keys, nonnegative, positive, quota_error,
+    QUOTA_RETENTION_MS, REQUEST_LEASE_MS, add, invalid, nonnegative, positive, quota_error,
     retention,
     store::{Authority, TokenSource},
     text, unavailable,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, RequestId},

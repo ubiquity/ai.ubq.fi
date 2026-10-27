@@ -131,7 +131,7 @@ impl CatalogHost for Host {
     }
     async fn publication(&self) -> Result<CredentialPublication, GatewayError> {
         let snapshot = read_codex_source_pool(&self.store, now_ms()?).await?;
-        let normalized = self.store.read(&gateway_authority::keys::pool()).await?;
+        let normalized = self.store.read(&gateway_authority_keys::pool()).await?;
         let mut publication = CredentialPublication {
             source_checks: vec![
                 RevisionCheck {
@@ -139,7 +139,7 @@ impl CatalogHost for Host {
                     expected_revision: snapshot.as_ref().map(|row| row.revision.clone()),
                 },
                 RevisionCheck {
-                    key: gateway_authority::keys::pool(),
+                    key: gateway_authority_keys::pool(),
                     expected_revision: normalized.as_ref().map(|row| row.revision.clone()),
                 },
             ],

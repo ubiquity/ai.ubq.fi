@@ -6,13 +6,13 @@ use crate::{
     state,
 };
 use gateway_authority::{
-    keys,
     paid_control::{
         PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
         PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
     },
     paid_types::PaidRoutingPolicy,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,

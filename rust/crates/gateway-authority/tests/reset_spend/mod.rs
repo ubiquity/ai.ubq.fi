@@ -3,11 +3,11 @@ use crate::support::*;
 use crate::{TestResult, fixture_json, fixture_row};
 use gateway_authority::{
     full_pool_reset::types::*,
-    keys,
     reset::utc_day,
     reset_types::{AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetRecord, ResetState},
     routing_types::{CohortProof, RouteSelection},
 };
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
 use gateway_core::js_string::JsString16;

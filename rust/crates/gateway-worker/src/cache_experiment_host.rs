@@ -329,7 +329,7 @@ impl ExperimentIo for Host<'_> {
         }
         if head.slot != slot {
             return Ok(ReadSample {
-                value: Err(gateway_authority::cache_experiment::model::Reason::SlotDrift),
+                value: Err(gateway_cache_experiment_records::model::Reason::SlotDrift),
                 completed: false,
             });
         }

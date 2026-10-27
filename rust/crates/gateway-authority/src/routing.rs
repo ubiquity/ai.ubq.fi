@@ -1,13 +1,14 @@
 //! Global serial subscription selection; source routing-serial.ts and routing-evaluation.ts.
 use crate::{
     capacity_rules::{capacity_for, parse_capacity_store},
-    generation, invalid, keys, next_generation, nonnegative,
+    generation, invalid, next_generation, nonnegative,
     routing_types::{
         AdmittedAccount, CapacityStore, CohortProof, ModelAvailability, RouteSelection,
     },
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_records::types::{

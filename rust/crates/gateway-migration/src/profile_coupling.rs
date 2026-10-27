@@ -270,7 +270,7 @@ async fn bind_paid_rows<S: QueryStore>(
 ) -> Result<(), GatewayError> {
     let p = input.parts;
     use gateway_authority::paid_types::{PendingPaid, ReconciliationGate};
-    let gate_key = gateway_authority::keys::paid_gate();
+    let gate_key = gateway_authority_keys::paid_gate();
     let observed = store.read(&gate_key).await?;
     let current = if gate_key == *input.key {
         Some(input.record.clone())

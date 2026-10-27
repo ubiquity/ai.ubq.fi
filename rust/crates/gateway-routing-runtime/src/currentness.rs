@@ -5,9 +5,9 @@ use crate::{
     types::{RoutingHost, RoutingResult},
 };
 use gateway_authority::kernel::{KernelReservation, KernelTerminal};
-use gateway_authority::keys;
 use gateway_authority::quota::{ApiReservation, ApiUsageRequest, ApiUsageState};
 use gateway_authority::store::{AuthorityClock, TokenSource};
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::lifecycle::SemanticTerminal;
 use gateway_core::local_work::LocalWorkPhase;

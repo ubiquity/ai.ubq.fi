@@ -7,7 +7,6 @@ use super::{
     },
 };
 use crate::{
-    keys,
     store::{TokenSource, Transaction},
     text,
 };
@@ -22,6 +21,7 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     error::GatewayError,

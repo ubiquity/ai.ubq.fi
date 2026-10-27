@@ -4,10 +4,11 @@
 use super::support;
 use crate::{TestResult, fixture_row};
 use gateway_authority::{
-    PAID_RETENTION_MS, keys,
+    PAID_RETENTION_MS,
     paid_control::*,
     paid_types::{PaidAdmission, PaidAuthorization, PaidRequest, PaidRoutingPolicy},
 };
+use gateway_authority_keys as keys;
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::state::{AuthorityStore, RecordKey};

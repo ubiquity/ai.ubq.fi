@@ -290,7 +290,7 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
             .code(),
         Some("migration_control_custody_required")
     );
-    let normalized_key = gateway_authority::keys::pool();
+    let normalized_key = gateway_authority_keys::pool();
     let normalized = run(store.read(&normalized_key)).unwrap().unwrap();
     let (inverse, controls, artifacts) = run(export_native_rollback_with_custody(
         &store,
@@ -312,7 +312,7 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
     assert!(
         controls
             .iter()
-            .any(|control| control.key == gateway_authority::keys::pool().0)
+            .any(|control| control.key == gateway_authority_keys::pool().0)
     );
     for control in &controls {
         assert_eq!(
@@ -478,8 +478,8 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
     assert!(snapshot.pool.accounts[0].refresh_token.expose().is_empty());
     assert_eq!(std::fs::read(home.join("auth.json"))?, original);
     let expected = snapshot.pool.accounts[0].identity();
-    let normalized = run(store.read(&gateway_authority::keys::pool()))?
-        .ok_or("Expected retained fixture row")?;
+    let normalized =
+        run(store.read(&gateway_authority_keys::pool()))?.ok_or("Expected retained fixture row")?;
     let normalized: gateway_authority_routing_records::types::SubscriptionPool =
         serde_json::from_value(normalized.value)?;
     assert_eq!(normalized.pool_versionstamp.0, snapshot.revision);

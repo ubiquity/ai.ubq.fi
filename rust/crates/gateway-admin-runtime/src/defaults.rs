@@ -7,7 +7,8 @@ use crate::{
 use gateway_admin::{operations::AdminInput, routes::AdminOperation, source_input as source_body};
 use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
-use gateway_authority::{kernel::KernelDefaults, keys};
+use gateway_authority::kernel::KernelDefaults;
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::model::ModelId;

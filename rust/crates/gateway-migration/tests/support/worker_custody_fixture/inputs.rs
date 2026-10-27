@@ -114,7 +114,7 @@ fn rebase(mut capture: NativeCapture, time: FixtureTime) -> Result<NativeCapture
     let mut expected = vec![
         key(json!(["ubq_ai", "api_keys", "id", "offline-key"])),
         key(json!(["ubq_ai", "api_keys", "hash", hash])),
-        gateway_authority::keys::api_window("offline-key", "v3:1000", 2000),
+        gateway_authority_keys::api_window("offline-key", "v3:1000", 2000),
     ];
     for index in 0..4 {
         expected.push(key(json!(["default", "native-graph", index])));
@@ -193,7 +193,7 @@ fn rebase(mut capture: NativeCapture, time: FixtureTime) -> Result<NativeCapture
         string("v3:1000"),
         string("v3:300000"),
     )?;
-    capture.entries[2].raw_key = TupleKey::from_record_key(&gateway_authority::keys::api_window(
+    capture.entries[2].raw_key = TupleKey::from_record_key(&gateway_authority_keys::api_window(
         "offline-key",
         "v3:300000",
         time.origin,
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(at(&mut window, "reserved_requests"), number(0));
         assert_eq!(
             new.entries[2].raw_key,
-            TupleKey::from_record_key(&gateway_authority::keys::api_window(
+            TupleKey::from_record_key(&gateway_authority_keys::api_window(
                 "offline-key",
                 "v3:300000",
                 time.origin

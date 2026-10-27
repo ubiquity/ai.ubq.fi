@@ -227,7 +227,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         account_id: &str,
         cohort_id: &str,
     ) -> Result<Option<SourceJson>, GatewayError> {
-        let key = crate::keys::claude_quota(account_id, cohort_id);
+        let key = gateway_authority_keys::claude_quota(account_id, cohort_id);
         self.cached_record(&key)
             .await?
             .map(|row| match row.value_encoding {
@@ -244,7 +244,7 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
         &mut self,
         episode_hash: &str,
     ) -> Result<Option<StoredRecord>, GatewayError> {
-        let key = crate::keys::reset_shadow(episode_hash);
+        let key = gateway_authority_keys::reset_shadow(episode_hash);
         Ok(self.cached_record(&key).await?.cloned())
     }
 

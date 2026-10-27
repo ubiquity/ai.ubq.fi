@@ -136,8 +136,8 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
             store: &store,
             host: &host,
         };
-        let repo = gateway_authority::keys::kernel_policy("owner", Some("repo"));
-        let org = gateway_authority::keys::kernel_policy("owner", None);
+        let repo = gateway_authority_keys::kernel_policy("owner", Some("repo"));
+        let org = gateway_authority_keys::kernel_policy("owner", None);
         store.rows.borrow_mut().insert(
             repo.0,
             StoredRecord::json("repo", kernel_source_policy("repo", Some("repo")), None),
@@ -178,7 +178,7 @@ fn kernel_auth_validates_both_source_policies_before_repo_precedence() {
                 .is_none()
         );
         store.rows.borrow_mut().insert(
-            gateway_authority::keys::kernel_policy("owner", Some("repo")).0,
+            gateway_authority_keys::kernel_policy("owner", Some("repo")).0,
             StoredRecord::json("stored-null", Value::Null, None),
         );
         assert_eq!(
@@ -561,7 +561,7 @@ impl AdminHost for ClaimedDeletion<'_> {
         // This finite fixture's only possible paid ledger is the racing attempt.
         assert!(
             self.store
-                .read(&gateway_authority::keys::paid_attempt(id, "racing-attempt"))
+                .read(&gateway_authority_keys::paid_attempt(id, "racing-attempt"))
                 .await?
                 .is_none()
         );
@@ -848,7 +848,8 @@ async fn prepare_paid_fixture_custody(
     host: &Host,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-    use gateway_authority::{keys, paid_control, paid_types::PaidRoutingPolicy};
+    use gateway_authority::{paid_control, paid_types::PaidRoutingPolicy};
+    use gateway_authority_keys as keys;
     use gateway_core::provider::PaidProvider;
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
@@ -942,7 +943,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
         self.store.read(key).await
     }
     async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let attempt = gateway_authority::keys::paid_attempt(&self.key_id, "racing-attempt");
+        let attempt = gateway_authority_keys::paid_attempt(&self.key_id, "racing-attempt");
         if transition
             .mutations
             .iter()
@@ -1076,10 +1077,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         );
         assert!(
             store
-                .read(&gateway_authority::keys::paid_attempt(
-                    &id,
-                    "racing-attempt"
-                ))
+                .read(&gateway_authority_keys::paid_attempt(&id, "racing-attempt"))
                 .await?
                 .is_none()
         );
@@ -1259,7 +1257,7 @@ fn key_creation_commits_identity_policy_window_and_audit_together() {
         );
         assert!(
             store
-                .read(&gateway_authority::keys::api_window(
+                .read(&gateway_authority_keys::api_window(
                     id,
                     &format!("v3:{}", gateway_auth::api_keys::WEEK_MS),
                     1_000_000

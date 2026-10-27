@@ -7,9 +7,9 @@ use crate::{
 };
 use gateway_auth::{crypto::sha256_hex, types::AuthPrincipal};
 use gateway_authority::kernel::{KernelReservation, KernelTerminal};
-use gateway_authority::keys;
 use gateway_authority::quota::{ApiReservation, ApiUsageRequest, ApiUsageState};
 use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};
 use gateway_core::lifecycle::TransportObservation;

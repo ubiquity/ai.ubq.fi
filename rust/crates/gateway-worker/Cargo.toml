@@ -13,6 +13,8 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-auth-native-wire.workspace = true
 gateway-compaction.workspace = true

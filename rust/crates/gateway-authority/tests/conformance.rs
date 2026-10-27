@@ -10,7 +10,6 @@ mod source_model_cases;
 use gateway_authority::{
     DAY_MS, PAID_RETENTION_MS, QUOTA_RETENTION_MS,
     kernel::{KernelPolicy, KernelTerminal, KernelWindow},
-    keys,
     paid_types::{
         PaidAdmission, PaidAuthorization, PaidCorrelation, PaidRequest, PaidRoutingPolicy,
         PaidUsage, PaidWindow,
@@ -23,6 +22,7 @@ use gateway_authority::{
     },
     routing_types::RouteSelection,
 };
+use gateway_authority_keys as keys;
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, PoolVersionstamp, RequestId};
 use gateway_core::lifecycle::{BillingState, PaidTerminalState};
 use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};

@@ -8,11 +8,11 @@ use gateway_auth::{
 use gateway_authority::{
     capacity::*,
     capacity_rules::parse_capacity_store,
-    keys,
     paid_control::PaidControlOwner,
     routing_types::{CohortProof, RouteSelection},
     store::AuthorityClock,
 };
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::codec::parse_routing_state;
 use gateway_authority_routing_records::types::{
     PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,

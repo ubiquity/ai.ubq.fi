@@ -1,7 +1,8 @@
 use gateway_auth::types::AuthMethod;
 use gateway_authority::{
-    REQUEST_LEASE_MS, kernel::KernelPolicy, keys, quota::ApiReservation, store::Authority,
+    REQUEST_LEASE_MS, kernel::KernelPolicy, quota::ApiReservation, store::Authority,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},

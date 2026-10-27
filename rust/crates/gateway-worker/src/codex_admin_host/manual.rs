@@ -70,7 +70,7 @@ async fn run(
     };
     let invocation = action.invocation()?;
     let previous = store
-        .read(&gateway_authority::keys::reset_redemption(
+        .read(&gateway_authority_keys::reset_redemption(
             &invocation.identity.account_id_hash,
             &invocation.identity.quota_generation,
         ))

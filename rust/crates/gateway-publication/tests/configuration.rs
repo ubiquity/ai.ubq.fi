@@ -1,8 +1,8 @@
 use gateway_auth::crypto::Secret;
 use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
 use gateway_auth::store;
-use gateway_authority::keys;
 use gateway_authority::paid_control::{PaidControlConfig, PaidControlOwner};
+use gateway_authority_keys as keys;
 use gateway_core::provider::PaidProvider;
 use gateway_core::state::AuthorityStore;
 use gateway_publication::sender::NativePublicationSender;

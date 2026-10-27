@@ -4,7 +4,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_routing_runtime_test_support::source_catalog;
 type MemoryStore = Store;
 type TestAuthority = gateway_authority::store::Authority<Store, Tokens>;
-use gateway_authority::{keys, paid_control::*};
+use gateway_authority::paid_control::*;
+use gateway_authority_keys as keys;
 use gateway_catalog_runtime::CatalogRuntime;
 use gateway_catalog_runtime::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,

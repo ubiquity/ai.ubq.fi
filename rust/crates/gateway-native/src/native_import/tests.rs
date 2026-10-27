@@ -17,7 +17,6 @@ use gateway_auth::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
 };
 use gateway_auth_native_wire::native_read::*;
-use gateway_authority::keys;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, actor,
     receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
@@ -26,6 +25,7 @@ use gateway_authority::paid_control::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};

@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 fn reset_key(hash: &str) -> gateway_core::state::RecordKey {
-    gateway_authority::keys::reset_usage(hash)
+    gateway_authority_keys::reset_usage(hash)
 }
 fn marker_key() -> gateway_core::state::RecordKey {
     store::key(json!([
@@ -231,7 +231,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     )
                 })?;
             let key = if overage {
-                gateway_authority::keys::overage(&hash)
+                gateway_authority_keys::overage(&hash)
             } else {
                 reset_key(&hash)
             };
@@ -261,7 +261,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if overage {
                 let row = self
                     .store
-                    .read(&gateway_authority::keys::overage(&hash))
+                    .read(&gateway_authority_keys::overage(&hash))
                     .await?;
                 v["allow"] =
                     json!(store::value(row.as_ref(), at)?.is_some_and(|v| v["allow"] == true));

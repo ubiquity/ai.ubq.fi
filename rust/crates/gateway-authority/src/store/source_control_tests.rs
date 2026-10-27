@@ -74,7 +74,7 @@ fn control(units: &[u16]) -> Control {
     }
 }
 fn key() -> RecordKey {
-    crate::keys::models()
+    gateway_authority_keys::models()
 }
 fn authority(store: &Store) -> Authority<Store, Store> {
     Authority::new(store.clone(), store.clone())
@@ -269,7 +269,7 @@ fn revision_observation_never_reinterprets_payload_or_drops_expired_cas() {
     assert_eq!(tx.revision(&key()).as_deref(), Some("seed"));
     assert_eq!(tx.expiry(&key()), Some(100));
     assert_eq!(tx.checks()[0].expected_revision.as_deref(), Some("seed"));
-    let other = crate::keys::paid_routing();
+    let other = gateway_authority_keys::paid_routing();
     run(tx.observe_revision(&other)).unwrap();
     assert!(tx.expect(&other, &None));
     tx.put_source_control(&other, &control(&[0xd800]), None)

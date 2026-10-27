@@ -5,11 +5,11 @@ mod selection;
 pub mod types;
 
 use crate::{
-    keys,
     reset_types::{ResetConfig, ResetMode},
     routing_types::CohortProof,
     store::{Authority, TokenSource, Transaction},
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError, identity::RequestContext, source_json::SourceJson, state::AuthorityStore,
     value::ValueEncoding,

@@ -404,12 +404,12 @@ impl Host {
         .ok_or_else(|| unavailable("The paid provider credential is not configured."))?;
         let owner = self
             .store
-            .read(&gateway_authority::keys::paid_control_owner())
+            .read(&gateway_authority_keys::paid_control_owner())
             .await?
             .ok_or_else(|| unavailable("The paid control owner is not configured."))?;
         let configuration = self
             .store
-            .read(&gateway_authority::keys::paid_control_config())
+            .read(&gateway_authority_keys::paid_control_config())
             .await?
             .ok_or_else(|| unavailable("The paid control configuration is not published."))?;
         let owner: gateway_authority::paid_control::PaidControlOwner =

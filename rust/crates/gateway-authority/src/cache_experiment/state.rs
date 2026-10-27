@@ -1,9 +1,10 @@
 //! Source v3 campaign/evidence CAS, using the one existing authority store.
-use super::{
-    model::*,
-    target::{key, resolve},
-};
+use super::target::{key, resolve};
 use crate::store::{Authority, TokenSource, Transaction};
+use gateway_cache_experiment_records::model::{
+    Cycle, Evidence, LEASE_MS, Outcome, PROVIDER, Reason, SESSION_MS, State, TELEMETRY_PROVIDER,
+    TargetBinding, busy, failed, unavailable,
+};
 use gateway_core::error::GatewayError;
 use gateway_core::state::{AuthorityStore, RecordKey};
 use serde::{Deserialize, Serialize};

@@ -1,7 +1,6 @@
 //! Pinned source cohort/probe capabilities; never an ordinary admitted request.
 use super::{
-    RefreshContext, RefreshPermit,
-    model::*,
+    RefreshPermit,
     state::{CyclePermit, record_key},
 };
 use crate::{
@@ -13,6 +12,8 @@ use gateway_auth::{
     provider_credentials::{CodexSourcePool, codex_source_pool_key, parse_codex_source_pool},
 };
 use gateway_authority_routing_records::types::{ProbeCircuit, ProbeLease};
+use gateway_cache_experiment_records::RefreshContext;
+use gateway_cache_experiment_records::model::{Reason, Sample, TargetBinding, failed, unavailable};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, PoolVersionstamp};
 use gateway_core::state::AuthorityStore;
@@ -257,7 +258,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 };
                 row.probe_lease = Some(lease.clone());
                 view.state.updated_at_ms = current;
-                tx.put(&crate::keys::routing(), &view.state, None)?;
+                tx.put(&gateway_authority_keys::routing(), &view.state, None)?;
                 Some(lease)
             } else {
                 None
@@ -328,7 +329,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 row.recovery_pending = false;
             }
             view.state.updated_at_ms = now;
-            tx.put(&crate::keys::routing(), &view.state, None)?;
+            tx.put(&gateway_authority_keys::routing(), &view.state, None)?;
             if tx.commit().await? {
                 return Ok(());
             }

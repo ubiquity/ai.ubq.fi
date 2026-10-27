@@ -2,11 +2,11 @@ use crate::{Row, Transform, decode, invalid, json, key, parts, starts};
 use gateway_auth::passkeys::{PasskeyCredential, PasskeyUser};
 use gateway_authority::{
     kernel::{KernelDefaults, KernelReservation, KernelWindow},
-    keys,
     paid::source_records::decode_paid_attempt_record,
     paid_types::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate},
     quota::{ApiUsageRequest, ApiUsageState, ApiUsageWindow},
 };
+use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;

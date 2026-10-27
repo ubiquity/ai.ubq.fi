@@ -1,8 +1,10 @@
 //! One awaited source cycle per invocation; actual network/native I/O is a finite host capability.
-use super::{
-    PreparedTarget, RefreshPermit, model::*, state::CyclePermit, transport::CacheDispatch,
-};
+use super::{PreparedTarget, RefreshPermit, state::CyclePermit, transport::CacheDispatch};
 use crate::store::{Authority, TokenSource};
+use gateway_cache_experiment_records::model::{
+    CYCLE_MS, Cycle, Outcome, Reason, SAMPLE_MS, SLOTS, Sample, TargetBinding, classify, failed,
+    sample_signal, unavailable,
+};
 use gateway_core::{error::GatewayError, identity::PoolVersionstamp, state::AuthorityStore};
 use serde_json::{Value, json};
 use std::future::Future;

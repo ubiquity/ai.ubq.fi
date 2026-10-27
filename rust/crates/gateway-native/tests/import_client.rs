@@ -18,7 +18,6 @@ use gateway_auth::{
 };
 use gateway_auth_native_wire::native_read::*;
 use gateway_authority::{
-    keys,
     native_control::{
         NativeRenewalCancellation, actor,
         receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
@@ -28,6 +27,7 @@ use gateway_authority::{
     },
     store::{Authority, AuthorityClock, TokenSource},
 };
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     error::GatewayError,

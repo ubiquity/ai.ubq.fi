@@ -1,10 +1,11 @@
 //! Kernel semantic quota reservations, retained separately from dispatch charging.
 use crate::{
-    DAY_MS, QUOTA_RETENTION_MS, REQUEST_LEASE_MS, add, invalid, keys, nonnegative, positive,
-    quota_error, retention,
+    DAY_MS, QUOTA_RETENTION_MS, REQUEST_LEASE_MS, add, invalid, nonnegative, positive, quota_error,
+    retention,
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError, identity::RequestId, js_string::JsString16, source_json::SourceJson,
     source_serialization as source, state::AuthorityStore,

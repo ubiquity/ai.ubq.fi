@@ -10,6 +10,7 @@ default = []
 native-import-fixture = ["gateway-authority/native-import-fixture"]
 
 [dependencies]
+gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-auth-native-wire.workspace = true
 gateway-core = { path = "../gateway-core" }

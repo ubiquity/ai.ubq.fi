@@ -339,7 +339,7 @@ fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() -> T
                 .await?;
             assert_eq!(window(&store)["committed_requests"], 1);
             assert_eq!(
-                store.value(gateway_authority::keys::api_request(
+                store.value(gateway_authority_keys::api_request(
                     "key-a",
                     &format!("v3:{}", gateway_authority::DAY_MS),
                     NOW,

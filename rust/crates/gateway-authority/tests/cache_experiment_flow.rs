@@ -65,7 +65,7 @@ fn seed_source(store: &MemoryStore, value: &Value, revision: &str) {
             .collect(),
     };
     store.seed_with_revision(codex_source_pool_key(), value, revision);
-    store.seed(gateway_authority::keys::pool(), &pool);
+    store.seed(gateway_authority_keys::pool(), &pool);
 }
 fn setup() -> (MemoryStore, TestAuthority, i64) {
     let fixture = source_fixture();
@@ -149,7 +149,7 @@ impl ExperimentIo for Io {
             let routing: gateway_authority_routing_records::types::RoutingState =
                 serde_json::from_value(
                     self.store
-                        .row(&gateway_authority::keys::routing())
+                        .row(&gateway_authority_keys::routing())
                         .ok_or_else(|| fixture_error("Recovery routing fixture is missing."))?
                         .value,
                 )
@@ -164,7 +164,7 @@ impl ExperimentIo for Io {
                     .generation,
                 7
             );
-            return Err(gateway_authority::cache_experiment::model::failed(
+            return Err(gateway_cache_experiment_records::model::failed(
                 "Controlled failed recovery probe.",
             ));
         }
@@ -229,7 +229,7 @@ impl ExperimentIo for Io {
                     )
                     .await?
             );
-            return Err(gateway_authority::cache_experiment::model::failed(
+            return Err(gateway_cache_experiment_records::model::failed(
                 "Controlled authoritative 429.",
             ));
         }
@@ -259,7 +259,7 @@ impl ExperimentIo for Io {
         self.refreshes.set(count);
         if self.unchanged {
             if self.refresh_error_after_rotation.is_some() {
-                return Err(gateway_authority::cache_experiment::model::failed(
+                return Err(gateway_cache_experiment_records::model::failed(
                     "Controlled refresh outcome is unknown with an unchanged pool.",
                 ));
             }
@@ -281,7 +281,7 @@ impl ExperimentIo for Io {
             &format!("pool-refresh-{count}"),
         );
         if self.refresh_error_after_rotation.is_some() {
-            return Err(gateway_authority::cache_experiment::model::failed(
+            return Err(gateway_cache_experiment_records::model::failed(
                 "Controlled refresh failed after the source pool changed.",
             ));
         }
@@ -389,7 +389,7 @@ fn scalar_campaign_preserves_opaque_unrelated_catalog_metadata_through_promotion
         source::string(&source::member(&runtime, "default_model").unwrap()).unwrap(),
         JsString16::from_utf8("fixture-z")
     );
-    assert!(store.row(&gateway_authority::keys::active()).is_none());
+    assert!(store.row(&gateway_authority_keys::active()).is_none());
     assert_eq!(io.calls.borrow().len(), 30);
 }
 
@@ -427,7 +427,7 @@ fn lone_model_refuses_only_at_source_uri_target_phase_before_any_campaign_effect
             "Prompt-cache scope experiment could not run."
         );
         assert_eq!(store.row(&catalog_key).unwrap(), before);
-        assert!(store.row(&gateway_authority::keys::active()).is_none());
+        assert!(store.row(&gateway_authority_keys::active()).is_none());
     }
 }
 #[test]
@@ -438,7 +438,7 @@ fn unrelated_malformed_active_selection_never_blocks_or_changes_a_pinned_experim
         io.unchanged = true;
         io.quota_on_first = quota;
         let malformed = json!({"v": 99, "unrelated": "active-election"});
-        store.seed(gateway_authority::keys::active(), &malformed);
+        store.seed(gateway_authority_keys::active(), &malformed);
         let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
         let result = run(authority.run_cache_experiment(prepared, &io, now));
         if quota {
@@ -452,7 +452,7 @@ fn unrelated_malformed_active_selection_never_blocks_or_changes_a_pinned_experim
             assert_eq!(io.calls.borrow().len(), 5);
         }
         assert_eq!(
-            store.row(&gateway_authority::keys::active()).unwrap().value,
+            store.row(&gateway_authority_keys::active()).unwrap().value,
             malformed
         );
     }
@@ -477,7 +477,7 @@ fn unverified_catalog_controls_never_create_a_probeable_target() {
         error.envelope.error.code.as_deref(),
         Some("prompt_cache_scope_experiment_unavailable")
     );
-    assert!(store.row(&gateway_authority::keys::active()).is_none());
+    assert!(store.row(&gateway_authority_keys::active()).is_none());
 }
 #[test]
 fn exactly_three_leased_cycles_publish_one_scope_without_switching_runtime_default_or_global_account()
@@ -513,7 +513,7 @@ fn exactly_three_leased_cycles_publish_one_scope_without_switching_runtime_defau
             .value["default_model"],
         "fixture-z"
     );
-    assert!(store.row(&gateway_authority::keys::active()).is_none());
+    assert!(store.row(&gateway_authority_keys::active()).is_none());
     let prepared = run(authority.prepare_cache_experiment(&"1".repeat(40), now)).unwrap();
     assert_eq!(prepared.model(), "fixture-z");
 }
@@ -632,7 +632,7 @@ fn live_cycle_or_three_compare_and_set_conflicts_stop_before_any_dispatch() {
         assert_eq!(error.status, 409);
         assert!(io.calls.borrow().is_empty());
         assert_eq!(io.refreshes.get(), 0);
-        assert!(store.row(&gateway_authority::keys::active()).is_none());
+        assert!(store.row(&gateway_authority_keys::active()).is_none());
     }
 }
 #[test]
@@ -670,13 +670,13 @@ fn authoritative_quota_observation_stops_the_pinned_experiment_without_electing_
     assert_eq!(io.refreshes.get(), 0);
     let routing: gateway_authority_routing_records::types::RoutingState = serde_json::from_value(
         store
-            .row(&gateway_authority::keys::routing())
+            .row(&gateway_authority_keys::routing())
             .ok_or("expected fixture row")?
             .value,
     )?;
     assert!(routing.slots[0].quota_blocked_until_ms.is_some());
     assert!(routing.slots[1].quota_blocked_until_ms.is_none());
-    assert!(store.row(&gateway_authority::keys::active()).is_none());
+    assert!(store.row(&gateway_authority_keys::active()).is_none());
     Ok(())
 }
 #[test]
@@ -687,7 +687,7 @@ fn failed_recovery_probe_keeps_source_generation_and_retains_ambiguous_reset_ide
     io.fail_recovery_probe = true;
     let pool: SubscriptionPool = serde_json::from_value(
         store
-            .row(&gateway_authority::keys::pool())
+            .row(&gateway_authority_keys::pool())
             .ok_or("expected fixture row")?
             .value,
     )?;
@@ -720,7 +720,7 @@ fn failed_recovery_probe_keeps_source_generation_and_retains_ambiguous_reset_ide
     slots[0].reset_identity_stable = true;
     slots[0].recovery_pending = true;
     store.seed(
-        gateway_authority::keys::routing(),
+        gateway_authority_keys::routing(),
         &RoutingState {
             v: 2,
             updated_at_ms: now,
@@ -739,7 +739,7 @@ fn failed_recovery_probe_keeps_source_generation_and_retains_ambiguous_reset_ide
     assert_eq!(io.calls.borrow().len(), 1);
     let routing: RoutingState = serde_json::from_value(
         store
-            .row(&gateway_authority::keys::routing())
+            .row(&gateway_authority_keys::routing())
             .ok_or("expected fixture row")?
             .value,
     )?;

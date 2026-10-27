@@ -13,7 +13,6 @@ use gateway_auth::{
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_authority::{
-    keys,
     native_control::{
         NativeRenewalCancellation,
         actor::authenticate_admin_actor,
@@ -22,6 +21,7 @@ use gateway_authority::{
     },
     store::{Authority, AuthorityClock, TokenSource},
 };
+use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},

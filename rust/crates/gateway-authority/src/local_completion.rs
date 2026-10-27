@@ -2,10 +2,10 @@
 use crate::{
     invalid,
     kernel::{KernelReservation, KernelTerminal, kernel_identity, stage_kernel_terminal_intent},
-    keys,
     quota::{ApiReservation, ApiUsageRequest, ApiUsageState},
     store::{Authority, TokenSource, Transaction},
 };
+use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     local_completion::{LocalCompletedJournalPlan, LocalCompletedJournalState},
