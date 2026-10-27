@@ -3,7 +3,6 @@ use crate::{
     keys,
     native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
     paid_control::PaidControlOwner,
-    routing_types::SubscriptionPool,
     store::{Authority, TokenSource, Transaction},
 };
 use gateway_auth::{
@@ -14,6 +13,7 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{
     error::GatewayError,
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation},

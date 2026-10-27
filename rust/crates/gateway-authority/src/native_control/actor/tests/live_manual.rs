@@ -1,11 +1,6 @@
 use super::*;
 use crate::{
-    manual_reset::*,
-    native_live::wire::*,
-    native_live::*,
-    reset::*,
-    reset_types::*,
-    routing_codec::{normalize, parse_routing_state},
+    manual_reset::*, native_live::wire::*, native_live::*, reset::*, reset_types::*,
     routing_types::*,
 };
 use gateway_auth::{
@@ -14,6 +9,10 @@ use gateway_auth::{
     },
     native_live::NativeLiveAuthenticator,
     provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
+};
+use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
+use gateway_authority_routing_records::types::{
+    PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,
 };
 use gateway_core::{
     identity::{ActiveSelection, ActiveTransitionReason, PoolVersionstamp},

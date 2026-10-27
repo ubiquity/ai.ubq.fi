@@ -3,12 +3,12 @@ use crate::store::Transaction;
 use crate::{
     keys,
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    routing_types::SubscriptionPool,
 };
 use gateway_auth::{
     native_import::NativeImportTarget,
     provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
 };
+use gateway_authority_routing_records::types::SubscriptionPool;
 use serde_json::Value;
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

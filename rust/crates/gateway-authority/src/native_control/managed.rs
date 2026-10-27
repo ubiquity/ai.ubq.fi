@@ -8,7 +8,6 @@ use super::{
 };
 use crate::{
     keys,
-    routing_types::{PoolAccount, SubscriptionPool},
     store::{TokenSource, Transaction},
     text,
 };
@@ -23,6 +22,7 @@ use gateway_auth::{
         parse_codex_source_pool, valid_native_generation,
     },
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     error::GatewayError,
     identity::PoolVersionstamp,

@@ -13,6 +13,7 @@ gateway-observability.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-observability-test-support.workspace = true
 gateway-schema.workspace = true
 

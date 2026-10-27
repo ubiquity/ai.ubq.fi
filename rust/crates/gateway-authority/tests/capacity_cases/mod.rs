@@ -5,9 +5,12 @@ use gateway_authority::{
     capacity_rules::*,
     keys,
     paid_control::PaidControlOwner,
-    routing_codec::*,
     routing_types::*,
     store::{Authority, AuthorityClock},
+};
+use gateway_authority_routing_records::codec::parse_routing_state;
+use gateway_authority_routing_records::types::{
+    PoolAccount, ProbeCircuit, ProbeLease, QuotaBlock, QuotaBlockSource, SubscriptionPool,
 };
 use gateway_core::error::GatewayError;
 use gateway_core::state::{

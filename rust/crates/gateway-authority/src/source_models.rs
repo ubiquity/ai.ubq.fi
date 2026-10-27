@@ -1,11 +1,12 @@
 //! Adapt the one raw source account-model record; never persist normalized hash-keyed hints there.
 use crate::{
     invalid, keys,
-    routing_types::{AccountCatalog, ModelAvailability, SubscriptionPool, UnsupportedModel},
+    routing_types::{AccountCatalog, ModelAvailability, UnsupportedModel},
     store::{TokenSource, Transaction},
     unavailable,
 };
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
     source_serialization as source, state::AuthorityStore,

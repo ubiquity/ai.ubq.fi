@@ -1,12 +1,12 @@
 //! Source capacity row codecs and named-window applicability; no producer trust is inferred here.
 use crate::{
     invalid,
-    routing_codec::{safe_integer, safe_ms},
     routing_types::{
         CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityStore,
         CapacityWindow, CapacityWindows,
     },
 };
+use gateway_authority_routing_records::codec::{safe_integer, safe_ms};
 use gateway_core::{error::GatewayError, identity::RoutingAccountHash, model::ModelId};
 use serde_json::Value;
 pub const CAPACITY_MAX_AGE_MS: i64 = 30 * crate::MINUTE_MS;

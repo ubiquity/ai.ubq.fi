@@ -9,7 +9,6 @@ use crate::{
     },
     paid_control::{PaidControlConfig, PaidControlOwner, PaidSourceCheck},
     routing::LiveRouteSelection,
-    routing_types::{PoolAccount, SubscriptionPool},
 };
 use gateway_auth::native::NATIVE_CONTROL_PATH;
 use gateway_auth::native_auth::{
@@ -21,6 +20,7 @@ use gateway_auth::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
     ManagedNativeSource, codex_source_pool_key,
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::identity::PoolVersionstamp;
 use gateway_core::js_string::JsString16;
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};

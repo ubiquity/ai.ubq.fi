@@ -3,11 +3,13 @@ use crate::{
     PROBE_LEASE_MS, add, invalid, keys,
     native_control::actor::{self, NativeActorScope, NativeRenewalActor},
     next_generation, nonnegative,
-    routing::{class_name, read_view, validate_cohort},
-    routing_types::{AdmittedAccount, CohortProof, ProbeLease, QuotaBlock, ScopedOverageProbe},
+    routing::{read_view, validate_cohort},
+    routing_types::{AdmittedAccount, CohortProof, ScopedOverageProbe},
     store::{Authority, TokenSource},
     text, unavailable,
 };
+use gateway_authority_routing_records::slot::class_name;
+use gateway_authority_routing_records::types::{ProbeLease, QuotaBlock};
 use gateway_core::{error::GatewayError, identity::RoutingAccountHash, state::AuthorityStore};
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -37,7 +39,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let Some(raw) = tx.read::<serde_json::Value>(&keys::routing()).await? else {
                 return Ok(false);
             };
-            let mut state = crate::routing_codec::parse_routing_state(&raw)?;
+            let mut state = gateway_authority_routing_records::codec::parse_routing_state(&raw)?;
             let Some(slot) = state.slots.get_mut(usize::from(slot_number - 1)) else {
                 return Ok(false);
             };
@@ -126,7 +128,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
                 generation: slot.generation as i64,
-                circuit: crate::routing_types::ProbeCircuit::Quota,
+                circuit: gateway_authority_routing_records::types::ProbeCircuit::Quota,
                 quota_class: Some(admission.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
@@ -260,7 +262,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
                 generation: slot.generation as i64,
-                circuit: crate::routing_types::ProbeCircuit::Quota,
+                circuit: gateway_authority_routing_records::types::ProbeCircuit::Quota,
                 quota_class: Some(proof.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };

@@ -125,7 +125,7 @@ fn derive_basics<'a>(
             .iter()
             .map(|account| {
                 let identity = account.identity();
-                gateway_authority::routing_types::PoolAccount {
+                gateway_authority_routing_records::types::PoolAccount {
                     account_id_hash: identity.routing_account_hash,
                     admin_account_hash: identity.administrative_account_hash,
                     credential_version: identity.credential_version,
@@ -135,7 +135,7 @@ fn derive_basics<'a>(
                 }
             })
             .collect();
-        let normalized = gateway_authority::routing_types::SubscriptionPool {
+        let normalized = gateway_authority_routing_records::types::SubscriptionPool {
             v: 1,
             pool_versionstamp: gateway_core::identity::PoolVersionstamp(source.revision.clone()),
             accounts,

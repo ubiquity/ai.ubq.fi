@@ -1,10 +1,11 @@
 //! Banked-reset owner fencing and spend-once boundaries. No provider call occurs here.
 use crate::{
     DAY_MS, PROBE_LEASE_MS, add, invalid, keys, next_generation, nonnegative,
-    routing::{class_name, read_view, validate_cohort},
+    routing::{read_view, validate_cohort},
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
 };
+use gateway_authority_routing_records::slot::class_name;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use sha2::{Digest, Sha256};
 

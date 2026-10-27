@@ -1,10 +1,6 @@
 //! Fixed source/normalized/catalog mutations for one verified original import.
 use super::*;
-use crate::{
-    keys,
-    routing_types::{PoolAccount, SubscriptionPool},
-    store::Transaction,
-};
+use crate::{keys, store::Transaction};
 use gateway_auth::{
     crypto::Secret,
     native_import::publication::command::{ImportCatalogData, ImportPublicationCommandData},
@@ -13,6 +9,7 @@ use gateway_auth::{
         codex_source_pool_key, parse_codex_source_pool,
     },
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     identity::PoolVersionstamp,
     source_control::encode_source_control_record,

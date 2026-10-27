@@ -27,4 +27,5 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-observability-test-support.workspace = true

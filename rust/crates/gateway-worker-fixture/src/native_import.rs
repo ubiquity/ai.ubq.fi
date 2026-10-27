@@ -20,9 +20,9 @@ use gateway_authority::{
         owners::RegisteredRenewalOwners,
         receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
     },
-    routing_types::{PoolAccount, SubscriptionPool},
     store::{Authority, AuthorityClock, TokenSource},
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},
     state::{

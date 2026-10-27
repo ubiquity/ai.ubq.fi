@@ -3,11 +3,9 @@ use crate::{
     capacity_rules::{merge_capacity, parse_capacity_observation, parse_capacity_store},
     invalid, keys,
     paid_control::PaidControlOwner,
-    routing_codec::parse_routing_state,
     routing_rules::apply_capacity_observation,
     routing_types::{
         CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityWindows,
-        SubscriptionPool,
     },
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
@@ -15,6 +13,8 @@ use crate::{
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, codex_source_pool_key, read_codex_source_pool,
 };
+use gateway_authority_routing_records::codec::parse_routing_state;
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash};
 use gateway_core::model::ModelId;
@@ -151,7 +151,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             return Err(changed());
         }
         let pool: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(changed)?;
-        pool.validate()?;
+        crate::routing::validate_pool(&pool)?;
         if pool.pool_versionstamp.0 != snapshot.revision
             || pool.accounts.len() != snapshot.pool.accounts.len()
         {

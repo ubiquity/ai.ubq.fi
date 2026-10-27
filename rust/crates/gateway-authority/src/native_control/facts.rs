@@ -7,13 +7,14 @@ use crate::{
     keys,
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
     quota::{ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState},
-    routing_types::{AdmittedAccount, SubscriptionPool},
+    routing_types::AdmittedAccount,
     store::{TokenSource, Transaction},
 };
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::RequestContext;
 use gateway_core::local_work::journal_local_work;

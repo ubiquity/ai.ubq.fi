@@ -2,13 +2,16 @@
 use crate::{
     capacity_rules::{capacity_for, parse_capacity_store},
     generation, invalid, keys, next_generation, nonnegative,
-    routing_codec::{normalize, parse_routing_state},
     routing_types::{
-        AdmittedAccount, CapacityStore, CohortProof, ModelAvailability, ProbeCircuit, ProbeLease,
-        QuotaBlock, RouteSelection, RoutingState, SubscriptionPool,
+        AdmittedAccount, CapacityStore, CohortProof, ModelAvailability, RouteSelection,
     },
     store::{Authority, TokenSource, Transaction},
     text, unavailable,
+};
+use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
+use gateway_authority_routing_records::slot::class_name;
+use gateway_authority_routing_records::types::{
+    ProbeCircuit, ProbeLease, QuotaBlock, RoutingState, SubscriptionPool,
 };
 use gateway_core::{
     error::GatewayError,
@@ -72,16 +75,6 @@ pub enum LiveRouteSelection {
     RoutingUnavailable,
 }
 
-pub fn class_name(class: CodexQuotaClass) -> &'static str {
-    match class {
-        CodexQuotaClass::Spark => "spark",
-        CodexQuotaClass::GptOss120b => "gpt_oss_120b",
-        CodexQuotaClass::Reserve => "reserve",
-        CodexQuotaClass::Standard => "standard",
-        CodexQuotaClass::Unknown => "unknown",
-    }
-}
-
 pub(crate) fn validate_binding(binding: &AccountBinding) -> Result<(), GatewayError> {
     text(&binding.account_id_hash.0)?;
     text(&binding.credential_version.0)?;
@@ -91,23 +84,21 @@ pub(crate) fn validate_binding(binding: &AccountBinding) -> Result<(), GatewayEr
     Ok(())
 }
 
-impl SubscriptionPool {
-    pub(crate) fn validate(&self) -> Result<(), GatewayError> {
-        if self.v != 1 || self.accounts.is_empty() {
-            return Err(invalid("Codex subscription pool is missing or malformed."));
-        }
-        text(&self.pool_versionstamp.0)?;
-        let mut identities = BTreeSet::new();
-        for account in &self.accounts {
-            text(&account.account_id_hash.0)?;
-            text(&account.admin_account_hash.0)?;
-            text(&account.credential_version.0)?;
-            if !identities.insert(&account.account_id_hash.0) {
-                return Err(invalid("Duplicate Codex account identity."));
-            }
-        }
-        Ok(())
+pub(crate) fn validate_pool(pool: &SubscriptionPool) -> Result<(), GatewayError> {
+    if pool.v != 1 || pool.accounts.is_empty() {
+        return Err(invalid("Codex subscription pool is missing or malformed."));
     }
+    text(&pool.pool_versionstamp.0)?;
+    let mut identities = BTreeSet::new();
+    for account in &pool.accounts {
+        text(&account.account_id_hash.0)?;
+        text(&account.admin_account_hash.0)?;
+        text(&account.credential_version.0)?;
+        if !identities.insert(&account.account_id_hash.0) {
+            return Err(invalid("Duplicate Codex account identity."));
+        }
+    }
+    Ok(())
 }
 
 fn unavailable_model(
@@ -174,7 +165,7 @@ async fn read_view_for<S: AuthorityStore, I: TokenSource>(
         .read(&keys::pool())
         .await?
         .ok_or_else(|| unavailable("codex_routing_unavailable", "Codex pool is unavailable."))?;
-    pool.validate()?;
+    validate_pool(&pool)?;
     let state = normalize(
         &pool,
         tx.read::<serde_json::Value>(&keys::routing())

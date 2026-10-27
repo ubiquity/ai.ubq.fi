@@ -12,13 +12,13 @@ use crate::{
     native_live::mapping_key,
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
     routing::LiveAccountSelection,
-    routing_types::SubscriptionPool,
     store::{TokenSource, Transaction},
 };
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
+use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
@@ -252,7 +252,8 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 }
                 let routing: Option<Value> = tx.read(&keys::routing()).await?;
                 if let Some(raw) = routing {
-                    let state = crate::routing_codec::parse_routing_state(&raw)?;
+                    let state =
+                        gateway_authority_routing_records::codec::parse_routing_state(&raw)?;
                     let slot = state
                         .slots
                         .get(usize::try_from(binding.slot).map_err(|_| fail())?)

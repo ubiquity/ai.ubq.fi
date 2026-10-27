@@ -480,7 +480,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
     let expected = snapshot.pool.accounts[0].identity();
     let normalized = run(store.read(&gateway_authority::keys::pool()))?
         .ok_or("Expected retained fixture row")?;
-    let normalized: gateway_authority::routing_types::SubscriptionPool =
+    let normalized: gateway_authority_routing_records::types::SubscriptionPool =
         serde_json::from_value(normalized.value)?;
     assert_eq!(normalized.pool_versionstamp.0, snapshot.revision);
     assert_eq!(normalized.accounts.len(), 1);

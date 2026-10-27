@@ -26,9 +26,9 @@ use gateway_authority::{
     paid_control::{
         PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
     },
-    routing_types::{PoolAccount, SubscriptionPool},
     store::{Authority, AuthorityClock, TokenSource},
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     error::GatewayError,
     identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},

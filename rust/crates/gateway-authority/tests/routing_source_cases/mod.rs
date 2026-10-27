@@ -1,8 +1,10 @@
 use crate::TestResult;
+use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 mod live_selection;
 use super::support::*;
 use gateway_authority::capacity_rules::*;
-use gateway_authority::routing_codec::*;
+
 use gateway_authority::routing_rules::*;
 use gateway_authority::routing_types::*;
 use gateway_core::identity::{PoolVersionstamp, SubscriptionSelectionHash};

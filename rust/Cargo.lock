@@ -926,6 +926,7 @@ name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
@@ -940,11 +941,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-routing-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-observability",
  "gateway-observability-test-support",
@@ -1068,6 +1079,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-migration-test-support",
@@ -1098,6 +1110,7 @@ dependencies = [
  "futures-executor",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-native-supervisor-read",
  "gateway-publication",
@@ -1143,6 +1156,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-observability-test-support",
  "gateway-schema",
@@ -1180,6 +1194,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-test-support",
@@ -1205,6 +1220,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication",
  "gateway-publication-policy",
@@ -1253,6 +1269,7 @@ dependencies = [
  "futures-util",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
@@ -1267,6 +1284,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime",
@@ -1299,6 +1317,7 @@ dependencies = [
  "gateway-admission",
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-capacity-recovery",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
@@ -1328,6 +1347,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-transport",
@@ -1343,6 +1363,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-authority-routing-records",
  "gateway-core",
  "gateway-publication",
  "gateway-publication-policy",

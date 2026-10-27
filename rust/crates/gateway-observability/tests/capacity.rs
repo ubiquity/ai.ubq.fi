@@ -1,3 +1,4 @@
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 mod support;
 use gateway_auth::{
     crypto::Secret,
@@ -8,7 +9,6 @@ use gateway_authority::{
     capacity_rules::parse_capacity_store,
     keys,
     paid_control::PaidControlOwner,
-    routing_types::{PoolAccount, SubscriptionPool},
     store::{Authority, AuthorityClock, TokenSource},
 };
 use gateway_core::{error::GatewayError, identity::PoolVersionstamp, state::StoredRecord};

@@ -1,7 +1,7 @@
 //! Source v2 row normalization; absent legacy fields follow native-codex-contracts.ts.
 use crate::{
     invalid, next_generation,
-    routing_types::{
+    types::{
         ProbeCircuit, ProbeLease, QuotaBlock, QuotaBlockSource, RoutingSlot, RoutingState,
         SubscriptionPool,
     },
@@ -14,12 +14,12 @@ use gateway_core::{
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const CLASSES: [&str; 5] = ["spark", "gpt_oss_120b", "reserve", "standard", "unknown"];
-pub(crate) fn safe_integer(value: &Value) -> Option<i64> {
+pub const CLASSES: [&str; 5] = ["spark", "gpt_oss_120b", "reserve", "standard", "unknown"];
+pub fn safe_integer(value: &Value) -> Option<i64> {
     let n = value.as_f64()?;
     (n.is_finite() && n.fract() == 0.0 && n.abs() <= MAX_SAFE_INTEGER as f64).then_some(n as i64)
 }
-pub(crate) fn safe_ms(value: &Value) -> Option<i64> {
+pub fn safe_ms(value: &Value) -> Option<i64> {
     safe_integer(value).filter(|n| *n >= 0)
 }
 fn time(value: &Value, name: &str) -> Option<i64> {
@@ -41,7 +41,7 @@ fn source(value: &Value) -> Option<QuotaBlockSource> {
         _ => None,
     }
 }
-pub(crate) fn parse_class(value: &Value) -> Option<CodexQuotaClass> {
+fn parse_class(value: &Value) -> Option<CodexQuotaClass> {
     match value.as_str()? {
         "spark" => Some(CodexQuotaClass::Spark),
         "gpt_oss_120b" => Some(CodexQuotaClass::GptOss120b),

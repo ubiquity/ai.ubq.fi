@@ -10,11 +10,12 @@ use gateway_authority::{
     capacity_rules::parse_capacity_store,
     keys,
     paid_control::PaidControlOwner,
-    routing_codec::parse_routing_state,
-    routing_types::{
-        CohortProof, PoolAccount, QuotaBlock, QuotaBlockSource, RouteSelection, SubscriptionPool,
-    },
+    routing_types::{CohortProof, RouteSelection},
     store::AuthorityClock,
+};
+use gateway_authority_routing_records::codec::parse_routing_state;
+use gateway_authority_routing_records::types::{
+    PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,
 };
 use gateway_core::{identity::PoolVersionstamp, provider::CodexQuotaClass, state::StoredRecord};
 use gateway_observability::host_types::*;

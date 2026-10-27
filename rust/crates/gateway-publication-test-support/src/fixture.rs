@@ -9,7 +9,7 @@ use gateway_auth::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
 };
 use gateway_authority::keys;
-use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::PoolVersionstamp;
 use gateway_core::state::{

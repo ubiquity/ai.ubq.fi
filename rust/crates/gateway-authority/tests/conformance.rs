@@ -6,7 +6,6 @@ mod paid_control_cases;
 mod paid_original;
 mod paid_retention_f13;
 mod reset_spend;
-mod routing_source_cases;
 mod source_model_cases;
 use gateway_authority::{
     DAY_MS, PAID_RETENTION_MS, QUOTA_RETENTION_MS,

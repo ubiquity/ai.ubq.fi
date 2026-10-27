@@ -737,7 +737,7 @@ fn frozen_source_classifier_quota_classes_and_fallback_matrix() {
     assert_eq!(golden["quota"].as_array().unwrap().len(), 16);
     for case in golden["classes"].as_array().unwrap() {
         assert_eq!(
-            gateway_authority::routing::class_name(policy::class(&ModelId::from(
+            gateway_authority_routing_records::slot::class_name(policy::class(&ModelId::from(
                 case["model"].as_str().unwrap_or("")
             ))),
             case["expected"].as_str().unwrap()

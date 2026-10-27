@@ -6,10 +6,11 @@ use crate::{
         FullPoolResetReconciliation, ResetCandidate, ResetRecord, ResetState, reset_invocation,
     },
     routing::read_view,
-    routing_types::{AdmittedAccount, ProbeLease},
+    routing_types::AdmittedAccount,
     store::{Authority, TokenSource},
     text, unavailable,
 };
+use gateway_authority_routing_records::types::ProbeLease;
 use gateway_core::{
     error::GatewayError,
     identity::{ActiveSelection, ActiveTransitionReason},
@@ -265,7 +266,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let lease = ProbeLease {
                 token: self.tokens.next_token()?,
                 generation: slot.generation as i64,
-                circuit: crate::routing_types::ProbeCircuit::Quota,
+                circuit: gateway_authority_routing_records::types::ProbeCircuit::Quota,
                 quota_class: Some(candidate.proof.quota_class),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };

@@ -30,7 +30,6 @@ pub mod reset;
 mod reset_recovery;
 pub mod reset_types;
 pub mod routing;
-pub mod routing_codec;
 pub mod routing_rules;
 pub mod routing_types;
 mod source_models;

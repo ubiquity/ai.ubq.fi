@@ -7,7 +7,10 @@ use gateway_authority::cache_experiment::{
     run::{ExperimentIo, ReadSample},
     transport::CacheDispatch,
 };
-use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
+use gateway_authority_routing_records::types::{
+    PoolAccount, QuotaBlock, QuotaBlockSource, RoutingSlot, RoutingState, SubscriptionPool,
+};
+
 use gateway_core::error::GatewayError;
 use gateway_core::identity::PoolVersionstamp;
 use gateway_core::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
@@ -143,13 +146,14 @@ impl ExperimentIo for Io {
             .borrow_mut()
             .push((dispatch.slot(), body.into(), conversation.into()));
         if self.fail_recovery_probe {
-            let routing: gateway_authority::routing_types::RoutingState = serde_json::from_value(
-                self.store
-                    .row(&gateway_authority::keys::routing())
-                    .ok_or_else(|| fixture_error("Recovery routing fixture is missing."))?
-                    .value,
-            )
-            .map_err(|error| fixture_error(&format!("Invalid routing fixture: {error}")))?;
+            let routing: gateway_authority_routing_records::types::RoutingState =
+                serde_json::from_value(
+                    self.store
+                        .row(&gateway_authority::keys::routing())
+                        .ok_or_else(|| fixture_error("Recovery routing fixture is missing."))?
+                        .value,
+                )
+                .map_err(|error| fixture_error(&format!("Invalid routing fixture: {error}")))?;
             assert_eq!(dispatch.binding().routing_generation, 7);
             assert_eq!(routing.slots[0].generation, 7);
             assert_eq!(
@@ -210,10 +214,10 @@ impl ExperimentIo for Io {
                 authority(&self.store)
                     .record_cache_quota_block(
                         dispatch,
-                        gateway_authority::routing_types::QuotaBlock {
+                        gateway_authority_routing_records::types::QuotaBlock {
                             blocked_until_ms: now + 60_000,
                             source:
-                                gateway_authority::routing_types::QuotaBlockSource::BodyResetsAt,
+                                gateway_authority_routing_records::types::QuotaBlockSource::BodyResetsAt,
                             legacy_fallback: false,
                             observed_at_ms: Some(now),
                             reset_at_ms: Some(now + 60_000),
@@ -664,7 +668,7 @@ fn authoritative_quota_observation_stops_the_pinned_experiment_without_electing_
     assert_eq!(io.calls.borrow().len(), 1);
     assert_eq!(io.discards.get(), 1);
     assert_eq!(io.refreshes.get(), 0);
-    let routing: gateway_authority::routing_types::RoutingState = serde_json::from_value(
+    let routing: gateway_authority_routing_records::types::RoutingState = serde_json::from_value(
         store
             .row(&gateway_authority::keys::routing())
             .ok_or("expected fixture row")?
@@ -678,9 +682,6 @@ fn authoritative_quota_observation_stops_the_pinned_experiment_without_electing_
 #[test]
 fn failed_recovery_probe_keeps_source_generation_and_retains_ambiguous_reset_identity() -> TestResult
 {
-    use gateway_authority::routing_types::{
-        QuotaBlock, QuotaBlockSource, RoutingSlot, RoutingState,
-    };
     let (store, authority, now) = setup();
     let mut io = Io::new(&store);
     io.fail_recovery_probe = true;

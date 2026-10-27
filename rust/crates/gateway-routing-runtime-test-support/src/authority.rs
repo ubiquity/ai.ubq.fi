@@ -1,9 +1,10 @@
 //! Deterministic conformance store, not a Worker/runtime acceptance substitute.
 use gateway_authority::quota::ApiKeyPolicy;
-use gateway_authority::routing_types::{
-    AdmittedAccount, PoolAccount, QuotaBlock, QuotaBlockSource, RouteSelection, SubscriptionPool,
-};
+use gateway_authority::routing_types::{AdmittedAccount, RouteSelection};
 use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority_routing_records::types::{
+    PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,
+};
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash},

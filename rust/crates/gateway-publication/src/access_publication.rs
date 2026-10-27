@@ -9,11 +9,8 @@ use gateway_auth::{
     },
     store,
 };
-use gateway_authority::{
-    keys,
-    paid_control::PaidControlOwner,
-    routing_types::{PoolAccount, SubscriptionPool},
-};
+use gateway_authority::{keys, paid_control::PaidControlOwner};
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     error::GatewayError,
     identity::PoolVersionstamp,

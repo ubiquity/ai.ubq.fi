@@ -79,7 +79,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     } else if starts(p, &["uos_ai", "codex_active_account"]) {
         let _: gateway_core::identity::ActiveSelection = decode(&v)?;
     } else if starts(p, &["uos_ai", "codex_account_routing"]) {
-        gateway_authority::routing_codec::parse_routing_state(&v)?;
+        gateway_authority_routing_records::codec::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {
         gateway_authority::capacity_rules::parse_capacity_store(&v)?;
     } else if starts(p, &["uos_ai", "codex_manual_reset"]) {

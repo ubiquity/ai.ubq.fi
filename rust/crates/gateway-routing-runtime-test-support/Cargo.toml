@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-auth.workspace = true
 gateway-authority.workspace = true
 gateway-core.workspace = true

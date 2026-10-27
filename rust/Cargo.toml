@@ -7,6 +7,7 @@ members = [
   "crates/gateway-schema",
   "crates/gateway-providers",
   "crates/gateway-authority",
+  "crates/gateway-authority-routing-records",
   "crates/gateway-admission",
   "crates/gateway-catalog-runtime",
   "crates/gateway-auth",
@@ -55,6 +56,7 @@ gateway-compaction = { path = "crates/gateway-compaction" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
+gateway-authority-routing-records = { path = "crates/gateway-authority-routing-records" }
 gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }

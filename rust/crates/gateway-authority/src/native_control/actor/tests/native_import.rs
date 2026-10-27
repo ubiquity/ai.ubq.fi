@@ -6,7 +6,6 @@ use crate::{
         receiver::RegisteredRenewalOwner,
     },
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
-    routing_types::{PoolAccount, SubscriptionPool},
 };
 use gateway_auth::{
     crypto::{base64url, sha256_hex},
@@ -19,6 +18,7 @@ use gateway_auth::{
         CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
     },
 };
+use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::identity::PoolVersionstamp;
 use std::collections::BTreeSet;
 struct Cancel;

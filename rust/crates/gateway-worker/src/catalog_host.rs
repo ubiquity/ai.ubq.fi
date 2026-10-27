@@ -146,7 +146,7 @@ impl CatalogHost for Host {
             ..Default::default()
         };
         if let Some(normalized) = normalized.as_ref() {
-            let pool: gateway_authority::routing_types::SubscriptionPool =
+            let pool: gateway_authority_routing_records::types::SubscriptionPool =
                 serde_json::from_value(normalized.json_value()?.clone())
                     .map_err(|_| unavailable("Codex routing pool is invalid."))?;
             let source = snapshot
