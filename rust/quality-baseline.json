@@ -15,7 +15,7 @@
     "gateway-providers": 9739,
     "gateway-routing-runtime": 7944,
     "gateway-schema": 7618,
-    "gateway-worker": 20064
+    "gateway-worker": 20063
   },
   "targets": {
     "gateway-authority/test/conformance": 5558,

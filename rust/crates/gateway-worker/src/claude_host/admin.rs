@@ -22,7 +22,6 @@ use gateway_core::{
 };
 use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
 use serde::Serialize;
-use serde_json::Value;
 use std::collections::BTreeSet;
 
 const UNVALIDATED: &str = "Stored unvalidated: the models listing could not be read.";
