@@ -1,9 +1,10 @@
 use ciborium::value::Value as Cbor;
-use gateway_auth::{
-    crypto::{base64url, decode_base64url},
+use gateway_auth_attestation::webauthn::*;
+use gateway_auth_contracts::{
     passkeys::{AssertionVerification, PasskeyCredential, RegistrationVerification},
     webauthn::*,
 };
+use gateway_auth_primitives::crypto::{base64url, decode_base64url};
 use gateway_core::error::GatewayError;
 use p256::ecdsa::{
     Signature, SigningKey, VerifyingKey,
@@ -53,27 +54,27 @@ impl WebAuthnCrypto for RealP256 {
     async fn validate_key(&self, key: &CosePublicKey) -> Result<(), GatewayError> {
         let mut point = vec![4];
         point.extend(decode_base64url(key.jwk["x"].as_str().ok_or_else(
-            || gateway_auth::types::invalid("Missing EC coordinate"),
+            || gateway_auth_primitives::error::invalid("Missing EC coordinate"),
         )?)?);
         point.extend(decode_base64url(key.jwk["y"].as_str().ok_or_else(
-            || gateway_auth::types::invalid("Missing EC coordinate"),
+            || gateway_auth_primitives::error::invalid("Missing EC coordinate"),
         )?)?);
         p256::PublicKey::from_sec1_bytes(&point)
-            .map_err(|_| gateway_auth::types::invalid("Invalid curve point"))?;
+            .map_err(|_| gateway_auth_primitives::error::invalid("Invalid curve point"))?;
         Ok(())
     }
     async fn verify_signature(&self, input: SignatureInput) -> Result<bool, GatewayError> {
         let mut point = vec![4];
         point.extend(decode_base64url(input.key.jwk["x"].as_str().ok_or_else(
-            || gateway_auth::types::invalid("Missing EC coordinate"),
+            || gateway_auth_primitives::error::invalid("Missing EC coordinate"),
         )?)?);
         point.extend(decode_base64url(input.key.jwk["y"].as_str().ok_or_else(
-            || gateway_auth::types::invalid("Missing EC coordinate"),
+            || gateway_auth_primitives::error::invalid("Missing EC coordinate"),
         )?)?);
         let key = VerifyingKey::from_sec1_bytes(&point)
-            .map_err(|_| gateway_auth::types::invalid("Invalid curve point"))?;
+            .map_err(|_| gateway_auth_primitives::error::invalid("Invalid curve point"))?;
         let signature = Signature::from_slice(&input.signature)
-            .map_err(|_| gateway_auth::types::invalid("Invalid signature"))?;
+            .map_err(|_| gateway_auth_primitives::error::invalid("Invalid signature"))?;
         Ok(key.verify(&input.data, &signature).is_ok())
     }
 }

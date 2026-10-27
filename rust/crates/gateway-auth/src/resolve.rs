@@ -1,15 +1,17 @@
-use crate::{
+use gateway_auth_attestation::upstream::{
+    console_title_matches, deno_token_shape, github_rejected, github_token_shape,
+    kernel_public_keys_key, upstream_unavailable, verify_kernel,
+};
+use gateway_auth_contracts::{
+    passkeys::SessionView,
+    types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse},
+    upstream::AuthUpstreamRequest,
+};
+use gateway_auth_passkeys::{origin::local_bypass, passkeys::PasskeyService};
+use gateway_auth_primitives::{
     api_keys,
     crypto::{Secret, sha256_base64url, sha256_hex},
-    origin::local_bypass,
-    passkeys::{PasskeyService, SessionView},
-    types::{
-        AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse, unauthorized,
-    },
-    upstream::{
-        AuthUpstreamRequest, console_title_matches, deno_token_shape, github_rejected,
-        github_token_shape, kernel_public_keys_key, upstream_unavailable, verify_kernel,
-    },
+    error::unauthorized,
 };
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use serde_json::{Value, json};
@@ -57,7 +59,10 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             is_super_admin,
         }
     }
-    fn passport_principal(claims: crate::passport::PassportClaims, bearer: bool) -> AuthPrincipal {
+    fn passport_principal(
+        claims: gateway_auth_passport_contracts::passport::PassportClaims,
+        bearer: bool,
+    ) -> AuthPrincipal {
         let eligible_admin = claims.is_admin && claims.agent_token_id.is_none();
         let method = if bearer {
             AuthMethod::PassportBearer { claims }
@@ -362,10 +367,15 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         if self.legacy_local(request) {
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
         }
-        if crate::passport::cookie(request, crate::passport::PASSPORT_COOKIE).is_some() {
-            let config = crate::passport::config_for_request(self.config, request)
+        if gateway_auth_passport::passport::cookie(
+            request,
+            gateway_auth_passport_contracts::passport::PASSPORT_COOKIE,
+        )
+        .is_some()
+        {
+            let config = gateway_auth_passport::passport::config_for_request(self.config, request)
                 .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
+            let passport = gateway_auth_passport::passport::PassportService {
                 host: self.host,
                 config: &config,
             };
@@ -426,10 +436,10 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         }
         // A JWT-shaped credential is never an admin or opaque token. Invalid
         // Passport material fails closed instead of reaching the admin path.
-        if crate::passport::jwt_shaped(token) {
-            let config = crate::passport::config_for_request(self.config, request)
+        if gateway_auth_passport::passport::jwt_shaped(token) {
+            let config = gateway_auth_passport::passport::config_for_request(self.config, request)
                 .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
+            let passport = gateway_auth_passport::passport::PassportService {
                 host: self.host,
                 config: &config,
             };
@@ -452,13 +462,21 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         }
         // Passport-admin authority is cookie-only; a Passport/agent bearer can
         // never be promoted even when its own claims say isAdmin.
-        if request.bearer().is_some_and(crate::passport::jwt_shaped) {
+        if request
+            .bearer()
+            .is_some_and(gateway_auth_passport::passport::jwt_shaped)
+        {
             return Err(unauthorized());
         }
-        if crate::passport::cookie(request, crate::passport::PASSPORT_COOKIE).is_some() {
-            let config = crate::passport::config_for_request(self.config, request)
+        if gateway_auth_passport::passport::cookie(
+            request,
+            gateway_auth_passport_contracts::passport::PASSPORT_COOKIE,
+        )
+        .is_some()
+        {
+            let config = gateway_auth_passport::passport::config_for_request(self.config, request)
                 .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
+            let passport = gateway_auth_passport::passport::PassportService {
                 host: self.host,
                 config: &config,
             };
@@ -469,7 +487,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             if claims.agent_token_id.is_some() {
                 return Err(unauthorized());
             }
-            if !crate::origin::same_origin_mutation(request) {
+            if !gateway_auth_passkeys::origin::same_origin_mutation(request) {
                 return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
             }
             return Ok(Self::passport_principal(claims, false));
@@ -500,7 +518,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             }
             if request.bearer().is_none()
                 && request.header("cookie").is_some()
-                && !crate::origin::same_origin_mutation(request)
+                && !gateway_auth_passkeys::origin::same_origin_mutation(request)
             {
                 return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
             }
@@ -513,8 +531,8 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         &self,
         request: &AuthRequest,
     ) -> Result<Option<AuthResponse>, GatewayError> {
-        let url =
-            Url::parse(&request.url).map_err(|_| crate::types::invalid("Invalid request URL"))?;
+        let url = Url::parse(&request.url)
+            .map_err(|_| gateway_auth_primitives::error::invalid("Invalid request URL"))?;
         let result = match (request.method.as_str(), url.path()) {
             ("POST", "/api/auth/register/start") => {
                 let admin = self.authenticate_admin(request).await?;
@@ -566,9 +584,10 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 )
             }
             ("GET", "/auth/login") => {
-                let config = crate::passport::config_for_request(self.config, request)
-                    .ok_or_else(passport_not_configured)?;
-                crate::passport::PassportService {
+                let config =
+                    gateway_auth_passport::passport::config_for_request(self.config, request)
+                        .ok_or_else(passport_not_configured)?;
+                gateway_auth_passport::passport::PassportService {
                     host: self.host,
                     config: &config,
                 }
@@ -576,18 +595,19 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 .await?
             }
             ("GET", "/auth/callback") => {
-                let config = crate::passport::config_for_request(self.config, request)
-                    .ok_or_else(passport_not_configured)?;
-                crate::passport::PassportService {
+                let config =
+                    gateway_auth_passport::passport::config_for_request(self.config, request)
+                        .ok_or_else(passport_not_configured)?;
+                gateway_auth_passport::passport::PassportService {
                     host: self.host,
                     config: &config,
                 }
                 .callback(request)
                 .await?
             }
-            ("POST", "/auth/logout") => crate::passport::PassportService {
+            ("POST", "/auth/logout") => gateway_auth_passport::passport::PassportService {
                 host: self.host,
-                config: &crate::passport::PassportConfig::production(),
+                config: &gateway_auth_passport_contracts::passport::PassportConfig::production(),
             }
             .logout(),
             _ => return Ok(None),
@@ -612,14 +632,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             } => {
                 json!({"kind":"github_token","repo":{"owner":owner,"repo":repo},"state_id":state_id,"limit_scope":limit_scope})
             }
-            AuthMethod::PassportSession { claims } => crate::passport::method_json(claims, false),
-            AuthMethod::PassportBearer { claims } => crate::passport::method_json(claims, true),
+            AuthMethod::PassportSession { claims } => {
+                gateway_auth_passport::passport::method_json(claims, false)
+            }
+            AuthMethod::PassportBearer { claims } => {
+                gateway_auth_passport::passport::method_json(claims, true)
+            }
             AuthMethod::KvApiKey { key_id, policy } => {
                 let mut key = json!({"id":key_id});
                 if let Some(row) = self.store.read(&api_keys::id_key(key_id)).await? {
                     row.validate_version()?;
                     let record = row.json_value()?.clone();
-                    let wk = crate::store::key(json!([
+                    let wk = gateway_auth_primitives::store::key(json!([
                         "uos_ai",
                         "api_key_usage",
                         "v3",

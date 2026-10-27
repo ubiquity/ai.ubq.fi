@@ -1,11 +1,10 @@
-use gateway_auth::{
+use gateway_auth::resolve::AuthService;
+use gateway_auth_attestation::upstream::*;
+use gateway_auth_contracts::{passkeys::*, types::*, upstream::*};
+use gateway_auth_passkeys::{origin::*, passkeys::*};
+use gateway_auth_primitives::{
     api_keys,
     crypto::{Secret, base64url},
-    origin::*,
-    passkeys::*,
-    resolve::AuthService,
-    types::*,
-    upstream::*,
 };
 use gateway_core::{error::GatewayError, state::*};
 use serde_json::json;
@@ -21,7 +20,7 @@ fn authentication_requires_declared_json_and_never_guesses_profile_tags() {
     let ambiguous = json!({"type":"binary","value":{"kind":"Uint8Array","bytes":[1,2],"byte_offset":0,"byte_length":2}});
     let plain = StoredRecord::json("plain", ambiguous.clone(), None);
     assert_eq!(
-        gateway_auth::store::decode::<serde_json::Value>(Some(&plain), 1).unwrap(),
+        gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&plain), 1).unwrap(),
         Some(ambiguous.clone())
     );
     let typed = StoredRecord::profile(
@@ -30,7 +29,8 @@ fn authentication_requires_declared_json_and_never_guesses_profile_tags() {
         None,
     )
     .unwrap();
-    let error = gateway_auth::store::decode::<serde_json::Value>(Some(&typed), 1).unwrap_err();
+    let error =
+        gateway_auth_primitives::store::decode::<serde_json::Value>(Some(&typed), 1).unwrap_err();
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("incompatible_value_encoding")
@@ -145,7 +145,9 @@ fn insert<T: serde::Serialize>(store: &Store, key: RecordKey, value: &T) {
 #[test]
 fn source_pool_reads_keep_codec_expiry_and_authority_revision_explicit() {
     run(async {
-        use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
+        use gateway_auth_credentials::provider_credentials::{
+            codex_source_pool_key, read_codex_source_pool,
+        };
         let store = Store::default();
         let key = codex_source_pool_key();
         let value = json!({"accounts":[{"account_id":"fixture","access_token":"fixture-access","refresh_token":"fixture-refresh","updated_at_ms":1}],"updated_at_ms":2});
@@ -375,7 +377,7 @@ fn api_key_authentication_is_quota_free_and_secret_debug_is_redacted() {
         let token = format!("u_{}", "ab".repeat(32));
         assert!(api_keys::api_key_shape(&token));
         assert!(!api_keys::api_key_shape(&token.to_ascii_uppercase()));
-        let hash = gateway_auth::crypto::sha256_base64url(token.as_bytes());
+        let hash = gateway_auth_primitives::crypto::sha256_base64url(token.as_bytes());
         let store = Store::default();
         let record = api_keys::ApiKeyHashRecord {
             id: "key".into(),
@@ -466,10 +468,10 @@ fn deno_console_requires_real_title_and_exact_candidate_is_prepared_only() {
     assert!(!deno_token_shape("uos_ai_session_012345678901234567890"));
 }
 
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -478,7 +480,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",

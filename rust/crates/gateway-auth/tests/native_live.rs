@@ -1,10 +1,12 @@
-use gateway_auth::{
-    crypto::base64url,
-    native_auth::{
-        NativeAuthHeaders, NativeCapability, NativeNonceAuthority, NativeTransportIdentity,
-    },
+use gateway_auth_native_contracts::native_live::{
+    authority_signature_input, request_signature_input,
+};
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_proof::{
+    native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
     native_live::*,
 };
+use gateway_auth_primitives::crypto::base64url;
 use gateway_core::error::GatewayError;
 use std::{
     collections::BTreeSet,

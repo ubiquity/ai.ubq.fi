@@ -1,8 +1,10 @@
-use gateway_auth::{
-    crypto::{base64url, sha256_hex},
-    native_auth::*,
-    native_import::*,
+use gateway_auth_native_contracts::{
+    native_import::{NativeImportKind, NativeImportMetadata, NativeImportTarget},
+    nonce::NativeNonceAuthority,
 };
+use gateway_auth_native_proof::{native_auth::*, native_import::*};
+use gateway_auth_native_protocol::import_frame::signature_input;
+use gateway_auth_primitives::crypto::{base64url, sha256_hex};
 use gateway_core::error::GatewayError;
 use std::{
     collections::BTreeSet,
@@ -109,7 +111,7 @@ fn native_import_domains_metadata_and_unknown_fields_fail_closed() {
     )
     .unwrap();
     assert_ne!(auth, profile);
-    let legacy = gateway_auth::native::signature_input(
+    let legacy = gateway_auth_native_protocol::native::signature_input(
         gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
         "import-test",
         1000,

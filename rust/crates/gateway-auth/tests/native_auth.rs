@@ -1,8 +1,7 @@
-use gateway_auth::{
-    crypto::{base64url, sha256_hex},
-    native_auth::*,
-};
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_proof::native_auth::*;
 use gateway_auth_native_wire::native_read::*;
+use gateway_auth_primitives::crypto::{base64url, sha256_hex};
 use gateway_core::error::GatewayError;
 use std::{
     collections::{BTreeMap, BTreeSet},

@@ -1,15 +1,15 @@
-use gateway_auth::{
-    crypto::base64url,
-    origin::same_origin_mutation,
-    passport::{
-        PASSPORT_COOKIE, PASSPORT_STATE_COOKIE, PassportClaims, PassportConfig, PassportService,
-        reset_jwks_cache, verify_jwt,
-    },
-    resolve::AuthService,
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::{
     types::{AuthConfig, AuthHost, AuthMethod, AuthRequest},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
+use gateway_auth_passkeys::origin::same_origin_mutation;
+use gateway_auth_passport::passport::{PassportService, reset_jwks_cache, verify_jwt};
+use gateway_auth_passport_contracts::passport::{
+    PASSPORT_COOKIE, PASSPORT_STATE_COOKIE, PassportClaims, PassportConfig,
+};
+use gateway_auth_primitives::crypto::base64url;
 use gateway_core::{
     error::GatewayError,
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
@@ -511,7 +511,7 @@ fn jwks_transport_failure_and_non_success_status_are_unavailable() {
     );
 }
 
-fn assert_unauthorized(result: Result<gateway_auth::types::AuthPrincipal, GatewayError>) {
+fn assert_unauthorized(result: Result<gateway_auth_contracts::types::AuthPrincipal, GatewayError>) {
     let error = match result {
         Ok(_) => panic!("expected unauthorized"),
         Err(error) => error,
@@ -567,7 +567,9 @@ fn invalid_jwt_shaped_bearer_never_falls_through_to_admin() {
     let host = Host::new(vec![public_jwk("key-a")], token(&claims()));
     let store = Store::default();
     let config = AuthConfig {
-        admin_tokens: vec![gateway_auth::crypto::Secret::new("fixture-admin".into())],
+        admin_tokens: vec![gateway_auth_primitives::crypto::Secret::new(
+            "fixture-admin".into(),
+        )],
         passport: Some(PassportConfig::production()),
         ..Default::default()
     };
@@ -664,7 +666,7 @@ fn same_origin_mutation_rejects_foreign_browser_markers() {
 fn preview_client_config_is_explicit_and_fail_closed() {
     let config = AuthConfig::default();
     let candidate = request("GET", "https://rust-candidate.ai.ubq.fi/auth/login");
-    assert!(gateway_auth::passport::config_for_request(&config, &candidate).is_none());
+    assert!(gateway_auth_passport::passport::config_for_request(&config, &candidate).is_none());
     let mut explicit = AuthConfig {
         passport: Some(PassportConfig {
             client_id: "candidate".into(),
@@ -674,11 +676,11 @@ fn preview_client_config_is_explicit_and_fail_closed() {
         }),
         ..Default::default()
     };
-    assert!(gateway_auth::passport::config_for_request(&explicit, &candidate).is_some());
+    assert!(gateway_auth_passport::passport::config_for_request(&explicit, &candidate).is_some());
     explicit.passport = None;
     let production = request("GET", "https://ai.ubq.fi/auth/login");
     assert_eq!(
-        gateway_auth::passport::config_for_request(&config, &production),
+        gateway_auth_passport::passport::config_for_request(&config, &production),
         Some(PassportConfig::production())
     );
 }
@@ -690,6 +692,6 @@ fn claims_serde_keeps_the_required_wire_metadata() {
     assert!(parsed.is_admin);
     assert_eq!(parsed.client_id, "ai");
     assert_eq!(parsed.agent_token_id, None);
-    let shaped = gateway_auth::passport::method_json(&parsed, false);
+    let shaped = gateway_auth_passport::passport::method_json(&parsed, false);
     assert_eq!(shaped["principal"], "passport-user:user-123");
 }

@@ -1,9 +1,9 @@
-use gateway_auth::{
+use gateway_auth_contracts::{
     passkeys::*,
-    session_index,
     types::{AuthHost, AuthRequest},
     upstream::*,
 };
+use gateway_auth_passkeys::{passkeys::*, session_index};
 use gateway_core::{error::GatewayError, state::*};
 use std::{
     cell::{Cell, RefCell},
@@ -133,10 +133,10 @@ impl AuthHost for Host {
         ))
     }
 }
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture does not execute ceremonies",
@@ -145,7 +145,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture does not execute ceremonies",
