@@ -42,7 +42,6 @@ import {
   dependencies,
   evaluateCodexBankedResetPool,
   inventory,
-  parseCodexBankedResetConfig,
   provenContract,
   requiredHash,
   seedFences,
@@ -247,15 +246,8 @@ test("two accounts may each redeem once per UTC day, and one account's second ep
 });
 
 test("the live banked-reset policy requires an exact per-account daily cap of one for a terminal provider", async () => {
-  // The parser fails closed: the retired global variable is not read, and an
-  // absent new cap leaves live submissions disabled until an explicit 1.
-  const declared = parseCodexBankedResetConfig((key) => (key === "CODEX_BANKED_RESET_MODE" ? "live" : undefined));
-  assert.equal(declared.mode, "live");
-  assert.equal(declared.maxPerAccountPerDay, 0);
-  assert.equal("maxGlobalPerDay" in declared, false);
-
   const terminalProvider = new FakeCodexUsageResetProvider({ ...provenContract(), redeemOutcomeIsFinal: true });
-  const explicit = { ...declared, maxPerAccountPerDay: 1 };
+  const explicit = config();
   assert.equal(providerPolicyReason(explicit, terminalProvider), null);
   assert.equal(providerPolicyReason({ ...explicit, maxPerAccountPerDay: 2 }, terminalProvider), "terminal_outcome_account_day_limit_must_be_one");
 

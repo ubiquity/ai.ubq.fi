@@ -1,6 +1,6 @@
 //! Streaming call answers and bounded replacement errors. No extra SDP-answer limit is invented.
 use crate::{
-    host::{PlatformHost, setting},
+    host::PlatformHost,
     transport::{
         outbound::{Cancellation, PinnedDestination},
         stream::{ObservationHandle, ObservedStream},
@@ -57,11 +57,10 @@ where
     let prepare = || -> Result<_, GatewayError> {
         let cancellation = Rc::new(platform.cancellation.child()?);
         let deadline = cancellation.set_timeout_ms(LIVE_CALL_HEADERS_TIMEOUT_MS as i32)?;
-        let base = setting(&platform.env, "CODEX_BASE_URL")
-            .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
+        let base = "https://chatgpt.com/backend-api/codex";
         let url = format!(
             "{}{LIVE_CALLS_PATH}",
-            gateway_schema::util::js_trim(&base).trim_end_matches('/')
+            gateway_schema::util::js_trim(base).trim_end_matches('/')
         );
         PinnedDestination::new(&url)?;
         let headers = Headers::new();

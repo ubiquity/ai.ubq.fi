@@ -45,9 +45,9 @@ const loadConfig = (): Config => {
   const isProductionTimeline = getEnv("DENO_TIMELINE") === "production";
   const authTokens = parseTokens(getEnv("UOS_AI_TOKEN"));
   const adminTokens = parseTokens(getEnv("DENO_DEPLOY_TOKEN"));
-  const allowOrigin = (getEnv("CORS_ALLOW_ORIGIN") ?? "*").trim() || "*";
+  const allowOrigin = "*";
 
-  const codexBaseUrl = (getEnv("CODEX_BASE_URL") ?? "https://chatgpt.com/backend-api/codex").trim().replace(/\/$/, "");
+  const codexBaseUrl = "https://chatgpt.com/backend-api/codex";
   const codexAuthJsonB64 = (getEnv("CODEX_AUTH_JSON_B64") ?? "").trim();
 
   return {
