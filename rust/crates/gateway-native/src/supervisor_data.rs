@@ -2,10 +2,12 @@
 use crate::{
     supervisor::{InventoryScope, KnownThread, SourceId},
     supervisor_brief::{self, SupervisorBriefContext},
+};
+use gateway_core::{error::GatewayError, redaction::redact};
+use gateway_native_local_transport::{
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
 };
-use gateway_core::{error::GatewayError, redaction::redact};
 use gateway_native_supervisor_read::{
     inventory::{self, SessionParts, ThreadProbe, text},
     metadata::{self as supervisor_metadata, MetadataRead},

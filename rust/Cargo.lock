@@ -1086,7 +1086,7 @@ dependencies = [
  "gateway-claude-runtime",
  "gateway-core",
  "gateway-migration-test-support",
- "gateway-native",
+ "gateway-native-local-transport",
  "gateway-observability",
  "gateway-routing-runtime",
  "gateway-schema",
@@ -1115,6 +1115,7 @@ dependencies = [
  "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
+ "gateway-native-local-transport",
  "gateway-native-supervisor-read",
  "gateway-publication",
  "gateway-publication-policy",
@@ -1135,6 +1136,17 @@ dependencies = [
  "ureq",
  "url",
  "webpki-roots",
+]
+
+[[package]]
+name = "gateway-native-local-transport"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "serde_json",
+ "socket2",
+ "tungstenite",
 ]
 
 [[package]]

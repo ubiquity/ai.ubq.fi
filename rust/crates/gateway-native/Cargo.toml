@@ -15,6 +15,7 @@ gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-publication = { path = "../gateway-publication" }
+gateway-native-local-transport.workspace = true
 gateway-native-supervisor-read.workspace = true
 gateway-publication-policy.workspace = true
 gateway-publication-transport.workspace = true

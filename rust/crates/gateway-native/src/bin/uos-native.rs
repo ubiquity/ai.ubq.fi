@@ -199,8 +199,9 @@ fn prepare_owner_renewal(
     };
     use gateway_native::{
         authority_http::NativeAuthorityHttp, managed_publication_http::NativeAccessPublicationHttp,
-        owner_renewal::NativeOwnerRenewalService, unix::NativeOwnerLocation,
+        owner_renewal::NativeOwnerRenewalService,
     };
+    use gateway_native_local_transport::unix::NativeOwnerLocation;
     let mut locations = Vec::new();
     for owner in config.owners() {
         let home = std::fs::canonicalize(owner.codex_home()).map_err(|_| renewal_unavailable())?;

@@ -1,6 +1,6 @@
 //! Registry-bound Unix websocket adapter. This module never launches a process or refreshes OAuth itself.
 use crate::{
-    supervisor::{RENEWAL_FRAME_LIMIT, SUPERVISOR_FRAME_LIMIT},
+    limits::{RENEWAL_FRAME_LIMIT, SUPERVISOR_FRAME_LIMIT},
     transport::{NativeOwnerTransport, RenewalStep, SupervisorMethod, SupervisorTransport},
 };
 use gateway_auth::native_credentials::{

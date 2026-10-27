@@ -1,5 +1,5 @@
-use crate::transport::{SupervisorMethod, SupervisorTransport};
 use gateway_core::error::GatewayError;
+use gateway_native_local_transport::transport::{SupervisorMethod, SupervisorTransport};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,8 +10,6 @@ pub const LIVE_PROBE_LIMIT: usize = 24;
 pub const OVERALL_DEADLINE_MS: u64 = 9_000;
 pub const FOLLOW_MAX_DURATION_MS: i64 = 600_000;
 pub const FOLLOW_POLL_MS: u64 = 2_000;
-pub const SUPERVISOR_FRAME_LIMIT: usize = 1_048_576;
-pub const RENEWAL_FRAME_LIMIT: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "String", into = "String")]

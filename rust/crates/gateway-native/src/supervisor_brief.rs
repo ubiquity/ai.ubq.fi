@@ -2,12 +2,14 @@
 use crate::{
     supervisor::KnownThread,
     supervisor_rollout::{SupervisorLogEvent, read_rollout_tail},
-    transport::{SupervisorMethod, SupervisorTransport},
-    unix::UnixSupervisor,
 };
 use gateway_core::{
     error::GatewayError,
     redaction::{redact, redact_parts},
+};
+use gateway_native_local_transport::{
+    transport::{SupervisorMethod, SupervisorTransport},
+    unix::UnixSupervisor,
 };
 use gateway_native_supervisor_read::inventory::{epoch_ms, text};
 use serde::{Deserialize, Serialize};

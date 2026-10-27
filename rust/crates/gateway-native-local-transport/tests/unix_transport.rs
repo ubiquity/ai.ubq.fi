@@ -4,8 +4,8 @@ use gateway_auth::crypto::base64url;
 use gateway_auth::native_credentials::{
     NativeGeneration, NativeOwnerId, OwnerFence, parse_native_document,
 };
-use gateway_native::{
-    supervisor::SUPERVISOR_FRAME_LIMIT,
+use gateway_native_local_transport::{
+    limits::SUPERVISOR_FRAME_LIMIT,
     transport::{
         NativeOwnerTransport, RenewalStep, SupervisorMethod, SupervisorTransport,
         renew_owned_guarded,
@@ -281,7 +281,7 @@ struct FixtureGuard {
     observed: Arc<Mutex<ObservedRequests>>,
     policy: GuardPolicy,
 }
-impl gateway_native::owner_control::NativeRenewalGuard for FixtureGuard {
+impl gateway_native_local_transport::guard::NativeRenewalGuard for FixtureGuard {
     fn now_ms(&self) -> Result<i64, gateway_core::error::GatewayError> {
         Ok(1_000_000)
     }

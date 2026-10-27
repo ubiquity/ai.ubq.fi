@@ -2,9 +2,7 @@
 //! from the authenticated shared-store reverse receiver, never a local ledger.
 use crate::{
     authority_http::{NativeAuthorityHttp, authority_deadline},
-    owner_control::{NativeControlContext, NativeOwnerRenewalHandler, NativeRenewalGuard},
-    transport::{NativeOwnerTransport, renew_owned_guarded},
-    unix::{NativeOwnerLocation, UnixOwnerTransport},
+    owner_control::{NativeControlContext, NativeOwnerRenewalHandler},
 };
 use gateway_auth::{
     crypto::base64url,
@@ -26,6 +24,11 @@ use gateway_authority::native_control::{
     },
 };
 use gateway_core::error::GatewayError;
+use gateway_native_local_transport::{
+    guard::NativeRenewalGuard,
+    transport::{NativeOwnerTransport, renew_owned_guarded},
+    unix::{NativeOwnerLocation, UnixOwnerTransport},
+};
 use std::cell::RefCell;
 
 pub(crate) fn require_current_fence(fence: &NativeRenewalFence) -> Result<(), GatewayError> {

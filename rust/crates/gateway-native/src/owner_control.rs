@@ -3,10 +3,7 @@
 use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders};
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlResponse};
 use gateway_core::error::GatewayError;
-use std::{
-    future::Future,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub struct NativeControlContext<'a> {
     deadline: Instant,
@@ -72,13 +69,4 @@ pub trait NativeOwnerRenewalHandler: Send + Sync {
         raw_body: &[u8],
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError>;
-}
-
-/// Constructor-owned bridge to the original durable action. The start hook
-/// must atomically commit possible-effect intent and refuse replay/unknown.
-/// None of these methods can be supplied by deserializing request fields.
-pub trait NativeRenewalGuard {
-    fn now_ms(&self) -> Result<i64, GatewayError>;
-    fn ensure_current(&self) -> impl Future<Output = Result<(), GatewayError>>;
-    fn start_refresh(&self) -> impl Future<Output = Result<(), GatewayError>>;
 }

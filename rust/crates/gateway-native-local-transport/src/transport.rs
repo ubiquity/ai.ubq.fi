@@ -165,10 +165,7 @@ pub async fn renew_owned<T: NativeOwnerTransport>(
 
 /// Source renewal with current shared-authority checks around every awaited
 /// owner boundary and one durable possible-effect claim before refresh RPC.
-pub async fn renew_owned_guarded<
-    T: NativeOwnerTransport,
-    G: crate::owner_control::NativeRenewalGuard,
->(
+pub async fn renew_owned_guarded<T: NativeOwnerTransport, G: crate::guard::NativeRenewalGuard>(
     transport: &T,
     guard: &G,
     fence: OwnerFence,
@@ -214,7 +211,7 @@ struct GuardedOwnerTransport<'a, T, G> {
     current: &'a NativeCredentials,
     advanced: std::cell::Cell<bool>,
 }
-impl<T: NativeOwnerTransport, G: crate::owner_control::NativeRenewalGuard> NativeOwnerTransport
+impl<T: NativeOwnerTransport, G: crate::guard::NativeRenewalGuard> NativeOwnerTransport
     for GuardedOwnerTransport<'_, T, G>
 {
     async fn read_credentials(

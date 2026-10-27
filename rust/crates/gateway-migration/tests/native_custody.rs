@@ -24,7 +24,7 @@ use gateway_migration::{
 };
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
-use gateway_native::{
+use gateway_native_local_transport::{
     transport::NativeOwnerTransport,
     unix::{NativeOwnerLocation, UnixOwnerTransport},
 };
