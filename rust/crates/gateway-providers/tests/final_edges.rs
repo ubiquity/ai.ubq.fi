@@ -1,11 +1,11 @@
 //! Additional source boundaries: dc6be2c3 Cerebras and e706 Claude/Lithos/stream contracts.
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::request::prepare_request;
-use gateway_provider_response::response::decode_response;
-use gateway_provider_protocol::types::Headers;
-use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_protocol::types::AuthMaterial;
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_provider_protocol::types::Headers;
 use gateway_provider_protocol::types::PrepareOptions;
+use gateway_provider_response::response::decode_response;
+use gateway_providers::request::prepare_request;
 use serde_json::{Value, json};
 fn opts() -> PrepareOptions {
     PrepareOptions {
@@ -102,13 +102,14 @@ fn buffered_cerebras_chat_client_stream_replays_real_finish_and_usage() {
     );
 }
 #[test]
-fn lithos_header_precedence_and_streamed_final_refusal_stay_in_band() {
+fn lithos_header_precedence_and_streamed_final_refusal_stay_in_band() -> Result<(), String> {
     let headers = Headers::from([
         ("retry-after-ms".into(), "250".into()),
         ("retry-after".into(), "2".into()),
         ("x-ratelimit-reset-tokens".into(), "1m30s".into()),
     ]);
-    let wait = gateway_provider_policy::lithos::rate_limit_wait(&headers, 0.0, |_| None).unwrap();
+    let wait = gateway_provider_policy::lithos::rate_limit_wait(&headers, 0.0, |_| None)
+        .ok_or("missing expected fixture value")?;
     assert_eq!(wait.wait_ms, 250.0);
     let headers = Headers::from([
         ("x-ratelimit-reset-tokens".into(), "3.23s".into()),
@@ -116,7 +117,7 @@ fn lithos_header_precedence_and_streamed_final_refusal_stay_in_band() {
     ]);
     assert_eq!(
         gateway_provider_policy::lithos::rate_limit_wait(&headers, 0.0, |_| None)
-            .unwrap()
+            .ok_or("missing expected fixture value")?
             .wait_ms,
         3230.0
     );
@@ -126,23 +127,24 @@ fn lithos_header_precedence_and_streamed_final_refusal_stay_in_band() {
         &json!({"model":"deepseek-ai/DeepSeek-V4.1-Flash","input":"x","stream":true}),
         &opts(),
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     let decoded = decode_response(
         &prepared.decode,
         429,
         &Headers::new(),
         br#"{"error":{"code":"tokens_exhausted","message":"wait"}}"#,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(decoded.status, 200);
     assert_eq!(scalar(&decoded.events[0].data)["type"], "response.failed");
     assert_eq!(
         scalar(&decoded.events[0].data)["response"]["error"]["code"],
         "tokens_exhausted"
     );
+    Ok(())
 }
 #[test]
-fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() {
+fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() -> Result<(), String> {
     let headers = Headers::from([
         ("content-type".into(), "application/json".into()),
         ("x-should-retry".into(), "false".into()),
@@ -158,7 +160,8 @@ fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() {
             json!({"model":"deepseek-ai/DeepSeek-V4.1-Flash","messages":[{"role":"user","content":"x"}],"stream":true}),
         ),
     ] {
-        let prepared = prepare_request(UpstreamProvider::Lithos, surface, &body, &opts()).unwrap();
+        let prepared = prepare_request(UpstreamProvider::Lithos, surface, &body, &opts())
+            .map_err(|error| format!("{error:?}"))?;
         assert!(gateway_provider_stream::sse::is_lithos_stream_refusal(
             &prepared.decode,
             429
@@ -173,7 +176,7 @@ fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() {
             &headers,
             br#"{"error":{"code":"tokens_exhausted","message":"wait"}}"#,
         )
-        .unwrap();
+        .map_err(|error| format!("{error:?}"))?;
         assert_eq!(decoded.status, 200, "{surface:?}");
         assert_eq!(
             decoded.terminal,
@@ -190,6 +193,7 @@ fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() {
         };
         assert_eq!(code, "tokens_exhausted", "{surface:?}: {event}");
     }
+    Ok(())
 }
 #[test]
 fn codex_error_bytes_are_available_unchanged_before_authority_classification() {

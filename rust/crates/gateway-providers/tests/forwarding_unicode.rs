@@ -1,18 +1,24 @@
 //! Exact source forwarding seams, not an aggregate request tokenizer or runtime dispatch proof.
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::request::prepare_request;
 use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
 use gateway_provider_source::types::ChatProfile;
+use gateway_providers::request::prepare_request;
 use serde_json::{Value, json};
 
-fn golden() -> Value {
+fn golden() -> Result<Value, String> {
     let source = include_str!("fixtures/forwarding-unicode-source-v1.json");
     assert!(source.contains("deepseek-forwarded-payload/v1"));
-    serde_json::from_str(&source.replace("deepseek-forwarded-payload/v1", gateway_prompt_policy::payload::VERSION)).unwrap()
+    serde_json::from_str(&source.replace(
+        "deepseek-forwarded-payload/v1",
+        gateway_prompt_policy::payload::VERSION,
+    ))
+    .map_err(|error| format!("{error:?}"))
 }
 fn with_emoji(prefix: String) -> String {
     let length = prefix.encode_utf16().count();
-    prefix + "😀" + &"a".repeat(gateway_prompt_policy::payload::PER_MESSAGE_LIMIT + 1024 - length - 2)
+    prefix
+        + "😀"
+        + &"a".repeat(gateway_prompt_policy::payload::PER_MESSAGE_LIMIT + 1024 - length - 2)
 }
 fn input(index: usize) -> String {
     match index {
@@ -36,35 +42,57 @@ fn request(text: &str, truncation: Option<&str>) -> Value {
 }
 
 #[test]
-fn source_bmp_prefix_is_exactly_31343_code_units() {
+fn source_bmp_prefix_is_exactly_31343_code_units() -> Result<(), String> {
     let result = gateway_providers::chat::project_responses(
         &request(&input(4), None),
         "deepseek-flash",
         false,
         ChatProfile::Deepseek,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     let body = scalar(&result.body);
-    let content = body["messages"].as_array().unwrap().last().unwrap()["content"]
+    let content = body["messages"]
+        .as_array()
+        .ok_or("missing expected fixture value")?
+        .last()
+        .ok_or("missing expected fixture value")?["content"]
         .as_str()
-        .unwrap();
-    let prefix = &content[..content.find("\n[gateway:").unwrap()];
+        .ok_or("missing expected fixture value")?;
+    let prefix = &content[..content
+        .find("\n[gateway:")
+        .ok_or("missing expected fixture value")?];
     assert_eq!(prefix.encode_utf16().count(), 31_343);
+    Ok(())
 }
 
 #[test]
-fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
-    let golden = golden();
-    assert_eq!(golden["policy"]["version"], gateway_prompt_policy::payload::VERSION);
-    assert_eq!(golden["policy"]["perMessageLimit"], gateway_prompt_policy::payload::PER_MESSAGE_LIMIT);
-    let cases = golden["cases"].as_array().unwrap();
+fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() -> Result<(), String> {
+    let golden = golden()?;
+    assert_eq!(
+        golden["policy"]["version"],
+        gateway_prompt_policy::payload::VERSION
+    );
+    assert_eq!(
+        golden["policy"]["perMessageLimit"],
+        gateway_prompt_policy::payload::PER_MESSAGE_LIMIT
+    );
+    let cases = golden["cases"]
+        .as_array()
+        .ok_or("missing expected fixture value")?;
     assert_eq!(cases.len(), 5);
     for (index, case) in cases.iter().enumerate() {
         let text = input(index);
         let units: Vec<u16> = text.encode_utf16().collect();
-        let head =
-            String::from_utf16(&units[..case["headUnits"].as_u64().unwrap() as usize]).unwrap();
-        let expected = head.clone() + case["marker"].as_str().unwrap();
+        let head = String::from_utf16(
+            &units[..case["headUnits"]
+                .as_u64()
+                .ok_or("missing expected fixture value")? as usize],
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        let expected = head.clone()
+            + case["marker"]
+                .as_str()
+                .ok_or("missing expected fixture value")?;
         for truncation in [None, Some("auto")] {
             for profile in [
                 ChatProfile::Deepseek,
@@ -73,14 +101,25 @@ fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
             ] {
                 let raw = request(&text, truncation);
                 let before = raw.clone();
-                let result =
-                    gateway_providers::chat::project_responses(&raw, "deepseek-flash", false, profile).unwrap();
+                let result = gateway_providers::chat::project_responses(
+                    &raw,
+                    "deepseek-flash",
+                    false,
+                    profile,
+                )
+                .map_err(|error| format!("{error:?}"))?;
                 let body = scalar(&result.body);
-                let tool = body["messages"].as_array().unwrap().last().unwrap();
+                let tool = body["messages"]
+                    .as_array()
+                    .ok_or("missing expected fixture value")?
+                    .last()
+                    .ok_or("missing expected fixture value")?;
                 assert_eq!(tool["role"], "tool");
                 assert_eq!(tool["tool_call_id"], "call_unicode");
                 assert_eq!(
-                    tool["content"].as_str().unwrap(),
+                    tool["content"]
+                        .as_str()
+                        .ok_or("missing expected fixture value")?,
                     expected,
                     "{} {truncation:?} {profile:?}",
                     case["name"]
@@ -91,55 +130,80 @@ fn five_source_unicode_seams_match_exact_prefix_marker_counts_and_call_id() {
                 assert_eq!(result.elisions.len(), 1);
                 let actual = &result.elisions[0];
                 let source = &case["elision"];
-                assert_eq!(actual.path, source["path"].as_str().unwrap());
+                assert_eq!(
+                    actual.path,
+                    source["path"]
+                        .as_str()
+                        .ok_or("missing expected fixture value")?
+                );
                 assert_eq!(
                     actual
                         .call_id
                         .as_ref()
-                        .map(|id| id.try_utf8().unwrap())
+                        .map(|id| id.try_utf8())
+                        .transpose()
+                        .map_err(|error| format!("{error:?}"))?
                         .as_deref(),
                     source["callId"].as_str()
                 );
-                assert_eq!(actual.kind, source["kind"].as_str().unwrap());
+                assert_eq!(
+                    actual.kind,
+                    source["kind"]
+                        .as_str()
+                        .ok_or("missing expected fixture value")?
+                );
                 assert_eq!(
                     actual.original_bytes,
-                    source["originalBytes"].as_u64().unwrap() as usize
+                    source["originalBytes"]
+                        .as_u64()
+                        .ok_or("missing expected fixture value")? as usize
                 );
                 assert_eq!(
                     actual.forwarded_bytes,
-                    source["forwardedBytes"].as_u64().unwrap() as usize
+                    source["forwardedBytes"]
+                        .as_u64()
+                        .ok_or("missing expected fixture value")? as usize
                 );
                 assert_eq!(
                     actual.omitted_bytes,
-                    source["omittedBytes"].as_u64().unwrap() as usize
+                    source["omittedBytes"]
+                        .as_u64()
+                        .ok_or("missing expected fixture value")? as usize
                 );
             }
         }
     }
+    Ok(())
 }
 
 #[test]
-fn in_budget_unicode_is_verbatim_for_every_reduction_setting() {
+fn in_budget_unicode_is_verbatim_for_every_reduction_setting() -> Result<(), String> {
     let text = "é😀".repeat(10_000);
     for truncation in [None, Some("auto"), Some("disabled")] {
         let raw = request(&text, truncation);
-        let result =
-            gateway_providers::chat::project_responses(&raw, "deepseek-flash", false, ChatProfile::Deepseek).unwrap();
+        let result = gateway_providers::chat::project_responses(
+            &raw,
+            "deepseek-flash",
+            false,
+            ChatProfile::Deepseek,
+        )
+        .map_err(|error| format!("{error:?}"))?;
         assert_eq!(
             scalar(&result.body)["messages"]
                 .as_array()
-                .unwrap()
+                .ok_or("missing expected fixture value")?
                 .last()
-                .unwrap()["content"],
+                .ok_or("missing expected fixture value")?["content"],
             text
         );
         assert!(result.elisions.is_empty());
     }
+    Ok(())
 }
 
 #[test]
-fn disabled_unicode_refuses_preparation_with_exact_source_error() {
-    let expected = golden()["disabled"].clone();
+fn disabled_unicode_refuses_preparation_with_exact_source_error() -> Result<(), String> {
+    let expected = golden()?["disabled"].clone();
     let raw = request(&input(2), Some("disabled"));
     let options = PrepareOptions {
         auth: AuthMaterial {
@@ -164,7 +228,9 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
         assert_eq!(error.status, 400);
         assert_eq!(
             error.envelope.error.message,
-            expected["message"].as_str().unwrap()
+            expected["message"]
+                .as_str()
+                .ok_or("missing expected fixture value")?
         );
         assert_eq!(
             error.envelope.error.code.as_deref(),
@@ -180,6 +246,7 @@ fn disabled_unicode_refuses_preparation_with_exact_source_error() {
             expected["param"].as_str()
         );
     }
+    Ok(())
 }
 
 fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {

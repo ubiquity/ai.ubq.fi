@@ -2,9 +2,11 @@ use gateway_core::{
     js_string::JsString16, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_providers::source_request::prepare_source_request;
+use gateway_provider_claude_body::{
+    types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody,
+};
 use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
-use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody};
+use gateway_providers::source_request::prepare_source_request;
 use serde_json::json;
 fn parse(text: &str) -> SourceJson {
     SourceJson::parse(text).unwrap()
@@ -16,17 +18,17 @@ fn body_options(kind: ClaudeCredentialKind) -> ClaudeBodyOptions {
     options
 }
 #[test]
-fn staged_scalar_bodies_and_decode_match_one_legacy_implementation() {
+fn staged_scalar_bodies_and_decode_match_one_legacy_implementation() -> Result<(), String> {
     for surface in [ClientSurface::Responses, ClientSurface::Chat] {
         for kind in [ClaudeCredentialKind::ApiKey, ClaudeCredentialKind::Oauth] {
             for stream in [false, true] {
                 let raw=SourceJson::from_serializable(&if surface==ClientSurface::Responses {
                     json!({"model":"claude-fixture","input":"hello","stream":stream})
-                } else {json!({"model":"claude-fixture","messages":[{"role":"user","content":"hello"}],"stream":stream})}).unwrap();
+                } else {json!({"model":"claude-fixture","messages":[{"role":"user","content":"hello"}],"stream":stream})}).map_err(|error| format!("{error:?}"))?;
                 let options = body_options(kind);
                 let stage =
                     PreparedClaudeBody::prepare(surface, &raw, &"claude-fixture".into(), &options)
-                        .unwrap();
+                        .map_err(|error| format!("{error:?}"))?;
                 let scalar = PrepareOptions {
                     auth: AuthMaterial {
                         secret: "actual-scalar-fixture".into(),
@@ -45,11 +47,11 @@ fn staged_scalar_bodies_and_decode_match_one_legacy_implementation() {
                     &"claude-fixture".into(),
                     &scalar,
                 )
-                .unwrap();
+                .map_err(|error| format!("{error:?}"))?;
                 assert_eq!(stage.body(), &legacy.body);
                 assert_eq!(
-                    serde_json::to_string(stage.decode()).unwrap(),
-                    serde_json::to_string(&legacy.decode).unwrap()
+                    serde_json::to_string(stage.decode()).map_err(|error| format!("{error:?}"))?,
+                    serde_json::to_string(&legacy.decode).map_err(|error| format!("{error:?}"))?
                 );
                 assert_eq!(stage.stream(), stream);
                 assert_eq!(stage.kind(), kind);
@@ -79,6 +81,7 @@ fn staged_scalar_bodies_and_decode_match_one_legacy_implementation() {
             }
         }
     }
+    Ok(())
 }
 #[test]
 fn pure_stage_has_no_material_port_and_retains_original_body_error() {
@@ -113,7 +116,7 @@ fn pure_stage_has_no_material_port_and_retains_original_body_error() {
     // invalid source secret nor an actual header attempt can preempt this error.
 }
 #[test]
-fn stage_keeps_source_effort_payload_and_actual_disabled_capability() {
+fn stage_keeps_source_effort_payload_and_actual_disabled_capability() -> Result<(), String> {
     let raw = parse(
         r#"{"model":"claude-fixture","input":"text\ud800","reasoning":{"effort":"vendor\udc00"}}"#,
     );
@@ -126,15 +129,16 @@ fn stage_keeps_source_effort_payload_and_actual_disabled_capability() {
         &"claude-fixture".into(),
         &options,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(&stage.decode().request, &raw);
     assert_eq!(
         gateway_provider_source::source::string(
             &source::member(
-                &source::member(stage.body(), "output_config").unwrap(),
+                &source::member(stage.body(), "output_config")
+                    .ok_or("missing expected fixture value")?,
                 "effort"
             )
-            .unwrap()
+            .ok_or("missing expected fixture value")?
         ),
         Some(effort)
     );
@@ -157,11 +161,12 @@ fn stage_keeps_source_effort_payload_and_actual_disabled_capability() {
         &"claude-fixture".into(),
         &options,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(
-        source::member(stage.body(), "thinking").unwrap(),
+        source::member(stage.body(), "thinking").ok_or("missing expected fixture value")?,
         parse(r#"{"type":"disabled"}"#)
     );
+    Ok(())
 }
 #[test]
 fn plain_api_body_retains_scalar_golden_bytes_without_attribution() {

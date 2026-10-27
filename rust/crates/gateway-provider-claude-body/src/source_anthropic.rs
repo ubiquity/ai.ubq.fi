@@ -1,21 +1,21 @@
-use gateway_provider_protocol::replay::ReplayEntry;
-use gateway_provider_protocol::replay::ReplayTransport;
-use gateway_provider_source::source as s;
 use crate::types::ClaudeBodyOptions;
-use gateway_provider_protocol::types::PrepareOptions;
 use gateway_core::source_json::SourceJson;
 use gateway_core::source_serialization as json;
-use gateway_provider_chat::source_anthropic::eq;
-use gateway_provider_chat::source_anthropic::only;
+use gateway_provider_chat::source_anthropic::add_cache;
 use gateway_provider_chat::source_anthropic::base;
 use gateway_provider_chat::source_anthropic::block;
+use gateway_provider_chat::source_anthropic::content;
+use gateway_provider_chat::source_anthropic::eq;
+use gateway_provider_chat::source_anthropic::merge;
+use gateway_provider_chat::source_anthropic::only;
 use gateway_provider_chat::source_anthropic::policy;
 use gateway_provider_chat::source_anthropic::text;
-use gateway_provider_chat::source_anthropic::content;
-use gateway_provider_chat::source_anthropic::merge;
 use gateway_provider_chat::source_anthropic::valid_name;
 use gateway_provider_chat::source_anthropic::valid_reasoning;
-use gateway_provider_chat::source_anthropic::add_cache;
+use gateway_provider_protocol::replay::ReplayEntry;
+use gateway_provider_protocol::replay::ReplayTransport;
+use gateway_provider_protocol::types::PrepareOptions;
+use gateway_provider_source::source as s;
 
 /// The native body algorithm cannot inspect auth material.
 struct NativeBodyOptions<'a> {
@@ -25,7 +25,6 @@ struct NativeBodyOptions<'a> {
     native_reasoning_efforts: Option<&'a Vec<gateway_core::js_string::JsString16>>,
     catalog_max_output_tokens: Option<u64>,
 }
-
 
 impl<'a> From<&'a PrepareOptions> for NativeBodyOptions<'a> {
     fn from(options: &'a PrepareOptions) -> Self {
@@ -38,7 +37,6 @@ impl<'a> From<&'a PrepareOptions> for NativeBodyOptions<'a> {
         }
     }
 }
-
 
 fn native_messages(
     raw: &SourceJson,
@@ -62,15 +60,16 @@ fn native_messages(
     Ok((!messages.is_empty()).then_some(messages))
 }
 
-
 pub fn restored_native_messages(
     restored: &[SourceJson],
     system: &mut Vec<SourceJson>,
 ) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
     let mut messages = vec![];
     for item in restored {
-        let role = represented!(s::present(item, "role").and_then(|observed| s::control(&observed)));
-        let blocks = represented!(s::present(item, "content").and_then(|observed| json::array(&observed)));
+        let role =
+            represented!(s::present(item, "role").and_then(|observed| s::control(&observed)));
+        let blocks =
+            represented!(s::present(item, "content").and_then(|observed| json::array(&observed)));
         match role.as_str() {
             "system" | "developer" => system.extend(blocks),
             "user" | "assistant" => merge(&mut messages, &role, blocks)?,
@@ -80,22 +79,23 @@ pub fn restored_native_messages(
     Ok((!messages.is_empty()).then_some(messages))
 }
 
-
 fn append_native_item(
     item: &SourceJson,
     system: &mut Vec<SourceJson>,
     messages: &mut Vec<SourceJson>,
 ) -> Result<Option<()>, gateway_core::error::GatewayError> {
-    let kind = s::present(item, "type").and_then(|observed| s::control(&observed)).unwrap_or_else(|| "message".into());
+    let kind = s::present(item, "type")
+        .and_then(|observed| s::control(&observed))
+        .unwrap_or_else(|| "message".into());
     match kind.as_str() {
         "message" => {
-            let role = represented!(s::present(item, "role").and_then(|observed| s::control(&observed)));
+            let role =
+                represented!(s::present(item, "role").and_then(|observed| s::control(&observed)));
             let blocks = represented!(content(&represented!(s::present(item, "content")), true)?);
             if role == "system" || role == "developer" {
-                if blocks
-                    .iter()
-                    .any(|block| !s::present(block, "type").is_some_and(|observed| s::is(&observed, "text")))
-                {
+                if blocks.iter().any(|block| {
+                    !s::present(block, "type").is_some_and(|observed| s::is(&observed, "text"))
+                }) {
                     return Ok(None);
                 }
                 system.extend(blocks);
@@ -112,7 +112,9 @@ fn append_native_item(
                 return Ok(None);
             }
             // This is the existing native protocol's JSON.parse operation, not an opaque Chat argument rewrite.
-            let arguments = represented!(s::present(item, "arguments").and_then(|observed| s::control(&observed)));
+            let arguments = represented!(
+                s::present(item, "arguments").and_then(|observed| s::control(&observed))
+            );
             let input = represented!(SourceJson::parse(&arguments).ok());
             represented!(json::entries(&input));
             let id = represented!(s::present(item, "call_id"));
@@ -136,7 +138,10 @@ fn append_native_item(
                 ("tool_use_id", id),
                 (
                     "content",
-                    s::array(&represented!(content(&represented!(s::present(item, "output")), true)?))?,
+                    s::array(&represented!(content(
+                        &represented!(s::present(item, "output")),
+                        true
+                    )?))?,
                 ),
             ])?;
             if let Some(value) = s::present(item, "is_error") {
@@ -149,8 +154,9 @@ fn append_native_item(
     Ok(Some(()))
 }
 
-
-fn native_tools(raw: &SourceJson) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
+fn native_tools(
+    raw: &SourceJson,
+) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
     let Some(value) = s::present(raw, "tools") else {
         return Ok(Some(vec![]));
     };
@@ -166,7 +172,10 @@ fn native_tools(raw: &SourceJson) -> Result<Option<Vec<SourceJson>>, gateway_cor
             ("name", represented!(s::present(&tool, "name"))),
             (
                 "input_schema",
-                match s::present(&tool, "parameters") { Some(value) => value, None => s::scalar_json(&serde_json::json!({"type":"object"}))? },
+                match s::present(&tool, "parameters") {
+                    Some(value) => value,
+                    None => s::scalar_json(&serde_json::json!({"type":"object"}))?,
+                },
             ),
         ])?;
         if let Some(value) = s::present(&tool, "description") {
@@ -177,8 +186,10 @@ fn native_tools(raw: &SourceJson) -> Result<Option<Vec<SourceJson>>, gateway_cor
     Ok(Some(tools))
 }
 
-
-fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
+fn native_reasoning(
+    raw: &SourceJson,
+    options: &NativeBodyOptions<'_>,
+) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
     let Some(reasoning) = s::present(raw, "reasoning").filter(|v| !s::is_null(v)) else {
         return Ok(Some(s::object(vec![])?));
     };
@@ -189,7 +200,13 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result
         return Ok(Some(s::object(vec![])?));
     };
     if s::is(&effort, "none") {
-        return Ok(if options.supports_disabled_thinking { Some(s::scalar_json(&serde_json::json!({"thinking":{"type":"disabled"}}))?) } else { None });
+        return Ok(if options.supports_disabled_thinking {
+            Some(s::scalar_json(
+                &serde_json::json!({"thinking":{"type":"disabled"}}),
+            )?)
+        } else {
+            None
+        });
     }
     if !options.supports_native_effort {
         return Ok(None);
@@ -210,22 +227,24 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result
                 .map(gateway_core::js_string::JsString16::from_utf8)
                 .to_vec()
         });
-    if !allowed.contains(&effort) { return Ok(None); }
+    if !allowed.contains(&effort) {
+        return Ok(None);
+    }
     Ok(Some(s::object(vec![
-            (
-                "thinking",
-                s::scalar_json(&serde_json::json!({"type":"adaptive"}))?,
-            ),
-            (
-                "output_config",
-                s::object(vec![("effort", s::quoted(&effort)?)])?,
-            ),
-        ])?))
+        (
+            "thinking",
+            s::scalar_json(&serde_json::json!({"type":"adaptive"}))?,
+        ),
+        (
+            "output_config",
+            s::object(vec![("effort", s::quoted(&effort)?)])?,
+        ),
+    ])?))
 }
 
-
-
-fn native_choice(raw: &SourceJson) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
+fn native_choice(
+    raw: &SourceJson,
+) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
     let mut choice = match s::present(raw, "tool_choice") {
         None => s::object(vec![])?,
         Some(value) if s::is(&value, "auto") || s::is(&value, "none") => {
@@ -258,14 +277,18 @@ fn native_choice(raw: &SourceJson) -> Result<Option<SourceJson>, gateway_core::e
     Ok(Some(choice))
 }
 
-
-pub fn native(raw: &SourceJson, options: &PrepareOptions) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok(native_body(raw, &NativeBodyOptions::from(options))?)
+pub fn native(
+    raw: &SourceJson,
+    options: &PrepareOptions,
+) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
+    native_body(raw, &NativeBodyOptions::from(options))
 }
 
-
-pub fn native_claude(raw: &SourceJson, options: &ClaudeBodyOptions) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok(native_body(
+pub fn native_claude(
+    raw: &SourceJson,
+    options: &ClaudeBodyOptions,
+) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
+    native_body(
         raw,
         &NativeBodyOptions {
             restored_native_messages: options.restored_native_messages.as_ref(),
@@ -277,26 +300,35 @@ pub fn native_claude(raw: &SourceJson, options: &ClaudeBodyOptions) -> Result<Op
             native_reasoning_efforts: options.native_reasoning_efforts.as_ref(),
             catalog_max_output_tokens: Some(32_000),
         },
-    )?)
+    )
 }
 
-
-fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
+fn native_body(
+    raw: &SourceJson,
+    options: &NativeBodyOptions<'_>,
+) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
     if !base(raw) || !policy(raw) {
         return Ok(None);
     }
     if let Some(text) = s::present(raw, "text")
         && (!only(&text, &["format"])
-            || match s::present(&text, "format") { Some(value) => !eq(&value, r#"{"type":"text"}"#)?, None => false })
+            || match s::present(&text, "format") {
+                Some(value) => !eq(&value, r#"{"type":"text"}"#)?,
+                None => false,
+            })
     {
         return Ok(None);
     }
-    let max = represented!(s::present(raw, "max_output_tokens")
-        .and_then(|value| json::number(&value))
-        .filter(|v| *v >= 0.0 && v.fract() == 0.0)
-        .map(|v| v as u64)
-        .or(options.catalog_max_output_tokens)
-        .or_else(|| s::present(raw, "model").is_some_and(|observed| s::is(&observed, "claude-opus-5-5")).then_some(128_000)));
+    let max = represented!(
+        s::present(raw, "max_output_tokens")
+            .and_then(|value| json::number(&value))
+            .filter(|v| *v >= 0.0 && v.fract() == 0.0)
+            .map(|v| v as u64)
+            .or(options.catalog_max_output_tokens)
+            .or_else(|| s::present(raw, "model")
+                .is_some_and(|observed| s::is(&observed, "claude-opus-5-5"))
+                .then_some(128_000))
+    );
     if max == 0 || max > 9_007_199_254_740_991 {
         return Ok(None);
     }
@@ -320,7 +352,9 @@ fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result<Opti
         ("messages", s::array(&messages)?),
         (
             "stream",
-            s::scalar_json(&serde_json::json!(s::present(raw, "stream").and_then(|observed| s::boolean(&observed)) == Some(true)))?,
+            s::scalar_json(&serde_json::json!(
+                s::present(raw, "stream").and_then(|observed| s::boolean(&observed)) == Some(true)
+            ))?,
         ),
     ])?;
     if !system.is_empty() {
@@ -344,51 +378,62 @@ fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result<Opti
     Ok(Some(body))
 }
 
-
 pub fn replay_messages(
     raw: &SourceJson,
     entries: &[ReplayEntry],
 ) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
-    let (_, _names) = match gateway_provider_tool_grammar::source_tools::flatten(s::present(raw, "tools").as_ref(), 64) { Ok(value) => value, Err(gateway_provider_tool_grammar::source_tools::ToolError::Request(_)) => return Ok(None), Err(gateway_provider_tool_grammar::source_tools::ToolError::Construction(error)) => return Err(error) };
+    let (_, _names) = match gateway_provider_tool_grammar::source_tools::flatten(
+        s::present(raw, "tools").as_ref(),
+        64,
+    ) {
+        Ok(value) => value,
+        Err(gateway_provider_tool_grammar::source_tools::ToolError::Request(_)) => return Ok(None),
+        Err(gateway_provider_tool_grammar::source_tools::ToolError::Construction(error)) => {
+            return Err(error);
+        }
+    };
     let mut messages = vec![];
 
-let mut system = vec![];
-            for entry in entries {
-                match entry {
-                    ReplayEntry::Original(item) => {
-                        let item = item.clone();
-                        let role = s::present(&item, "role").and_then(|observed| s::control(&observed)).unwrap_or_default();
-                        if ["system", "developer"].contains(&role.as_str()) && !messages.is_empty()
-                        {
-                            return Ok(None);
-                        }
-                        represented!(append_native_item(&item, &mut system, &mut messages)?);
-                    }
-                    ReplayEntry::NativeAssistant {
-                        transport: ReplayTransport::Messages,
-                        payload,
-                    } => {
-                        let blocks = if let Some(blocks) = json::array(payload) {
-                            blocks
-                        } else if json::entries(payload).is_some() {
-                            represented!(s::present(payload, "content").and_then(|observed| json::array(&observed)))
-                        } else {
-                            return Ok(None);
-                        };
-                        merge(&mut messages, "assistant", blocks)?;
-                    }
-                    ReplayEntry::NativeAssistant { .. } => return Ok(None),
+    let mut system = vec![];
+    for entry in entries {
+        match entry {
+            ReplayEntry::Original(item) => {
+                let item = item.clone();
+                let role = s::present(&item, "role")
+                    .and_then(|observed| s::control(&observed))
+                    .unwrap_or_default();
+                if ["system", "developer"].contains(&role.as_str()) && !messages.is_empty() {
+                    return Ok(None);
                 }
+                represented!(append_native_item(&item, &mut system, &mut messages)?);
             }
-            if !system.is_empty() {
-                messages.insert(
-                    0,
-                    s::object(vec![
-                        ("role", s::text("system")?),
-                        ("content", s::array(&system)?),
-                    ])?,
-                );
+            ReplayEntry::NativeAssistant {
+                transport: ReplayTransport::Messages,
+                payload,
+            } => {
+                let blocks = if let Some(blocks) = json::array(payload) {
+                    blocks
+                } else if json::entries(payload).is_some() {
+                    represented!(
+                        s::present(payload, "content").and_then(|observed| json::array(&observed))
+                    )
+                } else {
+                    return Ok(None);
+                };
+                merge(&mut messages, "assistant", blocks)?;
             }
+            ReplayEntry::NativeAssistant { .. } => return Ok(None),
+        }
+    }
+    if !system.is_empty() {
+        messages.insert(
+            0,
+            s::object(vec![
+                ("role", s::text("system")?),
+                ("content", s::array(&system)?),
+            ])?,
+        );
+    }
 
     if messages.is_empty() {
         return Ok(None);

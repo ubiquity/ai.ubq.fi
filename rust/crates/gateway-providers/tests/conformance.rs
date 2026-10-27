@@ -1,18 +1,18 @@
 //! Frozen source-derived cases from e706343d: deepseek-responses, oss-terminal-parity,
 //! anthropic-responses/replay, lithos-tier-windows, images and embeddings fixtures.
-use gateway_provider_source::types::ChatProfile;
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::source_json::SourceJson;
-use gateway_providers::request::prepare_request;
-use gateway_provider_response::response::decode_response;
-use gateway_provider_tool_grammar::source_tools::ToolMap;
-use gateway_provider_stream::sse::StreamDecoder;
-use gateway_provider_protocol::types::Headers;
-use gateway_provider_protocol::types::ClientSurface;
-use gateway_provider_protocol::types::ResponseDecode;
 use gateway_provider_protocol::types::AuthMaterial;
-use gateway_provider_protocol::types::PrepareOptions;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_protocol::types::DecodePlan;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_protocol::types::PrepareOptions;
+use gateway_provider_protocol::types::ResponseDecode;
+use gateway_provider_response::response::decode_response;
+use gateway_provider_source::types::ChatProfile;
+use gateway_provider_stream::sse::StreamDecoder;
+use gateway_provider_tool_grammar::source_tools::ToolMap;
+use gateway_providers::request::prepare_request;
 use serde_json::{Value, json};
 fn options() -> PrepareOptions {
     PrepareOptions {
@@ -75,29 +75,58 @@ fn frame(value: &Value) -> Vec<u8> {
 }
 #[test]
 fn frozen_waterfalls_distinguish_quota_from_serving_failure() {
-    assert!(!gateway_provider_policy::policy::paid_should_advance(Some(503), true));
-    assert!(!gateway_provider_policy::policy::paid_should_advance(None, true));
-    assert!(gateway_provider_policy::policy::paid_should_advance(Some(402), true));
-    assert!(gateway_provider_policy::policy::paid_should_advance(Some(429), true));
+    assert!(!gateway_provider_policy::policy::paid_should_advance(
+        Some(503),
+        true
+    ));
+    assert!(!gateway_provider_policy::policy::paid_should_advance(
+        None, true
+    ));
+    assert!(gateway_provider_policy::policy::paid_should_advance(
+        Some(402),
+        true
+    ));
+    assert!(gateway_provider_policy::policy::paid_should_advance(
+        Some(429),
+        true
+    ));
     assert_eq!(
-        gateway_provider_policy::policy::deepseek_decision(gateway_provider_policy::policy::HopFailure::Status(503), false),
+        gateway_provider_policy::policy::deepseek_decision(
+            gateway_provider_policy::policy::HopFailure::Status(503),
+            false
+        ),
         gateway_provider_policy::policy::HopDecision::Advance
     );
     assert_eq!(
-        gateway_provider_policy::policy::deepseek_decision(gateway_provider_policy::policy::HopFailure::Status(503), true),
+        gateway_provider_policy::policy::deepseek_decision(
+            gateway_provider_policy::policy::HopFailure::Status(503),
+            true
+        ),
         gateway_provider_policy::policy::HopDecision::Deliver
     );
     assert_eq!(
-        gateway_provider_policy::policy::deepseek_decision(gateway_provider_policy::policy::HopFailure::Cancelled, false),
+        gateway_provider_policy::policy::deepseek_decision(
+            gateway_provider_policy::policy::HopFailure::Cancelled,
+            false
+        ),
         gateway_provider_policy::policy::HopDecision::Abort
     );
     assert_eq!(
-        gateway_provider_policy::policy::deepseek_decision(gateway_provider_policy::policy::HopFailure::Status(400), false),
+        gateway_provider_policy::policy::deepseek_decision(
+            gateway_provider_policy::policy::HopFailure::Status(400),
+            false
+        ),
         gateway_provider_policy::policy::HopDecision::Deliver
     );
-    assert_eq!(gateway_provider_policy::policy::codex_paid_fallback_reason(429, None), None);
     assert_eq!(
-        gateway_provider_policy::policy::codex_paid_fallback_reason(429, Some("codex_quota_blocked")),
+        gateway_provider_policy::policy::codex_paid_fallback_reason(429, None),
+        None
+    );
+    assert_eq!(
+        gateway_provider_policy::policy::codex_paid_fallback_reason(
+            429,
+            Some("codex_quota_blocked")
+        ),
         Some("primary_quota_blocked")
     );
     assert_ne!(
@@ -108,13 +137,22 @@ fn frozen_waterfalls_distinguish_quota_from_serving_failure() {
 #[test]
 fn codex_replay_repair_is_exact_and_does_not_damage_provider_history() -> Result<(), String> {
     let input = json!([{"type":"reasoning","id":"resp_old_rs_0","summary":[]},{"type":"reasoning","id":"rs_resp_old_0","encrypted_content":"signed"},{"type":"function_call","id":"fc_resp_old_0_0","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"reasoning","id":"rs_upstream","summary":[]}]);
-    let repaired = scalar(&gateway_provider_input::request::codex_replay_input(&input).map_err(|error| format!("{error:?}"))?);
+    let repaired = scalar(
+        &gateway_provider_input::request::codex_replay_input(&input)
+            .map_err(|error| format!("{error:?}"))?,
+    );
     assert_eq!(
         repaired,
         json!([{"type":"reasoning","encrypted_content":"signed"},{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"reasoning","id":"rs_upstream","summary":[]}])
     );
-    assert_eq!(input.as_array().unwrap().len(), 4);
-    let body=scalar(&gateway_provider_input::request::build_codex_body(&json!({"model":"gpt-fixture","input":[],"reasoning":{"effort":"none"},"stream":false,"store":true})).unwrap());
+    assert_eq!(
+        input
+            .as_array()
+            .ok_or("missing expected fixture value")?
+            .len(),
+        4
+    );
+    let body=scalar(&gateway_provider_input::request::build_codex_body(&json!({"model":"gpt-fixture","input":[],"reasoning":{"effort":"none"},"stream":false,"store":true})).map_err(|error| format!("{error:?}"))?);
     assert_eq!(body["reasoning"]["effort"], "none");
     assert_eq!(body["stream"], true);
     assert_eq!(body["store"], false);
@@ -124,22 +162,38 @@ fn codex_replay_repair_is_exact_and_does_not_damage_provider_history() -> Result
 #[test]
 fn namespace_and_freeform_round_trip_keeps_identity() -> Result<(), String> {
     let raw = json!({"input":"hello","reasoning":{"effort":"none"},"tools":[{"type":"namespace","name":"first","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},{"type":"namespace","name":"second","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},{"type":"custom","name":"apply_patch"}]});
-    let result =
-        gateway_providers::chat::project_responses(&raw, "deepseek-flash", true, ChatProfile::Deepseek).unwrap();
+    let result = gateway_providers::chat::project_responses(
+        &raw,
+        "deepseek-flash",
+        true,
+        ChatProfile::Deepseek,
+    )
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(scalar(&result.body)["tools"][0]["function"]["name"], "read");
     assert_eq!(
         scalar(&result.body)["tools"][1]["function"]["name"],
         "second_read"
     );
     assert_eq!(
-        result.tool_names.get("read").ok_or("missing declared tool")?
+        result
+            .tool_names
+            .get("read")
+            .ok_or("missing declared tool")?
             .namespace
             .as_ref()
-            .map(|v| v.try_utf8().unwrap())
+            .map(|v| v.try_utf8())
+            .transpose()
+            .map_err(|error| format!("{error:?}"))?
             .as_deref(),
         Some("first")
     );
-    assert!(result.tool_names.get("apply_patch").ok_or("missing declared tool")?.custom);
+    assert!(
+        result
+            .tool_names
+            .get("apply_patch")
+            .ok_or("missing declared tool")?
+            .custom
+    );
     assert_eq!(
         scalar(&result.body)["stream_options"],
         json!({"include_usage":true})
@@ -151,28 +205,32 @@ fn namespace_and_freeform_round_trip_keeps_identity() -> Result<(), String> {
         "{\"input\":\"*** Begin Patch\"}",
         &result.tool_names,
         "completed",
-    ).map_err(|error| format!("{error:?}"))?;
+    )
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(scalar(&item)["type"], "custom_tool_call");
     assert_eq!(scalar(&item)["input"], "*** Begin Patch");
 
     Ok(())
 }
 #[test]
-fn thinking_conflict_and_reasoning_profiles_are_provider_specific() {
+fn thinking_conflict_and_reasoning_profiles_are_provider_specific() -> Result<(), String> {
     assert!(gateway_providers::chat::project_responses(&json!({"input":"x","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"a"}],"tool_choice":"required"}),"deepseek-flash",false,ChatProfile::Deepseek).is_err());
     assert!(gateway_providers::chat::project_responses(&json!({"input":"x","reasoning":{"effort":"high"},"tools":[{"type":"function","name":"a"}],"tool_choice":"required"}),"deepseek-ai/DeepSeek-V4.1-Flash",false,ChatProfile::Lithos).is_ok());
     assert_eq!(
-        gateway_providers::chat::project_effort("ultra", ChatProfile::Deepseek).unwrap(),
+        gateway_providers::chat::project_effort("ultra", ChatProfile::Deepseek)
+            .map_err(|error| format!("{error:?}"))?,
         "max"
     );
     assert_eq!(
-        gateway_providers::chat::project_effort("vendor-new", ChatProfile::Deepseek).unwrap(),
+        gateway_providers::chat::project_effort("vendor-new", ChatProfile::Deepseek)
+            .map_err(|error| format!("{error:?}"))?,
         "vendor-new"
     );
     assert!(gateway_providers::chat::project_effort("ultra", ChatProfile::Lithos).is_err());
+    Ok(())
 }
 #[test]
-fn declared_payload_bound_keeps_unicode_and_disabled_rejects() {
+fn declared_payload_bound_keeps_unicode_and_disabled_rejects() -> Result<(), String> {
     let text = "😀".repeat(20_000);
     let result = gateway_providers::chat::project_responses(
         &json!({"input":text}),
@@ -180,9 +238,11 @@ fn declared_payload_bound_keeps_unicode_and_disabled_rejects() {
         false,
         ChatProfile::Deepseek,
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     let scalar_body = scalar(&result.body);
-    let forwarded = scalar_body["messages"][0]["content"].as_str().unwrap();
+    let forwarded = scalar_body["messages"][0]["content"]
+        .as_str()
+        .ok_or("missing expected fixture value")?;
     assert!(forwarded.len() <= 65_536);
     assert!(forwarded.contains("the model did not receive the elided bytes"));
     assert!(!result.elisions.is_empty());
@@ -195,127 +255,18 @@ fn declared_payload_bound_keeps_unicode_and_disabled_rejects() {
         )
         .is_err()
     );
-}
-#[test]
-fn reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes() -> Result<(), String> {
-    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan(ChatProfile::Deepseek));
-    let mut events = writer.chat_chunk(
-        &chunk(json!({"reasoning_content":"think"}), Value::Null),
-        ChatProfile::Deepseek,
-    ).map_err(|error| format!("{error:?}"))?;
-    events.extend(writer.chat_chunk(
-        &chunk(json!({"content":"answer"}), Value::Null),
-        ChatProfile::Deepseek,
-    ).map_err(|error| format!("{error:?}"))?);
-    events.extend(writer.finish().map_err(|error| format!("{error:?}"))?);
-    let kinds = events
-        .iter()
-        .map(|e| e.type_name().unwrap())
-        .collect::<Vec<_>>();
-    let done = kinds
-        .iter()
-        .position(|k| *k == "response.output_item.done")
-        .unwrap();
-    let message = events
-        .iter()
-        .position(|e| {
-            scalar(&e.data)["type"] == "response.output_item.added"
-                && scalar(&e.data)["item"]["type"] == "message"
-        })
-        .unwrap();
-    assert!(done < message);
-    assert_eq!(
-        scalar(&events.last().unwrap().data)["response"]["output"][0]["type"],
-        "reasoning"
-    );
-    assert_eq!(
-        scalar(&events.last().unwrap().data)["response"]["output"][1]["type"],
-        "message"
-    );
-    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan(ChatProfile::Deepseek));
-    writer.tool_delta(1, Some("call_b"), Some("second"), "{\"b\":").map_err(|error| format!("{error:?}"))?;
-    writer.tool_delta(0, Some("call_a"), Some("first"), "{\"a\":").map_err(|error| format!("{error:?}"))?;
-    writer.tool_delta(1, None, None, "2}").map_err(|error| format!("{error:?}"))?;
-    writer.tool_delta(0, None, None, "1}").map_err(|error| format!("{error:?}"))?;
-    let events = writer.finish().map_err(|error| format!("{error:?}"))?;
-    let output = &scalar(&events.last().unwrap().data)["response"]["output"];
-    assert_eq!(output[0]["name"], "second");
-    assert_eq!(output[0]["arguments"], "{\"b\":2}");
-    assert_eq!(output[1]["name"], "first");
-    assert!(writer.finish().map_err(|error| format!("{error:?}"))?.is_empty());
-
     Ok(())
 }
 #[test]
-fn truthful_terminals_distinguish_explicit_truncation_and_empty_stop() -> Result<(), String> {
-    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan(ChatProfile::Deepseek));
-    writer.reasoning("only reasoning").map_err(|error| format!("{error:?}"))?;
-    let events = writer.finish().map_err(|error| format!("{error:?}"))?;
-    assert_eq!(
-        scalar(&events.last().unwrap().data)["type"],
-        "response.failed"
-    );
-    assert_eq!(
-        scalar(&events.last().unwrap().data)["response"]["error"]["code"],
-        "empty_upstream_completion"
-    );
-    let mut writer = gateway_provider_writer::writer::ResponseWriter::new(plan(ChatProfile::Deepseek));
-    writer.reasoning("only reasoning").map_err(|error| format!("{error:?}"))?;
-    writer.finish_reason = Some("length".into());
-    let events = writer.finish().map_err(|error| format!("{error:?}"))?;
-    assert_eq!(
-        scalar(&events.last().unwrap().data)["type"],
-        "response.incomplete"
-    );
-    assert_eq!(
-        scalar(&events.last().unwrap().data)["response"]["incomplete_details"]["reason"],
-        "max_output_tokens"
-    );
-
-    Ok(())
-}
-#[test]
-fn sse_incremental_utf8_mixed_line_endings_and_eof_fail_closed() {
-    let mut parser = gateway_provider_events::framing::SseParser::new(1000);
-    let raw = "event: thing\r\ndata: {\"text\":\"😀\"}\r\n\r\n".as_bytes();
-    let mut frames = vec![];
-    for byte in raw {
-        frames.extend(parser.push(&[*byte]).unwrap());
-    }
-    assert_eq!(frames.len(), 1);
-    assert_eq!(
-        serde_json::from_str::<Value>(&frames[0].data).unwrap()["text"],
-        "😀"
-    );
-    let mut decoder = StreamDecoder::new(plan(ChatProfile::Deepseek));
-    decoder
-        .push(&frame(&chunk(
-            json!({"reasoning_content":"thought"}),
-            Value::Null,
-        )))
-        .unwrap();
-    assert!(decoder.finish().is_err());
-    let mut decoder = StreamDecoder::new(plan(ChatProfile::Deepseek));
-    let mut events = decoder
-        .push(&frame(&chunk(json!({"content":"answer"}), json!("stop"))))
-        .unwrap();
-    events.extend(decoder.push(b"data: [DONE]\n\n").unwrap());
-    assert_eq!(
-        scalar(&events.last().unwrap().data)["type"],
-        "response.completed"
-    );
-    decoder.finish().unwrap();
-}
-#[test]
-fn usage_preserves_missingness_and_native_cache_gross_input() {
+fn usage_preserves_missingness_and_native_cache_gross_input() -> Result<(), String> {
     let missing = gateway_provider_source::usage::chat_to_responses(
         &json!({"prompt_tokens":10,"completion_tokens":4}),
         ChatProfile::Deepseek,
     )
-    .unwrap();
+    .ok_or("missing expected fixture value")?;
     assert!(missing.get("input_tokens_details").is_none());
     assert!(missing.get("output_tokens_details").is_none());
-    let native=gateway_provider_source::usage::anthropic_to_responses(&json!({"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"buyer_cost_micro":17})).unwrap();
+    let native=gateway_provider_source::usage::anthropic_to_responses(&json!({"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":20,"cache_creation_input_tokens":5,"buyer_cost_micro":17})).ok_or("missing expected fixture value")?;
     assert_eq!(native["input_tokens"], 35);
     assert_eq!(native["total_tokens"], 39);
     assert_eq!(native["input_tokens_details"]["cached_tokens"], 20);
@@ -323,9 +274,10 @@ fn usage_preserves_missingness_and_native_cache_gross_input() {
     let invalid = gateway_provider_source::usage::anthropic_to_responses(
         &json!({"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":-1}),
     )
-    .unwrap();
+    .ok_or("missing expected fixture value")?;
     assert!(invalid["input_tokens"].is_null());
     assert!(invalid["input_tokens_details"]["cached_tokens"].is_null());
+    Ok(())
 }
 #[test]
 fn transport_profiles_cerebras_and_openrouter_preserve_actual_wires() {
@@ -356,7 +308,10 @@ fn transport_profiles_cerebras_and_openrouter_preserve_actual_wires() {
 #[test]
 fn cerebras_schema_preserves_property_names_and_collapses_root_union() -> Result<(), String> {
     let schema = json!({"oneOf":[{"type":"object","properties":{"operationId":{"const":"a"},"format":{"type":"string","pattern":"x"}},"required":["operationId","format"]},{"type":"object","properties":{"operationId":{"const":"b"},"count":{"type":"number"}},"required":["operationId"]}]});
-    let projected = scalar(&gateway_provider_input::request::project_cerebras_schema(&schema).map_err(|error| format!("{error:?}"))?);
+    let projected = scalar(
+        &gateway_provider_input::request::project_cerebras_schema(&schema)
+            .map_err(|error| format!("{error:?}"))?,
+    );
     assert_eq!(projected["type"], "object");
     assert_eq!(
         projected["properties"]["operationId"]["enum"],
@@ -371,10 +326,18 @@ fn cerebras_schema_preserves_property_names_and_collapses_root_union() -> Result
 #[test]
 fn native_disabled_thinking_requires_exact_independent_proof() -> Result<(), String> {
     let body = json!({"model":"claude-fixture","input":"hello","max_output_tokens":10,"reasoning":{"effort":"none"}});
-    assert!(gateway_providers::anthropic::try_native_messages(&body, &options()).map_err(|error| format!("{error:?}"))?.is_none());
+    assert!(
+        gateway_providers::anthropic::try_native_messages(&body, &options())
+            .map_err(|error| format!("{error:?}"))?
+            .is_none()
+    );
     let mut opts = options();
     opts.supports_disabled_thinking = true;
-    let native = scalar(&gateway_providers::anthropic::try_native_messages(&body, &opts).map_err(|error| format!("{error:?}"))?.unwrap());
+    let native = scalar(
+        &gateway_providers::anthropic::try_native_messages(&body, &opts)
+            .map_err(|error| format!("{error:?}"))?
+            .ok_or("missing expected fixture value")?,
+    );
     assert_eq!(native["thinking"], json!({"type":"disabled"}));
     assert!(native.get("output_config").is_none());
     assert_eq!(
@@ -391,45 +354,69 @@ fn native_replay_is_scoped_complete_expiring_and_never_publicly_signed() -> Resu
         provider: "claude_code".into(),
         model: "claude-fixture".into(),
     };
-    let source = |value: &Value| SourceJson::from_serializable(value).unwrap();
+    let source =
+        |value: &Value| SourceJson::from_serializable(value).map_err(|error| format!("{error:?}"));
     let native = source(
         &json!([{"type":"thinking","thinking":"thought","signature":"private"},{"type":"text","text":"answer"}]),
-    );
-    let output = [
+    )?;
+    let [reasoning, message] = [
         json!({"id":"rs_resp_native_0","type":"reasoning","summary":[{"type":"summary_text","text":"thought"}]}),
         json!({"id":"msg_resp_native_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[]}]}),
     ]
     .map(|value| source(&value));
+    let output = [reasoning?, message?];
     let mut store = gateway_provider_replay::replay::ReplayStore::default();
-    assert!(store.remember(
-        context.clone(),
-        &output,
-        native,
-        gateway_provider_protocol::replay::ReplayTransport::Messages,
-        0
-    ).map_err(|error| format!("{error:?}"))?);
     assert!(
         store
-            .restore(&context, &output, gateway_provider_protocol::replay::ReplayTransport::Messages, 1).map_err(|error| format!("{error:?}"))?
+            .remember(
+                context.clone(),
+                &output,
+                native,
+                gateway_provider_protocol::replay::ReplayTransport::Messages,
+                0
+            )
+            .map_err(|error| format!("{error:?}"))?
+    );
+    assert!(
+        store
+            .restore(
+                &context,
+                &output,
+                gateway_provider_protocol::replay::ReplayTransport::Messages,
+                1
+            )
+            .map_err(|error| format!("{error:?}"))?
             .is_some()
     );
     let mut other = context.clone();
     other.scope = "key-b".into();
     assert!(
         store
-            .restore(&other, &output, gateway_provider_protocol::replay::ReplayTransport::Messages, 1).map_err(|error| format!("{error:?}"))?
+            .restore(
+                &other,
+                &output,
+                gateway_provider_protocol::replay::ReplayTransport::Messages,
+                1
+            )
+            .map_err(|error| format!("{error:?}"))?
             .is_none()
     );
     let tampered_value = json!({"id":"rs_resp_native_0","type":"reasoning","summary":[{"type":"summary_text","text":"thought"}]});
     let tampered = [
-        source(&tampered_value),
+        source(&tampered_value)?,
         source(
             &json!({"id":"msg_resp_native_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"tampered"}]}),
-        ),
+        )?,
     ];
     assert!(
         store
-            .restore(&context, &tampered, gateway_provider_protocol::replay::ReplayTransport::Messages, 1).map_err(|error| format!("{error:?}"))?
+            .restore(
+                &context,
+                &tampered,
+                gateway_provider_protocol::replay::ReplayTransport::Messages,
+                1
+            )
+            .map_err(|error| format!("{error:?}"))?
             .is_none()
     );
     assert!(
@@ -439,7 +426,8 @@ fn native_replay_is_scoped_complete_expiring_and_never_publicly_signed() -> Resu
                 &output,
                 gateway_provider_protocol::replay::ReplayTransport::Messages,
                 1_800_000
-            ).map_err(|error| format!("{error:?}"))?
+            )
+            .map_err(|error| format!("{error:?}"))?
             .is_none()
     );
     assert!(!json!(output).to_string().contains("private"));
@@ -469,23 +457,26 @@ fn lithos_rung_windows_recover_independently() {
     assert!(!waits.claim(1, false));
 }
 #[test]
-fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary() {
+fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary()
+-> Result<(), String> {
     let embedding = gateway_provider_services::extras::prepare_embeddings(
         &json!({"model":"voyage-4-large","input":["hello"],"dimensions":256}),
         &options(),
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(
         scalar(&embedding.body),
         json!({"model":"voyage-4-large","input":"hello","input_type":"document","output_dimension":256,"output_dtype":"float","truncation":true})
     );
     assert_eq!(embedding.url, "https://api.voyageai.com/v1/embeddings");
-    assert!(gateway_provider_services::extras::parse_embeddings(&json!({"input":"x"}), true).is_err());
+    assert!(
+        gateway_provider_services::extras::parse_embeddings(&json!({"input":"x"}), true).is_err()
+    );
     let system = gateway_provider_services::extras::prepare_systemone(
         &json!({"state":{},"questions":{"go":{"type":"noul"}}}),
         &options(),
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert_eq!(scalar(&system.body)["model"], "~typesafe/jev-latest");
     assert_eq!(system.url, "https://openrouter.ai/api/v1/systemone");
     let image = gateway_provider_images::extras::prepare_image(
@@ -494,7 +485,7 @@ fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary
         true,
         "request",
     )
-    .unwrap();
+    .map_err(|error| format!("{error:?}"))?;
     assert!(image.codex_only);
     assert_eq!(
         scalar_source(&image.responses)["tools"][0]["model"],
@@ -510,6 +501,7 @@ fn additional_inference_routes_have_provider_payloads_and_image_billing_boundary
         )
         .is_err()
     );
+    Ok(())
 }
 #[test]
 fn chat_tool_calls_null_is_absent_in_buffered_responses() {
@@ -602,16 +594,19 @@ fn direct_paid_and_synthetic_pins_preserve_catalog_admission() -> Result<(), Str
         surplus_configured: true,
         openlux_configured: true,
         surplus_catalog: Some(vec![
-            gateway_core::source_json::SourceJson::from_serializable(&surplus).unwrap(),
+            gateway_core::source_json::SourceJson::from_serializable(&surplus)
+                .map_err(|error| format!("{error:?}"))?,
         ]),
         openlux_catalog: Some(vec![
-            gateway_core::source_json::SourceJson::from_serializable(&openlux).unwrap(),
+            gateway_core::source_json::SourceJson::from_serializable(&openlux)
+                .map_err(|error| format!("{error:?}"))?,
         ]),
         allowed_paid_providers: None,
         synthetic_hop: None,
         ubiquity_enabled: true,
     };
-    let normal = gateway_provider_policy::policy::resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?;
+    let normal = gateway_provider_policy::policy::resolve_paid_route(&input)
+        .map_err(|error| format!("{error:?}"))?;
     assert_eq!(normal.providers, vec![PaidProvider::Surplus]);
     assert_eq!(
         gateway_provider_policy::policy::paid_entry(&normal),
@@ -621,10 +616,16 @@ fn direct_paid_and_synthetic_pins_preserve_catalog_admission() -> Result<(), Str
     input.openlux_enabled = false;
     input.allowed_paid_providers = Some(vec![PaidProvider::Metered]);
     input.synthetic_hop = Some(gateway_provider_policy::policy::DeepseekHop::Openlux);
-    let pinned = gateway_provider_policy::policy::resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?;
+    let pinned = gateway_provider_policy::policy::resolve_paid_route(&input)
+        .map_err(|error| format!("{error:?}"))?;
     assert_eq!(pinned.providers, vec![PaidProvider::Metered]);
     input.ubiquity_enabled = false;
-    assert!(gateway_provider_policy::policy::resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?.providers.is_empty());
+    assert!(
+        gateway_provider_policy::policy::resolve_paid_route(&input)
+            .map_err(|error| format!("{error:?}"))?
+            .providers
+            .is_empty()
+    );
 
     Ok(())
 }

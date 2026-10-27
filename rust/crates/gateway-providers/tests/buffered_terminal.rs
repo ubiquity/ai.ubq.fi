@@ -1,10 +1,10 @@
 use gateway_core::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_provider_protocol::types::DecodePlan;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_protocol::types::ResponseDecode;
 use gateway_provider_response::response::decode_response;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
-use gateway_provider_protocol::types::Headers;
-use gateway_provider_protocol::types::ClientSurface;
-use gateway_provider_protocol::types::ResponseDecode;
-use gateway_provider_protocol::types::DecodePlan;
 use serde_json::{Value, json};
 
 fn plan(stream: bool) -> DecodePlan {
@@ -154,7 +154,8 @@ fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
 }
 
 #[test]
-fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
+fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() -> Result<(), String>
+{
     let terminal = completed();
     for stream in [false, true] {
         let plan = plan(stream);
@@ -169,7 +170,7 @@ fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
             &Headers::new(),
             &frames(std::slice::from_ref(&terminal)),
         )
-        .unwrap();
+        .map_err(|error| format!("{error:?}"))?;
         assert_eq!(decoded.status, 200);
         assert_eq!(decoded.terminal, Some(SemanticTerminal::Completed));
         assert_eq!(scalar(&decoded.body), terminal["response"]);
@@ -184,6 +185,7 @@ fn successful_codex_without_media_type_uses_strict_sse_in_both_client_modes() {
             }
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -210,7 +212,7 @@ fn absent_codex_media_type_never_accepts_non_sse_or_missing_terminal_as_completi
 }
 
 #[test]
-fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
+fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() -> Result<(), String> {
     for status in [199, 300, 400, 403, 429, 500] {
         assert!(!gateway_provider_stream::response::is_event_stream(
             UpstreamProvider::ChatgptCodex,
@@ -223,7 +225,11 @@ fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
         UpstreamProvider::Surplus,
         UpstreamProvider::Cerebras,
     ] {
-        assert!(!gateway_provider_stream::response::is_event_stream(provider, 200, &Headers::new()));
+        assert!(!gateway_provider_stream::response::is_event_stream(
+            provider,
+            200,
+            &Headers::new()
+        ));
     }
     let json_headers = Headers::from([("Content-Type".into(), "application/json".into())]);
     assert!(!gateway_provider_stream::response::is_event_stream(
@@ -232,8 +238,10 @@ fn missing_media_type_is_inferred_only_for_successful_fixed_codex_protocol() {
         &json_headers
     ));
     let body = br#"{"error":{"code":"quota_exhausted","message":"unchanged"}}"#;
-    let decoded = decode_response(&plan(true), 429, &Headers::new(), body).unwrap();
+    let decoded = decode_response(&plan(true), 429, &Headers::new(), body)
+        .map_err(|error| format!("{error:?}"))?;
     assert_eq!(decoded.status, 429);
     assert_eq!(decoded.raw_body, Some(body.to_vec()));
     assert_eq!(decoded.terminal, Some(SemanticTerminal::Error));
+    Ok(())
 }

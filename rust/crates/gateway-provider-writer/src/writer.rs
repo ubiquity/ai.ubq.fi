@@ -1,9 +1,9 @@
-use gateway_provider_source::source as s;
-use gateway_provider_source::types::ChatProfile;
-use gateway_provider_protocol::types::DecodePlan;
-use gateway_provider_events::event::ProviderEvent;
 use gateway_core::lifecycle::SemanticTerminal;
 use gateway_core::source_json::SourceJson;
+use gateway_provider_events::event::ProviderEvent;
+use gateway_provider_protocol::types::DecodePlan;
+use gateway_provider_source::source as s;
+use gateway_provider_source::types::ChatProfile;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -19,7 +19,6 @@ struct Active {
     refusal_part: Option<usize>,
 }
 
-
 #[derive(Clone, Debug, Default)]
 struct Call {
     id: String,
@@ -28,7 +27,6 @@ struct Call {
     index: Option<usize>,
     item_id: String,
 }
-
 
 #[derive(Clone, Debug)]
 pub struct ResponseWriter {
@@ -44,11 +42,12 @@ pub struct ResponseWriter {
     pub terminal: Option<SemanticTerminal>,
 }
 
-
-pub fn envelope(plan: &DecodePlan, status: &str) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok(gateway_provider_protocol::source_echo::envelope(plan, status)?)
+pub fn envelope(
+    plan: &DecodePlan,
+    status: &str,
+) -> Result<SourceJson, gateway_core::error::GatewayError> {
+    gateway_provider_protocol::source_echo::envelope(plan, status)
 }
-
 
 pub fn finish_disposition(
     reason: Option<&str>,
@@ -72,7 +71,6 @@ pub fn finish_disposition(
     }
 }
 
-
 impl ResponseWriter {
     pub fn new(plan: DecodePlan) -> Self {
         Self {
@@ -93,7 +91,7 @@ impl ResponseWriter {
             return Ok(vec![]);
         }
         self.started = true;
-    Ok(vec![
+        Ok(vec![
             gateway_provider_protocol::source_echo::response_event(
                 "response.created",
                 envelope(&self.plan, "in_progress")?,
@@ -103,9 +101,12 @@ impl ResponseWriter {
                 envelope(&self.plan, "in_progress")?,
             )?,
         ])
-}
+    }
 
-    fn allocate(&mut self, kind: &'static str) -> Result<Active, gateway_core::error::GatewayError> {
+    fn allocate(
+        &mut self,
+        kind: &'static str,
+    ) -> Result<Active, gateway_core::error::GatewayError> {
         let index = self.output.len();
         let prefix = if kind == "reasoning" { "rs" } else { "msg" };
         let id = format!("{prefix}_{}_{}", self.plan.response_id, index);
@@ -116,7 +117,7 @@ impl ResponseWriter {
         };
         item["status"] = json!("in_progress");
         self.output.push(s::scalar_json(&item)?);
-    Ok(Active {
+        Ok(Active {
             kind,
             id,
             index,
@@ -125,14 +126,14 @@ impl ResponseWriter {
             text_part: None,
             refusal_part: None,
         })
-}
+    }
     fn added(&self, active: &Active) -> Result<ProviderEvent, gateway_core::error::GatewayError> {
-    Ok(gateway_provider_protocol::source_echo::item_event(
+        gateway_provider_protocol::source_echo::item_event(
             "response.output_item.added",
             active.index,
             self.output[active.index].clone(),
-        )?)
-}
+        )
+    }
     pub fn close(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
         let Some(active) = self.active.take() else {
             return Ok(vec![]);
@@ -167,9 +168,12 @@ impl ResponseWriter {
             active.index,
             s::scalar_json(&item)?,
         )?);
-    Ok(events)
-}
-    pub fn reasoning(&mut self, text: &str) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
+        Ok(events)
+    }
+    pub fn reasoning(
+        &mut self,
+        text: &str,
+    ) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
         if self.finished
             || text.is_empty()
             || self
@@ -195,9 +199,13 @@ impl ResponseWriter {
             active.text.push_str(text);
             events.push(ProviderEvent::responses(json!({"type":"response.reasoning_summary_text.delta","item_id":active.id,"output_index":active.index,"summary_index":0,"delta":text}))?);
         }
-    Ok(events)
-}
-    pub fn text(&mut self, text: &str, refusal: bool) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
+        Ok(events)
+    }
+    pub fn text(
+        &mut self,
+        text: &str,
+        refusal: bool,
+    ) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
         if self.finished || text.is_empty() {
             return Ok(vec![]);
         }
@@ -248,8 +256,8 @@ impl ResponseWriter {
             event["logprobs"] = json!([])
         }
         events.push(ProviderEvent::responses(event)?);
-    Ok(events)
-}
+        Ok(events)
+    }
     fn flush_pending(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
         if self.pending_reasoning.is_empty() {
             return Ok(vec![]);
@@ -257,8 +265,8 @@ impl ResponseWriter {
         let pending = std::mem::take(&mut self.pending_reasoning);
         let mut events = self.reasoning(&pending)?;
         events.extend(self.close()?);
-    Ok(events)
-}
+        Ok(events)
+    }
     pub fn tool_delta(
         &mut self,
         key: usize,
@@ -283,7 +291,8 @@ impl ResponseWriter {
         if call.id.is_empty() {
             call.id = format!("{}_call_{key}", self.plan.response_id)
         }
-        let identity = gateway_provider_tool_grammar::tools::original(&call.name, &self.plan.tool_names);
+        let identity =
+            gateway_provider_tool_grammar::tools::original(&call.name, &self.plan.tool_names);
         if !call.name.is_empty() && call.index.is_none() && !identity.custom {
             let index = self.output.len();
             let item_id = format!("fc_{}_{index}", self.plan.response_id);
@@ -311,9 +320,13 @@ impl ResponseWriter {
         {
             events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.delta","item_id":call.item_id,"output_index":index,"delta":args}))?);
         }
-    Ok(events)
-}
-    pub fn chat_chunk(&mut self, chunk: &Value, profile: ChatProfile) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
+        Ok(events)
+    }
+    pub fn chat_chunk(
+        &mut self,
+        chunk: &Value,
+        profile: ChatProfile,
+    ) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
         let mut events = self.start()?;
         if let Some(usage) = chunk.get("usage").filter(|v| !v.is_null()) {
             self.usage = gateway_provider_source::usage::chat_to_responses(usage, profile);
@@ -354,26 +367,19 @@ impl ResponseWriter {
                 );
             }
         }
-    Ok(events)
-}
-    pub fn finish(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-        if self.finished {
-            return Ok(vec![]);
-        }
-        let mut events = self.start()?;
-        events.extend(self.close()?);
-        events.extend(self.flush_pending()?);
-        let (terminal, incomplete, error) = finish_disposition(self.finish_reason.as_deref());
-        let status = match terminal {
-            SemanticTerminal::Completed => "completed",
-            SemanticTerminal::Incomplete => "incomplete",
-            _ => "failed",
-        };
+        Ok(events)
+    }
+    fn finish_calls(
+        &mut self,
+        status: &str,
+    ) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
+        let mut events = vec![];
         for call in self.calls.values_mut() {
             if call.name.is_empty() {
                 continue;
             }
-            let identity = gateway_provider_tool_grammar::tools::original(&call.name, &self.plan.tool_names);
+            let identity =
+                gateway_provider_tool_grammar::tools::original(&call.name, &self.plan.tool_names);
             let index = if let Some(index) = call.index {
                 index
             } else {
@@ -407,7 +413,12 @@ impl ResponseWriter {
                     ("item_id", s::text(&call.item_id)?),
                     ("output_index", s::scalar_json(&serde_json::json!(index))?),
                     ("call_id", s::text(&call.id)?),
-                    ("delta", s::quoted(&gateway_provider_tool_grammar::tools::custom_input(&call.args))?),
+                    (
+                        "delta",
+                        s::quoted(&gateway_provider_tool_grammar::tools::custom_input(
+                            &call.args,
+                        ))?,
+                    ),
                 ])?));
             } else {
                 events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.done","item_id":call.item_id,"output_index":index,"arguments":call.args}))?);
@@ -427,9 +438,29 @@ impl ResponseWriter {
                 item,
             )?);
         }
+        Ok(events)
+    }
+    pub fn finish(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
+        if self.finished {
+            return Ok(vec![]);
+        }
+        let mut events = self.start()?;
+        events.extend(self.close()?);
+        events.extend(self.flush_pending()?);
+        let (terminal, incomplete, error) = finish_disposition(self.finish_reason.as_deref());
+        let status = match terminal {
+            SemanticTerminal::Completed => "completed",
+            SemanticTerminal::Incomplete => "incomplete",
+            _ => "failed",
+        };
+        events.extend(self.finish_calls(status)?);
         let mut response = envelope(&self.plan, status)?;
         s::set(&mut response, "output", s::array(&self.output)?)?;
-        s::set(&mut response, "usage", s::scalar_json(&serde_json::json!(self.usage))?)?;
+        s::set(
+            &mut response,
+            "usage",
+            s::scalar_json(&serde_json::json!(self.usage))?,
+        )?;
         if let Some(reason) = incomplete {
             s::set(
                 &mut response,
@@ -441,7 +472,9 @@ impl ResponseWriter {
             s::set(
                 &mut response,
                 "error",
-                s::scalar_json(&json!({"code":error,"message":format!("Upstream stopped generating: {error}")}))?,
+                s::scalar_json(
+                    &json!({"code":error,"message":format!("Upstream stopped generating: {error}")}),
+                )?,
             )?;
         }
         let empty = terminal == SemanticTerminal::Completed
@@ -451,7 +484,9 @@ impl ResponseWriter {
             s::set(
                 &mut response,
                 "error",
-                s::scalar_json(&json!({"code":"empty_upstream_completion","message":"Upstream response completed with no translated semantic output."}))?,
+                s::scalar_json(
+                    &json!({"code":"empty_upstream_completion","message":"Upstream response completed with no translated semantic output."}),
+                )?,
             )?;
             SemanticTerminal::Failed
         } else {
@@ -462,14 +497,14 @@ impl ResponseWriter {
             SemanticTerminal::Incomplete => "response.incomplete",
             _ => "response.failed",
         };
-        events.push(gateway_provider_protocol::source_echo::response_event(kind, response)?);
+        events.push(gateway_provider_protocol::source_echo::response_event(
+            kind, response,
+        )?);
         self.terminal = Some(terminal);
         self.finished = true;
-    Ok(events)
+        Ok(events)
+    }
 }
-}
-
-
 
 pub fn anthropic_reason(reason: &str) -> String {
     match reason {

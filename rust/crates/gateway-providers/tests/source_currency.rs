@@ -1,7 +1,7 @@
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::request::prepare_request;
 use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
 use gateway_provider_source::types::ChatProfile;
+use gateway_providers::request::prepare_request;
 use serde_json::{Value, json};
 
 fn options() -> PrepareOptions {
@@ -15,26 +15,36 @@ fn options() -> PrepareOptions {
 }
 
 #[test]
-fn ba5ef_source_projection_vectors_match() {
-    let golden: Value =
-        serde_json::from_str(include_str!("fixtures/source-currency-golden.json")).unwrap();
-    for case in golden["cases"].as_array().unwrap() {
-        let projection =
-            gateway_providers::chat::project_responses(&case["raw"], "deepseek-flash", false, ChatProfile::Deepseek)
-                .unwrap();
+fn ba5ef_source_projection_vectors_match() -> Result<(), String> {
+    let golden: Value = serde_json::from_str(include_str!("fixtures/source-currency-golden.json"))
+        .map_err(|error| format!("{error:?}"))?;
+    for case in golden["cases"]
+        .as_array()
+        .ok_or("missing expected fixture value")?
+    {
+        let projection = gateway_providers::chat::project_responses(
+            &case["raw"],
+            "deepseek-flash",
+            false,
+            ChatProfile::Deepseek,
+        )
+        .map_err(|error| format!("{error:?}"))?;
         let body = scalar(&projection.body);
-        let observed = match case["select"].as_str().unwrap() {
+        let observed = match case["select"]
+            .as_str()
+            .ok_or("missing expected fixture value")?
+        {
             "reasoning" => json!(
                 body["messages"]
                     .as_array()
-                    .unwrap()
+                    .ok_or("missing expected fixture value")?
                     .iter()
                     .filter(|m| m["role"] == "assistant")
                     .map(|m| m.get("reasoning_content").cloned().unwrap_or(Value::Null))
                     .collect::<Vec<_>>()
             ),
             "tools" => {
-                json!({"tool_choice":body["tool_choice"],"names":body["tools"].as_array().unwrap().iter().map(|t|t["function"]["name"].clone()).collect::<Vec<_>>()})
+                json!({"tool_choice":body["tool_choice"],"names":body["tools"].as_array().ok_or("missing expected fixture value")?.iter().map(|t|t["function"]["name"].clone()).collect::<Vec<_>>()})
             }
             "sampling" => {
                 json!({"effort":body.get("reasoning_effort").cloned().unwrap_or(Value::Null),"temperature":body.get("temperature").cloned().unwrap_or(Value::Null),"top_p":body.get("top_p").cloned().unwrap_or(Value::Null),"warnings":projection.warnings})
@@ -43,6 +53,7 @@ fn ba5ef_source_projection_vectors_match() {
         };
         assert_eq!(observed, case["expected"], "{}", case["name"]);
     }
+    Ok(())
 }
 
 #[test]
