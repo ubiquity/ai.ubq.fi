@@ -6,6 +6,8 @@ export const MATRIX_MODELS = Object.freeze({
   claude: "claude-sonnet-4-5",
   lithos: "deepseek-ai/DeepSeek-V4.1-Flash",
   openrouter: "openai/gpt-matrix-test",
+  flash: "deepseek-v4.1-flash",
+  decision: "baseten/elephant-1:free",
 });
 export const MATRIX_KEYS = Object.freeze({
   surplus: "fixture-matrix-surplus",
@@ -20,7 +22,10 @@ const destinations = new Map([
   ["api.surplusintelligence.ai", { provider: "surplus", paths: ["/v1/responses", "/v1/chat/completions", "/v1/models"] }],
   ["api.openlux.ai", { provider: "openlux", paths: ["/v1/responses", "/v1/messages", "/v1/models", "/api/ratio_config", "/api/status", "/api/log/token"] }],
   ["api.lithosai.cloud", { provider: "lithos", paths: ["/v1/chat/completions", "/v1/models"] }],
-  ["openrouter.ai", { provider: "openrouter", paths: ["/api/v1/responses", "/api/v1/chat/completions", "/api/v1/models", "/api/v1/systemone"] }],
+  [
+    "openrouter.ai",
+    { provider: "openrouter", paths: ["/api/v1/responses", "/api/v1/chat/completions", "/api/v1/models", "/api/v1/systemone", "/api/alpha/decisions"] },
+  ],
   ["api.deepseek.com", { provider: "deepseek", paths: ["/chat/completions"] }],
 ]);
 
@@ -83,11 +88,17 @@ function models(provider) {
       has_more: false,
     };
   }
-  const ids = provider === "openrouter" ? [MATRIX_MODELS.openrouter, "typesafe/jev-fast"] : [MATRIX_MODELS[provider] ?? MATRIX_MODELS.codex];
+  let ids = [MATRIX_MODELS[provider] ?? MATRIX_MODELS.codex];
+  if (provider === "openrouter")
+    ids = [MATRIX_MODELS.openrouter, "typesafe/jev-fast", "~deepseek/deepseek-flash-latest", MATRIX_MODELS.decision, "~typesafe/jev-latest"];
+  if (provider === "surplus" || provider === "openlux") ids = [MATRIX_MODELS.codex, MATRIX_MODELS.flash];
   return {
     data: ids.map((id) => ({
       id,
       object: "model",
+      ...(provider === "openrouter" && [MATRIX_MODELS.decision, "~typesafe/jev-latest"].includes(id)
+        ? { architecture: { output_modalities: ["decisions"] } }
+        : {}),
       name: id,
       display_name: id,
       created: 1_800_000_000,
@@ -144,17 +155,43 @@ function response(provider, body) {
   };
 }
 
-function anthropic(body) {
+function anthropic(body, marker = "") {
+  const replay = marker.startsWith("fixture:matrix:replay:claude-producer-");
   return {
     id: "msg_matrix_claude",
     type: "message",
     role: "assistant",
     model: body.model,
-    content: [{ type: "text", text: "matrix answer" }],
-    stop_reason: "end_turn",
+    content: replay
+      ? [
+          { type: "thinking", thinking: "thought", signature: "private-fixture-signature" },
+          { type: "text", text: "answer" },
+          { type: "tool_use", id: "call_1", name: "read_file", input: { path: "a.txt" } },
+        ]
+      : [{ type: "text", text: "matrix answer" }],
+    stop_reason: replay ? "tool_use" : "end_turn",
     stop_sequence: null,
     usage: { input_tokens: 7, output_tokens: 3 },
   };
+}
+
+function claudeReplayParts(body, marker) {
+  const message = anthropic(body, marker);
+  return [
+    part("message_start", { type: "message_start", message: { ...message, content: [], stop_reason: null, usage: { input_tokens: 7, output_tokens: 0 } } }),
+    part("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }),
+    part("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "thought" } }),
+    part("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "private-fixture-signature" } }),
+    part("content_block_stop", { type: "content_block_stop", index: 0 }),
+    part("content_block_start", { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+    part("content_block_delta", { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "answer" } }),
+    part("content_block_stop", { type: "content_block_stop", index: 1 }),
+    part("content_block_start", { type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "call_1", name: "read_file", input: {} } }),
+    part("content_block_delta", { type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: '{"path":"a.txt"}' } }),
+    part("content_block_stop", { type: "content_block_stop", index: 2 }),
+    part("message_delta", { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 3 } }),
+    part("message_stop", { type: "message_stop" }),
+  ];
 }
 
 function replayChunks(provider, body) {
@@ -174,7 +211,13 @@ function replayChunks(provider, body) {
 }
 
 function streamParts(provider, body, wire, truncate, marker) {
+  if (provider === "surplus" && marker === "fixture:matrix:precommit-paid:paid-eof") {
+    return [
+      part(null, { type: "response.created", sequence_number: 0, response: { ...response(provider, body), status: "in_progress", output: [], usage: null } }),
+    ];
+  }
   if (wire === "chat" && marker.startsWith("fixture:matrix:replay:producer-")) return replayChunks(provider, body);
+  if (wire === "anthropic" && marker.startsWith("fixture:matrix:replay:claude-producer-")) return claudeReplayParts(body, marker);
   if (wire === "anthropic") {
     const message = anthropic(body);
     return [
@@ -243,8 +286,9 @@ function streamed(provider, body, wire, marker, context, recordEvent) {
       timer = setTimeout(
         () => {
           if (closed) return;
-          closed = true;
           for (const chunk of chunks.slice(initial)) controller.enqueue(chunk);
+          if (marker === "fixture:matrix:codex:terminal-hang") return;
+          closed = true;
           controller.close();
           finish();
         },
@@ -263,6 +307,45 @@ function streamed(provider, body, wire, marker, context, recordEvent) {
   return new Response(stream, { headers: { "content-type": "text/event-stream", "x-request-id": requestId(provider, marker) } });
 }
 
+/** Lithos really speaks Chat: its role-only chunk translates to response.created. */
+function precommitStream(request, body, marker, context, recordEvent) {
+  const base = { id: "chatcmpl_precommit_lithos", object: "chat.completion.chunk", created: 1_800_000_000, model: body.model };
+  const chunk = (delta) => part(null, { ...base, choices: [{ index: 0, delta, finish_reason: null }] });
+  let closed = false;
+  let timer;
+  let finish;
+  const lifetime = new Promise((resolve) => (finish = resolve));
+  const cancelled = () => {
+    if (closed) return;
+    closed = true;
+    clearTimeout(timer);
+    context.waitUntil(recordEvent({ kind: "matrix_cancelled", provider: "lithos", marker }));
+    finish();
+  };
+  request.signal.addEventListener("abort", cancelled, { once: true });
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(chunk({ role: "assistant" }));
+      if (marker.endsWith(":after-output")) controller.enqueue(chunk({ content: "committed Lithos output" }));
+      context.waitUntil(recordEvent({ kind: "matrix_precommit_ready", provider: "lithos", marker }));
+      timer = setTimeout(
+        () => {
+          if (closed) return;
+          closed = true;
+          if (marker.endsWith(":failed")) controller.enqueue(part(null, { error: { type: "server_error", message: "Controlled presemantic failure" } }));
+          if (marker.endsWith(":malformed")) controller.enqueue(new TextEncoder().encode("data: {invalid}\n\n"));
+          controller.close();
+          finish();
+        },
+        marker.endsWith(":abort") ? 60_000 : 75
+      );
+    },
+    cancel: cancelled,
+  });
+  context.waitUntil(lifetime.finally(() => request.signal.removeEventListener("abort", cancelled)));
+  return new Response(stream, { headers: { "content-type": "text/event-stream", "x-request-id": "precommit-lithos-id" } });
+}
+
 async function metadata(request, provider, url, recordEvent) {
   if (provider === "claude" && url.pathname === "/v1/organizations/workspaces") {
     if (!credentialMatches(request, provider, false)) return new Response(null, { status: 401 });
@@ -274,7 +357,7 @@ async function metadata(request, provider, url, recordEvent) {
   if (url.pathname === "/api/ratio_config") {
     return Response.json({
       success: true,
-      data: { model_ratio: { [MATRIX_MODELS.codex]: 1, [MATRIX_MODELS.unavailable]: 1 }, model_price: {}, completion_ratio: {} },
+      data: { model_ratio: { [MATRIX_MODELS.codex]: 1, [MATRIX_MODELS.unavailable]: 1, [MATRIX_MODELS.flash]: 1 }, model_price: {}, completion_ratio: {} },
     });
   }
   if (url.pathname !== "/api/log/token") return null;
@@ -382,6 +465,12 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
   if (request.method !== "POST") return null;
   const body = await request.clone().json();
   if (!isObject(body)) return null;
+  if (provider === "openrouter" && url.pathname === "/api/alpha/decisions") {
+    if (!credentialMatches(request, provider, false)) return new Response(null, { status: 401 });
+    if (![MATRIX_MODELS.decision, "~typesafe/jev-latest"].includes(body.model)) return new Response(null, { status: 400 });
+    await recordEvent({ kind: "matrix_dispatch", provider, marker: body.state, model: body.model, wire: "decisions", credential_matched: true });
+    return Response.json({ answers: { ready: 0.9 }, usage: { input_tokens: 7, output_tokens: 3, cost: 0.01 }, trace: body.trace });
+  }
   if (provider === "openrouter" && url.pathname === "/api/v1/systemone") return compactionDecisions(request, body, recordEvent);
   const marker = markerIn(body);
   if (!marker) return null;
@@ -411,6 +500,18 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
   if (provider === "lithos" && marker === "fixture:matrix:compaction:failure") {
     return Response.json({ error: { type: "rate_limit_error", message: "Controlled compaction fallback rung" } }, { status: 429 });
   }
+  if (provider === "lithos" && marker.startsWith("fixture:matrix:lithos:stream-refusal")) {
+    return Response.json(
+      { error: { type: "rate_limit_error", code: "tokens_exhausted", message: "wait" } },
+      { status: 429, headers: { "x-should-retry": "false", "retry-after-ms": "5000" } }
+    );
+  }
+  if (provider === "openrouter" && marker.startsWith("fixture:matrix:precommit-paid:")) {
+    return Response.json({ error: { type: "rate_limit_error", message: "Controlled direct capacity refusal" } }, { status: 429 });
+  }
+  if (provider === "surplus" && marker === "fixture:matrix:precommit-paid:capacity") {
+    return Response.json({ error: { type: "insufficient_balance", message: "Controlled paid capacity refusal" } }, { status: 402 });
+  }
   if (marker.endsWith(":transient")) return Response.json({ error: { type: "server_error", message: "Controlled matrix transient failure" } }, { status: 503 });
   if (marker.endsWith(":unavailable"))
     return Response.json({ detail: `The '${body.model}' model is not supported when using Codex with a ChatGPT account.` }, { status: 400 });
@@ -431,8 +532,11 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
       created_at: Math.floor(Date.now() / 1000),
     });
   }
+  if (provider === "lithos" && (marker.startsWith("fixture:matrix:precommit:") || marker.startsWith("fixture:matrix:precommit-paid:"))) {
+    return precommitStream(request, body, marker, context, recordEvent);
+  }
   if (body.stream === true || provider === "codex") return streamed(provider, body, wire, marker, context, recordEvent);
-  return Response.json(wire === "chat" ? completion(provider, body, marker) : wire === "anthropic" ? anthropic(body) : response(provider, body), {
+  return Response.json(wire === "chat" ? completion(provider, body, marker) : wire === "anthropic" ? anthropic(body, marker) : response(provider, body), {
     headers: { "x-request-id": requestId(provider, marker) },
   });
 }

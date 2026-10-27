@@ -9,7 +9,7 @@ use gateway_admin_runtime::{
     claude_generation::StateSnapshot,
 };
 use gateway_auth::types::AuthHost;
-use gateway_catalog_runtime::host::{
+use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };

@@ -275,12 +275,16 @@ fn openrouter(raw: &SourceJson) -> Option<SourceJson> {
                 ])
             })
         });
-    Some(object(vec![
+    let mut row = object(vec![
         ("id", json(&id)),
         ("context_window_tokens", json(&context)),
         ("max_context_window_tokens", json(&widest)),
         ("reasoning", json(&reasoning)),
-    ]))
+    ]);
+    if let Some(modalities) = gateway_decision_protocol::catalog::output_modalities(raw) {
+        set(&mut row, "output_modalities", json(&modalities));
+    }
+    Some(row)
 }
 fn observed_flag(raw: &SourceJson, p: &str) -> Option<bool> {
     flag(path(raw, p).as_ref().and_then(|v| get(v, "supported")))
@@ -461,7 +465,7 @@ pub fn parse_page(
     };
     Ok((models, next))
 }
-pub(crate) fn withdraw_stale_reasoning(models: &mut [SourceJson]) {
+pub fn withdraw_stale_reasoning(models: &mut [SourceJson]) -> Result<(), GatewayError> {
     for model in models {
         if let Some(fields) = source::entries(model) {
             *model = source::object_keys(
@@ -477,10 +481,10 @@ pub(crate) fn withdraw_stale_reasoning(models: &mut [SourceJson]) {
                         .any(|s| same(key, s))
                     })
                     .collect(),
-            )
-            .expect("provider model fields");
+            )?;
         }
     }
+    Ok(())
 }
 fn normalize_key(raw: &JsString16) -> JsString16 {
     let lower = gateway_core::js_string_case::lowercase_source(&js_trim_source(raw));

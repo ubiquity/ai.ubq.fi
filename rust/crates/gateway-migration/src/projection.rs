@@ -49,7 +49,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     }
     if row.record.value_encoding != gateway_core::value::ValueEncoding::Json {
         if quota_family(p) {
-            gateway_claude_runtime::quota::parse_record(&row.record, 0)?;
+            gateway_claude_usage_quota::parse_record(&row.record, 0)?;
             return Ok(());
         }
         if retained_typed(p) && known(p) {
@@ -94,7 +94,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             ));
         }
     } else if quota_family(p) {
-        gateway_claude_runtime::quota::parse_record(&row.record, 0)?;
+        gateway_claude_usage_quota::parse_record(&row.record, 0)?;
     } else if starts(p, &["uos_ai", "claude_code_accounts"]) {
         gateway_admin_runtime::claude::parse_roster(&v)?;
     } else if starts(p, &["uos_ai", "auth", "users"]) {

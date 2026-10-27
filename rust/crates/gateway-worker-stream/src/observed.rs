@@ -12,7 +12,7 @@ use gateway_core::lifecycle::{
 use worker::wasm_bindgen_futures::JsFuture;
 use worker::{Context, Response, ResponseBody};
 
-use super::outbound::{Cancellation, Deadline};
+use crate::control::StreamControl;
 
 pub type FinishFuture = Pin<Box<dyn Future<Output = ()>>>;
 pub type FinishHook = Box<dyn FnOnce(TransportObservation) -> FinishFuture>;
@@ -68,23 +68,23 @@ impl ObservationHandle {
 /// One outgoing body with one finalization hook. It never clones/tees the body.
 /// Finalization uses waitUntil but must leave durable pending state recoverable
 /// when the platform's post-disconnect lifetime expires.
-pub struct ObservedStream<S> {
+pub struct ObservedStream<S, C: StreamControl> {
     source: S,
     observation: ObservationHandle,
     context: Rc<Context>,
-    cancellation: Rc<Cancellation>,
-    _deadline: Option<Deadline>,
+    cancellation: Rc<C>,
+    _deadline: Option<C::Deadline>,
     finish: Option<Rc<FinishSignal>>,
     native_pipe: bool,
 }
 
-impl<S> ObservedStream<S> {
+impl<S, C: StreamControl> ObservedStream<S, C> {
     pub fn new(
         source: S,
         observation: ObservationHandle,
         context: Rc<Context>,
-        cancellation: Rc<Cancellation>,
-        deadline: Option<Deadline>,
+        cancellation: Rc<C>,
+        deadline: Option<C::Deadline>,
         finish: FinishHook,
     ) -> Self {
         let signal = Rc::new(FinishSignal {
@@ -142,7 +142,7 @@ impl<S> ObservedStream<S> {
     }
 }
 
-impl<S> ObservedStream<S>
+impl<S, C: StreamControl> ObservedStream<S, C>
 where
     S: Stream<Item = worker::Result<Vec<u8>>> + Unpin + 'static,
 {
@@ -198,7 +198,7 @@ where
     }
 }
 
-impl<S> Stream for ObservedStream<S>
+impl<S, C: StreamControl> Stream for ObservedStream<S, C>
 where
     S: Stream<Item = worker::Result<Vec<u8>>> + Unpin,
 {
@@ -241,7 +241,7 @@ where
     }
 }
 
-impl<S> Drop for ObservedStream<S> {
+impl<S, C: StreamControl> Drop for ObservedStream<S, C> {
     fn drop(&mut self) {
         if self.finish.is_some() {
             self.cancellation.abort();
@@ -252,12 +252,20 @@ impl<S> Drop for ObservedStream<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{FinishSignal, ObservationHandle, constructor_result};
+    use futures_util::task::AtomicWaker;
+    use gateway_core::lifecycle::{
+        BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
+    };
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
     use std::task::{Wake, Waker};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
     #[derive(Default)]
     struct WakeCount(AtomicUsize);
     impl Wake for WakeCount {

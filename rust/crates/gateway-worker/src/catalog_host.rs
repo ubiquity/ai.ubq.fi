@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
-use gateway_catalog_runtime::host::{
+use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
     CredentialPublication, ProviderBinding,
 };

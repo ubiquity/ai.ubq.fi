@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-claude-usage-protocol.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-admin-keys.workspace = true
 gateway-core = { path = "../gateway-core" }

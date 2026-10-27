@@ -1,0 +1,80 @@
+{
+  "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
+  "files": {
+    "fixture-loader.ts": "0cacd7ec5fd8ed0fc3926e97e926c18be37d4bb5297e15adb8c44cd9e6e9d182",
+    "source-sanitize.ts.txt": "3d24079e3650dab08a7e722b59bc7432561bcadb921f6bf761745a784ca0d18a",
+    "source-constants.ts.txt": "8f3a1d1e613efcacd2099507de36f58a6e3c257560d226061f96272e04c8409a",
+    "source-admin-refresh.ts.txt": "0340d0e20c1b147bde8906122321ec65d27bfde7a7da0756e5c414180069a823",
+    "generate-admin.ts": "7ad32ca295c2788531cf0c542753317770a324a6e9a5bce20fb609573fa5fbfe",
+    "generate-wire.ts": "f396ed0d4c4eab9554f6b306db2073a7fef05cc0689eb7a62e1747d6df8a69bb",
+    "generate-history.ts": "8c3534d33f792878590f7451412d97465361b4b96657a5d7d296dc0872ce2ff4",
+    "generate.ts": "fa2b5e6f9accf8dcf8d6d39b0840a9209f88593d906ca2e16e056d954938dd36",
+    "src/utils.ts.txt": "ae4f8df8ea106e116f8788a7d122e9a0df1355fb247980073c2a1d5a4949b1cf",
+    "src/provider/claude-code-usage-schema.ts.txt": "9884485bc12ebb9e02ac079a20018fa95dcd5b6e89315eee4ab6d4bf58dcd9e0",
+    "src/provider/claude-code-usage.ts.txt": "37e697805ff94765dab60ff48a9c2859ed12a25d77fe0c24293f52c9a6b00358",
+    "src/provider/claude-capacity-history.ts.txt": "89778fc309138719ff2d5ae23a9465a1a95929f818a4693fd5f34c8dfb39b3bb",
+    "src/provider/claude-capacity-rollups.ts.txt": "d32df93b707d78c5c63b768b3ea25882f58fd469cceb72b3ebe15f0f9c1187ab",
+    "src/provider/capacity-contract.ts.txt": "a362473bfbfe005606132e828eada97ef3d3e9b415291af1eec2488edeb7c47e"
+  },
+  "execution": "bun --no-env-file --no-install tests/oracle/generate.ts; acquire shared compiler lock on shared VM",
+  "imports": "Only exact source schema/usage and extracted isRecord, sanitizer and fixed constants; no auth/KV/provider module loaded.",
+  "admin_oracle": {
+    "source_functions": [
+      "src/http.ts json/openaiError",
+      "src/admin/claude-code.ts runClaudeUsageRefresh",
+      "src/http.ts isAdminPath/withCors"
+    ],
+    "extraction": "Complete frozen function bodies; only refresh result and current-state builder are finite public fixture inputs. No real auth/KV/provider imports.",
+    "headers": "Compare actual source content-type/cache-control/retry-after; existing CORS/build/request identity composition remains a separate Worker acceptance surface.",
+    "fixture_sha256": "974a138c4b8661dbfb54d9ed90bde48388757a5f3c9d5595994d90a927a4aa0e",
+    "cases": 16
+  },
+  "fixture_input_renames": [
+    {
+      "old": "source-admin-refresh.ts",
+      "new": "source-admin-refresh.ts.txt",
+      "sha256": "0340d0e20c1b147bde8906122321ec65d27bfde7a7da0756e5c414180069a823"
+    },
+    {
+      "old": "source-constants.ts",
+      "new": "source-constants.ts.txt",
+      "sha256": "8f3a1d1e613efcacd2099507de36f58a6e3c257560d226061f96272e04c8409a"
+    },
+    {
+      "old": "source-sanitize.ts",
+      "new": "source-sanitize.ts.txt",
+      "sha256": "3d24079e3650dab08a7e722b59bc7432561bcadb921f6bf761745a784ca0d18a"
+    },
+    {
+      "old": "src/utils.ts",
+      "new": "src/utils.ts.txt",
+      "sha256": "ae4f8df8ea106e116f8788a7d122e9a0df1355fb247980073c2a1d5a4949b1cf"
+    },
+    {
+      "old": "src/provider/capacity-contract.ts",
+      "new": "src/provider/capacity-contract.ts.txt",
+      "sha256": "a362473bfbfe005606132e828eada97ef3d3e9b415291af1eec2488edeb7c47e"
+    },
+    {
+      "old": "src/provider/claude-capacity-rollups.ts",
+      "new": "src/provider/claude-capacity-rollups.ts.txt",
+      "sha256": "d32df93b707d78c5c63b768b3ea25882f58fd469cceb72b3ebe15f0f9c1187ab"
+    },
+    {
+      "old": "src/provider/claude-capacity-history.ts",
+      "new": "src/provider/claude-capacity-history.ts.txt",
+      "sha256": "89778fc309138719ff2d5ae23a9465a1a95929f818a4693fd5f34c8dfb39b3bb"
+    },
+    {
+      "old": "src/provider/claude-code-usage.ts",
+      "new": "src/provider/claude-code-usage.ts.txt",
+      "sha256": "37e697805ff94765dab60ff48a9c2859ed12a25d77fe0c24293f52c9a6b00358"
+    },
+    {
+      "old": "src/provider/claude-code-usage-schema.ts",
+      "new": "src/provider/claude-code-usage-schema.ts.txt",
+      "sha256": "9884485bc12ebb9e02ac079a20018fa95dcd5b6e89315eee4ab6d4bf58dcd9e0"
+    }
+  ],
+  "fixture_loading": "Frozen source bytes retain their SHA256 under .ts.txt names; the explicit fixture loader replays their complete bodies without adding independent programs to the application TypeScript graph. No application typecheck exclusions changed."
+}

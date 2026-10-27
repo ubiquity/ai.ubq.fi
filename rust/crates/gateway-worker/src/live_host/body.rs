@@ -1,10 +1,7 @@
 //! Streaming call answers and bounded replacement errors. No extra SDP-answer limit is invented.
 use crate::{
     host::PlatformHost,
-    transport::{
-        outbound::{Cancellation, PinnedDestination},
-        stream::{ObservationHandle, ObservedStream},
-    },
+    transport::outbound::{Cancellation, PinnedDestination},
 };
 use futures_util::StreamExt;
 use gateway_auth::provider_credentials::CodexSourceAccount;
@@ -13,6 +10,7 @@ use gateway_live_runtime::types::{
     LIVE_CALL_CAPTURE_TIMEOUT_MS, LIVE_CALL_CAPTURED_ERROR_MAX_BYTES, LIVE_CALL_HEADERS_TIMEOUT_MS,
     LIVE_CALLS_PATH, LiveCreateRequest, LiveDispatchAttempt, LiveDispatchFailure, LiveResponse,
 };
+use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{collections::BTreeMap, rc::Rc, task::Poll};
 use worker::{
     Context, Headers, Response, ResponseBody, js_sys::Uint8Array, wasm_bindgen::JsCast,

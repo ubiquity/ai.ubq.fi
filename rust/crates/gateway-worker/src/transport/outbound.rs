@@ -74,6 +74,11 @@ impl Cancellation {
         Self::from_signal(self.controller.signal())
     }
 
+    /// Direct usage retains the actual caller abort reason.
+    pub(crate) fn source_signal(&self) -> worker::web_sys::AbortSignal {
+        self.incoming.clone()
+    }
+
     /// Event-owned billing is independent of a caller's delivery cancellation.
     pub fn background() -> Result<Self, GatewayError> {
         let incoming =

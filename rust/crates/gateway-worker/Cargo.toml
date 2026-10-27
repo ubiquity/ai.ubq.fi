@@ -11,10 +11,20 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["entrypoint"]
 entrypoint = []
+fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-claude-usage-protocol.workspace = true
+gateway-claude-usage-runtime.workspace = true
+gateway-claude-usage-admin.workspace = true
+gateway-claude-usage-history-records.workspace = true
+gateway-claude-usage-quota.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-admin-kernel.workspace = true
+gateway-decision-protocol.workspace = true
+gateway-extras-contract.workspace = true
+gateway-catalog-provider.workspace = true
+gateway-worker-stream.workspace = true
 gateway-compaction.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
