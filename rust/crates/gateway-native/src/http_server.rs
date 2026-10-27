@@ -1,7 +1,6 @@
 //! Fixed authenticated HTTP companion. No generic URL, command, file or
 //! configuration ingress. Supervisor data remains readonly and source sampled.
 use crate::live_bridge::{NativeLiveHandler, NativeLiveUpgradeRequest};
-use crate::nonce_sqlite::SqliteNonceStore;
 use crate::owner_control::{NativeControlContext, NativeOwnerRenewalHandler};
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
@@ -26,6 +25,7 @@ use gateway_native_http_framing::{
     response::{disconnected, now_ms, write_error, write_json},
 };
 use gateway_native_local_transport::unix::UnixSupervisor;
+use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_native_supervisor::supervisor::{
     FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, follow_update,
 };

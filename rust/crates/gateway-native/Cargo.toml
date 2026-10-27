@@ -19,6 +19,7 @@ gateway-native-http-framing.workspace = true
 gateway-native-import-client.workspace = true
 gateway-native-import-source.workspace = true
 gateway-native-local-transport.workspace = true
+gateway-native-replay.workspace = true
 gateway-native-supervisor.workspace = true
 gateway-native-supervisor-data.workspace = true
 gateway-publication-policy.workspace = true

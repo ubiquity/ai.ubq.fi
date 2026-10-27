@@ -28,8 +28,8 @@ fn run() -> Result<(), GatewayError> {
         confinement::{NativeConfinement, enforce},
         daemon_config::NativeDaemonConfig,
         http_server::NativeHttpService,
-        nonce_sqlite::SqliteNonceStore,
     };
+    use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
     use gateway_native_supervisor::supervisor::SourceId;
     use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
     use std::{net::TcpListener, path::PathBuf};

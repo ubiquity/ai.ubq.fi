@@ -1,7 +1,6 @@
 //! Closed HTTP import adapter. Actual shared authority mints every proof; no effect implementation.
 use crate::{
     native_import::{NativeImportHandler, auth_body_error, dispatch_import},
-    nonce_sqlite::SqliteNonceStore,
     owner_control::NativeControlContext,
 };
 use gateway_auth::native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeTransportIdentity};
@@ -26,6 +25,7 @@ use gateway_native_http_framing::{
     import_head::ImportHead,
     response::{disconnected, now_ms, write_import_response},
 };
+use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
     io::{Read, Write},
     net::TcpStream,

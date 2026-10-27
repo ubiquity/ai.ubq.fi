@@ -3,7 +3,8 @@ use gateway_auth::{
     crypto::base64url, native_auth::NativeNonceAuthority, native_replay::StoreNonceAuthority,
 };
 use gateway_core::state::{AuthorityStore, RecordKey};
-use gateway_native::{daemon_config::NativeDaemonConfig, nonce_sqlite::SqliteNonceStore};
+use gateway_native::daemon_config::NativeDaemonConfig;
+use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use serde_json::json;
 use std::{
     fs,

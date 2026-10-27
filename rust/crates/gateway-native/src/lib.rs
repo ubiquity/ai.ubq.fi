@@ -47,8 +47,6 @@ pub mod managed_publication_http;
 pub mod native_import;
 #[cfg(unix)]
 pub mod native_request_process;
-#[cfg(unix)]
-pub mod nonce_sqlite;
 pub mod owner_control;
 #[cfg(unix)]
 pub mod owner_renewal;

@@ -2,7 +2,7 @@
 use gateway_auth::{
     crypto::base64url, native_auth::NativeNonceAuthority, native_replay::StoreNonceAuthority,
 };
-use gateway_native::nonce_sqlite::SqliteNonceStore;
+use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
     fs,
     path::PathBuf,

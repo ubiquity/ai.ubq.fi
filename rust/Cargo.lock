@@ -1119,6 +1119,7 @@ dependencies = [
  "gateway-native-import-client",
  "gateway-native-import-source",
  "gateway-native-local-transport",
+ "gateway-native-replay",
  "gateway-native-supervisor",
  "gateway-native-supervisor-data",
  "gateway-publication",
@@ -1186,6 +1187,17 @@ dependencies = [
  "serde_json",
  "socket2",
  "tungstenite",
+]
+
+[[package]]
+name = "gateway-native-replay"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth",
+ "gateway-core",
+ "rusqlite",
+ "serde_json",
 ]
 
 [[package]]
