@@ -1116,6 +1116,7 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-native-confinement",
+ "gateway-native-connected-io",
  "gateway-native-http-framing",
  "gateway-native-import-client",
  "gateway-native-import-source",
@@ -1150,6 +1151,13 @@ dependencies = [
  "landlock",
  "libc",
  "seccompiler",
+]
+
+[[package]]
+name = "gateway-native-connected-io"
+version = "0.1.0"
+dependencies = [
+ "ureq",
 ]
 
 [[package]]
@@ -1215,6 +1223,7 @@ dependencies = [
 name = "gateway-native-supervisor"
 version = "0.1.0"
 dependencies = [
+ "futures-executor",
  "gateway-auth",
  "gateway-core",
  "gateway-native-local-transport",

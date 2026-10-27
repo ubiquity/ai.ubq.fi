@@ -16,6 +16,7 @@ gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-publication = { path = "../gateway-publication" }
 gateway-native-confinement.workspace = true
+gateway-native-connected-io.workspace = true
 gateway-native-http-framing.workspace = true
 gateway-native-import-client.workspace = true
 gateway-native-import-source.workspace = true

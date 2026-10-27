@@ -16,6 +16,7 @@ serde_json.workspace = true
 time = { version = "=0.3.44", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
+futures-executor = "=0.3.34"
 gateway-auth.workspace = true
 
 [lints]
