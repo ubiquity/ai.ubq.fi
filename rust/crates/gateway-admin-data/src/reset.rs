@@ -3,7 +3,7 @@ use crate::{
     report::Audit,
     validate::{reference, under},
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_migration_ledger::rows::ObservedRow;
 use serde_json::Value;
 

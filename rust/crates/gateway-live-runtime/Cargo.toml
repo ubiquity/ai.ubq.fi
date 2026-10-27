@@ -7,6 +7,9 @@ publish.workspace = true
 
 [dependencies]
 gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 serde.workspace = true

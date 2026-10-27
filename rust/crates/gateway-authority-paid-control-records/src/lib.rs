@@ -1,6 +1,7 @@
 //! Ordinary paid control rows and source codecs; these records mint no routing receipt.
 pub mod model_map;
-use gateway_core::{model::ModelId, provider::PaidProvider, state::RevisionCheck};
+use gateway_contracts::{model::ModelId, provider::PaidProvider};
+use gateway_core::state::RevisionCheck;
 use gateway_providers::types::ClientSurface;
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 use serde::{Deserialize, Serialize};

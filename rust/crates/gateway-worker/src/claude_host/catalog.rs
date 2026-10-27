@@ -14,9 +14,8 @@ use gateway_catalog_provider::host::{
     ProviderBinding,
 };
 use gateway_claude_runtime::host::ClaudePoolHost;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::RevisionCheck,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_core::state::RevisionCheck;
 use gateway_schema::catalog::ProviderCatalog;
 use std::collections::BTreeMap;
 

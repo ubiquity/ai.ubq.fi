@@ -5,12 +5,12 @@ use futures_util::{
     task::AtomicWaker,
 };
 use gateway_authority_kernel::KernelOperations;
-use gateway_core::error::GatewayError;
 use gateway_routing_runtime::{
     currentness::{ObservedRoutingLease, RoutingLeaseState},
     local_work::KERNEL_RENEWAL_INTERVAL_MS,
     types::RoutingError,
 };
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
 use gateway_worker_storage::store::now_ms;

@@ -9,9 +9,10 @@ mod versioned;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable,
 };
-use gateway_core::{
-    error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_core::query::QueryStore;
 use gateway_schema::{catalog::ProviderCatalog, catalog_cache::CatalogResponse};
 use std::{
     cell::RefCell,

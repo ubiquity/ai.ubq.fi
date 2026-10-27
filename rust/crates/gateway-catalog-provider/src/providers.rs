@@ -1,9 +1,10 @@
 //! Source-observed discovery only; no guessed model capabilities or reasoning tiers.
 use crate::host::{CatalogProvider, unavailable};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
 use gateway_schema::{reasoning::js_trim_source, util::js_trim};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,7 +49,7 @@ fn integer(value: Option<SourceJson>) -> Option<i64> {
         .filter(|n| {
             n.is_finite()
                 && n.fract() == 0.0
-                && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+                && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
         })
         .map(|n| n as i64)
 }
@@ -487,7 +488,7 @@ pub fn withdraw_stale_reasoning(models: &mut [SourceJson]) -> Result<(), Gateway
     Ok(())
 }
 fn normalize_key(raw: &JsString16) -> JsString16 {
-    let lower = gateway_core::js_string_case::lowercase_source(&js_trim_source(raw));
+    let lower = gateway_source::js_string_case::lowercase_source(&js_trim_source(raw));
     let mut key = Vec::new();
     for &unit in lower.as_units() {
         if (48..=57).contains(&unit) || (97..=122).contains(&unit) {
@@ -525,7 +526,7 @@ pub fn match_openrouter<'a>(
     models: &'a [SourceJson],
     model_id: &ModelId,
 ) -> Option<&'a SourceJson> {
-    use gateway_core::js_string_case::lowercase_source;
+    use gateway_source::js_string_case::lowercase_source;
     let target = js_trim_source(model_id.as_js_string());
     if target.as_units().is_empty() {
         return None;

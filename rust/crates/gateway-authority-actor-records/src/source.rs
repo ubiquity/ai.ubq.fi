@@ -2,7 +2,7 @@
 use crate::{scope::NativeActorScope, versions};
 use gateway_auth_passport_contracts::actor_data::PassportActorDataV2;
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_core::identity::PrincipalId;
+use gateway_contracts::identity::PrincipalId;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 

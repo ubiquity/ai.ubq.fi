@@ -1,6 +1,6 @@
 use crate::PaidAttempt;
 use gateway_authority_contracts::{PAID_RETENTION_MS, add, nonnegative, validate_time};
-use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
@@ -88,7 +88,7 @@ fn valid_rollup(value: &gateway_source::source_json::SourceJson) -> bool {
 pub fn merge_source_rollup(
     existing: Option<&gateway_source::source_json::SourceJson>,
     row: &PaidAttempt,
-    model: &gateway_core::model::ModelId,
+    model: &gateway_contracts::model::ModelId,
     provider: &str,
     bucket: i64,
     now: i64,

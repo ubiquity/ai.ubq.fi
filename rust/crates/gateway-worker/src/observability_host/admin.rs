@@ -3,10 +3,10 @@ use super::RequestHost;
 use gateway_authority::native_control::actor::NativeRenewalActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_paid_backfill::PaidBackfillOperations;
-use gateway_core::error::GatewayError;
 use gateway_observability::host_types::PaidWindowBackfill;
 use gateway_observability::{host_types::CacheExperimentTarget, types::ObservabilityHost};
 use gateway_observability::{host_types::PaidBackfillReceipt, host_types::PaidRequestBackfill};
+use gateway_source::error::GatewayError;
 
 pub(super) fn auth_required() -> GatewayError {
     GatewayError::unavailable(

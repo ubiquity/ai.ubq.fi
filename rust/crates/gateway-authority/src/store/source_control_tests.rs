@@ -1,5 +1,6 @@
 use super::*;
-use gateway_core::{model::ModelId, value::PortableValue, value::ValueEncoding};
+use gateway_contracts::model::ModelId;
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};
 use std::{

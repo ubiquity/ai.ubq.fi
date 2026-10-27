@@ -2,9 +2,9 @@
 use crate::types::*;
 use serde_json::Value;
 pub fn is_claude(model: &str) -> bool {
-    is_claude_model(&gateway_core::model::ModelId::from_scalar(model))
+    is_claude_model(&gateway_contracts::model::ModelId::from_scalar(model))
 }
-pub fn is_claude_model(model: &gateway_core::model::ModelId) -> bool {
+pub fn is_claude_model(model: &gateway_contracts::model::ModelId) -> bool {
     let original = model.as_js_string().as_units();
     let without_tilde = original.strip_prefix(&[126]).unwrap_or(original);
     let prefix = "anthropic/".encode_utf16().collect::<Vec<_>>();
@@ -16,7 +16,7 @@ pub fn is_claude_model(model: &gateway_core::model::ModelId) -> bool {
 pub fn try_native_messages(
     raw: &Value,
     options: &PrepareOptions,
-) -> Option<gateway_core::source_json::SourceJson> {
+) -> Option<gateway_source::source_json::SourceJson> {
     crate::source_anthropic::native(&crate::source::generated(raw), options)
 }
 pub fn try_claude_chat(

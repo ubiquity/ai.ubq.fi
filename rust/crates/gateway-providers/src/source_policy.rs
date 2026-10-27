@@ -1,6 +1,6 @@
 //! Finite semantic observations over the same authoritative event, not a transcript conversion.
 use crate::source as s;
-use gateway_core::{source_json::SourceJson, source_serialization as json};
+use gateway_source::{source_json::SourceJson, source_serialization as json};
 fn nonempty(value: &SourceJson) -> bool {
     s::string(value).is_some_and(|text| !text.as_units().is_empty())
 }

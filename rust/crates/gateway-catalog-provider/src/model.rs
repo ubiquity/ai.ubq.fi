@@ -1,5 +1,5 @@
 //! Match the existing direct-provider priority before waiting for discovery.
-use gateway_core::{model::ModelId, provider::UpstreamProvider};
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_providers::request::canonical_source_model;
 use gateway_schema::{aliases, catalog::CatalogInput, util::js_whitespace};
 

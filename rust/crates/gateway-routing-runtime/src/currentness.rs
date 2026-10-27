@@ -6,9 +6,11 @@ use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal};
 use gateway_authority_keys as keys;
-use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, local_work::LocalWorkPhase};
+use gateway_contracts::lifecycle::SemanticTerminal;
 use gateway_core::{query::QueryStore, state::AtomicTransition, state::CommitOutcome};
 use gateway_core::{state::RevisionCheck, state::StoredRecord};
+use gateway_local_journal::local_work::LocalWorkPhase;
+use gateway_source::error::GatewayError;
 use std::cell::RefCell;
 
 /// Captured only by the two genuine constructors, never loaded from stored rows.

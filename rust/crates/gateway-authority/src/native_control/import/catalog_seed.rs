@@ -5,10 +5,11 @@ use gateway_auth::native_import::catalog_seed::{
     ImportCatalogSeedReplyData as Reply, ImportCatalogSeedRequestData as Request,
 };
 use gateway_auth_native_wire::publication_data::ImportCatalogDisposition;
-use gateway_core::query::QueryStore;
-use gateway_core::state::{
-    AtomicTransition, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
+use gateway_core::{
+    query::QueryStore,
+    state::{AtomicTransition, CommitOutcome, RevisionCheck, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_schema::{catalog_cache, catalog_store};
 use std::collections::BTreeMap;
 

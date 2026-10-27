@@ -17,17 +17,17 @@ use gateway_source::{
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-fn reset_key(hash: &str) -> gateway_core::state::RecordKey {
+fn reset_key(hash: &str) -> gateway_kv_codec::key::RecordKey {
     gateway_authority_keys::reset_usage(hash)
 }
-fn marker_key() -> gateway_core::state::RecordKey {
+fn marker_key() -> gateway_kv_codec::key::RecordKey {
     store::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"
     ]))
 }
-fn legacy_key() -> gateway_core::state::RecordKey {
+fn legacy_key() -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
 }
 fn legacy_opt_out(value: Option<&Value>) -> bool {

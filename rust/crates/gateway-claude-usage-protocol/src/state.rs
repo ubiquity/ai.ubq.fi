@@ -1,5 +1,5 @@
 use crate::snapshot::safe_time;
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};

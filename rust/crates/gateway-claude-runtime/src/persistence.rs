@@ -10,11 +10,10 @@ use gateway_auth::{
     types::AuthHost,
 };
 use gateway_claude_usage_quota::{QuotaError, QuotaState};
-use gateway_core::{
-    error::GatewayError,
-    model::ModelId,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck},
-};
+use gateway_source::error::GatewayError;
+use gateway_contracts::model::ModelId;
+use gateway_core::state::{AuthorityStore, RecordMutation, RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
 use serde_json::json;
 
 pub fn quota_key(binding: &AccountBinding) -> RecordKey {
@@ -31,7 +30,7 @@ pub(crate) fn revision<H: AuthHost>(host: &H) -> Result<String, GatewayError> {
 }
 pub(crate) fn now<H: AuthHost>(host: &H) -> Result<i64, GatewayError> {
     let now = host.now_ms();
-    if (1..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now) {
+    if (1..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now) {
         Ok(now)
     } else {
         Err(crate::unavailable("Claude source clock is invalid."))

@@ -16,9 +16,11 @@ use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHo
 use gateway_authority_paid_route::{PaidRoutingReceipt, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::types::AdmittedAccount;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
-use gateway_core::{error::GatewayError, identity::ApiKeyId, model::ModelId};
-use gateway_core::{provider::UpstreamProvider, query::QueryStore};
+use gateway_contracts::provider::UpstreamProvider;
+use gateway_contracts::{identity::ApiKeyId, model::ModelId};
+use gateway_core::query::QueryStore;
 use gateway_providers::{policy::LithosWindows, policy::WaitBudget, types::PreparedClaudeOrdinary};
+use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};
 
 pub struct RoutingSession<S, I, C, H> {
@@ -51,13 +53,13 @@ impl<
         &self.plan.model
     }
     /// Pricing metadata from this genuine plan; policy stays with the usage owner.
-    pub fn surplus_billing(&self) -> Option<&gateway_core::source_json::SourceJson> {
+    pub fn surplus_billing(&self) -> Option<&gateway_source::source_json::SourceJson> {
         self.plan.paid.surplus_billing.as_ref()
     }
-    pub fn original_source(&self) -> &gateway_core::source_json::SourceJson {
+    pub fn original_source(&self) -> &gateway_source::source_json::SourceJson {
         self.input.original_source()
     }
-    pub fn original_context(&self) -> &gateway_core::identity::RequestContext {
+    pub fn original_context(&self) -> &gateway_contracts::identity::RequestContext {
         &self.input.context
     }
     pub fn elapsed_wait_ms(&self) -> i64 {
@@ -402,7 +404,7 @@ impl<
     }
     pub(crate) fn paid_context(
         &self,
-        provider: gateway_core::provider::PaidProvider,
+        provider: gateway_contracts::provider::PaidProvider,
         synthetic: bool,
     ) -> RoutingResult<PaidRequestContext> {
         let mut body = self.input.raw.clone();
@@ -412,8 +414,8 @@ impl<
             body,
             surface: self.input.surface,
             synthetic_hop: synthetic.then_some(match provider {
-                gateway_core::provider::PaidProvider::Surplus => PaidSyntheticHop::Surplus,
-                gateway_core::provider::PaidProvider::Metered => PaidSyntheticHop::Openlux,
+                gateway_contracts::provider::PaidProvider::Surplus => PaidSyntheticHop::Surplus,
+                gateway_contracts::provider::PaidProvider::Metered => PaidSyntheticHop::Openlux,
             }),
         })
     }
@@ -472,7 +474,7 @@ pub(crate) async fn reserve_original<
     C: AuthorityClock + Clone + 'static,
 >(
     principal: &gateway_auth::types::AuthPrincipal,
-    context: &gateway_core::identity::RequestContext,
+    context: &gateway_contracts::identity::RequestContext,
     row: &mut Journal,
     store: &S,
     tokens: &I,

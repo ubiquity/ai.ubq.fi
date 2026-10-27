@@ -1,5 +1,5 @@
 //! Trusted platform collation only; alias policy remains in the shared Rust resolver.
-use gateway_core::{error::GatewayError, js_string::JsString16};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_schema::aliases::SourceStringCollator;
 use std::{
     cmp::Ordering,
@@ -75,8 +75,8 @@ mod tests {
         assert!(std::sync::Arc::ptr_eq(&left, &right));
         assert!(
             left.compare(
-                &gateway_core::js_string::JsString16::from_units(vec![0xd800]),
-                &gateway_core::js_string::JsString16::from_utf8("other"),
+                &gateway_source::js_string::JsString16::from_units(vec![0xd800]),
+                &gateway_source::js_string::JsString16::from_utf8("other"),
             )
             .is_err()
         );

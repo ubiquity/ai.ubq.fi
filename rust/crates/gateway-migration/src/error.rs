@@ -1,6 +1,8 @@
 //! Named migration failure carrier. A scalar diagnostic is never the source response.
 use gateway_admin_data::report::Audit;
-use gateway_core::{error::GatewayError, source_json::SourceJson, source_serialization as source};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 
 pub enum MigrationError {
     State(GatewayError),

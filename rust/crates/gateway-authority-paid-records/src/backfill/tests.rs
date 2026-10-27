@@ -2,7 +2,7 @@ use super as values;
 use crate::PaidAttempt;
 use gateway_authority_paid_test_support::{NOW, Store, decode_json, key, request, rollup_key};
 use gateway_authority_paid_test_support::{backfill, family};
-use gateway_core::provider::PaidProvider;
+use gateway_contracts::provider::PaidProvider;
 use serde_json::json;
 #[test]
 fn rollup_race_stops_before_failed_row_and_later_success_cannot_skip_it() {

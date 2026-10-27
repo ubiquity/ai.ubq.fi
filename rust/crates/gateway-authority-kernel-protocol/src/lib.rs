@@ -2,7 +2,7 @@
 use gateway_authority_contracts::{
     DAY_MS, REQUEST_LEASE_MS, add, invalid, nonnegative, positive, text,
 };
-use gateway_core::identity::RequestId;
+use gateway_contracts::identity::RequestId;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -131,7 +131,7 @@ fn source_safe(value: &SourceJson, positive: bool) -> Option<i64> {
     (n.is_finite()
         && n.fract() == 0.0
         && n >= if positive { 1.0 } else { 0.0 }
-        && n <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+        && n <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
         .then_some(n as i64)
 }
 
@@ -202,10 +202,10 @@ impl KernelPolicy<JsString16, f64> {
         let limit = source_numeric(&get("usage_limit_requests")?)?.trunc();
         if !window.is_finite()
             || window <= 0.0
-            || window > gateway_core::identity::MAX_SAFE_INTEGER as f64
+            || window > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
             || !limit.is_finite()
             || (limit != -1.0 && limit < 0.0)
-            || limit > gateway_core::identity::MAX_SAFE_INTEGER as f64
+            || limit > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
         {
             return None;
         }

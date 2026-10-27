@@ -9,10 +9,12 @@ use gateway_authority_reset_records::{ResetMode, full_pool::SourceCreditCollatio
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_row};
+use gateway_contracts::identity::PrincipalId;
+use gateway_contracts::provider::CodexQuotaClass;
+use gateway_contracts::{identity::RequestContext, identity::RequestId};
 use gateway_core::state::StoredRecord;
-use gateway_core::{identity::PrincipalId, value::PortableValue};
-use gateway_core::{identity::RequestContext, identity::RequestId};
-use gateway_core::{provider::CodexQuotaClass, state::RecordKey};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::value::PortableValue;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::admitted};
 use gateway_routing_runtime_test_support::{authority::authority, authority::block};

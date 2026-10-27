@@ -3,10 +3,11 @@
 pub mod readback;
 use gateway_admin_runtime::claude::{self, AccountBinding, Workspace};
 use gateway_auth::types::AuthHost;
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source, state::AuthorityStore,
+    source_serialization as source,
 };
+use gateway_core::state::AuthorityStore;
 pub fn check_target_cohort(
     targeted: bool,
     original_leaf: Option<&SourceJson>,

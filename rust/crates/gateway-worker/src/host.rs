@@ -6,7 +6,7 @@ use gateway_auth_contracts::{
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::crypto;
 use gateway_worker_platform::random;
@@ -66,7 +66,7 @@ pub struct PlatformHost {
     pub env: Env,
     pub native: crate::native_host::NativeBindings,
     pub original: gateway_auth_contracts::types::AuthRequest,
-    pub request_id: gateway_core::identity::RequestId,
+    pub request_id: gateway_contracts::identity::RequestId,
 }
 
 #[derive(Clone, Copy)]

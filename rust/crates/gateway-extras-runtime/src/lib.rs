@@ -5,7 +5,8 @@ mod embeddings;
 mod idempotency;
 mod images;
 mod jobs;
-use gateway_core::{error::GatewayError, query::QueryStore};
+use gateway_source::error::GatewayError;
+use gateway_core::query::QueryStore;
 mod store;
 use gateway_extras_contract::types::{
     ExtrasHost, ExtrasRequest, ExtrasResponse, ExtrasRoute, KernelDisposition,

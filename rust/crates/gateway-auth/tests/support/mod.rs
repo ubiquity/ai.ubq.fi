@@ -4,7 +4,10 @@ use gateway_auth_contracts::{
     upstream::*,
 };
 use gateway_auth_passkeys::{passkeys::*, session_index};
-use gateway_core::state::*;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},

@@ -1,5 +1,6 @@
 mod support;
-use gateway_core::{error::GatewayError, state::StoredRecord};
+use gateway_source::error::GatewayError;
+use gateway_core::state::StoredRecord;
 use gateway_observability::{metered, types::ObservabilityHost};
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};

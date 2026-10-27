@@ -1,7 +1,7 @@
 //! Ordinary-request data views; no provider dispatch or authority is implemented here.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 macro_rules! json {
-    ({$($key:literal:$value:expr),*$(,)?})=>{$crate::source_request::value::Value::object(vec![$((gateway_core::js_string::JsString16::from_utf8($key),$crate::source_request::value::Value::from_serializable(&$value).expect("Source normalization fields serialize"))),*])};
+    ({$($key:literal:$value:expr),*$(,)?})=>{$crate::source_request::value::Value::object(vec![$((gateway_source::js_string::JsString16::from_utf8($key),$crate::source_request::value::Value::from_serializable(&$value).expect("Source normalization fields serialize"))),*])};
     ($value:expr)=>{$crate::source_request::value::Value::from_serializable(&$value).expect("Source normalization value serializes")};
 }
 pub mod cache_capability;
@@ -19,7 +19,7 @@ use self::{
     error::SourceRequestError, fields::validate_request_fields, ordinary::OrdinarySourceRequest,
     reasoning::parse_reasoning,
 };
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 
 pub const MAX_ACCEPTED_JSON_BODY_BYTES: usize = 32 * 1024 * 1024;
 

@@ -1,7 +1,7 @@
 //! Thin WebCrypto primitives. Rust authentication code owns every ceremony,
 //! key/algorithm policy, challenge, RP, origin, flags and counter decision.
 
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use worker::{
     js_sys::{Array, Function, JSON, Promise, Reflect, Uint8Array},

@@ -6,7 +6,8 @@ use gateway_admin_runtime::{
     },
 };
 use gateway_auth::types::AuthResponse;
-use gateway_core::{error::GatewayError, identity::RequestId};
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::RequestId;
 use gateway_schema::util::js_trim;
 use std::cmp::Ordering;
 use worker::{
@@ -181,7 +182,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn pricing(
         &self,
-        models: &[gateway_core::model::ModelId],
+        models: &[gateway_contracts::model::ModelId],
     ) -> Result<gateway_admin_runtime::capabilities::PricingSnapshot, GatewayError> {
         self.support.pricing(models).await
     }
@@ -263,8 +264,8 @@ impl RuntimeCapabilities for Capabilities {
     }
     fn compare_admin_labels(
         &self,
-        left: &gateway_core::js_string::JsString16,
-        right: &gateway_core::js_string::JsString16,
+        left: &gateway_source::js_string::JsString16,
+        right: &gateway_source::js_string::JsString16,
     ) -> Result<Ordering, GatewayError> {
         gateway_worker_platform::source_collator::shared().compare(left, right)
     }

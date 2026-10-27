@@ -17,10 +17,9 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use gateway_auth::crypto::sha256_hex;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::QueryStore, source_json::SourceJson,
-    state::RecordKey,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_core::query::QueryStore;
+use gateway_kv_codec::key::RecordKey;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use zeroize::Zeroizing;

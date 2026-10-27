@@ -2,7 +2,7 @@
 pub mod audit;
 pub mod selection;
 use crate::{ResetConfig, ResetMode};
-use gateway_core::identity::AccountBinding;
+use gateway_contracts::identity::AccountBinding;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;

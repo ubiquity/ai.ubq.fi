@@ -27,7 +27,7 @@ struct Receipt {
     spool_directory: String,
 }
 fn failure(message: &str) -> gateway_migration::error::MigrationError {
-    gateway_core::error::GatewayError::unavailable(message, "m20_capture_verify_invalid").into()
+    gateway_source::error::GatewayError::unavailable(message, "m20_capture_verify_invalid").into()
 }
 fn main() -> Result<(), gateway_migration::error::MigrationError> {
     assert_eq!(std::env::args_os().len(), 1, "Private input is stdin only");

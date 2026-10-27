@@ -10,13 +10,10 @@ use base64::{
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::STANDARD},
 };
 use gateway_auth::{crypto::Secret, types::AuthMethod};
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    lifecycle::SemanticTerminal,
-    query::QueryStore,
-    state::{RecordKey, RecordMutation, StoredRecord},
-};
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_contracts::lifecycle::SemanticTerminal;
+use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_extras_contract::errors::server;
 use gateway_extras_contract::types::{ExtrasHost, ExtrasProvider, ExtrasRequest, ExtrasResponse};
 use gateway_providers::extras::{self, EmbeddingsProfile};

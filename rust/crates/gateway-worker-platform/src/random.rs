@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use worker::{
     js_sys::{Function, Reflect, Uint8Array},
     wasm_bindgen::{JsCast, JsValue},

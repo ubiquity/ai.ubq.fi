@@ -6,10 +6,9 @@ use gateway_auth::{
 };
 use gateway_claude_usage_protocol::state::UsageState;
 use gateway_claude_usage_quota::QuotaState;
-use gateway_core::{
-    error::GatewayError,
-    state::{AuthorityStore, RecordKey, RecordMutation, StoredRecord},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::state::{AuthorityStore, RecordMutation, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

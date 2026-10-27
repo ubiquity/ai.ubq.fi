@@ -10,13 +10,14 @@ use gateway_auth::native_auth::NativeNonceAuthority;
 use gateway_auth::native_credentials::{NativeOwnerId, OwnerFence, parse_native_document};
 use gateway_auth::native_replay::StoreNonceAuthority;
 use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_source::js_string::JsString16;
 use gateway_core::{
-    js_string::JsString16,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    source_graph::{GraphAtom, GraphNode, SourceGraph},
-    state::*,
-    tuple_key::{KeyPart, TupleKey},
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::AtomicTransition,
+    state::CommitOutcome, state::PORTABLE_STATE_VERSION, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
 use gateway_migration::{
     engine::adopt_empty,
     graph_transport,

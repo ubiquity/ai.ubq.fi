@@ -3,11 +3,12 @@ use crate::{
     ObservabilityRuntime, records::valid_usage_rollup_source, store, types::ObservabilityHost,
 };
 use gateway_capacity_projection::scalars::trim;
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, source_usage::UsageTokens};
 use gateway_core::{
-    identity::MAX_SAFE_INTEGER, query::QueryStore, source_control::decode_source_control_record,
-    source_control::encode_source_control_record, source_usage::UsageTokens, state::RecordMutation,
-    tuple_key::KeyPart, tuple_key::TupleKey,
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::RecordMutation,
 };
+use gateway_kv_codec::{tuple_key::KeyPart, tuple_key::TupleKey};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

@@ -1,10 +1,13 @@
 //! Data-only custody of the actual private routing journal. Never mints a runtime capability.
 use crate::{journal, journal::Journal, types::CredentialFence};
 use gateway_authority_contracts::TokenSource;
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, model::ModelId};
-use gateway_core::{provider::PaidProvider, provider::UpstreamProvider};
-use gateway_core::{source_control::decode_source_control_record, state::RecordKey};
-use gateway_core::{state::StoredRecord, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
+use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use std::{collections::BTreeMap, collections::BTreeSet};
 
 fn invalid() -> GatewayError {
@@ -400,13 +403,14 @@ mod tests {
     type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
     use super::*;
 
+    use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
     use gateway_core::{
-        identity::{PrincipalId, RequestContext, RequestId},
-        local_work::{
-            LocalSemanticOutcome, LocalTerminalObservation, LocalWorkKind, LocalWorkPhase,
-            LocalWorkRecord, SOURCE_REQUEST_BINDING_VERSION,
-        },
-        state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation},
+        state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    };
+    use gateway_local_journal::{
+        local_work::LocalSemanticOutcome, local_work::LocalTerminalObservation,
+        local_work::LocalWorkKind, local_work::LocalWorkPhase, local_work::LocalWorkRecord,
+        local_work::SOURCE_REQUEST_BINDING_VERSION,
     };
     use serde_json::json;
     use std::{
@@ -470,7 +474,7 @@ mod tests {
         let writer = Writer::default();
         let (_, record) = row(false)?;
         let mut model = Journal::decode(
-            &gateway_core::source_json::SourceJson::from_serializable(&record.value)?,
+            &gateway_source::source_json::SourceJson::from_serializable(&record.value)?,
         )?;
         model.v = version;
         if version == 2 {
@@ -598,7 +602,7 @@ mod tests {
                             semantic: LocalSemanticOutcome::Incomplete,
                             reader_termination: None,
                             body: None,
-                            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                            delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                         });
                     } else {
                         row.terminal_intent = Some(Default::default());
@@ -671,7 +675,7 @@ mod tests {
                     "wrong_id" => b.1.value["request_id"] = json!("other"),
                     "wrong_key" => b.0 = journal::pending_key("other"),
                     "wrong_encoding" => {
-                        b.1.value_encoding = gateway_core::value::ValueEncoding::ProfileV2
+                        b.1.value_encoding = gateway_kv_codec::value::ValueEncoding::ProfileV2
                     }
                     "wrong_schema" => b.1.schema_version += 1,
                     _ => {
@@ -699,8 +703,8 @@ mod tests {
                 );
             }
             let unknown = TupleKey::from_scalar_parts(&[
-                gateway_core::tuple_key::ScalarKeyPart::String("uos_ai"),
-                gateway_core::tuple_key::ScalarKeyPart::String("routing_runtime"),
+                gateway_kv_codec::tuple_key::ScalarKeyPart::String("uos_ai"),
+                gateway_kv_codec::tuple_key::ScalarKeyPart::String("routing_runtime"),
             ])
             .to_record_key();
             assert!(validate_journal_rows([(&unknown, &pending.1)]).is_err());

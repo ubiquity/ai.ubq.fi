@@ -4,7 +4,7 @@ use gateway_authority_routing_evidence::capacity::{
     CapacityObservation, CapacityState, CapacityStore, CapacityWindows,
 };
 use gateway_authority_routing_records::types::RoutingState;
-use gateway_core::{identity::RoutingAccountHash, model::ModelId, provider::CodexQuotaClass};
+use gateway_contracts::{identity::RoutingAccountHash, model::ModelId, provider::CodexQuotaClass};
 use gateway_source::error::GatewayError;
 
 pub const CAPACITY_MAX_AGE_MS: i64 = 30 * gateway_authority_contracts::MINUTE_MS;

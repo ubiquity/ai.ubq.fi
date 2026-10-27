@@ -8,6 +8,9 @@ publish.workspace = true
 [dependencies]
 gateway-authority-contracts.workspace = true
 gateway-authority-keys.workspace = true
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-admin-keys.workspace = true
 gateway-admin.workspace = true

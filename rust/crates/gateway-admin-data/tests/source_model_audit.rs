@@ -1,9 +1,10 @@
 use gateway_admin_data::inventory as audit;
 use gateway_admin_data::report::Audit;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_control::encode_source_control_record,
-    source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_core::source_control::encode_source_control_record;
 use gateway_migration_ledger::rows::ObservedRow;
 use serde_json::json;
 use std::collections::BTreeMap;

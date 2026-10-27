@@ -1,13 +1,12 @@
 use crate::input::NOW;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::TupleKey,
+    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QueryStore,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::Value;
 use std::{

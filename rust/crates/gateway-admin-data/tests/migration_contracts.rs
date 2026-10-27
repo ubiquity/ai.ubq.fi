@@ -3,10 +3,8 @@ use gateway_admin_data::policy::ImportOptions;
 use gateway_admin_data::policy::Profile;
 use gateway_admin_data::policy::retention;
 use gateway_admin_data::policy::retention::Expiry;
-use gateway_core::{
-    state::{AtomicTransition, RecordMutation, StoredRecord},
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_core::state::{AtomicTransition, RecordMutation, StoredRecord};
+use gateway_kv_codec::value::{PortableValue, ValueEncoding};
 use gateway_migration_ledger::counter;
 use gateway_migration_ledger::kernel;
 use gateway_migration_ledger::rows::DAY;
@@ -389,7 +387,7 @@ fn kernel_legacy_reserved_aggregate_is_reconciled_only_from_complete_inventory()
 
 #[test]
 fn kernel_audit_rejects_reset_mismatch_and_bad_terminal_intervals()
--> Result<(), gateway_core::error::GatewayError> {
+-> Result<(), gateway_source::error::GatewayError> {
     let mut w = window();
     w["reserved_requests"] = json!(1);
     let observed = row(

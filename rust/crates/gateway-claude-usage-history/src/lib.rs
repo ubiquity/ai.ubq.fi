@@ -7,15 +7,15 @@ use gateway_claude_usage_history_records::{
     claude_history_bucket_record_source, claude_rollup_record_source, merge_source,
     object::SourceObject, point_for_observation, retain_source, types::ClaudeAcceptedObservation,
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::{QuerySelector, QueryStore},
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{RecordKey, RecordMutation},
 };
+use gateway_core::{
+    query::QuerySelector, query::QueryStore, source_control::encode_source_control_record,
+    state::RecordMutation,
+};
+use gateway_kv_codec::key::RecordKey;
 use serde_json::json;
 use store::{error, now, scan_selector, uuid};
 pub trait HistoryHost {

@@ -7,10 +7,9 @@ use gateway_admin_runtime::{
 use gateway_auth::types::AuthHost;
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_usage_quota::{QuotaObservation, QuotaState, observation::AcceptedObservation};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
-    state::RevisionCheck,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
+use gateway_core::state::RevisionCheck;
 use gateway_providers::types::{Headers, PrepareOptions};
 use gateway_schema::{catalog::ProviderCatalog, selection::ProviderSelection};
 use std::{cmp::Ordering, future::Future};

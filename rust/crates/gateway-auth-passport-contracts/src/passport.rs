@@ -122,11 +122,11 @@ impl PassportClaims {
                 .scopes
                 .iter()
                 .all(|scope| scope.encode_utf16().count() <= 500)
-            && (-gateway_core::identity::MAX_SAFE_INTEGER
-                ..=gateway_core::identity::MAX_SAFE_INTEGER)
+            && (-gateway_contracts::identity::MAX_SAFE_INTEGER
+                ..=gateway_contracts::identity::MAX_SAFE_INTEGER)
                 .contains(&self.iat)
-            && (-gateway_core::identity::MAX_SAFE_INTEGER
-                ..=gateway_core::identity::MAX_SAFE_INTEGER)
+            && (-gateway_contracts::identity::MAX_SAFE_INTEGER
+                ..=gateway_contracts::identity::MAX_SAFE_INTEGER)
                 .contains(&self.exp)
             && self.exp > now_seconds
             && self.iat <= now_seconds.saturating_add(60)

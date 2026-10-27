@@ -3,16 +3,15 @@ use crate::{
     catalog_cache::*,
     snapshot::{ModelSnapshot, SnapshotOverrides, compare_client_versions, normalize_snapshot},
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::{KeyPart, ScalarKeyPart, TupleKey},
+    query::QueryRequest, query::QuerySelector, query::QueryStore,
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
+};
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::KeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

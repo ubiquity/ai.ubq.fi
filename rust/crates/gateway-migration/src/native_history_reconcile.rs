@@ -6,7 +6,7 @@ use crate::native_capture::{NativeCapture, NativeEntry};
 use crate::native_stage::Captured;
 use crate::{GatewayError, RecordKey, invalid};
 use gateway_admin_data::inventory::AuditInventory;
-use gateway_core::tuple_key::TupleKey;
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration_ledger::rows::ObservedRow;
 use gateway_source_audit::driver::inspect_inventory;
 use std::collections::{BTreeMap, BTreeSet};

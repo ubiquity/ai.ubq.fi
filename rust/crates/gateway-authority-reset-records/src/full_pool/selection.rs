@@ -1,6 +1,6 @@
 use super::SourceResetInventory;
 use super::{CreditCandidateData, SourceCreditCollation, SourceResetCredit, declined};
-use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::{cmp::Ordering, collections::BTreeSet};
 

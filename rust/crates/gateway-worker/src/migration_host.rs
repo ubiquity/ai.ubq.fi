@@ -1,9 +1,10 @@
 //! Bounded migration bindings; full native capture is private, never a public admin body.
-use gateway_core::{error::GatewayError, query::QueryStore};
+use gateway_core::query::QueryStore;
 use gateway_migration::{
     error::MigrationError,
     operational::{NativeMigrationRequest, NativeMigrationResponse},
 };
+use gateway_source::error::GatewayError;
 #[cfg(target_arch = "wasm32")]
 use worker::js_sys;
 
@@ -19,13 +20,13 @@ struct ProfileHost;
 impl gateway_profile_values::date::SourceDateHost for ProfileHost {
     fn date_value(&self, input: Option<&serde_json::Value>) -> Result<Option<i64>, GatewayError> {
         let raw = input
-            .map(gateway_core::source_json::SourceJson::from_serializable)
+            .map(gateway_source::source_json::SourceJson::from_serializable)
             .transpose()?;
         self.source_date_value(raw.as_ref())
     }
     fn source_date_value(
         &self,
-        input: Option<&gateway_core::source_json::SourceJson>,
+        input: Option<&gateway_source::source_json::SourceJson>,
     ) -> Result<Option<i64>, GatewayError> {
         use worker::wasm_bindgen::JsCast;
         let value = input

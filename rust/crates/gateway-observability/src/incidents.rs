@@ -7,11 +7,10 @@ use crate::{
 };
 use gateway_admin_runtime::capabilities::{CaptureRequest, Context};
 use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
+use gateway_core::state::StoredRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -371,7 +370,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         input: &IncidentObservation,
     ) -> Result<IncidentIndexReceipt, GatewayError> {
         if input.observed_at_ms <= 0
-            || input.observed_at_ms > gateway_core::identity::MAX_SAFE_INTEGER
+            || input.observed_at_ms > gateway_contracts::identity::MAX_SAFE_INTEGER
         {
             return Err(store::error("Sentinel incident timestamp is invalid"));
         }

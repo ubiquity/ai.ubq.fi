@@ -17,11 +17,15 @@ use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelec
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_json, fixture_row, id, paid_request};
 use gateway_authority_test_support::{paid_reservation, paid_setup, reserve_paid, seed_policy};
-use gateway_core::{identity::PaidAttemptId, identity::PoolVersionstamp, lifecycle::BillingState};
-use gateway_core::{lifecycle::PaidTerminalState, provider::CodexQuotaClass};
-use gateway_core::{provider::PaidProvider, provider::UpstreamProvider, state::AtomicTransition};
+use gateway_contracts::{
+    identity::PaidAttemptId, identity::PoolVersionstamp, lifecycle::BillingState,
+};
+use gateway_contracts::{lifecycle::PaidTerminalState, provider::CodexQuotaClass};
+use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
+use gateway_core::state::AtomicTransition;
+use gateway_core::state::StoredRecord;
 use gateway_core::{state::AuthorityStore, state::RecordMutation, state::RevisionCheck};
-use gateway_core::{state::StoredRecord, value::PortableValue};
+use gateway_kv_codec::value::PortableValue;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::Tokens};
 use gateway_routing_runtime_test_support::{authority::admin_hash, authority::admitted};

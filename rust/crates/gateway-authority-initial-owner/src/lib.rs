@@ -4,7 +4,7 @@
 use gateway_auth::{crypto::sha256_hex, native_auth::NativeTransportIdentity};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
-use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
 use gateway_source::error::GatewayError;
 use serde::Serialize;

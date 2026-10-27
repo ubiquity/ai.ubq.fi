@@ -3,7 +3,7 @@ use gateway_auth_native_contracts::native_import::state::ImportAuthorityStateDat
 // above this crate and cannot be reconstructed by deserializing these frames.
 use gateway_auth_native_contracts::native_import::{NativeImportMetadata, NativeImportTarget};
 use gateway_auth_native_wire::control::{NATIVE_CONTROL_ERROR_MAX_BYTES, NATIVE_RENEWAL_MAX_MS};
-use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 

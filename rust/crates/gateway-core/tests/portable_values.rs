@@ -1,7 +1,5 @@
-use gateway_core::{
-    state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use serde_json::{Value, json};
 
 #[test]

@@ -16,8 +16,9 @@ use gateway_authority_reset_records::{ResetMode, ResetRecord, ResetState};
 use gateway_authority_reset_records::{manual::ManualIntent, manual::ManualResetPromotion};
 use gateway_authority_reset_records::{manual::intent_key, manual::parse_manual_intent};
 use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
-use gateway_core::{identity::AccountBinding, identity::ActiveSelection};
-use gateway_core::{identity::ActiveTransitionReason, state::AuthorityStore};
+use gateway_contracts::identity::ActiveTransitionReason;
+use gateway_contracts::{identity::AccountBinding, identity::ActiveSelection};
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 
@@ -480,14 +481,14 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let mut models = Vec::new();
             if capacity_rules::capacity_headroom_for_observation(usage, None).unwrap_or(0.0) > 0.0 {
-                models.push(gateway_core::model::ModelId::from_scalar("standard"));
+                models.push(gateway_contracts::model::ModelId::from_scalar("standard"));
             }
             for limit in &usage.additional_rate_limits {
-                let model = gateway_core::model::ModelId::from_scalar(&limit.limit_name);
+                let model = gateway_contracts::model::ModelId::from_scalar(&limit.limit_name);
                 if !matches!(
                     gateway_authority_routing_evidence::models::model_quota_class(&model),
-                    gateway_core::provider::CodexQuotaClass::Standard
-                        | gateway_core::provider::CodexQuotaClass::Unknown
+                    gateway_contracts::provider::CodexQuotaClass::Standard
+                        | gateway_contracts::provider::CodexQuotaClass::Unknown
                 ) && capacity_rules::capacity_headroom_for_observation(usage, Some(&model))
                     .unwrap_or(0.0)
                     > 0.0

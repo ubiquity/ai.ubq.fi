@@ -41,7 +41,7 @@ struct Receipt {
     credential_opened: bool,
 }
 fn failure(message: &str) -> gateway_migration::error::MigrationError {
-    gateway_core::error::GatewayError::unavailable(message, "m20_core_state_manifest_invalid")
+    gateway_source::error::GatewayError::unavailable(message, "m20_core_state_manifest_invalid")
         .into()
 }
 fn main() -> Result<(), MigrationError> {
@@ -172,7 +172,7 @@ fn execute(input: Input) -> Result<Receipt, MigrationError> {
 #[cfg(test)]
 mod tests {
     use super::{Input, execute, hash_file, write_selected};
-    use gateway_core::tuple_key::{KeyPart, TupleKey};
+    use gateway_kv_codec::tuple_key::{KeyPart, TupleKey};
     use gateway_migration::native_capture::{
         NativeCapture, NativeEntry, NativeRevision, NativeValue,
     };
@@ -270,7 +270,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         window.value = NativeValue::SourceGraphV1(
-            gateway_core::source_json::SourceJson::from_serializable(
+            gateway_source::source_json::SourceJson::from_serializable(
                 &serde_json::json!({"root":{"type":"ref","ref":0},"nodes":[{"type":"object","entries":entries}]}),
             ).unwrap(),
         );

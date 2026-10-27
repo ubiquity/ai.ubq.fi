@@ -1,6 +1,6 @@
 //! Source-bearing event-to-Chat observation; upstream parsing remains in sse.rs.
 use crate::{source as s, types::*};
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as json,
 };

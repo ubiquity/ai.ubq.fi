@@ -1,8 +1,9 @@
 //! Existing finite provider body/control transformations over source JSON.
 use crate::{source as s, types::*};
-use gateway_core::{
-    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as json,
 };
+use gateway_contracts::model::ModelId;
 use gateway_schema::source_request::{SourceField, SourceRequestDocument};
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) fn replay(input: &SourceJson) -> SourceJson {

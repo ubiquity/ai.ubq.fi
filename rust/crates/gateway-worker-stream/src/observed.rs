@@ -6,7 +6,7 @@ use std::task::{Context as PollContext, Poll};
 
 use futures_util::Stream;
 use futures_util::task::AtomicWaker;
-use gateway_core::lifecycle::{
+use gateway_contracts::lifecycle::{
     BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
 };
 use worker::wasm_bindgen_futures::JsFuture;
@@ -254,7 +254,7 @@ impl<S, C: StreamControl> Drop for ObservedStream<S, C> {
 mod tests {
     use super::{FinishSignal, ObservationHandle, constructor_result};
     use futures_util::task::AtomicWaker;
-    use gateway_core::lifecycle::{
+    use gateway_contracts::lifecycle::{
         BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
     };
     use std::sync::{

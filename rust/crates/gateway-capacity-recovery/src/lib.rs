@@ -13,7 +13,8 @@ use gateway_authority_routing_selection::{
     SelectionOperations, types::CohortProof, types::RouteSelection,
 };
 use gateway_capacity_projection::shapes;
-use gateway_core::{model::ModelId, state::AuthorityStore};
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
 use gateway_observability::{
     host_types::{CapacityAccountRef, CapacityProbe},
     types::ObservabilityHost,

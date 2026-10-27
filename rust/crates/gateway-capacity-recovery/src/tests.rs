@@ -16,7 +16,8 @@ use gateway_authority_routing_records::{types::QuotaBlock, types::QuotaBlockSour
 use gateway_authority_routing_selection::types::RouteSelection;
 use gateway_authority_routing_selection::{SelectionOperations, types::CohortProof};
 use gateway_authority_routing_signal::SignalOperations;
-use gateway_core::{identity::PoolVersionstamp, provider::CodexQuotaClass, state::StoredRecord};
+use gateway_contracts::{identity::PoolVersionstamp, provider::CodexQuotaClass};
+use gateway_core::state::StoredRecord;
 use gateway_observability::host_types::*;
 use gateway_observability_test_support::{runtime::Host, runtime::Memory, runtime::run};
 use serde_json::{Value, json};
@@ -183,7 +184,7 @@ impl ObservabilityHost for Probe {
         panic!("reset count call")
     }
 }
-fn seed(memory: &Memory, key: gateway_core::state::RecordKey, revision: &str, value: Value) {
+fn seed(memory: &Memory, key: gateway_kv_codec::key::RecordKey, revision: &str, value: Value) {
     memory
         .rows
         .borrow_mut()

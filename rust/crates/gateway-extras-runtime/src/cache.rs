@@ -1,10 +1,10 @@
 use crate::store::{check, commit, decoded, key, now, put};
 use chrono::{DateTime, SecondsFormat, Utc};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::state::{RecordKey, RecordMutation};
-use gateway_core::tuple_key::{DecodedKeyPart, TupleKey};
+use gateway_kv_codec::key::RecordKey;
+use gateway_core::state::RecordMutation;
+use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_extras_contract::errors::invalid_state;
 use gateway_extras_contract::types::ExtrasHost;
 use serde::{Deserialize, Serialize};

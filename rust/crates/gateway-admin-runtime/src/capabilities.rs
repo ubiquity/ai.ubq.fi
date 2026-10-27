@@ -1,5 +1,6 @@
 //! Finite native/provider capabilities. No URL, process, path, SQL, or Bun relay interface.
-use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 use {gateway_auth::types::AuthResponse, gateway_auth_native_wire::native_read::NativeReadRequest};
@@ -68,9 +69,9 @@ pub enum ProviderRequest {
 
 pub struct ClaudeSubmission {
     pub credential: Option<std::sync::Arc<crate::claude::source_secret::ClaudeSourceSecret>>,
-    pub label: Option<gateway_core::js_string::JsString16>,
+    pub label: Option<gateway_source::js_string::JsString16>,
     /// None means unchanged; Some(None) explicitly removes the workspace pin.
-    pub workspace_id: Option<Option<gateway_core::js_string::JsString16>>,
+    pub workspace_id: Option<Option<gateway_source::js_string::JsString16>>,
     pub account_id: Option<String>,
     pub create_new: bool,
     pub activate: bool,
@@ -83,13 +84,13 @@ pub enum ClaudeRequest {
     State,
     SetCredential(ClaudeSubmission),
     DeleteAccount {
-        account_id: Option<gateway_core::js_string::JsString16>,
+        account_id: Option<gateway_source::js_string::JsString16>,
     },
     SelectAccount {
-        account_id: gateway_core::js_string::JsString16,
+        account_id: gateway_source::js_string::JsString16,
     },
     ClearQuota {
-        account_id: Option<gateway_core::js_string::JsString16>,
+        account_id: Option<gateway_source::js_string::JsString16>,
         /// None is absent only; every present source leaf retains its type/value.
         cohort_id: Option<SourceJson>,
     },
@@ -174,8 +175,8 @@ pub trait RuntimeCapabilities {
     /// Source String.localeCompare for operator labels; an unbound collation never substitutes byte order.
     fn compare_admin_labels(
         &self,
-        _: &gateway_core::js_string::JsString16,
-        _: &gateway_core::js_string::JsString16,
+        _: &gateway_source::js_string::JsString16,
+        _: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(unavailable("admin_label_collation"))
     }

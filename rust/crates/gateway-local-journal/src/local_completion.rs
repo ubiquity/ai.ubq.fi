@@ -1,14 +1,13 @@
 //! Finite data-only local-completion patch. This never constructs a live runtime handle.
 use crate::{
-    identity::{MAX_SAFE_INTEGER, RequestContext},
-    lifecycle::DeliveryOutcome,
-    local_work::{
-        LocalSemanticOutcome, LocalTerminalObservation, LocalWorkPhase, journal_local_work,
-    },
-    source_control::decode_source_control_record,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{ScalarKeyPart, TupleKey},
+    local_work::LocalSemanticOutcome, local_work::LocalTerminalObservation,
+    local_work::LocalWorkPhase, local_work::journal_local_work,
 };
+use gateway_contracts::{
+    identity::MAX_SAFE_INTEGER, identity::RequestContext, lifecycle::DeliveryOutcome,
+};
+use gateway_core::{source_control::decode_source_control_record, state::StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;
@@ -208,11 +207,9 @@ fn invalid() -> GatewayError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        identity::{PrincipalId, RequestId},
-        source_control::encode_source_control_record,
-        value::ValueEncoding,
-    };
+    use gateway_contracts::{identity::PrincipalId, identity::RequestId};
+    use gateway_core::source_control::encode_source_control_record;
+    use gateway_kv_codec::value::ValueEncoding;
 
     // Data-factory fixtures are deliberately not evidence of a live runtime handle.
     fn fixture() -> Result<(RequestContext, SourceJson), GatewayError> {

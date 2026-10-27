@@ -2,10 +2,10 @@ use crate::types::ObservabilityHost;
 use gateway_auth::crypto::uuid_from_random;
 use gateway_core::{
     query::QueryEntry, query::QueryRequest, query::QuerySelector, query::QueryStore,
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RecordMutation, state::RevisionCheck, state::StoredRecord, tuple_key::DecodedKeyPart,
-    tuple_key::TupleKey,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 pub(crate) fn error(message: impl Into<String>) -> GatewayError {
@@ -54,7 +54,7 @@ pub(crate) fn value(row: Option<&StoredRecord>, now: i64) -> Result<Option<&Valu
 }
 pub(crate) fn now<H: ObservabilityHost>(host: &H) -> Result<i64, GatewayError> {
     let now = host.now_ms();
-    if (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now) {
+    if (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now) {
         Ok(now)
     } else {
         Err(error("Invalid observation clock"))

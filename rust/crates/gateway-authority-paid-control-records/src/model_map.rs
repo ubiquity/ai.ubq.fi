@@ -1,5 +1,5 @@
 //! Model-key object serde opts into the shared source string/object grammar.
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 use serde::{Deserializer, Serialize, Serializer, de::DeserializeOwned};
 use std::collections::BTreeMap;

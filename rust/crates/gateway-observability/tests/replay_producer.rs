@@ -3,17 +3,15 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::{QueryPage, QueryRequest, QueryStore},
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{DecodedKeyPart, TupleKey},
 };
+use gateway_core::{
+    query::{QueryPage, QueryRequest, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
+};
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_observability::{
     ObservabilityRuntime,
     host_types::BuildIdentity,

@@ -3,11 +3,9 @@ use gateway_admin_runtime::capabilities::{
     Context, MigrationImport, MigrationProfile, MigrationRequest,
 };
 use gateway_auth::types::{AuthResponse, AuthResponseBody};
-use gateway_core::{
-    error::GatewayError,
-    state::*,
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::state::StoredRecord;
+use gateway_kv_codec::value::{PortableValue, ValueEncoding};
 use gateway_migration::{
     capture::PrivateCapture,
     engine::{adopt_empty, prepare},
@@ -60,10 +58,10 @@ fn body(response: AuthResponse) -> Value {
 
 #[test]
 fn validate_renders_lone_default_model_errors_without_null_or_escape_text_substitution() {
-    use gateway_core::{
-        js_string::JsString16, source_control::encode_source_control_record,
-        source_json::SourceJson, source_serialization as source,
+    use gateway_source::{
+        js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
+    use gateway_core::source_control::encode_source_control_record;
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("source-validation.sqlite3"));
     let model_key = gateway_auth::store::key(json!(["default", "model"]));

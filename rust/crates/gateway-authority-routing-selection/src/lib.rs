@@ -19,10 +19,11 @@ use gateway_authority_routing_records::{
     codec::parse_routing_state,
     types::{ProbeCircuit, RoutingState, SubscriptionPool},
 };
-use gateway_core::{
+use gateway_contracts::{
     identity::ActiveSelection, identity::ActiveTransitionReason, model::ModelId,
-    provider::CodexQuotaClass, state::AuthorityStore,
+    provider::CodexQuotaClass,
 };
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 use types::{
@@ -169,7 +170,7 @@ impl SelectionView {
             overage: &self.overage,
         }
     }
-    fn binding(&self, slot: usize) -> gateway_core::identity::AccountBinding {
+    fn binding(&self, slot: usize) -> gateway_contracts::identity::AccountBinding {
         self.policy().binding(slot)
     }
 }

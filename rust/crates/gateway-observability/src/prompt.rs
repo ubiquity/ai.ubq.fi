@@ -2,7 +2,8 @@
 use crate::{ObservabilityRuntime, counters, store, types::ObservabilityHost};
 use gateway_auth::crypto::sha256_hex;
 use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
-use gateway_core::{query::QueryStore, state::RecordKey, state::RecordMutation};
+use gateway_core::{query::QueryStore, state::RecordMutation};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -51,7 +52,10 @@ pub struct PromptEvent {
 }
 impl PromptEvent {
     /// Map one already-extracted shared usage result; this does not parse or validate raw upstream JSON.
-    pub fn set_source_usage(&mut self, usage: Option<&gateway_core::source_usage::UsageTokens>) {
+    pub fn set_source_usage(
+        &mut self,
+        usage: Option<&gateway_contracts::source_usage::UsageTokens>,
+    ) {
         self.usage_telemetry_status = usage
             .map_or("missing", |usage| usage.status.as_str())
             .into();

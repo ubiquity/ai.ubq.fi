@@ -1,12 +1,9 @@
 use gateway_auth::crypto::{sha256_hex, uuid_from_random};
-use gateway_core::{
-    error::GatewayError,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::TupleKey,
+use gateway_source::error::GatewayError;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_extras_contract::errors::invalid_state;
 use gateway_extras_contract::types::ExtrasHost;
 use serde::{Serialize, de::DeserializeOwned};
@@ -20,7 +17,7 @@ pub(crate) fn key(parts: Value) -> RecordKey {
 
 pub(crate) fn now<H: ExtrasHost>(host: &H) -> Result<i64, GatewayError> {
     let n = host.now_ms();
-    if (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&n) {
+    if (0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&n) {
         Ok(n)
     } else {
         Err(invalid_state())
@@ -82,9 +79,9 @@ pub(crate) fn js_whitespace(c: char) -> bool {
 }
 
 /// Existing source TextEncoder boundary for hashes/encrypted embedding input, not a payload projection.
-pub(crate) fn source_utf8(text: &gateway_core::js_string::JsString16) -> String {
+pub(crate) fn source_utf8(text: &gateway_source::js_string::JsString16) -> String {
     String::from_utf16_lossy(text.as_units())
 }
-pub(crate) fn hash_source(text: &gateway_core::js_string::JsString16) -> String {
+pub(crate) fn hash_source(text: &gateway_source::js_string::JsString16) -> String {
     hash(&source_utf8(text))
 }

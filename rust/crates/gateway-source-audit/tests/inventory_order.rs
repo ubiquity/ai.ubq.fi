@@ -1,5 +1,6 @@
 use gateway_admin_data::inventory::AuditInventory;
-use gateway_core::{error::GatewayError, state::StoredRecord};
+use gateway_source::error::GatewayError;
+use gateway_core::state::StoredRecord;
 use gateway_migration_ledger::rows::ObservedRow;
 use gateway_source_audit::driver::{inspect_inventory, inspect_source_rows};
 use serde_json::{Value, json};

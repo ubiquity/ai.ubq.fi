@@ -1,5 +1,7 @@
 use futures_util::future::join_all;
-use gateway_core::{error::GatewayError, source_json::SourceJson, source_serialization as source};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use gateway_extras_contract::errors::{invalid, invalid_state};
 use gateway_extras_contract::types::{
     DispatchFailure, ExtrasDispatch, ExtrasHost, ExtrasRequest, ExtrasResponse, Headers, ImageKind,

@@ -7,8 +7,10 @@ use gateway_authority_paid_control_records::{PaidProjectionProvenance, PaidProvi
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
 use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_authority_paid_records::PaidRequest;
-use gateway_core::{provider::PaidProvider, state::AtomicTransition, state::AuthorityStore};
-use gateway_core::{state::RecordKey, state::RecordMutation, state::RevisionCheck};
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::{state::AtomicTransition, state::AuthorityStore};
+use gateway_core::{state::RecordMutation, state::RevisionCheck};
+use gateway_kv_codec::key::RecordKey;
 use gateway_providers::types::ClientSurface;
 use gateway_routing_runtime_test_support::authority::NOW;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::run};

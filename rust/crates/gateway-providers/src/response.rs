@@ -8,10 +8,8 @@ use crate::{
     usage,
     writer::{ResponseWriter, envelope, finish_disposition},
 };
-use gateway_core::{
-    error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider,
-    source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_contracts::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use serde_json::{Value, json};
 pub fn normalize_chat_completion(
     value: &Value,

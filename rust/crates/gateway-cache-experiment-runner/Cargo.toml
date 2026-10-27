@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-contracts.workspace = true
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
 gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }

@@ -2,9 +2,10 @@
 use gateway_authority_contracts::{TokenSource, invalid, text, validate_time};
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, BTreeSet};
@@ -215,10 +216,10 @@ impl<'a, S: AuthorityStore, I: TokenSource> Transaction<'a, S, I> {
     /// keys, the only allowed patch, None retention and the :pending revision.
     pub(crate) fn put_local_completed_journal(
         &mut self,
-        plan: &gateway_core::local_completion::LocalCompletedJournalPlan,
+        plan: &gateway_local_journal::local_completion::LocalCompletedJournalPlan,
         now: i64,
     ) -> Result<(), GatewayError> {
-        use gateway_core::local_completion::LocalCompletedJournalState;
+        use gateway_local_journal::local_completion::LocalCompletedJournalState;
         let journal_key = plan.journal_key();
         let pending_key = plan.pending_key();
         let journal = self

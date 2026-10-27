@@ -9,9 +9,8 @@ use gateway_authority_contracts::{
     unavailable,
 };
 use gateway_authority_keys as keys;
-use gateway_core::{
-    identity::ApiKeyId, identity::RequestId, provider::UpstreamProvider, state::AuthorityStore,
-};
+use gateway_contracts::{identity::ApiKeyId, identity::RequestId, provider::UpstreamProvider};
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 

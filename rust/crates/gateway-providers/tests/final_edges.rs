@@ -1,5 +1,5 @@
 //! Additional source boundaries: dc6be2c3 Cerebras and e706 Claude/Lithos/stream contracts.
-use gateway_core::provider::UpstreamProvider;
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_providers::{request::prepare_request, response::decode_response, types::*};
 use serde_json::{Value, json};
 fn opts() -> PrepareOptions {
@@ -172,7 +172,7 @@ fn lithos_streamed_refusal_parity_is_exposed_for_both_client_surfaces() {
         assert_eq!(decoded.status, 200, "{surface:?}");
         assert_eq!(
             decoded.terminal,
-            Some(gateway_core::lifecycle::SemanticTerminal::Failed)
+            Some(gateway_contracts::lifecycle::SemanticTerminal::Failed)
         );
         assert_eq!(decoded.headers["Content-Type"], "text/event-stream");
         assert_eq!(decoded.headers["x-should-retry"], "false");
@@ -243,7 +243,7 @@ fn image_fanout_measures_every_replayed_input_byte() {
     );
 }
 
-fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")

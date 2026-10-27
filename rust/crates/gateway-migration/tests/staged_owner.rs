@@ -1,8 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::*, source_graph::*, state::*,
-    tuple_key::TupleKey,
+    query::{QueryPage, QueryRequest, QuerySelector, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_migration::{
     graph_transport,
     native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
@@ -74,7 +77,7 @@ fn fixture() -> NativeCapture {
     capture
 }
 
-fn manifest_key() -> gateway_core::state::RecordKey {
+fn manifest_key() -> gateway_kv_codec::key::RecordKey {
     gateway_auth::store::key(json!(["uos_ai", "migration", "v3", "manifest"]))
 }
 

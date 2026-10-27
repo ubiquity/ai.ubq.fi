@@ -1,9 +1,9 @@
 //! Fixed synthetic >32MiB producer through the same real common-DO port.
 use super::{host, inputs, port, producers, support_run};
-use gateway_core::js_string::JsString16;
-use gateway_core::source_graph::{GraphAtom, SourceGraph};
+use gateway_source::js_string::JsString16;
+use gateway_source_graph::graph::{GraphAtom, SourceGraph};
 use gateway_core::state::AuthorityStore;
-use gateway_core::tuple_key::TupleKey;
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration::{
     error::MigrationError,
     graph_transport,
@@ -67,8 +67,8 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
     for index in 0..160 {
         source.entries.push(NativeEntry {
             raw_key: TupleKey::from_parts(&[
-                gateway_core::tuple_key::KeyPart::String("default".into()),
-                gateway_core::tuple_key::KeyPart::String(format!("staged-history-{index:03}")),
+                gateway_kv_codec::tuple_key::KeyPart::String("default".into()),
+                gateway_kv_codec::tuple_key::KeyPart::String(format!("staged-history-{index:03}")),
             ])?
             .sort_bytes()
             .to_vec(),

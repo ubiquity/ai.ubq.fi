@@ -66,10 +66,10 @@ pub fn generate_token(bytes: &[u8]) -> Result<Secret, GatewayError> {
     )))
 }
 
-pub fn hash_key(hash: &str) -> gateway_core::state::RecordKey {
+pub fn hash_key(hash: &str) -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["ubq_ai", "api_keys", "hash", hash]))
 }
-pub fn id_key(id: &str) -> gateway_core::state::RecordKey {
+pub fn id_key(id: &str) -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["ubq_ai", "api_keys", "id", id]))
 }
 

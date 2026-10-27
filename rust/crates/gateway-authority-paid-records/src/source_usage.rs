@@ -1,7 +1,9 @@
 //! Source recordSurplusUsage adapter over the one already-extracted usage object.
 //! It produces correlated billing input only; it does not settle or infer a terminal.
 use super::{PaidAttempt, PaidCorrelation, PaidUsage};
-use gateway_core::{identity::MAX_SAFE_INTEGER, provider::PaidProvider, source_usage::UsageTokens};
+use gateway_contracts::{
+    identity::MAX_SAFE_INTEGER, provider::PaidProvider, source_usage::UsageTokens,
+};
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 
 fn count(value: Option<u64>) -> Option<i64> {

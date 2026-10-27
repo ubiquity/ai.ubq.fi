@@ -1,13 +1,11 @@
-use gateway_core::{
-    error::GatewayError,
-    source_control::{
-        decode_source_control_record, encode_source_control_record, source_json_tree,
-    },
-    source_json::SourceJson,
-    source_serialization as source,
-    state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_core::{
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    source_control::source_json_tree, state::StoredRecord,
+};
+use gateway_kv_codec::value::{PortableValue, ValueEncoding};
 use gateway_migration_ledger::rows::ObservedRow;
 use gateway_source_audit as audit;
 use serde_json::{Value, json};
@@ -37,7 +35,7 @@ fn policies(models: &str) -> (SourceJson, SourceJson) {
             SourceJson::parse(r#"{"\ud800":1,"\udc00":2,"\ufffd":3}"#).unwrap(),
         ),
     ] {
-        fields.push((gateway_core::js_string::JsString16::from_utf8(name), value));
+        fields.push((gateway_source::js_string::JsString16::from_utf8(name), value));
     }
     (source::object_keys(fields).unwrap(), hash_policy)
 }

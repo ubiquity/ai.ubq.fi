@@ -11,10 +11,12 @@ use gateway_auth::{
     upstream::*,
     webauthn::*,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::*, source_json::SourceJson, state::*,
-    tuple_key::TupleKey, value::PortableValue,
+    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
 use serde_json::{Value, json};
 use std::{
     cell::Cell,

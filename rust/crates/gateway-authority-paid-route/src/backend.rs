@@ -2,7 +2,8 @@
 use gateway_authority_contracts::{invalid, text, validate_time};
 use gateway_core::source_control::decode_source_control_record;
 use gateway_core::{state::AtomicTransition, state::AuthorityStore, state::CommitOutcome};
-use gateway_core::{state::RecordKey, state::RevisionCheck, state::StoredRecord};
+use gateway_core::{state::RevisionCheck, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;

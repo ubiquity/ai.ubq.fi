@@ -1,12 +1,9 @@
 //! Routing policy only. Authoritative pool/credential/paid admission remains external.
 use crate::source as s;
-use gateway_core::{
-    js_string::JsString16,
-    model::ModelId,
-    provider::{PaidProvider, UpstreamProvider},
-    source_json::SourceJson,
-    source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::{model::ModelId, provider::PaidProvider, provider::UpstreamProvider};
 use serde_json::Value;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HopFailure {
@@ -401,7 +398,7 @@ pub fn paid_entry(plan: &PaidRoutingPlan) -> PaidEntry {
         PaidEntry::CodexPrimary
     }
 }
-pub fn validate_flash_effort(raw: &Value) -> Result<(), gateway_core::error::GatewayError> {
+pub fn validate_flash_effort(raw: &Value) -> Result<(), gateway_source::error::GatewayError> {
     validate_source_flash_effort(&s::generated(raw)).map_err(s::scalar_error)
 }
 pub fn validate_source_flash_effort(

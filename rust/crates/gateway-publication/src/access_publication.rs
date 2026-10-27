@@ -12,12 +12,10 @@ use gateway_auth::{
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_core::{
-    error::GatewayError,
-    identity::PoolVersionstamp,
-    state::{AuthorityStore, RecordMutation, RevisionCheck},
-};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_core::{state::AuthorityStore, state::RecordMutation, state::RevisionCheck};
 use gateway_publication_policy::control_publication::{conflict, unavailable, verify_owner};
+use gateway_source::error::GatewayError;
 use serde_json::json;
 
 /// Not deserializable from a request. A transport resolves this ID through its

@@ -9,7 +9,7 @@ use gateway_core::query::QueryStore;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-pub fn event_key(kind: &str, id: &str) -> gateway_core::state::RecordKey {
+pub fn event_key(kind: &str, id: &str) -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["uos_ai", "provider_capacity", "v1", kind, id]))
 }
 fn public_event(kind: &str, v: &Value) -> Value {

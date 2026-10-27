@@ -10,13 +10,14 @@ use crate::{
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::types::AuthResponse;
 use gateway_claude_usage_protocol::readback::quota as quota_readback;
-use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::query::QueryStore;
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 #[derive(Clone)]
 struct ActiveResponseData {
     status: u16,
-    body: gateway_core::source_json::SourceJson,
+    body: gateway_source::source_json::SourceJson,
     identity: host::BuildIdentity,
 }
 type ActiveResult = Result<ActiveResponseData, GatewayError>;
@@ -313,7 +314,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 auth: Option<Value>,
                 probes: Probes<'a>,
             }
-            let body = gateway_core::source_json::SourceJson::from_serializable(&Body {
+            let body = gateway_source::source_json::SourceJson::from_serializable(&Body {
                 status,
                 auth: evidence
                     .auth

@@ -1,4 +1,4 @@
-use gateway_core::provider::PaidProvider;
+use gateway_contracts::provider::PaidProvider;
 use gateway_providers::paid_lookup::*;
 use serde_json::{Value, json};
 

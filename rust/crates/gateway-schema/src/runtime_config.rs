@@ -3,10 +3,11 @@ use crate::{
     model_control as c, prompt_cache::compact_capabilities_source, reasoning::ModelReasoning,
     snapshot::ModelSnapshot, source_request::error::SourceRequestError,
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
 fn error(message: impl Into<String>) -> GatewayError {
     GatewayError::new(503, message, Some("runtime_config_invalid"))
 }

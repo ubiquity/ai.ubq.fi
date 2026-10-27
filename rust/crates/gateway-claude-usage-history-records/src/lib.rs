@@ -3,14 +3,12 @@ pub mod object;
 pub mod types;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::store;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::decode_source_control_record,
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{RecordKey, StoredRecord},
 };
+use gateway_core::{source_control::decode_source_control_record, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use object::SourceObject;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

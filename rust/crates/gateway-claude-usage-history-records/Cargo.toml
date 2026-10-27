@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-claude-usage-protocol.workspace = true

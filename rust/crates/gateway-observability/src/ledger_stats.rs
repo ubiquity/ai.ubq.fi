@@ -16,7 +16,7 @@ fn prefix() -> Vec<Value> {
 fn day(at: i64) -> i64 {
     at.max(0) / DAY * DAY
 }
-fn key(at: i64) -> gateway_core::state::RecordKey {
+fn key(at: i64) -> gateway_kv_codec::key::RecordKey {
     let mut p = prefix();
     p.push(json!(day(at)));
     store::key(json!(p))

@@ -1,9 +1,6 @@
-use gateway_core::{
-    identity::{PrincipalId, RequestContext, RequestId},
-    source_control,
-    tuple_key::{KeyPart, TupleKey},
-    value::ValueEncoding,
-};
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
+use gateway_core::source_control;
+use gateway_kv_codec::{tuple_key::KeyPart, tuple_key::TupleKey, value::ValueEncoding};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 
 #[test]

@@ -3,7 +3,7 @@ pub mod codec;
 pub mod slot;
 pub mod types;
 
-use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_source::error::GatewayError;
 
 fn invalid(message: &str) -> GatewayError {

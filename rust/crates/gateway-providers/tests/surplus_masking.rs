@@ -1,4 +1,4 @@
-use gateway_core::provider::UpstreamProvider;
+use gateway_contracts::provider::UpstreamProvider;
 use gateway_providers::{request::prepare_request, types::*};
 use serde_json::json;
 

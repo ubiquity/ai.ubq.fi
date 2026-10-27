@@ -13,9 +13,13 @@ use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
 use gateway_authority_routing_signal::SignalOperations;
-use gateway_core::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
-use gateway_core::{error::GatewayError, provider::UpstreamProvider, query::QueryStore};
+use gateway_contracts::provider::UpstreamProvider;
+use gateway_contracts::{
+    lifecycle::PaidTerminalState, lifecycle::SemanticTerminal, lifecycle::TransportObservation,
+};
+use gateway_core::query::QueryStore;
 use gateway_providers::{policy::HopDecision, policy::HopFailure};
+use gateway_source::error::GatewayError;
 
 impl<
     S: QueryStore + Clone,
@@ -464,7 +468,7 @@ impl<
     }
     async fn lithos_refusal(
         &self,
-        model: &gateway_core::model::ModelId,
+        model: &gateway_contracts::model::ModelId,
         failure: &AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let now = self.now()?;

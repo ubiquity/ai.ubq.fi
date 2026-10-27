@@ -42,7 +42,7 @@ impl PrivateCapture {
                 .source_git_sha
                 .bytes()
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&self.captured_at_ms)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&self.captured_at_ms)
         {
             return Err(invalid("Capture identity/version/clock is invalid"));
         }
@@ -52,7 +52,7 @@ impl PrivateCapture {
             .map(|entry| {
                 if entry.versionstamp.is_empty()
                     || entry.expires_at_ms.is_some_and(|n| {
-                        !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&n)
+                        !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&n)
                     })
                 {
                     return Err(invalid("Source revision or absolute expiry is invalid"));
@@ -121,7 +121,7 @@ fn validate_complete_binary_views(input: &SourceJson) -> Result<(), GatewayError
             let length = get("byteLength")
                 .ok_or_else(|| invalid("Full capture binary view requires explicit byteLength"))?
                 .deserialize::<f64>()?;
-            let gateway_core::value::PortableValue::Binary { bytes, .. } =
+            let gateway_kv_codec::value::PortableValue::Binary { bytes, .. } =
                 gateway_profile_source::codec::from_source_profile(input)?
             else {
                 return Err(invalid("Capture binary value is malformed"));

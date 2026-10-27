@@ -1,7 +1,7 @@
 //! Finite observations used only by the named source control audits.
 //! The complete SourceJson document remains authoritative; no model/map is
 //! replaced by a scalar view and ObservedRow's general interpretation is unchanged.
-use gateway_core::{source_json::SourceJson, source_serialization as source};
+use gateway_source::{source_json::SourceJson, source_serialization as source};
 use serde_json::Value;
 
 pub fn member(value: &SourceJson, field: &str) -> Option<SourceJson> {

@@ -64,6 +64,11 @@ members = [
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
   "crates/gateway-capacity-projection",
+  "crates/gateway-contracts",
+  "crates/gateway-kv-codec",
+  "crates/gateway-source-graph",
+  "crates/gateway-local-journal",
+  "crates/gateway-redaction",
   "crates/gateway-compaction",
   "crates/gateway-compaction-source",
   "crates/gateway-compaction-history",
@@ -192,6 +197,11 @@ worker = "=0.8.7"
 wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
 gateway-capacity-projection = { path = "crates/gateway-capacity-projection" }
+gateway-contracts = { path = "crates/gateway-contracts" }
+gateway-kv-codec = { path = "crates/gateway-kv-codec" }
+gateway-source-graph = { path = "crates/gateway-source-graph" }
+gateway-local-journal = { path = "crates/gateway-local-journal" }
+gateway-redaction = { path = "crates/gateway-redaction" }
 gateway-compaction = { path = "crates/gateway-compaction" }
 gateway-compaction-source = { path = "crates/gateway-compaction-source" }
 gateway-compaction-history = { path = "crates/gateway-compaction-history" }

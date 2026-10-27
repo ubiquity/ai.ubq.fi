@@ -2,7 +2,8 @@
 use crate::*;
 use gateway_admin_data::policy::logical_fields;
 use gateway_auth::types::AuthResponse;
-use gateway_core::{query::*, value::PortableValue};
+use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
+use gateway_kv_codec::value::PortableValue;
 use gateway_migration_ledger::rows::ObservedRow;
 use gateway_source_audit::driver as audit;
 use serde_json::json;
@@ -74,7 +75,7 @@ pub(crate) async fn source_rows<S: QueryStore>(
                 continue;
             }
             let value = if entry.record.value_encoding
-                == gateway_core::value::ValueEncoding::SourceGraphV1
+                == gateway_kv_codec::value::ValueEncoding::SourceGraphV1
             {
                 entry
                     .record
@@ -213,7 +214,7 @@ pub(crate) async fn validate<S: QueryStore>(
     #[derive(serde::Serialize)]
     struct Report<'a> {
         counts: &'a BTreeMap<&'static str, usize>,
-        errors: &'a [gateway_core::js_string::JsString16],
+        errors: &'a [gateway_source::js_string::JsString16],
         settings_present: &'a BTreeMap<&'static str, bool>,
     }
     Ok(AuthResponse::source_json(

@@ -1,5 +1,5 @@
 //! Existing finite authority host and checked scalar contracts; no store or operation grant.
-use gateway_core::{identity::MAX_SAFE_INTEGER, identity::UnixMillis};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::UnixMillis};
 use gateway_source::error::GatewayError;
 
 pub const MINUTE_MS: i64 = 60_000;

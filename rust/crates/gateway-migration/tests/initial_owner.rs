@@ -4,10 +4,8 @@ use gateway_auth::{
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
 use gateway_authority_initial_owner::*;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::*, source_graph::*, state::*,
-    tuple_key::TupleKey,
-};
+use gateway_core::{query::*, state::*};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_migration::{
     engine::{PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner},
     graph_transport,
@@ -16,6 +14,8 @@ use gateway_migration::{
 };
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_source_graph::graph::*;
 use serde_json::{Value, json};
 use std::{cell::Cell, collections::BTreeSet};
 

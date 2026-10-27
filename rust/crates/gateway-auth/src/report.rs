@@ -1,6 +1,6 @@
 //! Auth-report DATA, preserving the existing schema and repeated-cookie transport.
 use gateway_auth_contracts::types::AuthPrincipal;
-use gateway_core::identity::PrincipalId;
+use gateway_contracts::identity::PrincipalId;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 #[derive(Serialize)]

@@ -1,9 +1,10 @@
 use gateway_auth::{crypto::uuid_from_random, types::AuthHost};
+use gateway_source::error::GatewayError;
 use gateway_core::{
-    error::GatewayError,
     query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
-    state::{AuthorityStore, RecordKey, StoredRecord},
+    state::{AuthorityStore, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use serde_json::Value;
 use std::collections::BTreeSet;
 

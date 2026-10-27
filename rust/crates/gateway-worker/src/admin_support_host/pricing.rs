@@ -1,10 +1,11 @@
 //! Source OpenLux pricing projection. Metadata never authorizes inference.
 use super::{Binding, unavailable};
 use gateway_admin_runtime::capabilities::PricingSnapshot;
-use gateway_core::{
-    error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16, model::ModelId,
-    source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) enum Metadata {

@@ -18,10 +18,11 @@ use gateway_authority_routing_evidence::{
     reader::{RoutingEvidenceReader, RoutingReadMode},
 };
 use gateway_authority_routing_records::{codec::parse_routing_state, types::SubscriptionPool};
-use gateway_core::{
+use gateway_contracts::{
     identity::CredentialVersion, identity::RoutingAccountHash, identity::SubscriptionSelectionHash,
-    model::ModelId, state::AuthorityStore,
+    model::ModelId,
 };
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

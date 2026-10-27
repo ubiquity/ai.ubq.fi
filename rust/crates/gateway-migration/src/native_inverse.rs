@@ -5,10 +5,10 @@ use crate::native_capture::{
     NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native,
 };
 use crate::{digest, error::MigrationError, invalid, parts, unavailable};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::query::QueryStore;
-use gateway_core::tuple_key::TupleKey;
-use gateway_core::value::{PortableValue, ValueEncoding};
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use serde::Serialize;
 
 pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {

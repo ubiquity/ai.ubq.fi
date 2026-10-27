@@ -1,6 +1,5 @@
 //! Preserve original signed Claude Chat deltas while exposing one readable reasoning source.
-use crate::types::malformed;
-use gateway_core::error::GatewayError;
+use {crate::types::malformed, gateway_source::error::GatewayError};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug)]

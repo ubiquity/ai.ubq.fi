@@ -8,9 +8,11 @@ use gateway_authority_paid_control_records::{PaidControlConfig, PaidRoutingPolic
 use gateway_authority_paid_control_records::{PaidControlOwner, PaidProviderObservation};
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
 use gateway_authority_paid_records::PaidRequest;
-use gateway_core::provider::PaidProvider;
-use gateway_core::{state::AuthorityStore, state::RecordKey};
-use gateway_core::{state::RevisionCheck, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_contracts::provider::PaidProvider;
+use gateway_core::state::AuthorityStore;
+use gateway_core::state::RevisionCheck;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_providers::policy::PaidRoutingInput;
 use gateway_providers::{policy, policy::DeepseekHop, types::ClientSurface};
 use gateway_schema::{catalog_store, selection::ProviderSelection};
@@ -424,7 +426,7 @@ pub async fn capture_route<S: AuthorityStore>(
 pub async fn capture_original<S: AuthorityStore>(
     store: &S,
     request: &PaidRequest,
-    original: &gateway_core::identity::RequestContext,
+    original: &gateway_contracts::identity::RequestContext,
     existing: Option<&gateway_authority_paid_records::PaidReservation>,
     now: i64,
 ) -> Result<Vec<RevisionCheck>, GatewayError> {

@@ -11,9 +11,9 @@ use gateway_capacity_projection::{
 };
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
-    state::RecordKey, state::RevisionCheck, state::StoredRecord, tuple_key::TupleKey,
-    value::ValueEncoding,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::ValueEncoding};
 use gateway_observability::{
     ObservabilityRuntime, host_types::*, types::HealthProvider, types::HealthTarget,
     types::ObservabilityHost,

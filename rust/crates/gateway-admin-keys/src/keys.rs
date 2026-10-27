@@ -11,16 +11,14 @@ use gateway_auth::{
     types::{AuthHost, AuthPrincipal, AuthResponse, conflict, invalid},
 };
 use gateway_authority_api_protocol::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindow};
+use gateway_contracts::{identity::ApiKeyId, model::ModelId};
 use gateway_core::{
-    error::GatewayError,
-    identity::ApiKeyId,
-    js_string::JsString16,
-    model::ModelId,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AuthorityStore, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_profile_values::coercion::js_number;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -203,7 +201,7 @@ pub fn public_record(record: &ApiKeyRecord) -> SourceJson {
 
 fn safe_integer(value: &SourceJson) -> Option<i64> {
     let number = input::number(value)?.trunc();
-    (number.is_finite() && number.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+    (number.is_finite() && number.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
         .then_some(number as i64)
 }
 fn limit(raw: Option<&SourceJson>, default: i64) -> Result<i64, GatewayError> {
@@ -257,7 +255,8 @@ fn window(raw: Option<&SourceJson>, default: i64) -> Result<i64, GatewayError> {
                 // form its numeric grammar; it gets the same window validation error.
                 text.try_utf8().ok().and_then(|text| {
                     let n = js_number(&Value::String(text));
-                    (n.is_finite() && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64)
+                    (n.is_finite()
+                        && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
                         .then_some(n.trunc() as i64)
                 })
             } else {
@@ -310,7 +309,7 @@ async fn paid_fields<A: AdminHost>(
             -1
         } else {
             let micro = (credit * 1_000_000.0).round();
-            if micro > gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+            if micro > gateway_contracts::identity::MAX_SAFE_INTEGER as f64 {
                 return Err(invalid(
                     "paid_fallback_limit_credits must be a non-negative number or -1",
                 ));
@@ -752,7 +751,7 @@ fn change_fields(
     let previous = fields(old);
     let mut changed = input::object(Vec::new());
     for (key, value) in
-        gateway_core::source_serialization::entries(&all).expect("constructed audit fields")
+        gateway_source::source_serialization::entries(&all).expect("constructed audit fields")
     {
         // All names come from the closed source audit allowlist above.
         let key = key.try_utf8().expect("closed ASCII audit field name");

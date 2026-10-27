@@ -1,6 +1,8 @@
 //! One source-unit tool identity map and provider-owned reversible projection.
 use crate::{source as s, types::ToolIdentity};
-use gateway_core::{js_string::JsString16, source_json::SourceJson, source_serialization as json};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as json,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     collections::{BTreeMap, BTreeSet},

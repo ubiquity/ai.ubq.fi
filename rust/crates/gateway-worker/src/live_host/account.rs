@@ -7,8 +7,8 @@ use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_p
 use gateway_authority::store::Authority;
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
-use gateway_core::error::GatewayError;
 use gateway_live_runtime::types::LiveAccount;
+use gateway_source::error::GatewayError;
 use gateway_worker_storage::store::now_ms;
 
 pub struct CurrentLiveAccount {

@@ -7,16 +7,14 @@ use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelPolicy;
 use gateway_authority_keys as keys;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_routing_runtime::{local_work::*, session::RoutingSession};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::source_request::SourceRequestDocument;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::sync::{
     Arc, Mutex,

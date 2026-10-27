@@ -5,14 +5,16 @@ use gateway_authority_paid_control_records::{PaidControlOwner, PaidProjectionPro
 use gateway_authority_paid_control_records::{PaidProviderObservation, PaidRoutingPolicy};
 use gateway_authority_paid_control_records::{PaidRoutingProjection, PaidSourceCheck};
 use gateway_authority_paid_evidence::paid_projection_source_keys;
-use gateway_core::{lifecycle::TransportObservation, provider::PaidProvider};
-use gateway_core::{provider::UpstreamProvider, source_json::SourceJson, state::AuthorityStore};
+use gateway_contracts::provider::UpstreamProvider;
+use gateway_contracts::{lifecycle::TransportObservation, provider::PaidProvider};
+use gateway_core::state::AuthorityStore;
 use gateway_providers::{policy::HopFailure, policy::paid_hop_identity};
 use gateway_routing_runtime::{session::RoutingSession, types::TransportState};
 use gateway_routing_runtime::{types::AttemptFailure, types::FailureOrigin};
 use gateway_routing_runtime::{types::RefusalDecision, types::RoutingInput};
 use gateway_routing_runtime_test_support::{exec::run, host::Host, input::NOW, input::input};
 use gateway_routing_runtime_test_support::{seed::seed_key, seed::window, store::Store};
+use gateway_source::source_json::SourceJson;
 use serde_json::json;
 use std::collections::BTreeMap;
 

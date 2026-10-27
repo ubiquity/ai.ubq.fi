@@ -9,9 +9,12 @@ use gateway_authority_paid_records::{PaidAttempt, PaidCorrelation, PaidReservati
 use gateway_authority_paid_records::{PaidUsage, PaidWindow, PendingPaid, ReconciliationGate};
 use gateway_authority_paid_records::{ReconciliationLease, provider_label, rollup_shard};
 use gateway_authority_paid_records::{pending_id, validate_attempt, validate_paid_window};
-use gateway_core::{identity::ApiKeyId, state::AuthorityStore};
-use gateway_core::{identity::PaidAttemptId, lifecycle::BillingState, lifecycle::DispatchState};
-use gateway_core::{lifecycle::PaidTerminalState, provider::PaidProvider};
+use gateway_contracts::identity::ApiKeyId;
+use gateway_contracts::{
+    identity::PaidAttemptId, lifecycle::BillingState, lifecycle::DispatchState,
+};
+use gateway_contracts::{lifecycle::PaidTerminalState, provider::PaidProvider};
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 async fn read_gate<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
@@ -65,7 +68,7 @@ fn correlated_spend(row: &PaidAttempt, usage: &PaidUsage) -> Result<Option<i64>,
         let value = (usage.provider_quota * 1_000_000.0 / row.quota_per_credit as f64).round();
         if !value.is_finite()
             || value < 0.0
-            || value > gateway_core::identity::MAX_SAFE_INTEGER as f64
+            || value > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
         {
             return Err(invalid("Provider spend is outside the safe integer range."));
         }
@@ -75,7 +78,7 @@ fn correlated_spend(row: &PaidAttempt, usage: &PaidUsage) -> Result<Option<i64>,
 }
 fn update_paid_rollup(
     mut rollup: PaidRollup,
-    rollup_key: &gateway_core::state::RecordKey,
+    rollup_key: &gateway_kv_codec::key::RecordKey,
     reservation: &PaidReservation,
     usage: &PaidUsage,
     spend: i64,
@@ -104,7 +107,7 @@ fn update_paid_rollup(
 }
 fn initial_paid_rollup(
     reservation: &PaidReservation,
-    model: gateway_core::model::ModelId,
+    model: gateway_contracts::model::ModelId,
     bucket: i64,
     now: i64,
 ) -> PaidRollup {
@@ -374,7 +377,7 @@ pub trait PaidLedgerOperations: PaidLedgerFactory {
                     keys::paid_window(&reservation.key_id.0, reservation.window_reset_at_ms);
                 let window: Option<PaidWindow> = tx.read(&window_key).await?;
                 let bucket = reservation.created_at_ms / 3_600_000 * 3_600_000;
-                let model = gateway_core::model::ModelId::from_source(
+                let model = gateway_contracts::model::ModelId::from_source(
                     gateway_schema::reasoning::js_trim_source(row.model.as_js_string()),
                 );
                 let rollup_key = keys::paid_rollup_model(

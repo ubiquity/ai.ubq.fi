@@ -11,11 +11,12 @@ use gateway_authority_routing_records::{
     codec::{normalize, parse_routing_state},
     types::{RoutingState, SubscriptionPool},
 };
+use gateway_contracts::{identity::ActiveSelection, provider::OveragePermission};
 use gateway_core::{
-    identity::ActiveSelection, provider::OveragePermission,
-    source_control::decode_source_control_record, state::AuthorityStore, state::RecordKey,
-    state::RevisionCheck, state::StoredRecord,
+    source_control::decode_source_control_record, state::AuthorityStore, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_schema::selection::{AccountModelsStore, ProviderSelection};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::de::DeserializeOwned;

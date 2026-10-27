@@ -1,9 +1,10 @@
 //! Private fixed-family staging. No transaction, callback, raw reader or writer escapes this crate.
 use gateway_authority_contracts::{TokenSource, invalid, text, validate_time};
 use gateway_core::{
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, BTreeSet};

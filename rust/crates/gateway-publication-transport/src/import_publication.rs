@@ -12,10 +12,11 @@ use gateway_authority::{
     native_control::NativeRenewalCancellation, native_control::receiver::NativeRenewalAuthority,
 };
 use gateway_authority_contracts::TokenSource;
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
 use gateway_publication_policy::protocol::{
     PublicationRequest, PublicationResponse, error_response,
 };
+use gateway_source::error::GatewayError;
 
 impl PublicationReceiver {
     /// Dedicated finite entry, deliberately not selected by an old operation's

@@ -9,15 +9,16 @@ use gateway_authority_reset_records::reset_invocation;
 use gateway_authority_reset_records::{ResetInvocation, ResetRecord, ResetState, check_record};
 use gateway_authority_routing_records::types::ProbeLease;
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
-use gateway_core::{identity::ActiveSelection, identity::ActiveTransitionReason};
-use gateway_core::{identity::RequestContext, state::AuthorityStore};
+use gateway_contracts::identity::RequestContext;
+use gateway_contracts::{identity::ActiveSelection, identity::ActiveTransitionReason};
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 mod backend;
 use gateway_authority_keys as keys;
 struct RoutingView {
     pool: gateway_authority_routing_records::types::SubscriptionPool,
     state: gateway_authority_routing_records::types::RoutingState,
-    active: Option<gateway_core::identity::ActiveSelection>,
+    active: Option<gateway_contracts::identity::ActiveSelection>,
     models: gateway_authority_routing_evidence::models::ModelAvailability,
     capacity: gateway_authority_routing_evidence::capacity::CapacityStore,
     overage: std::collections::BTreeMap<String, bool>,
@@ -300,7 +301,7 @@ pub trait ResetRecoveryOperations: ResetRecoveryFactory {
     fn reconcile_full_pool_reset(
         &self,
         proof: &gateway_authority_routing_selection::types::CohortProof,
-        original: &gateway_core::identity::RequestContext,
+        original: &gateway_contracts::identity::RequestContext,
     ) -> impl std::future::Future<Output = Result<FullPoolResetReconciliation, GatewayError>> {
         async move {
             let context = self.reset_recovery();

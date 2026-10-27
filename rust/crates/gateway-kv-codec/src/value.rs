@@ -418,7 +418,7 @@ fn source_json_invalid() -> GatewayError {
 }
 
 /// Only explicit ProfileV2 nodes use this physical representation.
-pub(crate) mod source_units {
+pub mod source_units {
     use gateway_source::js_string::JsString16;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     pub fn serialize<S: Serializer>(value: &JsString16, serializer: S) -> Result<S::Ok, S::Error> {
@@ -429,7 +429,7 @@ pub(crate) mod source_units {
     }
 }
 
-pub(crate) mod optional_source_units {
+pub mod optional_source_units {
     use gateway_source::js_string::JsString16;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     pub fn serialize<S: Serializer>(
