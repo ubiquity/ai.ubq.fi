@@ -2,7 +2,10 @@
 use gateway_core::provider::UpstreamProvider;
 use gateway_providers::request::prepare_request;
 use gateway_provider_response::response::decode_response;
-use gateway_provider_protocol::types::*;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_provider_protocol::types::AuthMaterial;
+use gateway_provider_protocol::types::PrepareOptions;
 use serde_json::{Value, json};
 fn opts() -> PrepareOptions {
     PrepareOptions {

@@ -4,7 +4,6 @@ use gateway_core::source_json::SourceJson;
 use gateway_core::source_serialization as json;
 
 pub fn envelope(plan: &DecodePlan, status: &str) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
     let instructions = match s::present(&plan.request, "instructions") { Some(value) => value, None => s::null()? };
     let choice = match s::present(&plan.request, "tool_choice") { Some(value) => value, None => s::text("auto")? };
     let tools = match s::present(&plan.request, "tools").filter(|value| json::array(value).is_some()) { Some(value) => value, None => s::array(&[])? };
@@ -31,21 +30,16 @@ pub fn envelope(plan: &DecodePlan, status: &str) -> Result<SourceJson, gateway_c
         ("store", s::scalar_json(&serde_json::json!(false))?),
         ("truncation", s::text("disabled")?),
         ("usage", s::null()?),
-    ])?
-
-    })
+    ])
 }
 
 
 
-pub fn response_event(kind: &str, response: SourceJson) -> Result<crate::types::ProviderEvent, gateway_core::error::GatewayError> {
-    Ok({
-    crate::types::ProviderEvent::responses_source(s::object(vec![
+pub fn response_event(kind: &str, response: SourceJson) -> Result<gateway_provider_events::event::ProviderEvent, gateway_core::error::GatewayError> {
+    Ok(gateway_provider_events::event::ProviderEvent::responses_source(s::object(vec![
         ("type", s::text(kind)?),
         ("response", response),
-    ])?)
-
-    })
+    ])?))
 }
 
 
@@ -54,15 +48,12 @@ pub fn item_event(
     kind: &str,
     index: usize,
     item: SourceJson,
-) -> Result<crate::types::ProviderEvent, gateway_core::error::GatewayError> {
-    Ok({
-    crate::types::ProviderEvent::responses_source(s::object(vec![
+) -> Result<gateway_provider_events::event::ProviderEvent, gateway_core::error::GatewayError> {
+    Ok(gateway_provider_events::event::ProviderEvent::responses_source(s::object(vec![
         ("type", s::text(kind)?),
         ("output_index", s::scalar_json(&serde_json::json!(index))?),
         ("item", item),
-    ])?)
-
-    })
+    ])?))
 }
 
 
@@ -71,7 +62,8 @@ pub fn item_event(
 mod tests {
     use super::*;
     use gateway_provider_tool_grammar::source_tools::ToolMap;
-    use crate::types::{ChatProfile, ClientSurface, ResponseDecode};
+    use gateway_provider_source::types::ChatProfile;
+    use crate::types::{ClientSurface, ResponseDecode};
     use gateway_core::{js_string::JsString16, provider::UpstreamProvider};
 
     #[test]

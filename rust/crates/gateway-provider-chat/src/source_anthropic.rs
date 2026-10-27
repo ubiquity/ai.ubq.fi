@@ -1,7 +1,6 @@
 use gateway_provider_protocol::replay::ReplayEntry;
 use gateway_provider_protocol::replay::ReplayTransport;
 use gateway_provider_source::source as s;
-use gateway_provider_tool_grammar::source_tools as source_tools;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
 use gateway_provider_protocol::types::PrepareOptions;
 use gateway_core::source_json::SourceJson;
@@ -57,7 +56,6 @@ fn cache(value: &SourceJson) -> Option<SourceJson> {
 
 
 pub fn block(mut block: SourceJson, source: &SourceJson) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok({
     if let Some(marker) = s::present(source, "prompt_cache_breakpoint") {
         if !eq(&marker, r#"{"mode":"explicit"}"#)? {
             return Ok(None);
@@ -71,9 +69,7 @@ pub fn block(mut block: SourceJson, source: &SourceJson) -> Result<Option<Source
     if let Some(control) = s::present(source, "cache_control") {
         s::set(&mut block, "cache_control", represented!(cache(&control)))?;
     }
-    Some(block)
-
-    })
+    Ok(Some(block))
 }
 
 
@@ -109,15 +105,11 @@ fn count(value: &SourceJson) -> usize {
 
 
 pub fn text(value: SourceJson) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
-    s::object(vec![("type", s::text("text")?), ("text", value)])?
-
-    })
+    s::object(vec![("type", s::text("text")?), ("text", value)])
 }
 
 
 pub fn content(value: &SourceJson, native: bool) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
-    Ok({
     if s::string(value).is_some() {
         return Ok(Some(vec![text(value.clone())?]));
     }
@@ -130,14 +122,22 @@ pub fn content(value: &SourceJson, native: bool) -> Result<Option<Vec<SourceJson
                 represented!(s::string(&value));
                 text(value)?
             }
-            "input_image" => {
-                if s::present(&part, "file_id").is_some() {
+            "input_image" => represented!(input_image(&part, native)?),
+            _ => return Ok(None),
+        };
+        blocks.push(represented!(block(result, &part)?));
+    }
+    Ok(Some(blocks))
+}
+
+fn input_image(part: &SourceJson, native: bool) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
+                if s::present(part, "file_id").is_some() {
                     return Ok(None);
                 }
-                let url = represented!(s::present(&part, "image_url"));
+                let url = represented!(s::present(part, "image_url"));
                 represented!(s::string(&url));
-                if native {
-                    if s::present(&part, "detail")
+                let image = if native {
+                    if s::present(part, "detail")
                         .is_some_and(|v| !s::is_null(&v) && !s::is(&v, "auto"))
                     {
                         return Ok(None);
@@ -161,27 +161,19 @@ pub fn content(value: &SourceJson, native: bool) -> Result<Option<Vec<SourceJson
                     s::object(vec![("type", s::text("image")?), ("source", source)])?
                 } else {
                     let mut reference = s::object(vec![("url", url)])?;
-                    if let Some(detail) = s::present(&part, "detail") {
+                    if let Some(detail) = s::present(part, "detail") {
                         s::set(&mut reference, "detail", detail)?;
                     }
                     s::object(vec![
                         ("type", s::text("image_url")?),
                         ("image_url", reference),
                     ])?
-                }
-            }
-            _ => return Ok(None),
-        };
-        blocks.push(represented!(block(result, &part)?));
-    }
-    Some(blocks)
-
-    })
+                };
+    Ok(Some(image))
 }
 
 
 pub fn merge(messages: &mut Vec<SourceJson>, role: &str, blocks: Vec<SourceJson>) -> Result<(), gateway_core::error::GatewayError> {
-    Ok({
     if let Some(last) = messages
         .last_mut()
         .filter(|value| s::present(value, "role").is_some_and(|observed| s::is(&observed, role)))
@@ -195,8 +187,7 @@ pub fn merge(messages: &mut Vec<SourceJson>, role: &str, blocks: Vec<SourceJson>
             ("content", s::array(&blocks)?),
         ])?);
     }
-
-    })
+    Ok(())
 }
 
 
@@ -222,7 +213,6 @@ pub fn valid_reasoning(reasoning: &SourceJson) -> bool {
 
 
 pub fn add_cache(body: &mut SourceJson, raw: &SourceJson, native: bool) -> Result<Option<()>, gateway_core::error::GatewayError> {
-    Ok({
     let count = count(body);
     if count > 4 {
         return Ok(None);
@@ -252,19 +242,16 @@ pub fn add_cache(body: &mut SourceJson, raw: &SourceJson, native: bool) -> Resul
             s::set(body, "tools", s::array(&tools)?)?;
         }
     }
-    Some(())
-
-    })
+    Ok(Some(()))
 }
 
 
 fn chat_tool(tool: &SourceJson) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
     let valid = s::present(tool, "name").is_some_and(|observed| valid_name(&observed));
-    match s::present(tool, "type").and_then(|observed| s::control(&observed)).as_deref() {
+    Ok(match s::present(tool, "type").and_then(|observed| s::control(&observed)).as_deref() {
         Some("function") => valid,
         Some("custom") => {
-            valid && s::present(tool, "format").is_none_or(|value| eq(&value, r#"{"type":"text"}"#)?)
+            valid && match s::present(tool, "format") { Some(value) => eq(&value, r#"{"type":"text"}"#)?, None => true }
         }
         Some("namespace") => {
             valid
@@ -276,8 +263,6 @@ fn chat_tool(tool: &SourceJson) -> Result<bool, gateway_core::error::GatewayErro
                 })
         }
         _ => false,
-    }
-
     })
 }
 
@@ -286,14 +271,13 @@ pub fn chat(
     raw: &SourceJson,
     options: &PrepareOptions,
 ) -> Result<Option<gateway_provider_protocol::source_chat::Projection>, gateway_core::error::GatewayError> {
-    Ok({
     if !base(raw) || !policy(raw) {
         return Ok(None);
     }
-    if let Some(tools) = s::present(raw, "tools")
-        && represented!(json::array(&tools)).iter().any(|tool| !chat_tool(tool)?)
-    {
-        return Ok(None);
+    if let Some(tools) = s::present(raw, "tools") {
+        for tool in represented!(json::array(&tools)) {
+            if !chat_tool(&tool)? { return Ok(None); }
+        }
     }
     let (tools, names) = match gateway_provider_tool_grammar::source_tools::flatten(s::present(raw, "tools").as_ref(), 64) { Ok(value) => value, Err(gateway_provider_tool_grammar::source_tools::ToolError::Request(_)) => return Ok(None), Err(gateway_provider_tool_grammar::source_tools::ToolError::Construction(error)) => return Err(error) };
     let mut messages = vec![];
@@ -393,16 +377,14 @@ pub fn chat(
         }
     }
     represented!(add_cache(&mut body, raw, false)?);
-    Some(gateway_provider_protocol::source_chat::Projection {
+    Ok(Some(gateway_provider_protocol::source_chat::Projection {
         body,
         names,
         elisions: vec![],
         warnings: vec![],
         exemptions: vec![],
         admission: None,
-    })
-
-    })
+    }))
 }
 
 
@@ -411,7 +393,6 @@ fn append_chat_item(
     messages: &mut Vec<SourceJson>,
     names: &ToolMap,
 ) -> Result<Option<()>, gateway_core::error::GatewayError> {
-    Ok({
     let kind = s::present(item, "type").and_then(|observed| s::control(&observed)).unwrap_or_else(|| "message".into());
     match kind.as_str() {
         "message" => {
@@ -490,9 +471,7 @@ fn append_chat_item(
         }
         _ => return Ok(None),
     }
-    Some(())
-
-    })
+    Ok(Some(()))
 }
 
 
@@ -500,7 +479,6 @@ pub fn replay_messages(
     raw: &SourceJson,
     entries: &[ReplayEntry],
 ) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
-    Ok({
     let (_, names) = match gateway_provider_tool_grammar::source_tools::flatten(s::present(raw, "tools").as_ref(), 64) { Ok(value) => value, Err(gateway_provider_tool_grammar::source_tools::ToolError::Request(_)) => return Ok(None), Err(gateway_provider_tool_grammar::source_tools::ToolError::Construction(error)) => return Err(error) };
     let mut messages = vec![];
 
@@ -522,7 +500,5 @@ for entry in entries {
     if messages.is_empty() {
         return Ok(None);
     }
-    Some(messages)
-
-    })
+    Ok(Some(messages))
 }

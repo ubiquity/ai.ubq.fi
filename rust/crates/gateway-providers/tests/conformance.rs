@@ -1,17 +1,18 @@
-use gateway_provider_source::types::ChatProfile;
 //! Frozen source-derived cases from e706343d: deepseek-responses, oss-terminal-parity,
 //! anthropic-responses/replay, lithos-tier-windows, images and embeddings fixtures.
+use gateway_provider_source::types::ChatProfile;
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::source_json::SourceJson;
-use gateway_providers::{chat, request as request, request::prepare_request};
-use gateway_provider_services::extras;
-use gateway_provider_policy::policy;
-use gateway_provider_replay::replay;
+use gateway_providers::request::prepare_request;
 use gateway_provider_response::response::decode_response;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
-use gateway_provider_source::usage;
 use gateway_provider_stream::sse::StreamDecoder;
-use gateway_provider_protocol::types::*;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_provider_protocol::types::ResponseDecode;
+use gateway_provider_protocol::types::AuthMaterial;
+use gateway_provider_protocol::types::PrepareOptions;
+use gateway_provider_protocol::types::DecodePlan;
 use serde_json::{Value, json};
 fn options() -> PrepareOptions {
     PrepareOptions {
@@ -121,7 +122,7 @@ fn codex_replay_repair_is_exact_and_does_not_damage_provider_history() -> Result
     Ok(())
 }
 #[test]
-fn namespace_and_freeform_round_trip_keeps_identity() {
+fn namespace_and_freeform_round_trip_keeps_identity() -> Result<(), String> {
     let raw = json!({"input":"hello","reasoning":{"effort":"none"},"tools":[{"type":"namespace","name":"first","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},{"type":"namespace","name":"second","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},{"type":"custom","name":"apply_patch"}]});
     let result =
         gateway_providers::chat::project_responses(&raw, "deepseek-flash", true, ChatProfile::Deepseek).unwrap();
@@ -131,14 +132,14 @@ fn namespace_and_freeform_round_trip_keeps_identity() {
         "second_read"
     );
     assert_eq!(
-        result.tool_names["read"]
+        result.tool_names.get("read").ok_or("missing declared tool")?
             .namespace
             .as_ref()
             .map(|v| v.try_utf8().unwrap())
             .as_deref(),
         Some("first")
     );
-    assert!(result.tool_names["apply_patch"].custom);
+    assert!(result.tool_names.get("apply_patch").ok_or("missing declared tool")?.custom);
     assert_eq!(
         scalar(&result.body)["stream_options"],
         json!({"include_usage":true})
@@ -150,9 +151,11 @@ fn namespace_and_freeform_round_trip_keeps_identity() {
         "{\"input\":\"*** Begin Patch\"}",
         &result.tool_names,
         "completed",
-    );
+    ).map_err(|error| format!("{error:?}"))?;
     assert_eq!(scalar(&item)["type"], "custom_tool_call");
     assert_eq!(scalar(&item)["input"], "*** Begin Patch");
+
+    Ok(())
 }
 #[test]
 fn thinking_conflict_and_reasoning_profiles_are_provider_specific() {
@@ -199,11 +202,11 @@ fn reasoning_closes_before_text_and_fragmented_tools_keep_announced_indexes() ->
     let mut events = writer.chat_chunk(
         &chunk(json!({"reasoning_content":"think"}), Value::Null),
         ChatProfile::Deepseek,
-    );
+    ).map_err(|error| format!("{error:?}"))?;
     events.extend(writer.chat_chunk(
         &chunk(json!({"content":"answer"}), Value::Null),
         ChatProfile::Deepseek,
-    ));
+    ).map_err(|error| format!("{error:?}"))?);
     events.extend(writer.finish().map_err(|error| format!("{error:?}"))?);
     let kinds = events
         .iter()
@@ -585,7 +588,7 @@ fn signed_claude_chat_details_are_private_and_do_not_duplicate_reasoning() {
     );
 }
 #[test]
-fn direct_paid_and_synthetic_pins_preserve_catalog_admission() {
+fn direct_paid_and_synthetic_pins_preserve_catalog_admission() -> Result<(), String> {
     let surplus = json!({"id":"deepseek-v4.1-flash","supported_endpoint_types":["openai-response"],"input_price_per_token":0.1,"output_price_per_token":0.2,"supports_tools":true});
     let openlux = json!({"id":"deepseek-v4.1-flash","supported_endpoint_types":["openai"]});
     let mut input = gateway_provider_policy::policy::PaidRoutingInput {
@@ -608,7 +611,7 @@ fn direct_paid_and_synthetic_pins_preserve_catalog_admission() {
         synthetic_hop: None,
         ubiquity_enabled: true,
     };
-    let normal = gateway_provider_policy::policy::resolve_paid_route(&input);
+    let normal = gateway_provider_policy::policy::resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?;
     assert_eq!(normal.providers, vec![PaidProvider::Surplus]);
     assert_eq!(
         gateway_provider_policy::policy::paid_entry(&normal),
@@ -618,10 +621,12 @@ fn direct_paid_and_synthetic_pins_preserve_catalog_admission() {
     input.openlux_enabled = false;
     input.allowed_paid_providers = Some(vec![PaidProvider::Metered]);
     input.synthetic_hop = Some(gateway_provider_policy::policy::DeepseekHop::Openlux);
-    let pinned = gateway_provider_policy::policy::resolve_paid_route(&input);
+    let pinned = gateway_provider_policy::policy::resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?;
     assert_eq!(pinned.providers, vec![PaidProvider::Metered]);
     input.ubiquity_enabled = false;
-    assert!(gateway_provider_policy::policy::resolve_paid_route(&input).providers.is_empty());
+    assert!(gateway_provider_policy::policy::resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?.providers.is_empty());
+
+    Ok(())
 }
 #[test]
 fn responses_chat_reconciles_terminal_only_output_without_duplicate_deltas() {

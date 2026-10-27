@@ -1,6 +1,6 @@
 //! Exact source forwarding seams, not an aggregate request tokenizer or runtime dispatch proof.
 use gateway_core::provider::UpstreamProvider;
-use gateway_providers::{chat, request::prepare_request};
+use gateway_providers::request::prepare_request;
 use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
 use gateway_provider_source::types::ChatProfile;
 use serde_json::{Value, json};

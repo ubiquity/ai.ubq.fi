@@ -2,7 +2,6 @@ use gateway_provider_source::source as s;
 use gateway_core::js_string::JsString16;
 use gateway_core::model::ModelId;
 use gateway_core::provider::PaidProvider;
-use gateway_core::provider::UpstreamProvider;
 use gateway_core::source_json::SourceJson;
 use gateway_core::source_serialization as source;
 use serde_json::Value;
@@ -306,7 +305,6 @@ fn row_matches(row: &SourceJson, model: &ModelId) -> bool {
 
 
 pub fn resolve_paid_route(input: &PaidRoutingInput) -> Result<PaidRoutingPlan, gateway_core::error::GatewayError> {
-    Ok({
     let surplus = input
         .surplus_catalog
         .as_ref()
@@ -358,14 +356,12 @@ pub fn resolve_paid_route(input: &PaidRoutingInput) -> Result<PaidRoutingPlan, g
                 .is_none_or(|a| a.contains(p))
         })
         .collect::<Vec<_>>();
-    PaidRoutingPlan {
+    Ok(PaidRoutingPlan {
         metered_only: !providers.is_empty() && !input.codex_model_known,
         providers,
         paid_model_known: openlux_route || surplus_route,
         codex_enabled: input.codex_enabled,
         surplus_billing,
-    }
-
     })
 }
 

@@ -10,7 +10,6 @@ use serde_json::Value;
 use serde_json::json;
 
 pub fn buffered_chat_events(completion: &Value, plan: &DecodePlan) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
     let mut choices = vec![];
     let mut finishes = vec![];
     for (position, choice) in completion["choices"]
@@ -62,9 +61,7 @@ pub fn buffered_chat_events(completion: &Value, plan: &DecodePlan) -> Result<Vec
         events.push(ProviderEvent::chat_source(chunk));
     }
     events.push(ProviderEvent::chat(json!("[DONE]"))?);
-    events
-
-    })
+    Ok(events)
 }
 
 
@@ -74,7 +71,6 @@ pub fn lithos_stream_refusal(
     headers: &Headers,
     value: &Value,
 ) -> Result<Option<DecodedResponse>, gateway_core::error::GatewayError> {
-    Ok({
     if plan.provider != UpstreamProvider::Lithos || !plan.stream || status != 429 {
         return Ok(None);
     }
@@ -105,7 +101,7 @@ pub fn lithos_stream_refusal(
         )?;
         gateway_provider_protocol::source_echo::response_event("response.failed", response)?
     };
-    Some(DecodedResponse {
+    Ok(Some(DecodedResponse {
         status: 200,
         headers: output_headers,
         body: s::scalar_json(value)?,
@@ -114,15 +110,12 @@ pub fn lithos_stream_refusal(
         usage: None,
         native_replay: None,
         raw_body: None,
-    })
-
-    })
+    }))
 }
 
 
 /// Native Messages stop vocabulary has its own error identity, distinct from Chat finish reasons.
 pub fn native_stop_error(events: &mut [ProviderEvent], reason: &str) -> Result<(), gateway_core::error::GatewayError> {
-    Ok({
     if let Some(last) = events.last_mut() {
         let Some(mut response) = s::present(&last.data, "response") else { return Ok(()); };
         if s::present(&response, "status").is_some_and(|observed| s::is(&observed, "failed"))
@@ -137,6 +130,5 @@ pub fn native_stop_error(events: &mut [ProviderEvent], reason: &str) -> Result<(
             s::set(&mut last.data, "response", response)?;
         }
     }
-
-    })
+    Ok(())
 }

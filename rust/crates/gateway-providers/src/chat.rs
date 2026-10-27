@@ -34,9 +34,30 @@ pub fn project_responses(
         warnings: projection.warnings,
     })
 }
-
-
-pub fn project_effort(value: &str, _profile: ChatProfile) -> Result<String, GatewayError> { Ok(value.into()) }
+pub fn project_effort(value: &str, profile: ChatProfile) -> Result<String, GatewayError> {
+    let effort = value.trim().to_lowercase();
+    if profile == ChatProfile::Deepseek {
+        return Ok(if effort == "ultra" {
+            "max".into()
+        } else {
+            value.into()
+        });
+    }
+    let allowed = match profile {
+        ChatProfile::Lithos => {
+            ["none", "minimal", "low", "medium", "high", "xhigh", "max"].as_slice()
+        }
+        ChatProfile::Cerebras => ["none", "low", "medium", "high"].as_slice(),
+        _ => return Ok(value.trim().into()),
+    };
+    if !allowed.contains(&effort.as_str()) {
+        return Err(invalid(
+            format!("reasoning.effort '{value}' is not supported by {profile:?}"),
+            "reasoning.effort",
+        ));
+    }
+    Ok(effort)
+}
 
 
 pub fn thinking_active(effort: Option<&str>, thinking: &Value) -> bool {

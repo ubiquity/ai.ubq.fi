@@ -3,34 +3,22 @@ use crate::source as s;
 use serde_json::Value;
 
 pub fn response_has_answer(value: &Value) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
-    crate::source_policy::response_has_answer(&s::scalar_json(value)?)
-
-    })
+    Ok(crate::source_policy::response_has_answer(&s::scalar_json(value)?))
 }
 
 
 pub fn item_has_answer(value: &Value) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
-    crate::source_policy::item_has_answer(&s::scalar_json(value)?)
-
-    })
+    Ok(crate::source_policy::item_has_answer(&s::scalar_json(value)?))
 }
 
 
 pub fn semantic_event(value: &Value) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
-    crate::source_policy::semantic_event(&s::scalar_json(value)?)
-
-    })
+    Ok(crate::source_policy::semantic_event(&s::scalar_json(value)?))
 }
 
 
 pub fn reasoning_progress(value: &Value) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
-    crate::source_policy::reasoning_progress(&s::scalar_json(value)?)
-
-    })
+    Ok(crate::source_policy::reasoning_progress(&s::scalar_json(value)?))
 }
 
 

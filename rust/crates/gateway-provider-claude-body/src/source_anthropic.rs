@@ -1,7 +1,6 @@
 use gateway_provider_protocol::replay::ReplayEntry;
 use gateway_provider_protocol::replay::ReplayTransport;
 use gateway_provider_source::source as s;
-use gateway_provider_tool_grammar::source_tools as source_tools;
 use crate::types::ClaudeBodyOptions;
 use gateway_provider_protocol::types::PrepareOptions;
 use gateway_core::source_json::SourceJson;
@@ -46,7 +45,6 @@ fn native_messages(
     system: &mut Vec<SourceJson>,
     options: &NativeBodyOptions<'_>,
 ) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
-    Ok({
     if let Some(restored) = &options.restored_native_messages {
         return Ok(restored_native_messages(restored, system))?;
     }
@@ -61,9 +59,7 @@ fn native_messages(
     for item in represented!(json::array(&input)) {
         represented!(append_native_item(&item, system, &mut messages)?);
     }
-    (!messages.is_empty()).then_some(messages)
-
-    })
+    Ok((!messages.is_empty()).then_some(messages))
 }
 
 
@@ -71,7 +67,6 @@ pub fn restored_native_messages(
     restored: &[SourceJson],
     system: &mut Vec<SourceJson>,
 ) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
-    Ok({
     let mut messages = vec![];
     for item in restored {
         let role = represented!(s::present(item, "role").and_then(|observed| s::control(&observed)));
@@ -82,9 +77,7 @@ pub fn restored_native_messages(
             _ => return Ok(None),
         }
     }
-    (!messages.is_empty()).then_some(messages)
-
-    })
+    Ok((!messages.is_empty()).then_some(messages))
 }
 
 
@@ -93,7 +86,6 @@ fn append_native_item(
     system: &mut Vec<SourceJson>,
     messages: &mut Vec<SourceJson>,
 ) -> Result<Option<()>, gateway_core::error::GatewayError> {
-    Ok({
     let kind = s::present(item, "type").and_then(|observed| s::control(&observed)).unwrap_or_else(|| "message".into());
     match kind.as_str() {
         "message" => {
@@ -154,14 +146,11 @@ fn append_native_item(
         }
         _ => return Ok(None),
     }
-    Some(())
-
-    })
+    Ok(Some(()))
 }
 
 
 fn native_tools(raw: &SourceJson) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
-    Ok({
     let Some(value) = s::present(raw, "tools") else {
         return Ok(Some(vec![]));
     };
@@ -185,14 +174,11 @@ fn native_tools(raw: &SourceJson) -> Result<Option<Vec<SourceJson>>, gateway_cor
         }
         tools.push(represented!(block(result, &tool)?));
     }
-    Some(tools)
-
-    })
+    Ok(Some(tools))
 }
 
 
 fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok({
     let Some(reasoning) = s::present(raw, "reasoning").filter(|v| !s::is_null(v)) else {
         return Ok(Some(s::object(vec![])?));
     };
@@ -224,8 +210,8 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result
                 .map(gateway_core::js_string::JsString16::from_utf8)
                 .to_vec()
         });
-    allowed.contains(&effort).then(|| {
-        s::object(vec![
+    if !allowed.contains(&effort) { return Ok(None); }
+    Ok(Some(s::object(vec![
             (
                 "thinking",
                 s::scalar_json(&serde_json::json!({"type":"adaptive"}))?,
@@ -234,16 +220,12 @@ fn native_reasoning(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result
                 "output_config",
                 s::object(vec![("effort", s::quoted(&effort)?)])?,
             ),
-        ])?
-    })
-
-    })
+        ])?))
 }
 
 
 
 fn native_choice(raw: &SourceJson) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok({
     let mut choice = match s::present(raw, "tool_choice") {
         None => s::object(vec![])?,
         Some(value) if s::is(&value, "auto") || s::is(&value, "none") => {
@@ -273,23 +255,17 @@ fn native_choice(raw: &SourceJson) -> Result<Option<SourceJson>, gateway_core::e
             s::scalar_json(&serde_json::json!(!parallel))?,
         )?;
     }
-    Some(choice)
-
-    })
+    Ok(Some(choice))
 }
 
 
 pub fn native(raw: &SourceJson, options: &PrepareOptions) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok({
-    native_body(raw, &NativeBodyOptions::from(options))?
-
-    })
+    Ok(native_body(raw, &NativeBodyOptions::from(options))?)
 }
 
 
 pub fn native_claude(raw: &SourceJson, options: &ClaudeBodyOptions) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok({
-    native_body(
+    Ok(native_body(
         raw,
         &NativeBodyOptions {
             restored_native_messages: options.restored_native_messages.as_ref(),
@@ -301,20 +277,17 @@ pub fn native_claude(raw: &SourceJson, options: &ClaudeBodyOptions) -> Result<Op
             native_reasoning_efforts: options.native_reasoning_efforts.as_ref(),
             catalog_max_output_tokens: Some(32_000),
         },
-    )?
-
-    })
+    )?)
 }
 
 
 fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok({
     if !base(raw) || !policy(raw) {
         return Ok(None);
     }
     if let Some(text) = s::present(raw, "text")
         && (!only(&text, &["format"])
-            || s::present(&text, "format").is_some_and(|value| !eq(&value, r#"{"type":"text"}"#)?))
+            || match s::present(&text, "format") { Some(value) => !eq(&value, r#"{"type":"text"}"#)?, None => false })
     {
         return Ok(None);
     }
@@ -368,9 +341,7 @@ fn native_body(raw: &SourceJson, options: &NativeBodyOptions<'_>) -> Result<Opti
         }
     }
     represented!(add_cache(&mut body, raw, true)?);
-    Some(body)
-
-    })
+    Ok(Some(body))
 }
 
 
@@ -378,7 +349,6 @@ pub fn replay_messages(
     raw: &SourceJson,
     entries: &[ReplayEntry],
 ) -> Result<Option<Vec<SourceJson>>, gateway_core::error::GatewayError> {
-    Ok({
     let (_, _names) = match gateway_provider_tool_grammar::source_tools::flatten(s::present(raw, "tools").as_ref(), 64) { Ok(value) => value, Err(gateway_provider_tool_grammar::source_tools::ToolError::Request(_)) => return Ok(None), Err(gateway_provider_tool_grammar::source_tools::ToolError::Construction(error)) => return Err(error) };
     let mut messages = vec![];
 
@@ -423,7 +393,5 @@ let mut system = vec![];
     if messages.is_empty() {
         return Ok(None);
     }
-    Some(messages)
-
-    })
+    Ok(Some(messages))
 }

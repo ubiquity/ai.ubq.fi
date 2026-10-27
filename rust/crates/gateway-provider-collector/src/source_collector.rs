@@ -62,8 +62,7 @@ impl ChatCollector {
         }
     }
     fn chunk(&self, delta: SourceJson, finish: SourceJson) -> Result<ProviderEvent, gateway_core::error::GatewayError> {
-    Ok({
-        ProviderEvent::chat_source(s::object(vec![
+    Ok(ProviderEvent::chat_source(s::object(vec![
             ("id", s::text(&self.plan.response_id)?),
             ("object", s::text("chat.completion.chunk")?),
             ("created", s::scalar_json(&serde_json::json!(self.plan.created_at))?),
@@ -76,21 +75,16 @@ impl ChatCollector {
                     ("finish_reason", finish),
                 ])?])?,
             ),
-        ])?)
-    
-    })
+        ])?))
 }
     fn text_chunk(&self, text: &JsString16, refusal: bool) -> Result<ProviderEvent, gateway_core::error::GatewayError> {
-    Ok({
-        self.chunk(
+    self.chunk(
             s::object(vec![(
                 if refusal { "refusal" } else { "content" },
                 s::quoted(text)?,
             )])?,
             s::null()?,
-        )?
-    
-    })
+        )
 }
     fn call_chunk(
         &self,
@@ -99,7 +93,6 @@ impl ChatCollector {
         name: Option<&JsString16>,
         args: &JsString16,
     ) -> Result<ProviderEvent, gateway_core::error::GatewayError> {
-    Ok({
         let mut function = s::object(vec![("arguments", s::quoted(args)?)])?;
         if let Some(name) = name {
             s::set(&mut function, "name", s::quoted(name)?)?;
@@ -112,12 +105,10 @@ impl ChatCollector {
             s::set(&mut call, "id", s::quoted(id)?)?;
             s::set(&mut call, "type", s::text("function")?)?;
         }
-        self.chunk(
+    self.chunk(
             s::object(vec![("tool_calls", s::array(&[call])?)])?,
             s::null()?,
-        )?
-    
-    })
+        )
 }
     fn reconcile(
         &mut self,
@@ -181,6 +172,54 @@ impl ChatCollector {
                 result.push(self.call_chunk(slot, None, None, &delta)?);
             }
         }
+        Ok(result)
+    }
+    fn complete(&mut self, response: Option<&SourceJson>) -> Result<Vec<ProviderEvent>, GatewayError> {
+        let mut result = vec![];
+                for (index, item) in response.and_then(|response| s::present(response, "output")).and_then(|observed| json::array(&observed))
+                    .unwrap_or_default()
+                    .iter()
+                    .enumerate()
+                {
+                    result.extend(self.reconcile(index, Some(item))?);
+                }
+                if self.text.is_empty()
+                    && self.refusal.is_empty()
+                    && self.calls.is_empty()
+                {
+                    return Err(GatewayError::new(
+                        502,
+                        "Upstream response completed with no translated semantic output.",
+                        Some("empty_upstream_completion"),
+                    )
+                    .with_type("server_error"));
+                }
+                self.usage = response.and_then(|response| s::present(response, "usage")).as_ref().and_then(usage);
+                result.push(self.chunk(
+                    s::object(vec![])?,
+                    s::text(if self.calls.is_empty() {
+                        "stop"
+                    } else {
+                        "tool_calls"
+                    })?,
+                )?);
+                if s::present_path(&self.plan.request, &["stream_options", "include_usage"]).and_then(|observed| s::boolean(&observed)) == Some(true)
+                {
+                    let usage = self
+                        .usage
+                        .as_ref()
+                        .and_then(gateway_provider_source::usage::responses_to_chat);
+                    result.push(ProviderEvent::chat_source(s::object(vec![
+                        ("id", s::text(&self.plan.response_id)?),
+                        ("object", s::text("chat.completion.chunk")?),
+                        ("created", s::scalar_json(&serde_json::json!(self.plan.created_at))?),
+                        ("model", s::quoted(self.plan.model.as_js_string())?),
+                        ("choices", s::array(&[])?),
+                        ("usage", match &usage { Some(value) => s::scalar_json(value)?, None => s::null()? }),
+                    ])?));
+                }
+                result.push(ProviderEvent::chat(serde_json::json!("[DONE]"))?);
+                self.finished = true;
         Ok(result)
     }
     pub fn push(&mut self, event: &SourceJson) -> Result<Vec<ProviderEvent>, GatewayError> {
@@ -292,51 +331,7 @@ impl ChatCollector {
                 }
             }
             "response.completed" => {
-                let response = s::present(event, "response");
-                for (index, item) in response.as_ref().and_then(|response| s::present(response, "output")).and_then(|observed| json::array(&observed))
-                    .unwrap_or_default()
-                    .iter()
-                    .enumerate()
-                {
-                    result.extend(self.reconcile(index, Some(item))?);
-                }
-                if self.text.is_empty()
-                    && self.refusal.is_empty()
-                    && self.calls.is_empty()
-                {
-                    return Err(GatewayError::new(
-                        502,
-                        "Upstream response completed with no translated semantic output.",
-                        Some("empty_upstream_completion"),
-                    )
-                    .with_type("server_error"));
-                }
-                self.usage = response.as_ref().and_then(|response| s::present(response, "usage")).as_ref().and_then(usage);
-                result.push(self.chunk(
-                    s::object(vec![])?,
-                    s::text(if self.calls.is_empty() {
-                        "stop"
-                    } else {
-                        "tool_calls"
-                    })?,
-                )?);
-                if s::present_path(&self.plan.request, &["stream_options", "include_usage"]).and_then(|observed| s::boolean(&observed)) == Some(true)
-                {
-                    let usage = self
-                        .usage
-                        .as_ref()
-                        .and_then(gateway_provider_source::usage::responses_to_chat);
-                    result.push(ProviderEvent::chat_source(s::object(vec![
-                        ("id", s::text(&self.plan.response_id)?),
-                        ("object", s::text("chat.completion.chunk")?),
-                        ("created", s::scalar_json(&serde_json::json!(self.plan.created_at))?),
-                        ("model", s::quoted(self.plan.model.as_js_string())?),
-                        ("choices", s::array(&[])?),
-                        ("usage", match &usage { Some(value) => s::scalar_json(value)?, None => s::null()? }),
-                    ])?));
-                }
-                result.push(ProviderEvent::chat(serde_json::json!("[DONE]"))?);
-                self.finished = true;
+                result.extend(self.complete(s::present(event, "response").as_ref())?);
             }
             "response.failed" | "response.incomplete" | "error" => {
                 result.push(ProviderEvent::chat(serde_json::json!({"error":{"message":"Upstream stream ended without response.completed.","type":"server_error","code":"upstream_stream_error","param":null}}))?);

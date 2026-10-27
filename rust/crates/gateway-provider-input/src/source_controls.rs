@@ -1,7 +1,6 @@
 use gateway_provider_source::source as s;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_protocol::types::OrdinaryPreparationContext;
-use gateway_provider_protocol::types::invalid;
 use gateway_core::js_string::JsString16;
 use gateway_core::model::ModelId;
 use gateway_core::source_json::SourceJson;
@@ -200,13 +199,10 @@ pub fn ordinary(
 
 
 fn map_effort(effort: &JsString16, context: Option<&OrdinaryPreparationContext>) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
-    s::quoted(&context.map_or_else(
+    Ok(s::quoted(&context.map_or_else(
         || effort.clone(),
         |context| gateway_schema::reasoning::effort_for_codex(effort, context.reasoning()),
-    ))?
-
-    })
+    ))?)
 }
 
 
@@ -231,19 +227,16 @@ fn validate_cache(
 
 
 pub fn ultra(body: &mut SourceJson) -> Result<(), gateway_core::error::GatewayError> {
-    Ok({
     if let Some(mut reasoning) = s::present(body, "reasoning")
         && s::present(&reasoning, "effort").is_some_and(|observed| s::is(&observed, "ultra")) {
         s::set(&mut reasoning, "effort", s::text("max")?)?;
         s::set(body, "reasoning", reasoning)?;
     }
-
-    })
+    Ok(())
 }
 
 
 pub fn openrouter(body: &mut SourceJson, model: &ModelId) -> Result<(), gateway_core::error::GatewayError> {
-    Ok({
     if (s::starts(model.as_js_string(), "openai/") || s::starts(model.as_js_string(), "~openai/"))
         && !model
             .as_js_string()
@@ -284,8 +277,7 @@ pub fn openrouter(body: &mut SourceJson, model: &ModelId) -> Result<(), gateway_
             s::scalar_json(&serde_json::json!({"type":"ephemeral"}))?,
         )?;
     }
-
-    })
+    Ok(())
 }
 
 

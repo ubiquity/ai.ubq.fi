@@ -26,7 +26,7 @@ impl CodexFailure {
     fn remember_text(&mut self, event: &SourceJson, kind: &str) {
         let field = match kind { "response.output_text.delta" | "response.refusal.delta" => "delta", "response.output_text.done" => "text", "response.refusal.done" => "refusal", _ => return };
         let Some(value) = string(event, field).filter(|value| !value.as_units().is_empty()) else { return; };
-        let id = item_id(event).unwrap_or_else(|| s::concat(&[&"msg_recovered_".into(), &string(event, "output_index").unwrap_or_else(|| self.text.len().to_string().into())]));
+        let id = item_id(event).unwrap_or_else(|| s::concat(&[&"msg_recovered_".into(), &string(event, "output_index").unwrap_or_else(|| JsString16::from_utf8(&self.text.len().to_string()))]));
         let old = self.text.iter_mut().find(|old| old.id == id);
         let completed = kind.ends_with(".done");
         let refusal = kind.starts_with("response.refusal.");
@@ -39,7 +39,7 @@ impl CodexFailure {
     fn hosted(&self, event: &SourceJson, kind: &str) -> Result<Option<SourceJson>, GatewayError> {
         let Some((name, status)) = kind.strip_prefix("response.").and_then(|value| value.rsplit_once('.')) else { return Ok(None); };
         if !["code_interpreter_call", "computer_call", "file_search_call", "image_generation_call", "mcp_call", "web_search_call"].contains(&name) || !["completed", "in_progress", "failed"].contains(&status) { return Ok(None); }
-        let id = item_id(event).unwrap_or_else(|| format!("tool_recovered_{}", self.items.len()).into());
+        let id = item_id(event).unwrap_or_else(|| JsString16::from_utf8(&format!("tool_recovered_{}", self.items.len())));
         let mut item = match self.items.iter().find(|old| trimmed(old, "id").as_ref() == Some(&id)) { Some(old) => old.clone(), None => s::object(vec![])? };
         s::set(&mut item, "id", s::quoted(&id)?)?; s::set(&mut item, "type", s::text(name)?)?; s::set(&mut item, "status", s::text(status)?)?;
         Ok(Some(item))

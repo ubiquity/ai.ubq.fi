@@ -13,7 +13,7 @@ use gateway_core::source_json::SourceJson;
 use gateway_core::source_serialization as source;
 use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
-use gateway_provider_policy::{policy as policy, policy::DeepseekHop, policy::PaidRoutingInput};
+use gateway_provider_policy::{policy::DeepseekHop, policy::PaidRoutingInput};
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_schema::{catalog_store, selection::ProviderSelection};
 use serde::{Deserialize, Serialize};

@@ -24,7 +24,10 @@ fn item_id(value: &SourceJson, name: &str) -> Option<JsString16> {
 fn index(value: Option<SourceJson>) -> Result<Option<JsString16>, GatewayError> {
     let Some(value) = value else { return Ok(None); };
     if let Some(text) = s::string(&value) { return Ok(Some(text)); }
-    if json::number(&value).is_some() { return Ok(Some(s::canonical(&value)?.as_str().into())); }
+    if let Some(number) = json::number(&value) {
+        if number.is_infinite() { return Ok(Some(JsString16::from_utf8(if number.is_sign_negative() { "-Infinity" } else { "Infinity" }))); }
+        return Ok(Some(s::canonical(&value)?.as_str().into()));
+    }
     Ok(None)
 }
 
@@ -70,6 +73,6 @@ impl Parts {
     }
     pub(crate) fn done(&mut self, event: &SourceJson, full: &JsString16) -> Result<JsString16, GatewayError> { self.reconcile(Identity::event(event)?, full) }
     pub(crate) fn completed(&mut self, output: usize, content: usize, item: &SourceJson, full: &JsString16) -> Result<JsString16, GatewayError> {
-        self.reconcile(Identity { position: Some(output.to_string().into()), item: item_id(item, "id"), content: content.to_string().into() }, full)
+        self.reconcile(Identity { position: Some(JsString16::from_utf8(&output.to_string())), item: item_id(item, "id"), content: JsString16::from_utf8(&content.to_string()) }, full)
     }
 }

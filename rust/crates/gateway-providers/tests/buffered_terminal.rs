@@ -1,7 +1,10 @@
 use gateway_core::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
-use gateway_provider_response::{response, response::decode_response};
+use gateway_provider_response::response::decode_response;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
-use gateway_provider_protocol::types::*;
+use gateway_provider_protocol::types::Headers;
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_provider_protocol::types::ResponseDecode;
+use gateway_provider_protocol::types::DecodePlan;
 use serde_json::{Value, json};
 
 fn plan(stream: bool) -> DecodePlan {

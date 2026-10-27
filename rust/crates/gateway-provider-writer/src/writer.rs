@@ -1,5 +1,4 @@
 use gateway_provider_source::source as s;
-use gateway_provider_tool_grammar::tools;
 use gateway_provider_source::types::ChatProfile;
 use gateway_provider_protocol::types::DecodePlan;
 use gateway_provider_events::event::ProviderEvent;
@@ -47,10 +46,7 @@ pub struct ResponseWriter {
 
 
 pub fn envelope(plan: &DecodePlan, status: &str) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
-    gateway_provider_protocol::source_echo::envelope(plan, status)?
-
-    })
+    Ok(gateway_provider_protocol::source_echo::envelope(plan, status)?)
 }
 
 
@@ -93,12 +89,11 @@ impl ResponseWriter {
         }
     }
     pub fn start(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         if self.started || self.finished {
             return Ok(vec![]);
         }
         self.started = true;
-        vec![
+    Ok(vec![
             gateway_provider_protocol::source_echo::response_event(
                 "response.created",
                 envelope(&self.plan, "in_progress")?,
@@ -107,13 +102,10 @@ impl ResponseWriter {
                 "response.in_progress",
                 envelope(&self.plan, "in_progress")?,
             )?,
-        ]
-    
-    })
+        ])
 }
 
     fn allocate(&mut self, kind: &'static str) -> Result<Active, gateway_core::error::GatewayError> {
-    Ok({
         let index = self.output.len();
         let prefix = if kind == "reasoning" { "rs" } else { "msg" };
         let id = format!("{prefix}_{}_{}", self.plan.response_id, index);
@@ -124,7 +116,7 @@ impl ResponseWriter {
         };
         item["status"] = json!("in_progress");
         self.output.push(s::scalar_json(&item)?);
-        Active {
+    Ok(Active {
             kind,
             id,
             index,
@@ -132,22 +124,16 @@ impl ResponseWriter {
             refusal: String::new(),
             text_part: None,
             refusal_part: None,
-        }
-    
-    })
+        })
 }
     fn added(&self, active: &Active) -> Result<ProviderEvent, gateway_core::error::GatewayError> {
-    Ok({
-        gateway_provider_protocol::source_echo::item_event(
+    Ok(gateway_provider_protocol::source_echo::item_event(
             "response.output_item.added",
             active.index,
             self.output[active.index].clone(),
-        )?
-    
-    })
+        )?)
 }
     pub fn close(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         let Some(active) = self.active.take() else {
             return Ok(vec![]);
         };
@@ -181,12 +167,9 @@ impl ResponseWriter {
             active.index,
             s::scalar_json(&item)?,
         )?);
-        events
-    
-    })
+    Ok(events)
 }
     pub fn reasoning(&mut self, text: &str) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         if self.finished
             || text.is_empty()
             || self
@@ -212,12 +195,9 @@ impl ResponseWriter {
             active.text.push_str(text);
             events.push(ProviderEvent::responses(json!({"type":"response.reasoning_summary_text.delta","item_id":active.id,"output_index":active.index,"summary_index":0,"delta":text}))?);
         }
-        events
-    
-    })
+    Ok(events)
 }
     pub fn text(&mut self, text: &str, refusal: bool) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         if self.finished || text.is_empty() {
             return Ok(vec![]);
         }
@@ -268,21 +248,16 @@ impl ResponseWriter {
             event["logprobs"] = json!([])
         }
         events.push(ProviderEvent::responses(event)?);
-        events
-    
-    })
+    Ok(events)
 }
     fn flush_pending(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         if self.pending_reasoning.is_empty() {
             return Ok(vec![]);
         }
         let pending = std::mem::take(&mut self.pending_reasoning);
         let mut events = self.reasoning(&pending)?;
         events.extend(self.close()?);
-        events
-    
-    })
+    Ok(events)
 }
     pub fn tool_delta(
         &mut self,
@@ -291,7 +266,6 @@ impl ResponseWriter {
         name: Option<&str>,
         args: &str,
     ) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         if self.finished {
             return Ok(vec![]);
         }
@@ -327,7 +301,7 @@ impl ResponseWriter {
             events.push(gateway_provider_protocol::source_echo::item_event(
                 "response.output_item.added",
                 index,
-                s::scalar_json(&item)?,
+                item,
             )?);
             if !call.args.is_empty() {
                 events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.delta","item_id":item_id,"output_index":index,"delta":call.args}))?);
@@ -337,12 +311,9 @@ impl ResponseWriter {
         {
             events.push(ProviderEvent::responses(json!({"type":"response.function_call_arguments.delta","item_id":call.item_id,"output_index":index,"delta":args}))?);
         }
-        events
-    
-    })
+    Ok(events)
 }
     pub fn chat_chunk(&mut self, chunk: &Value, profile: ChatProfile) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         let mut events = self.start()?;
         if let Some(usage) = chunk.get("usage").filter(|v| !v.is_null()) {
             self.usage = gateway_provider_source::usage::chat_to_responses(usage, profile);
@@ -383,12 +354,9 @@ impl ResponseWriter {
                 );
             }
         }
-        events
-    
-    })
+    Ok(events)
 }
     pub fn finish(&mut self) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
         if self.finished {
             return Ok(vec![]);
         }
@@ -429,7 +397,7 @@ impl ResponseWriter {
                 events.push(gateway_provider_protocol::source_echo::item_event(
                     "response.output_item.added",
                     index,
-                    s::scalar_json(&item)?,
+                    item,
                 )?);
                 index
             };
@@ -456,7 +424,7 @@ impl ResponseWriter {
             events.push(gateway_provider_protocol::source_echo::item_event(
                 "response.output_item.done",
                 index,
-                s::scalar_json(&item)?,
+                item,
             )?);
         }
         let mut response = envelope(&self.plan, status)?;
@@ -497,9 +465,7 @@ impl ResponseWriter {
         events.push(gateway_provider_protocol::source_echo::response_event(kind, response)?);
         self.terminal = Some(terminal);
         self.finished = true;
-        events
-    
-    })
+    Ok(events)
 }
 }
 

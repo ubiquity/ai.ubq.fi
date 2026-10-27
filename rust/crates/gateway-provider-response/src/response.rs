@@ -1,5 +1,4 @@
 use gateway_provider_source::source as s;
-use gateway_provider_tool_grammar::tools;
 use gateway_provider_source::types::ChatProfile;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_protocol::types::DecodePlan;
@@ -9,7 +8,6 @@ use gateway_provider_events::event::ProviderEvent;
 use gateway_provider_protocol::types::ResponseDecode;
 use gateway_provider_protocol::types::header;
 use gateway_provider_source::extras::malformed;
-use gateway_provider_source::usage;
 use gateway_provider_writer::writer::ResponseWriter;
 use gateway_provider_writer::writer::envelope;
 use gateway_provider_writer::writer::finish_disposition;
@@ -33,17 +31,14 @@ pub fn normalize_chat_completion(
     plan: &DecodePlan,
 ) -> Result<SourceJson, GatewayError> {
     let fields = normalize_chat_completion_fragment(value, plan)?;
-    Ok(chat_model_body(&fields, plan)?)
+    chat_model_body(&fields, plan)
 }
 
 
 fn chat_model_body(fields: &Value, plan: &DecodePlan) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
     let mut body = s::scalar_json(fields)?;
     s::set(&mut body, "model", s::quoted(plan.model.as_js_string())?)?;
-    body
-
-    })
+    Ok(body)
 }
 
 
@@ -160,7 +155,6 @@ pub fn chat_completion_to_responses(
     plan: &DecodePlan,
     profile: ChatProfile,
 ) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
     let (reason, incomplete, error) =
         finish_disposition(completion["choices"][0]["finish_reason"].as_str());
     let status = match reason {
@@ -232,7 +226,7 @@ pub fn chat_completion_to_responses(
     s::set(
         &mut body,
         "usage",
-        s::scalar_json(&gateway_provider_source::usage::chat_to_responses(&completion["usage"], profile))?,
+        match gateway_provider_source::usage::chat_to_responses(&completion["usage"], profile) { Some(value) => s::scalar_json(&value)?, None => s::null()? },
     )?;
     if let Some(incomplete) = incomplete {
         s::set(
@@ -248,9 +242,7 @@ pub fn chat_completion_to_responses(
             s::scalar_json(&json!({"code":error,"message":format!("Upstream stopped generating: {error}")}))?,
         )?;
     }
-    body
-
-    })
+    Ok(body)
 }
 
 
@@ -260,7 +252,6 @@ pub fn response_to_chat(payload: &Value, plan: &DecodePlan) -> Result<SourceJson
 
 
 fn replay_chat(completion: &Value, plan: &DecodePlan, profile: ChatProfile) -> Result<Vec<ProviderEvent>, gateway_core::error::GatewayError> {
-    Ok({
     let mut writer = ResponseWriter::new(plan.clone());
     let mut delta = completion["choices"][0]["message"].clone();
     if let Some(calls) = delta["tool_calls"].as_array_mut() {
@@ -270,9 +261,7 @@ fn replay_chat(completion: &Value, plan: &DecodePlan, profile: ChatProfile) -> R
     }
     let mut events=writer.chat_chunk(&json!({"choices":[{"delta":delta,"finish_reason":completion["choices"][0]["finish_reason"]}],"usage":completion["usage"]}),profile)?;
     events.extend(writer.finish()?);
-    events
-
-    })
+    Ok(events)
 }
 
 
@@ -553,7 +542,7 @@ fn decode_buffered_chat(
         if plan.stream {
             *events = gateway_provider_writer::finalize::buffered_chat_events(&completion, plan)?;
         }
-        return Ok(chat_model_body(&completion, plan)?);
+        return chat_model_body(&completion, plan);
     }
     let body = chat_completion_to_responses(&completion, plan, profile)?;
     let completed = s::present(&body, "status").is_some_and(|observed| s::is(&observed, "completed"));

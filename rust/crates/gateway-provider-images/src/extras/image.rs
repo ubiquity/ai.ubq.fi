@@ -1,5 +1,5 @@
 use super::MultipartFile;
-use gateway_core::{error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source};
+use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson, source_serialization as source};
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema::source_request::value::{Text, Value};
 use gateway_provider_source::{source as s, extras::{base64_encode, js_whitespace, key_is, keyed_error}};
@@ -122,6 +122,12 @@ fn validate_image_scalars(
         .filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= 10.0)
         .map(|n| n as u64)
         .ok_or_else(|| image_invalid("n must be an integer from 1 to 10.", "n"))?;
+    validate_output_options(&body, edit)?;
+    Ok((body, count, prompt))
+}
+
+
+fn validate_output_options(body: &Value, edit: bool) -> Result<(), SourceRequestError> {
     if body.get("output_compression").is_some_and(|v| {
         !v.as_f64()
             .is_some_and(|n| n.fract() == 0.0 && (0.0..=100.0).contains(&n))
@@ -185,7 +191,7 @@ fn validate_image_scalars(
             "response_format",
         ));
     }
-    Ok((body, count, prompt))
+    Ok(())
 }
 
 

@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 
 pub fn roles(body: &mut SourceJson, field: &str, remove_reasoning: bool) -> Result<(), gateway_core::error::GatewayError> {
-    Ok({
     if let Some(mut messages) = s::present(body, field).and_then(|observed| json::array(&observed)) {
         for message in &mut messages {
             if s::present(message, "role").is_some_and(|observed| s::is(&observed, "developer")) {
@@ -17,16 +16,14 @@ pub fn roles(body: &mut SourceJson, field: &str, remove_reasoning: bool) -> Resu
         }
         s::set(body, field, s::array(&messages)?)?;
     }
-
-    })
+    Ok(())
 }
 
 
 
 fn schema(value: &SourceJson, properties: bool) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
     if let Some(values) = json::array(value) {
-        return Ok(s::array(&values.iter().map(|v| schema(v, false)).collect::<Result<Vec<_>, _>>()?)?);
+        return s::array(&values.iter().map(|v| schema(v, false)).collect::<Result<Vec<_>, _>>()?);
     }
     let Some(fields) = json::entries(value) else {
         return Ok(value.clone());
@@ -68,61 +65,31 @@ fn schema(value: &SourceJson, properties: bool) -> Result<SourceJson, gateway_co
             ));
         }
     }
-    s::object_keys(result)?
-
-    })
+    s::object_keys(result)
 }
 
 
 
 pub fn cerebras_schema(value: &SourceJson) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
     let projected = schema(value, false)?;
     if s::present(&projected, "type").is_some_and(|observed| s::is(&observed, "object")) {
         return Ok(projected);
     }
-    let Some(variants) = s::present(&projected, "anyOf").and_then(|observed| json::array(&observed)).filter(|a| {
-        !a.is_empty()
-            && a.iter().all(|v| {
-                s::present(v, "type").is_some_and(|observed| s::is(&observed, "object"))
-                    && s::present(v, "properties").and_then(|observed| json::entries(&observed)).is_some()
-            })
-    }) else {
-        return Ok(projected);
-    };
+    let Some(variants) = s::present(&projected, "anyOf").and_then(|value| json::array(&value)).filter(|values| !values.is_empty()) else { return Ok(projected); };
+    let mut rows = Vec::new();
+    for variant in variants {
+        if !s::present(&variant, "type").is_some_and(|value| s::is(&value, "object")) { return Ok(projected); }
+        let Some(properties) = s::present(&variant, "properties").and_then(|value| json::entries(&value)) else { return Ok(projected); };
+        rows.push((properties, variant));
+    }
     let mut properties: BTreeMap<JsString16, SourceJson> = BTreeMap::new();
     let mut required: Option<BTreeSet<JsString16>> = None;
-    for variant in variants {
-        for (name, value) in s::present(&variant, "properties").and_then(|observed| json::entries(&observed)).unwrap_or_default() {
-            if let Some(old) = properties.get(&name).cloned() {
-                if old != value {
-                    if name
-                        .as_units()
-                        .iter()
-                        .copied()
-                        .eq("operationId".encode_utf16())
-                        && s::present(&old, "enum").and_then(|observed| json::array(&observed)).is_some()
-                        && s::present(&value, "enum").and_then(|observed| json::array(&observed)).is_some()
-                    {
-                        let mut values = s::present(&old, "enum").and_then(|observed| json::array(&observed)).unwrap_or_default();
-                        for value in s::present(&value, "enum").and_then(|observed| json::array(&observed)).unwrap_or_default() {
-                            if !values.contains(&value) {
-                                values.push(value);
-                            }
-                        }
-                        properties.insert(name, s::object(vec![("enum", s::array(&values)?)])?);
-                    } else {
-                        let mut choices =
-                            s::present(&old, "anyOf").and_then(|observed| json::array(&observed)).unwrap_or_else(|| vec![old]);
-                        if !choices.contains(&value) {
-                            choices.push(value);
-                        }
-                        properties.insert(name, s::object(vec![("anyOf", s::array(&choices)?)])?);
-                    }
-                }
-            } else {
-                properties.insert(name, value);
-            }
+    for (fields, variant) in rows {
+        for (name, value) in fields {
+            let value = match properties.get(&name).cloned() {
+                Some(old) => merge_property(&name, old, value)?, None => value,
+            };
+            properties.insert(name, value);
         }
         let row = s::present(&variant, "required").and_then(|observed| json::array(&observed))
             .unwrap_or_default()
@@ -151,9 +118,7 @@ pub fn cerebras_schema(value: &SourceJson) -> Result<SourceJson, gateway_core::e
             )?,
         ),
         ("additionalProperties", s::scalar_json(&serde_json::json!(false))?),
-    ])?
-
-    })
+    ])
 }
 
 
@@ -165,33 +130,7 @@ pub fn cerebras(body: &mut SourceJson) -> Result<(), gateway_local_refusal::sour
         let mut kept = vec![];
         for message in messages {
             if s::present(&message, "role").is_some_and(|observed| s::is(&observed, "system")) {
-                let content = s::present(&message, "content");
-                if let Some(text) = content.as_ref().and_then(s::string) {
-                    system.push(text);
-                } else if let Some(parts) = content.as_ref().and_then(json::array) {
-                    let mut text = vec![];
-                    for part in parts {
-                        if !s::present(&part, "type").is_some_and(|observed| s::is(&observed, "text"))
-                            || s::present(&part, "text").and_then(|observed| s::string(&observed)).is_none()
-                        {
-                            return Err(s::invalid(
-                                JsString16::from_utf8(
-                                    "Cerebras supports only text content in system and developer messages.",
-                                ),
-                                "messages",
-                            ));
-                        }
-                        text.push(s::present(&part, "text").and_then(|observed| s::string(&observed)).unwrap_or_default());
-                    }
-                    system.push(s::join(&text, ""));
-                } else {
-                    return Err(s::invalid(
-                        JsString16::from_utf8(
-                            "Cerebras supports only text content in system and developer messages.",
-                        ),
-                        "messages",
-                    ));
-                }
+                system.push(system_text(s::present(&message, "content").as_ref())?);
             } else {
                 kept.push(message);
             }
@@ -225,4 +164,30 @@ pub fn prepare(body: &mut SourceJson) -> Result<(), gateway_local_refusal::sourc
     for key in ["stream_options", "store", "metadata"] { s::remove(body, key)?; }
     if s::present(body, "logprobs").and_then(|value| s::boolean(&value)) != Some(true) { s::remove(body, "top_logprobs")?; }
     cerebras(body)
+}
+
+
+fn merge_property(name: &JsString16, old: SourceJson, value: SourceJson) -> Result<SourceJson, gateway_core::error::GatewayError> {
+    if old == value { return Ok(old); }
+    if name.as_units().iter().copied().eq("operationId".encode_utf16())
+        && let Some(mut values) = s::present(&old, "enum").and_then(|value| json::array(&value))
+        && let Some(next) = s::present(&value, "enum").and_then(|value| json::array(&value)) {
+        for value in next { if !values.contains(&value) { values.push(value); } }
+        return s::object(vec![("enum", s::array(&values)?)]);
+    }
+    let mut choices = s::present(&old, "anyOf").and_then(|value| json::array(&value)).unwrap_or_else(|| vec![old]);
+    if !choices.contains(&value) { choices.push(value); }
+    s::object(vec![("anyOf", s::array(&choices)?)])
+}
+
+fn system_text(content: Option<&SourceJson>) -> s::Result<JsString16> {
+    let invalid = || s::invalid(JsString16::from_utf8("Cerebras supports only text content in system and developer messages."), "messages");
+    if let Some(text) = content.and_then(s::string) { return Ok(text); }
+    let parts = content.and_then(json::array).ok_or_else(invalid)?;
+    let mut text = Vec::new();
+    for part in parts {
+        if !s::present(&part, "type").is_some_and(|value| s::is(&value, "text")) { return Err(invalid()); }
+        text.push(s::present(&part, "text").and_then(|value| s::string(&value)).ok_or_else(invalid)?);
+    }
+    Ok(s::join(&text, ""))
 }

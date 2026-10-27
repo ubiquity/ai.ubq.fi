@@ -126,54 +126,7 @@ impl StreamDecoder {
                 break;
             }
             if frame.data.trim() == "[DONE]" {
-                self.done = true;
-                match self.plan.decode {
-                    ResponseDecode::ChatToResponses(_)
-                    | ResponseDecode::AnthropicChatToResponses => {
-                        if self.plan.decode == ResponseDecode::AnthropicChatToResponses {
-                            let message = self.claude_chat.finish_message();
-                            let finish = self.claude_chat.finish_reason().ok_or_else(|| {
-                                malformed("Claude Chat ended without a finish reason.")
-                            })?;
-                            self.writer.finish_reason = Some(finish.into());
-                            for (index, call) in message["tool_calls"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .enumerate()
-                            {
-                                let translated = self.writer.tool_delta(
-                                    index,
-                                    call["id"].as_str(),
-                                    call["function"]["name"].as_str(),
-                                    call["function"]["arguments"].as_str().unwrap_or(""),
-                                )?;
-                                events.extend(self.deliver(translated)?);
-                            }
-                            if self.claude_chat.is_replayable()
-                                && self
-                                    .writer
-                                    .finish_reason
-                                    .as_deref()
-                                    .is_some_and(|r| matches!(r, "stop" | "tool_calls"))
-                            {
-                                self.native_replay = Some(message);
-                            }
-                        }
-                        let translated = self.writer.finish()?;
-                        self.terminal = true;
-                        events.extend(self.deliver(translated)?);
-                    }
-                    ResponseDecode::Chat => {
-                        self.terminal = true;
-                        events.push(ProviderEvent::chat(json!("[DONE]"))?);
-                    }
-                    _ => {
-                        return Err(malformed(
-                            "Responses sentinel arrived without a semantic terminal.",
-                        ));
-                    }
-                }
+                events.extend(self.sentinel()?);
                 continue;
             }
             if matches!(self.plan.decode, ResponseDecode::Responses | ResponseDecode::ResponsesToChat) {
@@ -273,37 +226,60 @@ impl StreamDecoder {
         }
         Ok(result)
     }
-    fn native_event(&mut self, value: &Value) -> Result<Vec<ProviderEvent>, GatewayError> {
-        let kind = value["type"].as_str().unwrap_or("");
-        if !self.native_started && kind != "message_start" && kind != "ping" {
-            return Err(malformed("Anthropic event arrived before message_start."));
-        }
+    fn sentinel(&mut self) -> Result<Vec<ProviderEvent>, GatewayError> {
         let mut events = vec![];
-        match kind {
-            "message_start" => {
-                if self.native_started {
-                    return Err(malformed(
-                        "Anthropic Messages emitted more than one message_start.",
-                    ));
+                self.done = true;
+                match self.plan.decode {
+                    ResponseDecode::ChatToResponses(_)
+                    | ResponseDecode::AnthropicChatToResponses => {
+                        if self.plan.decode == ResponseDecode::AnthropicChatToResponses {
+                            let message = self.claude_chat.finish_message();
+                            let finish = self.claude_chat.finish_reason().ok_or_else(|| {
+                                malformed("Claude Chat ended without a finish reason.")
+                            })?;
+                            self.writer.finish_reason = Some(finish.into());
+                            for (index, call) in message["tool_calls"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .enumerate()
+                            {
+                                let translated = self.writer.tool_delta(
+                                    index,
+                                    call["id"].as_str(),
+                                    call["function"]["name"].as_str(),
+                                    call["function"]["arguments"].as_str().unwrap_or(""),
+                                )?;
+                                events.extend(self.deliver(translated)?);
+                            }
+                            if self.claude_chat.is_replayable()
+                                && self
+                                    .writer
+                                    .finish_reason
+                                    .as_deref()
+                                    .is_some_and(|r| matches!(r, "stop" | "tool_calls"))
+                            {
+                                self.native_replay = Some(message);
+                            }
+                        }
+                        let translated = self.writer.finish()?;
+                        self.terminal = true;
+                        events.extend(self.deliver(translated)?);
+                    }
+                    ResponseDecode::Chat => {
+                        self.terminal = true;
+                        events.push(ProviderEvent::chat(json!("[DONE]"))?);
+                    }
+                    _ => {
+                        return Err(malformed(
+                            "Responses sentinel arrived without a semantic terminal.",
+                        ));
+                    }
                 }
-                self.native_started = true;
-                let message = &value["message"];
-                if message["type"] != "message" || message["role"] != "assistant" {
-                    return Err(malformed(
-                        "Anthropic Messages returned an invalid assistant message.",
-                    ));
-                }
-                if let Some(id) = message["id"].as_str().filter(|s| !s.is_empty()) {
-                    self.writer.plan.response_id =
-                        gateway_provider_protocol::response::native_response_id(id, &self.plan.response_id);
-                    self.plan.response_id = self.writer.plan.response_id.clone();
-                }
-                if let Some(usage) = message.get("usage") {
-                    self.native_usage = usage.clone();
-                }
-                events.extend(self.writer.start()?);
-            }
-            "content_block_start" => {
+        Ok(events)
+    }
+    fn start_native_block(&mut self, value: &Value) -> Result<Vec<ProviderEvent>, GatewayError> {
+        let mut events = vec![];
                 if !self.native_started {
                     return Err(malformed("Anthropic block arrived before message_start."));
                 }
@@ -350,9 +326,10 @@ impl StreamDecoder {
                     }
                     _ => (),
                 }
-                self.native.insert(index, entry);
-            }
-            "content_block_delta" => {
+                self.native.insert(index, entry);        Ok(events)
+    }
+    fn delta_native_block(&mut self, value: &Value) -> Result<Vec<ProviderEvent>, GatewayError> {
+        let mut events = vec![];
                 let index = value["index"]
                     .as_u64()
                     .ok_or_else(|| malformed("Anthropic block index is invalid."))?
@@ -395,9 +372,10 @@ impl StreamDecoder {
                         );
                     }
                     _ => return Err(malformed("Anthropic delta does not match its block type.")),
-                }
-            }
-            "content_block_stop" => {
+                }        Ok(events)
+    }
+    fn stop_native_block(&mut self, value: &Value) -> Result<Vec<ProviderEvent>, GatewayError> {
+        let mut events = vec![];
                 let index = value["index"]
                     .as_u64()
                     .ok_or_else(|| malformed("Anthropic block index is invalid."))?
@@ -433,8 +411,41 @@ impl StreamDecoder {
                 } else if block.kind == "text" {
                     block.native["text"] = json!(block.text);
                 }
-                events.extend(self.writer.close()?);
+                events.extend(self.writer.close()?);        Ok(events)
+    }
+    fn native_event(&mut self, value: &Value) -> Result<Vec<ProviderEvent>, GatewayError> {
+        let kind = value["type"].as_str().unwrap_or("");
+        if !self.native_started && kind != "message_start" && kind != "ping" {
+            return Err(malformed("Anthropic event arrived before message_start."));
+        }
+        let mut events = vec![];
+        match kind {
+            "message_start" => {
+                if self.native_started {
+                    return Err(malformed(
+                        "Anthropic Messages emitted more than one message_start.",
+                    ));
+                }
+                self.native_started = true;
+                let message = &value["message"];
+                if message["type"] != "message" || message["role"] != "assistant" {
+                    return Err(malformed(
+                        "Anthropic Messages returned an invalid assistant message.",
+                    ));
+                }
+                if let Some(id) = message["id"].as_str().filter(|s| !s.is_empty()) {
+                    self.writer.plan.response_id =
+                        gateway_provider_protocol::response::native_response_id(id, &self.plan.response_id);
+                    self.plan.response_id = self.writer.plan.response_id.clone();
+                }
+                if let Some(usage) = message.get("usage") {
+                    self.native_usage = usage.clone();
+                }
+                events.extend(self.writer.start()?);
             }
+            "content_block_start" => events.extend(self.start_native_block(value)?),
+            "content_block_delta" => events.extend(self.delta_native_block(value)?),
+            "content_block_stop" => events.extend(self.stop_native_block(value)?),
             "message_delta" => {
                 if let Some(reason) = value["delta"]["stop_reason"].as_str() {
                     self.writer.finish_reason = Some(gateway_provider_writer::writer::anthropic_reason(reason));

@@ -17,24 +17,18 @@ pub struct ProviderEvent {
 
 impl ProviderEvent {
     pub fn responses(data: Value) -> Result<Self, gateway_core::error::GatewayError> {
-    Ok({
-        Self {
+    Ok(Self {
             event: data.get("type").and_then(Value::as_str).map(str::to_owned),
             data: s::scalar_json(&data)?,
             original_observation: None,
-        }
-    
-    })
+        })
 }
     pub fn chat(data: Value) -> Result<Self, gateway_core::error::GatewayError> {
-    Ok({
-        Self {
+    Ok(Self {
             event: None,
             data: s::scalar_json(&data)?,
             original_observation: None,
-        }
-    
-    })
+        })
 }
     pub fn responses_source(data: SourceJson) -> Self {
         let event = source_serialization::member(&data, "type")

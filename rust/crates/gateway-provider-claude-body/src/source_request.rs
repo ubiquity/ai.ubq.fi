@@ -1,6 +1,5 @@
 use gateway_provider_input::request::bearer_headers;
 use gateway_provider_source::source as s;
-use gateway_provider_chat::source_anthropic;
 use gateway_provider_input::source_controls as controls;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
 use gateway_provider_protocol::types::AuthMaterial;
@@ -100,7 +99,7 @@ impl PreparedClaudeBody {
             "Claude request cannot be represented losslessly with the current credential/workspace capability proof",
             "reasoning",
         ))?;
-        controls::claude_transport(&mut body, options.kind);
+        crate::source_controls::claude_transport(&mut body, options.kind)?;
         let stream = s::present(&body, "stream").and_then(|observed| s::boolean(&observed)) == Some(true);
         let body = s::canonical(&body)?;
         Ok(Self {

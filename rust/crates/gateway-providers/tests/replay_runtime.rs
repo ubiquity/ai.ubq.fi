@@ -2,8 +2,7 @@
 use gateway_core::model::ModelId;
 use gateway_core::provider::UpstreamProvider;
 use gateway_core::source_json::SourceJson;
-use gateway_providers::{anthropic, source_request::prepare_source_request};
-use gateway_provider_replay::replay;
+use gateway_providers::source_request::prepare_source_request;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
 use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types::PrepareOptions};
 use serde_json::{Value, json};

@@ -49,7 +49,6 @@ pub fn function_item(
     names: &ToolMap,
     status: &str,
 ) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
     use gateway_provider_source::source as s;
     let identity = original(wire_name, names);
     let mut item = s::object(vec![
@@ -74,7 +73,5 @@ pub fn function_item(
             s::set(&mut item, "namespace", s::quoted(&namespace)?)?;
         }
     }
-    item
-
-    })
+    Ok(item)
 }

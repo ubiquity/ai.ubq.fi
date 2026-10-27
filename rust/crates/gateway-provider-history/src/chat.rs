@@ -13,7 +13,7 @@ pub fn oversized(path: &str, bytes: usize, call_id: Option<&JsString16>) -> gate
 }
 
 fn refusal(error: payload::PayloadRefusal) -> gateway_local_refusal::source_error::SourceRequestError {
-    gateway_local_refusal::source_error::SourceRequestError::new(400, error.message, "invalid_request_error", Some("context_length_exceeded"), Some(Some(error.path.into())))
+    gateway_local_refusal::source_error::SourceRequestError::new(400, error.message, "invalid_request_error", Some("context_length_exceeded"), Some(Some(JsString16::from_utf8(&error.path))))
 }
 
 fn retain(value: payload::Forwarded, kind: &str, elisions: &mut Vec<Elision>) -> JsString16 {

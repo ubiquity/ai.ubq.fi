@@ -2,7 +2,6 @@ use crate::source as s;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
 use gateway_local_refusal::source_error::SourceRequestError;
 use serde_json::Value as ScalarValue;
 

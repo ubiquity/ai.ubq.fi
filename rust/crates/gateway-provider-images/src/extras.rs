@@ -7,7 +7,6 @@ use gateway_schema::source_request::value::Value;
 use crate::extras::image::ImagePlan;
 use crate::extras::image::ParsedImageRequest;
 use serde_json::Value as ScalarValue;
-use gateway_provider_source::extras::scalar_error;
 use gateway_provider_source::extras::lift;
 
 pub mod image;

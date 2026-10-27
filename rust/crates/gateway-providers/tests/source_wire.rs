@@ -632,7 +632,7 @@ fn custom_argument_json_parse_extracts_source_units_without_a_scalar_response_mi
         arguments,
         &names,
         "completed",
-    );
+    ).map_err(|error| format!("{error:?}"))?;
     assert_eq!(get(&item, "input"), parse(r#""raw\udc00""#));
     let raw = parse(r#"{"model":"deepseek-flash","input":"x"}"#);
     let mut plan = prepare_source_request(
@@ -752,7 +752,7 @@ fn opaque_model_refusal_body_does_not_replace_or_scalarize_request_units() {
 }
 
 #[test]
-fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments() {
+fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments() -> Result<(), String> {
     use gateway_core::{model::ModelId, provider::PaidProvider};
     use gateway_provider_policy::{policy::PaidRoutingInput, policy::resolve_paid_route};
     let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
@@ -775,7 +775,7 @@ fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments
         synthetic_hop: None,
         ubiquity_enabled: true,
     };
-    let plan = resolve_paid_route(&input);
+    let plan = resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?;
     assert_eq!(plan.providers, vec![PaidProvider::Surplus]);
     assert_eq!(
         get(
@@ -785,5 +785,7 @@ fn paid_catalog_lookup_compares_source_model_units_and_retains_billing_fragments
         get(&row, "cache_read_price_per_token")
     );
     input.model = r"\ud800".into();
-    assert!(resolve_paid_route(&input).providers.is_empty());
+    assert!(resolve_paid_route(&input).map_err(|error| format!("{error:?}"))?.providers.is_empty());
+
+    Ok(())
 }

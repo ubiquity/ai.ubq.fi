@@ -232,9 +232,52 @@ pub fn reasoning(item: &SourceJson) -> JsString16 {
     }
     s::join(&parts, "")
 }
-
+struct History {
+    messages: Vec<SourceJson>,
+    elisions: Vec<Elision>,
+    pending: JsString16,
+    reject: bool,
+    summary_index: Option<usize>,
+    exemptions: Vec<SummaryExemption>,
+}
 
 pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, Vec<SummaryExemption>)> {
+    let reject = reduction(raw)?;
+    let mut history = History { messages: Vec::new(), elisions: Vec::new(), pending: JsString16::default(), reject, summary_index: None, exemptions: Vec::new() };
+    if let Some(instructions) =
+        s::present(raw, "instructions").and_then(|observed| s::string(&observed)).filter(|text| !s::trim(text).as_units().is_empty())
+    {
+        history.messages.push(s::object(vec![
+            ("role", s::text("system")?),
+            (
+                "content",
+                bound(
+                    &instructions,
+                    "instructions",
+                    None,
+                    "message",
+                    reject,
+                    &mut history.elisions,
+                )?,
+            ),
+        ])?);
+    }
+    let input = s::present(raw, "input").ok_or_else(|| error("input must be a string or an array", "input"))?;
+    history.summary_index = summary::inspect_input(&input).map_err(|failure| SourceRequestError::new(400, JsString16::from_utf8(&format!("input item {}", failure.message)), "invalid_request_error", Some("context_length_exceeded"), Some(Some(JsString16::from_utf8(&failure.path)))))?;
+    let items = if s::string(&input).is_some() {
+        vec![s::object(vec![
+            ("role", s::text("user")?),
+            ("content", input),
+        ])?]
+    } else {
+        json::array(&input).ok_or_else(|| error("input must be a string or an array", "input"))?
+    };
+
+    for (index, item) in items.iter().enumerate() { history.item(index, item)?; }
+    Ok((history.messages, history.elisions, history.exemptions))
+}
+
+fn reduction(raw: &SourceJson) -> s::Result<bool> {
     let truncation = s::present(raw, "truncation");
     let reject = truncation.as_ref().is_some_and(|value| s::is(value, "disabled"));
     if let Some(truncation) = truncation.filter(|value| !s::is_null(value) && !reject && !s::is(value, "auto")) {
@@ -256,56 +299,30 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
             "truncation",
         ));
     }
-    let mut messages = vec![];
-    let mut elisions = vec![];
-    let mut pending = JsString16::default();
-    if let Some(instructions) =
-        s::present(raw, "instructions").and_then(|observed| s::string(&observed)).filter(|text| !s::trim(text).as_units().is_empty())
-    {
-        messages.push(s::object(vec![
-            ("role", s::text("system")?),
-            (
-                "content",
-                bound(
-                    &instructions,
-                    "instructions",
-                    None,
-                    "message",
-                    reject,
-                    &mut elisions,
-                )?,
-            ),
-        ])?);
-    }
-    let input = s::present(raw, "input").ok_or_else(|| error("input must be a string or an array", "input"))?;
-    let summary_index = summary::inspect_input(&input).map_err(|failure| SourceRequestError::new(400, format!("input item {}", failure.message), "invalid_request_error", Some("context_length_exceeded"), Some(Some(failure.path.into()))))?;
-    let mut exemptions = Vec::new();
-    let items = if s::string(&input).is_some() {
-        vec![s::object(vec![
-            ("role", s::text("user")?),
-            ("content", input),
-        ])?]
-    } else {
-        json::array(&input).ok_or_else(|| error("input must be a string or an array", "input"))?
-    };
-    for (index, item) in items.iter().enumerate() {
+    Ok(reject)
+}
+
+impl History {
+    fn item(&mut self, index: usize, item: &SourceJson) -> s::Result<()> {
         let path = format!("input[{index}]");
         if let Some(text) = s::string(item) {
-            pending = JsString16::default();
-            messages.push(s::object(vec![
-                ("role", s::text("user")?),
-                (
-                    "content",
-                    bound(&text, &path, None, "message", reject, &mut elisions)?,
-                ),
-            ])?);
-            continue;
+            self.pending = JsString16::default();
+            self.messages.push(s::object(vec![("role", s::text("user")?), ("content", bound(&text, &path, None, "message", self.reject, &mut self.elisions)?)])?);
+            return Ok(());
         }
+        if json::entries(item).is_none() { return Err(error("input items must be objects", "input")); }
         let kind = match s::present(item, "type").filter(|value| s::string(value).is_some()) { Some(value) => value, None => s::text("message")? };
         if s::is(&kind, "reasoning") {
-            let text = bound_source(&reasoning(item), &path, None, "reasoning", reject, &mut elisions)?;
-            pending = s::concat(&[&pending, &text]);
-        } else if s::is(&kind, "message") {
+            let text = bound_source(&reasoning(item), &path, None, "reasoning", self.reject, &mut self.elisions)?;
+            self.pending = s::concat(&[&self.pending, &text]);
+        } else if s::is(&kind, "message") { self.message(index, item, &path)?; }
+        else if s::is(&kind, "function_call") || s::is(&kind, "custom_tool_call") { self.call(item, &kind, &path)?; }
+        else if s::is(&kind, "function_call_output") || s::is(&kind, "custom_tool_call_output") { self.output(item, &path)?; }
+        else if s::is(&kind, "agent_message") { self.agent(item, &path)?; }
+        else { return Err(s::invalid(s::concat(&[&JsString16::from_utf8("input item type '"), &s::string(&kind).unwrap_or_default(), &JsString16::from_utf8("' is not supported")]), "input.type")); }
+        Ok(())
+    }
+    fn message(&mut self, index: usize, item: &SourceJson, path: &str) -> s::Result<()> {
             let role_source =
                 s::present(item, "role").and_then(|observed| s::string(&observed)).unwrap_or_else(|| JsString16::from_utf8("user"));
             let role = role_source
@@ -325,15 +342,15 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
                     )
                 })?;
             if role == "user" {
-                pending = JsString16::default();
+                self.pending = JsString16::default();
             }
             let role = if role == "developer" { "system" } else { &role };
             let source_content = s::present(item, "content").ok_or_else(|| error("input.content must be a string or an array", "input.content"))?;
-            let projected_content = content(&source_content, role, &format!("{path}.content"), reject, &mut elisions, summary_index == Some(index))?;
-            if summary_index == Some(index)
+            let projected_content = content(&source_content, role, &format!("{path}.content"), self.reject, &mut self.elisions, self.summary_index == Some(index))?;
+            if self.summary_index == Some(index)
                 && let Some(text) = s::string(&projected_content)
                 && bytes(&text) > FORWARD_LIMIT {
-                exemptions.push(summary::exemption(&format!("{path}.content"), bytes(&text)));
+                self.exemptions.push(summary::exemption(&format!("{path}.content"), bytes(&text)));
             }
             let mut message = s::object(vec![
                 ("role", s::text(role)?),
@@ -342,16 +359,18 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
                     projected_content,
                 ),
             ])?;
-            if role == "assistant" && !pending.as_units().is_empty() {
+            if role == "assistant" && !self.pending.as_units().is_empty() {
                 s::set(
                     &mut message,
                     "reasoning_content",
-                    s::quoted(&std::mem::take(&mut pending))?,
+                    s::quoted(&std::mem::take(&mut self.pending))?,
                 )?;
             }
-            messages.push(message);
-        } else if s::is(&kind, "function_call") || s::is(&kind, "custom_tool_call") {
-            let label = if s::is(&kind, "custom_tool_call") {
+            self.messages.push(message);
+        Ok(())
+    }
+    fn call(&mut self, item: &SourceJson, kind: &SourceJson, path: &str) -> s::Result<()> {
+            let label = if s::is(kind, "custom_tool_call") {
                 "custom_tool_call"
             } else {
                 "function_call"
@@ -376,7 +395,7 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
             };
             let call_id_text = s::string(&call_id).ok_or_else(|| error(&format!("{label} items require call_id and name"), "input"))?;
             let arguments_text = s::string(&arguments).ok_or_else(|| error("tool arguments must be a string", "input"))?;
-            let arguments = s::quoted(&crate::chat::bound_arguments(&arguments_text, &format!("{path}.arguments"), &call_id_text, reject, &mut elisions)?)?;
+            let arguments = s::quoted(&crate::chat::bound_arguments(&arguments_text, &format!("{path}.arguments"), &call_id_text, self.reject, &mut self.elisions)?)?;
             let call = s::object(vec![
                 ("id", call_id),
                 ("type", s::text("function")?),
@@ -385,7 +404,7 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
                     s::object(vec![("name", name), ("arguments", arguments)])?,
                 ),
             ])?;
-            if let Some(previous) = messages.last_mut().filter(|message| {
+            if let Some(previous) = self.messages.last_mut().filter(|message| {
                 s::present(message, "role").is_some_and(|observed| s::is(&observed, "assistant"))
                     && s::present(message, "content").is_none_or(|observed| s::is_null(&observed))
                     && s::present(message, "tool_calls").and_then(|observed| json::array(&observed)).is_some()
@@ -393,12 +412,12 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
                 let mut calls = s::present(previous, "tool_calls").and_then(|observed| json::array(&observed)).unwrap_or_default();
                 calls.push(call);
                 s::set(previous, "tool_calls", s::array(&calls)?)?;
-                if !pending.as_units().is_empty() {
+                if !self.pending.as_units().is_empty() {
                     let old = s::present(previous, "reasoning_content").and_then(|observed| s::string(&observed)).unwrap_or_default();
                     s::set(
                         previous,
                         "reasoning_content",
-                        s::quoted(&s::concat(&[&old, &std::mem::take(&mut pending)]))?,
+                        s::quoted(&s::concat(&[&old, &std::mem::take(&mut self.pending)]))?,
                     )?;
                 }
             } else {
@@ -407,27 +426,29 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
                     ("content", s::null()?),
                     ("tool_calls", s::array(&[call])?),
                 ])?;
-                if !pending.as_units().is_empty() {
+                if !self.pending.as_units().is_empty() {
                     s::set(
                         &mut message,
                         "reasoning_content",
-                        s::quoted(&std::mem::take(&mut pending))?,
+                        s::quoted(&std::mem::take(&mut self.pending))?,
                     )?;
                 }
-                messages.push(message);
+                self.messages.push(message);
             }
-        } else if s::is(&kind, "function_call_output") || s::is(&kind, "custom_tool_call_output") {
+        Ok(())
+    }
+    fn output(&mut self, item: &SourceJson, path: &str) -> s::Result<()> {
             let Some(call_id) =
                 s::present(item, "call_id").and_then(|observed| s::string(&observed)).filter(|value| !value.as_units().is_empty())
             else {
-                continue;
+                return Ok(());
             };
             let output = match s::present(item, "output").filter(|value| !s::is_null(value)) { Some(value) => value, None => s::text("")? };
             let text = match s::string(&output) {
                 Some(text) => text,
                 None => JsString16::from_utf8(s::canonical(&output)?.as_str()),
             };
-            messages.push(s::object(vec![
+            self.messages.push(s::object(vec![
                 ("role", s::text("tool")?),
                 ("tool_call_id", s::quoted(&call_id)?),
                 (
@@ -437,13 +458,15 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
                         &format!("{path}.output"),
                         Some(&call_id),
                         "tool_output",
-                        reject,
-                        &mut elisions,
+                        self.reject,
+                        &mut self.elisions,
                     )?,
                 ),
             ])?);
-        } else if s::is(&kind, "agent_message") {
-            pending = JsString16::default();
+        Ok(())
+    }
+    fn agent(&mut self, item: &SourceJson, path: &str) -> s::Result<()> {
+            self.pending = JsString16::default();
             let author = s::present(item, "author").and_then(|observed| s::string(&observed))
                 .unwrap_or_else(|| JsString16::from_utf8("agent"));
             let recipient = s::present(item, "recipient").and_then(|observed| s::string(&observed))
@@ -481,23 +504,14 @@ pub fn messages(raw: &SourceJson) -> s::Result<(Vec<SourceJson>, Vec<Elision>, V
                 &s::join(&texts, "\n"),
                 &JsString16::from_utf8(&notice),
             ]);
-            messages.push(s::object(vec![
+            self.messages.push(s::object(vec![
                 ("role", s::text("user")?),
                 (
                     "content",
-                    bound(&text, &path, None, "agent_message", reject, &mut elisions)?,
+                    bound(&text, path, None, "agent_message", self.reject, &mut self.elisions)?,
                 ),
             ])?);
-        } else {
-            return Err(s::invalid(
-                s::concat(&[
-                    &JsString16::from_utf8("input item type '"),
-                    &s::string(&kind).unwrap_or_default(),
-                    &JsString16::from_utf8("' is not supported"),
-                ]),
-                "input.type",
-            ));
-        }
+        Ok(())
     }
-    Ok((messages, elisions, exemptions))
 }
+

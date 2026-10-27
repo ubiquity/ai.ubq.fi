@@ -79,58 +79,10 @@ impl ClaudeChatState {
             }
         }
         if let Some(details) = delta.get("reasoning_details").filter(|v| !v.is_null()) {
-            for (position, detail) in details
-                .as_array()
-                .ok_or_else(|| malformed("Claude reasoning_details delta must be array."))?
-                .iter()
-                .enumerate()
-            {
-                let index = detail["index"].as_u64().unwrap_or(position as u64);
-                let fields = detail.as_object().ok_or_else(|| malformed("Claude reasoning detail must be object."))?;
-                if let Some(prior) = self.details.get_mut(&index) {
-                    for (key, value) in fields {
-                        if key == "text" {
-                            let old = prior[key].as_str().unwrap_or("");
-                            if let Some(text) = value.as_str() {
-                                prior[key] = json!(format!("{old}{text}"));
-                            } else {
-                                self.replayable = false;
-                            }
-                        } else if prior.get(key).is_none() {
-                            prior[key] = value.clone();
-                        } else if prior[key] != *value || key == "signature" {
-                            self.replayable = false;
-                        }
-                    }
-                } else {
-                    self.details.insert(index, detail.clone());
-                }
-            }
+            self.push_details(details)?;
         }
         if let Some(tools) = delta.get("tool_calls").filter(|v| !v.is_null()) {
-            for (position, call) in tools
-                .as_array()
-                .ok_or_else(|| malformed("Claude tool_calls delta must be array."))?
-                .iter()
-                .enumerate()
-            {
-                if !call["function"].is_object() {
-                    return Err(malformed("Claude tool call delta must have a function."));
-                }
-                let index = call["index"].as_u64().unwrap_or(position as u64);
-                let row = self.tools.entry(index).or_insert(
-                    json!({"id":"","type":"function","function":{"name":"","arguments":""}}),
-                );
-                if let Some(id) = call["id"].as_str() {
-                    row["id"] = json!(id)
-                }
-                for field in ["name", "arguments"] {
-                    if let Some(text) = call["function"][field].as_str() {
-                        let old = row["function"][field].as_str().unwrap_or("");
-                        row["function"][field] = json!(format!("{old}{text}"));
-                    }
-                }
-            }
+            self.push_tool_calls(tools)?;
         }
         let from_content = delta["reasoning_content"]
             .as_str()
@@ -162,6 +114,49 @@ impl ClaudeChatState {
         result["choices"] = json!([{"index":choice["index"].as_u64().unwrap_or(0),"delta":projected,"finish_reason":choice["finish_reason"]}]);
         Ok(result)
     }
+    fn push_details(&mut self, details: &Value) -> Result<(), GatewayError> {
+            for (position, detail) in details
+                .as_array()
+                .ok_or_else(|| malformed("Claude reasoning_details delta must be array."))?
+                .iter()
+                .enumerate()
+            {
+                let index = detail["index"].as_u64().unwrap_or(position as u64);
+                let fields = detail.as_object().ok_or_else(|| malformed("Claude reasoning detail must be object."))?;
+                if let Some(prior) = self.details.get_mut(&index) {
+                    merge_detail(prior, fields, &mut self.replayable);
+                } else {
+                    self.details.insert(index, detail.clone());
+                }
+            }
+        Ok(())
+    }
+    fn push_tool_calls(&mut self, tools: &Value) -> Result<(), GatewayError> {
+            for (position, call) in tools
+                .as_array()
+                .ok_or_else(|| malformed("Claude tool_calls delta must be array."))?
+                .iter()
+                .enumerate()
+            {
+                if !call["function"].is_object() {
+                    return Err(malformed("Claude tool call delta must have a function."));
+                }
+                let index = call["index"].as_u64().unwrap_or(position as u64);
+                let row = self.tools.entry(index).or_insert(
+                    json!({"id":"","type":"function","function":{"name":"","arguments":""}}),
+                );
+                if let Some(id) = call["id"].as_str() {
+                    row["id"] = json!(id)
+                }
+                for field in ["name", "arguments"] {
+                    if let Some(text) = call["function"][field].as_str() {
+                        let old = row["function"][field].as_str().unwrap_or("");
+                        row["function"][field] = json!(format!("{old}{text}"));
+                    }
+                }
+            }
+        Ok(())
+    }
     pub fn finish_message(&mut self) -> Value {
         if !self.details.is_empty() {
             self.assistant["reasoning_details"] =
@@ -172,4 +167,21 @@ impl ClaudeChatState {
         }
         self.assistant.clone()
     }
+}
+
+fn merge_detail(prior: &mut Value, fields: &serde_json::Map<String, Value>, replayable: &mut bool) {
+                    for (key, value) in fields {
+                        if key == "text" {
+                            let old = prior[key].as_str().unwrap_or("");
+                            if let Some(text) = value.as_str() {
+                                prior[key] = json!(format!("{old}{text}"));
+                            } else {
+                                *replayable = false;
+                            }
+                        } else if prior.get(key).is_none() {
+                            prior[key] = value.clone();
+                        } else if prior[key] != *value || key == "signature" {
+                            *replayable = false;
+                        }
+                    }
 }

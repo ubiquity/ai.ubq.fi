@@ -204,36 +204,7 @@ fn embeddings_view(raw: &Value, job: bool) -> Result<EmbeddingsProfile, SourceRe
             value as u64
         }
     };
-    let encoding = match raw.get("encoding_format") {
-        None => "float",
-        Some(value) => {
-            if !value.is_string() {
-                return Err(invalid(
-                    "encoding_format must be a string",
-                    "encoding_format",
-                ));
-            }
-            let Some(text) = value.as_str() else {
-                return Err(invalid(
-                    "encoding_format must be one of: \"float\", \"base64\"",
-                    "encoding_format",
-                ));
-            };
-            text
-        }
-    };
-    if !["float", "base64"].contains(&encoding) {
-        return Err(invalid(
-            "encoding_format must be one of: \"float\", \"base64\"",
-            "encoding_format",
-        ));
-    }
-    if job && encoding != "float" {
-        return Err(invalid(
-            "encoding_format must be \"float\" for embeddings jobs",
-            "encoding_format",
-        ));
-    }
+    let encoding = embeddings_encoding(raw, job)?;
     let input_type = match raw.get("input_type") {
         None if job => {
             return Err(invalid(
@@ -262,55 +233,7 @@ fn embeddings_view(raw: &Value, job: bool) -> Result<EmbeddingsProfile, SourceRe
     {
         return Err(invalid("user must be a string", "user"));
     }
-    let input_error = || invalid("input must be a string or an array of strings", "input");
-    let inputs = if let Some(input) = raw["input"].as_text() {
-        vec![input.core()]
-    } else {
-        raw["input"]
-            .as_array()
-            .ok_or_else(input_error)?
-            .iter()
-            .map(|v| v.as_text().map(|text| text.core()).ok_or_else(input_error))
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    if inputs.is_empty() {
-        return Err(invalid(
-            "input must be a non-empty string or a non-empty array",
-            "input",
-        ));
-    }
-    if inputs.len() > 128 {
-        return Err(invalid(
-            format!("Too many inputs: {} (max 128)", inputs.len()),
-            "input",
-        ));
-    }
-    let mut total = 0;
-    for input in &inputs {
-        let len = input.as_units().len();
-        if len > 20_000 {
-            return Err(invalid(
-                format!("Input too large: {len} chars (max 20000)"),
-                "input",
-            ));
-        }
-        total += len;
-        if total > 100_000 {
-            return Err(invalid(
-                format!("Request too large: {total} chars total (max 100000)"),
-                "input",
-            ));
-        }
-        if String::from_utf16_lossy(input.as_units()).len().div_ceil(4) > 10_000 {
-            return Err(invalid(
-                format!(
-                    "Input too large for embeddings provider: ~{} tokens (max 10000).",
-                    String::from_utf16_lossy(input.as_units()).len().div_ceil(4)
-                ),
-                "input",
-            ));
-        }
-    }
+    let (inputs, total) = embeddings_inputs(raw)?;
     let cache_profile_key = serde_json::json!([
         "voyage-profile-v2",
         model,
@@ -420,4 +343,90 @@ pub fn source_systemone_usage(raw: &SourceJson) -> Option<ScalarValue> {
         usage["cost"] = serde_json::json!(cost)
     }
     Some(usage)
+}
+
+fn embeddings_encoding(raw: &Value, job: bool) -> Result<&str, SourceRequestError> {
+    let encoding = match raw.get("encoding_format") {
+        None => "float",
+        Some(value) => {
+            if !value.is_string() {
+                return Err(invalid(
+                    "encoding_format must be a string",
+                    "encoding_format",
+                ));
+            }
+            let Some(text) = value.as_str() else {
+                return Err(invalid(
+                    "encoding_format must be one of: \"float\", \"base64\"",
+                    "encoding_format",
+                ));
+            };
+            text
+        }
+    };
+    if !["float", "base64"].contains(&encoding) {
+        return Err(invalid(
+            "encoding_format must be one of: \"float\", \"base64\"",
+            "encoding_format",
+        ));
+    }
+    if job && encoding != "float" {
+        return Err(invalid(
+            "encoding_format must be \"float\" for embeddings jobs",
+            "encoding_format",
+        ));
+    }
+    Ok(encoding)
+}
+fn embeddings_inputs(raw: &Value) -> Result<(Vec<JsString16>, usize), SourceRequestError> {
+    let input_error = || invalid("input must be a string or an array of strings", "input");
+    let inputs = if let Some(input) = raw["input"].as_text() {
+        vec![input.core()]
+    } else {
+        raw["input"]
+            .as_array()
+            .ok_or_else(input_error)?
+            .iter()
+            .map(|v| v.as_text().map(|text| text.core()).ok_or_else(input_error))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    if inputs.is_empty() {
+        return Err(invalid(
+            "input must be a non-empty string or a non-empty array",
+            "input",
+        ));
+    }
+    if inputs.len() > 128 {
+        return Err(invalid(
+            format!("Too many inputs: {} (max 128)", inputs.len()),
+            "input",
+        ));
+    }
+    let mut total = 0;
+    for input in &inputs {
+        let len = input.as_units().len();
+        if len > 20_000 {
+            return Err(invalid(
+                format!("Input too large: {len} chars (max 20000)"),
+                "input",
+            ));
+        }
+        total += len;
+        if total > 100_000 {
+            return Err(invalid(
+                format!("Request too large: {total} chars total (max 100000)"),
+                "input",
+            ));
+        }
+        if String::from_utf16_lossy(input.as_units()).len().div_ceil(4) > 10_000 {
+            return Err(invalid(
+                format!(
+                    "Input too large for embeddings provider: ~{} tokens (max 10000).",
+                    String::from_utf16_lossy(input.as_units()).len().div_ceil(4)
+                ),
+                "input",
+            ));
+        }
+    }
+    Ok((inputs, total))
 }

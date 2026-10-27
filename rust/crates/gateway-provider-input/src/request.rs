@@ -16,10 +16,7 @@ pub fn bearer_headers(secret: &str, accept: &str) -> Headers {
 
 
 pub fn codex_replay_input(input: &Value) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
-    crate::source_controls::replay(&s::scalar_json(input)?)?
-
-    })
+    Ok(crate::source_controls::replay(&s::scalar_json(input)?)?)
 }
 
 
@@ -41,8 +38,5 @@ pub fn chat_request_to_responses(raw: &Value) -> Result<SourceJson, GatewayError
 
 
 pub fn project_cerebras_schema(value: &Value) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
-    gateway_provider_chat_controls::projection::cerebras_schema(&s::scalar_json(value)?)?
-
-    })
+    Ok(gateway_provider_chat_controls::projection::cerebras_schema(&s::scalar_json(value)?)?)
 }

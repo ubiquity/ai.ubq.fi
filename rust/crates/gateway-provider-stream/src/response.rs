@@ -4,7 +4,6 @@ use gateway_provider_protocol::types::DecodePlan;
 use gateway_provider_protocol::types::DecodedResponse;
 use gateway_provider_protocol::types::Headers;
 use gateway_provider_protocol::types::header;
-use gateway_provider_source::usage;
 use gateway_core::error::GatewayError;
 use gateway_core::lifecycle::SemanticTerminal;
 use gateway_core::provider::UpstreamProvider;

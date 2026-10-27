@@ -63,7 +63,6 @@ fn context_valid(c: &ReplayContext) -> bool {
 
 
 fn fingerprint(item: &SourceJson) -> Result<Option<SourceJson>, gateway_core::error::GatewayError> {
-    Ok({
     let id = represented!(s::present(item, "id").and_then(|observed| s::control(&observed)));
     let (prefix, tail) = represented!(id.split_once('_'));
     if !["rs", "msg", "fc", "ctc"].contains(&prefix)
@@ -75,7 +74,7 @@ fn fingerprint(item: &SourceJson) -> Result<Option<SourceJson>, gateway_core::er
     {
         return Ok(None);
     }
-    match represented!(s::present(item, "type").and_then(|observed| s::control(&observed))).as_str() {
+    Ok(match represented!(s::present(item, "type").and_then(|observed| s::control(&observed))).as_str() {
         "reasoning" => {
             if s::present(item, "encrypted_content").is_some_and(|v| !s::is_null(&v))
                 || s::present(item, "content").is_some_and(|v| {
@@ -160,8 +159,6 @@ fn fingerprint(item: &SourceJson) -> Result<Option<SourceJson>, gateway_core::er
             Some(result)
         }
         _ => None,
-    }
-
     })
 }
 
@@ -269,7 +266,6 @@ fn parsed_arguments(value: &SourceJson) -> Option<SourceJson> {
 
 
 fn native_messages_match(native: &SourceJson, output: &[SourceJson]) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
     let Some(blocks) = source::array(native) else {
         return Ok(false);
     };
@@ -326,14 +322,11 @@ fn native_messages_match(native: &SourceJson, output: &[SourceJson]) -> Result<b
             _ => return Ok(false),
         }
     }
-    position == output.len()
-
-    })
+    Ok(position == output.len())
 }
 
 
 fn native_chat_matches(native: &SourceJson, output: &[SourceJson], names: &ToolMap) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
     let text = s::present(native, "content").and_then(|observed| s::string(&observed)).unwrap_or_else(empty_string);
     let mut tools = vec![];
     let Some(thinking) = chat_readable_reasoning(native) else {
@@ -414,11 +407,9 @@ fn native_chat_matches(native: &SourceJson, output: &[SourceJson], names: &ToolM
             _ => return Ok(false),
         }
     }
-    text == actual_text
+    Ok(text == actual_text
         && (actual_thinking.as_units().is_empty() || thinking == actual_thinking)
-        && tools == actual_tools
-
-    })
+        && tools == actual_tools)
 }
 
 
@@ -434,10 +425,7 @@ impl ReplayStore {
         transport: ReplayTransport,
         now_ms: i64,
     ) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
-        self.remember_with_tools(context, output, native, transport, &ToolMap::new(), now_ms)?
-    
-    })
+    self.remember_with_tools(context, output, native, transport, &ToolMap::new(), now_ms)
 }
     pub fn remember_with_tools(
         &mut self,
@@ -448,7 +436,6 @@ impl ReplayStore {
         names: &ToolMap,
         now_ms: i64,
     ) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
         if !context_valid(&context)
             || output.is_empty()
             || output.len() > 256
@@ -513,9 +500,7 @@ impl ReplayStore {
             expires: now_ms.saturating_add(self.ttl_ms.clamp(1, 1_800_000)),
             bytes,
         });
-        true
-    
-    })
+    Ok(true)
 }
     pub fn restore(
         &mut self,
@@ -524,7 +509,6 @@ impl ReplayStore {
         transport: ReplayTransport,
         now_ms: i64,
     ) -> Result<Option<Vec<ReplayEntry>>, gateway_core::error::GatewayError> {
-    Ok({
         if !context_valid(context) {
             return Ok(None);
         }
@@ -549,13 +533,8 @@ impl ReplayStore {
                 {
                     return Ok(None);
                 }
-                for (offset, expected) in row.fingerprints.iter().enumerate() {
-                    if s::present(&input[i + offset], "id").and_then(|observed| s::control(&observed)).as_deref()
-                        != Some(&row.ids[offset])
-                        || fingerprint(&input[i + offset])?.as_ref() != Some(expected)
-                    {
-                        return Ok(None);
-                    }
+                if !row.matches_input(&input[i..])? {
+                    return Ok(None);
                 }
                 result.push(ReplayEntry::NativeAssistant {
                     transport,
@@ -575,9 +554,7 @@ impl ReplayStore {
                 i += 1;
             }
         }
-        Some(result)
-    
-    })
+    Ok(Some(result))
 }
     /// Retains the assistant envelope emitted by `DecodedResponse::native_replay`.
     pub fn remember_decoded_native(
@@ -589,7 +566,6 @@ impl ReplayStore {
         names: &ToolMap,
         now_ms: i64,
     ) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
         let payload = match transport {
             ReplayTransport::Messages => {
                 if !s::present(&native, "role").is_some_and(|observed| s::is(&observed, "assistant")) {
@@ -599,9 +575,7 @@ impl ReplayStore {
             }
             ReplayTransport::Chat => native,
         };
-        self.remember_with_tools(context, output, payload, transport, names, now_ms)?
-    
-    })
+    self.remember_with_tools(context, output, payload, transport, names, now_ms)
 }
     /// Restores a complete provider history into the existing PrepareOptions seam.
     ///
@@ -615,7 +589,6 @@ impl ReplayStore {
         transport: ReplayTransport,
         now_ms: i64,
     ) -> Result<bool, gateway_core::error::GatewayError> {
-    Ok({
         let Some(input) = s::present(raw, "input").and_then(|observed| source::array(&observed)) else {
             return Ok(false);
         };
@@ -627,9 +600,7 @@ impl ReplayStore {
             return Ok(false);
         };
         options.restored_native_messages = Some(messages);
-        true
-    
-    })
+    Ok(true)
 }
 }
 
@@ -640,5 +611,19 @@ impl std::fmt::Debug for ReplayStore {
         f.debug_struct("ReplayStore")
             .field("receipt_count", &self.rows.len())
             .finish_non_exhaustive()
+    }
+}
+
+impl Receipt {
+    fn matches_input(&self, input: &[SourceJson]) -> Result<bool, gateway_core::error::GatewayError> {
+                for (offset, expected) in self.fingerprints.iter().enumerate() {
+                    if s::present(&input[offset], "id").and_then(|observed| s::control(&observed)).as_deref()
+                        != Some(&self.ids[offset])
+                        || fingerprint(&input[offset])?.as_ref() != Some(expected)
+                    {
+                        return Ok(false);
+                    }
+                }
+        Ok(true)
     }
 }

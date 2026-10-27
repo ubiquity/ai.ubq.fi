@@ -1,11 +1,9 @@
-use gateway_provider_source::source as s;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::model::ModelId;
 use gateway_core::provider::UpstreamProvider;
 use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;

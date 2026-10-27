@@ -72,7 +72,6 @@ pub fn completion(
     refusal: JsString16,
     calls: Vec<SourceJson>,
 ) -> Result<SourceJson, gateway_core::error::GatewayError> {
-    Ok({
     let mut message = s::object(vec![
         ("role", s::text("assistant")?),
         (
@@ -108,7 +107,5 @@ pub fn completion(
                 ("finish_reason", s::text(finish)?),
             ])?])?,
         ),
-    ])?
-
-    })
+    ])
 }
