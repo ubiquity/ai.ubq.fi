@@ -432,7 +432,6 @@ The retained `DENO_DEPLOY_TOKEN` name identifies an admin credential; it does no
 - `UOS_AI_TOKEN` (optional): Comma- or newline-separated client tokens accepted via `Authorization: Bearer ...`. The
   gateway can also accept API keys stored in durable KV (created via `/admin/api-keys`).
 - `DENO_DEPLOY_TOKEN` (optional, recommended): Tokens accepted for admin endpoints.
-- `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CEREBRAS_API_KEY` (optional): Server-side credential for explicit non-streaming Chat Completions requests to Cerebras
   `gpt-oss-120b`. It is never accepted from clients or exposed by health responses.
 - `DEEPSEEK_API_KEY` (optional): Server-side credential for Chat Completions requests to DeepSeek's official API
@@ -471,9 +470,21 @@ Bearer` with the documented OAuth beta. Present alone it changes nothing: the ro
   `/admin/providers/capacity` additionally carries a live `claude` analytics row (credential direction, workspace,
   windows, guards, last error) that the Analytics capacity list renders next to the Codex subscription rows; the stored
   Codex/metered capacity snapshot record keeps its own three sources, so the event sampler pays no extra KV reads.
-- `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
-- `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
-- `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
+
+Credentials, private account/workspace identifiers, access allowlists, public verification keys, native credential homes (`CODEX_HOME` or `HOME`), and production identity settings remain configurable. Keep `DENO_TIMELINE=production` for the VPS service and retain the existing host security boundaries. The repository-root `.env` resolves to a shared credential file; an unused gateway setting does not make a provider credential or shared metadata safe to delete.
+
+Gateway behavior uses these fixed defaults:
+
+- Compaction follows the selected provider's stock route, with no gateway Jev interception or hybrid residue pass.
+- The CORS fallback origin is `*`; trusted-origin and authentication checks still apply.
+- Images use the gateway's selected/default text model, and the Codex upstream is `https://chatgpt.com/backend-api/codex`.
+- New API keys default to `50` requests per week and expire after `90` days. Explicit per-key settings remain available.
+- TypeScript banked resets are enabled only through the existing per-account consent, eligibility and claim gates, with one redemption per account per UTC day and one per quota window. Rust's persisted account reset policy is unchanged.
+- Mac companion capacity samples use the host identity `mac`.
+
+The retired overrides are `JEV_COMPACTION_DISABLED`, `JEV_COMPACTION_HYBRID`, `CORS_ALLOW_ORIGIN`, `IMAGE_BASE_MODEL`, `CODEX_BASE_URL`, `UOS_API_KEY_DEFAULT_USAGE_LIMIT`, `UOS_API_KEY_DEFAULT_EXPIRY_DAYS`, `CODEX_BANKED_RESET_ENABLED`, `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY`, `CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW`, and `UOS_CAPACITY_OBSERVATION_HOST_ID`.
+
+For local activation, deploy the accepted immutable release with the old shared environment intact, then verify its release identity, authenticated ordinary inference and a marked native-compaction request using the stock route. After that proof, privately back up and hash-check the shared file, remove only retired behavior settings, preserve every other byte plus symlinks, ownership and permissions, and gracefully reload only the gateway. Never restart the shared Codex daemon. Restore `JEV_COMPACTION_DISABLED=1` before rolling back to interception-capable code. This local procedure does not authorize VPS activation, credential changes, reset redemption or a database rollback.
 
 ## Output-token caps by endpoint and provider
 

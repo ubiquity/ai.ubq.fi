@@ -1,7 +1,5 @@
-use gateway_admin::{
-    audit::{self, KeyChange, SourceChangeInput},
-    reads,
-};
+use gateway_admin::reads;
+use gateway_admin_contracts::audit::{self, KeyChange, SourceChangeInput};
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,

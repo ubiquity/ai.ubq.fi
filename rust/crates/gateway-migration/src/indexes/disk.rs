@@ -38,7 +38,7 @@ pub(crate) fn bind_spooled(
     for key in snapshot.keys() {
         let p = parts(&RecordKey(key.clone()))?;
         if starts(&p, &["ubq_ai", "api_keys", "id"]) {
-            let record: gateway_admin::keys::ApiKeyRecord = decode(
+            let record: gateway_admin_keys::keys::ApiKeyRecord = decode(
                 get(key)?
                     .ok_or_else(|| invalid("API key ID row is missing"))?
                     .json_value()?,

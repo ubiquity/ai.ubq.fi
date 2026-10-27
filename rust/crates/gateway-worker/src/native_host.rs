@@ -3,7 +3,6 @@
 use crate::{
     host::{PlatformHost, response_bytes},
     native_transport::{NativeTransport, unavailable},
-    transport::stream::{ObservationHandle, ObservedStream},
 };
 use gateway_auth::{
     crypto::{base64url, decode_base64url},
@@ -22,6 +21,7 @@ use gateway_auth_native_wire::{
     },
 };
 use gateway_core::error::GatewayError;
+use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use serde::Deserialize;
 use std::{collections::BTreeSet, rc::Rc};
 use worker::{Context, Env, Fetcher, Response};
@@ -113,7 +113,7 @@ impl NativeBindings {
         &self,
         action: &gateway_authority::native_live::NativeLiveAction,
         platform: &PlatformHost,
-    ) -> Result<crate::response::GatewayResponse, GatewayError> {
+    ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
         self.transport()?
             .live_upgrade(action.action_ref(), platform)
             .await
@@ -286,7 +286,7 @@ impl NativeBindings {
         use gateway_auth_native_wire::control::{NativeControlDisposition, NativeControlRequest};
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
-            operation_id: crate::transport::random::opaque_token()?,
+            operation_id: gateway_worker_platform::random::opaque_token()?,
             request: NativeControlRequest::CodexRenewAccess {
                 action_ref: action.action_ref().to_owned(),
             },

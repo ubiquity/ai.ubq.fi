@@ -1,6 +1,6 @@
 //! Closed native control DATA; finite reference validation is not authorization.
 use crate::native_read::NATIVE_WIRE_VERSION;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub const NATIVE_CONTROL_MAX_BYTES: usize = 65_536;

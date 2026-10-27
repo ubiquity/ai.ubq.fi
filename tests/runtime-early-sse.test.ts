@@ -1,5 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { connect } from "node:net";
 import { serveHttp } from "#http";
 import { earlySseHeadersCommitted, tryCommitEarlySseHeaders } from "../src/runtime/http-early-sse.ts";
 
@@ -91,7 +92,7 @@ test("early SSE refuses unread bodies and framing conflicts, commits once and re
   assert.equal(tryCommitEarlySseHeaders(observed, { headers: headers() }), false);
 });
 
-test("pending selection sends comments only and stops before a fragmented selected API event", async () => {
+test("pending selection sends no bytes and forwards the exact fragmented selected API event", async () => {
   const select = deferred();
   const finish = deferred();
   const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, async (request) => {
@@ -116,23 +117,83 @@ test("pending selection sends comments only and stops before a fragmented select
     const body = response.body;
     assert.ok(body);
     const reader = body.getReader();
-    const comment = await reader.read();
-    assert.equal(new TextDecoder().decode(comment.value), ":\n\n");
+    let preselectionBytes = false;
+    const first = reader.read().then((value) => {
+      preselectionBytes = true;
+      return value;
+    });
+    await Bun.sleep(120);
+    assert.equal(preselectionBytes, false, "pending selection must remain silent");
     select.resolve();
-    assert.equal(new TextDecoder().decode((await reader.read()).value), 'data: {"text":"first');
+    assert.equal(new TextDecoder().decode((await first).value), 'data: {"text":"first');
     let inserted = false;
     const next = reader.read().then((value) => {
       inserted = true;
       return value;
     });
-    await Bun.sleep(450);
-    assert.equal(inserted, false, "a pending selected body must not receive header-phase heartbeats");
+    await Bun.sleep(120);
+    assert.equal(inserted, false, "a pending selected body must not receive transport bytes");
     finish.resolve();
     assert.equal(new TextDecoder().decode((await next).value), 'last"}\n\n');
     assert.equal((await reader.read()).done, true);
   } finally {
     select.resolve();
     finish.resolve();
+    await server.shutdown();
+  }
+}, 5000);
+
+test("completed POST input stays live until a real disconnect aborts the held response without body bytes", async () => {
+  const release = deferred();
+  const headersArrived = deferred();
+  const aborted = deferred();
+  const posted = "x".repeat(52 * 1024);
+  let physicalRequest: Request | undefined;
+  let delivery: Promise<void> | undefined;
+  const server = serveHttp({ hostname: "127.0.0.1", port: 0 }, async (request, info) => {
+    assert.equal(await request.text(), posted);
+    physicalRequest = request;
+    delivery = info.completed;
+    request.signal.addEventListener("abort", aborted.resolve, { once: true });
+    assert.equal(tryCommitEarlySseHeaders(request, { headers: headers() }), true);
+    await release.promise;
+    return new Response("data: cleanup\n\n", { headers: headers() });
+  });
+  const address = await server.ready;
+  const socket = connect({ host: "127.0.0.1", port: address.port });
+  let wire = "";
+  socket.on("error", () => {});
+  socket.once("connect", () => {
+    socket.write(`POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${posted.length}\r\n\r\n${posted}`);
+  });
+  socket.on("data", (chunk: Buffer) => {
+    wire += chunk.toString();
+    if (wire.includes("\r\n\r\n")) headersArrived.resolve();
+  });
+  try {
+    await Promise.race([
+      headersArrived.promise,
+      Bun.sleep(1000).then(() => {
+        throw new Error("admitted headers did not arrive");
+      }),
+    ]);
+    assert.ok(physicalRequest);
+    assert.ok(delivery);
+    assert.equal(physicalRequest.signal.aborted, false, "input EOF must not abort the response");
+    await Bun.sleep(120);
+    assert.equal(physicalRequest.signal.aborted, false, "a quiet open response must stay live after input EOF");
+    assert.equal(wire.slice(wire.indexOf("\r\n\r\n") + 4), "", "no response body bytes may expose abandonment");
+    socket.destroy();
+    await Promise.race([
+      aborted.promise,
+      Bun.sleep(500).then(() => {
+        throw new Error("completed-input disconnect did not abort the original request");
+      }),
+    ]);
+    await assert.rejects(delivery, /disconnected/);
+  } finally {
+    socket.destroy();
+    release.resolve();
     await server.shutdown();
   }
 }, 5000);

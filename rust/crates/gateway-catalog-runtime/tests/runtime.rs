@@ -1,10 +1,10 @@
 use gateway_catalog_runtime::CatalogRuntime;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-use gateway_catalog_runtime::host::{
+use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
     CatalogProvider, CodexAccount, CredentialPublication, ProviderBinding,
 };
-use gateway_catalog_runtime::providers;
+use gateway_catalog_provider::providers;
 use gateway_catalog_runtime::state::{self, source_key};
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
@@ -244,10 +244,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let n = self.sequence.get() + 1;
         self.sequence.set(n);
-        format!("uuid-{n}")
+        Ok(format!("uuid-{n}"))
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         self.store

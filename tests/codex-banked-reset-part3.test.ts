@@ -11,7 +11,7 @@ import {
   attemptCodexBankedReset,
   candidate,
   dependencies,
-  parseCodexBankedResetConfig,
+  loadCodexBankedResetConfig,
   parseCodexResetRedemptionRecord,
   provenContract,
   providerSupportsLiveRedemption,
@@ -19,8 +19,8 @@ import {
   unavailableCodexUsageResetProvider,
 } from "./helpers/codex-banked-reset-harness.ts";
 
-test("config and durable-record parsers are strict, and production configuration always selects live", async () => {
-  const defaults = parseCodexBankedResetConfig(() => undefined);
+test("the fixed live policy preserves account budgets and durable-record parsing stays strict", async () => {
+  const defaults = loadCodexBankedResetConfig();
   assert.deepEqual(
     {
       enabled: defaults.enabled,
@@ -28,26 +28,8 @@ test("config and durable-record parsers are strict, and production configuration
       maxPerAccountPerDay: defaults.maxPerAccountPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: true, mode: "live", maxPerAccountPerDay: 0, maxPerAccountPerWindow: 1 }
+    { enabled: true, mode: "live", maxPerAccountPerDay: 1, maxPerAccountPerWindow: 1 }
   );
-
-  const environment = new Map<string, string>([
-    ["CODEX_BANKED_RESET_ENABLED", " true "],
-    ["CODEX_BANKED_RESET_MODE", " shadow "],
-    ["CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY", "2"],
-    ["CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW", "1"],
-  ]);
-  const parsedConfig = parseCodexBankedResetConfig((key) => environment.get(key));
-  assert.equal(parsedConfig.enabled, true);
-  assert.equal(parsedConfig.mode, "live");
-  assert.equal(parsedConfig.maxPerAccountPerDay, 2);
-  assert.equal(parsedConfig.maxPerAccountPerWindow, 1);
-  assert.equal("maxGlobalPerDay" in parsedConfig, false, "the retired global cap field is gone");
-  assert.equal(parseCodexBankedResetConfig(() => "1").enabled, false);
-  assert.equal(parseCodexBankedResetConfig(() => "1.5").maxPerAccountPerDay, 0);
-  // The retired global environment variable is no longer read at all.
-  const retiredEnvironment = parseCodexBankedResetConfig((key) => (key === "CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY" ? "0" : undefined));
-  assert.equal(retiredEnvironment.maxPerAccountPerDay, 0);
 
   const submittedAtMs = 1_700_000_000_001;
   const validRecord: CodexResetRedemptionRecord = {

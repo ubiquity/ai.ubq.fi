@@ -6,7 +6,8 @@ use gateway_admin_runtime::{
     claude_access,
     claude_generation::StateSnapshot,
 };
-use gateway_catalog_runtime::{host::ProviderBinding, state::checks_current};
+use gateway_catalog_provider::host::ProviderBinding;
+use gateway_catalog_runtime::state::checks_current;
 use gateway_core::{
     claude::ClaudeErrorEvidence as ErrorEvidence,
     error::GatewayError,
@@ -176,14 +177,10 @@ impl ClaudePoolSession {
             options.supports_native_effort = false;
             options.supports_disabled_thinking = false;
             if effort.is_some() {
-                let catalog = host
-                    .catalog(
-                        &binding,
-                        &ProviderBinding {
-                            identity: identity.clone(),
-                        },
-                    )
-                    .await?;
+                let catalog_binding = ProviderBinding {
+                    identity: identity.clone(),
+                };
+                let catalog = host.catalog(&binding, &catalog_binding).await?;
                 if !catalog.stale
                     && let Some(row) = catalog.models.iter().find(|r| {
                         source::member(r, "id")
@@ -435,7 +432,7 @@ impl ClaudePoolSession {
         {
             let now = host.now_ms();
             let binding = &head.selected.binding;
-            let event = host::AcceptedObservation {
+            let event = gateway_claude_usage_quota::observation::AcceptedObservation {
                 v: 1,
                 observation_id,
                 account_id: binding.account_id.clone(),

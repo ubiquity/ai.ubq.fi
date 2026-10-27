@@ -66,101 +66,52 @@ fn systemone_view(
     raw: &Value,
     options: &PrepareOptions,
 ) -> Result<PreparedRequest, SourceRequestError> {
-    let object = raw
-        .as_object()
-        .ok_or_else(|| scalar_error(400, "Invalid JSON body", Some("invalid_request_error")))?;
-    if let Some((key, _)) = object.iter().find(|(key, _)| {
-        !["state", "questions", "model"]
-            .iter()
-            .any(|name| key_is(key, name))
-    }) {
-        return Err(keyed_error("Unsupported key: ", key, "", false));
-    }
-    if !raw["state"].is_object() {
-        return Err(scalar_error(
-            400,
-            "state must be an object",
-            Some("invalid_request_error"),
-        ));
-    }
-    let questions = raw["questions"].as_object().ok_or_else(|| {
-        scalar_error(
-            400,
-            "questions must be an object",
-            Some("invalid_request_error"),
-        )
-    })?;
-    if questions.is_empty() || questions.len() > 24 {
-        return Err(scalar_error(
-            400,
-            "questions must hold between 1 and 24 questions",
-            Some("invalid_request_error"),
-        ));
-    }
-    if questions.iter().any(|(name, q)| {
-        gateway_schema::reasoning::js_trim_source(name)
-            .as_units()
-            .is_empty()
-            || name.as_units().len() > 120
-            || !q.is_object()
-            || !matches!(q["type"].as_str(), Some("noul" | "choice" | "score"))
-    }) {
-        return Err(scalar_error(
-            400,
-            "questions must be typed noul, choice, or score objects",
-            Some("invalid_request_error"),
-        ));
-    }
-    let model_value = raw.get("model");
-    if model_value.is_some_and(|value| !value.is_string()) {
-        return Err(scalar_error(
-            400,
-            "model must be a string",
-            Some("invalid_request_error"),
-        ));
-    }
-    let model = model_value
-        .map(Value::as_str)
-        .unwrap_or(Some("~typesafe/jev-latest"));
-    let Some(model) = model else {
-        return Err(scalar_error(
-            400,
-            "model must be a typesafe model id",
-            Some("invalid_request_error"),
-        ));
-    };
-    let base = model.strip_prefix('~').unwrap_or(model);
-    let suffix = base.strip_prefix("typesafe/").unwrap_or("");
-    if model.len() > 80
-        || suffix.is_empty()
-        || suffix.len() > 64
-        || !suffix
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
-        || !suffix
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-    {
-        return Err(scalar_error(
-            400,
-            "model must be a typesafe model id",
-            Some("invalid_request_error"),
-        ));
-    }
-    let upstream = if model.starts_with('~') {
-        model.to_owned()
-    } else {
-        format!("~{model}")
-    };
+    let source = raw.source().map_err(SourceRequestError::from_gateway)?;
+    let body = gateway_decision_protocol::legacy::parse(&source).map_err(decision_error)?;
     Ok(prepared(
         UpstreamProvider::Openrouter,
         "https://openrouter.ai/api/v1/systemone",
         ClientSurface::SystemOne,
         raw,
-        json!({"model":upstream,"state":raw["state"],"questions":raw["questions"]}),
+        Value::from_source(body),
         options,
         ResponseDecode::SystemOne,
+    ))
+}
+fn decision_error(error: gateway_decision_protocol::request::RequestError) -> SourceRequestError {
+    SourceRequestError::new(
+        error.status,
+        error.message,
+        "invalid_request_error",
+        Some(error.code),
+        error.param.map(|p| Some(p.into())),
+    )
+}
+pub fn prepare_source_decisions(
+    raw: &SourceJson,
+    options: &PrepareOptions,
+) -> Result<PreparedRequest, SourceRequestError> {
+    let request = gateway_decision_protocol::request::parse(raw).map_err(decision_error)?;
+    let model = gateway_decision_protocol::catalog::resolve_decision(
+        &request.model,
+        &options.allowed_models,
+    )
+    .ok_or_else(|| {
+        decision_error(gateway_decision_protocol::request::RequestError::invalid(
+            "The requested model is not served by the OpenRouter Decisions API",
+            Some("model"),
+        ))
+    })?;
+    let body = gateway_decision_protocol::request::select(&request, &model)
+        .map_err(SourceRequestError::from_gateway)?;
+    Ok(prepared(
+        UpstreamProvider::Openrouter,
+        gateway_decision_protocol::catalog::DECISIONS_URL,
+        ClientSurface::Decisions,
+        &Value::from_source(raw.clone()),
+        Value::from_source(body),
+        options,
+        ResponseDecode::Decisions,
     ))
 }
 pub fn decode_systemone(value: &ScalarValue) -> Result<ScalarValue, GatewayError> {

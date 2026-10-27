@@ -1,5 +1,27 @@
 [workspace]
 members = [
+  "crates/gateway-claude-usage-admin",
+  "crates/gateway-claude-usage-history",
+  "crates/gateway-claude-usage-history-records",
+  "crates/gateway-claude-usage-runtime",
+  "crates/gateway-claude-usage-protocol",
+  "crates/gateway-claude-usage-quota",
+  "crates/gateway-decision-runtime",
+  "crates/gateway-extras-contract",
+  "crates/gateway-decision-protocol",
+  "crates/gateway-auth-attestation",
+  "crates/gateway-auth-contracts",
+  "crates/gateway-auth-credentials",
+  "crates/gateway-auth-native-contracts",
+  "crates/gateway-auth-native-import-data",
+  "crates/gateway-auth-native-proof",
+  "crates/gateway-auth-native-protocol",
+  "crates/gateway-auth-passkeys",
+  "crates/gateway-auth-passport",
+  "crates/gateway-auth-passport-contracts",
+  "crates/gateway-auth-passport-sessions",
+  "crates/gateway-auth-primitives",
+  "crates/gateway-source",
   "crates/gateway-quality",
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
@@ -8,15 +30,26 @@ members = [
   "crates/gateway-providers",
   "crates/gateway-authority",
   "crates/gateway-admission",
+  "crates/gateway-catalog-provider",
   "crates/gateway-catalog-runtime",
   "crates/gateway-auth",
   "crates/gateway-auth-native-wire",
   "crates/gateway-admin",
+  "crates/gateway-admin-contracts",
+  "crates/gateway-admin-keys",
+  "crates/gateway-admin-kernel",
   "crates/gateway-admin-data",
+  "crates/gateway-profile-source",
+  "crates/gateway-quota-projection",
+  "crates/gateway-migration-ledger",
+  "crates/gateway-source-audit",
+  "crates/gateway-ledger-audit",
+  "crates/gateway-profile-values",
   "crates/gateway-admin-runtime",
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
+  "crates/gateway-observability-request-records",
   "crates/gateway-routing-runtime",
   "crates/gateway-routing-runtime-test-support",
   "crates/gateway-extras-runtime",
@@ -27,7 +60,13 @@ members = [
   "crates/gateway-native",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
+  "crates/gateway-wait-observation",
   "crates/gateway-worker",
+  "crates/gateway-worker-http-body",
+  "crates/gateway-worker-web",
+  "crates/gateway-worker-platform",
+  "crates/gateway-worker-storage",
+  "crates/gateway-worker-stream",
   "crates/gateway-capacity-recovery",
   "crates/gateway-worker-fixture",
   "crates/gateway-worker-fixture-setup",
@@ -47,6 +86,28 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-claude-usage-admin = { path = "crates/gateway-claude-usage-admin" }
+gateway-claude-usage-history = { path = "crates/gateway-claude-usage-history" }
+gateway-claude-usage-history-records = { path = "crates/gateway-claude-usage-history-records" }
+gateway-claude-usage-runtime = { path = "crates/gateway-claude-usage-runtime" }
+gateway-claude-usage-protocol = { path = "crates/gateway-claude-usage-protocol" }
+gateway-claude-usage-quota = { path = "crates/gateway-claude-usage-quota" }
+gateway-decision-runtime = { path = "crates/gateway-decision-runtime" }
+gateway-extras-contract = { path = "crates/gateway-extras-contract" }
+gateway-decision-protocol = { path = "crates/gateway-decision-protocol" }
+gateway-auth-attestation = { path = "crates/gateway-auth-attestation" }
+gateway-auth-contracts = { path = "crates/gateway-auth-contracts" }
+gateway-auth-credentials = { path = "crates/gateway-auth-credentials" }
+gateway-auth-native-contracts = { path = "crates/gateway-auth-native-contracts" }
+gateway-auth-native-import-data = { path = "crates/gateway-auth-native-import-data" }
+gateway-auth-native-proof = { path = "crates/gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "crates/gateway-auth-native-protocol" }
+gateway-auth-passkeys = { path = "crates/gateway-auth-passkeys" }
+gateway-auth-passport = { path = "crates/gateway-auth-passport" }
+gateway-auth-passport-contracts = { path = "crates/gateway-auth-passport-contracts" }
+gateway-auth-passport-sessions = { path = "crates/gateway-auth-passport-sessions" }
+gateway-auth-primitives = { path = "crates/gateway-auth-primitives" }
+gateway-source = { path = "crates/gateway-source" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
@@ -57,16 +118,27 @@ gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
 gateway-admission = { path = "crates/gateway-admission" }
+gateway-catalog-provider = { path = "crates/gateway-catalog-provider" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
 gateway-auth-native-wire = { path = "crates/gateway-auth-native-wire" }
 gateway-admin = { path = "crates/gateway-admin" }
+gateway-admin-contracts = { path = "crates/gateway-admin-contracts" }
+gateway-admin-keys = { path = "crates/gateway-admin-keys" }
+gateway-admin-kernel = { path = "crates/gateway-admin-kernel" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
+gateway-profile-source = { path = "crates/gateway-profile-source" }
+gateway-quota-projection = { path = "crates/gateway-quota-projection" }
+gateway-migration-ledger = { path = "crates/gateway-migration-ledger" }
+gateway-source-audit = { path = "crates/gateway-source-audit" }
+gateway-ledger-audit = { path = "crates/gateway-ledger-audit" }
+gateway-profile-values = { path = "crates/gateway-profile-values" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }
+gateway-observability-request-records = { path = "crates/gateway-observability-request-records" }
 gateway-routing-runtime = { path = "crates/gateway-routing-runtime" }
 gateway-routing-runtime-test-support = { path = "crates/gateway-routing-runtime-test-support" }
 gateway-extras-runtime = { path = "crates/gateway-extras-runtime" }
@@ -77,6 +149,12 @@ gateway-publication-test-support = { path = "crates/gateway-publication-test-sup
 gateway-native = { path = "crates/gateway-native" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
+gateway-wait-observation = { path = "crates/gateway-wait-observation" }
+gateway-worker-http-body = { path = "crates/gateway-worker-http-body" }
+gateway-worker-web = { path = "crates/gateway-worker-web" }
+gateway-worker-platform = { path = "crates/gateway-worker-platform" }
+gateway-worker-storage = { path = "crates/gateway-worker-storage" }
+gateway-worker-stream = { path = "crates/gateway-worker-stream" }
 gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }
 gateway-observability-test-support = { path = "crates/gateway-observability-test-support" }
 gateway-admin-test-support = { path = "crates/gateway-admin-test-support" }

@@ -77,6 +77,9 @@ pub struct ClaudeSubmission {
 }
 
 pub enum ClaudeRequest {
+    RefreshUsage {
+        document: SourceJson,
+    },
     State,
     SetCredential(ClaudeSubmission),
     DeleteAccount {

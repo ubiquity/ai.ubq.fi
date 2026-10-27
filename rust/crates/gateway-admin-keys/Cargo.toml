@@ -1,0 +1,19 @@
+[package]
+name = "gateway-admin-keys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-source-audit.workspace = true
+gateway-admin-contracts.workspace = true
+gateway-core.workspace = true
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-profile-values.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

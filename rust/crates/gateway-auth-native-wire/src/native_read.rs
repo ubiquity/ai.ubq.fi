@@ -1,6 +1,6 @@
 //! Fixed native read DATA and matching descriptors, without MAC or transport ownership.
 use crate::validation::invalid;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub const NATIVE_WIRE_VERSION: u8 = 1;

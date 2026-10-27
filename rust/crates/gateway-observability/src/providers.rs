@@ -9,6 +9,7 @@ use crate::{
 };
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::types::AuthResponse;
+use gateway_claude_usage_protocol::readback::quota as quota_readback;
 use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
@@ -107,20 +108,6 @@ fn credential_view(credential: &host::CredentialMetadata) -> Result<SourceJson, 
     document.set("refresh_material_present", &false)?;
     document.source_json()
 }
-fn safe_quota(
-    quota: &gateway_core::source_json::SourceJson,
-) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
-    crate::replay_values::SourceObject::parse(quota)?.select(&[
-        "windows",
-        "standard",
-        "representative_claim",
-        "blocked_until_ms",
-        "block_window",
-        "cooldown_until_ms",
-        "last_error",
-        "updated_at_ms",
-    ])
-}
 fn identity_headers(
     response: &mut AuthResponse,
     identity: host::BuildIdentity,
@@ -145,8 +132,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let auth = auth_view(&inventory.codex, at);
         let mut codex_accounts = auth["accounts"]
             .as_array()
-            .expect("source account array")
-            .clone();
+            .cloned()
+            .ok_or_else(|| store::error("Source account array is invalid"))?;
         let mut states = Vec::new();
         for (index, account) in inventory.codex.accounts.iter().enumerate() {
             let health = self
@@ -197,39 +184,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         gateway_health["stale"] = json!(false);
         body["ubiquity"] =
             json!({"configured":inventory.ubiquity_configured,"health":gateway_health});
-        let mut accounts = Vec::new();
-        let mut active = None;
-        for account in &inventory.claude.accounts {
-            if account.target.provider != HealthProvider::ClaudeCode {
-                return Err(store::error("Claude health target provider mismatch"));
-            }
-            let current = binding_current(self.store.as_ref(), &account.target)
-                .await
-                .unwrap_or(false);
-            let health = if current {
-                self.provider_health(&account.target, at)
-                    .await
-                    .unwrap_or_else(|_| unknown_health())
-            } else {
-                unknown_health()
-            };
-            let mut document = SourceObject::parse(&SourceJson::from_serializable(
-                &json!({"account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"active":inventory.claude.active_account_id.as_ref()==Some(&account.account_id),"stale":!current,"health":health,"capabilities":{"identity_verified":false,"can_refresh":false,"can_reset_upstream_quota":false}}),
-            )?)?;
-            document.set("label", &account.label)?;
-            document.set("credential", &credential_view(&account.credential)?)?;
-            document.set("workspace", &account.workspace)?;
-            let quota = if current {
-                account.quota.as_ref().map(safe_quota).transpose()?
-            } else {
-                None
-            };
-            document.set("quota", &quota)?;
-            if current && inventory.claude.active_account_id.as_ref() == Some(&account.account_id) {
-                active = Some(document.clone());
-            }
-            accounts.push(document.source_json()?);
-        }
+        let (accounts, active) = self.claude_health_accounts(&inventory.claude, at).await?;
         let mut claude = SourceObject::parse(&SourceJson::from_serializable(
             &json!({"configured":active.is_some(),"active_account_id":inventory.claude.active_account_id,"account_scan":"ok","principal_allowlist_configured":inventory.claude.access.as_ref().is_some_and(|a|!a.allowed_key_ids.is_empty()),"enabled":inventory.claude.enabled}),
         )?)?;
@@ -258,6 +213,48 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut response = AuthResponse::source_json(200, source.source_json()?);
         identity_headers(&mut response, self.host.build_identity()?)?;
         Ok(response)
+    }
+    async fn claude_health_accounts(
+        &self,
+        roster: &host::ClaudeRosterReadback,
+        at: i64,
+    ) -> Result<(Vec<SourceJson>, Option<SourceObject>), GatewayError> {
+        let dates = |s: &_| self.host.parse_claude_usage_date(s);
+        let project = |quota: &SourceJson| quota_readback(quota, &dates);
+        let mut accounts = Vec::new();
+        let mut active = None;
+        for account in &roster.accounts {
+            if account.target.provider != HealthProvider::ClaudeCode {
+                return Err(store::error("Claude health target provider mismatch"));
+            }
+            let current = binding_current(self.store.as_ref(), &account.target)
+                .await
+                .unwrap_or(false);
+            let health = if current {
+                self.provider_health(&account.target, at)
+                    .await
+                    .unwrap_or_else(|_| unknown_health())
+            } else {
+                unknown_health()
+            };
+            let mut document = SourceObject::parse(&SourceJson::from_serializable(
+                &json!({"account_id":account.account_id,"account_cohort_id":account.account_cohort_id,"active":roster.active_account_id.as_ref()==Some(&account.account_id),"stale":!current,"health":health,"capabilities":{"identity_verified":false,"can_refresh":false,"can_reset_upstream_quota":false}}),
+            )?)?;
+            document.set("label", &account.label)?;
+            document.set("credential", &credential_view(&account.credential)?)?;
+            document.set("workspace", &account.workspace)?;
+            let quota = if current {
+                account.quota.as_ref().map(project).transpose()?
+            } else {
+                None
+            };
+            document.set("quota", &quota)?;
+            if current && roster.active_account_id.as_ref() == Some(&account.account_id) {
+                active = Some(document.clone());
+            }
+            accounts.push(document.source_json()?);
+        }
+        Ok((accounts, active))
     }
 }
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {

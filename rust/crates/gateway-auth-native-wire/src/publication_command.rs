@@ -4,7 +4,7 @@ use crate::{
     publication_data::ImportCatalogDisposition,
     validation::{hash, required_nullable, text, unavailable},
 };
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -51,7 +51,7 @@ impl<'de> Deserialize<'de> for ImportCatalogData {
             upstream_status: u16,
         }
         let raw = <SourceJson as Deserialize>::deserialize(deserializer)?;
-        let kind = gateway_core::source_serialization::member(&raw, "kind")
+        let kind = gateway_source::source_serialization::member(&raw, "kind")
             .and_then(|value| value.deserialize::<String>().ok())
             .ok_or_else(|| serde::de::Error::custom("Missing import catalog kind"))?;
         match kind.as_str() {

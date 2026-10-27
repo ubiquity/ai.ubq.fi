@@ -9,12 +9,12 @@ use gateway_core::state::RecordKey;
 use gateway_core::tuple_key::TupleKey;
 use gateway_extras_runtime_test_support::fixture::{Memory, error};
 
-use gateway_extras_runtime::ExtrasRuntime;
-use gateway_extras_runtime::types::{
+use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider,
     ExtrasRequest, ExtrasRoute, Headers, HealthKind, ImageKind, KernelDisposition,
     UpstreamResponse,
 };
+use gateway_extras_runtime::ExtrasRuntime;
 use gateway_providers::types::PrepareOptions;
 use serde_json::{Value, json};
 use std::{
@@ -124,29 +124,18 @@ impl ExtrasHost for Host {
         &self,
         operation: ExtrasDispatch,
     ) -> Result<UpstreamResponse, DispatchFailure> {
-        let (label, body) = match &operation {
-            ExtrasDispatch::Voyage(c) => (
-                "voyage".into(),
-                c.prepared()
-                    .body
-                    .deserialize::<Value>()
-                    .expect("Generated scalar fixture request"),
-            ),
-            ExtrasDispatch::SystemOne(c) => (
-                "systemone".into(),
-                c.prepared()
-                    .body
-                    .deserialize::<Value>()
-                    .expect("Generated scalar fixture request"),
-            ),
+        let (label, source) = match &operation {
+            ExtrasDispatch::Voyage(c) => ("voyage".into(), &c.prepared().body),
+            ExtrasDispatch::SystemOne(c) | ExtrasDispatch::Decisions(c) => {
+                ("systemone".into(), &c.prepared().body)
+            }
             ExtrasDispatch::ImageChild {
                 request_id, body, ..
-            } => (
-                request_id.clone(),
-                body.deserialize::<Value>()
-                    .expect("actual scalar fixture child body"),
-            ),
+            } => (request_id.clone(), body),
         };
+        let body = source
+            .deserialize::<Value>()
+            .map_err(DispatchFailure::transport)?;
         self.0.calls.borrow_mut().push((label, body.clone()));
         if self.0.pending.get() {
             std::future::pending::<()>().await;
@@ -157,13 +146,16 @@ impl ExtrasHost for Host {
         let (body, semantic) = match operation {
             ExtrasDispatch::Voyage(_) => {
                 let count = body["input"].as_array().map_or(1, Vec::len);
-                let dims = body["output_dimension"].as_u64().unwrap() as usize;
+                let dims = body["output_dimension"]
+                    .as_u64()
+                    .ok_or_else(|| DispatchFailure::transport(error("fixture_dimensions")))?
+                    as usize;
                 (
                     json!({"data":(0..count).map(|i|json!({"embedding":vec![i as f64+1.0;dims]})).collect::<Vec<_>>(),"usage":{"total_tokens":count}}),
                     None,
                 )
             }
-            ExtrasDispatch::SystemOne(_) => (
+            ExtrasDispatch::SystemOne(_) | ExtrasDispatch::Decisions(_) => (
                 json!({"answers":{"go":true},"usage":{"input_tokens":2,"output_tokens":3,"cost":0.1}}),
                 None,
             ),
@@ -175,7 +167,8 @@ impl ExtrasHost for Host {
         Ok(UpstreamResponse {
             status: 200,
             headers: Headers::from([("x-uos-upstream".into(), "fixture".into())]),
-            body: serde_json::to_vec(&body).unwrap(),
+            body: serde_json::to_vec(&body)
+                .map_err(|_| DispatchFailure::transport(error("fixture_json")))?,
             semantic_terminal: semantic,
             usage: None,
         })

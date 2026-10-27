@@ -1,6 +1,7 @@
 //! Provider-declared catalog projections; credentials/configuration are injected observations.
 use crate::{aliases::*, catalog::*, metadata::*, model_control as c};
 use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+use gateway_decision_protocol::catalog as decisions;
 pub const CEREBRAS_IDS: &[&str] = &["gpt-oss-120b", "qwen-3.8-27b"];
 pub fn provider_hint(provider: &str, id: &ModelId) -> MetadataHint {
     match provider {
@@ -69,15 +70,7 @@ pub fn provider_ids(provider: &str) -> &'static [&'static str] {
         _ => &[],
     }
 }
-pub(crate) fn openrouter_owner(id: &ModelId) -> JsString16 {
-    let units = id.as_js_string().as_units();
-    let prefix = units.split(|unit| *unit == 47).next().unwrap_or_default();
-    if prefix.is_empty() {
-        "openrouter".into()
-    } else {
-        JsString16::from_units(prefix.to_vec())
-    }
-}
+
 pub fn configured_model_rows(input: &CatalogInput, provider: &str) -> Vec<SourceJson> {
     if !input.enabled(provider)
         || (provider == "ubiquity" && !input.synthetic_configured())
@@ -209,9 +202,7 @@ pub fn openrouter_models(input: &CatalogInput) -> Vec<SourceJson> {
     if !input.enabled("openrouter") || !input.configured("openrouter") {
         return Vec::new();
     }
-    let mut rows: Vec<_> = input
-        .rows("openrouter")
-        .iter()
+    let mut rows: Vec<_> = decisions::served_models(input.rows("openrouter"))
         .filter_map(|r| c::get(r, "id").as_ref().and_then(c::string))
         .map(|id| {
             let id = ModelId::from_source(id);
@@ -219,7 +210,7 @@ pub fn openrouter_models(input: &CatalogInput) -> Vec<SourceJson> {
                 ("id", c::json(&id)),
                 ("object", c::json("model")),
                 ("created", c::json(&0)),
-                ("owned_by", c::json(&openrouter_owner(&id))),
+                ("owned_by", c::json(&decisions::owner(&id))),
             ])
         })
         .collect();
@@ -238,16 +229,11 @@ pub fn openrouter_models(input: &CatalogInput) -> Vec<SourceJson> {
 pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
     openrouter_models(input)
         .iter()
-        .map(|model| {
-            let id = ModelId::from_source(
-                c::get(model, "id")
-                    .as_ref()
-                    .and_then(c::string)
-                    .expect("constructed model id"),
-            );
+        .filter_map(|model| {
+            let id = ModelId::from_source(c::get(model, "id").as_ref().and_then(c::string)?);
             let jev = id.matches_scalar("typesafe/jev-latest");
             let resolved = input.metadata(&id, None, None, false);
-            let discovered = input.rows("openrouter").iter().any(|r| {
+            let discovered = input.rows("openrouter").iter().find(|r| {
                 c::get(r, "id").as_ref().and_then(c::string).as_ref() == Some(id.as_js_string())
             });
             let levels = if jev {
@@ -276,10 +262,10 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
                 ("upstream_provider", c::json("openrouter")),
                 (
                     "supported_endpoints",
-                    c::json(&if jev && !discovered {
-                        vec!["/v1/systemone"]
+                    c::json(&if jev && discovered.is_none() {
+                        vec!["/v1/decisions", "/v1/systemone"]
                     } else {
-                        vec!["/v1/responses", "/v1/chat/completions"]
+                        discovered.map_or_else(Vec::new, decisions::endpoints)
                     }),
                 ),
                 ("supported_reasoning_levels", c::json(&levels)),
@@ -314,7 +300,7 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
                     c::json(&resolved.reasoning_source),
                 );
             }
-            row
+            Some(row)
         })
         .collect()
 }

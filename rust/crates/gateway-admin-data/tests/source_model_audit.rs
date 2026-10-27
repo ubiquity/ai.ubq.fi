@@ -1,11 +1,10 @@
-use gateway_admin_data::migration::{
-    ObservedRow,
-    audit::{self, Audit},
-};
+use gateway_admin_data::inventory as audit;
+use gateway_admin_data::report::Audit;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_control::encode_source_control_record,
     source_json::SourceJson, source_serialization as source,
 };
+use gateway_migration_ledger::rows::ObservedRow;
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -111,8 +110,8 @@ impl audit::AuditInventory for Replay<'_> {
     }
 }
 fn inspect_model_snapshot(rows: &[ObservedRow]) -> Result<Vec<JsString16>, GatewayError> {
-    let result = audit::source_model::inspect_model_snapshot(rows);
-    let replay = audit::source_model::inspect_model_inventory(&Replay(rows));
+    let result = gateway_source_audit::model::inspect_model_snapshot(rows);
+    let replay = gateway_source_audit::model::inspect_model_inventory(&Replay(rows));
     assert_eq!(format!("{result:?}"), format!("{replay:?}"));
     result
 }

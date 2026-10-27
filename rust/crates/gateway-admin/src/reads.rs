@@ -1,8 +1,8 @@
-use crate::{
+use gateway_admin_contracts::{
     audit::{self, RETENTION_MS},
-    keys::{ApiKeyRecord, public_record},
     source_input as input,
 };
+use gateway_admin_keys::keys::{ApiKeyRecord, public_record};
 use gateway_auth::{
     api_keys,
     passkeys::{PasskeyUser, user_wire},
@@ -267,7 +267,7 @@ pub async fn api_keys_with_usage<S: QueryStore>(
     let rows = prefix_rows(store, store::key(json!(["ubq_ai", "api_keys", "id"])), now).await?;
     let mut records = Vec::new();
     for (key, row) in rows {
-        let record = crate::keys::decode_id_record(&key, &row)?;
+        let record = gateway_admin_keys::keys::decode_id_record(&key, &row)?;
         records.push(record);
     }
     records.sort_by_key(|record| std::cmp::Reverse(record.created_at_ms));

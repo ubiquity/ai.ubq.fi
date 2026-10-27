@@ -2,6 +2,8 @@
 //! One controller is shared across requests, principals and inference routes in an
 //! isolate. This is neither a quota ledger nor a durable/distributed scheduler.
 
+pub mod handoff;
+
 use gateway_core::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},

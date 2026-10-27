@@ -48,41 +48,16 @@ export type CodexBankedResetConfig = Readonly<{
   maxPerAccountPerWindow: number;
 }>;
 
-const getEnv = (key: string): string | undefined => {
-  try {
-    return process.env[key];
-  } catch {
-    return undefined;
-  }
-};
-
-const parseStrictBoolean = (value: string | undefined, defaultValue: boolean): boolean =>
-  value === undefined ? defaultValue : value.trim().toLowerCase() === "true";
-
-const parseNonNegativeInteger = (value: string | undefined, defaultValue: number): number => {
-  if (value === undefined) return defaultValue;
-  const normalized = value.trim();
-  if (!/^\d+$/.test(normalized)) return 0;
-  const parsed = Number(normalized);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
-};
-
 /**
- * This is intentionally read at use time rather than module load time. A
- * configuration update can kill new claims immediately without deleting an
- * existing submitted/unknown record that still requires reconciliation.
+ * Preserve the established live policy: one submission per account per UTC
+ * day and quota window. Fresh per-account KV consent gates every submission.
  */
-export const parseCodexBankedResetConfig = (readEnv: (key: string) => string | undefined = getEnv): CodexBankedResetConfig => ({
-  // Automatic redemptions are live-only. The enabled switch remains the immediate kill switch.
-  enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
+export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => ({
+  enabled: true,
   mode: "live",
-  // The retired CODEX_BANKED_RESET_MAX_GLOBAL_PER_DAY environment is no longer read.
-  // Fail closed like the retired global cap: an absent cap disables live submissions until an explicit 1 is configured.
-  maxPerAccountPerDay: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_DAY"), 0),
-  maxPerAccountPerWindow: parseNonNegativeInteger(readEnv("CODEX_BANKED_RESET_MAX_PER_ACCOUNT_PER_WINDOW"), 1),
+  maxPerAccountPerDay: 1,
+  maxPerAccountPerWindow: 1,
 });
-
-export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => parseCodexBankedResetConfig();
 
 /**
  * The usage gate that every path writing a durable submission passes through.

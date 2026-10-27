@@ -1,7 +1,6 @@
 //! Existing public profile import, distinct from stopped complete-state adoption.
 use crate::{Mapping, Row, Transform, capture::SourceEntry, invalid, starts};
-use gateway_admin_data::migration::{self, ImportOptions, NormalizedEntry, Profile};
-use gateway_admin_data::profile::{SourceDateHost, source::normalize_source_import_line_with_host};
+use gateway_admin_data::policy::{self as migration, ImportOptions, Profile};
 use gateway_admin_runtime::capabilities::{Context, MigrationProfile, MigrationRequest};
 use gateway_auth::types::AuthResponse;
 use gateway_core::error::GatewayError;
@@ -11,6 +10,9 @@ use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
 use gateway_core::value::PortableValue;
+use gateway_profile_source::codec::normalize_source_import_line_with_host;
+use gateway_profile_source::line::NormalizedEntry;
+use gateway_profile_values::date::SourceDateHost;
 use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
@@ -214,7 +216,7 @@ async fn import_line<S: QueryStore, H: ProfileHost>(
     )
     .await?;
     if store.commit(transition).await? == CommitOutcome::Committed {
-        if migration::kernel::identity(&entry.parts, "window").is_some() {
+        if gateway_migration_ledger::kernel::identity(&entry.parts, "window").is_some() {
             kernel_windows.insert(entry.key.0);
         }
         Ok("imported")

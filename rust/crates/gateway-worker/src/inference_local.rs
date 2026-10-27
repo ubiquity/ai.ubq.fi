@@ -6,7 +6,6 @@ use crate::{
     inference_lifecycle::Session,
     inference_local_lifecycle::{LocalLifecycle, response_error, wrapper_error},
     routing_host,
-    transport::stream::{ObservationHandle, ObservedStream},
 };
 use futures_util::{Stream, task::AtomicWaker};
 use gateway_compaction::types::{CompactionOutcome, ResponseOptions};
@@ -20,6 +19,7 @@ use gateway_routing_runtime::{
     types::RoutingError,
 };
 use gateway_schema::source_request::SourceRequestDocument;
+use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{
     cell::{Cell, RefCell},
     future::{Future, poll_fn},
@@ -133,8 +133,7 @@ async fn start_inner(
                     &builder,
                     ResponseOptions {
                         stream,
-                        hybrid: crate::host::setting(&host.env, "JEV_COMPACTION_HYBRID").as_deref()
-                            != Some("0"),
+                        hybrid: true,
                     },
                 )
                 .await

@@ -1,15 +1,7 @@
-use gateway_core::{
-    identity::MAX_SAFE_INTEGER,
-    js_string::JsString16,
-    model::ModelId,
-    source_control::{
+use gateway_core::{identity::MAX_SAFE_INTEGER, model::ModelId, source_control::{
         decode_source_control_record, encode_source_control_record, source_json_tree,
-    },
-    source_json::SourceJson,
-    source_serialization as source,
-    state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
-};
+    }, state::StoredRecord, value::{PortableValue, ValueEncoding}};
+use gateway_source::{js_string::JsString16, source_json::SourceJson, source_serialization as source};
 use serde_json::json;
 use std::collections::BTreeSet;
 

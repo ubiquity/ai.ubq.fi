@@ -1,7 +1,6 @@
 //! Private Worker-binding protocol for the single coordination authority.
 //! The public router must never forward client requests to these store routes.
 
-use crate::{storage::SqliteAuthorityStore, transport::body::request_bytes};
 use futures_util::StreamExt;
 use gateway_core::{
     error::GatewayError,
@@ -11,6 +10,8 @@ use gateway_core::{
         StoredRecord,
     },
 };
+use gateway_worker_http_body::body::request_bytes;
+use gateway_worker_storage::store::SqliteAuthorityStore;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use worker::{

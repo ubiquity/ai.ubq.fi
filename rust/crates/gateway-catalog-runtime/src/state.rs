@@ -1,4 +1,4 @@
-use crate::{
+use gateway_catalog_provider::{
     host::{CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable},
     providers,
 };

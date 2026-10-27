@@ -1,9 +1,9 @@
 //! Existing source CORS policy, including trusted credential origins and Vary merging.
-use crate::response::GatewayResponse;
 use gateway_auth::origin::trusted_relay_origin;
+use gateway_worker_web::response::GatewayResponse;
 use worker::{Env, Request};
 
-use crate::host::{auth_config, setting};
+use crate::host::auth_config;
 
 const ALLOWED_HEADERS: &str = "Authorization,Content-Type,Idempotency-Key,If-None-Match,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token";
 const EXPOSED_HEADERS: &str = "x-uos-warning,x-uos-request-id,x-uos-provider-request-id,x-uos-upstream,x-uos-attempted-providers,x-uos-router-revision,x-uos-git-sha,x-uos-deployment-id,x-uos-cache,ETag,Retry-After,RateLimit,RateLimit-Policy,RateLimit-Limit,RateLimit-Remaining,RateLimit-Reset,x-ratelimit-limit-requests-minute,x-ratelimit-remaining-requests-minute,x-ratelimit-reset-requests-minute,x-ratelimit-limit-tokens-minute,x-ratelimit-remaining-tokens-minute,x-ratelimit-reset-tokens-minute,x-ratelimit-limit-requests-day,x-ratelimit-remaining-requests-day,x-ratelimit-reset-requests-day,x-ratelimit-limit-tokens-day,x-ratelimit-remaining-tokens-day,x-ratelimit-reset-tokens-day,x-codex-limit-name,x-codex-primary-used-percent";
@@ -25,18 +25,12 @@ impl Cors {
                 .find_map(|(key, value)| (key == "cors_origin").then(|| value.into_owned())),
         };
         let origin = raw_origin.and_then(|value| trusted_relay_origin(&value, &config));
-        let configured = setting(env, "CORS_ALLOW_ORIGIN")
-            .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "*".into());
-        let credentials = origin
-            .as_ref()
-            .is_some_and(|origin| configured == "*" || *origin == configured);
+        let credentials = origin.is_some();
         Ok(Self {
             origin: if credentials {
                 origin.expect("A credential origin was validated")
             } else {
-                configured
+                "*".into()
             },
             credentials,
             admin: url.path() == "/admin" || url.path().starts_with("/admin/"),

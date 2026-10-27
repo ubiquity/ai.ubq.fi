@@ -5,11 +5,11 @@ mod embeddings;
 mod idempotency;
 mod images;
 mod jobs;
-mod store;
-mod systemone;
-pub mod types;
 use gateway_core::{error::GatewayError, query::QueryStore};
-use types::{ExtrasHost, ExtrasRequest, ExtrasResponse, ExtrasRoute, KernelDisposition};
+mod store;
+use gateway_extras_contract::types::{
+    ExtrasHost, ExtrasRequest, ExtrasResponse, ExtrasRoute, KernelDisposition,
+};
 
 pub struct ExtrasRuntime<S, H> {
     store: S,
@@ -43,8 +43,8 @@ impl<S: QueryStore, H: ExtrasHost> ExtrasRuntime<S, H> {
                 jobs::get(&self.store, &self.host, &request, id).await?
             }
             ExtrasRoute::Images(kind) => images::images(&self.host, &request, *kind).await?,
-            ExtrasRoute::SystemOne => {
-                systemone::systemone(&self.store, &self.host, &request).await?
+            ExtrasRoute::SystemOne | ExtrasRoute::Decisions => {
+                gateway_decision_runtime::handle(&self.store, &self.host, &request).await?
             }
         };
         result.kernel = match request.route {
@@ -73,11 +73,15 @@ impl<S: QueryStore, H: ExtrasHost> ExtrasRuntime<S, H> {
             ExtrasRoute::JobGet(_) => {
                 KernelDisposition::Incomplete("embedding_job_read_not_counted")
             }
-            ExtrasRoute::SystemOne => {
+            ExtrasRoute::SystemOne | ExtrasRoute::Decisions => {
                 if (200..300).contains(&result.status) {
                     KernelDisposition::Completed
                 } else {
-                    KernelDisposition::Incomplete("systemone_failed")
+                    KernelDisposition::Incomplete(if request.route == ExtrasRoute::Decisions {
+                        "decisions_failed"
+                    } else {
+                        "systemone_failed"
+                    })
                 }
             }
             ExtrasRoute::Images(_) => KernelDisposition::FromAggregate,

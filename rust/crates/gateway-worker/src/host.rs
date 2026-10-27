@@ -1,13 +1,11 @@
 //! Only actual platform clock, RNG, WebCrypto and fixed authentication reads.
-use crate::transport::{
-    crypto,
-    outbound::Cancellation,
-    random,
-};
 use futures_util::StreamExt;
 use gateway_auth_contracts::{types::{AuthConfig, AuthHost}, upstream::{AuthUpstreamRequest, AuthUpstreamResponse}, webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto}};
 use gateway_authority::store::{AuthorityClock, TokenSource};
 use gateway_core::error::GatewayError;
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::crypto;
+use gateway_worker_platform::random;
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Method, Request, RequestInit, RequestRedirect, Response, Url};
 
@@ -84,7 +82,7 @@ impl TokenSource for PlatformTokens {
 pub struct PlatformClock;
 impl AuthorityClock for PlatformClock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        crate::storage::now_ms()
+        gateway_worker_storage::store::now_ms()
     }
 }
 
@@ -132,7 +130,7 @@ impl AuthHost for PlatformHost {
     fn now_ms(&self) -> i64 {
         // The request checks this fallible clock first. If the platform clock
         // subsequently fails, the sentinel expires credentials rather than reusing old time.
-        crate::storage::now_ms().unwrap_or(i64::MAX)
+        gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX)
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
         random::random_bytes(length)
@@ -151,7 +149,7 @@ impl AuthHost for PlatformHost {
         _state_id: &str,
         path: &str,
     ) -> Result<String, GatewayError> {
-        Ok(gateway_admin::kernel_auth::KernelAuthService {
+        Ok(gateway_admin_kernel::kernel_auth::KernelAuthService {
             store: &self.store,
             host: self,
         }

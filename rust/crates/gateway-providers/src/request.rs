@@ -134,6 +134,13 @@ pub fn prepare_request(
     raw: &Value,
     options: &PrepareOptions,
 ) -> Result<PreparedRequest, GatewayError> {
+    if surface == ClientSurface::Decisions {
+        return crate::extras::prepare_source_decisions(
+            &SourceJson::from_serializable(raw)?,
+            options,
+        )
+        .map_err(crate::source::scalar_error);
+    }
     if surface == ClientSurface::SystemOne {
         return crate::extras::prepare_systemone(raw, options);
     }
