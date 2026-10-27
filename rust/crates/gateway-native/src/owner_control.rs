@@ -56,10 +56,7 @@ impl<'a> NativeControlContext<'a> {
     }
     pub fn check(&self) -> Result<(), GatewayError> {
         if self.cancelled() {
-            return Err(GatewayError::unavailable(
-                "Native control was interrupted; reconcile the original action",
-                "native_control_outcome_unknown",
-            ));
+            return Err(gateway_native_http_framing::error::control_interrupted());
         }
         Ok(())
     }

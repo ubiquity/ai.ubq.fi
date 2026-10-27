@@ -1195,7 +1195,9 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
+ "gateway-authority",
  "gateway-core",
+ "gateway-native-import-source",
  "httparse",
  "serde_json",
  "ureq",

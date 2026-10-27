@@ -1,6 +1,6 @@
 //! Closed HTTP import adapter. Actual shared authority mints every proof; no effect implementation.
 use crate::{
-    native_import::{NativeImportHandler, auth_body_error, dispatch_import},
+    native_import::{NativeImportHandler, dispatch_import},
     owner_control::NativeControlContext,
 };
 use gateway_auth::native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeTransportIdentity};
@@ -22,12 +22,12 @@ use gateway_authority::native_control::{
 use gateway_authority::store::{Authority, TokenSource};
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_native_http_framing::{
+    import_body::{RawImportDocument, read_import_body},
     import_head::ImportHead,
     response::{disconnected, now_ms, write_import_response},
 };
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
-    io::Read,
     net::TcpStream,
     sync::Arc,
     time::{Duration, Instant},
@@ -175,16 +175,16 @@ where
         if head.kind != NativeImportKind::CodexAuth || head.path != head.kind.path() {
             return Err(unavailable());
         }
-        let raw = read_body(stream, &head, &original)?;
+        let raw = read_import_body(stream, &head, &cancellation)?;
         original.check()?;
-        let proof = futures_executor::block_on(authority.finish_import(admitted, &raw.0))?;
+        let proof = futures_executor::block_on(authority.finish_import(admitted, raw.as_bytes()))?;
         original.check()?;
         let result = futures_executor::block_on(dispatch_import(
             self.handler,
             &authority,
             &proof,
             &metadata,
-            &raw.0,
+            raw.as_bytes(),
             &original,
         ))?;
         original.check()?;
@@ -254,11 +254,11 @@ fn admit_headers(
 pub(crate) struct RemoteImportDocument {
     pub(crate) proof: gateway_authority::native_control::import::AuthenticatedNativeImport,
     pub(crate) metadata: NativeImportMetadata,
-    raw: NativeDocument,
+    raw: RawImportDocument,
 }
 impl RemoteImportDocument {
     pub(crate) fn body(&self) -> &[u8] {
-        &self.raw.0
+        self.raw.as_bytes()
     }
 }
 pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
@@ -284,9 +284,9 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     if head.kind != NativeImportKind::CodexAuth || head.path != head.kind.path() {
         return Err(unavailable());
     }
-    let raw = read_body(stream, head, original)?;
+    let raw = read_import_body(stream, head, &OriginalCancellation(original))?;
     original.check()?;
-    let proof = authority.finish_import(admitted, &raw.0)?;
+    let proof = authority.finish_import(admitted, raw.as_bytes())?;
     authority.recheck_import(&proof)?;
     original.check()?;
     Ok(RemoteImportDocument {
@@ -294,112 +294,6 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
         metadata,
         raw,
     })
-}
-struct NativeDocument(Vec<u8>);
-impl Drop for NativeDocument {
-    fn drop(&mut self) {
-        self.0.fill(0);
-    }
-}
-fn read_body(
-    stream: &mut TcpStream,
-    head: &ImportHead,
-    original: &NativeControlContext<'_>,
-) -> Result<NativeDocument, GatewayError> {
-    let length = optional(head, "content-length")?;
-    let encoding = optional(head, "transfer-encoding")?;
-    if length.is_some() && encoding.is_some() {
-        return Err(invalid());
-    }
-    let maximum = head.kind.body_limit_bytes();
-    let mut body = NativeDocument(Vec::new());
-    if let Some(length) = length {
-        gateway_native_import_source::body::check_auth_content_length(Some(length))
-            .map_err(|_| auth_body_error())?;
-        let length = length.parse::<usize>().map_err(|_| auth_body_error())?;
-        append(stream, &mut body.0, length, head.framing_deadline, original)?;
-    } else if encoding.is_some_and(|encoding| encoding.eq_ignore_ascii_case("chunked")) {
-        loop {
-            let mut line = Vec::new();
-            while !line.ends_with(b"\r\n") {
-                if line.len() >= 1024 {
-                    return Err(invalid());
-                }
-                append(stream, &mut line, 1, head.framing_deadline, original)?;
-            }
-            let size = match httparse::parse_chunk_size(&line).map_err(|_| invalid())? {
-                httparse::Status::Complete((used, size)) if used == line.len() => {
-                    usize::try_from(size).map_err(|_| auth_body_error())?
-                }
-                _ => return Err(invalid()),
-            };
-            if size > maximum - body.0.len() {
-                return Err(auth_body_error());
-            }
-            append(stream, &mut body.0, size, head.framing_deadline, original)?;
-            let mut end = Vec::new();
-            append(stream, &mut end, 2, head.framing_deadline, original)?;
-            if end != b"\r\n" {
-                return Err(invalid());
-            }
-            if size == 0 {
-                break;
-            }
-        }
-    } else {
-        return Err(invalid());
-    }
-    original.check()?;
-    // Preserve the closed native framing contract: no buffered trailers or second request.
-    stream.set_nonblocking(true).map_err(|_| invalid())?;
-    let extra = match stream.peek(&mut [0u8; 1]) {
-        Ok(count) => count > 0,
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
-        Err(_) => true,
-    };
-    stream.set_nonblocking(false).map_err(|_| invalid())?;
-    if extra {
-        return Err(invalid());
-    }
-    Ok(body)
-}
-fn append(
-    stream: &mut TcpStream,
-    output: &mut Vec<u8>,
-    length: usize,
-    deadline: Instant,
-    original: &NativeControlContext<'_>,
-) -> Result<(), GatewayError> {
-    let mut remaining = length;
-    let mut chunk = [0u8; 8192];
-    while remaining > 0 {
-        original.check()?;
-        let time = deadline
-            .checked_duration_since(Instant::now())
-            .filter(|duration| !duration.is_zero())
-            .ok_or_else(auth_body_error)?;
-        stream
-            .set_read_timeout(Some(time))
-            .map_err(|_| auth_body_error())?;
-        let take = remaining.min(chunk.len());
-        let count = match stream.read(&mut chunk[..take]) {
-            Ok(count) => count,
-            Err(_) => {
-                chunk.fill(0);
-                return Err(auth_body_error());
-            }
-        };
-        if count == 0 {
-            chunk.fill(0);
-            original.check()?;
-            return Err(auth_body_error());
-        }
-        output.extend_from_slice(&chunk[..count]);
-        chunk[..count].fill(0);
-        remaining -= count;
-        original.check()?;
-    }
-    Ok(())
 }
 fn unavailable() -> GatewayError {
     GatewayError::unavailable(

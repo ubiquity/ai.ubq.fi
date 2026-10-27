@@ -9,6 +9,8 @@ publish.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-auth-native-wire.workspace = true
+gateway-authority.workspace = true
+gateway-native-import-source.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]
