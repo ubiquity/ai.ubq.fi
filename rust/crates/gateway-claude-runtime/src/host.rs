@@ -1,14 +1,12 @@
 //! Fixed owner capabilities; none accepts a URL, caller proof, environment name or refresh token.
-use crate::{
-    quota::{QuotaObservation, QuotaState},
-    response::Classification,
-};
+use crate::response::Classification;
 use gateway_admin_runtime::{
     claude::{AccountBinding, Bootstrap},
     claude_generation::{StateGeneration, StateSnapshot},
 };
 use gateway_auth::types::AuthHost;
 use gateway_catalog_provider::host::ProviderBinding;
+use gateway_claude_usage_quota::{QuotaObservation, QuotaState};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
     source_serialization as source, state::RevisionCheck,
@@ -176,7 +174,7 @@ impl AcceptedObservation {
             source::entries(&standard.1).expect("standard observation is an object");
         let mut ordered = Vec::new();
         // Actual observeClaudeCodeQuota producer order, not arbitrary consumer input order.
-        for family in crate::quota::STANDARD_FAMILIES {
+        for family in gateway_claude_usage_quota::STANDARD_FAMILIES {
             if let Some(index) = remaining
                 .iter()
                 .position(|(name, _)| name == &JsString16::from_utf8(family))
@@ -254,10 +252,13 @@ mod producer_order_tests {
     #[test]
     fn accepted_standard_families_follow_actual_source_producer_order() {
         let mut quota = QuotaObservation::empty(1_800_000_000_000);
-        for (index, family) in crate::quota::STANDARD_FAMILIES.into_iter().enumerate() {
+        for (index, family) in gateway_claude_usage_quota::STANDARD_FAMILIES
+            .into_iter()
+            .enumerate()
+        {
             quota.standard.insert(
                 family.into(),
-                crate::quota::StandardWindow {
+                gateway_claude_usage_quota::StandardWindow {
                     limit: Some((index + 1) as f64),
                     remaining: None,
                     reset_at_ms: None,
@@ -287,7 +288,7 @@ mod producer_order_tests {
                 .iter()
                 .map(|(name, _)| name.try_utf8().unwrap())
                 .collect::<Vec<_>>(),
-            crate::quota::STANDARD_FAMILIES
+            gateway_claude_usage_quota::STANDARD_FAMILIES
         );
         for (index, (_, value)) in fields.iter().enumerate() {
             assert_eq!(

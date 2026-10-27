@@ -5,6 +5,7 @@ use gateway_auth::{
     crypto::sha256_hex,
     provider_credentials::{self as codex, CodexSourceAccount},
 };
+use gateway_claude_usage_history_records::types::CredentialKind;
 use gateway_core::{
     error::GatewayError,
     source_json::SourceJson,
@@ -192,7 +193,9 @@ impl RequestHost {
         ),
         GatewayError,
     > {
-        let roster = claude::read_roster(&self.store, at).await?;
+        let seed =
+            crate::claude_host::platform::bootstrap_for_source(&self.store, &self.platform).await?;
+        let roster = Some(claude::load_roster(&self.store, &self.platform, &seed).await?);
         let mut accounts = Vec::new();
         let mut active_id = None;
         let mut active_reason = None;
@@ -204,11 +207,22 @@ impl RequestHost {
                 let quota_row = self.store.read(&quota_key).await?;
                 let quota = quota_row
                     .as_ref()
-                    .map(|row| gateway_claude_runtime::quota::parse_record(row, at))
+                    .map(|row| gateway_claude_usage_quota::parse_record(row, at))
                     .transpose()?
                     .flatten()
                     .map(|mut quota| {
                         quota.pool_proofs = None;
+                        quota.usage_snapshot = quota
+                            .usage_snapshot
+                            .as_ref()
+                            .and_then(|s| {
+                                gateway_claude_usage_protocol::snapshot::read(
+                                    s,
+                                    &crate::claude_host::platform::parse_usage_date,
+                                )
+                            })
+                            .map(|s| gateway_claude_usage_protocol::snapshot::serialize(&s))
+                            .transpose()?;
                         SourceJson::from_serializable(&quota)
                     })
                     .transpose()?;

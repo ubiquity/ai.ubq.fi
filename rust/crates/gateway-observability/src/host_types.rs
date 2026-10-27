@@ -1,5 +1,6 @@
 //! Fixed secretless receipts from native publication and the actual Worker transport.
 use crate::types::{HealthProvider, HealthTarget};
+use gateway_claude_usage_history_records::types::CredentialKind;
 use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -55,12 +56,6 @@ pub struct CredentialMetadata {
     pub hint: JsString16,
     pub label: Option<JsString16>,
     pub updated_at_ms: Option<i64>,
-}
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CredentialKind {
-    ApiKey,
-    Oauth,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct WorkspaceMetadata {
@@ -171,33 +166,6 @@ pub struct PaidWindowBackfill {
 pub struct PaidBackfillReceipt {
     pub requests: PaidRequestBackfill,
     pub windows: PaidWindowBackfill,
-}
-/// Source ClaudeCodeAcceptedObservation, emitted only after its current-binding quota CAS.
-/// History/health subscribers never write quota or credential state from this event.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ClaudeAcceptedObservation {
-    pub v: u8,
-    pub observation_id: String,
-    pub account_id: String,
-    pub account_cohort_id: String,
-    pub credential_kind: CredentialKind,
-    pub workspace_id: Option<JsString16>,
-    pub source_observed_at_ms: Option<i64>,
-    pub sampled_at_ms: i64,
-    pub response_status: Option<u16>,
-    pub state: ClaudeObservationState,
-    pub observation: SourceJson,
-}
-impl ClaudeAcceptedObservation {
-    pub fn from_source(value: &SourceJson) -> Result<Self, GatewayError> {
-        value.deserialize()
-    }
-}
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaudeObservationState {
-    Available,
-    Unavailable,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ClaudeQuotaObservation {

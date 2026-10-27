@@ -1,5 +1,9 @@
 //! Actual frozen Bun writer cases, plus the named post-acceptance carrier only.
 //! This fixture grants no quota, routing, native credential or live provider authority.
+use gateway_claude_usage_history_records::{
+    types::{ClaudeAcceptedObservation, ClaudeObservationState, CredentialKind},
+    *,
+};
 mod support;
 use gateway_admin_runtime::capabilities::Context;
 use gateway_core::{
@@ -15,7 +19,6 @@ use gateway_core::{
 use gateway_observability::{
     ObservabilityRuntime,
     capacity_shapes::{BUCKET_MS, RETENTION_MS, unavailable_snapshot},
-    claude_capacity::*,
     host_types::*,
     types::{HealthProvider, HealthTarget, ObservabilityHost},
 };
@@ -638,7 +641,11 @@ fn passive_response_preserves_actual_source_masked_hint_labels_workspace_allowli
 fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_document_rail()
 -> Result<(), GatewayError> {
     let memory = Memory::default();
-    let host = inventory(&memory, true);
+    let mut host = inventory(&memory, true);
+    // This readback case is independently fresh; collection behavior has its own fixture.
+    let usage = SourceJson::parse(r#"{"source":"oauth_usage","state":"unsupported_credential","status":null,"message":null,"attempted_at_ms":7200000,"observed_at_ms":null}"#)?;
+    let account = &mut host.inventory.claude.accounts[0];
+    account.quota = account.quota.as_ref().map(|quota| replace(quota, "usage", usage));
     let runtime = ObservabilityRuntime::new(memory.clone(), host);
     assert!(run(runtime.record_claude_capacity_observation(&event(1)))?);
     memory.rows.borrow_mut().insert(

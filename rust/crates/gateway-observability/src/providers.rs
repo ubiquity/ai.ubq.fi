@@ -109,9 +109,11 @@ fn credential_view(credential: &host::CredentialMetadata) -> Result<SourceJson, 
 }
 fn safe_quota(
     quota: &gateway_core::source_json::SourceJson,
+    dates: &impl Fn(&gateway_core::js_string::JsString16) -> Option<i64>,
 ) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
-    crate::replay_values::SourceObject::parse(quota)?.select(&[
+    let selected = crate::replay_values::SourceObject::parse(quota)?.select(&[
         "windows",
+        "usage",
         "standard",
         "representative_claim",
         "blocked_until_ms",
@@ -119,7 +121,19 @@ fn safe_quota(
         "cooldown_until_ms",
         "last_error",
         "updated_at_ms",
-    ])
+    ])?;
+    let mut selected = SourceObject::parse(&selected)?;
+    let usage = selected
+        .get("usage")
+        .and_then(gateway_claude_usage_protocol::state::read);
+    selected.set("usage", &usage)?;
+    if let Some(snapshot) = gateway_core::source_serialization::member(quota, "usage_snapshot")
+        .as_ref()
+        .and_then(|s| gateway_claude_usage_protocol::snapshot::read(s, dates))
+    {
+        selected.set("usage_snapshot", &snapshot)?;
+    }
+    selected.source_json()
 }
 fn identity_headers(
     response: &mut AuthResponse,
@@ -220,7 +234,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             document.set("credential", &credential_view(&account.credential)?)?;
             document.set("workspace", &account.workspace)?;
             let quota = if current {
-                account.quota.as_ref().map(safe_quota).transpose()?
+                account
+                    .quota
+                    .as_ref()
+                    .map(|q| safe_quota(q, &|s| self.host.parse_claude_usage_date(s)))
+                    .transpose()?
             } else {
                 None
             };

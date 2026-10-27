@@ -1,0 +1,115 @@
+use crate::{collect::Refresh, fetch::ResultData};
+use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap};
+use gateway_auth::types::{AuthHost, AuthResponse};
+use gateway_core::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source, state::AuthorityStore,
+};
+
+pub struct Target {
+    pub account_id: JsString16,
+    pub cohort_id: Option<JsString16>,
+}
+/// Called only after existing administrative authentication; no input is authority.
+pub fn parse(body: &SourceJson) -> Result<Target, GatewayError> {
+    let account_id = source::member(body, "account_id")
+        .as_ref()
+        .and_then(source::string)
+        .ok_or_else(|| gateway_auth::types::invalid("account_id is required"))?;
+    let cohort_id = source::member(body, "account_cohort_id")
+        .map(|v| {
+            source::string(&v)
+                .ok_or_else(|| gateway_auth::types::invalid("account_cohort_id must be a string"))
+        })
+        .transpose()?;
+    Ok(Target {
+        account_id,
+        cohort_id,
+    })
+}
+pub async fn resolve<S: AuthorityStore, H: AuthHost>(
+    store: &S,
+    host: &H,
+    seed: &Bootstrap,
+    target: &Target,
+) -> Result<AccountBinding, GatewayError> {
+    let roster = claude::load_roster(store, host, seed).await?;
+    let account = roster
+        .roster
+        .accounts
+        .into_iter()
+        .find(|a| JsString16::from_utf8(&a.account_id) == target.account_id)
+        .ok_or_else(|| GatewayError::new(404, "Claude account was not found", Some("not_found")))?;
+    if target
+        .cohort_id
+        .as_ref()
+        .is_some_and(|id| *id != JsString16::from_utf8(&account.account_cohort_id))
+    {
+        return Err(changed("Claude account generation changed"));
+    }
+    Ok(account)
+}
+fn raw<T: serde::Serialize>(v: &T) -> Result<SourceJson, GatewayError> {
+    SourceJson::from_serializable(v)
+}
+/// The composition reads the current admin block after collection and supplies it here.
+pub fn response(result: Refresh, data: SourceJson) -> Result<AuthResponse, GatewayError> {
+    let mut fields = vec![("data", data)];
+    match result {
+        Refresh::Changed => return Err(changed("Claude account changed during usage refresh")),
+        Refresh::Busy => fields.extend([
+            ("refreshed", raw(&false)?),
+            ("reason", raw(&"refresh_in_progress")?),
+            ("message", raw(&"A usage refresh is already in progress.")?),
+        ]),
+        Refresh::Fresh(usage) => fields.extend([
+            ("refreshed", raw(&false)?),
+            ("reason", raw(&"fresh")?),
+            ("observed_at_ms", raw(&usage.attempted_at_ms)?),
+            ("usage", raw(&usage)?),
+        ]),
+        Refresh::Completed { result, usage } => {
+            match result {
+                ResultData::Success { observed_at_ms, .. } => fields.extend([
+                    ("refreshed", raw(&true)?),
+                    ("source", raw(&"oauth_usage")?),
+                    ("observed_at_ms", raw(&observed_at_ms)?),
+                    ("usage", raw(&usage)?),
+                ]),
+                ResultData::Failure(f)
+                    if ["scope_missing", "unsupported_credential"].contains(&f.kind) =>
+                {
+                    fields.extend([
+                        ("refreshed", raw(&false)?),
+                        ("reason", raw(&f.kind)?),
+                        (
+                            "message",
+                            raw(&f.message.unwrap_or_else(|| {
+                                "This credential cannot read Claude usage.".into()
+                            }))?,
+                        ),
+                        ("usage", raw(&usage)?),
+                    ])
+                }
+                ResultData::Failure(f) => {
+                    let mut response=AuthResponse::source_json(502,source::object(vec![("error",source::object(vec![("message",raw(&f.message.unwrap_or_else(||"Claude usage could not be read from the upstream service".into()))?),("type",raw(&"invalid_request_error")?),("code",raw(&"claude_usage_unavailable")?)])?)])?);
+                    if let Some(retry) = f.retry_after_ms {
+                        response.headers.insert(
+                            "Retry-After".into(),
+                            if retry.is_finite() {
+                                (retry / 1000.0).ceil().max(1.0).to_string()
+                            } else {
+                                "Infinity".into()
+                            },
+                        );
+                    }
+                    return Ok(response);
+                }
+            }
+        }
+    }
+    Ok(AuthResponse::source_json(200, source::object(fields)?))
+}
+fn changed(message: &str) -> GatewayError {
+    GatewayError::new(409, message, Some("claude_code_account_changed"))
+}

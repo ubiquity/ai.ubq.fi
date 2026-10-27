@@ -1,0 +1,13 @@
+{
+  "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
+  "files": {
+    "generate.ts": "ee7825deb80571ed04f4c11d01dc8935406944323f009451c5630edd9630e109",
+    "source-constants.ts": "8f3a1d1e613efcacd2099507de36f58a6e3c257560d226061f96272e04c8409a",
+    "source-sanitize.ts": "3d24079e3650dab08a7e722b59bc7432561bcadb921f6bf761745a784ca0d18a",
+    "src/utils.ts": "e3434f2f360cfbefb25b85061ed69d8b8230e8a07b3d52a5667a401b18f5252a",
+    "src/provider/claude-code-usage.ts": "37e697805ff94765dab60ff48a9c2859ed12a25d77fe0c24293f52c9a6b00358",
+    "src/provider/claude-code-usage-schema.ts": "9884485bc12ebb9e02ac079a20018fa95dcd5b6e89315eee4ab6d4bf58dcd9e0"
+  },
+  "execution": "bun --no-env-file --no-install tests/oracle/generate.ts; acquire shared compiler lock on shared VM",
+  "imports": "Only exact source schema/usage and extracted isRecord, sanitizer and fixed constants; no auth/KV/provider module loaded."
+}

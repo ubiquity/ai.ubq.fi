@@ -13,7 +13,6 @@ use gateway_claude_runtime::host::{
 };
 use gateway_claude_runtime::persistence::quota_key;
 use gateway_claude_runtime::pool::ClaudePoolSession;
-use gateway_claude_runtime::quota;
 use gateway_core::claude::ClaudeErrorEvidence as ErrorEvidence;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
@@ -108,9 +107,12 @@ impl Store {
         .unwrap()
         .unwrap()
     }
-    pub fn quota(&self, account: &AccountBinding) -> Option<quota::QuotaState> {
+    pub fn quota(
+        &self,
+        account: &AccountBinding,
+    ) -> Option<gateway_claude_usage_quota::QuotaState> {
         self.get(&quota_key(account))
-            .and_then(|r| quota::parse_record(&r, self.now.get()).unwrap())
+            .and_then(|r| gateway_claude_usage_quota::parse_record(&r, self.now.get()).unwrap())
     }
     pub fn allow(&self, ids: Value) {
         self.put(
