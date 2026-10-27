@@ -38,6 +38,102 @@ async fn clear_nonbillable_marker<S: AuthorityStore, I: TokenSource>(
     }
     Ok(())
 }
+fn correlated_spend(row: &PaidAttempt, usage: &PaidUsage) -> Result<Option<i64>, GatewayError> {
+    let exact = match &usage.correlation {
+        PaidCorrelation::ProviderRequestId(id)
+            if row.reservation.provider == PaidProvider::Metered =>
+        {
+            if row.provider_request_id.as_ref() != Some(id) {
+                return Ok(None);
+            }
+            None
+        }
+        PaidCorrelation::SurplusReservation {
+            attempt_id,
+            buyer_cost_micro,
+        } if row.reservation.provider == PaidProvider::Surplus
+            && attempt_id == &row.reservation.attempt_id =>
+        {
+            *buyer_cost_micro
+        }
+        _ => return Ok(None),
+    };
+    let spend = if let Some(exact) = exact {
+        nonnegative(exact)?
+    } else {
+        let value = (usage.provider_quota * 1_000_000.0 / row.quota_per_credit as f64).round();
+        if !value.is_finite()
+            || value < 0.0
+            || value > gateway_core::identity::MAX_SAFE_INTEGER as f64
+        {
+            return Err(invalid("Provider spend is outside the safe integer range."));
+        }
+        value as i64
+    };
+    Ok(Some(spend))
+}
+fn update_paid_rollup(
+    mut rollup: PaidRollup,
+    rollup_key: &gateway_core::state::RecordKey,
+    reservation: &PaidReservation,
+    usage: &PaidUsage,
+    spend: i64,
+    now: i64,
+) -> Result<PaidRollup, GatewayError> {
+    gateway_authority_paid_records::source_records::validate_rollup_identity(&rollup, rollup_key)?;
+    rollup.request_count = add(rollup.request_count, 1)?;
+    rollup.input_tokens = add(rollup.input_tokens, usage.input_tokens)?;
+    rollup.cached_input_tokens = add(
+        rollup.cached_input_tokens,
+        usage.cached_input_tokens.unwrap_or(0),
+    )?;
+    rollup.output_tokens = add(rollup.output_tokens, usage.output_tokens)?;
+    rollup.spend_microcredits += spend as f64;
+    if !rollup.spend_microcredits.is_finite() || rollup.spend_microcredits < 0.0 {
+        return Err(invalid("Paid rollup spend overflow."));
+    }
+    rollup.provider_quota += usage.provider_quota;
+    if !rollup.provider_quota.is_finite() {
+        return Err(invalid("Paid rollup quota overflow."));
+    }
+    rollup.first_request_at_ms = rollup.first_request_at_ms.min(reservation.created_at_ms);
+    rollup.last_request_at_ms = rollup.last_request_at_ms.max(reservation.created_at_ms);
+    rollup.updated_at_ms = now;
+    Ok(rollup)
+}
+fn initial_paid_rollup(
+    reservation: &PaidReservation,
+    model: gateway_core::model::ModelId,
+    bucket: i64,
+    now: i64,
+) -> PaidRollup {
+    PaidRollup {
+        v: 1,
+        bucket_start_at_ms: bucket,
+        model,
+        provider: reservation.provider,
+        request_count: 0,
+        provider_quota: 0.0,
+        input_tokens: 0,
+        cached_input_tokens: 0,
+        output_tokens: 0,
+        spend_microcredits: 0.0,
+        first_request_at_ms: reservation.created_at_ms,
+        last_request_at_ms: reservation.created_at_ms,
+        updated_at_ms: now,
+    }
+}
+fn validate_paid_usage(usage: &PaidUsage) -> Result<(), GatewayError> {
+    if !usage.provider_quota.is_finite() || usage.provider_quota < 0.0 {
+        return Err(invalid("Provider usage is invalid."));
+    }
+    nonnegative(usage.input_tokens)?;
+    nonnegative(usage.output_tokens)?;
+    if let Some(cached) = usage.cached_input_tokens {
+        nonnegative(cached)?;
+    }
+    Ok(())
+}
 pub struct PaidLedgerService<'a, S, I> {
     store: &'a S,
     tokens: &'a I,
@@ -233,14 +329,7 @@ pub trait PaidLedgerOperations: PaidLedgerFactory {
     ) -> impl std::future::Future<Output = Result<bool, GatewayError>> {
         async move {
             let context = self.paid_ledger();
-            if !usage.provider_quota.is_finite() || usage.provider_quota < 0.0 {
-                return Err(invalid("Provider usage is invalid."));
-            }
-            nonnegative(usage.input_tokens)?;
-            nonnegative(usage.output_tokens)?;
-            if let Some(cached) = usage.cached_input_tokens {
-                nonnegative(cached)?;
-            }
+            validate_paid_usage(usage)?;
             for _ in 0..128 {
                 let mut tx = context.transaction(now)?;
                 let key = keys::paid_attempt(&reservation.key_id.0, &reservation.attempt_id.0);
@@ -277,37 +366,8 @@ pub trait PaidLedgerOperations: PaidLedgerFactory {
                 if pending.is_none() {
                     return Ok(false);
                 }
-                let exact = match &usage.correlation {
-                    PaidCorrelation::ProviderRequestId(id)
-                        if row.reservation.provider == PaidProvider::Metered =>
-                    {
-                        if row.provider_request_id.as_ref() != Some(id) {
-                            return Ok(false);
-                        }
-                        None
-                    }
-                    PaidCorrelation::SurplusReservation {
-                        attempt_id,
-                        buyer_cost_micro,
-                    } if row.reservation.provider == PaidProvider::Surplus
-                        && attempt_id == &row.reservation.attempt_id =>
-                    {
-                        *buyer_cost_micro
-                    }
-                    _ => return Ok(false),
-                };
-                let spend = if let Some(exact) = exact {
-                    nonnegative(exact)?
-                } else {
-                    let value =
-                        (usage.provider_quota * 1_000_000.0 / row.quota_per_credit as f64).round();
-                    if !value.is_finite()
-                        || value < 0.0
-                        || value > gateway_core::identity::MAX_SAFE_INTEGER as f64
-                    {
-                        return Err(invalid("Provider spend is outside the safe integer range."));
-                    }
-                    value as i64
+                let Some(spend) = correlated_spend(&row, usage)? else {
+                    return Ok(false);
                 };
                 let window_key =
                     keys::paid_window(&reservation.key_id.0, reservation.window_reset_at_ms);
@@ -322,48 +382,12 @@ pub trait PaidLedgerOperations: PaidLedgerFactory {
                     provider_label(reservation.provider),
                     rollup_shard(&reservation.attempt_id.0),
                 );
-                let mut rollup: PaidRollup =
-                    tx.read_source_control(&rollup_key)
-                        .await?
-                        .unwrap_or(PaidRollup {
-                            v: 1,
-                            bucket_start_at_ms: bucket,
-                            model: model.clone(),
-                            provider: reservation.provider,
-                            request_count: 0,
-                            provider_quota: 0.0,
-                            input_tokens: 0,
-                            cached_input_tokens: 0,
-                            output_tokens: 0,
-                            spend_microcredits: 0.0,
-                            first_request_at_ms: reservation.created_at_ms,
-                            last_request_at_ms: reservation.created_at_ms,
-                            updated_at_ms: now,
-                        });
-                gateway_authority_paid_records::source_records::validate_rollup_identity(
-                    &rollup,
-                    &rollup_key,
-                )?;
-                rollup.request_count = add(rollup.request_count, 1)?;
-                rollup.input_tokens = add(rollup.input_tokens, usage.input_tokens)?;
-                rollup.cached_input_tokens = add(
-                    rollup.cached_input_tokens,
-                    usage.cached_input_tokens.unwrap_or(0),
-                )?;
-                rollup.output_tokens = add(rollup.output_tokens, usage.output_tokens)?;
-                rollup.spend_microcredits += spend as f64;
-                if !rollup.spend_microcredits.is_finite() || rollup.spend_microcredits < 0.0 {
-                    return Err(invalid("Paid rollup spend overflow."));
-                }
-                rollup.provider_quota += usage.provider_quota;
-                if !rollup.provider_quota.is_finite() {
-                    return Err(invalid("Paid rollup quota overflow."));
-                }
-                rollup.first_request_at_ms =
-                    rollup.first_request_at_ms.min(reservation.created_at_ms);
-                rollup.last_request_at_ms =
-                    rollup.last_request_at_ms.max(reservation.created_at_ms);
-                rollup.updated_at_ms = now;
+                let rollup: PaidRollup = tx
+                    .read_source_control(&rollup_key)
+                    .await?
+                    .unwrap_or(initial_paid_rollup(reservation, model.clone(), bucket, now));
+                let rollup =
+                    update_paid_rollup(rollup, &rollup_key, reservation, usage, spend, now)?;
                 row.billing_state = BillingState::Settled;
                 row.provider_quota = Some(usage.provider_quota);
                 row.input_tokens = Some(usage.input_tokens);
