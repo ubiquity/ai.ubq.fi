@@ -171,7 +171,8 @@ fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error()
         body,
         &cancelled,
     ))
-    .err()?;
+    .err()
+    .ok_or_else(fail)?;
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("native_control_outcome_unknown")
@@ -188,7 +189,8 @@ fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error()
         run(dispatch_import(
             &Refuse, &control, &p, &wrong, body, &original
         ))
-        .err()?
+        .err()
+        .ok_or_else(fail)?
         .status,
         403
     );

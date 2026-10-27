@@ -566,7 +566,8 @@ export const NATIVE_IMPORT_CASES = [
     seconds: 20,
   },
   {
-    name: "connector_policy::import_policy_tests::actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls",
+    name: "actual_import_profile_exact_names_fixed_ports_process_and_sibling_controls",
+    target: "import_policy",
     boundary: "prelaunch",
     seconds: 30,
   },
@@ -711,11 +712,12 @@ export const executeDarwinNativeImportTests = async (cwd: string, inherited: Rec
     const result = await checked({ argv: ["/usr/bin/sandbox-exec", "-f", offline, cargo, ...argv], cwd });
     return importFixtureArtifacts(result.stdout, cwd, target);
   };
-  const tests = await compile(["test", ...flags, "--lib", "--no-run", "--message-format=json"]);
-  const library = nativeLibraryArtifact(
-    tests.filter((item) => item.test),
-    cwd
-  );
+  const tests = await compile(["test", ...flags, "--lib", "--test", "import_policy", "--no-run", "--message-format=json"]);
+  const testArtifacts = tests.filter((item) => item.test);
+  const library = nativeLibraryArtifact(testArtifacts, cwd);
+  const importPolicy = tests.find((item) => item.kind === "test" && item.name === "import_policy" && item.test);
+  if (importPolicy?.source !== realpathSync(join(cwd, "crates/gateway-native/tests/import_policy.rs")))
+    throw new Error("Exact native import policy target/source is missing");
   const names = ["uos-native-owner-inspect", "uos-native", "uos-native-supervisor", "uos-native-request", "uos-native-connector", "uos-native-import"];
   const built = await compile([
     "build",
@@ -737,13 +739,16 @@ export const executeDarwinNativeImportTests = async (cwd: string, inherited: Rec
   verify();
   const listing = await checked({ argv: [library.executable, "--list"], cwd, isolated: true });
   const inventory = nativeTestNames(listing.stdout);
-  if (NATIVE_IMPORT_CASES.some((item) => !inventory.includes(item.name))) throw new Error("Missing exact finite native import case");
+  const policyListing = await checked({ argv: [importPolicy.executable, "--list"], cwd, isolated: true });
+  const policyInventory = nativeTestNames(policyListing.stdout);
+  if (NATIVE_IMPORT_CASES.some((item) => !("target" in item ? policyInventory : inventory).includes(item.name)))
+    throw new Error("Missing exact finite native import case");
   console.log(
     JSON.stringify({ nativeImportSource: source, tree, feature: "native-import-fixture", profile: "optimized-debug", artifacts, cases: NATIVE_IMPORT_CASES })
   );
   for (const item of NATIVE_IMPORT_CASES) {
     verify();
-    const selected = [library.executable, "--exact", item.name, "--nocapture", "--test-threads=1"];
+    const selected = [("target" in item ? importPolicy : library).executable, "--exact", item.name, "--nocapture", "--test-threads=1"];
     let argv: readonly string[] = selected;
     if (item.boundary === "loopback") argv = testNetworkArgv(selected);
     if (item.boundary === "offline") argv = ["/usr/bin/sandbox-exec", "-f", offline, ...selected];

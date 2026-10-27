@@ -424,7 +424,7 @@ fn current_authenticated_raw_bytes_dispatch_once_without_claiming_import_success
         fixture.observed.lock().map_err(|_| fail())?.documents,
         [RAW.to_vec()]
     );
-    assert_ne!(status(&fixture.exchange(&request)?), 200);
+    assert_ne!(status(&fixture.exchange(&request)?)?, 200);
     assert_eq!(fixture.calls()?, 1);
     Ok(())
 }
@@ -440,11 +440,11 @@ fn header_auth_and_missing_action_refuse_before_waiting_for_document() -> Result
     let at = wrong
         .windows(NATIVE_MAC_HEADER.len())
         .position(|part| part == NATIVE_MAC_HEADER.as_bytes())
-        .map_err(|_| fail())?
+        .ok_or_else(fail)?
         + NATIVE_MAC_HEADER.len()
         + 2;
     wrong[at] = if wrong[at] == b'A' { b'B' } else { b'A' };
-    assert_eq!(status(&fixture.exchange(&wrong)?), 401);
+    assert_eq!(status(&fixture.exchange(&wrong)?)?, 401);
     fixture.metadata.action_ref = "a".repeat(64);
     let absent = fixture.head(
         NativeImportKind::CodexAuth,
@@ -452,7 +452,7 @@ fn header_auth_and_missing_action_refuse_before_waiting_for_document() -> Result
         RAW,
         "Content-Length: 1024\r\n",
     )?;
-    assert_eq!(status(&fixture.exchange(&absent)?), 503);
+    assert_eq!(status(&fixture.exchange(&absent)?)?, 503);
     assert_eq!(fixture.calls()?, 0);
     Ok(())
 }
@@ -472,7 +472,7 @@ fn stale_owner_and_revoked_actor_stop_before_raw_read() -> Result<(), GatewayErr
             4,
             RAW,
             "Content-Length: 1024\r\n"
-        )?)?),
+        )?)?)?,
         503
     );
     assert_eq!(fixture.calls()?, 0);
@@ -489,7 +489,7 @@ fn stale_owner_and_revoked_actor_stop_before_raw_read() -> Result<(), GatewayErr
             5,
             RAW,
             "Content-Length: 1024\r\n"
-        )?)?),
+        )?)?)?,
         503
     );
     assert_eq!(fixture.calls()?, 0);
@@ -532,7 +532,7 @@ fn wrong_body_digest_and_actual_source_shape_fail_before_recording() -> Result<(
         &format!("Content-Length: {}\r\n", RAW.len()),
     )?;
     request.extend_from_slice(RAW);
-    assert_eq!(status(&fixture.exchange(&request)?), 403);
+    assert_eq!(status(&fixture.exchange(&request)?)?, 403);
     let response = fixture.exchange(&fixture.document(8, b"{")?)?;
     assert_eq!(status(&response)?, 400);
     assert_eq!(
@@ -565,7 +565,7 @@ fn declared_and_chunked_oversize_auth_use_source400_without_body_or_handler()
         "Transfer-Encoding: chunked\r\n",
     )?;
     request.extend_from_slice(b"2000001\r\n");
-    assert_eq!(status(&fixture.exchange(&request)?), 400);
+    assert_eq!(status(&fixture.exchange(&request)?)?, 400);
     assert_eq!(fixture.calls()?, 0);
     Ok(())
 }
@@ -583,7 +583,7 @@ fn canonical_length_and_ambiguous_framing_refuse_without_raw_read() -> Result<()
                 salt,
                 RAW,
                 framing
-            )?)?),
+            )?)?)?,
             400
         );
     }
@@ -602,7 +602,7 @@ fn chunked_original_document_reaches_same_guarded_handler() -> Result<(), Gatewa
     request.extend_from_slice(format!("{:x}\r\n", RAW.len()).as_bytes());
     request.extend_from_slice(RAW);
     request.extend_from_slice(b"\r\n0\r\n\r\n");
-    assert_eq!(status(&fixture.exchange(&request)?), 503);
+    assert_eq!(status(&fixture.exchange(&request)?)?, 503);
     assert_eq!(
         fixture.observed.lock().map_err(|_| fail())?.documents,
         [RAW.to_vec()]
@@ -619,10 +619,13 @@ fn profile_without_real_prepared_authority_and_unconfigured_service_fail_closed(
         b"",
         "Content-Length: 0\r\n",
     )?;
-    assert_eq!(status(&fixture.exchange(&request)?), 503);
+    assert_eq!(status(&fixture.exchange(&request)?)?, 503);
     assert_eq!(fixture.calls()?, 0);
     let fixture = Fixture::new(false)?;
-    assert_eq!(status(&fixture.exchange(&fixture.document(16, RAW)?)?), 503);
+    assert_eq!(
+        status(&fixture.exchange(&fixture.document(16, RAW)?)?)?,
+        503
+    );
     assert_eq!(fixture.calls()?, 0);
     Ok(())
 }
@@ -672,7 +675,7 @@ fn legacy_rpc_and_control_limits_and_responses_remain_separate() -> Result<(), G
         .map_err(|_| fail())?;
     let mut request = format!("POST {NATIVE_RPC_PATH} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n{NATIVE_VERSION_HEADER}: 1\r\n{NATIVE_KEY_HEADER}: {}\r\n{NATIVE_TIME_HEADER}: {time}\r\n{NATIVE_NONCE_HEADER}: {nonce}\r\n{NATIVE_MAC_HEADER}: {mac}\r\n\r\n", body.len(), fixture.identity.key_id()).into_bytes();
     request.extend_from_slice(&body);
-    assert_eq!(status(&fixture.exchange(&request)?), 200);
+    assert_eq!(status(&fixture.exchange(&request)?)?, 200);
     assert_eq!(fixture.calls()?, 0);
     Ok(())
 }
@@ -695,7 +698,7 @@ fn import_headers_keep_sixteen_kib_and_sixty_four_field_limits() -> Result<(), G
         request.truncate(request.len() - 2);
         request.extend_from_slice(extra.as_bytes());
         request.extend_from_slice(b"\r\n");
-        assert_eq!(status(&fixture.exchange(&request)?), 400);
+        assert_eq!(status(&fixture.exchange(&request)?)?, 400);
     }
     assert_eq!(fixture.calls()?, 0);
     Ok(())
@@ -705,7 +708,7 @@ fn buffered_unsigned_trailers_or_second_requests_never_reach_handler() -> Result
     let fixture = Fixture::new(true)?;
     let mut request = fixture.document(20, RAW)?;
     request.extend_from_slice(b"POST /unexpected HTTP/1.1\r\n\r\n");
-    assert_eq!(status(&fixture.exchange(&request)?), 400);
+    assert_eq!(status(&fixture.exchange(&request)?)?, 400);
     let mut request = fixture.head(
         NativeImportKind::CodexAuth,
         21,
@@ -715,7 +718,7 @@ fn buffered_unsigned_trailers_or_second_requests_never_reach_handler() -> Result
     request.extend_from_slice(format!("{:x}\r\n", RAW.len()).as_bytes());
     request.extend_from_slice(RAW);
     request.extend_from_slice(b"\r\n0\r\nX-Trailer: unsupported\r\n\r\n");
-    assert_eq!(status(&fixture.exchange(&request)?), 400);
+    assert_eq!(status(&fixture.exchange(&request)?)?, 400);
     assert_eq!(fixture.calls()?, 0);
     Ok(())
 }
@@ -735,15 +738,14 @@ fn native_only_source_result_preserves_status_headers_and_utf16_without_success_
     let start = response
         .windows(4)
         .position(|part| part == b"\r\n\r\n")
-        .map_err(|_| fail())?
+        .ok_or_else(fail)?
         + 4;
     let body = gateway_core::source_json::SourceJson::parse(
         std::str::from_utf8(&response[start..]).map_err(|_| fail())?,
     )
     .map_err(|_| fail())?;
-    let error = gateway_core::source_serialization::member(&body, "error").map_err(|_| fail())?;
-    let message =
-        gateway_core::source_serialization::member(&error, "message").map_err(|_| fail())?;
+    let error = gateway_core::source_serialization::member(&body, "error").ok_or_else(fail)?;
+    let message = gateway_core::source_serialization::member(&error, "message").ok_or_else(fail)?;
     let expected = gateway_core::js_string::JsString16::from_units(
         "native-only".encode_utf16().chain([0xd800]).collect(),
     );

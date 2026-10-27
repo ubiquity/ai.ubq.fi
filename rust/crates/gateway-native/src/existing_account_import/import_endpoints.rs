@@ -204,14 +204,16 @@ mod tests {
         let authority = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let models = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let oauth = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
-        let data = || ImportEndpointData {
-            authority: authority.local_addr()?,
-            models: models.local_addr()?,
-            oauth: oauth.local_addr()?,
+        let data = || -> std::io::Result<ImportEndpointData> {
+            Ok(ImportEndpointData {
+                authority: authority.local_addr()?,
+                models: models.local_addr()?,
+                oauth: oauth.local_addr()?,
+            })
         };
         let cancellation = Cancellation(AtomicBool::new(false));
         let connected = connect_endpoints(
-            data(),
+            data()?,
             &cancellation,
             Instant::now() + Duration::from_secs(2),
         )?;
@@ -233,7 +235,7 @@ mod tests {
         cancellation.0.store(true, Ordering::SeqCst);
         assert!(
             connect_endpoints(
-                data(),
+                data()?,
                 &cancellation,
                 Instant::now() + Duration::from_secs(2)
             )
