@@ -146,7 +146,7 @@ impl Captured {
         }
         reader.verify_end()?;
         let normalized = writer.seal()?;
-        let audited = gateway_admin_data::migration::audit::inspect_inventory(
+        let audited = gateway_source_audit::driver::inspect_inventory(
             &RowInventory {
                 rows: &normalized,
                 now: self.header.captured_at_ms,

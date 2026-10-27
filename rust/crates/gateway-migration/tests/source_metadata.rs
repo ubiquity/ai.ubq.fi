@@ -1,6 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Invalid source metadata views are retained raw, not promoted into normalized authority.
-use gateway_admin_data::profile::source::{from_source_profile, to_source_profile};
 use gateway_core::{
     source_control::source_json_tree, source_json::SourceJson, value::PortableValue,
 };
@@ -12,6 +11,8 @@ use gateway_migration::{
 };
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_profile_source::codec::from_source_profile;
+use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::CanonicalDates;
 use serde_json::{Value, json};
 

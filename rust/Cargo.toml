@@ -15,6 +15,11 @@ members = [
   "crates/gateway-admin-keys",
   "crates/gateway-admin-kernel",
   "crates/gateway-admin-data",
+  "crates/gateway-profile-source",
+  "crates/gateway-quota-projection",
+  "crates/gateway-migration-ledger",
+  "crates/gateway-source-audit",
+  "crates/gateway-ledger-audit",
   "crates/gateway-profile-values",
   "crates/gateway-admin-runtime",
   "crates/gateway-migration",
@@ -68,6 +73,11 @@ gateway-admin-contracts = { path = "crates/gateway-admin-contracts" }
 gateway-admin-keys = { path = "crates/gateway-admin-keys" }
 gateway-admin-kernel = { path = "crates/gateway-admin-kernel" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
+gateway-profile-source = { path = "crates/gateway-profile-source" }
+gateway-quota-projection = { path = "crates/gateway-quota-projection" }
+gateway-migration-ledger = { path = "crates/gateway-migration-ledger" }
+gateway-source-audit = { path = "crates/gateway-source-audit" }
+gateway-ledger-audit = { path = "crates/gateway-ledger-audit" }
 gateway-profile-values = { path = "crates/gateway-profile-values" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
 gateway-migration = { path = "crates/gateway-migration" }

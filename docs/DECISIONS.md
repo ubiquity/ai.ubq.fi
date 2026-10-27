@@ -2620,3 +2620,11 @@ Administrative operation types, source field parsers and audit records are defin
 Reason: the original 2,471-line admin crate exceeded the owner's 1,000-line limit. The partition keeps the existing authorization-before-parsing order, atomic key/policy/audit transaction, paid-deletion fences, source UTF16 encodings and exact route responses. The admin integration tests remain independent targets with common fixtures in the bounded dev-only support crate.
 
 Reversal risk: moving these owners back into the dispatcher restores oversized-crate debt; forwarding their public names would violate the defining-module rule. The split does not transfer credential, state-conversion, service-activation or deployment authority.
+
+## Rust admin-data defines bounded source, ledger and report responsibilities - 2026-10-27
+
+Source profile/line codecs are defined in `gateway-profile-source`, quota projections in `gateway-quota-projection`, and observed rows plus pure counter/kernel transition plans in `gateway-migration-ledger`. `gateway-admin-data` retains policy, replayable inventory, finite report validation and reset observations. Complete key/model source audits live in `gateway-source-audit`; paid/API/kernel observations and their ordered borrowed single-pass finish composition live in `gateway-ledger-audit`. Consumers import actual defining modules with no forwarding surface. Ordinary reports and shape validators grant no custody, currentness, schema binding or publication authority.
+
+Reason: the remaining 4,121-line admin-data crate exceeded the owner's 1,000-line limit. Moving the exact shared finite predicates to the ledger data owner closes dependency cycles without duplicate algorithms. The complete audit preserves its original key/inventory EOF checks, observer order, deferred API/kernel/paid/reset/model failure order, codec bytes, raw keys, revisions and absolute expiry; no inventory pass or row collection is added.
+
+Reversal risk: aggregating these definitions restores oversized-crate debt, and facade exports hide the supported defining paths. This source-only split grants no credential, state capture/conversion, provider spend, runtime/service activation or deployment authority.

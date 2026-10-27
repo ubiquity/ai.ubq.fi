@@ -1,4 +1,4 @@
-use super::HOUR_MS;
+use crate::quota::HOUR_MS;
 use gateway_profile_values::scalar::{json_number, number, positive, text};
 use serde_json::{Value, json};
 

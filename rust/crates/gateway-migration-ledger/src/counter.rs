@@ -1,10 +1,13 @@
-use super::{ObservedRow, check, key, put};
+use crate::{
+    rows::{DAY, ObservedRow, api_id, safe},
+    transition::{check, key, put},
+};
 use gateway_core::{
     error::GatewayError,
-    state::{AtomicTransition, RevisionCheck},
+    state::{AtomicTransition, RecordKey, RevisionCheck},
     value::PortableValue,
 };
-use gateway_profile_values::scalar::{error, integer, text};
+use gateway_profile_values::scalar::{error, integer, number, text};
 use serde_json::{Value, json};
 
 pub fn current_legacy_usage(record: &Value, now: i64) -> Option<i64> {
@@ -23,7 +26,7 @@ pub fn migration_policy_now(record: &Value, now: i64) -> Option<i64> {
 }
 pub fn valid_baseline(value: &Value) -> bool {
     value["version"] == 1
-        && super::audit::api_id(value.get("key_id"))
+        && api_id(value.get("key_id"))
         && text(value, "policy_version").is_some_and(|s| !s.is_empty())
         && [
             "window_start_ms",
@@ -77,26 +80,11 @@ pub fn plan_counter_handoff(
     let start = integer(policy, "window_start_ms").ok_or_else(|| error("Invalid window start."))?;
     let reset =
         integer(policy, "usage_reset_at_ms").ok_or_else(|| error("Invalid window reset."))?;
-    let observed = if let Some(counter) = counter {
-        match counter.record.portable_value()? {
-            PortableValue::Null => legacy_usage,
-            PortableValue::KvU64(v) => v
-                .parse::<i64>()
-                .ok()
-                .filter(|v| *v <= 9_007_199_254_740_991)
-                .ok_or_else(|| error("Legacy V2 API-key counter is out of range."))?,
-            _ => return Err(error("Legacy V2 API-key counter is invalid.")),
-        }
-    } else {
-        legacy_usage
-    };
-    if !(0..=9_007_199_254_740_991).contains(&observed) {
-        return Err(error("Legacy V2 API-key counter is out of range."));
-    }
+    let observed = legacy_counter_usage(counter, legacy_usage)?;
     let existing = window
         .map(ObservedRow::value)
         .transpose()?
-        .filter(|v| super::audit::valid_api_window(v));
+        .filter(|v| valid_api_window(v));
     if existing.is_some_and(|w| {
         text(w, "key_id") != Some(key_id)
             || text(w, "policy_version") != Some(version)
@@ -146,6 +134,63 @@ pub fn plan_counter_handoff(
     };
     next_window["committed_requests"] = json!(next_committed);
     next_window["updated_at_ms"] = json!(now);
+    let (baseline_key, counter_key, window_key) = handoff_keys(key_id, version, start)?;
+    let expected = |row: Option<&ObservedRow>, key| -> Result<RevisionCheck, GatewayError> {
+        if let Some(row) = row {
+            if row.key != key {
+                return Err(error("Counter migration snapshot key identity mismatch."));
+            }
+            Ok(check(row))
+        } else {
+            Ok(RevisionCheck {
+                key,
+                expected_revision: None,
+            })
+        }
+    };
+    let expiry = reset
+        .checked_add(7 * DAY)
+        .and_then(|v| v.checked_add(now.saturating_sub(reset).max(0)))
+        .ok_or_else(|| error("Counter migration retention overflow."))?;
+    Ok(CounterPlan {
+        baseline_created: created,
+        baseline_reconciled: initialized,
+        legacy_usage_delta_applied: delta,
+        transition: AtomicTransition {
+            checks: vec![
+                expected(baseline, baseline_key.clone())?,
+                expected(counter, counter_key)?,
+                expected(window, window_key.clone())?,
+            ],
+            mutations: vec![
+                put(baseline_key, next_baseline, None, new_revision),
+                put(window_key, next_window, Some(expiry), new_revision),
+            ],
+        },
+    })
+}
+
+pub fn valid_api_window(v: &Value) -> bool {
+    v["v"] == 3
+        && text(v, "key_id").is_some_and(|s| !s.is_empty())
+        && text(v, "policy_version").is_some_and(|s| !s.is_empty())
+        && [
+            "window_start_ms",
+            "window_reset_at_ms",
+            "committed_requests",
+            "reserved_requests",
+            "updated_at_ms",
+        ]
+        .iter()
+        .all(|f| safe(v.get(f)))
+        && number(v, "window_reset_at_ms") > number(v, "window_start_ms")
+}
+
+fn handoff_keys(
+    key_id: &str,
+    version: &str,
+    start: i64,
+) -> Result<(RecordKey, RecordKey, RecordKey), GatewayError> {
     let baseline_key = key(&[
         json!("uos_ai"),
         json!("migrations"),
@@ -172,37 +217,28 @@ pub fn plan_counter_handoff(
         json!(version),
         json!(start),
     ])?;
-    let expected = |row: Option<&ObservedRow>, key| -> Result<RevisionCheck, GatewayError> {
-        if let Some(row) = row {
-            if row.key != key {
-                return Err(error("Counter migration snapshot key identity mismatch."));
-            }
-            Ok(check(row))
-        } else {
-            Ok(RevisionCheck {
-                key,
-                expected_revision: None,
-            })
+    Ok((baseline_key, counter_key, window_key))
+}
+
+fn legacy_counter_usage(
+    counter: Option<&ObservedRow>,
+    legacy_usage: i64,
+) -> Result<i64, GatewayError> {
+    let observed = if let Some(counter) = counter {
+        match counter.record.portable_value()? {
+            PortableValue::Null => legacy_usage,
+            PortableValue::KvU64(v) => v
+                .parse::<i64>()
+                .ok()
+                .filter(|v| *v <= 9_007_199_254_740_991)
+                .ok_or_else(|| error("Legacy V2 API-key counter is out of range."))?,
+            _ => return Err(error("Legacy V2 API-key counter is invalid.")),
         }
+    } else {
+        legacy_usage
     };
-    let expiry = reset
-        .checked_add(7 * super::retention::DAY)
-        .and_then(|v| v.checked_add(now.saturating_sub(reset).max(0)))
-        .ok_or_else(|| error("Counter migration retention overflow."))?;
-    Ok(CounterPlan {
-        baseline_created: created,
-        baseline_reconciled: initialized,
-        legacy_usage_delta_applied: delta,
-        transition: AtomicTransition {
-            checks: vec![
-                expected(baseline, baseline_key.clone())?,
-                expected(counter, counter_key)?,
-                expected(window, window_key.clone())?,
-            ],
-            mutations: vec![
-                put(baseline_key, next_baseline, None, new_revision),
-                put(window_key, next_window, Some(expiry), new_revision),
-            ],
-        },
-    })
+    if !(0..=9_007_199_254_740_991).contains(&observed) {
+        return Err(error("Legacy V2 API-key counter is out of range."));
+    }
+    Ok(observed)
 }

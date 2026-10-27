@@ -1,16 +1,13 @@
-//! Source-profile data plans only. Business-state publication needs a separate schema/index binding.
-pub mod audit;
-pub mod counter;
-pub mod kernel;
+//! Source-profile policy and ordinary import plans; schema binding remains mandatory.
 mod prefixes;
 pub mod retention;
-
 use gateway_core::{
     error::GatewayError,
-    state::{AtomicTransition, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
-    tuple_key::TupleKey,
+    state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord},
     value::PortableValue,
 };
+use gateway_migration_ledger::rows::starts;
+use gateway_profile_source::line::NormalizedEntry;
 use gateway_profile_values::scalar::error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -45,13 +42,6 @@ pub struct Decision {
     pub action: String,
     pub group: String,
     pub reason: String,
-}
-pub fn starts(parts: &[Value], prefix: &[&str]) -> bool {
-    parts.len() >= prefix.len()
-        && parts
-            .iter()
-            .zip(prefix)
-            .all(|(a, b)| a.as_str() == Some(*b))
 }
 pub fn classify_key(parts: &[Value], options: &ImportOptions) -> Decision {
     let find = |rules: &[(&str, &[&str])]| {
@@ -95,34 +85,6 @@ pub fn classify_key(parts: &[Value], options: &ImportOptions) -> Decision {
     decision("skip", "unknown".into(), "unknown_prefix")
 }
 
-#[derive(Clone, Debug)]
-pub struct ObservedRow {
-    pub key: RecordKey,
-    pub parts: Vec<Value>,
-    pub record: StoredRecord,
-}
-impl ObservedRow {
-    pub fn json(parts: Vec<Value>, record: StoredRecord) -> Result<Self, GatewayError> {
-        let tuple = TupleKey::from_json_parts(&parts)?;
-        tuple.validate_stored_key()?;
-        Ok(Self {
-            key: tuple.to_record_key(),
-            parts,
-            record,
-        })
-    }
-    pub fn value(&self) -> Result<&Value, GatewayError> {
-        self.record.json_value()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct NormalizedEntry {
-    pub key: RecordKey,
-    pub parts: Vec<Value>,
-    pub value: PortableValue,
-    pub raw: Value,
-}
 #[derive(Clone, Debug)]
 pub struct ImportPlan {
     pub decision: Decision,
@@ -216,26 +178,4 @@ pub fn logical_fields(value: &PortableValue) -> Value {
     } else {
         value.to_json_lossless().unwrap_or(Value::Null)
     }
-}
-pub(crate) fn check(row: &ObservedRow) -> RevisionCheck {
-    RevisionCheck {
-        key: row.key.clone(),
-        expected_revision: Some(row.record.revision.clone()),
-    }
-}
-pub(crate) fn put(
-    key: RecordKey,
-    value: Value,
-    expiry: Option<i64>,
-    revision: &str,
-) -> RecordMutation {
-    RecordMutation::Put {
-        key,
-        record: StoredRecord::json(revision, value, expiry),
-    }
-}
-pub(crate) fn key(parts: &[Value]) -> Result<RecordKey, GatewayError> {
-    let key = TupleKey::from_json_parts(parts)?;
-    key.validate_stored_key()?;
-    Ok(key.to_record_key())
 }

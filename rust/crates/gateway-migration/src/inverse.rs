@@ -6,7 +6,6 @@ use crate::{
     error::MigrationError,
     invalid, key, parts, starts, unavailable,
 };
-use gateway_admin_data::profile::source::to_source_profile as to_profile;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::source_json::SourceJson;
@@ -15,6 +14,7 @@ use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::DecodedKeyPart;
 use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::PortableValue;
+use gateway_profile_source::codec::to_source_profile as to_profile;
 use gateway_profile_values::{coercion::encode_base64, date::CanonicalDates};
 use serde::Deserialize;
 use serde_json::Value;
@@ -128,7 +128,7 @@ pub(crate) fn inverse_value(
     }
     let current = record.json_value()?;
     let original = source
-        .map(|s| gateway_admin_data::profile::source::from_source_profile(&s.value))
+        .map(|s| gateway_profile_source::codec::from_source_profile(&s.value))
         .transpose()?
         .and_then(|v| v.to_json_lossless())
         .unwrap_or(json!({}));

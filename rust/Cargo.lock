@@ -873,8 +873,13 @@ name = "gateway-admin-data"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-ledger-audit",
+ "gateway-migration-ledger",
+ "gateway-profile-source",
  "gateway-profile-values",
+ "gateway-quota-projection",
  "gateway-schema",
+ "gateway-source-audit",
  "ryu-js",
  "serde",
  "serde_json",
@@ -885,10 +890,10 @@ name = "gateway-admin-kernel"
 version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
- "gateway-admin-data",
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-migration-ledger",
  "serde",
  "serde_json",
 ]
@@ -898,11 +903,11 @@ name = "gateway-admin-keys"
 version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
- "gateway-admin-data",
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
  "gateway-profile-values",
+ "gateway-source-audit",
  "serde",
  "serde_json",
 ]
@@ -1097,6 +1102,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-ledger-audit"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-core",
+ "gateway-migration-ledger",
+ "gateway-profile-values",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-live-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1120,16 +1136,28 @@ dependencies = [
  "gateway-authority",
  "gateway-claude-runtime",
  "gateway-core",
+ "gateway-migration-ledger",
  "gateway-migration-test-support",
  "gateway-native",
  "gateway-observability",
+ "gateway-profile-source",
  "gateway-profile-values",
  "gateway-routing-runtime",
  "gateway-schema",
+ "gateway-source-audit",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-migration-ledger"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-profile-values",
+ "serde_json",
 ]
 
 [[package]]
@@ -1190,12 +1218,12 @@ dependencies = [
  "base64 0.22.1",
  "flate2",
  "futures-util",
- "gateway-admin-data",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
  "gateway-observability-test-support",
+ "gateway-quota-projection",
  "gateway-schema",
  "hkdf",
  "hmac 0.12.1",
@@ -1212,6 +1240,16 @@ dependencies = [
  "gateway-core",
  "gateway-observability",
  "gateway-schema",
+]
+
+[[package]]
+name = "gateway-profile-source"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-profile-values",
+ "ryu-js",
+ "serde_json",
 ]
 
 [[package]]
@@ -1309,6 +1347,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-quota-projection"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-profile-values",
+ "gateway-schema",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-routing-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1349,6 +1397,18 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-source-audit"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-core",
+ "gateway-ledger-audit",
+ "gateway-migration-ledger",
+ "gateway-profile-values",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,13 +1,13 @@
 //! Source labels never enter a scalar Value. Only explicit numeric rollup fields
 //! feed the same summary/runway engine used by the existing scalar frontend.
-use super::{
-    json_number, metered_quota_runway_view, model_projection_numbers, number, public_quota_view,
-    summarize_windows,
+use crate::quota::{
+    metered_quota_runway_view, model_projection_numbers, public_quota_view, summarize_windows,
 };
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_profile_values::scalar::{json_number, number};
 use gateway_schema::aliases::SourceStringCollator;
 use serde_json::Value;
 use std::collections::HashMap;

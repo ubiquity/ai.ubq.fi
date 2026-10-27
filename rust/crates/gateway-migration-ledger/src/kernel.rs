@@ -1,7 +1,10 @@
-use super::{ObservedRow, check, key, put, starts};
+use crate::{
+    rows::{DAY, ObservedRow, starts},
+    transition::{check, key, put},
+};
 use gateway_core::{
     error::GatewayError,
-    state::{AtomicTransition, RecordMutation},
+    state::{AtomicTransition, RecordMutation, RevisionCheck},
 };
 use gateway_profile_values::{
     coercion::js_number,
@@ -204,7 +207,7 @@ pub fn reconcile_imported_window(
     }
     value["reserved_requests"] = json!(count);
     let expiry = integer(&value, "usage_reset_at_ms")
-        .and_then(|t| t.checked_add(7 * super::retention::DAY))
+        .and_then(|t| t.checked_add(7 * DAY))
         .ok_or_else(|| error("Kernel retention overflows."))?
         .max(now.saturating_add(1));
     Ok(Some(AtomicTransition {
@@ -289,31 +292,7 @@ pub fn plan_legacy_kernel(
         new_revision,
         reservations_complete,
     } = context;
-    let scope = if starts(&legacy.parts, &["ubq_ai", "kernel_auth", "limits"]) {
-        "repo"
-    } else if starts(&legacy.parts, &["ubq_ai", "kernel_auth", "org_limits"]) {
-        "org"
-    } else {
-        return Err(error("Legacy kernel prefix is malformed."));
-    };
-    let owner = legacy
-        .parts
-        .get(3)
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| error("Legacy kernel owner is malformed."))?;
-    let repo = if scope == "repo" {
-        Some(
-            legacy
-                .parts
-                .get(4)
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| error("Legacy kernel repository is malformed."))?,
-        )
-    } else {
-        None
-    };
+    let (scope, owner, repo) = legacy_source_identity(legacy)?;
     let value = normalize_legacy_limit(legacy.value()?, default_limit, default_window, now as f64)
         .ok_or_else(|| error("Legacy kernel value is malformed."))?;
     let mut policy_parts = vec![
@@ -331,17 +310,17 @@ pub fn plan_legacy_kernel(
     let window_key = key(&policy_parts)?;
     let mut checks = vec![
         check(legacy),
-        super::RevisionCheck {
+        RevisionCheck {
             key: policy_key.clone(),
             expected_revision: policy.map(|r| r.record.revision.clone()),
         },
-        super::RevisionCheck {
+        RevisionCheck {
             key: window_key.clone(),
             expected_revision: window.map(|r| r.record.revision.clone()),
         },
     ];
     if let Some(policy) = policy
-        && super::audit::valid_kernel_policy(policy.value()?, scope, owner, repo)
+        && normalize_policy(policy.value()?, scope, owner, repo).is_some()
     {
         return Ok(AtomicTransition {
             checks,
@@ -365,47 +344,15 @@ pub fn plan_legacy_kernel(
         .map(ObservedRow::value)
         .transpose()?
         .and_then(|v| normalize_window(v, scope, owner, repo));
-    if let (Some(observed), Some(current)) = (window, current.as_mut())
-        && observed.value()?.get("reserved_requests").is_none()
-    {
-        if !reservations_complete {
-            return Err(error(
-                "A complete reservation scan is required before legacy conversion.",
-            ));
-        }
-        let mut prefix = vec![
-            json!("uos_ai"),
-            json!("kernel_quota"),
-            json!("v2"),
-            json!(format!("{scope}_reservation")),
-            json!(owner),
-        ];
-        if let Some(repo) = repo {
-            prefix.push(json!(repo));
-        }
-        prefix.push(current["created_at_ms"].clone());
-        let mut reserved = 0;
-        for row in reservations {
-            if row.parts.len() > prefix.len() && row.parts[..prefix.len()] == prefix[..] {
-                let r =
-                    normalize_reservation(row.value()?, scope, owner, repo).ok_or_else(|| {
-                        error("Malformed kernel reservation during legacy migration.")
-                    })?;
-                if row.parts.len() != prefix.len() + 1
-                    || row.parts.last().and_then(Value::as_str) != text(&r, "request_id")
-                    || r["window_created_at_ms"] != current["created_at_ms"]
-                {
-                    return Err(error(
-                        "Kernel reservation identity mismatch during legacy migration.",
-                    ));
-                }
-                if r["state"] == "reserved" {
-                    reserved += 1;
-                }
-            }
-        }
-        current["reserved_requests"] = json!(reserved);
-    }
+    restore_legacy_reserved(
+        window,
+        current.as_mut(),
+        reservations,
+        reservations_complete,
+        scope,
+        owner,
+        repo,
+    )?;
     let same = current.as_ref().is_some_and(|w| {
         number(w, "applied_window_ms") == Some(span)
             && w["usage_reset_at_ms"] == value["usage_reset_at_ms"]
@@ -453,4 +400,88 @@ pub fn plan_legacy_kernel(
         checks: std::mem::take(&mut checks),
         mutations,
     })
+}
+
+fn legacy_source_identity(
+    legacy: &ObservedRow,
+) -> Result<(&str, &str, Option<&str>), GatewayError> {
+    let scope = if starts(&legacy.parts, &["ubq_ai", "kernel_auth", "limits"]) {
+        "repo"
+    } else if starts(&legacy.parts, &["ubq_ai", "kernel_auth", "org_limits"]) {
+        "org"
+    } else {
+        return Err(error("Legacy kernel prefix is malformed."));
+    };
+    let owner = legacy
+        .parts
+        .get(3)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| error("Legacy kernel owner is malformed."))?;
+    let repo = if scope == "repo" {
+        Some(
+            legacy
+                .parts
+                .get(4)
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| error("Legacy kernel repository is malformed."))?,
+        )
+    } else {
+        None
+    };
+    Ok((scope, owner, repo))
+}
+
+fn restore_legacy_reserved(
+    window: Option<&ObservedRow>,
+    current: Option<&mut Value>,
+    reservations: &[ObservedRow],
+    reservations_complete: bool,
+    scope: &str,
+    owner: &str,
+    repo: Option<&str>,
+) -> Result<(), GatewayError> {
+    if let (Some(observed), Some(current)) = (window, current)
+        && observed.value()?.get("reserved_requests").is_none()
+    {
+        if !reservations_complete {
+            return Err(error(
+                "A complete reservation scan is required before legacy conversion.",
+            ));
+        }
+        let mut prefix = vec![
+            json!("uos_ai"),
+            json!("kernel_quota"),
+            json!("v2"),
+            json!(format!("{scope}_reservation")),
+            json!(owner),
+        ];
+        if let Some(repo) = repo {
+            prefix.push(json!(repo));
+        }
+        prefix.push(current["created_at_ms"].clone());
+        let mut reserved = 0;
+        for row in reservations {
+            if row.parts.len() > prefix.len() && row.parts[..prefix.len()] == prefix[..] {
+                let r =
+                    normalize_reservation(row.value()?, scope, owner, repo).ok_or_else(|| {
+                        error("Malformed kernel reservation during legacy migration.")
+                    })?;
+                if row.parts.len() != prefix.len() + 1
+                    || row.parts.last().and_then(Value::as_str) != text(&r, "request_id")
+                    || r["window_created_at_ms"] != current["created_at_ms"]
+                {
+                    return Err(error(
+                        "Kernel reservation identity mismatch during legacy migration.",
+                    ));
+                }
+                if r["state"] == "reserved" {
+                    reserved += 1;
+                }
+            }
+        }
+        current["reserved_requests"] = json!(reserved);
+    }
+    Ok(())
 }
