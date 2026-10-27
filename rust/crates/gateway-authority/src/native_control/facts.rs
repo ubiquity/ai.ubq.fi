@@ -3,7 +3,7 @@ use super::{
     actor::StoredNativeActor as Actor,
     rows::{fail, session_key},
 };
-use crate::{routing_types::AdmittedAccount, store::Transaction};
+use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
@@ -17,6 +17,7 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
+use gateway_authority_routing_selection::types::AdmittedAccount;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::RequestContext;
 use gateway_core::local_work::journal_local_work;
@@ -269,7 +270,10 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     let native_owner_id = registered.native_owner_id();
     let home = registered.home.as_str();
     let view = crate::routing::read_view(tx).await?;
-    if !view.matches(admission) {
+    if !view
+        .policy()
+        .matches_admission(&admission.binding, admission.active_generation)
+    {
         return Err(fail());
     }
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;

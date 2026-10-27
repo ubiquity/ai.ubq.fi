@@ -1,22 +1,18 @@
-use gateway_authority::{full_pool_reset::types::*, reset::utc_day, routing_types::RouteSelection};
+use gateway_authority::full_pool_reset::types::*;
+use gateway_authority::reset::utc_day;
 use gateway_authority_keys as keys;
 use gateway_authority_reset_records::{ResetConfig, ResetMode, reset_invocation};
+use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_test_support::{TestResult, fixture_row};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
-use gateway_core::js_string::JsString16;
-use gateway_core::provider::CodexQuotaClass;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, StoredRecord};
-use gateway_routing_runtime_test_support::authority::MemoryStore;
-use gateway_routing_runtime_test_support::authority::NOW;
-use gateway_routing_runtime_test_support::authority::TestAuthority;
-use gateway_routing_runtime_test_support::authority::admitted;
-use gateway_routing_runtime_test_support::authority::authority;
-use gateway_routing_runtime_test_support::authority::block;
-use gateway_routing_runtime_test_support::authority::pool;
-use gateway_routing_runtime_test_support::authority::run;
-use gateway_routing_runtime_test_support::authority::seed_pool;
+use gateway_core::{
+    error::GatewayError, identity::PrincipalId, identity::RequestContext, identity::RequestId,
+    js_string::JsString16, provider::CodexQuotaClass, source_json::SourceJson, state::RecordKey,
+    state::StoredRecord, value::PortableValue,
+};
+use gateway_routing_runtime_test_support::{
+    authority::MemoryStore, authority::NOW, authority::TestAuthority, authority::admitted,
+    authority::authority, authority::block, authority::pool, authority::run, authority::seed_pool,
+};
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 
@@ -53,7 +49,7 @@ fn original() -> RequestContext {
 type ResetSetup = (
     MemoryStore,
     TestAuthority,
-    gateway_authority::routing_types::CohortProof,
+    gateway_authority_routing_selection::types::CohortProof,
 );
 fn setup(mode: ResetMode) -> TestResult<ResetSetup> {
     setup_with_config(Some(mode))
@@ -100,7 +96,7 @@ fn assert_history_unchanged(store: &MemoryStore, key: &RecordKey, saved: &Stored
 }
 fn plan(
     authority: &TestAuthority,
-    proof: &gateway_authority::routing_types::CohortProof,
+    proof: &gateway_authority_routing_selection::types::CohortProof,
 ) -> TestResult<FullPoolResetPlan> {
     let FullPoolPreparation::Observe(plan) =
         run(authority.prepare_full_pool_reset(proof, &original()))?
@@ -289,7 +285,6 @@ fn unexpired_shadow_is_cached_without_requesting_new_inventory() -> TestResult {
 
 #[test]
 fn cached_profile_audit_preserves_unrelated_utf16_source_leaves() -> TestResult {
-    use gateway_core::value::PortableValue;
     let (store, authority, proof) = setup(ResetMode::Shadow)?;
     let first = plan(&authority, &proof)?;
     let rows = observations(&first, None);

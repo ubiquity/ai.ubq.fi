@@ -1,19 +1,20 @@
 //! Request-owned observation only. The existing journal owns the single recovery
 //! attempt; this module cannot reset, refresh credentials or select paid hops.
-use gateway_auth::provider_credentials::{CodexSourceSnapshot, read_codex_source_pool};
-use gateway_authority::{
-    routing_types::{CohortProof, RouteSelection},
-    store::Authority,
+use gateway_auth::{
+    provider_credentials::CodexSourceSnapshot, provider_credentials::read_codex_source_pool,
 };
+use gateway_authority::store::Authority;
 use gateway_authority_capacity::{
     CapacityOperations, CodexCapacityAccountRef, CodexCapacitySample,
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_routing_evidence::capacity::CapacityState;
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::CohortProof, types::RouteSelection,
+};
 use gateway_core::{error::GatewayError, model::ModelId, state::AuthorityStore};
 use gateway_observability::{
-    capacity_shapes,
-    host_types::{CapacityAccountRef, CapacityProbe},
+    capacity_shapes, host_types::CapacityAccountRef, host_types::CapacityProbe,
     types::ObservabilityHost,
 };
 use std::future::Future;

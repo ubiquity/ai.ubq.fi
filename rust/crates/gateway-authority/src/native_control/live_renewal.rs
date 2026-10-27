@@ -7,7 +7,8 @@ use super::{
     receiver::NativeRenewalAuthority,
     rows::{self, ActionRow, conflict, fail},
 };
-use crate::{native_live::mapping_key, routing::LiveAccountSelection, store::Transaction};
+use crate::native_live::mapping_key;
+use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
@@ -18,6 +19,7 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
+use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;

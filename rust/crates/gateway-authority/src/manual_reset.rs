@@ -281,7 +281,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 actor: actor.stored().clone(),
                 account_id: account,
                 hash: hash.into(),
-                binding: view.binding(index),
+                binding: view.policy().binding(index),
             };
             let prior = read_intent(&mut tx, hash).await?;
             let result = if let Some(intent) = prior.filter(|r| r.promoted_at_ms.is_none()) {
@@ -354,7 +354,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 actor: target.actor.clone(),
                 account_id: target.account_id.clone(),
                 hash: target.hash.clone(),
-                binding: view.binding(index),
+                binding: view.policy().binding(index),
             },
             intent,
         })
@@ -549,7 +549,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             for limit in &usage.additional_rate_limits {
                 let model = gateway_core::model::ModelId::from_scalar(&limit.limit_name);
                 if !matches!(
-                    routing::model_quota_class(&model),
+                    gateway_authority_routing_evidence::models::model_quota_class(&model),
                     gateway_core::provider::CodexQuotaClass::Standard
                         | gateway_core::provider::CodexQuotaClass::Unknown
                 ) && capacity_rules::capacity_headroom_for_observation(usage, Some(&model))
@@ -592,7 +592,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             if models.iter().any(|model| {
                 view.state.slots[index]
-                    .quota_block_for(routing::model_quota_class(model))
+                    .quota_block_for(
+                        gateway_authority_routing_evidence::models::model_quota_class(model),
+                    )
                     .is_some_and(|b| b.blocked_until_ms > tx.now)
             }) {
                 return Err(error(409, "codex_reset_concurrent_update"));
@@ -606,7 +608,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             .capacity;
             let active = ActiveSelection {
                 v: 1,
-                binding: view.binding(index),
+                binding: view.policy().binding(index),
                 generation: crate::next_generation(
                     view.active.as_ref().map_or(0, |a| a.generation),
                 )?,

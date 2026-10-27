@@ -1,38 +1,36 @@
-use gateway_auth::provider_credentials::{CodexSourcePool, codex_source_pool_key};
-use gateway_authority::routing_types::RouteSelection;
-use gateway_authority::{routing_types::*, store::Authority};
+use gateway_auth::{
+    crypto::Secret, crypto::base64url, provider_credentials::CodexNativeOwner,
+    provider_credentials::CodexSourcePool, provider_credentials::ManagedNativeSource,
+    provider_credentials::codex_source_pool_key,
+};
+use gateway_authority::store::Authority;
 use gateway_authority_capacity::{
     CapacityOperations, CapacityReconciliation, CodexCapacityAccountRef, CodexCapacitySample,
 };
 use gateway_authority_contracts::AuthorityClock;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
-use gateway_authority_routing_evidence::capacity::{
-    CapacityObservation, CapacityState, CapacityStore, CapacityWindow, CapacityWindows,
-    parse_capacity_store,
+use gateway_authority_routing_evidence::{
+    capacity::CapacityObservation, capacity::CapacityState, capacity::CapacityStore,
+    capacity::CapacityWindow, capacity::CapacityWindows, capacity::parse_capacity_store,
 };
-use gateway_authority_routing_records::codec::parse_routing_state;
-use gateway_authority_routing_records::types::{
-    PoolAccount, ProbeCircuit, ProbeLease, QuotaBlock, QuotaBlockSource, SubscriptionPool,
+use gateway_authority_routing_records::{
+    codec::parse_routing_state, types::PoolAccount, types::ProbeCircuit, types::ProbeLease,
+    types::QuotaBlock, types::QuotaBlockSource, types::SubscriptionPool,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::PoolVersionstamp;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_authority_routing_selection::types::*;
+use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_core::{
+    error::GatewayError, identity::PoolVersionstamp, provider::CodexQuotaClass,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RecordMutation, state::StoredRecord,
 };
-use gateway_routing_runtime_test_support::authority::MemoryStore;
-use gateway_routing_runtime_test_support::authority::NOW;
-use gateway_routing_runtime_test_support::authority::Tokens;
-use gateway_routing_runtime_test_support::authority::pool;
-use gateway_routing_runtime_test_support::authority::routing_hash;
-use gateway_routing_runtime_test_support::authority::run;
-use gateway_routing_runtime_test_support::authority::seed_pool;
-use gateway_routing_runtime_test_support::authority::source_account;
+use gateway_routing_runtime_test_support::{
+    authority::MemoryStore, authority::NOW, authority::Tokens, authority::pool,
+    authority::routing_hash, authority::run, authority::seed_pool, authority::source_account,
+};
 use serde_json::{Value, json};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::{sync::Arc, sync::Mutex, sync::atomic::AtomicBool, sync::atomic::Ordering};
 
 #[derive(Clone, Default)]
 struct CapturedStore {
@@ -124,10 +122,6 @@ fn source_pool() -> CodexSourcePool {
 }
 
 fn external_source(id: &str) -> gateway_auth::provider_credentials::CodexSourceAccount {
-    use gateway_auth::{
-        crypto::{Secret, base64url},
-        provider_credentials::CodexNativeOwner,
-    };
     let access = format!(
         "e30.{}.synthetic",
         base64url(json!({"exp":(NOW + 3_600_000) / 1000,"https://api.openai.com/auth":{"chatgpt_user_id":"fixture-user","chatgpt_account_id":id}}).to_string().as_bytes())
@@ -214,7 +208,6 @@ fn external_access_only_owner_appearance_conflicts_at_capacity_commit() {
 
 #[test]
 fn external_access_only_absence_does_not_authorize_managed_unowned_or_mixed_pools() {
-    use gateway_auth::provider_credentials::ManagedNativeSource;
     let mut managed = external_source("a");
     let native_generation = managed.identity().native_generation_hash;
     let native = managed.native_owner.as_mut().unwrap();
@@ -573,7 +566,6 @@ fn capacity_materialization_reconciles_a_newer_sample_over_stale_ambiguous_reset
 
 #[test]
 fn capacity_materialization_cannot_replace_a_newer_live_quota_signal() {
-    use gateway_core::provider::CodexQuotaClass;
     let (store, authority) = setup();
     run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap();
     let mut state = parse_routing_state(&store.inner.row(&keys::routing()).unwrap().value).unwrap();
@@ -616,7 +608,6 @@ fn capacity_materialization_cannot_replace_a_newer_live_quota_signal() {
 
 #[test]
 fn capacity_materialization_refuses_owned_probe_and_preserves_foreign_class_lease() {
-    use gateway_core::provider::CodexQuotaClass;
     for class in [CodexQuotaClass::Standard, CodexQuotaClass::Spark] {
         let (store, authority) = setup();
         run(authority.select_account(&"gpt-test".into(), CodexQuotaClass::Standard, NOW)).unwrap();

@@ -1,25 +1,20 @@
 //! Fixed live operations over the original actor and the common account authority.
-use super::{
-    WorkerLiveHost,
-    account::{self, CurrentLiveAccount},
-    body::{self, Body},
-    health,
-};
+use super::{WorkerLiveHost, account, account::CurrentLiveAccount, body, body::Body, health};
 use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformTokens},
-    storage::now_ms,
+    authority::RemoteAuthorityStore, host::PlatformClock, host::PlatformTokens, storage::now_ms,
     transport::outbound::Cancellation,
 };
-use gateway_auth::provider_credentials::{codex_access_expiry_ms, read_codex_source_pool};
-use gateway_authority::{
-    routing::{LiveAccountSelection, LiveRouteSelection},
-    store::Authority,
+use gateway_auth::{
+    provider_credentials::codex_access_expiry_ms, provider_credentials::read_codex_source_pool,
+};
+use gateway_authority::store::Authority;
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::LiveAccountSelection, types::LiveRouteSelection,
 };
 use gateway_core::{error::GatewayError, js_string::JsString16};
 use gateway_live_runtime::{
-    runtime::PreparedSideband,
-    types::{LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse},
+    runtime::PreparedSideband, types::LiveAccount, types::LiveCreateRequest,
+    types::LiveDispatchFailure, types::LiveHost, types::LiveResponse,
 };
 use std::collections::BTreeMap;
 

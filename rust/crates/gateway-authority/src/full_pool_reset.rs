@@ -6,11 +6,9 @@ mod facts;
 mod selection;
 pub mod types;
 
-use crate::{
-    routing_types::CohortProof,
-    store::{Authority, Transaction},
-};
+use crate::store::{Authority, Transaction};
 use gateway_authority_keys as keys;
+use gateway_authority_routing_selection::types::CohortProof;
 use gateway_core::{
     error::GatewayError, identity::RequestContext, source_json::SourceJson, state::AuthorityStore,
     value::ValueEncoding,

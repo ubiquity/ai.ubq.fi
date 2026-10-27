@@ -1,17 +1,21 @@
 //! Routing credentials use the owner-derived current source and routing fences.
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
-use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
-use gateway_auth::{crypto::Secret, types::AuthPrincipal};
-use gateway_authority::routing_types::CohortProof;
+use gateway_auth::{
+    crypto::Secret, provider_credentials::codex_source_pool_key,
+    provider_credentials::read_codex_source_pool, types::AuthPrincipal,
+};
 use gateway_authority_paid_control_records as paid_records;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
-use gateway_core::error::GatewayError;
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::state::{AuthorityStore, RecordKey};
-use gateway_providers::types::{AuthMaterial, PrepareOptions};
-use gateway_routing_runtime::types::{
-    ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
-    RefreshOutcome, RoutingHost, direct_credential,
+use gateway_authority_routing_selection::types::CohortProof;
+use gateway_core::{
+    error::GatewayError, provider::PaidProvider, provider::UpstreamProvider, state::AuthorityStore,
+    state::RecordKey,
+};
+use gateway_providers::{types::AuthMaterial, types::PrepareOptions};
+use gateway_routing_runtime::{
+    types::ClaudeSelection, types::CodexRecovery, types::CredentialFence, types::CredentialRequest,
+    types::PublishedCredential, types::RefreshOutcome, types::RoutingHost,
+    types::direct_credential,
 };
 use worker::Env;
 
@@ -291,8 +295,9 @@ impl RoutingHost for Host {
         )
         .await?;
         let current_proof = match selection {
-            Some(gateway_authority::routing_types::RouteSelection::QuotaBlocked {
-                proof, ..
+            Some(gateway_authority_routing_selection::types::RouteSelection::QuotaBlocked {
+                proof,
+                ..
             }) => proof,
             Some(_) => return Ok(CodexRecovery::Reselect),
             None => proof.clone(),

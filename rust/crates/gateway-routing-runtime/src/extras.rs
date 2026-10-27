@@ -10,6 +10,8 @@ use gateway_authority::store::Authority;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::{types::AdmittedAccount, types::RouteSelection};
 use gateway_core::{error::GatewayError, source_serialization as source};
 use gateway_core::{lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider};
 use gateway_core::{query::QueryStore, source_json::SourceJson};
@@ -246,12 +248,12 @@ impl<
     }
     async fn image_account(
         &self,
-        selection: gateway_authority::routing_types::RouteSelection,
+        selection: RouteSelection,
         model: &ModelId,
-    ) -> RoutingResult<Option<gateway_authority::routing_types::AdmittedAccount>> {
+    ) -> RoutingResult<Option<AdmittedAccount>> {
         Ok(Some(match selection {
-            gateway_authority::routing_types::RouteSelection::Eligible(account) => account,
-            gateway_authority::routing_types::RouteSelection::QuotaBlocked { proof, .. } => {
+            RouteSelection::Eligible(account) => account,
+            RouteSelection::QuotaBlocked { proof, .. } => {
                 let recovery = if proof.full_cohort_exhausted() {
                     self.host.recover_codex(&proof, model).await?
                 } else {
@@ -285,7 +287,7 @@ impl<
                     }
                 }
             }
-            gateway_authority::routing_types::RouteSelection::CredentialsInvalid { .. } => {
+            RouteSelection::CredentialsInvalid { .. } => {
                 return Err(GatewayError::new(
                     401,
                     "Codex subscription credentials are unavailable.",
@@ -293,7 +295,7 @@ impl<
                 )
                 .into());
             }
-            gateway_authority::routing_types::RouteSelection::ModelUnavailable { .. } => {
+            RouteSelection::ModelUnavailable { .. } => {
                 return Err(GatewayError::new(
                     404,
                     "The image child model is unavailable.",

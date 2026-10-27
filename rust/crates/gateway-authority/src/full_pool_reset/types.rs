@@ -1,5 +1,6 @@
-use crate::{reset_types::ResetCandidate, routing_types::CohortProof};
+use crate::reset_types::ResetCandidate;
 use gateway_authority_reset_records::ResetConfig;
+use gateway_authority_routing_selection::types::CohortProof;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, RequestContext};
 use gateway_core::js_string::JsString16;

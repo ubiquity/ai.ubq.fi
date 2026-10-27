@@ -1,6 +1,6 @@
 //! Actual proof-bearing authorization remains with checked reservation owners.
-use crate::routing_types::CohortProof;
 use gateway_authority_claude_proof::ClaudeCohortProof;
+use gateway_authority_routing_selection::types::CohortProof;
 
 #[derive(Clone, Debug)]
 pub enum PaidAuthorization {

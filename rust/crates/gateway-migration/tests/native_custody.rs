@@ -5,6 +5,7 @@ use gateway_auth::{
     native_credentials::{NativeGeneration, NativeOwnerId, OwnerFence, parse_native_document},
     provider_credentials::*,
 };
+use gateway_authority_routing_selection::SelectionOperations;
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,
@@ -13,23 +14,22 @@ use gateway_core::{
     tuple_key::TupleKey,
 };
 use gateway_migration::{
-    engine::adopt_empty,
-    graph_transport,
-    inverse::ArtifactContext,
-    native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native},
-    native_custody::{
-        NativeCustody, OwnedNativeSnapshot, export_native_rollback_with_custody,
-        export_native_with_custody, sanitize_native_capture,
-    },
+    engine::adopt_empty, graph_transport, inverse::ArtifactContext, native_capture::NativeCapture,
+    native_capture::NativeEntry, native_capture::NativeRevision, native_capture::NativeValue,
+    native_capture::prepare_native, native_custody::NativeCustody,
+    native_custody::OwnedNativeSnapshot, native_custody::export_native_rollback_with_custody,
+    native_custody::export_native_with_custody, native_custody::sanitize_native_capture,
+    native_operator::NativeCustodyRegistration, native_operator::prepare_local_bootstrap,
+    operational::NativeMigrationRequest, operational::NativeOperation, operational::execute_native,
 };
-use gateway_migration_test_support::fixture::{Directory, run};
-use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_migration_test_support::{fixture::Directory, fixture::run, sqlite_store::SqliteStore};
 use gateway_native::{
-    transport::NativeOwnerTransport,
-    unix::{NativeOwnerLocation, UnixOwnerTransport},
+    transport::NativeOwnerTransport, unix::NativeOwnerLocation, unix::UnixOwnerTransport,
 };
 use serde_json::{Value, json};
-use std::{cell::RefCell, collections::BTreeMap, path::PathBuf};
+use std::{
+    cell::RefCell, collections::BTreeMap, path::PathBuf, time::SystemTime, time::UNIX_EPOCH,
+};
 
 fn graph(value: &Value) -> SourceGraph {
     fn atom(value: &Value, nodes: &mut Vec<GraphNode>) -> GraphAtom {
@@ -417,11 +417,6 @@ fn full_local_source_sanitizes_then_restarts_and_inverts_only_under_current_nati
 #[test]
 fn configured_operator_composes_access_only_request_and_empty_store_adoption()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_migration::{
-        native_operator::{NativeCustodyRegistration, prepare_local_bootstrap},
-        operational::{NativeMigrationRequest, NativeOperation, execute_native},
-    };
-    use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("actual-configured-operator");
     std::fs::create_dir(&home)?;
@@ -518,7 +513,8 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
         gateway_authority_routing_evidence::models::model_quota_class(&model),
         2300,
     ))?;
-    let gateway_authority::routing_types::RouteSelection::Eligible(selected) = selected else {
+    let gateway_authority_routing_selection::types::RouteSelection::Eligible(selected) = selected
+    else {
         panic!("The adopted real routing projection did not select the source account");
     };
     assert_eq!(
@@ -535,8 +531,6 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
 
 #[test]
 fn configured_operator_observes_existing_external_access_and_refuses_stale_input() {
-    use gateway_migration::native_operator::{NativeCustodyRegistration, prepare_local_bootstrap};
-    use std::time::{SystemTime, UNIX_EPOCH};
     let directory = Directory::new();
     let home = directory.file("external-operator");
     std::fs::create_dir(&home).unwrap();

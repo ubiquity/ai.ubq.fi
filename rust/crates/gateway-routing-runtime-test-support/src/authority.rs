@@ -1,29 +1,25 @@
 //! Deterministic conformance store, not a Worker/runtime acceptance substitute.
-use gateway_authority::routing_types::{AdmittedAccount, RouteSelection};
+use gateway_auth::crypto::Secret;
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiKeyPolicy;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_authority_routing_records::types::{
-    PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,
+use gateway_authority_routing_records::{
+    types::PoolAccount, types::QuotaBlock, types::QuotaBlockSource, types::SubscriptionPool,
+};
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::AdmittedAccount, types::RouteSelection,
 };
 use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash},
-    provider::CodexQuotaClass,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::TupleKey,
+    error::GatewayError, identity::ApiKeyId, identity::PoolVersionstamp,
+    identity::RoutingAccountHash, identity::SubscriptionSelectionHash, provider::CodexQuotaClass,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RecordMutation, state::StoredRecord, tuple_key::TupleKey,
 };
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    future::Future,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering},
-    },
-    task::{Context, Poll, Waker},
+    collections::BTreeMap, collections::BTreeSet, future::Future, sync::Arc, sync::Mutex,
+    sync::atomic::AtomicI64, sync::atomic::AtomicU64, sync::atomic::AtomicUsize,
+    sync::atomic::Ordering, task::Context, task::Poll, task::Waker,
 };
 
 #[track_caller]
@@ -253,7 +249,6 @@ pub fn source_account(
     id: &str,
     refreshed: bool,
 ) -> gateway_auth::provider_credentials::CodexSourceAccount {
-    use gateway_auth::crypto::Secret;
     gateway_auth::provider_credentials::CodexSourceAccount {
         access_token: Secret::new(format!("fixture-access-{id}-{}", u8::from(refreshed))),
         refresh_token: Secret::new(format!("fixture-refresh-{id}")),

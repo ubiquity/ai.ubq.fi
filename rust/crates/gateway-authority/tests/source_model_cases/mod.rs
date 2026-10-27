@@ -1,23 +1,18 @@
 use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::routing_types::RouteSelection;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_evidence::models::model_quota_class;
-use gateway_authority_test_support::paid_request;
-use gateway_authority_test_support::paid_setup;
-use gateway_authority_test_support::{TestResult, fixture_row};
-use gateway_core::provider::CodexQuotaClass;
-use gateway_core::provider::PaidProvider;
-use gateway_routing_runtime_test_support::authority::MemoryStore;
-use gateway_routing_runtime_test_support::authority::NOW;
-use gateway_routing_runtime_test_support::authority::admin_hash;
-use gateway_routing_runtime_test_support::authority::admitted;
-use gateway_routing_runtime_test_support::authority::authority;
-use gateway_routing_runtime_test_support::authority::block;
-use gateway_routing_runtime_test_support::authority::pool;
-use gateway_routing_runtime_test_support::authority::routing_hash;
-use gateway_routing_runtime_test_support::authority::run;
-use gateway_routing_runtime_test_support::authority::seed_pool;
+use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_authority_test_support::{TestResult, fixture_row, paid_request, paid_setup};
+use gateway_core::{
+    js_string::JsString16, model::ModelId, provider::CodexQuotaClass, provider::PaidProvider,
+    source_control, source_json::SourceJson, source_serialization as source, value::ValueEncoding,
+};
+use gateway_routing_runtime_test_support::{
+    authority::MemoryStore, authority::NOW, authority::admin_hash, authority::admitted,
+    authority::authority, authority::block, authority::pool, authority::routing_hash,
+    authority::run, authority::seed_pool,
+};
 use gateway_schema::selection::AccountModelsStore;
 use serde_json::json;
 
@@ -193,10 +188,6 @@ fn source_selection_shrink_and_empty_defaults_keep_sticky_active_identity() {
 
 #[test]
 fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -> TestResult {
-    use gateway_core::{
-        js_string::JsString16, model::ModelId, source_control, source_json::SourceJson,
-        source_serialization as source, value::ValueEncoding,
-    };
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let raw = SourceJson::parse(&r#"{"accounts":{},"unsupported":{"other":{"\udc00":NOW}},"source_metadata":{"retain":"\ud800"}}"#.replace("NOW", &NOW.to_string()))?;
@@ -214,7 +205,7 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
     assert_eq!(admission.requested_model, high);
     run(authority.ensure_admission_current(&admission, NOW))?;
     let encoded_admission = SourceJson::from_serializable(&admission)?;
-    let restored: gateway_authority::routing_types::AdmittedAccount =
+    let restored: gateway_authority_routing_selection::types::AdmittedAccount =
         encoded_admission.deserialize()?;
     assert_eq!(restored, admission);
     let detail = |unit| {
@@ -262,7 +253,6 @@ fn opaque_model_admission_learning_uses_same_raw_source_key_and_exact_detail() -
 
 #[test]
 fn opaque_model_full_pool_proof_retains_exact_model_and_current_credential_fence() {
-    use gateway_core::{js_string::JsString16, model::ModelId};
     let store = MemoryStore::default();
     seed_pool(&store, &pool());
     let authority = authority(&store);
@@ -296,7 +286,6 @@ fn opaque_model_full_pool_proof_retains_exact_model_and_current_credential_fence
 
 #[test]
 fn model_quota_class_uses_source_comparison_projection_without_changing_identity() {
-    use gateway_core::{js_string::JsString16, model::ModelId};
     // Pinned Bun1.4.0 oracle af9107c1: Kelvin-sign lower-case is significant to the spark class.
     for (model, expected) in [
         (

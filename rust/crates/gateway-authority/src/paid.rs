@@ -128,8 +128,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     }
                 }
                 PaidAuthorization::SubscriptionUnavailable(proof) => {
-                    if !proof.unavailable
-                        || proof.bindings.is_empty()
+                    if !proof.full_cohort_unavailable()
+                        || proof.account_bindings().is_empty()
                         || proof.model() != &input.model
                     {
                         return Err(unavailable(

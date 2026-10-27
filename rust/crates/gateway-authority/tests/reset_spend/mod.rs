@@ -1,29 +1,23 @@
 //! Source banked-reset claim/submission and native-codex-mutations probe boundaries.
 
-use gateway_authority::{
-    full_pool_reset::types::*,
-    reset::utc_day,
-    routing_types::{CohortProof, RouteSelection},
-};
+use gateway_authority::full_pool_reset::types::*;
+use gateway_authority::reset::utc_day;
 use gateway_authority_keys as keys;
 use gateway_authority_reset_records::{
     AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetRecord, ResetState, reset_invocation,
 };
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::CohortProof, types::RouteSelection,
+};
 use gateway_authority_test_support::{TestResult, fixture_json, fixture_row};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
-use gateway_core::js_string::JsString16;
-use gateway_core::provider::CodexQuotaClass;
-use gateway_core::state::RecordKey;
-use gateway_routing_runtime_test_support::authority::MemoryStore;
-use gateway_routing_runtime_test_support::authority::NOW;
-use gateway_routing_runtime_test_support::authority::TestAuthority;
-use gateway_routing_runtime_test_support::authority::admitted;
-use gateway_routing_runtime_test_support::authority::authority;
-use gateway_routing_runtime_test_support::authority::block;
-use gateway_routing_runtime_test_support::authority::pool;
-use gateway_routing_runtime_test_support::authority::run;
-use gateway_routing_runtime_test_support::authority::seed_pool;
+use gateway_core::{
+    error::GatewayError, identity::PrincipalId, identity::RequestContext, identity::RequestId,
+    js_string::JsString16, provider::CodexQuotaClass, state::RecordKey,
+};
+use gateway_routing_runtime_test_support::{
+    authority::MemoryStore, authority::NOW, authority::TestAuthority, authority::admitted,
+    authority::authority, authority::block, authority::pool, authority::run, authority::seed_pool,
+};
 use serde_json::json;
 use std::cmp::Ordering;
 

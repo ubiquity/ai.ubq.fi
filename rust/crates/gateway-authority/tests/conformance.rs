@@ -1,52 +1,33 @@
-use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::reset_types::ResetCandidate;
-use gateway_authority::routing_types::RouteSelection;
+use gateway_authority::{paid_types::PaidAuthorization, reset_types::ResetCandidate};
 use gateway_authority_api_protocol::ApiUsageWindow;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_api_release::ApiReleaseOperations;
-use gateway_authority_contracts::DAY_MS;
-use gateway_authority_contracts::PAID_RETENTION_MS;
-use gateway_authority_contracts::QUOTA_RETENTION_MS;
+use gateway_authority_contracts::{DAY_MS, PAID_RETENTION_MS, QUOTA_RETENTION_MS};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelTerminal, KernelWindow};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidCorrelation, PaidUsage, PaidWindow};
-use gateway_authority_reset_records::utc_day;
 use gateway_authority_reset_records::{
-    AccountDayBudget, ResetClaim, ResetConfig, ResetCredit, ResetMode, ResetState, reset_invocation,
+    AccountDayBudget, ResetClaim, ResetConfig, ResetCredit, ResetMode, ResetState,
+    reset_invocation, utc_day,
 };
-use gateway_authority_test_support::TestResult;
-use gateway_authority_test_support::fixture_json;
-use gateway_authority_test_support::fixture_row;
-use gateway_authority_test_support::id;
-use gateway_authority_test_support::paid_request;
-use gateway_authority_test_support::paid_reservation;
-use gateway_authority_test_support::paid_setup;
-use gateway_authority_test_support::reserve_paid;
-use gateway_authority_test_support::seed_policy;
-use gateway_core::identity::PaidAttemptId;
-use gateway_core::identity::PoolVersionstamp;
-use gateway_core::lifecycle::BillingState;
-use gateway_core::lifecycle::PaidTerminalState;
-use gateway_core::provider::CodexQuotaClass;
-use gateway_core::provider::PaidProvider;
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::state::AuthorityStore;
-use gateway_core::state::StoredRecord;
-use gateway_routing_runtime_test_support::authority::MemoryStore;
-use gateway_routing_runtime_test_support::authority::NOW;
-use gateway_routing_runtime_test_support::authority::TestAuthority;
-use gateway_routing_runtime_test_support::authority::Tokens;
-use gateway_routing_runtime_test_support::authority::admin_hash;
-use gateway_routing_runtime_test_support::authority::admitted;
-use gateway_routing_runtime_test_support::authority::authority;
-use gateway_routing_runtime_test_support::authority::block;
-use gateway_routing_runtime_test_support::authority::policy;
-use gateway_routing_runtime_test_support::authority::pool;
-use gateway_routing_runtime_test_support::authority::routing_hash;
-use gateway_routing_runtime_test_support::authority::run;
-use gateway_routing_runtime_test_support::authority::seed_pool;
-use gateway_routing_runtime_test_support::authority::source_account;
+use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_authority_test_support::{
+    TestResult, fixture_json, fixture_row, id, paid_request, paid_reservation, paid_setup,
+    reserve_paid, seed_policy,
+};
+use gateway_core::{
+    identity::PaidAttemptId, identity::PoolVersionstamp, lifecycle::BillingState,
+    lifecycle::PaidTerminalState, provider::CodexQuotaClass, provider::PaidProvider,
+    provider::UpstreamProvider, state::AtomicTransition, state::AuthorityStore,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord, value::PortableValue,
+};
+use gateway_routing_runtime_test_support::{
+    authority::MemoryStore, authority::NOW, authority::TestAuthority, authority::Tokens,
+    authority::admin_hash, authority::admitted, authority::authority, authority::block,
+    authority::policy, authority::pool, authority::routing_hash, authority::run,
+    authority::seed_pool, authority::source_account,
+};
 use std::sync::atomic::Ordering;
 #[test]
 fn serial_identity_survives_headroom_reorder_and_same_account_refresh() {
@@ -769,10 +750,6 @@ fn expired_paid_detail_clears_its_marker_without_refunding_retained_exposure() -
 
 #[test]
 fn domain_rows_require_declared_json_and_never_guess_from_value_shapes() -> TestResult {
-    use gateway_core::{
-        state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord},
-        value::PortableValue,
-    };
     let store = MemoryStore::default();
     let typed = StoredRecord::profile(
         "typed-import",

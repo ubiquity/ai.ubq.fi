@@ -1,14 +1,11 @@
 use super::*;
 use crate::native_control::managed::NativeManagedPublicationDisposition;
 use crate::native_control::owners::RegisteredRenewalOwners;
-use crate::native_control::{custody::validate_native_control_custody, facts, rows};
-use crate::{
-    native_control::{
-        NativeRenewalCancellation, NativeRenewalContext, NativeRenewalControl, NativeRenewalMode,
-        receiver::NativeRenewalAuthority, receiver::RegisteredRenewalOwner,
-    },
-    routing::LiveRouteSelection,
+use crate::native_control::receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
+use crate::native_control::{
+    NativeRenewalCancellation, NativeRenewalContext, NativeRenewalControl, NativeRenewalMode,
 };
+use crate::native_control::{custody::validate_native_control_custody, facts, rows};
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
     NativeTransportIdentity,
@@ -23,6 +20,8 @@ use gateway_authority_paid_control_records::{
     PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::types::LiveRouteSelection;
 use gateway_core::identity::PoolVersionstamp;
 use gateway_core::js_string::JsString16;
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};

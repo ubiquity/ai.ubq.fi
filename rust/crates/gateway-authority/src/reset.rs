@@ -20,9 +20,12 @@ pub(crate) async fn reset_fences<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     candidate: &ResetCandidate,
 ) -> Result<ResetInvocation, GatewayError> {
-    if !candidate.proof.exhausted
-        || candidate.proof.bindings.is_empty()
-        || !candidate.proof.bindings.contains(&candidate.binding)
+    if !candidate.proof.full_cohort_exhausted()
+        || candidate.proof.account_bindings().is_empty()
+        || !candidate
+            .proof
+            .account_bindings()
+            .contains(&candidate.binding)
     {
         return Err(unavailable(
             "routing_fence_stale",
@@ -39,7 +42,7 @@ pub(crate) async fn reset_fences<S: AuthorityStore, I: TokenSource>(
     let slot =
         usize::try_from(candidate.binding.slot).map_err(|_| invalid("Reset slot is invalid."))?;
     if slot >= view.state.slots.len()
-        || view.binding(slot) != candidate.binding
+        || view.policy().binding(slot) != candidate.binding
         || !view.pool.accounts[slot].enabled
         || view.state.legacy_identity_unresolved
     {
@@ -50,7 +53,7 @@ pub(crate) async fn reset_fences<S: AuthorityStore, I: TokenSource>(
     }
     let block = view.state.slots[slot]
         .quota_blocks
-        .get(class_name(candidate.proof.quota_class))
+        .get(class_name(candidate.proof.quota_class()))
         .ok_or_else(|| {
             unavailable(
                 "routing_fence_missing",
@@ -128,7 +131,7 @@ fn live_clock(
 }
 
 fn shadow_episode(candidate: &ResetCandidate) -> String {
-    let value = serde_json::json!({"model":candidate.proof.model,"class":class_name(candidate.proof.quota_class),"bindings":candidate.proof.bindings,"reset":candidate.quota_reset_at_ms});
+    let value = serde_json::json!({"model":candidate.proof.model(),"class":class_name(candidate.proof.quota_class()),"bindings":candidate.proof.account_bindings(),"reset":candidate.quota_reset_at_ms});
     hash(&value.to_string())
 }
 
@@ -246,12 +249,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Finite pre-inventory projection; the fixed host rechecks again before every effect.
     pub async fn reset_candidates(
         &self,
-        proof: &crate::routing_types::CohortProof,
+        proof: &gateway_authority_routing_selection::types::CohortProof,
     ) -> Result<Vec<ResetCandidate>, GatewayError> {
         for _ in 0..3 {
             let now = self.fresh_time(0)?;
             let mut tx = self.transaction(now)?;
-            if !proof.exhausted || !validate_cohort(&mut tx, proof, true).await? {
+            if !proof.full_cohort_exhausted() || !validate_cohort(&mut tx, proof, true).await? {
                 return Err(unavailable(
                     "routing_fence_stale",
                     "Current full quota cohort is required.",
@@ -267,11 +270,11 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let view = read_view(&mut tx).await?;
             let mut candidates = Vec::new();
-            for binding in &proof.bindings {
+            for binding in proof.account_bindings() {
                 let Some(slot) = view.state.slots.get(binding.slot as usize) else {
                     continue;
                 };
-                let Some(block) = slot.quota_block_for(proof.quota_class) else {
+                let Some(block) = slot.quota_block_for(proof.quota_class()) else {
                     continue;
                 };
                 if block.blocked_until_ms <= now

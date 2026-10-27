@@ -1,17 +1,16 @@
 //! Bounded routing and scoped overage probe transitions.
-use crate::{
-    PROBE_LEASE_MS, add, invalid,
-    native_control::actor::{self, NativeActorScope, NativeRenewalActor},
-    next_generation, nonnegative,
-    routing::{read_view, validate_cohort},
-    routing_types::{AdmittedAccount, CohortProof, ScopedOverageProbe},
-    store::Authority,
-    text, unavailable,
-};
+use crate::native_control::actor;
+use crate::native_control::actor::{NativeActorScope, NativeRenewalActor};
+use crate::routing::{read_view, validate_cohort};
+use crate::store::Authority;
+use crate::{PROBE_LEASE_MS, add, invalid, next_generation, nonnegative, text, unavailable};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_records::types::{ProbeLease, QuotaBlock};
+use gateway_authority_routing_selection::types::{
+    AdmittedAccount, CohortProof, ScopedOverageProbe,
+};
 use gateway_core::{error::GatewayError, identity::RoutingAccountHash, state::AuthorityStore};
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -88,7 +87,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let mut view = read_view(&mut tx).await?;
-            if !view.matches(admission) {
+            if !view
+                .policy()
+                .matches_admission(&admission.binding, admission.active_generation)
+            {
                 return Ok(None);
             }
             let allowed = view
@@ -168,7 +170,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let mut view = read_view(&mut tx).await?;
-            if !view.current_binding(&admission.binding) {
+            if !view.policy().current_binding(&admission.binding) {
                 return Ok(false);
             }
             let slot = &mut view.state.slots[admission.binding.slot as usize];
@@ -265,15 +267,15 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 token: self.tokens.next_token()?,
                 generation: slot.generation as i64,
                 circuit: gateway_authority_routing_records::types::ProbeCircuit::Quota,
-                quota_class: Some(proof.quota_class),
+                quota_class: Some(proof.quota_class()),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
             slot.probe_lease = Some(lease.clone());
             let probe = ScopedOverageProbe {
-                binding: view.binding(slot_index),
-                requested_model: proof.model.clone(),
-                quota_class: proof.quota_class,
+                binding: view.policy().binding(slot_index),
+                requested_model: proof.model().clone(),
+                quota_class: proof.quota_class(),
                 probe: lease,
             };
             tx.put(&keys::routing(), &view.state, None)?;
@@ -297,7 +299,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let view = read_view(&mut tx).await?;
             let slot = probe.binding.slot as usize;
             if slot >= view.state.slots.len()
-                || view.binding(slot) != probe.binding
+                || view.policy().binding(slot) != probe.binding
                 || view.state.slots[slot].probe_lease.as_ref() != Some(&probe.probe)
                 || probe.probe.expires_at_ms <= now
             {
@@ -327,7 +329,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut view = read_view(&mut tx).await?;
             let slot = probe.binding.slot as usize;
             if slot >= view.state.slots.len()
-                || view.binding(slot) != probe.binding
+                || view.policy().binding(slot) != probe.binding
                 || view.state.slots[slot].probe_lease.as_ref() != Some(&probe.probe)
             {
                 return Ok(false);
@@ -363,7 +365,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let mut tx = self.transaction(now)?;
             let mut view = read_view(&mut tx).await?;
             let slot = probe.binding.slot as usize;
-            if !view.current_binding(&probe.binding)
+            if !view.policy().current_binding(&probe.binding)
                 || view.state.slots[slot].probe_lease.as_ref() != Some(&probe.probe)
             {
                 return Ok(false);

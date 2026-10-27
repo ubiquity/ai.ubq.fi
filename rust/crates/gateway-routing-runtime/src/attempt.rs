@@ -4,11 +4,10 @@ use crate::{types::ClaudeSelection, types::CodexRecovery, types::CredentialFence
 use crate::{types::PreparedAttempt, types::PublishedCredential, types::RoutingError};
 use crate::{types::RoutingHost, types::RoutingResult, types::SourceRefusalBody};
 use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::routing_types::RouteSelection;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_paid_records::{PaidAdmission, PaidRequest, PaidReservation};
-use gateway_core::model::ModelId;
-use gateway_core::{error::GatewayError, provider::UpstreamProvider::ChatgptCodex};
+use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_core::{error::GatewayError, model::ModelId, provider::UpstreamProvider::ChatgptCodex};
 use gateway_core::{identity::PaidAttemptId, provider::UpstreamProvider, query::QueryStore};
 use gateway_core::{provider::PaidProvider, provider::UpstreamProvider::ClaudeCode};
 use gateway_providers::types::ClientSurface;

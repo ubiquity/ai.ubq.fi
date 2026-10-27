@@ -225,8 +225,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }
             let mut view = read_pinned_view(&mut tx).await?;
             let current = self.fresh_time(now)?;
-            let evaluation = crate::routing::evaluate(
-                &view,
+            let evaluation = gateway_authority_routing_policy::evaluate(
+                &view.policy(),
                 index,
                 &gateway_core::model::ModelId::from_scalar(&target.model),
                 model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
@@ -237,7 +237,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                     "The requested Codex slot is not eligible for the prompt-cache scope experiment.",
                 ));
             }
-            let binding = view.binding(index);
+            let binding = view.policy().binding(index);
             let probe = if evaluation.probe {
                 let row = &mut view.state.slots[index];
                 if row
@@ -291,7 +291,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         for _ in 0..3 {
             let mut tx = self.transaction(now)?;
             let mut view = read_pinned_view(&mut tx).await?;
-            if !view.current_binding(&dispatch.binding) {
+            if !view.policy().current_binding(&dispatch.binding) {
                 return Ok(());
             }
             let row = &mut view.state.slots[dispatch.binding.slot as usize];
@@ -358,8 +358,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let current = self.fresh_time(now)?;
         if view.pool.accounts.len() != 2
             || view.pool.pool_versionstamp.0 != target.auth_pool_versionstamp
-            || !crate::routing::evaluate(
-                &view,
+            || !gateway_authority_routing_policy::evaluate(
+                &view.policy(),
                 0,
                 &gateway_core::model::ModelId::from_scalar(&target.model),
                 model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
@@ -399,7 +399,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         }
         Ok(RefreshPermit {
             context,
-            binding: view.binding(0),
+            binding: view.policy().binding(0),
         })
     }
 }

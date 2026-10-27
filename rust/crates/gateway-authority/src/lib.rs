@@ -21,7 +21,6 @@ pub mod reset;
 mod reset_recovery;
 pub mod reset_types;
 pub mod routing;
-pub mod routing_types;
 mod source_models;
 pub mod store;
 

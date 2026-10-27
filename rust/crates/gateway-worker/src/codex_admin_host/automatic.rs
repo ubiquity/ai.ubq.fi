@@ -1,26 +1,21 @@
 //! One source full-pool evaluation. Only shared opaque permits reach a consume.
-use super::{
-    manual,
-    source_inventory::{self, SourceRuntime},
-};
+use super::{manual, source_inventory, source_inventory::SourceRuntime};
 use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
-    transport::outbound::{PinnedDestination, send_http},
+    authority::RemoteAuthorityStore, host::PlatformClock, host::PlatformHost, host::PlatformTokens,
+    storage::now_ms, transport::outbound::PinnedDestination, transport::outbound::send_http,
 };
-use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_pool};
-use gateway_auth::resolve::AuthService;
-use gateway_auth::types::{AuthConfig, AuthMethod, AuthRequest};
-use gateway_authority::full_pool_reset::types::{
-    AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, SourceResetInventory,
+use gateway_auth::{
+    provider_credentials::CodexSourceAccount, provider_credentials::read_codex_source_pool,
+    resolve::AuthService, types::AuthConfig, types::AuthMethod, types::AuthRequest,
 };
-use gateway_authority::reset_types::FullPoolResetReconciliation;
-use gateway_authority::routing_types::{AdmittedAccount, CohortProof};
-use gateway_authority::store::Authority;
+use gateway_authority::{
+    full_pool_reset::types::AutomaticResetPermit, full_pool_reset::types::FullPoolEvaluation,
+    full_pool_reset::types::FullPoolPreparation, full_pool_reset::types::SourceResetInventory,
+    reset_types::FullPoolResetReconciliation, store::Authority,
+};
 use gateway_authority_reset_records::{ResetClaim, ResetState};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{AccountBinding, RequestContext};
+use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
+use gateway_core::{error::GatewayError, identity::AccountBinding, identity::RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;
 use std::cell::RefCell;
 use worker::Method;

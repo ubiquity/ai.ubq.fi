@@ -2,17 +2,19 @@ use crate::TestResult;
 use gateway_authority_capacity_policy::{
     apply_capacity_observation, capacity_headroom_for_observation, plan_capacity_observation_store,
 };
-use gateway_authority_routing_evidence::capacity::{
-    CapacityObservation, CapacityStore, normalize_capacity_window,
+use gateway_authority_routing_evidence::{
+    capacity::CapacityObservation, capacity::CapacityStore, capacity::normalize_capacity_window,
 };
-use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
-use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_authority_routing_records::{
+    codec::normalize, codec::parse_routing_state, types::PoolAccount, types::SubscriptionPool,
+};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_core::{identity::PoolVersionstamp, identity::SubscriptionSelectionHash};
+use serde_json::{Value, from_value, json};
 mod live_selection;
 use super::support::*;
 
-use gateway_authority::routing_types::*;
-use gateway_core::identity::{PoolVersionstamp, SubscriptionSelectionHash};
-use serde_json::{Value, from_value, json};
+use gateway_authority_routing_selection::types::*;
 fn packet() -> Value {
     serde_json::from_str(include_str!("../fixtures/codex-capacity-source-v1.json")).unwrap()
 }

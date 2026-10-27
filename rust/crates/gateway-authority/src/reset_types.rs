@@ -1,5 +1,5 @@
 //! Actual proof-bearing reset candidates and admitted existing-only outcomes.
-use crate::routing_types::{AdmittedAccount, CohortProof};
+use gateway_authority_routing_selection::types::{AdmittedAccount, CohortProof};
 use gateway_core::identity::AccountBinding;
 
 #[derive(Clone, Debug)]

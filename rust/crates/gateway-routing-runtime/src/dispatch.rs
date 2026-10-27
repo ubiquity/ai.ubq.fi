@@ -8,6 +8,7 @@ use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
 use gateway_core::{error::GatewayError, lifecycle::PaidTerminalState};
 use gateway_core::{lifecycle::SemanticTerminal, lifecycle::TransportObservation};
 use gateway_core::{provider::UpstreamProvider, query::QueryStore};
@@ -405,7 +406,7 @@ impl<
         &self,
         row: &Journal,
         record: &AttemptRecord,
-        admission: &gateway_authority::routing_types::AdmittedAccount,
+        admission: &AdmittedAccount,
         failure: &AttemptFailure,
     ) -> RoutingResult<bool> {
         if let Some(block) = classify::codex_quota(

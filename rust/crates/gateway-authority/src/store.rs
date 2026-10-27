@@ -500,3 +500,17 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         Ok(())
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_routing_selection::SelectionFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn selection(&self) -> gateway_authority_routing_selection::SelectionService<'_, S, I> {
+        gateway_authority_routing_selection::SelectionService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}

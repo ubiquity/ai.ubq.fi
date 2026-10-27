@@ -1,11 +1,9 @@
 use super::*;
 use gateway_auth::{
-    crypto::{Secret, base64url},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
-    },
+    crypto::Secret, crypto::base64url, provider_credentials::CodexNativeOwner,
+    provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,
+    provider_credentials::codex_source_pool_key,
 };
-use gateway_authority::routing_types::{CohortProof, RouteSelection};
 use gateway_authority_capacity::{
     AcceptedCodexCapacityObservations, CapacityOperations, CodexCapacityAccountRef,
     CodexCapacityObservationFence, CodexCapacitySample,
@@ -14,13 +12,16 @@ use gateway_authority_contracts::AuthorityClock;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_evidence::capacity::parse_capacity_store;
-use gateway_authority_routing_records::codec::parse_routing_state;
-use gateway_authority_routing_records::types::{
-    PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,
+use gateway_authority_routing_records::{
+    codec::parse_routing_state, types::PoolAccount, types::QuotaBlock, types::QuotaBlockSource,
+    types::SubscriptionPool,
+};
+use gateway_authority_routing_selection::{
+    SelectionOperations, types::CohortProof, types::RouteSelection,
 };
 use gateway_core::{identity::PoolVersionstamp, provider::CodexQuotaClass, state::StoredRecord};
 use gateway_observability::host_types::*;
-use gateway_observability_test_support::runtime::{Host, Memory, run};
+use gateway_observability_test_support::{runtime::Host, runtime::Memory, runtime::run};
 use serde_json::{Value, json};
 use std::cell::Cell;
 const NOW: i64 = 1_800_000_000_000;

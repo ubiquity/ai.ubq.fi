@@ -1,17 +1,14 @@
 //! Provider-outcome reconciliation and verified-reset recovery, with no provider I/O.
-use crate::{
-    PROBE_LEASE_MS, add, invalid, next_generation,
-    reset::{ResetAuthorization, authorization_fences, check_record},
-    reset_types::{FullPoolResetReconciliation, ResetCandidate},
-    routing::read_view,
-    routing_types::AdmittedAccount,
-    store::Authority,
-    text, unavailable,
-};
+use crate::reset::{ResetAuthorization, authorization_fences, check_record};
+use crate::reset_types::{FullPoolResetReconciliation, ResetCandidate};
+use crate::routing::read_view;
+use crate::store::Authority;
+use crate::{PROBE_LEASE_MS, add, invalid, next_generation, text, unavailable};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_reset_records::{ResetRecord, ResetState, reset_invocation};
 use gateway_authority_routing_records::types::ProbeLease;
+use gateway_authority_routing_selection::types::AdmittedAccount;
 use gateway_core::{
     error::GatewayError,
     identity::{ActiveSelection, ActiveTransitionReason},
@@ -34,7 +31,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Source preexistingBankedReset: never request inventory or create a redemption/budget.
     pub async fn reconcile_full_pool_reset(
         &self,
-        proof: &crate::routing_types::CohortProof,
+        proof: &gateway_authority_routing_selection::types::CohortProof,
         original: &gateway_core::identity::RequestContext,
     ) -> Result<FullPoolResetReconciliation, GatewayError> {
         if !self.migrate_full_pool_reset_settings().await? {
@@ -256,9 +253,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 return Ok(None);
             }
             let released = slot
-                .quota_block_for(candidate.proof.quota_class)
+                .quota_block_for(candidate.proof.quota_class())
                 .ok_or_else(|| unavailable("routing_fence_stale", "Reset quota class changed."))?;
-            slot.remove_quota_class(candidate.proof.quota_class);
+            slot.remove_quota_class(candidate.proof.quota_class());
             slot.retained_reset_at_ms = released.reset_at_ms;
             slot.reset_identity_stable = released.reset_is_stable;
             slot.reset_identity_ambiguous = true;
@@ -268,12 +265,12 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 token: self.tokens.next_token()?,
                 generation: slot.generation as i64,
                 circuit: gateway_authority_routing_records::types::ProbeCircuit::Quota,
-                quota_class: Some(candidate.proof.quota_class),
+                quota_class: Some(candidate.proof.quota_class()),
                 expires_at_ms: add(now, PROBE_LEASE_MS)?,
             };
             text(&lease.token)?;
             slot.probe_lease = Some(lease.clone());
-            let binding = view.binding(slot_index);
+            let binding = view.policy().binding(slot_index);
             let (active_generation, reason) = view.active.as_ref().map_or((1, None), |active| {
                 (active.generation, active.transition_reason)
             });
@@ -303,8 +300,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             let admitted = AdmittedAccount {
                 binding,
                 active_generation,
-                requested_model: candidate.proof.model.clone(),
-                quota_class: candidate.proof.quota_class,
+                requested_model: candidate.proof.model().clone(),
+                quota_class: candidate.proof.quota_class(),
                 probe_required: false,
                 probe: Some(lease),
             };

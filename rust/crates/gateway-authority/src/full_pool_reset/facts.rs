@@ -1,14 +1,12 @@
 use super::{Facts, FullPoolFence, Member, declined, invalid};
-use crate::{
-    reset_types::ResetCandidate,
-    routing::{read_view, validate_cohort},
-    routing_types::CohortProof,
-    store::{Authority, Transaction},
-};
+use crate::reset_types::ResetCandidate;
+use crate::routing::{read_view, validate_cohort};
+use crate::store::{Authority, Transaction};
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_reset_records::{ResetConfig, ResetMode, reset_invocation};
+use gateway_authority_routing_selection::types::CohortProof;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};
 use gateway_core::state::AuthorityStore;
@@ -159,7 +157,7 @@ async fn capture_for<S: AuthorityStore, I: TokenSource>(
         let index = usize::try_from(binding.slot).map_err(|_| invalid())?;
         let account = view.pool.accounts.get(index).ok_or_else(invalid)?;
         let state = view.state.slots.get(index).ok_or_else(invalid)?;
-        if view.binding(index) != *binding || !account.enabled {
+        if view.policy().binding(index) != *binding || !account.enabled {
             return Err(declined("routing_fence_stale"));
         }
         let block = state
