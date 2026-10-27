@@ -1,7 +1,7 @@
 //! Complete cold model discovery before the request freezes its routing input.
 use crate::CatalogRuntime;
+use gateway_catalog_inputs::model::uses_openrouter;
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
-use gateway_catalog_provider::model::uses_openrouter;
 use gateway_core::{error::GatewayError, model::ModelId, query::QueryStore};
 use gateway_schema::{
     catalog::CatalogInput,

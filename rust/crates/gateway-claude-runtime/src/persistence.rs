@@ -154,7 +154,7 @@ pub(crate) async fn rotate<S: AuthorityStore, H: ClaudePoolHost>(
         {
             return Ok(true);
         }
-        if !gateway_catalog_runtime::state::checks_current(store, &view.quota_checks).await? {
+        if !gateway_catalog_inputs::state::checks_current(store, &view.quota_checks).await? {
             return Ok(false);
         }
     }

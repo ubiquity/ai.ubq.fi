@@ -1,10 +1,8 @@
 //! Request-owned catalog runtime. Network and credential ownership are typed host capabilities.
 use gateway_catalog_provider::providers;
-pub mod admin;
-pub mod control;
 mod inference;
-pub mod state;
-mod versioned;
+mod observation;
+use gateway_catalog_inputs::state;
 
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable,
@@ -12,7 +10,7 @@ use gateway_catalog_provider::host::{
 use gateway_core::{
     error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
 };
-use gateway_schema::{catalog::ProviderCatalog, catalog_cache::CatalogResponse};
+use gateway_schema::catalog::ProviderCatalog;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -84,13 +82,35 @@ impl CatalogRuntime {
         self.source_string_collator = Some(collator);
         self
     }
-    pub(crate) fn source_string_collator<H: CatalogHost>(
+    fn source_string_collator<H: CatalogHost>(
         &self,
         host: &H,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
         self.source_string_collator
             .clone()
             .unwrap_or_else(|| host.source_string_collator())
+    }
+    /// Project public catalog DATA with the constructor-selected source collator.
+    pub fn public_catalog_document<H: CatalogHost>(
+        &self,
+        input: &gateway_schema::catalog::CatalogInput,
+        host: &H,
+    ) -> Result<SourceJson, GatewayError> {
+        gateway_schema::catalog_views::public_catalog(
+            input,
+            self.source_string_collator(host).as_ref(),
+        )
+    }
+    /// Project the full catalog snapshot with that same private source collator.
+    pub fn catalog_document<H: CatalogHost>(
+        &self,
+        input: &gateway_schema::catalog::CatalogInput,
+        host: &H,
+    ) -> Result<SourceJson, GatewayError> {
+        gateway_schema::catalog_views::build_catalog_snapshot(
+            input,
+            self.source_string_collator(host).as_ref(),
+        )
     }
     fn snapshots_for_view(
         &self,
@@ -463,7 +483,7 @@ impl CatalogRuntime {
                 MemoIdentity::Credential(binding) => Some(binding),
                 MemoIdentity::Anonymous => None,
             };
-            state::persist_provider_observation(
+            observation::persist_provider_observation(
                 store,
                 &generation,
                 provider,
@@ -604,7 +624,7 @@ impl CatalogRuntime {
             snapshot
         };
         if let Some(generation) = state::auth_generation(store).await? {
-            state::persist_provider_observation(
+            observation::persist_provider_observation(
                 store,
                 &generation,
                 CatalogProvider::ClaudeCode,
@@ -616,14 +636,5 @@ impl CatalogRuntime {
             .await?;
         }
         Ok(true)
-    }
-    pub async fn versioned_models<S: QueryStore, H: CatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-        raw_version: &str,
-        conditional: Option<&str>,
-    ) -> Result<CatalogResponse, GatewayError> {
-        versioned::serve(self, store, host, raw_version, conditional).await
     }
 }

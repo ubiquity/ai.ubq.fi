@@ -4,7 +4,7 @@ use gateway_admin_runtime::{
     capabilities::{Context, ErrorDiagnostics, PricingSnapshot, SupervisorBriefTarget},
 };
 use gateway_auth::{native::NativeReadRequest, types::AuthResponse};
-use gateway_catalog_runtime::admin::AdminCatalogOperation;
+use gateway_catalog_admin::admin::{AdminCatalogOperation, CatalogAdmin};
 use gateway_core::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeMap;

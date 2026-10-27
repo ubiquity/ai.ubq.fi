@@ -16,7 +16,7 @@ pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
     if selected.disabled || selected.binding.workspace.is_some() {
         return Ok(None);
     }
-    if !gateway_catalog_runtime::state::checks_current(store, &selected.native_checks).await? {
+    if !gateway_catalog_inputs::state::checks_current(store, &selected.native_checks).await? {
         return Ok(None);
     }
     if claude::current_binding(store, &selected.binding, persistence::now(host)?)
@@ -88,7 +88,7 @@ pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
     {
         return Ok(None);
     }
-    if !gateway_catalog_runtime::state::checks_current(store, &selected.native_checks).await? {
+    if !gateway_catalog_inputs::state::checks_current(store, &selected.native_checks).await? {
         return Ok(None);
     }
     if session

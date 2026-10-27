@@ -1,5 +1,5 @@
 //! The full stored-reader and runtime-compaction source-label phases are intentionally distinct.
-use gateway_catalog_runtime::state::parse_full_snapshot;
+use gateway_catalog_inputs::state::parse_full_snapshot;
 use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

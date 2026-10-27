@@ -1,6 +1,5 @@
 //! Fixed paid control publications, derived in the same store as admission/accounting.
 //! These records are provenance and a coarse index; only authority issues a request receipt.
-use crate::{CatalogRuntime, state};
 use gateway_authority::{
     keys,
     paid_control::{
@@ -9,7 +8,9 @@ use gateway_authority::{
     },
     paid_types::PaidRoutingPolicy,
 };
+use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider, CredentialPublication};
+use gateway_catalog_runtime::CatalogRuntime;
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,
@@ -190,7 +191,7 @@ impl Checks {
         key: RecordKey,
         record: Option<&StoredRecord>,
     ) -> Result<(), GatewayError> {
-        self.add(state::check(key, record))
+        self.add(check(key, record))
     }
     fn source(&mut self, checks: &[PaidSourceCheck]) -> Result<(), GatewayError> {
         let mut seen = BTreeSet::new();
@@ -371,270 +372,264 @@ fn revision<H: CatalogHost>(host: &H, checks: &Checks) -> Result<String, Gateway
     }
     Ok(revision)
 }
-impl CatalogRuntime {
-    pub async fn publish_paid_observation<S: QueryStore, H: CatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-        provider: PaidProvider,
-        force: bool,
-    ) -> Result<PaidObservationPublication, GatewayError> {
-        self.publish_observation(store, host, provider, force, &Checks::default())
-            .await
+pub async fn publish_paid_observation<S: QueryStore, H: CatalogHost>(
+    runtime: &CatalogRuntime,
+    store: &S,
+    host: &H,
+    provider: PaidProvider,
+    force: bool,
+) -> Result<PaidObservationPublication, GatewayError> {
+    publish_observation(runtime, store, host, provider, force, &Checks::default()).await
+}
+
+async fn publish_observation<S: QueryStore, H: CatalogHost>(
+    runtime: &CatalogRuntime,
+    store: &S,
+    host: &H,
+    provider: PaidProvider,
+    force: bool,
+    base: &Checks,
+) -> Result<PaidObservationPublication, GatewayError> {
+    let started = host.now_ms();
+    let control = Controls::capture(store, started).await?;
+    let key = keys::paid_control_observation(provider);
+    let previous = read_record(store, &key).await?;
+    let previous_observation = previous
+        .as_ref()
+        .map(|row| control.observation(provider, row, started))
+        .transpose()?;
+    let publication = host.publication().await?;
+    control.publication(&publication)?;
+    let mut source = Checks::default();
+    source.source(&control.config.source_checks)?;
+    source.native(&publication.source_checks)?;
+    if let Some(old) = &previous_observation {
+        source.source(&old.source_checks)?;
     }
-    async fn publish_observation<S: QueryStore, H: CatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-        provider: PaidProvider,
-        force: bool,
-        base: &Checks,
-    ) -> Result<PaidObservationPublication, GatewayError> {
-        let started = host.now_ms();
-        let control = Controls::capture(store, started).await?;
-        let key = keys::paid_control_observation(provider);
-        let previous = read_record(store, &key).await?;
-        let previous_observation = previous
-            .as_ref()
-            .map(|row| control.observation(provider, row, started))
-            .transpose()?;
-        let publication = host.publication().await?;
-        control.publication(&publication)?;
-        let mut source = Checks::default();
-        source.source(&control.config.source_checks)?;
-        source.native(&publication.source_checks)?;
-        if let Some(old) = &previous_observation {
-            source.source(&old.source_checks)?;
-        }
-        let source_until = source_deadline(store, &source, started).await?;
-        let snapshot = if discovery_binding(&control.config, provider).is_some() {
-            self.refresh_provider(store, host, catalog_provider(provider), force)
-                .await?
-        } else {
-            None
-        };
-        let now = host.now_ms();
-        time(now)?;
-        if now < started {
-            return Err(stale());
-        }
-        let source_until =
-            expiry([source_until, source_deadline(store, &source, now).await?].into_iter());
-        let mut checks = source.clone();
-        for fence in base.list() {
-            checks.add(fence)?;
-        }
-        control.commit_checks(&mut checks)?;
-        checks.record(key.clone(), previous.as_ref())?;
-        let (next, revision) = if let Some(snapshot) = snapshot {
-            let observed = snapshot
-                .updated_at_ms
-                .ok_or_else(|| missing("Provider model observation has no source time"))?;
-            time(observed)?;
-            if observed > now {
-                return Err(stale());
-            }
-            let revision = revision(host, &checks)?;
-            let next = PaidProviderObservation {
-                v: 1,
-                provider,
-                owner_id: control.owner.owner_id,
-                owner_epoch: control.owner.owner_epoch,
-                configuration_generation: control.config.generation,
-                configuration_fingerprint: control.config.configuration_fingerprint,
-                credential_binding: configured_binding(&publication, provider)?,
-                observed_at_ms: observed,
-                source_valid_until_ms: source_until,
-                stale: snapshot.stale || now.saturating_sub(observed) >= 300_000,
-                models: routing_rows(snapshot.models),
-                source_checks: source.persisted(),
-            };
-            (Some(next), Some(revision))
-        } else {
-            (None, previous.as_ref().map(|row| row.revision.clone()))
-        };
-        let mutations = if let (Some(next), Some(revision)) = (next, revision.as_ref()) {
-            vec![RecordMutation::Put {
-                key,
-                record: encode_source_control_record(
-                    revision,
-                    &SourceJson::from_serializable(&next)
-                        .map_err(|_| missing("Provider observation serialization failed"))?,
-                    source_until,
-                )?,
-            }]
-        } else {
-            Vec::new()
-        };
-        if store
-            .commit(AtomicTransition {
-                checks: checks.list(),
-                mutations,
-            })
+    let source_until = source_deadline(store, &source, started).await?;
+    let snapshot = if discovery_binding(&control.config, provider).is_some() {
+        runtime
+            .refresh_provider(store, host, catalog_provider(provider), force)
             .await?
-            != CommitOutcome::Committed
-        {
-            return Err(stale());
-        }
-        Ok(PaidObservationPublication {
-            provider,
-            revision,
-            published_at_ms: now,
-        })
+    } else {
+        None
+    };
+    let now = host.now_ms();
+    time(now)?;
+    if now < started {
+        return Err(stale());
     }
-    /// Capture durable source values before any awaited provider fetch. There is one
-    /// full replacement projection; missing models cannot survive from an older row.
-    pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
-        &self,
-        store: &S,
-        host: &H,
-    ) -> Result<PaidRoutingPublication, GatewayError> {
-        let started = host.now_ms();
-        let control = Controls::capture(store, started).await?;
-        let captured = CapturedSource::read(store, started).await?;
-        let publication = host.publication().await?;
-        control.publication(&publication)?;
-        let mut source = captured.checks.clone();
-        source.source(&control.config.source_checks)?;
-        source.native(&publication.source_checks)?;
-        let mut prior_observations = Vec::new();
-        for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
-            let key = keys::paid_control_observation(provider);
-            let row = read_record(store, &key).await?;
-            if let Some(row) = &row {
-                control.observation(provider, row, started)?;
-            }
-            prior_observations.push((provider, row));
-        }
-        for (provider, row) in &prior_observations {
-            if row.is_none() && configured(&control.config, *provider).is_some() {
-                self.publish_observation(store, host, *provider, false, &source)
-                    .await?;
-            }
-        }
-        let now = host.now_ms();
-        time(now)?;
-        if now < started {
+    let source_until =
+        expiry([source_until, source_deadline(store, &source, now).await?].into_iter());
+    let mut checks = source.clone();
+    for fence in base.list() {
+        checks.add(fence)?;
+    }
+    control.commit_checks(&mut checks)?;
+    checks.record(key.clone(), previous.as_ref())?;
+    let (next, revision) = if let Some(snapshot) = snapshot {
+        let observed = snapshot
+            .updated_at_ms
+            .ok_or_else(|| missing("Provider model observation has no source time"))?;
+        time(observed)?;
+        if observed > now {
             return Err(stale());
         }
-        let mut input = captured.input;
-        let mut observation_revisions = BTreeMap::new();
-        let mut source_valid_until = expiry(
-            [
-                control.owner_record.expires_at_ms,
-                control.config_record.expires_at_ms,
-                captured.valid_until,
-            ]
-            .into_iter(),
-        );
-        for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
-            let key = keys::paid_control_observation(provider);
-            let row = read_record(store, &key).await?;
-            let binding = configured(&control.config, provider);
-            if let Some(row) = &row {
-                let observation = control.observation(provider, row, now)?;
-                source.source(&observation.source_checks)?;
-                source_valid_until = expiry(
-                    [
-                        source_valid_until,
-                        row.expires_at_ms,
-                        observation.source_valid_until_ms,
-                    ]
-                    .into_iter(),
-                );
-                input.providers.insert(
-                    catalog_provider(provider).id().into(),
-                    ProviderCatalog {
-                        models: observation.models,
-                        updated_at_ms: Some(observation.observed_at_ms),
-                        configured: binding.is_some(),
-                        available: true,
-                        stale: observation.stale,
-                    },
-                );
-            } else {
-                input.providers.insert(
-                    catalog_provider(provider).id().into(),
-                    ProviderCatalog {
-                        configured: binding.is_some(),
-                        ..ProviderCatalog::default()
-                    },
-                );
-            }
-            observation_revisions.insert(
-                catalog_provider(provider).id(),
-                row.as_ref().map(|r| r.revision.clone()),
+        let revision = revision(host, &checks)?;
+        let next = PaidProviderObservation {
+            v: 1,
+            provider,
+            owner_id: control.owner.owner_id,
+            owner_epoch: control.owner.owner_epoch,
+            configuration_generation: control.config.generation,
+            configuration_fingerprint: control.config.configuration_fingerprint,
+            credential_binding: configured_binding(&publication, provider)?,
+            observed_at_ms: observed,
+            source_valid_until_ms: source_until,
+            stale: snapshot.stale || now.saturating_sub(observed) >= 300_000,
+            models: routing_rows(snapshot.models),
+            source_checks: source.persisted(),
+        };
+        (Some(next), Some(revision))
+    } else {
+        (None, previous.as_ref().map(|row| row.revision.clone()))
+    };
+    let mutations = if let (Some(next), Some(revision)) = (next, revision.as_ref()) {
+        vec![RecordMutation::Put {
+            key,
+            record: encode_source_control_record(
+                revision,
+                &SourceJson::from_serializable(&next)
+                    .map_err(|_| missing("Provider observation serialization failed"))?,
+                source_until,
+            )?,
+        }]
+    } else {
+        Vec::new()
+    };
+    if store
+        .commit(AtomicTransition {
+            checks: checks.list(),
+            mutations,
+        })
+        .await?
+        != CommitOutcome::Committed
+    {
+        return Err(stale());
+    }
+    Ok(PaidObservationPublication {
+        provider,
+        revision,
+        published_at_ms: now,
+    })
+}
+/// Capture durable source values before any awaited provider fetch. There is one
+/// full replacement projection; missing models cannot survive from an older row.
+
+pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
+    runtime: &CatalogRuntime,
+    store: &S,
+    host: &H,
+) -> Result<PaidRoutingPublication, GatewayError> {
+    let started = host.now_ms();
+    let control = Controls::capture(store, started).await?;
+    let captured = CapturedSource::read(store, started).await?;
+    let publication = host.publication().await?;
+    control.publication(&publication)?;
+    let mut source = captured.checks.clone();
+    source.source(&control.config.source_checks)?;
+    source.native(&publication.source_checks)?;
+    let mut prior_observations = Vec::new();
+    for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
+        let key = keys::paid_control_observation(provider);
+        let row = read_record(store, &key).await?;
+        if let Some(row) = &row {
+            control.observation(provider, row, started)?;
+        }
+        prior_observations.push((provider, row));
+    }
+    for (provider, row) in &prior_observations {
+        if row.is_none() && configured(&control.config, *provider).is_some() {
+            publish_observation(runtime, store, host, *provider, false, &source).await?;
+        }
+    }
+    let now = host.now_ms();
+    time(now)?;
+    if now < started {
+        return Err(stale());
+    }
+    let mut input = captured.input;
+    let mut observation_revisions = BTreeMap::new();
+    let mut source_valid_until = expiry(
+        [
+            control.owner_record.expires_at_ms,
+            control.config_record.expires_at_ms,
+            captured.valid_until,
+        ]
+        .into_iter(),
+    );
+    for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
+        let key = keys::paid_control_observation(provider);
+        let row = read_record(store, &key).await?;
+        let binding = configured(&control.config, provider);
+        if let Some(row) = &row {
+            let observation = control.observation(provider, row, now)?;
+            source.source(&observation.source_checks)?;
+            source_valid_until = expiry(
+                [
+                    source_valid_until,
+                    row.expires_at_ms,
+                    observation.source_valid_until_ms,
+                ]
+                .into_iter(),
+            );
+            input.providers.insert(
+                catalog_provider(provider).id().into(),
+                ProviderCatalog {
+                    models: observation.models,
+                    updated_at_ms: Some(observation.observed_at_ms),
+                    configured: binding.is_some(),
+                    available: true,
+                    stale: observation.stale,
+                },
+            );
+        } else {
+            input.providers.insert(
+                catalog_provider(provider).id().into(),
+                ProviderCatalog {
+                    configured: binding.is_some(),
+                    ..ProviderCatalog::default()
+                },
             );
         }
-        source_valid_until = expiry(
-            [
-                source_valid_until,
-                source_deadline(store, &source, now).await?,
-            ]
-            .into_iter(),
+        observation_revisions.insert(
+            catalog_provider(provider).id(),
+            row.as_ref().map(|r| r.revision.clone()),
         );
-        if source_valid_until.is_some_and(|until| until <= now) {
-            return Err(stale());
-        }
-        let policy = coarse_policy(&input);
-        let projection = PaidRoutingProjection {
-            policy,
-            provenance: PaidProjectionProvenance {
-                v: 1,
-                owner_revision: control.owner_record.revision.clone(),
-                config_revision: control.config_record.revision.clone(),
-                surplus_observation_revision: observation_revisions
-                    .get("surplus")
-                    .cloned()
-                    .flatten(),
-                openlux_observation_revision: observation_revisions
-                    .get("openlux")
-                    .cloned()
-                    .flatten(),
-                observed_at_ms: now,
-                source_valid_until_ms: source_valid_until,
-                source_checks: source.persisted(),
-            },
-        };
-        let previous = read_record(store, &keys::paid_routing()).await?;
-        let mut checks = source.clone();
-        control.commit_checks(&mut checks)?;
-        for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
-            checks.add(RevisionCheck {
-                key: keys::paid_control_observation(provider),
-                expected_revision: observation_revisions
-                    .get(catalog_provider(provider).id())
-                    .cloned()
-                    .flatten(),
-            })?;
-        }
-        checks.record(keys::paid_routing(), previous.as_ref())?;
-        let revision = revision(host, &checks)?;
-        if store
-            .commit(AtomicTransition {
-                checks: checks.list(),
-                mutations: vec![RecordMutation::Put {
-                    key: keys::paid_routing(),
-                    record: encode_source_control_record(
-                        &revision,
-                        &SourceJson::from_serializable(&projection)
-                            .map_err(|_| missing("Paid projection serialization failed"))?,
-                        source_valid_until,
-                    )?,
-                }],
-            })
-            .await?
-            != CommitOutcome::Committed
-        {
-            return Err(stale());
-        }
-        Ok(PaidRoutingPublication {
-            revision,
-            published_at_ms: now,
-            source_checks: source.list(),
-        })
     }
+    source_valid_until = expiry(
+        [
+            source_valid_until,
+            source_deadline(store, &source, now).await?,
+        ]
+        .into_iter(),
+    );
+    if source_valid_until.is_some_and(|until| until <= now) {
+        return Err(stale());
+    }
+    let policy = coarse_policy(&input);
+    let projection = PaidRoutingProjection {
+        policy,
+        provenance: PaidProjectionProvenance {
+            v: 1,
+            owner_revision: control.owner_record.revision.clone(),
+            config_revision: control.config_record.revision.clone(),
+            surplus_observation_revision: observation_revisions.get("surplus").cloned().flatten(),
+            openlux_observation_revision: observation_revisions.get("openlux").cloned().flatten(),
+            observed_at_ms: now,
+            source_valid_until_ms: source_valid_until,
+            source_checks: source.persisted(),
+        },
+    };
+    let previous = read_record(store, &keys::paid_routing()).await?;
+    let mut checks = source.clone();
+    control.commit_checks(&mut checks)?;
+    for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
+        checks.add(RevisionCheck {
+            key: keys::paid_control_observation(provider),
+            expected_revision: observation_revisions
+                .get(catalog_provider(provider).id())
+                .cloned()
+                .flatten(),
+        })?;
+    }
+    checks.record(keys::paid_routing(), previous.as_ref())?;
+    let revision = revision(host, &checks)?;
+    if store
+        .commit(AtomicTransition {
+            checks: checks.list(),
+            mutations: vec![RecordMutation::Put {
+                key: keys::paid_routing(),
+                record: encode_source_control_record(
+                    &revision,
+                    &SourceJson::from_serializable(&projection)
+                        .map_err(|_| missing("Paid projection serialization failed"))?,
+                    source_valid_until,
+                )?,
+            }],
+        })
+        .await?
+        != CommitOutcome::Committed
+    {
+        return Err(stale());
+    }
+    Ok(PaidRoutingPublication {
+        revision,
+        published_at_ms: now,
+        source_checks: source.list(),
+    })
 }
+
 fn routing_rows(models: Vec<SourceJson>) -> Vec<SourceJson> {
     models
         .into_iter()
@@ -856,5 +851,12 @@ fn coarse_policy(input: &CatalogInput) -> PaidRoutingPolicy {
         codex_enabled: input.enabled("codex"),
         codex_models,
         models: result,
+    }
+}
+
+fn check(key: RecordKey, record: Option<&StoredRecord>) -> RevisionCheck {
+    RevisionCheck {
+        key,
+        expected_revision: record.map(|r| r.revision.clone()),
     }
 }

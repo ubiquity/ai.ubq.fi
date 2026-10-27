@@ -9,8 +9,6 @@ publish.workspace = true
 gateway-decision-protocol.workspace = true
 gateway-core.workspace = true
 gateway-schema.workspace = true
-gateway-providers.workspace = true
-gateway-auth.workspace = true
 serde.workspace = true
 
 [lints]

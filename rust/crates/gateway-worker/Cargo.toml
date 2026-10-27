@@ -14,6 +14,10 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-catalog-inputs.workspace = true
+gateway-catalog-admin.workspace = true
+gateway-catalog-control.workspace = true
+gateway-catalog-versioned.workspace = true
 gateway-decision-protocol.workspace = true
 gateway-extras-contract.workspace = true
 gateway-catalog-provider.workspace = true

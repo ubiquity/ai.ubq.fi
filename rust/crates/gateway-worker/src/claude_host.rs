@@ -112,9 +112,9 @@ impl Binding {
         if !gateway_providers::anthropic::is_claude_model(model) {
             return Ok(ClaudeSelection::NotApplicable);
         }
-        let selection = gateway_catalog_runtime::state::read_json(
+        let selection = gateway_catalog_inputs::state::read_json(
             &self.store,
-            &gateway_catalog_runtime::state::selection_key(),
+            &gateway_catalog_inputs::state::selection_key(),
         )
         .await?
         .as_ref()

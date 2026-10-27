@@ -8,6 +8,7 @@ use gateway_core::{error::GatewayError, source_json::SourceJson};
 use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
 use std::rc::Rc;
 use worker::{Context, Env, Request};
+use {gateway_catalog_admin::admin::CatalogAdmin, gateway_catalog_versioned::VersionedCatalog};
 
 pub const DIRECT_PROVIDERS: &[(&str, &str)] = &[
     ("deepseek", "DEEPSEEK_API_KEY"),
@@ -38,7 +39,7 @@ pub async fn public_response(
         platform: platform.clone(),
         context,
     };
-    Ok(gateway_catalog_provider::response::into_auth_response(
+    Ok(gateway_catalog_admin::response::into_auth_response(
         service().public_catalog(store, &host).await,
     ))
 }

@@ -6,8 +6,8 @@ use gateway_admin_runtime::{
     claude_access,
     claude_generation::StateSnapshot,
 };
+use gateway_catalog_inputs::state::checks_current;
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_catalog_runtime::state::checks_current;
 use gateway_core::{
     claude::ClaudeErrorEvidence as ErrorEvidence,
     error::GatewayError,

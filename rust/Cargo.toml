@@ -13,6 +13,10 @@ members = [
   "crates/gateway-admission",
   "crates/gateway-catalog-provider",
   "crates/gateway-catalog-runtime",
+  "crates/gateway-catalog-inputs",
+  "crates/gateway-catalog-admin",
+  "crates/gateway-catalog-control",
+  "crates/gateway-catalog-versioned",
   "crates/gateway-auth",
   "crates/gateway-admin",
   "crates/gateway-admin-contracts",
@@ -70,6 +74,10 @@ gateway-authority = { path = "crates/gateway-authority" }
 gateway-admission = { path = "crates/gateway-admission" }
 gateway-catalog-provider = { path = "crates/gateway-catalog-provider" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
+gateway-catalog-inputs = { path = "crates/gateway-catalog-inputs" }
+gateway-catalog-admin = { path = "crates/gateway-catalog-admin" }
+gateway-catalog-control = { path = "crates/gateway-catalog-control" }
+gateway-catalog-versioned = { path = "crates/gateway-catalog-versioned" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }

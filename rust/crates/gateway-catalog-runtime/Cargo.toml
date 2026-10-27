@@ -6,15 +6,18 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-catalog-inputs.workspace = true
 gateway-catalog-provider.workspace = true
 gateway-core.workspace = true
-gateway-authority.workspace = true
-gateway-providers.workspace = true
 gateway-schema.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-authority.workspace = true
+gateway-providers.workspace = true
+gateway-catalog-admin.workspace = true
+gateway-catalog-control.workspace = true
+gateway-catalog-versioned.workspace = true
 gateway-admin-test-support.workspace = true
 
 [lints]
@@ -25,3 +28,31 @@ gateway-auth.workspace = true
 gateway-native.workspace = true
 gateway-publication-policy.workspace = true
 gateway-routing-runtime-test-support.workspace = true
+
+[[test]]
+name = "admin"
+path = "tests/admin/main.rs"
+
+[[test]]
+name = "admin_discovery"
+path = "tests/admin_discovery/main.rs"
+
+[[test]]
+name = "control"
+path = "tests/control/main.rs"
+
+[[test]]
+name = "control_authority"
+path = "tests/control_authority/main.rs"
+
+[[test]]
+name = "runtime"
+path = "tests/runtime/main.rs"
+
+[[test]]
+name = "runtime_fences"
+path = "tests/runtime_fences/main.rs"
+
+[[test]]
+name = "runtime_providers"
+path = "tests/runtime_providers/main.rs"

@@ -1,8 +1,9 @@
+use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
-use gateway_catalog_runtime::{CatalogRuntime, state};
+use gateway_catalog_runtime::CatalogRuntime;
 use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
 use gateway_routing_runtime_test_support::{
     exec::run, input::NOW, source_catalog::Collator, store::Store,

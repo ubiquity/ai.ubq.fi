@@ -1,4 +1,4 @@
-use gateway_catalog_provider::response::{AdminCatalogResponse, into_auth_response};
+use gateway_catalog_admin::response::{AdminCatalogResponse, into_auth_response};
 use gateway_core::js_string::JsString16;
 use gateway_core::source_json::SourceJson;
 use gateway_schema::source_request::error::SourceRequestError;

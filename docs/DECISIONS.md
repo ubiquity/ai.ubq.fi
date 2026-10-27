@@ -2577,6 +2577,10 @@ The Rust Decisions route uses a separate typed request and response protocol wit
 
 Reason: catalog discovery without a matching Rust wire advertised decision models the Rust candidate could not serve. Component checks do not establish Worker runtime, deployment or live-client acceptance.
 
+## Catalog capabilities keep private memo and publication ownership - 2026-10-27
+
+The bounded catalog family keeps provider memo, current binding checks and observation writes with the runtime owner, and exact-version lease, heartbeat and fenced publication with the versioned operation owner. Named catalog input reads and finite upstream reads return data; complete admin and paid provenance operations retain their existing authorization and currentness boundaries. Consumers import the defining operations directly. This structural split changes no wire, provider selection, reasoning metadata, source UTF16/collation, cold-discovery or cost authority rule, and introduces no public memo, secret, lease or publication-proof constructor. Test partitions preserve the existing public-behavior cases and private fixture scope. Source structure is not runtime or deployment acceptance.
+
 ## Admin Rust code uses defining contract, key, kernel and dispatch crates - 2026-10-25
 
 Administrative operation types, source field parsers and audit records are defined in `gateway-admin-contracts`; API-key transactions are defined in `gateway-admin-keys`; kernel authentication projection and public-key administration are defined in `gateway-admin-kernel`. `gateway-admin` retains authenticated HTTP dispatch and authority-backed list responses. Consumers import each item from its defining module without re-exports. Scalar/query parsers remain data-to-data operations and do not authorize an administrative request. The existing scalar profile codec, JavaScript coercion and date definitions live in `gateway-profile-values`; source profile adapters and migration policy remain in `gateway-admin-data`, with direct defining imports at every consumer.

@@ -1003,13 +1003,52 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway-catalog-provider"
+name = "gateway-catalog-admin"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-catalog-inputs",
+ "gateway-catalog-provider",
+ "gateway-catalog-runtime",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-catalog-control"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-catalog-inputs",
+ "gateway-catalog-provider",
+ "gateway-catalog-runtime",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-catalog-inputs"
+version = "0.1.0"
+dependencies = [
+ "gateway-catalog-provider",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-catalog-provider"
+version = "0.1.0"
+dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
- "gateway-providers",
  "gateway-schema",
  "serde",
 ]
@@ -1021,14 +1060,29 @@ dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-authority",
+ "gateway-catalog-admin",
+ "gateway-catalog-control",
+ "gateway-catalog-inputs",
  "gateway-catalog-provider",
+ "gateway-catalog-versioned",
  "gateway-core",
  "gateway-native",
  "gateway-providers",
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
- "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-catalog-versioned"
+version = "0.1.0"
+dependencies = [
+ "gateway-catalog-inputs",
+ "gateway-catalog-provider",
+ "gateway-catalog-runtime",
+ "gateway-core",
+ "gateway-schema",
  "serde_json",
 ]
 
@@ -1038,6 +1092,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime-test-support",
@@ -1420,8 +1475,12 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-capacity-recovery",
+ "gateway-catalog-admin",
+ "gateway-catalog-control",
+ "gateway-catalog-inputs",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
+ "gateway-catalog-versioned",
  "gateway-claude-runtime",
  "gateway-compaction",
  "gateway-core",
