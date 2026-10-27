@@ -71,7 +71,7 @@ pub fn header<'a>(headers: &'a Headers, name: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 fn js_number(value: &Value) -> Option<f64> {
-    Some(gateway_admin_data::profile::js_number(value))
+    Some(gateway_profile_values::coercion::js_number(value))
 }
 fn nonnegative(raw: Option<&str>) -> Option<f64> {
     let raw = raw.filter(|s| !js_trim(s).is_empty())?;

@@ -39,6 +39,7 @@ use gateway_core::error::GatewayError;
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::{RecordKey, StoredRecord};
 use gateway_core::tuple_key::TupleKey;
+use gateway_profile_values::coercion::encode_base64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -129,7 +130,7 @@ fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
                     .ok_or_else(|| invalid("Finite source key number cannot be projected"))
             }
             DecodedKeyPart::Boolean(v) => Ok(Value::Bool(v)),
-            DecodedKeyPart::Bytes(bytes)=>Ok(serde_json::json!({"type":"Uint8Array","value":gateway_admin_data::profile::encode_base64(&bytes)})),
+            DecodedKeyPart::Bytes(bytes)=>Ok(serde_json::json!({"type":"Uint8Array","value":encode_base64(&bytes)})),
             DecodedKeyPart::BigInt{negative,magnitude}=>Ok(serde_json::json!({"type":"bigint","value":crate::inverse::decimal_key(negative,&magnitude)})),
             DecodedKeyPart::Number(value)=>Ok(serde_json::json!({"type":"number","value":if value.is_nan(){"NaN"}else if value.is_sign_negative(){"-Infinity"}else{"Infinity"}})),
         })

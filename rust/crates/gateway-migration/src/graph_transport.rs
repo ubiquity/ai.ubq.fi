@@ -1,12 +1,10 @@
 //! Private native-source graph wire. Strings remain validated JSON tokens throughout.
 use crate::{GatewayError, SourceJson, invalid};
-use gateway_admin_data::profile::{
-    decode_base64, encode_base64, normalize_bigint,
-    source::{from_source_profile, to_source_profile},
-};
+use gateway_admin_data::profile::source::{from_source_profile, to_source_profile};
 use gateway_core::js_string::JsString16;
 use gateway_core::source_graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind};
 use gateway_core::value::PortableValue;
+use gateway_profile_values::coercion::{decode_base64, encode_base64, js_string, normalize_bigint};
 use std::collections::BTreeMap;
 
 type Fields = BTreeMap<String, SourceJson>;
@@ -311,9 +309,7 @@ fn atom_wire(value: &GraphAtom) -> Result<SourceJson, GatewayError> {
                     "Infinity"
                 })?
             } else {
-                SourceJson::parse(&gateway_admin_data::profile::js_string(&serde_json::json!(
-                    number
-                )))?
+                SourceJson::parse(&js_string(&serde_json::json!(number)))?
             };
             ("number", data)
         }

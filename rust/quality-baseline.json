@@ -1,8 +1,7 @@
 {
   "crates": {
-    "gateway-admin": 2471,
-    "gateway-admin-data": 4861,
-    "gateway-admin-runtime": 5607,
+    "gateway-admin-data": 4121,
+    "gateway-admin-runtime": 5486,
     "gateway-auth": 8509,
     "gateway-authority": 32269,
     "gateway-catalog-runtime": 4207,
@@ -19,8 +18,6 @@
     "gateway-worker": 20516
   },
   "targets": {
-    "gateway-admin-runtime/test/contracts": 1509,
-    "gateway-admin/test/contracts": 1400,
     "gateway-authority/test/conformance": 5558,
     "gateway-catalog-runtime/test/admin": 1020,
     "gateway-catalog-runtime/test/control": 1306,
@@ -28,7 +25,7 @@
     "gateway-extras-runtime/test/runtime": 1001,
     "gateway-migration/example/worker-custody-fixture": 1922,
     "gateway-migration/test/copied_store_inverse": 1075,
-    "gateway-migration/test/runtime": 1191,
+    "gateway-migration/test/runtime": 1188,
     "gateway-routing-runtime/test/source_contracts": 1462
   },
   "violations": {

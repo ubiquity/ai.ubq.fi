@@ -127,7 +127,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
 fn project_api(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
     let p = &row.parts;
     if starts(p, &["ubq_ai", "api_keys", "id"]) {
-        let record: gateway_admin::keys::ApiKeyRecord = decode(v)?;
+        let record: gateway_admin_keys::keys::ApiKeyRecord = decode(v)?;
         if p.len() != 4
             || p[3] != record.policy.id
             || record.policy.usage_quota_version != 3
