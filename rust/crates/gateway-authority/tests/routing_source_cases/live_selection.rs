@@ -1,5 +1,6 @@
 use crate::support::*;
 use gateway_authority_routing_selection::{SelectionOperations, types::LiveRouteSelection};
+use gateway_authority_routing_signal::SignalOperations;
 use gateway_core::js_string::JsString16;
 
 #[test]

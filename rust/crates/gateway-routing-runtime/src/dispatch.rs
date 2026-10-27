@@ -1,9 +1,9 @@
-use crate::journal::{AttemptRecord, BillingUsage, Journal, Phase, unavailable};
-use crate::session::RoutingSession;
-use crate::types::{AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin, TransportState};
-use crate::types::{PreparedAttempt, RecoveredSession, RefreshOutcome, RefusalDecision};
-use crate::types::{RevisionCheckWire, RoutingHost, RoutingResult};
-use crate::{classify, journal, settlement};
+use crate::{classify, journal, settlement, types::RoutingHost, types::RoutingResult};
+use crate::{journal::AttemptRecord, journal::BillingUsage, journal::Journal, journal::Phase};
+use crate::{journal::unavailable, session::RoutingSession, types::AttemptFailure};
+use crate::{types::AttemptUsage, types::CredentialFence, types::FailureOrigin};
+use crate::{types::PreparedAttempt, types::RecoveredSession, types::TransportState};
+use crate::{types::RefreshOutcome, types::RefusalDecision, types::RevisionCheckWire};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
@@ -12,9 +12,9 @@ use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
-use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal};
-use gateway_core::{lifecycle::PaidTerminalState, lifecycle::TransportObservation};
-use gateway_core::{provider::UpstreamProvider, query::QueryStore};
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_core::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
+use gateway_core::{error::GatewayError, provider::UpstreamProvider, query::QueryStore};
 use gateway_providers::{policy::HopDecision, policy::HopFailure};
 
 impl<

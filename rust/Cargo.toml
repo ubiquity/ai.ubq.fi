@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/gateway-authority-routing-signal",
   "crates/gateway-authority-reset-authorization",
   "crates/gateway-authority-reset-recovery",
   "crates/gateway-authority-reset-spend",
@@ -80,6 +81,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-routing-signal = { path = "crates/gateway-authority-routing-signal" }
 gateway-authority-reset-authorization = { path = "crates/gateway-authority-reset-authorization" }
 gateway-authority-reset-recovery = { path = "crates/gateway-authority-reset-recovery" }
 gateway-authority-reset-spend = { path = "crates/gateway-authority-reset-spend" }

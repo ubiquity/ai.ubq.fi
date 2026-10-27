@@ -1,5 +1,5 @@
-use super::declined;
-use super::{CreditCandidateData, SourceCreditCollation, SourceResetCredit, SourceResetInventory};
+use super::SourceResetInventory;
+use super::{CreditCandidateData, SourceCreditCollation, SourceResetCredit, declined};
 use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16};
 use std::{cmp::Ordering, collections::BTreeSet};
 
@@ -21,7 +21,7 @@ fn nonblank(value: &JsString16) -> bool {
     })
 }
 pub fn select<H: SourceCreditCollation>(
-    facts: &CreditCandidateData,
+    members: &[CreditCandidateData],
     inventories: &[SourceResetInventory],
     host: &H,
     now: i64,

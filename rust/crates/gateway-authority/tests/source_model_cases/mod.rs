@@ -4,6 +4,7 @@ use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_route::authorization::PaidAuthorization;
 use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_row, paid_request, paid_setup};
 use gateway_core::{js_string::JsString16, model::ModelId, provider::CodexQuotaClass};
 use gateway_core::{provider::PaidProvider, source_control, source_json::SourceJson};

@@ -3,3 +3,5 @@ pub mod capacity;
 pub mod models;
 pub mod reader;
 pub mod validation;
+
+pub mod learning;

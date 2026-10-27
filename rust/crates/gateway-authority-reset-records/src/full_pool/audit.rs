@@ -1,7 +1,7 @@
 use super::{FullPoolFence, FullPoolShadowDecision, invalid};
-use gateway_core::value::ValueEncoding;
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16};
-use gateway_core::{source_json::SourceJson, state::RecordKey, state::StoredRecord};
+use gateway_core::state::StoredRecord;
+use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, value::ValueEncoding};
+use gateway_core::{js_string::JsString16, source_json::SourceJson, state::RecordKey};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -130,7 +130,7 @@ pub fn episode_hash(settings: &str, fences: &[FullPoolFence]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\u{1}");
-    gateway_authority_reset_records::hash(&format!(
+    crate::hash(&format!(
         "uos_ai\0codex_reset_shadow_episode\0{settings}\0{rows}"
     ))
 }
@@ -141,5 +141,5 @@ pub fn credit_hash(credit: &JsString16) -> String {
     for scalar in char::decode_utf16(credit.as_units().iter().copied()) {
         text.push(scalar.unwrap_or(char::REPLACEMENT_CHARACTER));
     }
-    gateway_authority_reset_records::hash(&text)
+    crate::hash(&text)
 }

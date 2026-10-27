@@ -1,11 +1,10 @@
 //! Adapt the one raw source account-model record; never persist normalized hash-keyed hints there.
-use crate::invalid;
-use gateway_core::{
-    error::GatewayError, model::ModelId, source_json::SourceJson, source_serialization as source,
-};
+use gateway_authority_contracts::invalid;
+use gateway_core::{error::GatewayError, js_string::JsString16, model::ModelId};
+use gateway_core::{source_json::SourceJson, source_serialization as source};
 use gateway_schema::selection::AccountModelsStore;
 
-pub(crate) fn learn(
+pub fn learn(
     raw: &SourceJson,
     id: &str,
     model: &ModelId,
@@ -21,8 +20,10 @@ pub(crate) fn learn(
             "Cannot update a malformed source account-model record.",
         ));
     }
-    let mut unsupported = source::member(raw, "unsupported")
-        .unwrap_or_else(|| SourceJson::parse("{}").expect("fixed empty source object"));
+    let mut unsupported = match source::member(raw, "unsupported") {
+        Some(value) => value,
+        None => source::object(Vec::new())?,
+    };
     if source::entries(&unsupported).is_none() {
         return Err(invalid("Source unsupported-model map is malformed."));
     }

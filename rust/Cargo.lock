@@ -981,6 +981,7 @@ dependencies = [
  "gateway-authority-routing-policy",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
  "gateway-authority-test-support",
  "gateway-cache-experiment-records",
  "gateway-core",
@@ -1326,6 +1327,7 @@ name = "gateway-authority-reset-records"
 version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
+ "gateway-authority-keys",
  "gateway-core",
  "gateway-schema",
  "serde",
@@ -1424,6 +1426,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-routing-signal"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-test-support"
 version = "0.1.0"
 dependencies = [
@@ -1467,6 +1485,7 @@ dependencies = [
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
  "gateway-core",
  "gateway-observability",
  "gateway-observability-test-support",
@@ -1842,8 +1861,10 @@ dependencies = [
  "gateway-authority-paid-ledger",
  "gateway-authority-paid-records",
  "gateway-authority-paid-route",
+ "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
@@ -1917,6 +1938,7 @@ dependencies = [
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-authority-routing-signal",
  "gateway-cache-experiment-records",
  "gateway-capacity-recovery",
  "gateway-catalog-runtime",

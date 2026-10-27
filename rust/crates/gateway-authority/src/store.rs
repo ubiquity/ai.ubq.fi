@@ -1,7 +1,7 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_core::state::StoredRecord;
-use gateway_core::{error::GatewayError, source_control::decode_source_control_record};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::{error::GatewayError, state::StoredRecord};
 use gateway_core::{source_control::encode_source_control_record, state::RecordKey};
 use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::RecordMutation};
 use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RevisionCheck};
@@ -572,6 +572,20 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_recovery::ResetR
             &self.store,
             &self.tokens,
             self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_routing_signal::SignalFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn routing_signal(&self) -> gateway_authority_routing_signal::SignalService<'_, S, I> {
+        gateway_authority_routing_signal::SignalService::new(
+            &self.store,
+            &self.tokens,
+            self.source_string_collator(),
         )
     }
 }

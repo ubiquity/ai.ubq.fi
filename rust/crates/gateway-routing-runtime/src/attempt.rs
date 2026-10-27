@@ -9,6 +9,7 @@ use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_authority_paid_records::{PaidAdmission, PaidRequest, PaidReservation};
 use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_authority_routing_signal::SignalOperations;
 use gateway_core::{error::GatewayError, model::ModelId, provider::UpstreamProvider::ChatgptCodex};
 use gateway_core::{identity::PaidAttemptId, provider::UpstreamProvider, query::QueryStore};
 use gateway_core::{provider::PaidProvider, provider::UpstreamProvider::ClaudeCode};

@@ -14,6 +14,7 @@ use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig,
 use gateway_authority_reset_records::{ResetMode, ResetState, reset_invocation, utc_day};
 use gateway_authority_reset_spend::ResetSpendOperations;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_json, fixture_row, id, paid_request};
 use gateway_authority_test_support::{paid_reservation, paid_setup, reserve_paid, seed_policy};
 use gateway_core::{identity::PaidAttemptId, identity::PoolVersionstamp, lifecycle::BillingState};

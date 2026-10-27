@@ -1,17 +1,14 @@
 //! One original admission across source image children, Voyage chunks and SystemOne.
-use crate::{
-    journal::{self, Phase},
-    session::RoutingSession,
-    settlement,
-    types::*,
-};
+use crate::journal::{self, Phase};
+use crate::{session::RoutingSession, settlement, types::*};
 use futures_util::lock::Mutex;
 use gateway_authority::store::Authority;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel_protocol::KernelTerminal;
-use gateway_authority_routing_selection::SelectionOperations;
-use gateway_authority_routing_selection::{types::AdmittedAccount, types::RouteSelection};
+use gateway_authority_routing_selection::types::RouteSelection;
+use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
+use gateway_authority_routing_signal::SignalOperations;
 use gateway_core::{error::GatewayError, source_serialization as source};
 use gateway_core::{lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider};
 use gateway_core::{query::QueryStore, source_json::SourceJson};

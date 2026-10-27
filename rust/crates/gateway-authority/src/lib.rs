@@ -12,8 +12,7 @@ pub mod manual_reset;
 pub mod native_control;
 pub mod native_live;
 mod probes;
-pub mod routing;
-mod source_models;
+mod routing;
 pub mod store;
 
 use gateway_authority_contracts::{
