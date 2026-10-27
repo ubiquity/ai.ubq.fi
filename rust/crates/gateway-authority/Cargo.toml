@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-claude-proof = { path = "../gateway-authority-claude-proof" }
 gateway-authority-capacity = { path = "../gateway-authority-capacity" }
 gateway-authority-capacity-policy = { path = "../gateway-authority-capacity-policy" }

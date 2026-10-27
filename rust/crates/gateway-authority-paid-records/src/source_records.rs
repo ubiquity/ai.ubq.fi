@@ -1,7 +1,7 @@
 //! Data-only complete-row readers for the actual paid writer DTOs. No capability,
 //! clock/currentness reconstruction, expiry renewal or storage operation occurs here.
 use super::{PaidAttempt, PaidRollup, provider_label, validate_attempt};
-use crate::{invalid, text, validate_time};
+use gateway_authority_contracts::{invalid, text, validate_time};
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
@@ -35,10 +35,7 @@ pub fn decode_paid_attempt_record(
     Ok(row)
 }
 
-pub(super) fn validate_rollup_identity(
-    row: &PaidRollup,
-    key: &RecordKey,
-) -> Result<(), GatewayError> {
+pub fn validate_rollup_identity(row: &PaidRollup, key: &RecordKey) -> Result<(), GatewayError> {
     validate_time(row.bucket_start_at_ms)?;
     let parts = TupleKey::from_record_key(key)?.decoded_parts()?;
     let shard = match parts.last() {

@@ -5,12 +5,11 @@ use gateway_auth::native_auth::{
 };
 use gateway_auth::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-use gateway_authority::{
-    paid_control::paid_projection_source_keys, paid_types::PaidRequest, store::Authority,
-};
+use gateway_authority::{paid_control::paid_projection_source_keys, store::Authority};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
+use gateway_authority_paid_records::PaidRequest;
 use gateway_catalog_runtime::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,

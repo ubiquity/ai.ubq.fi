@@ -1,9 +1,8 @@
 use super::*;
-use crate::paid::source_records::decode_paid_attempt_record;
-use crate::paid::source_records::decode_paid_rollup_record;
-use crate::paid::source_usage::surplus_usage_from_source;
-use crate::paid_types::PaidCorrelation;
-use crate::paid_types::PaidRollup;
+use gateway_authority_paid_records::source_records::decode_paid_attempt_record;
+use gateway_authority_paid_records::source_records::decode_paid_rollup_record;
+use gateway_authority_paid_records::source_usage::surplus_usage_from_source;
+use gateway_authority_paid_records::{PaidCorrelation, PaidRollup};
 use gateway_core::{
     js_string::JsString16,
     model::ModelId,
@@ -59,15 +58,19 @@ fn actual_settlement_preserves_first_label_for_three_source_physical_key_collisi
     let store = Store::default();
     let bucket = (NOW - 1000) / 3_600_000 * 3_600_000;
     let first = model(&[0xd800]);
-    let first_key =
-        keys::paid_rollup_model(bucket, &first, "metered", crate::paid::rollup_shard("a"));
+    let first_key = keys::paid_rollup_model(
+        bucket,
+        &first,
+        "metered",
+        gateway_authority_paid_records::rollup_shard("a"),
+    );
     assert_eq!(
         first_key,
         keys::paid_rollup(
             bucket,
             "\u{fffd}",
             "metered",
-            crate::paid::rollup_shard("a")
+            gateway_authority_paid_records::rollup_shard("a")
         )
     );
     let mut active = window(NOW);
@@ -84,8 +87,8 @@ fn actual_settlement_preserves_first_label_for_three_source_physical_key_collisi
     .enumerate()
     {
         assert_eq!(
-            crate::paid::rollup_shard(id),
-            crate::paid::rollup_shard("a")
+            gateway_authority_paid_records::rollup_shard(id),
+            gateway_authority_paid_records::rollup_shard("a")
         );
         let logical = model(units);
         let raw = source_request(id, false, &logical);
@@ -161,7 +164,7 @@ fn backfill_source_rows_preserve_unknown_units_restart_markers_and_collision_lab
         (NOW - 1000) / 3_600_000 * 3_600_000,
         &high,
         "metered",
-        crate::paid::rollup_shard("a"),
+        gateway_authority_paid_records::rollup_shard("a"),
     );
     let rollup: PaidRollup = typed(&store, &rollup_key);
     assert_eq!(rollup.model, high);

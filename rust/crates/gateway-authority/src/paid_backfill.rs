@@ -1,8 +1,9 @@
 //! Source historical paid usage and retention, owned by the existing atomic authority.
 //! Cursors are progress hints only; request markers and revision checks prevent double folds.
-use crate::{paid_types::PaidAttempt, store::Authority, validate_time};
+use crate::{store::Authority, validate_time};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_records::PaidAttempt;
 use gateway_core::{
     error::GatewayError,
     query::{QueryPage, QueryRequest, QuerySelector, QueryStore},
@@ -243,7 +244,7 @@ impl<S: QueryStore, I: TokenSource> Authority<S, I> {
                 bucket,
                 &model,
                 provider,
-                crate::paid::rollup_shard(&row.reservation.attempt_id.0),
+                gateway_authority_paid_records::rollup_shard(&row.reservation.attempt_id.0),
             );
             let old: Option<gateway_core::source_json::SourceJson> =
                 tx.read_source_control(&rollup_key).await?;

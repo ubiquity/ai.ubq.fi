@@ -439,7 +439,7 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
         "pending-attempt",
     )))?
     .ok_or("Expected retained fixture row")?;
-    let row: gateway_authority::paid_types::PaidAttempt = serde_json::from_value(row.value)?;
+    let row: gateway_authority_paid_records::PaidAttempt = serde_json::from_value(row.value)?;
     assert_eq!(row.reservation.request_id.0, "pending-attempt");
     assert_eq!(row.reservation.attempt_id.0, "pending-attempt");
     assert!(row.spend_microcredits.is_none());

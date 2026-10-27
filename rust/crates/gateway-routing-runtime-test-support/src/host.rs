@@ -1,10 +1,8 @@
 use crate::{seed::source_key, source_catalog::Collator, store::Store};
 use gateway_auth::{crypto::Secret, types::AuthPrincipal};
-use gateway_authority::{
-    paid_types::{PaidReservation, PaidUsage},
-    routing_types::CohortProof,
-};
+use gateway_authority::routing_types::CohortProof;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_providers::types::{AuthMaterial, PrepareOptions};
 use gateway_routing_runtime::types::{

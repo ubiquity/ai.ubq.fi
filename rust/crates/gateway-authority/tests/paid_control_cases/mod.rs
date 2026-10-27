@@ -1,11 +1,10 @@
 use gateway_authority::paid_control::*;
-use gateway_authority::paid_types::PaidAdmission;
 use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::paid_types::PaidRequest;
 use gateway_authority_contracts::DAY_MS;
 use gateway_authority_contracts::PAID_RETENTION_MS;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PaidControlConfig, PaidSyntheticHop};
+use gateway_authority_paid_records::{PaidAdmission, PaidRequest};
 use gateway_authority_test_support::TestResult;
 use gateway_authority_test_support::control::context;
 use gateway_authority_test_support::control::no_attempt;

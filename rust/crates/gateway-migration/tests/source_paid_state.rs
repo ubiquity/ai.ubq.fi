@@ -85,8 +85,9 @@ fn latest_paid_projection_preserves_current_model_effort_and_source_only_fields(
     let key = gateway_authority_keys::paid_attempt(key_id, attempt_id);
     let original = run(gateway_core::state::AuthorityStore::read(&store, &key))?
         .ok_or("Expected retained fixture row")?;
-    let mut current =
-        gateway_authority::paid::source_records::decode_paid_attempt_record(&key, &original)?;
+    let mut current = gateway_authority_paid_records::source_records::decode_paid_attempt_record(
+        &key, &original,
+    )?;
     assert_eq!(current.model.as_js_string().as_units(), &[0xd800]);
     assert_eq!(
         current

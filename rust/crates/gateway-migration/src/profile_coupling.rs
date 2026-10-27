@@ -1,5 +1,6 @@
 //! Same-authority reservation and paid-event indexes for public profile writes.
 use crate::{Transform, invalid, key, parts, starts};
+use gateway_authority_paid_records::{PendingPaid, ReconciliationGate};
 use gateway_core::error::GatewayError;
 use gateway_core::{
     query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
@@ -269,7 +270,7 @@ async fn bind_paid_rows<S: QueryStore>(
     transition: &mut AtomicTransition,
 ) -> Result<(), GatewayError> {
     let p = input.parts;
-    use gateway_authority::paid_types::{PendingPaid, ReconciliationGate};
+
     let gate_key = gateway_authority_keys::paid_gate();
     let observed = store.read(&gate_key).await?;
     let current = if gate_key == *input.key {

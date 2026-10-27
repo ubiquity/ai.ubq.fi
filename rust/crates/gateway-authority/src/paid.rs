@@ -2,11 +2,7 @@
 use crate::{
     DAY_MS, PAID_RETENTION_MS, add, invalid, nonnegative,
     paid_control::PaidRoutingReceipt,
-    paid_types::{
-        PaidAdmission, PaidAttempt, PaidAuthorization, PaidCorrelation, PaidRequest,
-        PaidReservation, PaidRollup, PaidUsage, PaidWindow, PendingPaid, ReconciliationGate,
-        ReconciliationLease,
-    },
+    paid_types::PaidAuthorization,
     positive, quota_error, retention,
     routing::validate_cohort,
     store::{Authority, Transaction},
@@ -15,6 +11,11 @@ use crate::{
 use gateway_authority_api_protocol::ApiKeyPolicy;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_records::{
+    PaidAdmission, PaidAttempt, PaidCorrelation, PaidRequest, PaidReservation, PaidRollup,
+    PaidUsage, PaidWindow, PendingPaid, ReconciliationGate, ReconciliationLease, provider_label,
+    rollup_shard, validate_attempt, validate_paid_window,
+};
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, MicrocreditLimit, PaidAttemptId},
@@ -22,36 +23,9 @@ use gateway_core::{
     provider::PaidProvider,
     state::AuthorityStore,
 };
-pub mod source_records;
-pub mod source_usage;
 
 fn pending_id(key: &ApiKeyId, attempt: &PaidAttemptId) -> String {
     serde_json::json!([key.0, attempt.0]).to_string()
-}
-
-fn validate_attempt(row: &PaidAttempt, expected: &PaidReservation) -> Result<(), GatewayError> {
-    if row.v != 3 || row.reservation != *expected {
-        return Err(invalid("Paid attempt identity conflicts."));
-    }
-    nonnegative(row.reservation.reserved_microcredits)?;
-    positive(row.quota_per_credit)?;
-    nonnegative(row.reconciliation_attempts)?;
-    if let Some(spend) = row.spend_microcredits {
-        nonnegative(spend)?;
-    }
-    Ok(())
-}
-
-fn validate_paid_window(row: &PaidWindow, key: &ApiKeyId, reset: i64) -> Result<(), GatewayError> {
-    if row.v != 3 || &row.key_id != key || row.window_reset_at_ms != reset {
-        return Err(invalid("Paid window identity conflicts."));
-    }
-    nonnegative(row.settled_microcredits)?;
-    nonnegative(row.reserved_microcredits)?;
-    nonnegative(row.pending_count)?;
-    MicrocreditLimit::try_from(row.limit_microcredits)
-        .map_err(|_| invalid("Invalid paid window limit."))?;
-    Ok(())
 }
 
 async fn read_gate<S: AuthorityStore, I: TokenSource>(
@@ -90,21 +64,7 @@ async fn clear_nonbillable_marker<S: AuthorityStore, I: TokenSource>(
     Ok(())
 }
 
-fn provider_label(provider: PaidProvider) -> &'static str {
-    match provider {
-        PaidProvider::Surplus => "surplus",
-        PaidProvider::Metered => "metered",
-    }
-}
-
 /// Source FNV-1a uses UTF-16 code units; preserve that mapping for historical rollup joins.
-pub fn rollup_shard(request: &str) -> u8 {
-    let mut hash: u32 = 2_166_136_261;
-    for code in request.encode_utf16() {
-        hash = (hash ^ u32::from(code)).wrapping_mul(16_777_619);
-    }
-    (hash % 16) as u8
-}
 
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub async fn reserve_paid(
@@ -656,7 +616,10 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         last_request_at_ms: reservation.created_at_ms,
                         updated_at_ms: now,
                     });
-            source_records::validate_rollup_identity(&rollup, &rollup_key)?;
+            gateway_authority_paid_records::source_records::validate_rollup_identity(
+                &rollup,
+                &rollup_key,
+            )?;
             rollup.request_count = add(rollup.request_count, 1)?;
             rollup.input_tokens = add(rollup.input_tokens, usage.input_tokens)?;
             rollup.cached_input_tokens = add(

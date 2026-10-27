@@ -3,10 +3,10 @@ use crate::{journal::unavailable, policy::RouteHop, session::RoutingSession, set
 use crate::{types::ClaudeSelection, types::CodexRecovery, types::CredentialFence};
 use crate::{types::PreparedAttempt, types::PublishedCredential, types::RoutingError};
 use crate::{types::RoutingHost, types::RoutingResult, types::SourceRefusalBody};
+use gateway_authority::paid_types::PaidAuthorization;
 use gateway_authority::routing_types::RouteSelection;
-use gateway_authority::{paid_types::PaidAdmission, paid_types::PaidAuthorization};
-use gateway_authority::{paid_types::PaidRequest, paid_types::PaidReservation};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_paid_records::{PaidAdmission, PaidRequest, PaidReservation};
 use gateway_core::model::ModelId;
 use gateway_core::{error::GatewayError, provider::UpstreamProvider::ChatgptCodex};
 use gateway_core::{identity::PaidAttemptId, provider::UpstreamProvider, query::QueryStore};

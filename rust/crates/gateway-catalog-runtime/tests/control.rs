@@ -3,6 +3,7 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProviderObservation,
     PaidRequestContext, PaidRoutingProjection, PaidSourceCheck, PaidSyntheticHop,
 };
+use gateway_authority_paid_records::PaidAdmission;
 mod original_request_fixture;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -785,9 +786,9 @@ fn paid_request(
     store: &Store,
     provider: PaidProvider,
     model: &str,
-) -> gateway_authority::paid_types::PaidRequest {
+) -> gateway_authority_paid_records::PaidRequest {
     use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-    gateway_authority::paid_types::PaidRequest {
+    gateway_authority_paid_records::PaidRequest {
         key_id: ApiKeyId("fixture-key".into()),
         request_id: RequestId("fixture-request".into()),
         attempt_id: PaidAttemptId("fixture-attempt".into()),
@@ -824,10 +825,7 @@ fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
 #[test]
 fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale_existing()
 -> TestResult {
-    use gateway_authority::{
-        paid_types::{PaidAdmission, PaidAuthorization},
-        store::Authority,
-    };
+    use gateway_authority::{paid_types::PaidAuthorization, store::Authority};
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);

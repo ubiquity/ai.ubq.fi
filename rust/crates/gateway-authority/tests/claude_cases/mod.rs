@@ -1,8 +1,7 @@
-use gateway_authority::paid_types::PaidAdmission;
 use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::paid_types::PaidWindow;
 use gateway_authority_claude_proof::ClaudeProofOperations;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_records::{PaidAdmission, PaidWindow};
 use gateway_authority_test_support::TestResult;
 use gateway_authority_test_support::paid_request;
 use gateway_authority_test_support::paid_setup;

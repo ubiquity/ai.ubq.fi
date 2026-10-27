@@ -1,10 +1,7 @@
 //! Bounded F13 experiment against current public Rust authority primitives only.
 //! Source b6e25555179ad2b195b0bab93e946be834ecda6c native-authority.test.ts1097-1113
 //! is a fixture-only generic service with permanent attempt_lifetime rows, not a live Rust RPC.
-use gateway_authority::{
-    paid_control::*,
-    paid_types::{PaidAdmission, PaidAuthorization, PaidRequest},
-};
+use gateway_authority::{paid_control::*, paid_types::PaidAuthorization};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::DAY_MS;
 use gateway_authority_contracts::PAID_RETENTION_MS;
@@ -14,6 +11,7 @@ use gateway_authority_paid_control_records::{
     PaidProviderObservation, PaidRequestContext, PaidRoutingPolicy, PaidRoutingProjection,
     PaidSourceCheck,
 };
+use gateway_authority_paid_records::{PaidAdmission, PaidRequest};
 use gateway_authority_test_support::{TestResult, fixture_row};
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
@@ -527,7 +525,7 @@ fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() -> TestResult 
 fn publish_active_paid(
     store: &MemoryStore,
     input: &PaidRequest,
-    paid: &gateway_authority::paid_types::PaidReservation,
+    paid: &gateway_authority_paid_records::PaidReservation,
 ) -> TestResult {
     let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut journal = fixture_row(store, &key)?.value;

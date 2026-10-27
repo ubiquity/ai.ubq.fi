@@ -2,9 +2,9 @@
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_auth::{crypto::Secret, types::AuthPrincipal};
-use gateway_authority::paid_types::{PaidReservation, PaidUsage};
 use gateway_authority::routing_types::CohortProof;
 use gateway_authority_paid_control_records as paid_records;
+use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_core::error::GatewayError;
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::state::{AuthorityStore, RecordKey};

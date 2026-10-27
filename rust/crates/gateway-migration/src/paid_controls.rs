@@ -86,7 +86,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<bool, GatewayError> {
         &source::object_keys(fields)?,
         row.record.expires_at_ms,
     )?;
-    gateway_authority::paid::source_records::decode_paid_attempt_record(&row.key, &record)?;
+    gateway_authority_paid_records::source_records::decode_paid_attempt_record(&row.key, &record)?;
     row.record = record;
     row.mapping.transform = Transform::PaidRequest;
     Ok(true)
@@ -97,7 +97,7 @@ pub(crate) fn inverse(
     record: &StoredRecord,
     original: Option<&SourceEntry>,
 ) -> Result<PortableValue, GatewayError> {
-    gateway_authority::paid::source_records::decode_paid_attempt_record(key, record)?;
+    gateway_authority_paid_records::source_records::decode_paid_attempt_record(key, record)?;
     let current = decode_source_control_record(record)?;
     let mut fields = match original {
         Some(original) => {

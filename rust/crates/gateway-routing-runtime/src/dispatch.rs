@@ -136,7 +136,7 @@ impl<
                     .into());
                 }
             };
-            let input = gateway_authority::paid_types::PaidRequest {
+            let input = gateway_authority_paid_records::PaidRequest {
                 key_id: reservation.key_id.clone(),
                 request_id: reservation.request_id.clone(),
                 attempt_id: reservation.attempt_id.clone(),
@@ -178,7 +178,7 @@ impl<
                 .reserve_paid(&input, &authorization, &receipt, self.now()?)
                 .await?
             {
-                gateway_authority::paid_types::PaidAdmission::Existing(current)
+                gateway_authority_paid_records::PaidAdmission::Existing(current)
                     if current == *reservation => {}
                 _ => {
                     return Err(unavailable("The paid reservation changed before dispatch.").into());

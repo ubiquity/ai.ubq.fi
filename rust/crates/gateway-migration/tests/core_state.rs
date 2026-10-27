@@ -413,8 +413,9 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
     drop(authority);
     let paid_key = gateway_authority_keys::paid_attempt("core-key", "current");
     let paid = run(store.read(&paid_key))?.ok_or("Expected retained fixture row")?;
-    let paid =
-        gateway_authority::paid::source_records::decode_paid_attempt_record(&paid_key, &paid)?;
+    let paid = gateway_authority_paid_records::source_records::decode_paid_attempt_record(
+        &paid_key, &paid,
+    )?;
     assert_eq!(
         paid.billing_state,
         gateway_core::lifecycle::BillingState::Unresolved

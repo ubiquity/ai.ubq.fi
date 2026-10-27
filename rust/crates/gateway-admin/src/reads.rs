@@ -184,7 +184,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         .await?;
     if let Some(row) = paid {
         row.validate_version()?;
-        let paid: gateway_authority::paid_types::PaidWindow =
+        let paid: gateway_authority_paid_records::PaidWindow =
             serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                 GatewayError::unavailable(
                     "Paid billing window is corrupt",

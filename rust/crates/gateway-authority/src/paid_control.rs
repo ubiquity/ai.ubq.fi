@@ -1,6 +1,5 @@
 //! Fixed same-authority derived control metadata; these DTOs grant no write capability.
 use crate::{
-    paid_types::PaidRequest,
     positive,
     store::{Authority, Transaction},
     text, unavailable,
@@ -12,6 +11,7 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProviderObservation,
     PaidRequestContext, PaidRoutingProjection, PaidSourceCheck, PaidSyntheticHop,
 };
+use gateway_authority_paid_records::PaidRequest;
 use gateway_core::error::GatewayError;
 use gateway_core::provider::PaidProvider;
 use gateway_core::source_json::SourceJson;
@@ -36,7 +36,7 @@ pub struct PaidRoutingReceipt {
     pub(crate) context: PaidRequestContext,
     pub(crate) checks: Vec<RevisionCheck>,
     pub(crate) original_request: Option<gateway_core::identity::RequestContext>,
-    pub(crate) existing_paid: Option<crate::paid_types::PaidReservation>,
+    pub(crate) existing_paid: Option<gateway_authority_paid_records::PaidReservation>,
     owner_id: String,
     owner_epoch: String,
     configuration_generation: String,

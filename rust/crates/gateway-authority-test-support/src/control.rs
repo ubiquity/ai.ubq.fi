@@ -1,12 +1,12 @@
 //! Synthetic source-control fixtures; all production grants still use real public checked operations.
 use gateway_authority::paid_control::*;
-use gateway_authority::paid_types::PaidRequest;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
     PaidProviderObservation, PaidRequestContext, PaidRoutingPolicy, PaidRoutingProjection,
     PaidSourceCheck,
 };
+use gateway_authority_paid_records::PaidRequest;
 use gateway_core::provider::PaidProvider;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, RecordKey, RecordMutation, RevisionCheck,

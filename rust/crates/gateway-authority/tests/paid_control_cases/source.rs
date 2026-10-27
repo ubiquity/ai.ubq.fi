@@ -1,6 +1,6 @@
 use super::*;
-use gateway_authority::paid_types::{PaidAttempt, PaidReservation};
 use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_paid_records::{PaidAttempt, PaidReservation};
 use gateway_authority_test_support::TestResult;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId,

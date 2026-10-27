@@ -1,8 +1,6 @@
 use gateway_auth::{crypto::Secret, types::AuthPrincipal};
-use gateway_authority::{
-    paid_types::{PaidReservation, PaidUsage},
-    routing_types::{AdmittedAccount, CohortProof},
-};
+use gateway_authority::routing_types::{AdmittedAccount, CohortProof};
+use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_core::{
     error::GatewayError,
     identity::RequestContext,

@@ -1,7 +1,4 @@
 use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::paid_types::PaidCorrelation;
-use gateway_authority::paid_types::PaidUsage;
-use gateway_authority::paid_types::PaidWindow;
 use gateway_authority::reset::utc_day;
 use gateway_authority::reset_types::AccountDayBudget;
 use gateway_authority::reset_types::ResetCandidate;
@@ -21,6 +18,7 @@ use gateway_authority_contracts::QUOTA_RETENTION_MS;
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelTerminal, KernelWindow};
 use gateway_authority_keys as keys;
+use gateway_authority_paid_records::{PaidCorrelation, PaidUsage, PaidWindow};
 use gateway_authority_test_support::TestResult;
 use gateway_authority_test_support::fixture_json;
 use gateway_authority_test_support::fixture_row;
@@ -329,7 +327,7 @@ fn paid_usage_records_actual_overshoot_once_without_fabricating_a_terminal() -> 
     assert!(run(authority.settle_paid(&reservation, &usage, NOW))?);
     assert!(!run(authority.settle_paid(&reservation, &usage, NOW))?);
     let stored = fixture_row(&store, &keys::paid_attempt("key-a", "paid-one"))?;
-    let row: gateway_authority::paid_types::PaidAttempt =
+    let row: gateway_authority_paid_records::PaidAttempt =
         gateway_core::source_control::decode_source_control_record(&stored)?.deserialize()?;
     assert_eq!(row.spend_microcredits, Some(2500));
     assert_eq!(row.terminal_state, PaidTerminalState::Pending);

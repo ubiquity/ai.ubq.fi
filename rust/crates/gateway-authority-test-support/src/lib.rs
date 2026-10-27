@@ -1,9 +1,8 @@
 use crate::control as paid_control_cases;
 use crate::original as paid_original;
-use gateway_authority::paid_types::PaidAdmission;
 use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::paid_types::PaidRequest;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_records::{PaidAdmission, PaidRequest};
 use gateway_core::identity::ApiKeyId;
 use gateway_core::identity::PaidAttemptId;
 use gateway_core::identity::RequestId;
@@ -67,7 +66,7 @@ pub async fn reserve_paid(
 pub fn paid_reservation(
     authority: &TestAuthority,
     input: &PaidRequest,
-) -> TestResult<gateway_authority::paid_types::PaidReservation> {
+) -> TestResult<gateway_authority_paid_records::PaidReservation> {
     match run(reserve_paid(
         authority,
         input,

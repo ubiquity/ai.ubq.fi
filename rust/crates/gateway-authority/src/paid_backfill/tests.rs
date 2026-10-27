@@ -1,10 +1,7 @@
 use super::*;
+use gateway_authority_paid_records::{PaidCorrelation, PaidRollup, PaidUsage, PaidWindow};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-use crate::paid::source_usage::surplus_usage_from_source;
-use crate::paid_types::PaidCorrelation;
-use crate::paid_types::PaidRollup;
-use crate::paid_types::PaidUsage;
-use crate::paid_types::PaidWindow;
+use gateway_authority_paid_records::source_usage::surplus_usage_from_source;
 use gateway_core::{
     provider::PaidProvider,
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
@@ -161,7 +158,7 @@ fn rollup_key(id: &str) -> RecordKey {
         (NOW - 1000) / 3_600_000 * 3_600_000,
         "model",
         "metered",
-        crate::paid::rollup_shard(id),
+        gateway_authority_paid_records::rollup_shard(id),
     )
 }
 fn window(reset: i64) -> Value {

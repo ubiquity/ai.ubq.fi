@@ -16,6 +16,7 @@ use gateway_auth::{
 };
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
+use gateway_authority_paid_records::PaidRequest;
 use gateway_core::{error::GatewayError, source_json::SourceJson, state::*};
 use std::{
     cell::{Cell, RefCell},
@@ -991,7 +992,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
 fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission()
 -> Result<(), Box<dyn std::error::Error>> {
     run(async {
-        use gateway_authority::paid_types::{PaidAuthorization, PaidRequest};
+        use gateway_authority::paid_types::PaidAuthorization;
         use gateway_core::{
             identity::{ApiKeyId, PaidAttemptId, RequestId},
             provider::PaidProvider,
@@ -1088,7 +1089,7 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
 async fn bind_paid_fixture_original(
     authority: &gateway_authority::store::Authority<PaidRaceStore<'_>, &Host>,
     store: &Store,
-    request: &gateway_authority::paid_types::PaidRequest,
+    request: &gateway_authority_paid_records::PaidRequest,
     receipt: &gateway_authority::paid_control::PaidRoutingReceipt,
 ) -> Result<gateway_authority::paid_control::PaidRoutingReceipt, GatewayError> {
     // Controlled authority regression: use the canonical finite original
