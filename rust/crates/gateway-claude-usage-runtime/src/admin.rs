@@ -115,7 +115,9 @@ pub fn response(result: Refresh, data: SourceJson) -> Result<AuthResponse, Gatew
                         response.headers.insert(
                             "Retry-After".into(),
                             if retry.is_finite() {
-                                (retry / 1000.0).ceil().max(1.0).to_string()
+                                gateway_profile_values::coercion::js_string(&serde_json::json!(
+                                    (retry / 1000.0).ceil().max(1.0)
+                                ))
                             } else {
                                 "Infinity".into()
                             },

@@ -66,6 +66,10 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
                 .filter(|r| !r.expires_at_ms.is_some_and(|t| t <= at))
                 .map(|r| claude_history_bucket_record_source(&key, r))
                 .transpose()?;
+            let previous = previous
+                .as_ref()
+                .map(|value| project_bucket(self.host, value))
+                .transpose()?;
             let Some(next) = retain_source(previous.as_ref(), &point)? else {
                 return Ok(false);
             };
@@ -225,17 +229,35 @@ fn recent_points<H: HistoryHost>(
         if p.sampled_at_ms > at as f64 || p.clock() < cutoff as f64 {
             continue;
         }
-        let point = if let Some(snapshot) = &p.usage_snapshot {
-            let snapshot =
-                gateway_claude_usage_protocol::snapshot::read(snapshot, &|s| host.parse_date(s))
-                    .ok_or_else(|| error("Claude snapshot is invalid"))?;
-            let mut projected = SourceObject::parse(&point)?;
-            projected.set("usage_snapshot", &snapshot)?;
-            projected.source_json()?
-        } else {
-            point
-        };
+        let point = project_point(host, &point)?;
         points.push((point, p.clock() as i64));
     }
     Ok(points)
+}
+
+fn project_point<H: HistoryHost>(host: &H, point: &SourceJson) -> Result<SourceJson, GatewayError> {
+    let Some(snapshot) = source::member(point, "usage_snapshot") else {
+        return Ok(point.clone());
+    };
+    let snapshot =
+        gateway_claude_usage_protocol::snapshot::read(&snapshot, &|s| host.parse_date(s))
+            .ok_or_else(|| error("Claude snapshot is invalid"))?;
+    let mut projected = SourceObject::parse(point)?;
+    projected.set("usage_snapshot", &snapshot)?;
+    projected.source_json()
+}
+
+fn project_bucket<H: HistoryHost>(
+    host: &H,
+    value: &SourceJson,
+) -> Result<SourceJson, GatewayError> {
+    let bucket: Bucket = value.deserialize()?;
+    let points = bucket
+        .points
+        .iter()
+        .map(|point| project_point(host, point))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut projected = SourceObject::parse(value)?;
+    projected.set("points", &points)?;
+    projected.source_json()
 }

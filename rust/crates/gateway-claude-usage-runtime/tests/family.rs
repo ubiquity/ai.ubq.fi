@@ -588,3 +588,22 @@ fn pre_fetch_setup_error_releases_only_owned_lease_without_quota_or_auth_mutatio
     assert!(host.base.accepted.borrow().is_empty());
     Ok(())
 }
+
+#[test]
+fn quota_readback_refuses_an_old_binding_generation_without_erasing_retained_evidence() -> TestResult
+{
+    let store = Store::new();
+    let old = account(1);
+    seed(&store, vec![old.clone()]);
+    let host = Fixture::new(&store)?;
+    run(collect::refresh(&store, &host, &old))?;
+    assert!(run(collect::load(&store, &old, NOW))?.is_some());
+    let retained = store.quota(&old).ok_or("accepted quota absent")?;
+    let mut current = old.clone();
+    current.evidence_generation = account(2).evidence_generation;
+    seed(&store, vec![current.clone()]);
+    assert!(run(collect::load(&store, &old, NOW))?.is_none());
+    assert_eq!(run(collect::load(&store, &current, NOW))?, Some(retained));
+    assert_eq!(host.calls.get(), 1);
+    Ok(())
+}

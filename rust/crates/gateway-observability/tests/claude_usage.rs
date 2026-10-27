@@ -360,6 +360,64 @@ fn snapshots_history_and_duplicate_meter_rollups_reopen_dedupe_and_preserve_tran
     );
     Ok(())
 }
+
+#[test]
+fn stored_derived_meter_tampering_cannot_create_a_retained_usage_transition() -> TestResult {
+    use gateway_claude_usage_history_records::{Point, object::SourceObject};
+    use gateway_core::source_control::{
+        decode_source_control_record, encode_source_control_record,
+    };
+    let host = Fixture::new();
+    let account = account(1);
+    host.seed(vec![account.clone()])?;
+    run(collect::refresh(&host.store, &host, &account))?;
+    host.base.at.set(NOW + 30_000);
+    run(collect::refresh(&host.store, &host, &account))?;
+    let history = History {
+        store: &host.store,
+        host: &host,
+    };
+    let view = run(history.claude_capacity_history(NOW + 30_000));
+    let mut points = member(&view, "points")?.array_items()?;
+    assert_eq!(points.len(), 2);
+    let latest: Point = points[1].deserialize()?;
+    let key = latest.history_key();
+    let row = run(host.store.read(&key))?.ok_or("history row absent")?;
+    let mut snapshot = SourceObject::parse(&member(&points[1], "usage_snapshot")?)?;
+    snapshot.set("meters", &Vec::<SourceJson>::new())?;
+    let mut point = SourceObject::parse(&points[1])?;
+    point.set("usage_snapshot", &snapshot.source_json()?)?;
+    points[1] = point.source_json()?;
+    let mut bucket = SourceObject::parse(&decode_source_control_record(&row)?)?;
+    bucket.set("points", &points)?;
+    host.store.rows.borrow_mut().insert(
+        key.0,
+        encode_source_control_record(
+            "derived-tampered",
+            &bucket.source_json()?,
+            row.expires_at_ms,
+        )?,
+    );
+    host.base.at.set(NOW + 60_000);
+    run(collect::refresh(&host.store, &host, &account))?;
+    let points = member(
+        &run(history.claude_capacity_history(NOW + 60_000)),
+        "points",
+    )?
+    .array_items()?;
+    assert_eq!(points.len(), 2);
+    assert_eq!(
+        member(&member(&points[1], "usage_snapshot")?, "meters")?
+            .array_items()?
+            .len(),
+        2
+    );
+    let rollups = run(history.usage_rollups(0, NOW + 60_000));
+    for point in member(&rollups, "points")?.array_items()? {
+        assert_eq!(member(&point, "samples")?.as_str(), "2");
+    }
+    Ok(())
+}
 #[test]
 fn corrupt_usage_rollup_refuses_entire_bucket_transaction_and_read_scan_reports_unavailable()
 -> TestResult {

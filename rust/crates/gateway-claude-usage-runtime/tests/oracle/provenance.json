@@ -1,6 +1,8 @@
 {
   "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
   "files": {
+    "generate-admin.ts": "ccfc763d50610b60727fabaa41433b908259c4486cb67302234d37ac54dea77b",
+    "source-admin-refresh.ts": "0340d0e20c1b147bde8906122321ec65d27bfde7a7da0756e5c414180069a823",
     "generate-wire.ts": "931176df002ed66b64b6a11a822b75f4052c2b647cba9bf0c3c243a11a231664",
     "generate-history.ts": "7979a60f5e72c730f7236c6afc7bf2b8d15fcb44879109c2b3e6794e300f024d",
     "generate.ts": "ee7825deb80571ed04f4c11d01dc8935406944323f009451c5630edd9630e109",
@@ -14,5 +16,14 @@
     "src/provider/claude-code-usage-schema.ts": "9884485bc12ebb9e02ac079a20018fa95dcd5b6e89315eee4ab6d4bf58dcd9e0"
   },
   "execution": "bun --no-env-file --no-install tests/oracle/generate.ts; acquire shared compiler lock on shared VM",
-  "imports": "Only exact source schema/usage and extracted isRecord, sanitizer and fixed constants; no auth/KV/provider module loaded."
+  "imports": "Only exact source schema/usage and extracted isRecord, sanitizer and fixed constants; no auth/KV/provider module loaded.",
+  "admin_oracle": {
+    "source_functions": [
+      "src/http.ts json/openaiError",
+      "src/admin/claude-code.ts runClaudeUsageRefresh",
+      "src/http.ts isAdminPath/withCors"
+    ],
+    "extraction": "Complete frozen function bodies; only refresh result and current-state builder are finite public fixture inputs. No real auth/KV/provider imports.",
+    "headers": "Compare actual source content-type/cache-control/retry-after; existing CORS/build/request identity composition remains a separate Worker acceptance surface."
+  }
 }

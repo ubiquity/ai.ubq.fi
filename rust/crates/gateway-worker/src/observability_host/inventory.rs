@@ -203,13 +203,8 @@ impl RequestHost {
             active_id = roster.roster.active_account_id;
             active_reason = Some(roster.roster.active_reason);
             for account in roster.roster.accounts {
-                let quota_key = gateway_claude_runtime::persistence::quota_key(&account);
-                let quota_row = self.store.read(&quota_key).await?;
-                let quota = quota_row
-                    .as_ref()
-                    .map(|row| gateway_claude_usage_quota::parse_record(row, at))
-                    .transpose()?
-                    .flatten()
+                let quota = gateway_claude_usage_runtime::collect::load(&self.store, &account, at)
+                    .await?
                     .map(|mut quota| {
                         quota.pool_proofs = None;
                         quota.usage_snapshot = quota
