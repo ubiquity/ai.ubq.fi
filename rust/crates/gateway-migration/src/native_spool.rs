@@ -1,7 +1,7 @@
 //! Native-private immutable row frames. Never a database/runtime or wire codec.
-use crate::native_capture::NativeEntry;
 use crate::*;
 use gateway_admin_data::inventory::AuditInventory;
+use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_ledger::rows::ObservedRow;
 use serde::de::DeserializeOwned;
 use std::{
@@ -35,7 +35,7 @@ impl SpoolValue for Row {
         )
     }
 }
-impl SpoolValue for crate::staged::CanonicalRecord {
+impl SpoolValue for gateway_migration_data::staged::CanonicalRecord {
     fn facts(&self) -> (Option<String>, Option<i64>, Option<Transform>) {
         (Some(self.key.0.clone()), self.record.expires_at_ms, None)
     }
@@ -114,7 +114,7 @@ impl<T: SpoolValue> Writer<T> {
         expiry: Option<i64>,
         transform: Option<Transform>,
     ) -> Result<(), GatewayError> {
-        if bytes.len() > 2 * crate::operational::PRIVATE_WIRE_MAX_BYTES + 8192 {
+        if bytes.len() > 2 * gateway_migration_data::PRIVATE_WIRE_MAX_BYTES + 8192 {
             return Err(failure());
         }
         let offset = self.file.stream_position().map_err(|_| failure())?;
@@ -330,7 +330,7 @@ impl AuditInventory for RowInventory<'_> {
     }
 }
 
-impl Writer<crate::staged::CanonicalRecord> {
+impl Writer<gateway_migration_data::staged::CanonicalRecord> {
     // Only native preparation calls this after full row validation, global audit,
     // projection/index binding, and verified source-frame hashing. The record raw
     // token is unchanged from that genuine typed record's serializer.

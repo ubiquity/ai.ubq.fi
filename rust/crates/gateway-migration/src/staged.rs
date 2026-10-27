@@ -13,98 +13,15 @@ use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck},
 };
+use gateway_migration_data::staged::{
+    CanonicalRecord, STAGED_BATCH_MAX_BYTES, StageBatch, StageHeader, StageOwnerBinding,
+    StageReceipt, StageRequest, bounded, extend, initial,
+};
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::{BTreeSet, VecDeque};
 
-pub const STAGED_BATCH_MAX_BYTES: usize = crate::operational::PRIVATE_WIRE_MAX_BYTES;
 const PREFERRED_BATCH_BYTES: usize = 4 * 1024 * 1024;
-pub(crate) mod record_key_wire {
-    use gateway_core::state::RecordKey;
-    use gateway_core::tuple_key::TupleKey;
-    use serde::Deserialize;
-    pub fn serialize<S: serde::Serializer>(
-        key: &RecordKey,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&key.0)
-    }
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<RecordKey, D::Error> {
-        let key = RecordKey(String::deserialize(deserializer)?);
-        TupleKey::from_record_key(&key)
-            .and_then(|key| key.validate_stored_key())
-            .map_err(serde::de::Error::custom)?;
-        Ok(key)
-    }
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct CanonicalRecord {
-    #[serde(with = "record_key_wire")]
-    pub key: RecordKey,
-    pub record: StoredRecord,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StageHeader {
-    manifest: crate::engine::Manifest,
-    records: usize,
-    digest: String,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StageBatch {
-    pub capture_id: String,
-    pub sequence: u64,
-    pub previous_digest: String,
-    pub records: Vec<CanonicalRecord>,
-    pub digest: String,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(
-    tag = "stage",
-    content = "data",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum StageRequest {
-    Begin(StageHeader),
-    Append(StageBatch),
-    Seal {
-        capture_id: String,
-    },
-    /// Private post-seal control-owner binding. It proves the sealed target's
-    /// exact manifest/source/projection facts and the absent-owner fence before
-    /// one CAS. It never marks the target active or rewrites sealed data.
-    BindOwner(StageOwnerBinding),
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StageOwnerAccount {
-    pub account_id_hash: String,
-    pub access_generation: String,
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StageOwnerBinding {
-    pub capture_id: String,
-    pub source_git_sha: String,
-    pub source_captured_at_ms: i64,
-    pub source_native_version: String,
-    pub source_native_sequence: String,
-    pub source_pool_revision: String,
-    pub normalized_pool_revision: String,
-    pub accounts: Vec<StageOwnerAccount>,
-    pub custody_observed_at_ms: i64,
-    pub valid_through_ms: i64,
-    pub bound_at_ms: i64,
-    pub owner_id: String,
-    pub owner_epoch: String,
-    pub key_fingerprint: String,
-    pub owner_revision: String,
-}
 #[derive(Debug, Serialize)]
 pub struct StagePlanSummary {
     pub capture_id: String,
@@ -114,19 +31,6 @@ pub struct StagePlanSummary {
     pub derived_rows: usize,
     pub records: usize,
     pub digest: String,
-}
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct StageReceipt {
-    pub capture_id: String,
-    pub source_rows: usize,
-    pub derived_rows: usize,
-    pub accepted_records: usize,
-    pub atomic_batches: u64,
-    pub sealed: bool,
-    pub owner_bound: bool,
-    /// Data readiness is not a grant to activate a service or restore an owner.
-    pub activation_authorized: bool,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -139,23 +43,6 @@ struct Progress {
 }
 fn progress_key() -> RecordKey {
     key(serde_json::json!(["uos_ai", "migration", "v3", "staged"]))
-}
-fn initial(id: &str) -> String {
-    gateway_auth::crypto::sha256_hex(format!("private-staged-v1:{id}").as_bytes())
-}
-fn extend(previous: &str, item: &CanonicalRecord) -> Result<String, GatewayError> {
-    Ok(gateway_auth::crypto::sha256_hex(
-        &serde_json::to_vec(&(previous, item))
-            .map_err(|_| invalid("Staged row cannot be encoded"))?,
-    ))
-}
-fn bounded<T: Serialize>(value: &T) -> Result<usize, GatewayError> {
-    let bytes =
-        serde_json::to_vec(value).map_err(|_| invalid("Private staged frame cannot be encoded"))?;
-    if bytes.len() > STAGED_BATCH_MAX_BYTES {
-        return Err(invalid("Private staged frame exceeds its bound"));
-    }
-    Ok(bytes.len())
 }
 /// Only constructed from a complete audited PreparedAdoption. No Deserialize.
 /// Native preparation may retain the full capture; WASM receives bounded frames.
@@ -205,8 +92,14 @@ impl StagePlan {
         let mut rows = Vec::new();
         for row in prepared.rows {
             rows.push(CanonicalRecord {
-                key: crate::engine::mapping_key(&prepared.manifest.capture_id, &row.key.0),
-                record: crate::engine::mapping_record(&row, &prepared.manifest.capture_id)?,
+                key: gateway_migration_data::manifest::mapping_key(
+                    &prepared.manifest.capture_id,
+                    &row.key.0,
+                ),
+                record: gateway_migration_data::manifest::mapping_record(
+                    &row,
+                    &prepared.manifest.capture_id,
+                )?,
             });
             rows.push(CanonicalRecord {
                 key: row.key,
@@ -251,7 +144,7 @@ impl StagePlan {
     }
     #[cfg(all(unix, not(target_arch = "wasm32")))]
     pub(crate) fn from_spool(
-        manifest: crate::engine::Manifest,
+        manifest: gateway_migration_data::manifest::Manifest,
         spool: crate::native_spool::Spool<CanonicalRecord>,
     ) -> Result<Self, GatewayError> {
         let mut reader = spool.reader()?;
@@ -550,7 +443,7 @@ pub async fn execute_staged<S: QueryStore>(
     if let StageRequest::BindOwner(binding) = &request {
         return bind_owner(store, binding).await;
     }
-    let manifest_key = crate::engine::manifest_key();
+    let manifest_key = gateway_migration_data::manifest::manifest_key();
     if store.read(&manifest_key).await?.is_some() {
         return Err(invalid("Target already adopted"));
     }
@@ -756,7 +649,7 @@ async fn sealed_owner_facts<S: QueryStore>(
     binding: &StageOwnerBinding,
 ) -> Result<
     (
-        crate::engine::Manifest,
+        gateway_migration_data::manifest::Manifest,
         StoredRecord,
         StoredRecord,
         StoredRecord,
@@ -764,13 +657,14 @@ async fn sealed_owner_facts<S: QueryStore>(
     GatewayError,
 > {
     let manifest_record = store
-        .read(&crate::engine::manifest_key())
+        .read(&gateway_migration_data::manifest::manifest_key())
         .await?
         .ok_or_else(owner_refused)?;
     if manifest_record.revision != format!("capture:{}", binding.capture_id) {
         return Err(owner_refused());
     }
-    let manifest: crate::engine::Manifest = decode(manifest_record.json_value()?)?;
+    let manifest: gateway_migration_data::manifest::Manifest =
+        decode(manifest_record.json_value()?)?;
     let native = manifest
         .native_revision
         .as_ref()
@@ -863,7 +757,7 @@ async fn sealed_owner_facts<S: QueryStore>(
 }
 fn owner_receipt(
     binding: &StageOwnerBinding,
-    manifest: &crate::engine::Manifest,
+    manifest: &gateway_migration_data::manifest::Manifest,
 ) -> Result<StageReceipt, GatewayError> {
     Ok(StageReceipt {
         capture_id: binding.capture_id.clone(),
@@ -906,7 +800,7 @@ async fn bind_owner<S: QueryStore>(
     let transition = AtomicTransition {
         checks: vec![
             check(
-                crate::engine::manifest_key(),
+                gateway_migration_data::manifest::manifest_key(),
                 Some(manifest_record.revision),
             ),
             check(

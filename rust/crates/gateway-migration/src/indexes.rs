@@ -308,7 +308,7 @@ impl ReservationIndexes {
                 if attempt.reservation.window_reset_at_ms > now {
                     account_paid(&mut self.paid_accounting, &attempt)?;
                 }
-                if crate::projection::outstanding(&attempt) {
+                if gateway_migration_projection::projection::outstanding(&attempt) {
                     if !exists(
                         &keys::paid_pending(
                             &attempt.reservation.key_id.0,

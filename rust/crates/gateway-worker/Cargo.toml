@@ -13,6 +13,7 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-migration-data.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-admin-kernel.workspace = true
 gateway-compaction.workspace = true

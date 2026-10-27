@@ -12,11 +12,12 @@ use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
 use gateway_core::tuple_key::TupleKey;
-use gateway_migration::native_capture::{NativeCapture, NativeValue};
 use gateway_migration::native_custody::{
     NativeCustody, OwnedNativeSnapshot, export_native_rollback_with_custody,
 };
 use gateway_migration::native_operator::{ConfiguredNativeCustody, NativeCustodyRegistration};
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeValue;
 use gateway_migration_fixture_inputs::inputs;
 use gateway_migration_fixture_port::port;
 use gateway_migration_fixture_port::{executor::support_run, port::error};
@@ -132,8 +133,8 @@ impl Host {
         self,
         store: &port::Store,
         time: inputs::FixtureTime,
-        artifacts: &gateway_migration::inverse::ArtifactContext,
-    ) -> Result<(Self, Receipt), gateway_migration::error::MigrationError> {
+        artifacts: &gateway_migration_data::custody::ArtifactContext,
+    ) -> Result<(Self, Receipt), gateway_migration_data::error::MigrationError> {
         time.check()?;
         if self.now_ms != time.runtime() {
             return Err(error("Fixture managed owner clock differs").into());

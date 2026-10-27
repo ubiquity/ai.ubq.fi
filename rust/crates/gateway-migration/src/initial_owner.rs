@@ -165,7 +165,10 @@ async fn matching_fences<S: QueryStore>(
                 .read(&gateway_authority::keys::paid_control_owner())
                 .await?
                 .as_ref(),
-        ) || store.read(&crate::engine::manifest_key()).await?.as_ref()
+        ) || store
+            .read(&gateway_migration_data::manifest::manifest_key())
+            .await?
+            .as_ref()
             != Some(&expected_manifest)
             || store
                 .read(&gateway_auth::provider_credentials::codex_source_pool_key())
@@ -188,7 +191,11 @@ pub(crate) async fn adopt<S: QueryStore>(
 ) -> Result<InitialControlOwnerAdoptionReceipt, GatewayError> {
     let facts = actual_facts(prepared)?;
     owner.require_adoption_facts(&facts, now_ms)?;
-    if store.read(&crate::engine::manifest_key()).await?.is_some() {
+    if store
+        .read(&gateway_migration_data::manifest::manifest_key())
+        .await?
+        .is_some()
+    {
         matching_fences(store, prepared, owner, &facts, now_ms).await?;
         return Ok(InitialControlOwnerAdoptionReceipt::Reconciled {
             capture_id: prepared.manifest.capture_id.clone(),

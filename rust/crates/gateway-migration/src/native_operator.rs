@@ -109,9 +109,12 @@ fn invalid() -> GatewayError {
 /// The host supplies the capture and registrations through independent private
 /// operator inputs. This creates no native writer, renewal or ownership grant.
 pub async fn prepare_local_bootstrap(
-    capture: &crate::native_capture::NativeCapture,
+    capture: &gateway_migration_data::native_capture::NativeCapture,
     registrations: Vec<NativeCustodyRegistration>,
-) -> Result<crate::native_capture::NativeCapture, crate::error::MigrationError> {
+) -> Result<
+    gateway_migration_data::native_capture::NativeCapture,
+    gateway_migration_data::error::MigrationError,
+> {
     let custody = ConfiguredNativeCustody::new(registrations)?;
     custody.verify_existing_access_only(capture).await?;
     crate::native_custody::sanitize_native_capture(capture, &custody).await
@@ -123,8 +126,8 @@ impl ConfiguredNativeCustody {
     // never an OwnedNativeSnapshot/managed grant for an external account.
     pub(crate) async fn verify_existing_access_only(
         &self,
-        capture: &crate::native_capture::NativeCapture,
-    ) -> Result<(), crate::error::MigrationError> {
+        capture: &gateway_migration_data::native_capture::NativeCapture,
+    ) -> Result<(), gateway_migration_data::error::MigrationError> {
         for entry in &capture.entries {
             self.verify_access_only_entry(entry).await?;
         }
@@ -135,8 +138,8 @@ impl ConfiguredNativeCustody {
     // accounts without cloning the complete capture or constructing tiny headers.
     pub(crate) async fn verify_access_only_entry(
         &self,
-        entry: &crate::native_capture::NativeEntry,
-    ) -> Result<(), crate::error::MigrationError> {
+        entry: &gateway_migration_data::native_capture::NativeEntry,
+    ) -> Result<(), gateway_migration_data::error::MigrationError> {
         if !crate::native_custody::codex_key(&entry.raw_key)? {
             return Ok(());
         }
@@ -203,9 +206,9 @@ impl ConfiguredNativeCustody {
 /// Native-only full audit/custody preparation. Only bounded canonical stage frames
 /// leave this process. Ordinary profile/capture codecs and atomic adoption stay intact.
 pub async fn prepare_local_stage(
-    source: crate::native_capture::NativeCapture,
+    source: gateway_migration_data::native_capture::NativeCapture,
     registrations: Vec<NativeCustodyRegistration>,
-) -> Result<crate::staged::StagePlan, crate::error::MigrationError> {
+) -> Result<crate::staged::StagePlan, gateway_migration_data::error::MigrationError> {
     let custody = ConfiguredNativeCustody::new(registrations)?;
     custody.verify_existing_access_only(&source).await?;
     let directory = crate::native_stage::directory(&std::env::temp_dir())?;
@@ -227,10 +230,10 @@ pub async fn write_private_latest<
     store: &S,
     now_ms: i64,
     host: &H,
-    artifacts: crate::inverse::ArtifactContext,
+    artifacts: gateway_migration_data::custody::ArtifactContext,
     source_sink: &mut W,
     custody_sink: &mut C,
-) -> Result<usize, crate::error::MigrationError> {
+) -> Result<usize, gateway_migration_data::error::MigrationError> {
     crate::native_latest::write_latest(store, now_ms, host, artifacts, source_sink, custody_sink)
         .await
 }
@@ -241,7 +244,7 @@ pub async fn prepare_local_stage_file(
     path: &std::path::Path,
     directory: &std::path::Path,
     registrations: Vec<NativeCustodyRegistration>,
-) -> Result<crate::staged::StagePlan, crate::error::MigrationError> {
+) -> Result<crate::staged::StagePlan, gateway_migration_data::error::MigrationError> {
     let custody = ConfiguredNativeCustody::new(registrations)?;
     let source = crate::native_stage::Captured::read(path, directory)?;
     source.verify_configured(&custody).await?;
@@ -260,11 +263,11 @@ pub async fn reconcile_local_history_file<
     store: &S,
     now_ms: i64,
     host: &H,
-    artifacts: crate::inverse::ArtifactContext,
+    artifacts: gateway_migration_data::custody::ArtifactContext,
     original_path: &std::path::Path,
     directory: &std::path::Path,
     custody_sink: &mut C,
-) -> Result<crate::native_stage::Captured, crate::error::MigrationError> {
+) -> Result<crate::native_stage::Captured, gateway_migration_data::error::MigrationError> {
     use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt};
     let root = crate::native_stage::directory(directory)?;
     let latest_path = root.join("latest-native.json");
@@ -316,11 +319,11 @@ pub async fn prepare_reconciled_stage_file<
     store: &S,
     now_ms: i64,
     host: &H,
-    artifacts: crate::inverse::ArtifactContext,
+    artifacts: gateway_migration_data::custody::ArtifactContext,
     original_path: &std::path::Path,
     directory: &std::path::Path,
     custody_sink: &mut C,
-) -> Result<crate::staged::StagePlan, crate::error::MigrationError> {
+) -> Result<crate::staged::StagePlan, gateway_migration_data::error::MigrationError> {
     reconcile_local_history_file(
         store,
         now_ms,

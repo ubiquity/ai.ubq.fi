@@ -8,11 +8,14 @@ use gateway_core::{
     error::GatewayError, js_string::JsString16, query::*, source_graph::*, state::*,
     tuple_key::TupleKey,
 };
-use gateway_migration::{
-    engine::{PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner},
-    initial_owner::InitialControlOwnerAdoptionReceipt,
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-};
+use gateway_migration::engine::PreparedAdoption;
+use gateway_migration::engine::adopt_empty;
+use gateway_migration::engine::adopt_empty_with_initial_control_owner;
+use gateway_migration::engine::prepare_native;
+use gateway_migration::initial_owner::InitialControlOwnerAdoptionReceipt;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
 use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;

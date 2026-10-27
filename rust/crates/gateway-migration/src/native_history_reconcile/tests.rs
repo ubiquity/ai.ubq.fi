@@ -1,9 +1,10 @@
 use super::*;
-use crate::native_capture::{NativeRevision, NativeValue};
 use gateway_core::{
     source_json::SourceJson,
     tuple_key::{BigIntKey, KeyPart},
 };
+use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::native_capture::NativeValue;
 use std::path::{Path, PathBuf};
 
 struct Scratch(PathBuf);
@@ -77,7 +78,7 @@ fn mapping(raw_keys: &[Vec<u8>]) -> (Manifest, BTreeSet<String>) {
             let key = TupleKey::from_sort_bytes(raw.clone())
                 .unwrap()
                 .to_record_key();
-            crate::engine::mapping_key(&capture_id, &key.0).0
+            gateway_migration_data::manifest::mapping_key(&capture_id, &key.0).0
         })
         .collect::<BTreeSet<_>>();
     let manifest = Manifest {
@@ -284,7 +285,9 @@ fn malformed_duplicate_source_and_mapping_anchor_mismatches_fail_before_output()
         manifest.native_revision = None
     });
     refused(capture(vec![]), capture(vec![]), |manifest, keys| {
-        keys.insert(crate::engine::mapping_key(&"d".repeat(64), "wrong-capture").0);
+        keys.insert(
+            gateway_migration_data::manifest::mapping_key(&"d".repeat(64), "wrong-capture").0,
+        );
         manifest.source_rows = 1;
     });
 }

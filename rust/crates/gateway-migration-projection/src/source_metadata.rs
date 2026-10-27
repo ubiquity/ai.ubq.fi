@@ -1,9 +1,11 @@
 //! Raw source metadata and effective normalized views are distinct contracts.
 //! Owner parse-None/default behavior does not authorize rewriting captured data.
-use crate::*;
+use gateway_core::error::GatewayError;
 use gateway_core::{source_control::decode_source_control_record, value::ValueEncoding};
+use gateway_migration_data::{RowData as Row, starts};
+use serde_json::Value;
 
-pub(crate) fn named_key(parts: &[Value]) -> bool {
+pub fn named_key(parts: &[Value]) -> bool {
     (parts.len() == 2
         && (starts(parts, &["ubq_ai", "codex_models"])
             || starts(parts, &["uos_ai", "codex_models_whitelist"])))

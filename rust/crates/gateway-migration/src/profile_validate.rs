@@ -54,8 +54,11 @@ pub(crate) async fn source_rows<S: QueryStore>(
                 // Validation already retained malformed profile rows as source
                 // data, rather than live paid authority. Keep that report-only
                 // behavior, but never make its model/effort a Value transcript.
-                let document = match crate::paid_controls::inverse(&entry.key, &entry.record, None)
-                {
+                let document = match gateway_migration_projection::paid_controls::inverse(
+                    &entry.key,
+                    &entry.record,
+                    None,
+                ) {
                     Ok(value) => value.to_source_json()?,
                     Err(_) => {
                         gateway_core::source_control::decode_source_control_record(&entry.record)?
@@ -82,8 +85,8 @@ pub(crate) async fn source_rows<S: QueryStore>(
                     .try_identity_free_tree()?
                     .unwrap_or(PortableValue::Null)
             } else {
-                crate::inverse::inverse_value_for_key(
-                    crate::inverse::transform_for_new(&parts),
+                gateway_migration_values::inverse::inverse_value_for_key(
+                    gateway_migration_values::inverse::transform_for_new(&parts),
                     &entry.key,
                     &entry.record,
                     None,
@@ -226,7 +229,7 @@ pub(crate) async fn validate<S: QueryStore>(
 }
 
 fn identity_source_control(parts: &[Value]) -> bool {
-    crate::source_metadata::named_key(parts)
+    gateway_migration_projection::source_metadata::named_key(parts)
         || (parts.len() == 2
             && (starts(parts, &["ubq_ai", "codex_models"])
                 || (parts[0] == "default"

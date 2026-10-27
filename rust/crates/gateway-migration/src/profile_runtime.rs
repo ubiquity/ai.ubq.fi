@@ -1,13 +1,11 @@
 //! Existing public profile import, distinct from stopped complete-state adoption.
-use crate::{Mapping, Row, Transform, capture::SourceEntry, invalid, starts};
+use crate::invalid;
+use crate::starts;
 use gateway_admin_data::policy::{self as migration, ImportOptions, Profile};
 use gateway_admin_runtime::capabilities::{Context, MigrationProfile, MigrationRequest};
 use gateway_auth::types::AuthResponse;
 use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::RecordKey;
-use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
 use gateway_core::value::PortableValue;
 use gateway_profile_source::codec::normalize_source_import_line_with_host;
@@ -186,7 +184,11 @@ async fn import_line<S: QueryStore, H: ProfileHost>(
         migration::retention::Expiry::Durable => None,
         migration::retention::Expiry::Skip => return Ok("skipped"),
     };
-    let record = crate::native_capture::tree_record(entry.value.clone(), &revision, expiry)?;
+    let record = gateway_migration_data::native_capture::tree_record(
+        entry.value.clone(),
+        &revision,
+        expiry,
+    )?;
     let record = project(&entry.key, &entry.parts, record)?;
     let mut transition = AtomicTransition {
         checks: if options.overwrite {
@@ -225,32 +227,4 @@ async fn import_line<S: QueryStore, H: ProfileHost>(
     }
 }
 
-pub(crate) fn project(
-    key: &RecordKey,
-    parts: &[Value],
-    record: StoredRecord,
-) -> Result<StoredRecord, GatewayError> {
-    let original = record.clone();
-    let mut row = Row {
-        key: key.clone(),
-        parts: parts.to_vec(),
-        record,
-        mapping: Mapping {
-            source: SourceEntry {
-                key: vec![],
-                value: SourceJson::parse("null")?,
-                versionstamp: original.revision.clone(),
-                expires_at_ms: original.expires_at_ms,
-            },
-            transform: Transform::Identity,
-            baseline_digest: String::new(),
-            native_origin: None,
-        },
-    };
-    // Source import accepts parsed malformed business data. Retain it explicitly;
-    // consumers fail closed and the separate source validation reports its errors.
-    if crate::projection::forward(&mut row).is_err() {
-        return Ok(original);
-    }
-    Ok(row.record)
-}
+use gateway_migration_values::profile::project;

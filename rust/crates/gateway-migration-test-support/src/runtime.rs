@@ -2,7 +2,8 @@
 use gateway_admin_contracts::operations::AdminInput;
 use gateway_auth::crypto::sha256_base64url;
 use gateway_core::{error::GatewayError, source_json::SourceJson, value::PortableValue};
-use gateway_migration::capture::{PrivateCapture, SourceEntry};
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
 use gateway_profile_source::codec::to_source_profile as to_profile;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};

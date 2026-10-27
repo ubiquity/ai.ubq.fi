@@ -1,8 +1,6 @@
 //! Private stopped-file preparation. No full-capture payload collection, VM,
 //! database, public import route, or capability is created by these spool files.
 use crate::core_state::{CoreStateCapture, CoreStateManifest};
-use crate::error::MigrationError;
-use crate::native_capture::{NativeCapture, NativeEntry};
 use crate::native_custody::NativeCustody;
 use crate::native_spool::{RowInventory, Spool, Writer};
 use crate::{Mapping, Row, Transform, digest, invalid, json, starts};
@@ -10,6 +8,9 @@ use gateway_core::error::GatewayError;
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
 use serde::Deserialize;
 use serde::de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
@@ -141,8 +142,8 @@ impl Captured {
                 )
                 .into());
             }
-            let row = crate::native_capture::validate_entry(&entry, version)?;
-            writer.push(&row)?;
+            let row = gateway_migration_data::native_capture::validate_entry(&entry, version)?;
+            writer.push(row.as_data())?;
         }
         reader.verify_end()?;
         let normalized = writer.seal()?;
@@ -169,9 +170,9 @@ impl Captured {
             let p = &row.parts;
             // The original generic retained graph branch is an identity return.
             // Its full typed validators and complete audit already ran above.
-            if !(crate::projection::retained_typed(p)
-                && crate::projection::known(p)
-                && !crate::source_metadata::named_key(p)
+            if !(gateway_migration_projection::projection::retained_typed(p)
+                && gateway_migration_projection::projection::known(p)
+                && !gateway_migration_projection::source_metadata::named_key(p)
                 && (starts(p, &["agent_messages"])
                     || starts(p, &["embeddings"])
                     || starts(p, &["key"])
@@ -181,7 +182,7 @@ impl Captured {
                             Some("kernel_policy_limit_requests" | "kernel_policy_window_ms")
                         ))))
             {
-                crate::projection::forward(&mut row)?;
+                gateway_migration_projection::projection::forward(&mut row)?;
             }
             projected.push(&row)?;
         }
@@ -220,10 +221,10 @@ impl Captured {
             {
                 return Err(invalid("Derived schema key collides with source state").into());
             }
-            canonical.push(&crate::staged::CanonicalRecord { key, record })?;
+            canonical.push(&gateway_migration_data::staged::CanonicalRecord { key, record })?;
         }
         let entries: Vec<_> = mapping_digests.into_iter().collect();
-        let manifest = crate::engine::Manifest {
+        let manifest = gateway_migration_data::manifest::Manifest {
             v: 4,
             capture_id,
             source_git_sha: self.header.source_git_sha,
@@ -247,7 +248,7 @@ fn canonical_row(
     index: usize,
     reader: &crate::native_spool::Reader<Row>,
     identity: (&str, &str),
-    canonical: &mut Writer<crate::staged::CanonicalRecord>,
+    canonical: &mut Writer<gateway_migration_data::staged::CanonicalRecord>,
     mapping_digests: &mut BTreeMap<String, String>,
     keys: &mut std::collections::BTreeSet<String>,
 ) -> Result<(), MigrationError> {
@@ -266,13 +267,13 @@ fn canonical_row(
         row.mapping.source.value = SourceJson::parse("null")?;
         row.mapping.source.key.clear();
     }
-    let mapping = crate::engine::mapping_key(capture_id, &row.key);
+    let mapping = gateway_migration_data::manifest::mapping_key(capture_id, &row.key);
     let record = StoredRecord::json(revision, json(&row.mapping)?, None);
     mapping_digests.insert(mapping.0.clone(), digest(&record)?);
     if !keys.insert(row.key.clone()) {
         return Err(invalid("Staged canonical inventory has duplicate keys").into());
     }
-    canonical.push(&crate::staged::CanonicalRecord {
+    canonical.push(&gateway_migration_data::staged::CanonicalRecord {
         key: mapping,
         record,
     })?;

@@ -4,13 +4,17 @@ use gateway_core::js_string::JsString16;
 use gateway_core::source_graph::{GraphAtom, SourceGraph};
 use gateway_core::state::AuthorityStore;
 use gateway_core::tuple_key::TupleKey;
-use gateway_migration::{
-    error::MigrationError,
-    native_capture::{NativeCapture, NativeEntry, NativeValue},
-    native_inverse::export_native_latest,
-    native_operator, native_stage, operational,
-    staged::{StageRequest, decode_stage_request, execute_staged},
-};
+use gateway_migration::native_inverse::export_native_latest;
+use gateway_migration::native_operator;
+use gateway_migration::native_stage;
+use gateway_migration::operational;
+use gateway_migration::staged::decode_stage_request;
+use gateway_migration::staged::execute_staged;
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_data::staged::StageRequest;
 use gateway_migration_fixture_inputs::{inputs, producers};
 use gateway_migration_fixture_port::{executor::support_run, port};
 use gateway_migration_graph::transport as graph_transport;

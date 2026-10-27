@@ -1,12 +1,13 @@
 //! Native-private candidate data only. No store, custody, publication or replay
 //! authority is created by reconciling these immutable stopped inventories.
-use crate::engine::Manifest;
-use crate::error::MigrationError;
-use crate::native_capture::{NativeCapture, NativeEntry};
 use crate::native_stage::Captured;
 use crate::{GatewayError, RecordKey, invalid};
 use gateway_admin_data::inventory::AuditInventory;
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::manifest::Manifest;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
 use gateway_migration_ledger::rows::ObservedRow;
 use gateway_source_audit::driver::inspect_inventory;
 use std::collections::{BTreeMap, BTreeSet};
@@ -103,7 +104,7 @@ fn index(capture: &Captured) -> Result<KeyIndex, GatewayError> {
     capture.visit_entries(&mut |entry| {
         // Even deleted, overwritten and expired rows retain the complete native
         // typed validator. The index stores no graph or other value payload.
-        crate::native_capture::validate_entry(entry, version)?;
+        gateway_migration_data::native_capture::validate_entry(entry, version)?;
         if keys.insert(entry.raw_key.clone(), ordinal).is_some() {
             return Err(invalid("History reconciliation source key is duplicated"));
         }
@@ -145,7 +146,10 @@ impl Merged<'_> {
                 emit(&current)?;
             } else {
                 let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
-                let mapping = crate::engine::mapping_key(&self.manifest.capture_id, &key.0);
+                let mapping = gateway_migration_data::manifest::mapping_key(
+                    &self.manifest.capture_id,
+                    &key.0,
+                );
                 if !self.mapping_row_keys.contains(&mapping.0) {
                     emit(entry)?;
                 }
@@ -170,7 +174,8 @@ impl AuditInventory for Merged<'_> {
         row: &mut dyn FnMut(&ObservedRow) -> Result<(), GatewayError>,
     ) -> Result<(), GatewayError> {
         self.visit_entries(&mut |entry| {
-            let value = crate::native_capture::validate_entry(entry, self.version)?;
+            let value =
+                gateway_migration_data::native_capture::validate_entry(entry, self.version)?;
             if value
                 .record
                 .expires_at_ms

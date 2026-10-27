@@ -14,11 +14,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use fixture::{Directory, run};
     use gateway_auth::store::key;
     use gateway_core::{source_graph::GraphNode, state::*};
-    use gateway_migration::{
-        engine::adopt_empty,
-        native_capture::{NativeCapture, prepare_native},
-        native_inverse::export_native_latest,
-    };
+    use gateway_migration::engine::adopt_empty;
+    use gateway_migration::engine::prepare_native;
+    use gateway_migration::native_inverse::export_native_latest;
+    use gateway_migration_data::native_capture::NativeCapture;
     use sqlite_store::SqliteStore;
     struct Tokens(std::sync::atomic::AtomicU64);
     impl gateway_authority::store::TokenSource for Tokens {

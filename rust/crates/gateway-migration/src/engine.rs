@@ -1,6 +1,9 @@
-use crate::{
-    Row, Transform, capture::PrivateCapture, digest, error::MigrationError, invalid, json, key,
-};
+use crate::Row;
+use crate::Transform;
+use crate::digest;
+use crate::invalid;
+use crate::json;
+use crate::key;
 use gateway_admin_data::inventory::SliceInventory;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
@@ -9,23 +12,17 @@ use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::manifest::{
+    Manifest, manifest_key, mapping_checksum, mapping_key, mapping_record,
+};
+use gateway_migration_data::native_capture::NativeCapture;
 use gateway_profile_values::date::SourceDateHost;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
 
-#[derive(Clone, Deserialize, Serialize)]
-pub(crate) struct Manifest {
-    pub v: u32,
-    pub capture_id: String,
-    pub source_git_sha: String,
-    pub captured_at_ms: i64,
-    pub source_rows: usize,
-    pub mapping_checksum: String,
-    pub derived: BTreeMap<String, String>,
-    pub native_revision: Option<crate::native_capture::NativeRevision>,
-}
 pub struct PreparedAdoption {
     pub(crate) manifest: Manifest,
     pub(crate) rows: Vec<Row>,
@@ -53,40 +50,6 @@ pub struct AdoptionReceipt {
     pub derived_rows: usize,
     pub atomic_committed: bool,
 }
-pub(crate) fn manifest_key() -> RecordKey {
-    key(json!(["uos_ai", "migration", "v3", "manifest"]))
-}
-pub(crate) fn mapping_key(id: &str, source: &str) -> RecordKey {
-    key(json!([
-        "uos_ai",
-        "migration",
-        "v3",
-        "row",
-        id,
-        gateway_auth::crypto::sha256_hex(source.as_bytes())
-    ]))
-}
-
-pub(crate) fn mapping_record(row: &Row, capture_id: &str) -> Result<StoredRecord, GatewayError> {
-    Ok(StoredRecord::json(
-        format!("capture:{capture_id}"),
-        json(&row.mapping)?,
-        None,
-    ))
-}
-pub(crate) fn mapping_checksum(
-    records: impl IntoIterator<Item = (String, StoredRecord)>,
-) -> Result<String, GatewayError> {
-    let mut entries = records
-        .into_iter()
-        .map(|(key, record)| Ok((key, digest(&record)?)))
-        .collect::<Result<Vec<_>, GatewayError>>()?;
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(gateway_auth::crypto::sha256_hex(
-        &serde_json::to_vec(&entries).map_err(|_| invalid("Mapping checksum cannot be encoded"))?,
-    ))
-}
-
 fn validate_source_inventories(
     rows: Vec<Row>,
     now: i64,
@@ -154,18 +117,22 @@ pub fn prepare(
 }
 
 pub(crate) fn prepare_rows(
-    rows: Vec<Row>,
+    rows: Vec<gateway_migration_data::ValidatedRow>,
     capture_id: String,
     source_git_sha: &str,
     captured_at_ms: i64,
-    native_revision: Option<crate::native_capture::NativeRevision>,
+    native_revision: Option<gateway_migration_data::native_capture::NativeRevision>,
 ) -> Result<PreparedAdoption, MigrationError> {
+    let rows = rows
+        .into_iter()
+        .map(gateway_migration_data::ValidatedRow::into_data)
+        .collect();
     let (mut rows, audited) = validate_source_inventories(rows, captured_at_ms)?;
     if !audited.errors.is_empty() {
         return Err(MigrationError::SourceInventory(audited));
     }
     for row in &mut rows {
-        crate::projection::forward(row)?;
+        gateway_migration_projection::projection::forward(row)?;
     }
     let revision = format!("capture:{capture_id}");
     let derived = crate::indexes::bind(&mut rows, captured_at_ms, &revision)?;
@@ -289,4 +256,17 @@ pub async fn adopt_empty_with_initial_control_owner<S: QueryStore>(
     now_ms: i64,
 ) -> Result<crate::initial_owner::InitialControlOwnerAdoptionReceipt, GatewayError> {
     crate::initial_owner::adopt(store, prepared, owner, now_ms).await
+}
+
+pub fn prepare_native(capture: &NativeCapture) -> Result<PreparedAdoption, MigrationError> {
+    let id = gateway_auth::crypto::sha256_hex(
+        &serde_json::to_vec(capture).map_err(|_| invalid("Native capture cannot be encoded"))?,
+    );
+    crate::engine::prepare_rows(
+        capture.validate()?,
+        id,
+        &capture.source_git_sha,
+        capture.captured_at_ms,
+        Some(capture.data_revision.clone()),
+    )
 }

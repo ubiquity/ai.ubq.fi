@@ -1,14 +1,21 @@
 //! Latest native logical state; original VM bytes are never replayed as new state.
-use crate::inverse::{ArtifactContext, CustodyRecord};
-use crate::native_capture::NativeKind;
-use crate::native_capture::{
-    NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native,
-};
-use crate::{digest, error::MigrationError, invalid, parts, unavailable};
+use crate::digest;
+use crate::engine::prepare_native;
+use crate::invalid;
+use crate::parts;
+use crate::unavailable;
 use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
 use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::{PortableValue, ValueEncoding};
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::custody::CustodyRecord;
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeKind;
+use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::native_capture::NativeValue;
 use serde::Serialize;
 
 pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {
@@ -17,12 +24,10 @@ pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeVal
             gateway_migration_graph::transport::to_source_graph(&row.record.source_graph_value()?)?,
         ));
     }
-    let transform = row
-        .mapping
-        .as_ref()
-        .map(|m| m.transform)
-        .unwrap_or(crate::inverse::transform_for_new(&parts(&row.key)?));
-    let value = crate::inverse::inverse_value_for_key(
+    let transform = row.mapping.as_ref().map(|m| m.transform).unwrap_or(
+        gateway_migration_values::inverse::transform_for_new(&parts(&row.key)?),
+    );
+    let value = gateway_migration_values::inverse::inverse_value_for_key(
         transform,
         &row.key,
         &row.record,
@@ -148,7 +153,7 @@ pub async fn export_native_rollback_bundle<S: QueryStore>(
     now_ms: i64,
     artifacts: ArtifactContext,
 ) -> Result<NativeRollbackBundle, MigrationError> {
-    crate::inverse::validate_artifacts(&artifacts)?;
+    gateway_migration_data::custody::validate_artifacts(&artifacts)?;
     let (source, rust_controls) = export(store, now_ms).await?;
     Ok(NativeRollbackBundle {
         v: 2,

@@ -1,214 +1,36 @@
-use crate::{
-    Mapping, Transform,
-    capture::{PrivateCapture, SourceEntry},
-    decode, digest,
-    engine::{Manifest, manifest_key, mapping_key},
-    error::MigrationError,
-    invalid, key, parts, starts, unavailable,
-};
+use crate::Mapping;
+use crate::Transform;
+use crate::decode;
+use crate::digest;
+use crate::invalid;
+use crate::key;
+use crate::parts;
+use crate::starts;
+use crate::unavailable;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
-use gateway_core::tuple_key::DecodedKeyPart;
 use gateway_core::tuple_key::TupleKey;
-use gateway_core::value::PortableValue;
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_data::custody::{ArtifactContext, CustodyRecord, validate_artifacts};
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::manifest::Manifest;
+use gateway_migration_data::manifest::manifest_key;
+use gateway_migration_data::manifest::mapping_key;
+use gateway_migration_values::inverse::{
+    inverse_value_for_key, source_profile_key, transform_for_new,
+};
 use gateway_profile_source::codec::to_source_profile as to_profile;
-use gateway_profile_values::{coercion::encode_base64, date::CanonicalDates};
+use gateway_profile_values::date::CanonicalDates;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 mod native_import_custody;
 
-fn source_profile_key(key: &RecordKey) -> Result<Vec<SourceJson>, GatewayError> {
-    TupleKey::from_record_key(key)?
-        .decoded_parts()?
-        .into_iter()
-        .map(|part| match part {
-            DecodedKeyPart::String(bytes) => {
-                let text = String::from_utf8(bytes).map_err(|_| {
-                    unavailable("New non-UTF8 source key needs exact typed encoding")
-                })?;
-                to_profile(&PortableValue::String(text))
-            }
-            DecodedKeyPart::Number(number) => to_profile(&PortableValue::number(number)),
-            DecodedKeyPart::Boolean(value) => to_profile(&PortableValue::Boolean(value)),
-            DecodedKeyPart::Bytes(bytes) => SourceJson::from_serializable(
-                &json!({"type":"Uint8Array","value":encode_base64(&bytes)}),
-            ),
-            DecodedKeyPart::BigInt {
-                negative,
-                magnitude,
-            } => to_profile(&PortableValue::BigInt(decimal_key(negative, &magnitude))),
-        })
-        .collect()
-}
-
-pub(crate) fn decimal_key(negative: bool, magnitude: &[u8]) -> String {
-    let mut digits = vec![0_u32];
-    for byte in magnitude {
-        let mut carry = u32::from(*byte);
-        for digit in &mut digits {
-            let value = *digit * 256 + carry;
-            *digit = value % 10;
-            carry = value / 10;
-        }
-        while carry > 0 {
-            digits.push(carry % 10);
-            carry /= 10;
-        }
-    }
-    let mut decimal = digits
-        .into_iter()
-        .rev()
-        .map(|d| char::from_digit(d, 10).expect("decimal digit"))
-        .collect::<String>();
-    if negative && decimal != "0" {
-        decimal.insert(0, '-');
-    }
-    decimal
-}
-fn overlay(original: &Value, current: &Value) -> Result<Value, GatewayError> {
-    let mut out = original.as_object().cloned().unwrap_or_default();
-    for (k, v) in current
-        .as_object()
-        .ok_or_else(|| invalid("Transformed runtime record is not an object"))?
-    {
-        out.insert(k.clone(), v.clone());
-    }
-    Ok(Value::Object(out))
-}
-fn remove(value: &mut Value, fields: &[&str]) {
-    if let Some(object) = value.as_object_mut() {
-        for field in fields {
-            object.remove(*field);
-        }
-    }
-}
-pub(crate) fn inverse_value_for_key(
-    transform: Transform,
-    key: &RecordKey,
-    record: &StoredRecord,
-    source: Option<&SourceEntry>,
-) -> Result<PortableValue, GatewayError> {
-    if transform == Transform::PaidRequest {
-        return crate::paid_controls::inverse(key, record, source);
-    }
-    if starts(
-        &parts(key)?,
-        &["uos_ai", "paid_fallback", "v3", "usage_rollup"],
-    ) {
-        crate::rollup_source::validate(key, record)?;
-    }
-    inverse_value(transform, record, source)
-}
-
-pub(crate) fn inverse_value(
-    transform: Transform,
-    record: &StoredRecord,
-    source: Option<&SourceEntry>,
-) -> Result<PortableValue, GatewayError> {
-    if transform == Transform::PaidRequest {
-        return Err(invalid("Paid inverse requires its actual source key"));
-    }
-    if transform == Transform::Identity {
-        return record.portable_value();
-    }
-    if transform == Transform::CatalogBytes {
-        let bytes: Vec<u8> = decode(record.json_value()?)?;
-        let len = bytes.len() as u64;
-        return Ok(PortableValue::Binary {
-            kind: "Uint8Array".into(),
-            bytes,
-            byte_offset: 0,
-            byte_length: len,
-        });
-    }
-    let current = record.json_value()?;
-    let original = source
-        .map(|s| gateway_profile_source::codec::from_source_profile(&s.value))
-        .transpose()?
-        .and_then(|v| v.to_json_lossless())
-        .unwrap_or(json!({}));
-    let mut out = overlay(&original, current)?;
-    match transform {
-        Transform::ApiWindow | Transform::KernelWindow => remove(&mut out, &["reservations"]),
-        Transform::ApiRequest => remove(&mut out, &["transport_started"]),
-        Transform::KernelRequest => {
-            let state = current["state"].as_str().unwrap_or("reserved");
-            out["state"] = json!(state);
-            out["committed_at_ms"] = if state == "committed" {
-                current["terminal_at_ms"].clone()
-            } else {
-                Value::Null
-            };
-            out["released_at_ms"] = if state == "released" {
-                current["terminal_at_ms"].clone()
-            } else {
-                Value::Null
-            };
-            remove(&mut out, &["terminal_at_ms"]);
-        }
-        Transform::PaidRequest => {
-            return Err(invalid("Paid inverse requires its actual source key"));
-        }
-        Transform::PaidPending => remove(&mut out, &["key_id", "attempt_id"]),
-        Transform::PaidGate => remove(&mut out, &["pending"]),
-        Transform::Identity | Transform::CatalogBytes => {}
-    }
-    if matches!(
-        transform,
-        Transform::KernelWindow | Transform::KernelRequest
-    ) {
-        out["scope"] = json!(if out.get("repo").is_some_and(Value::is_string) {
-            "repo"
-        } else {
-            "org"
-        });
-    }
-    if matches!(
-        transform,
-        Transform::KernelWindow | Transform::KernelRequest
-    ) && out["repo"].is_null()
-    {
-        remove(&mut out, &["repo"]);
-    }
-    Ok(PortableValue::from_json(&out))
-}
-pub(crate) fn transform_for_new(parts: &[Value]) -> Transform {
-    if starts(parts, &["uos_ai", "api_key_usage", "v3", "window"]) {
-        Transform::ApiWindow
-    } else if starts(parts, &["uos_ai", "api_key_usage", "v3", "request"]) {
-        Transform::ApiRequest
-    } else if starts(parts, &["uos_ai", "paid_fallback", "v3", "request"]) {
-        Transform::PaidRequest
-    } else if starts(parts, &["uos_ai", "paid_fallback", "v3", "pending"]) {
-        Transform::PaidPending
-    } else if starts(
-        parts,
-        &["uos_ai", "paid_fallback", "v3", "reconciliation_gate"],
-    ) {
-        Transform::PaidGate
-    } else if starts(parts, &["uos_ai", "kernel_quota", "v2"])
-        && parts
-            .get(3)
-            .and_then(Value::as_str)
-            .is_some_and(|s| s.ends_with("_window"))
-    {
-        Transform::KernelWindow
-    } else if starts(parts, &["uos_ai", "kernel_quota", "v2"])
-        && parts
-            .get(3)
-            .and_then(Value::as_str)
-            .is_some_and(|s| s.ends_with("_reservation"))
-    {
-        Transform::KernelRequest
-    } else {
-        Transform::Identity
-    }
-}
 /// Export only after the current target owner has actually stopped its writers.
 /// QueryStore pages are not a cross-page snapshot; no stale backup is read or restored.
 pub(crate) struct LatestRow {
@@ -422,7 +244,8 @@ fn validate_inventory(
         })
         .collect::<Vec<_>>();
     if mappings.len() != manifest.source_rows
-        || crate::engine::mapping_checksum(mappings)? != manifest.mapping_checksum
+        || gateway_migration_data::manifest::mapping_checksum(mappings)?
+            != manifest.mapping_checksum
     {
         return Err(invalid("Inverse mapping inventory is missing or modified"));
     }
@@ -499,7 +322,7 @@ pub(crate) async fn export_rows<S: QueryStore>(
         {
             continue;
         }
-        if !crate::projection::known(&p) {
+        if !gateway_migration_projection::projection::known(&p) {
             return Err(unavailable(
                 "Latest target includes an unmapped source key family",
             ));
@@ -607,21 +430,6 @@ pub async fn export_latest<S: QueryStore>(
     Ok(source)
 }
 
-/// Private current operational evidence; this type has no restore/authorization constructor.
-#[derive(Clone, serde::Serialize)]
-pub struct CustodyRecord {
-    pub key: String,
-    pub record: StoredRecord,
-}
-#[derive(Clone, serde::Serialize)]
-pub struct ArtifactContext {
-    pub rust_git_sha: String,
-    pub rust_git_tree: String,
-    pub wasm_sha256: String,
-    pub native_sha256: String,
-    /// Separately retained stopped native nonce SQLite+WAL/SHM custody, never opened here.
-    pub native_nonce_capture_sha256: Option<String>,
-}
 #[derive(Clone, serde::Serialize)]
 pub struct PrivateRollbackBundle {
     pub v: u32,
@@ -642,24 +450,4 @@ pub async fn export_rollback_bundle<S: QueryStore>(
         rust_controls,
         artifacts,
     })
-}
-pub(crate) fn validate_artifacts(artifacts: &ArtifactContext) -> Result<(), GatewayError> {
-    let hash = |value: &str, len: usize| {
-        value.len() == len
-            && value
-                .bytes()
-                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-    };
-    if !hash(&artifacts.rust_git_sha, 40)
-        || !hash(&artifacts.rust_git_tree, 40)
-        || !hash(&artifacts.wasm_sha256, 64)
-        || !hash(&artifacts.native_sha256, 64)
-        || artifacts
-            .native_nonce_capture_sha256
-            .as_deref()
-            .is_some_and(|s| !hash(s, 64))
-    {
-        return Err(invalid("Rollback artifact identity is malformed"));
-    }
-    Ok(())
 }

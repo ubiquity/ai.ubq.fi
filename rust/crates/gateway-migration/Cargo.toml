@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-migration-values.workspace = true
+gateway-migration-projection.workspace = true
+gateway-migration-data.workspace = true
 gateway-migration-graph.workspace = true
 gateway-source-audit.workspace = true
 gateway-profile-source.workspace = true

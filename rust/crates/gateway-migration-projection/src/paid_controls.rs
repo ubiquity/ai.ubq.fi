@@ -1,6 +1,5 @@
 //! Only the actual paid source/runtime families opt into this finite codec.
 //! Complete runtime DTO/key validation remains owned by gateway-authority.
-use crate::{Row, Transform, capture::SourceEntry, invalid, starts};
 use gateway_core::error::GatewayError;
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::RecordKey;
@@ -13,6 +12,11 @@ use gateway_core::{
     source_serialization as source,
     value::PortableValue,
 };
+use gateway_migration_data::RowData as Row;
+use gateway_migration_data::Transform;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_data::invalid;
+use gateway_migration_data::starts;
 use serde_json::Value;
 
 fn required(value: &SourceJson, field: &str) -> Result<SourceJson, GatewayError> {
@@ -92,7 +96,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<bool, GatewayError> {
     Ok(true)
 }
 
-pub(crate) fn inverse(
+pub fn inverse(
     key: &RecordKey,
     record: &StoredRecord,
     original: Option<&SourceEntry>,

@@ -2,8 +2,8 @@
 //! It opens one private stopped capture and writes no database, target, or
 //! credential. A later preparation still requires the existing custody gate.
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-use gateway_migration::error::MigrationError;
 use gateway_migration::native_stage::Captured;
+use gateway_migration_data::error::MigrationError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -40,7 +40,7 @@ struct Receipt {
     target_touched: bool,
     credential_opened: bool,
 }
-fn failure(message: &str) -> gateway_migration::error::MigrationError {
+fn failure(message: &str) -> gateway_migration_data::error::MigrationError {
     gateway_core::error::GatewayError::unavailable(message, "m20_core_state_manifest_invalid")
         .into()
 }
@@ -173,9 +173,10 @@ fn execute(input: Input) -> Result<Receipt, MigrationError> {
 mod tests {
     use super::{Input, execute, hash_file, write_selected};
     use gateway_core::tuple_key::{KeyPart, TupleKey};
-    use gateway_migration::native_capture::{
-        NativeCapture, NativeEntry, NativeRevision, NativeValue,
-    };
+    use gateway_migration_data::native_capture::NativeCapture;
+    use gateway_migration_data::native_capture::NativeEntry;
+    use gateway_migration_data::native_capture::NativeRevision;
+    use gateway_migration_data::native_capture::NativeValue;
     use std::{
         fs,
         os::unix::fs::{DirBuilderExt, PermissionsExt},

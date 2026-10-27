@@ -35,7 +35,7 @@ impl std::fmt::Debug for PrivateCapture {
     }
 }
 impl PrivateCapture {
-    pub(crate) fn validate(&self, host: &dyn SourceDateHost) -> Result<Vec<Row>, GatewayError> {
+    pub fn validate(&self, host: &dyn SourceDateHost) -> Result<Vec<ValidatedRow>, GatewayError> {
         if self.v != 1
             || self.source_git_sha.len() != 40
             || !self
@@ -73,7 +73,7 @@ impl PrivateCapture {
                 }
                 let record = if let Some(value) = decoded.value.to_json_lossless() {
                     StoredRecord::json(&entry.versionstamp, value, entry.expires_at_ms)
-                } else if !crate::projection::quota_family(&source_parts)
+                } else if !crate::quota_family(&source_parts)
                     && decoded.value.validate_for_storage().is_ok()
                 {
                     StoredRecord::profile(&entry.versionstamp, decoded.value, entry.expires_at_ms)?
@@ -84,17 +84,17 @@ impl PrivateCapture {
                         entry.expires_at_ms,
                     )?
                 };
-                Ok(Row {
+                Ok(ValidatedRow(RowData {
                     key: decoded.key,
                     parts: source_parts,
                     record,
-                    mapping: Mapping {
+                    mapping: MappingData {
                         source: entry.clone(),
                         transform: Transform::Identity,
                         baseline_digest: String::new(),
                         native_origin: None,
                     },
-                })
+                }))
             })
             .collect()
     }

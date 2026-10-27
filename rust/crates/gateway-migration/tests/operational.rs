@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_migration::{native_capture::NativeCapture, operational::*};
+use gateway_migration::operational::*;
+use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 

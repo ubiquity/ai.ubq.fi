@@ -23,6 +23,9 @@ members = [
   "crates/gateway-profile-values",
   "crates/gateway-admin-runtime",
   "crates/gateway-migration-graph",
+  "crates/gateway-migration-data",
+  "crates/gateway-migration-projection",
+  "crates/gateway-migration-values",
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
@@ -86,6 +89,9 @@ gateway-ledger-audit = { path = "crates/gateway-ledger-audit" }
 gateway-profile-values = { path = "crates/gateway-profile-values" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
 gateway-migration-graph = { path = "crates/gateway-migration-graph" }
+gateway-migration-data = { path = "crates/gateway-migration-data" }
+gateway-migration-projection = { path = "crates/gateway-migration-projection" }
+gateway-migration-values = { path = "crates/gateway-migration-values" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }

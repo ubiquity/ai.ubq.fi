@@ -1,14 +1,18 @@
 #![cfg(not(target_arch = "wasm32"))]
 use gateway_core::state::AuthorityStore;
-use gateway_migration::{
-    engine::adopt_empty,
-    inverse::ArtifactContext,
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-    native_custody::{NativeCustody, OwnedNativeSnapshot},
-    native_inverse::{export_native_latest, export_native_rollback_bundle},
-    native_operator, native_stage,
-    staged::*,
-};
+use gateway_migration::engine::adopt_empty;
+use gateway_migration::engine::prepare_native;
+use gateway_migration::native_custody::NativeCustody;
+use gateway_migration::native_custody::OwnedNativeSnapshot;
+use gateway_migration::native_inverse::export_native_latest;
+use gateway_migration::native_inverse::export_native_rollback_bundle;
+use gateway_migration::native_operator;
+use gateway_migration::native_stage;
+use gateway_migration::staged::*;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
 use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;

@@ -1,12 +1,17 @@
 //! The existing shared source usage family includes paid AND ordinary providers.
 //! M39 owns its value predicate; this adapter adds only physical-key/metadata custody.
-use crate::*;
+use gateway_core::{
+    error::GatewayError,
+    state::{RecordKey, StoredRecord},
+    tuple_key::TupleKey,
+};
 use gateway_core::{
     identity::MAX_SAFE_INTEGER, js_string::JsString16, model::ModelId,
     source_serialization as source, tuple_key::DecodedKeyPart,
 };
+use gateway_migration_data::invalid;
 
-pub(crate) fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayError> {
+pub fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayError> {
     record.validate_version()?;
     if record.revision.trim().is_empty()
         || record
@@ -48,10 +53,11 @@ mod tests {
     use gateway_core::source_control::{
         decode_source_control_record, encode_source_control_record,
     };
+    use gateway_core::source_json::SourceJson;
 
     fn fixture() -> (RecordKey, StoredRecord) {
         let envelope = SourceJson::parse(include_str!(
-            "../tests/fixtures/source-usage-rollup-writer.json"
+            "../../gateway-migration/tests/fixtures/source-usage-rollup-writer.json"
         ))
         .unwrap();
         assert_eq!(

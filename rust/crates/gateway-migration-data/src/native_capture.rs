@@ -1,7 +1,7 @@
 //! Closed native interchange; no runtime VM bytes or source database are opened here.
 use crate::{
-    Mapping, Row, Transform, capture::SourceEntry, engine::PreparedAdoption, error::MigrationError,
-    invalid, parts, private_source_key, unavailable,
+    MappingData, RowData, Transform, ValidatedRow, capture::SourceEntry, invalid, parts,
+    private_source_key, unavailable,
 };
 use gateway_core::error::GatewayError;
 use gateway_core::source_graph::SourceGraph;
@@ -22,7 +22,7 @@ pub struct NativeRevision {
     pub sequence: String,
 }
 impl NativeRevision {
-    pub(crate) fn numbers(&self) -> Result<(i64, i64), GatewayError> {
+    pub fn numbers(&self) -> Result<(i64, i64), GatewayError> {
         fn number(value: &str) -> Result<i64, GatewayError> {
             let number = value
                 .parse::<i64>()
@@ -34,7 +34,7 @@ impl NativeRevision {
         }
         Ok((number(&self.version)?, number(&self.sequence)?))
     }
-    pub(crate) fn record_revision(&self) -> Result<String, GatewayError> {
+    pub fn record_revision(&self) -> Result<String, GatewayError> {
         self.numbers()?;
         Ok(format!("native-v1:{}:{}", self.version, self.sequence))
     }
@@ -86,18 +86,18 @@ impl std::fmt::Debug for NativeCapture {
 }
 #[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum NativeKind {
+pub enum NativeKind {
     Graph,
     Counter,
     Bytes,
 }
 #[derive(Clone, Deserialize, Serialize)]
-pub(crate) struct NativeOrigin {
+pub struct NativeOrigin {
     pub kind: NativeKind,
     pub revision: NativeRevision,
 }
 
-pub(crate) fn tree_record(
+pub fn tree_record(
     value: PortableValue,
     revision: &str,
     expiry: Option<i64>,
@@ -133,13 +133,13 @@ fn graph_record(
         .try_identity_free_tree()?
         .ok_or_else(|| unavailable("This business schema has no graph-aware runtime binding"))?;
     let mut record = tree_record(value, revision, expiry)?;
-    if crate::projection::quota_family(p) && record.value_encoding != ValueEncoding::Json {
+    if crate::quota_family(p) && record.value_encoding != ValueEncoding::Json {
         record.value_encoding = ValueEncoding::ProfileV2;
     }
     Ok(record)
 }
 impl NativeCapture {
-    pub(crate) fn validate(&self) -> Result<Vec<Row>, GatewayError> {
+    pub fn validate(&self) -> Result<Vec<ValidatedRow>, GatewayError> {
         let version = self.validate_header()?;
         let mut seen = BTreeSet::new();
         self.entries
@@ -155,7 +155,7 @@ impl NativeCapture {
             })
             .collect()
     }
-    pub(crate) fn validate_header(&self) -> Result<i64, GatewayError> {
+    pub fn validate_header(&self) -> Result<i64, GatewayError> {
         if self.v != 2
             || self.source_codec != "bun-jsc-v1"
             || self.native_schema_version != 3
@@ -176,7 +176,7 @@ impl NativeCapture {
         Ok(version)
     }
 }
-pub(crate) fn validate_entry(entry: &NativeEntry, version: i64) -> Result<Row, GatewayError> {
+pub fn validate_entry(entry: &NativeEntry, version: i64) -> Result<ValidatedRow, GatewayError> {
     let tuple = TupleKey::from_sort_bytes(entry.raw_key.clone())?;
     tuple.validate_stored_key()?;
     let key = tuple.to_record_key();
@@ -236,11 +236,11 @@ pub(crate) fn validate_entry(entry: &NativeEntry, version: i64) -> Result<Row, G
     } else {
         gateway_profile_source::codec::to_source_profile(&record.portable_value()?)?
     };
-    Ok(Row {
+    Ok(ValidatedRow(RowData {
         key,
         parts: p,
         record,
-        mapping: Mapping {
+        mapping: MappingData {
             source: SourceEntry {
                 key: vec![],
                 value: source_value,
@@ -254,17 +254,5 @@ pub(crate) fn validate_entry(entry: &NativeEntry, version: i64) -> Result<Row, G
                 revision: entry.revision.clone(),
             }),
         },
-    })
-}
-pub fn prepare_native(capture: &NativeCapture) -> Result<PreparedAdoption, MigrationError> {
-    let id = gateway_auth::crypto::sha256_hex(
-        &serde_json::to_vec(capture).map_err(|_| invalid("Native capture cannot be encoded"))?,
-    );
-    crate::engine::prepare_rows(
-        capture.validate()?,
-        id,
-        &capture.source_git_sha,
-        capture.captured_at_ms,
-        Some(capture.data_revision.clone()),
-    )
+    }))
 }

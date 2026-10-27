@@ -199,8 +199,12 @@ async fn bind_kernel_rows<S: QueryStore>(
         observed.clone()
     };
     if let Some(mut current) = current
-        && let Ok(source) = crate::inverse::inverse_value(Transform::KernelWindow, &current, None)
-            .or_else(|_| current.portable_value())
+        && let Ok(source) = gateway_migration_values::inverse::inverse_value(
+            Transform::KernelWindow,
+            &current,
+            None,
+        )
+        .or_else(|_| current.portable_value())
         && let Some(source) = source.to_json_lossless()
         && let (Some(owner), repo) = (
             p[4].as_str(),
@@ -233,8 +237,12 @@ async fn bind_kernel_rows<S: QueryStore>(
         let mut reservations = BTreeMap::new();
         for row in rows {
             let rp = parts(&row.key)?;
-            let source = crate::inverse::inverse_value(Transform::KernelRequest, &row.record, None)
-                .or_else(|_| row.record.portable_value())?;
+            let source = gateway_migration_values::inverse::inverse_value(
+                Transform::KernelRequest,
+                &row.record,
+                None,
+            )
+            .or_else(|_| row.record.portable_value())?;
             let Some(v) = source.to_json_lossless() else {
                 continue;
             };
@@ -354,8 +362,12 @@ pub(crate) async fn finish_kernel<S: QueryStore, H: crate::profile_runtime::Prof
             continue;
         };
         let p = parts(&key)?;
-        let source = crate::inverse::inverse_value(Transform::KernelWindow, &record, None)
-            .or_else(|_| record.portable_value())?;
+        let source = gateway_migration_values::inverse::inverse_value(
+            Transform::KernelWindow,
+            &record,
+            None,
+        )
+        .or_else(|_| record.portable_value())?;
         let Some(value) = source.to_json_lossless() else {
             continue;
         };
@@ -380,9 +392,12 @@ pub(crate) async fn finish_kernel<S: QueryStore, H: crate::profile_runtime::Prof
         let mut reservations = Vec::new();
         for entry in scan(store, json!(prefix), now).await? {
             let parts = parts(&entry.key)?;
-            let source =
-                crate::inverse::inverse_value(Transform::KernelRequest, &entry.record, None)
-                    .or_else(|_| entry.record.portable_value())?;
+            let source = gateway_migration_values::inverse::inverse_value(
+                Transform::KernelRequest,
+                &entry.record,
+                None,
+            )
+            .or_else(|_| entry.record.portable_value())?;
             if let Some(value) = source.to_json_lossless() {
                 reservations.push(ObservedRow {
                     key: entry.key,
@@ -405,7 +420,7 @@ pub(crate) async fn finish_kernel<S: QueryStore, H: crate::profile_runtime::Prof
         else {
             return Err(invalid("Kernel reconciliation has no write"));
         };
-        *next = crate::profile_runtime::project(&key, &p, next.clone())?;
+        *next = gateway_migration_values::profile::project(&key, &p, next.clone())?;
         let next = next.clone();
         crate::profile_bindings::bind(
             store,

@@ -26,10 +26,10 @@ struct Receipt {
     eof: bool,
     spool_directory: String,
 }
-fn failure(message: &str) -> gateway_migration::error::MigrationError {
+fn failure(message: &str) -> gateway_migration_data::error::MigrationError {
     gateway_core::error::GatewayError::unavailable(message, "m20_capture_verify_invalid").into()
 }
-fn main() -> Result<(), gateway_migration::error::MigrationError> {
+fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
     assert_eq!(std::env::args_os().len(), 1, "Private input is stdin only");
     let mut raw = Vec::new();
     std::io::stdin()

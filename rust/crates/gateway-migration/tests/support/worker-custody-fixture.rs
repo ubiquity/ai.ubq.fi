@@ -6,7 +6,7 @@ struct Initialize {
     v: u32,
     directory: String,
     now_ms: i64,
-    capture: gateway_migration::native_capture::NativeCapture,
+    capture: gateway_migration_data::native_capture::NativeCapture,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
@@ -20,7 +20,7 @@ struct Export {
 #[derive(serde::Serialize)]
 struct Candidate {
     operation: &'static str,
-    capture: gateway_migration::native_capture::NativeCapture,
+    capture: gateway_migration_data::native_capture::NativeCapture,
     adoption_receipt: gateway_migration::engine::AdoptionReceipt,
 }
 #[cfg(not(target_arch = "wasm32"))]
@@ -39,9 +39,9 @@ enum Phase {
 #[derive(serde::Serialize)]
 struct Inverse {
     operation: &'static str,
-    source: gateway_migration::native_capture::NativeCapture,
-    rust_controls: Vec<gateway_migration::inverse::CustodyRecord>,
-    artifacts: gateway_migration::inverse::ArtifactContext,
+    source: gateway_migration_data::native_capture::NativeCapture,
+    rust_controls: Vec<gateway_migration_data::custody::CustodyRecord>,
+    artifacts: gateway_migration_data::custody::ArtifactContext,
 }
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
@@ -70,15 +70,14 @@ struct Selector {
     operation: Option<String>,
 }
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), gateway_migration::error::MigrationError> {
+fn main() -> Result<(), gateway_migration_data::error::MigrationError> {
     use gateway_auth::provider_credentials::codex_source_pool_key;
     use gateway_core::state::AuthorityStore;
-    use gateway_migration::{
-        engine::adopt_empty,
-        inverse::ArtifactContext,
-        native_capture::prepare_native,
-        native_custody::{export_native_rollback_with_custody, sanitize_native_capture},
-    };
+    use gateway_migration::engine::adopt_empty;
+    use gateway_migration::engine::prepare_native;
+    use gateway_migration::native_custody::export_native_rollback_with_custody;
+    use gateway_migration::native_custody::sanitize_native_capture;
+    use gateway_migration_data::custody::ArtifactContext;
     use gateway_migration_fixture_custody::{host, staged};
     use gateway_migration_fixture_inputs::{inputs, producers};
     use gateway_migration_fixture_port::{executor::support_run, port};

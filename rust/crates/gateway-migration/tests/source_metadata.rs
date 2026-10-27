@@ -3,12 +3,12 @@
 use gateway_core::{
     source_control::source_json_tree, source_json::SourceJson, value::PortableValue,
 };
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    error::MigrationError,
-    inverse::export_latest,
-};
+use gateway_migration::engine::adopt_empty;
+use gateway_migration::engine::prepare;
+use gateway_migration::inverse::export_latest;
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_data::error::MigrationError;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::from_source_profile;

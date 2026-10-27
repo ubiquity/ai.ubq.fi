@@ -1,9 +1,8 @@
 //! Bounded migration bindings; full native capture is private, never a public admin body.
 use gateway_core::{error::GatewayError, query::QueryStore};
-use gateway_migration::{
-    error::MigrationError,
-    operational::{NativeMigrationRequest, NativeMigrationResponse},
-};
+use gateway_migration::operational::NativeMigrationRequest;
+use gateway_migration::operational::NativeMigrationResponse;
+use gateway_migration_data::error::MigrationError;
 #[cfg(target_arch = "wasm32")]
 use worker::js_sys;
 
@@ -94,12 +93,12 @@ async fn local_operator_adoption(
     };
     use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
     let refused = || JsValue::from_str("private_local_bootstrap_refused");
-    if input.length() as usize > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
+    if input.length() as usize > gateway_migration_data::PRIVATE_WIRE_MAX_BYTES {
         return Err(refused());
     }
     // Decode original NativeCapture v2 bytes directly: the shared public
     // request decoder remains unchanged and cannot mint this private setup.
-    let capture: gateway_migration::native_capture::NativeCapture =
+    let capture: gateway_migration_data::native_capture::NativeCapture =
         serde_json::from_slice(&input.to_vec()).map_err(|_| refused())?;
     if capture.v != 2 {
         return Err(refused());
@@ -124,7 +123,7 @@ pub fn local_operator_stage(env: worker::Env, input: js_sys::Uint8Array) -> js_s
     worker::wasm_bindgen_futures::future_to_promise(async move {
         use worker::{js_sys::Uint8Array, wasm_bindgen::JsValue};
         let refused = || JsValue::from_str("private_local_staged_refused");
-        if input.length() as usize > gateway_migration::staged::STAGED_BATCH_MAX_BYTES {
+        if input.length() as usize > gateway_migration_data::staged::STAGED_BATCH_MAX_BYTES {
             return Err(refused());
         }
         let request = gateway_migration::staged::decode_stage_request(&input.to_vec())

@@ -1,4 +1,3 @@
-use crate::{Row, Transform, decode, invalid, starts, unavailable};
 use gateway_authority::{
     kernel::{KernelPolicy, KernelReservation, KernelWindow},
     paid_types::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate},
@@ -6,10 +5,11 @@ use gateway_authority::{
 };
 use gateway_core::error::GatewayError;
 use gateway_core::{lifecycle::BillingState, value::PortableValue};
+use gateway_migration_data::{RowData as Row, Transform, decode, invalid, starts, unavailable};
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
+pub fn forward(row: &mut Row) -> Result<(), GatewayError> {
     if crate::paid_controls::forward(row)? {
         return Ok(());
     }
@@ -338,10 +338,10 @@ pub fn known_source_family(p: &[Value]) -> bool {
             .and_then(Value::as_str)
             .is_some_and(|s| ["default", "key", "agent_messages", "embeddings"].contains(&s))
 }
-pub(crate) fn known(p: &[Value]) -> bool {
+pub fn known(p: &[Value]) -> bool {
     known_source_family(p)
 }
-pub(crate) fn retained_typed(p: &[Value]) -> bool {
+pub fn retained_typed(p: &[Value]) -> bool {
     p.first()
         .and_then(Value::as_str)
         .is_some_and(|s| ["default", "key", "agent_messages", "embeddings"].contains(&s))
@@ -362,13 +362,11 @@ pub(crate) fn retained_typed(p: &[Value]) -> bool {
                 .contains(&s)
             }))
 }
-pub(crate) fn outstanding(row: &PaidAttempt) -> bool {
+pub fn outstanding(row: &PaidAttempt) -> bool {
     matches!(
         row.billing_state,
         BillingState::Pending | BillingState::Unresolved
     )
 }
 
-pub(crate) fn quota_family(parts: &[Value]) -> bool {
-    starts(parts, &["uos_ai", "claude_code_quota"])
-}
+use gateway_migration_data::quota_family;

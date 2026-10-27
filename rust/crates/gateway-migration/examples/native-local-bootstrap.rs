@@ -22,13 +22,13 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
     #[serde(deny_unknown_fields)]
     struct Input {
         v: u32,
-        capture: Option<gateway_migration::native_capture::NativeCapture>,
+        capture: Option<gateway_migration_data::native_capture::NativeCapture>,
         capture_file: Option<std::path::PathBuf>,
         registrations: Vec<Registration>,
         #[serde(default)]
         staged: bool,
     }
-    let maximum = gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES;
+    let maximum = gateway_migration_data::PRIVATE_WIRE_MAX_BYTES;
     if std::env::args_os().len() != 1 {
         return Err("No command arguments are accepted".into());
     }

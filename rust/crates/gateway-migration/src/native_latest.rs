@@ -1,23 +1,29 @@
 //! Native-private latest state, one genuine row at a time; no store mirror.
-use crate::{
-    Mapping, decode, digest,
-    engine::{Manifest, manifest_key, mapping_key},
-    error::MigrationError,
-    invalid,
-    inverse::{ArtifactContext, CustodyRecord},
-    key,
-    native_capture::{NativeCapture, NativeEntry, NativeRevision},
-    native_custody::NativeCustody,
-    native_spool::Writer,
-    parts,
-    staged::CanonicalRecord,
-    starts, unavailable,
-};
+use crate::Mapping;
+use crate::decode;
+use crate::digest;
+use crate::invalid;
+use crate::key;
+use crate::native_custody::NativeCustody;
+use crate::native_spool::Writer;
+use crate::parts;
+use crate::starts;
+use crate::unavailable;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::TupleKey;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::custody::CustodyRecord;
+use gateway_migration_data::error::MigrationError;
+use gateway_migration_data::manifest::Manifest;
+use gateway_migration_data::manifest::manifest_key;
+use gateway_migration_data::manifest::mapping_key;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::staged::CanonicalRecord;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -355,7 +361,7 @@ fn validate(
         {
             continue;
         }
-        if !crate::projection::known(&p) {
+        if !gateway_migration_projection::projection::known(&p) {
             return Err(unavailable(
                 "Latest target includes an unmapped source key family",
             ));
@@ -400,7 +406,7 @@ pub(crate) async fn write_latest_for_reconciliation<
     source_sink: &mut W,
     custody_sink: &mut C,
 ) -> Result<(usize, Manifest, BTreeSet<String>), MigrationError> {
-    crate::inverse::validate_artifacts(&artifacts)?;
+    gateway_migration_data::custody::validate_artifacts(&artifacts)?;
     let manifest = store
         .read(&manifest_key())
         .await?

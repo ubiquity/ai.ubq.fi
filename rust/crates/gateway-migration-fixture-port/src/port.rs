@@ -11,7 +11,7 @@ use std::{
     io::{BufRead, Write},
 };
 
-const MAX_BYTES: usize = gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES;
+const MAX_BYTES: usize = gateway_migration_data::PRIVATE_WIRE_MAX_BYTES;
 
 pub fn error(message: impl std::fmt::Display) -> GatewayError {
     GatewayError::unavailable(message.to_string(), "migration_fixture_port_invalid")
@@ -339,7 +339,7 @@ mod frame_tests {
             #[derive(Deserialize)]
             struct Envelope {
                 operation: String,
-                capture: gateway_migration::native_capture::NativeCapture,
+                capture: gateway_migration_data::native_capture::NativeCapture,
             }
             let parsed: Envelope = value.deserialize().unwrap();
             assert_eq!(parsed.operation, "candidate");
