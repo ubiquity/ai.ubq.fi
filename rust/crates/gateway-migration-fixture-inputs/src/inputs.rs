@@ -1,6 +1,5 @@
 //! Original native-source + native_custody.rs:25-77,145-165 + runtime debug input.
 //! Fixed synthetic preparation only; generation hashes come from the actual native parser.
-use super::port::error;
 use gateway_auth::{
     crypto::base64url, native_credentials::parse_native_document,
     provider_credentials::codex_source_pool_key, store::key,
@@ -9,8 +8,9 @@ use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::source_graph::{GraphAtom, GraphNode, SourceGraph};
 use gateway_core::tuple_key::TupleKey;
-use gateway_migration::graph_transport;
 use gateway_migration::native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue};
+use gateway_migration_fixture_port::port::error;
+use gateway_migration_graph::transport as graph_transport;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -91,8 +91,10 @@ fn graph_value(entry: &NativeEntry) -> Result<SourceGraph, GatewayError> {
     graph_transport::from_source_graph(value)
 }
 fn source(time: FixtureTime) -> Result<NativeCapture, GatewayError> {
-    let capture =
-        serde_json::from_str(include_str!("../../fixtures/native-source.json")).map_err(error)?;
+    let capture = serde_json::from_str(include_str!(
+        "../../gateway-migration/tests/fixtures/native-source.json"
+    ))
+    .map_err(error)?;
     rebase(capture, time)
 }
 fn rebase(mut capture: NativeCapture, time: FixtureTime) -> Result<NativeCapture, GatewayError> {
@@ -340,7 +342,10 @@ pub fn prepare(directory: &str, now_ms: i64) -> Result<Prepared, GatewayError> {
 mod tests {
     use super::*;
     fn original() -> NativeCapture {
-        serde_json::from_str(include_str!("../../fixtures/native-source.json")).unwrap()
+        serde_json::from_str(include_str!(
+            "../../gateway-migration/tests/fixtures/native-source.json"
+        ))
+        .unwrap()
     }
     fn at(graph: &mut SourceGraph, name: &str) -> GraphAtom {
         root_entries(graph)

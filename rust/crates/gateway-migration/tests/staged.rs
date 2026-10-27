@@ -2,7 +2,6 @@
 use gateway_core::state::AuthorityStore;
 use gateway_migration::{
     engine::adopt_empty,
-    graph_transport,
     inverse::ArtifactContext,
     native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
     native_custody::{NativeCustody, OwnedNativeSnapshot},
@@ -10,6 +9,7 @@ use gateway_migration::{
     native_operator, native_stage,
     staged::*,
 };
+use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 fn fixture() -> NativeCapture {

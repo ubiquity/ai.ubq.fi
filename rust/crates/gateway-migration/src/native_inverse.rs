@@ -14,7 +14,7 @@ use serde::Serialize;
 pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeValue, GatewayError> {
     if row.record.value_encoding == ValueEncoding::SourceGraphV1 {
         return Ok(NativeValue::SourceGraphV1(
-            crate::graph_transport::to_source_graph(&row.record.source_graph_value()?)?,
+            gateway_migration_graph::transport::to_source_graph(&row.record.source_graph_value()?)?,
         ));
     }
     let transform = row
@@ -49,7 +49,7 @@ pub(crate) fn current_value(row: &crate::inverse::LatestRow) -> Result<NativeVal
         return Ok(NativeValue::Bytes(bytes.clone()));
     }
     Ok(NativeValue::SourceGraphV1(
-        crate::graph_transport::to_source_graph(&crate::graph_tree::from_tree(&value)?)?,
+        gateway_migration_graph::transport::tree_to_source_graph(&value)?,
     ))
 }
 

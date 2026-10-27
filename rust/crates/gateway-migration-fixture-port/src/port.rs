@@ -327,7 +327,7 @@ mod frame_tests {
     }
     #[test]
     fn actual_multiline_native_capture_retains_all_original_source_bytes() {
-        let capture = include_str!("../../fixtures/native-source.json");
+        let capture = include_str!("../../gateway-migration/tests/fixtures/native-source.json");
         let document = format!("{{\"operation\":\"candidate\",\"capture\":{capture}}}");
         let framed = format!("{document}\n");
         for capacity in [1, 7, framed.len()] {
@@ -414,5 +414,15 @@ mod frame_tests {
         for bytes in [b"{\"operation\":\"store_response\",\"id\":7,\"response\":{\"operation\":\"sql\"}}\n".as_slice(),b"{\"operation\":\"store_response\",\"id\":7,\"id\":7,\"response\":{\"operation\":\"read\",\"record\":null}}\n"]{
             assert!(read_frame::<Incoming,_>(&mut Cursor::new(bytes)).is_err());
         }
+    }
+}
+
+// A reference to the SAME wire port, not a second store, row mirror or id counter.
+impl AuthorityStore for &Store {
+    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        (*self).read(key).await
+    }
+    async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        (*self).commit(tx).await
     }
 }

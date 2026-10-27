@@ -1,8 +1,4 @@
 //! Synthetic-only stdin/stdout controller; no network, child process, or live owner access.
-#[cfg(all(test, not(target_arch = "wasm32")))]
-use gateway_migration_test_support::fixture;
-#[cfg(not(target_arch = "wasm32"))]
-mod worker_custody_fixture;
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -83,7 +79,9 @@ fn main() -> Result<(), gateway_migration::error::MigrationError> {
         native_capture::prepare_native,
         native_custody::{export_native_rollback_with_custody, sanitize_native_capture},
     };
-    use worker_custody_fixture::{host, inputs, port, producers, staged, support_run};
+    use gateway_migration_fixture_custody::{host, staged};
+    use gateway_migration_fixture_inputs::{inputs, producers};
+    use gateway_migration_fixture_port::{executor::support_run, port};
     assert_eq!(
         std::env::args_os().len(),
         1,

@@ -1127,6 +1127,7 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-graph",
  "gateway-admin",
  "gateway-admin-contracts",
  "gateway-admin-data",
@@ -1136,6 +1137,9 @@ dependencies = [
  "gateway-authority",
  "gateway-claude-runtime",
  "gateway-core",
+ "gateway-migration-fixture-port",
+ "gateway-migration-fixture-inputs",
+ "gateway-migration-fixture-custody",
  "gateway-migration-ledger",
  "gateway-migration-test-support",
  "gateway-native",
@@ -1149,6 +1153,59 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-migration-fixture-custody"
+version = "0.1.0"
+dependencies = [
+ "gateway-migration-graph",
+ "gateway-auth",
+ "gateway-core",
+ "gateway-migration",
+ "gateway-migration-fixture-inputs",
+ "gateway-migration-fixture-port",
+ "gateway-migration-test-support",
+ "gateway-native",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-fixture-inputs"
+version = "0.1.0"
+dependencies = [
+ "gateway-migration-graph",
+ "gateway-admin-contracts",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-migration",
+ "gateway-migration-fixture-port",
+ "gateway-migration-test-support",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-fixture-port"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-migration",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-graph"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "serde_json",
 ]
 
 [[package]]

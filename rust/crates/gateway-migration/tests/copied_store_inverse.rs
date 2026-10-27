@@ -1,4 +1,5 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
+use gateway_migration_graph::transport as graph_transport;
 mod copied_store_inverse {
     pub mod driver;
     pub mod store;
@@ -19,7 +20,6 @@ use gateway_core::{
 };
 use gateway_migration::{
     engine::adopt_empty,
-    graph_transport,
     native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native},
     native_operator::{NativeCustodyRegistration, prepare_local_bootstrap},
 };

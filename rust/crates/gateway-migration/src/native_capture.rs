@@ -196,7 +196,7 @@ pub(crate) fn validate_entry(entry: &NativeEntry, version: i64) -> Result<Row, G
     let (record, kind) = match &entry.value {
         NativeValue::SourceGraphV1(value) => (
             graph_record(
-                crate::graph_transport::from_source_graph(value)?,
+                gateway_migration_graph::transport::from_source_graph(value)?,
                 &p,
                 &revision,
                 expiry,

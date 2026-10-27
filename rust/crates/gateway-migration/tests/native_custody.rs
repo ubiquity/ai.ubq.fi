@@ -14,7 +14,6 @@ use gateway_core::{
 };
 use gateway_migration::{
     engine::adopt_empty,
-    graph_transport,
     inverse::ArtifactContext,
     native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native},
     native_custody::{
@@ -22,6 +21,7 @@ use gateway_migration::{
         export_native_with_custody, sanitize_native_capture,
     },
 };
+use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_native::{

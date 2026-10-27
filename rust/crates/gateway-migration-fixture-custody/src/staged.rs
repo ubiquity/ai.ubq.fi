@@ -1,17 +1,19 @@
 //! Fixed synthetic >32MiB producer through the same real common-DO port.
-use super::{host, inputs, port, producers, support_run};
+use crate::host;
 use gateway_core::js_string::JsString16;
 use gateway_core::source_graph::{GraphAtom, SourceGraph};
 use gateway_core::state::AuthorityStore;
 use gateway_core::tuple_key::TupleKey;
 use gateway_migration::{
     error::MigrationError,
-    graph_transport,
     native_capture::{NativeCapture, NativeEntry, NativeValue},
     native_inverse::export_native_latest,
     native_operator, native_stage, operational,
     staged::{StageRequest, decode_stage_request, execute_staged},
 };
+use gateway_migration_fixture_inputs::{inputs, producers};
+use gateway_migration_fixture_port::{executor::support_run, port};
+use gateway_migration_graph::transport as graph_transport;
 use serde::{Deserialize, Serialize};
 use std::{fs::OpenOptions, os::unix::fs::OpenOptionsExt, path::Path};
 #[derive(Deserialize)]

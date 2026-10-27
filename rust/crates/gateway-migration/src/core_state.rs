@@ -129,7 +129,7 @@ fn object_fields(entry: &NativeEntry) -> Result<BTreeMap<String, Value>, Gateway
     let NativeValue::SourceGraphV1(source) = &entry.value else {
         return Err(invalid("Core-state source value is not a source graph"));
     };
-    let graph = crate::graph_transport::from_source_graph(source)?;
+    let graph = gateway_migration_graph::transport::from_source_graph(source)?;
     let tree = graph
         .try_identity_free_tree()?
         .ok_or_else(|| invalid("Core-state source graph has shared identity"))?;

@@ -1,5 +1,4 @@
 //! Fixed two-account registry for the controlled fixture only.
-use super::{port::error, support_run};
 use gateway_auth::crypto::Secret;
 use gateway_auth::managed_access::ManagedAccessProjection;
 use gateway_auth::native_credentials::{NativeGeneration, NativeOwnerId, OwnerFence};
@@ -18,6 +17,9 @@ use gateway_migration::native_custody::{
     NativeCustody, OwnedNativeSnapshot, export_native_rollback_with_custody,
 };
 use gateway_migration::native_operator::{ConfiguredNativeCustody, NativeCustodyRegistration};
+use gateway_migration_fixture_inputs::inputs;
+use gateway_migration_fixture_port::port;
+use gateway_migration_fixture_port::{executor::support_run, port::error};
 use gateway_migration_test_support::fixture::{MANAGED_A_CASES, Receipt};
 use gateway_native::transport::NativeOwnerTransport;
 use gateway_native::unix::{NativeOwnerLocation, UnixOwnerTransport};
@@ -51,7 +53,7 @@ impl Host {
         let NativeValue::SourceGraphV1(graph) = &entry.value else {
             return Err(error("Synthetic source pool is not a graph"));
         };
-        let tree = gateway_migration::graph_transport::from_source_graph(graph)?
+        let tree = gateway_migration_graph::transport::from_source_graph(graph)?
             .try_identity_free_tree()?
             .and_then(|v| v.to_json_lossless())
             .ok_or_else(|| error("Synthetic source pool has identity"))?;
@@ -114,7 +116,7 @@ impl Host {
         }
         let transport = UnixOwnerTransport::new(locations)?;
         for (home, fence) in bindings.values_mut() {
-            let document = super::support_run(transport.read_credentials(&fence.owner))?;
+            let document = support_run(transport.read_credentials(&fence.owner))?;
             if document.account_id != fence.account_id
                 || home.file_name().and_then(|s| s.to_str()) != Some(&fence.account_id)
             {
@@ -128,8 +130,8 @@ impl Host {
     /// physical refresh, prove the stale export refusal, then publish its actual projection.
     pub fn advance_managed_a(
         self,
-        store: &super::port::Store,
-        time: super::inputs::FixtureTime,
+        store: &port::Store,
+        time: inputs::FixtureTime,
         artifacts: &gateway_migration::inverse::ArtifactContext,
     ) -> Result<(Self, Receipt), gateway_migration::error::MigrationError> {
         time.check()?;
@@ -301,8 +303,8 @@ impl NativeCustody for Host {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixture::{Directory, run};
     use gateway_auth::{crypto::base64url, native_credentials::parse_native_document};
+    use gateway_migration_test_support::fixture::{Directory, run};
     use serde_json::json;
 
     fn fixture(directory: &Directory, expires_at_seconds: u64) -> (Host, Vec<(PathBuf, Vec<u8>)>) {

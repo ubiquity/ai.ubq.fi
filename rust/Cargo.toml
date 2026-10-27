@@ -22,6 +22,7 @@ members = [
   "crates/gateway-ledger-audit",
   "crates/gateway-profile-values",
   "crates/gateway-admin-runtime",
+  "crates/gateway-migration-graph",
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
@@ -43,6 +44,9 @@ members = [
   "crates/gateway-admin-test-support",
   "crates/gateway-claude-runtime-test-support",
   "crates/gateway-extras-runtime-test-support",
+  "crates/gateway-migration-fixture-port",
+  "crates/gateway-migration-fixture-inputs",
+  "crates/gateway-migration-fixture-custody",
   "crates/gateway-migration-test-support",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
@@ -80,6 +84,7 @@ gateway-source-audit = { path = "crates/gateway-source-audit" }
 gateway-ledger-audit = { path = "crates/gateway-ledger-audit" }
 gateway-profile-values = { path = "crates/gateway-profile-values" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
+gateway-migration-graph = { path = "crates/gateway-migration-graph" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }
@@ -98,6 +103,9 @@ gateway-observability-test-support = { path = "crates/gateway-observability-test
 gateway-admin-test-support = { path = "crates/gateway-admin-test-support" }
 gateway-claude-runtime-test-support = { path = "crates/gateway-claude-runtime-test-support" }
 gateway-extras-runtime-test-support = { path = "crates/gateway-extras-runtime-test-support" }
+gateway-migration-fixture-port = { path = "crates/gateway-migration-fixture-port" }
+gateway-migration-fixture-inputs = { path = "crates/gateway-migration-fixture-inputs" }
+gateway-migration-fixture-custody = { path = "crates/gateway-migration-fixture-custody" }
 gateway-migration-test-support = { path = "crates/gateway-migration-test-support" }
 
 [profile.dev]

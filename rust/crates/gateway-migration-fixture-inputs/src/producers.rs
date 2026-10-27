@@ -1,6 +1,5 @@
 //! Fixed TEST producers only, from native-offline-fixture.rs:20-77 and
 //! runtime.rs:137-248,571-695. No command accepts keys, rows, SQL or callbacks.
-use super::{port, support_run};
 use gateway_admin_contracts::operations::{AdminHost, AdminInput};
 use gateway_admin_contracts::routes::AdminOperation;
 use gateway_auth::{store::key, types::AuthHost};
@@ -13,19 +12,11 @@ use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
     StoredRecord,
 };
+use gateway_migration_fixture_port::{executor::support_run, port};
 use gateway_migration_test_support::fixture::{RUNTIME_CASES, Receipt};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-// A reference to the SAME wire port, not a second store, row mirror or id counter.
-impl AuthorityStore for &port::Store {
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
-        (*self).read(key).await
-    }
-    async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        (*self).commit(tx).await
-    }
-}
 struct Tokens(AtomicU64);
 impl gateway_authority::store::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {

@@ -52,7 +52,7 @@ fn source_base64(bytes: &[u8]) -> String {
     }
     text
 }
-pub(crate) fn decode_source_bytes(value: &SourceJson) -> Result<Vec<u8>, GatewayError> {
+fn decode_source_bytes(value: &SourceJson) -> Result<Vec<u8>, GatewayError> {
     let text = scalar(value)?;
     let bytes = decode_base64(&text);
     if source_base64(&bytes) != text {
@@ -436,4 +436,9 @@ pub fn to_source_graph(value: &SourceGraph) -> Result<SourceJson, GatewayError> 
             )?,
         ),
     ])
+}
+
+/// Convert a validated identity-free current tree through the native source graph wire.
+pub fn tree_to_source_graph(value: &PortableValue) -> Result<SourceJson, GatewayError> {
+    to_source_graph(&crate::tree::from_tree(value)?)
 }

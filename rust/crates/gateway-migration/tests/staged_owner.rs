@@ -4,10 +4,10 @@ use gateway_core::{
     tuple_key::TupleKey,
 };
 use gateway_migration::{
-    graph_transport,
     native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
     staged::*,
 };
+use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use serde_json::{Value, json};

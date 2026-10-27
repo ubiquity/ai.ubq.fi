@@ -60,7 +60,7 @@ pub(crate) fn source_pool(value: &NativeValue) -> Result<CodexSourcePool, Gatewa
             "Codex source pool requires its explicit graph representation",
         ));
     };
-    let value = crate::graph_transport::from_source_graph(graph)?
+    let value = gateway_migration_graph::transport::from_source_graph(graph)?
         .try_identity_free_tree()?
         .and_then(|v| v.to_json_lossless())
         .ok_or_else(|| unavailable("Codex source pool graph lacks a business-schema binding"))?;
@@ -68,9 +68,9 @@ pub(crate) fn source_pool(value: &NativeValue) -> Result<CodexSourcePool, Gatewa
 }
 fn pool_value(pool: &CodexSourcePool) -> Result<NativeValue, GatewayError> {
     Ok(NativeValue::SourceGraphV1(
-        crate::graph_transport::to_source_graph(&crate::graph_tree::from_tree(
-            &PortableValue::from_json(&pool.private_source_value()),
-        )?)?,
+        gateway_migration_graph::transport::tree_to_source_graph(&PortableValue::from_json(
+            &pool.private_source_value(),
+        ))?,
     ))
 }
 pub(crate) fn codex_key(raw: &[u8]) -> Result<bool, GatewayError> {

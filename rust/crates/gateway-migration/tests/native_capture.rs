@@ -4,11 +4,11 @@ use gateway_core::{query::*, source_graph::GraphNode, state::*, tuple_key::Tuple
 use gateway_migration::native_capture::NativeRevision;
 use gateway_migration::{
     engine::adopt_empty,
-    graph_transport,
     inverse::{ArtifactContext, export_latest},
     native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
     native_inverse::{export_native_latest, export_native_rollback_bundle},
 };
+use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use serde_json::json;

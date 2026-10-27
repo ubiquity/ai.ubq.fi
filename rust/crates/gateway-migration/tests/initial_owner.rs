@@ -10,10 +10,10 @@ use gateway_core::{
 };
 use gateway_migration::{
     engine::{PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner},
-    graph_transport,
     initial_owner::InitialControlOwnerAdoptionReceipt,
     native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
 };
+use gateway_migration_graph::transport as graph_transport;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use serde_json::{Value, json};
