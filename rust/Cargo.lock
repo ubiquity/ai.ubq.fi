@@ -1119,6 +1119,7 @@ dependencies = [
  "gateway-native-connector",
  "gateway-native-connected-io",
  "gateway-native-http-framing",
+ "gateway-native-https-test-support",
  "gateway-native-import-client",
  "gateway-native-import-source",
  "gateway-native-import-test-support",
@@ -1185,6 +1186,16 @@ dependencies = [
  "gateway-core",
  "httparse",
  "serde_json",
+ "ureq",
+]
+
+[[package]]
+name = "gateway-native-https-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-native-wire",
+ "rustls",
  "ureq",
 ]
 
