@@ -142,18 +142,7 @@ async fn run(
                 },
             )
             .await;
-            let code = match response {
-                Ok(mut response) if (200..300).contains(&response.status_code()) => response
-                    .bytes()
-                    .await
-                    .ok()
-                    .and_then(|bytes| consume_code(&bytes)),
-                Ok(mut response) => {
-                    gateway_worker_http_body::body::discard_response(&mut response);
-                    None
-                }
-                Err(_) => None,
-            };
+            let code = consume_response(response).await;
             let (state, error, receipt) = reset_observation(code.as_deref());
             let observed = authority
                 .record_reset_outcome(&latest.into_inner(), state, receipt, error, now_ms()?)
@@ -182,6 +171,23 @@ async fn run(
         .promote_manual_reset(&action, config, &verified, &observation)
         .await?;
     serde_json::to_value(promoted).map_err(|_| unavailable("Reset promotion response is invalid."))
+}
+
+async fn consume_response(
+    response: Result<worker::Response, crate::transport::outbound::DispatchFailure>,
+) -> Option<String> {
+    match response {
+        Ok(mut response) if (200..300).contains(&response.status_code()) => response
+            .bytes()
+            .await
+            .ok()
+            .and_then(|bytes| consume_code(&bytes)),
+        Ok(mut response) => {
+            gateway_worker_http_body::body::discard_response(&mut response);
+            None
+        }
+        Err(_) => None,
+    }
 }
 
 fn reset_observation(code: Option<&str>) -> (ResetState, Option<&str>, Option<&str>) {
