@@ -1197,7 +1197,10 @@ name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-authority-actor-currentness",
  "gateway-authority-actor-records",
  "gateway-authority-api-protocol",
  "gateway-authority-api-quota",
@@ -1247,6 +1250,27 @@ dependencies = [
  "sha2 0.11.0",
  "ureq",
  "url",
+]
+
+[[package]]
+name = "gateway-authority-actor-currentness"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-attestation",
+ "gateway-auth-contracts",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-records",
+ "gateway-authority-api-protocol",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

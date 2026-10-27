@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
 gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
 gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
 gateway-source.workspace = true

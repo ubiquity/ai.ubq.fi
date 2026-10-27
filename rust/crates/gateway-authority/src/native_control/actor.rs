@@ -8,7 +8,7 @@ use gateway_auth::session_index;
 use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_auth::upstream;
 use gateway_authority_actor_records::{
-    legacy::{ConfigMethod, SourceActor, StoredNativeActor, config_digest, policy_digest},
+    legacy::{ConfigMethod, SourceActor, StoredNativeActor, config_digest},
     scope::NativeActorScope,
 };
 use gateway_authority_contracts::TokenSource;
@@ -382,167 +382,24 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
     stored: &StoredNativeActor,
     config: &AuthConfig,
 ) -> Result<CurrentNativeActor, GatewayError> {
-    if stored.v != 1 || stored.config_digest != config_digest(config)? {
-        return Err(fail());
-    }
-    ensure_lifetime(stored, tx.now)?;
-    if observed(tx, &keys::paid_control_owner()).await? != stored.owner_revision
-        || observed(tx, &keys::paid_control_config()).await? != stored.config_revision
-        || observed(tx, &runtime_key()).await? != stored.runtime_revision
-    {
-        return Err(fail());
-    }
-    let principal = match &stored.source {
-        SourceActor::Session {
-            digest,
-            index_revision,
-            session_revision,
-            user_id,
-            user_revision,
-            expires_at_ms,
-        } => {
-            let key = session_index::index_key(digest)?;
-            let index: session_index::SessionRevisionFence =
-                tx.read(&key).await?.ok_or_else(fail)?;
-            let user_key = passkeys::key("users", user_id);
-            let user: PasskeyUser = tx.read(&user_key).await?.ok_or_else(fail)?;
-            if index.v != 1
-                || index.session_digest != *digest
-                || index.session_revision != *session_revision
-                || index.user_id != *user_id
-                || index.expires_at_ms != *expires_at_ms
-                || tx.revision(&key).as_ref() != Some(index_revision)
-                || tx.revision(&user_key).as_ref() != Some(user_revision)
-                || user.id != *user_id
-                || (stored.scope == NativeActorScope::Admin && !user.is_admin)
-            {
-                return Err(fail());
-            }
-            format!("passkey-user:{user_id}")
-        }
-        SourceActor::ApiKey {
-            key_id,
-            token_hash,
-            hash_revision,
-            policy_revision,
-            ..
-        } => {
-            if stored.scope == NativeActorScope::Admin
-                || token_hash.len() != 43
-                || !token_hash
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-            {
-                return Err(fail());
-            }
-            let key = api_keys::hash_key(token_hash);
-            let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
-            let policy = api_keys::policy_from_record(token_hash.clone(), record, tx.now)?;
-            let policy_key = keys::api_policy(key_id);
-            let normalized: Option<gateway_authority_api_protocol::ApiKeyPolicy> =
-                tx.read(&policy_key).await?;
-            if let Some(normalized) = &normalized {
-                normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
-            }
-            if policy.key_id != *key_id
-                || tx.revision(&key).as_ref() != Some(hash_revision)
-                || tx.revision(&policy_key) != *policy_revision
-                || normalized.as_ref().is_some_and(|normalized| {
-                    policy.expires_at_ms != normalized.expires_at_ms
-                        || policy.window_ms != normalized.window_ms
-                        || policy.usage_limit_requests != normalized.usage_limit_requests
-                })
-            {
-                return Err(fail());
-            }
-            format!("api-key:{key_id}")
-        }
-        SourceActor::Configuration {
-            method, token_hash, ..
-        } => match method {
-            ConfigMethod::AuthAllowlist => {
-                if stored.scope == NativeActorScope::Admin
-                    || !config.auth_tokens.iter().any(|token| {
-                        Some(sha256_hex(token.expose().as_bytes())).as_ref() == token_hash.as_ref()
-                    })
-                {
-                    return Err(fail());
-                }
-                "auth-method:auth_tokens_allowlist".into()
-            }
-            ConfigMethod::AdminAllowlist => {
-                if !config.admin_tokens.iter().any(|token| {
-                    Some(sha256_hex(token.expose().as_bytes())).as_ref() == token_hash.as_ref()
-                }) {
-                    return Err(fail());
-                }
-                "auth-method:admin_allowlist".into()
-            }
-            ConfigMethod::Deno => {
-                if token_hash.is_none() {
-                    return Err(fail());
-                }
-                "auth-method:deno_deploy_token".into()
-            }
-            ConfigMethod::Disabled => token_hash.as_ref().map_or_else(
-                || "local-auth-disabled".into(),
-                |hash| format!("bearer-sha256:{hash}"),
-            ),
-        },
-        SourceActor::Passport {
-            sub,
-            jti,
-            expires_at_ms,
-        } => {
-            if stored.scope != NativeActorScope::Admin
-                || sub.is_empty()
-                || jti.is_empty()
-                || *expires_at_ms <= tx.now
-            {
-                return Err(fail());
-            }
-            format!("passport-user:{sub}")
-        }
-        SourceActor::Kernel {
-            owner,
-            repo,
-            scope,
-            repo_revision,
-            org_revision,
-            defaults_revision,
-            cutover_revision,
-            keys_revision,
-            ..
-        } => {
-            if stored.scope == NativeActorScope::Admin || !matches!(scope.as_str(), "org" | "repo")
-            {
-                return Err(fail());
-            }
-            if observed(tx, &keys::kernel_policy(owner, Some(repo))).await? != *repo_revision
-                || observed(tx, &keys::kernel_policy(owner, None)).await? != *org_revision
-                || observed(tx, &keys::kernel_defaults()).await? != *defaults_revision
-                || observed(tx, &keys::kernel_cutover()).await? != *cutover_revision
-                || observed(tx, &upstream::kernel_public_keys_key()).await? != *keys_revision
-            {
-                return Err(fail());
-            }
-            format!(
-                "github-repo:{}/{}",
-                owner.to_lowercase(),
-                repo.to_lowercase()
-            )
-        }
+    let now = tx.now;
+    let evidence = {
+        let reader = tx.routing_read_store();
+        gateway_authority_actor_currentness::legacy::LegacyActorReader::new(&reader, config, now)?
+            .read(stored)
+            .await?
     };
-    if principal != stored.principal {
-        return Err(fail());
+    for check in evidence.revision_checks() {
+        if !tx.expect(&check.key, &check.expected_revision) {
+            return Err(fail());
+        }
     }
     Ok(CurrentNativeActor {
-        principal,
-        scope: stored.scope,
-        policy_digest: policy_digest(stored)?,
+        principal: evidence.principal().to_owned(),
+        scope: evidence.scope(),
+        policy_digest: evidence.policy_digest().to_owned(),
     })
 }
-
 fn ensure_lifetime(stored: &StoredNativeActor, now: i64) -> Result<(), GatewayError> {
     if stored
         .source_valid_until_ms

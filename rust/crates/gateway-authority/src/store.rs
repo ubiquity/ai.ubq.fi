@@ -599,3 +599,17 @@ impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_runner::CacheRu
         gateway_cache_experiment_runner::CacheRunService::new(&self.store, self.clock.as_deref())
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn actors<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+    ) -> gateway_authority_actor_currentness::app::ActorService<'a, S, H> {
+        gateway_authority_actor_currentness::app::ActorService::new(&self.store, host, config)
+    }
+}
