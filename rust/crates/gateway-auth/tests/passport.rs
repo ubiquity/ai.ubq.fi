@@ -456,7 +456,8 @@ fn claim_signature_and_algorithm_failures_fail_closed() -> Result<(), Box<dyn st
     }
     let tampered = valid
         .rsplit_once('.')
-        .map(|(prefix, _)| format!("{prefix}.AAAA"))?;
+        .map(|(prefix, _)| format!("{prefix}.AAAA"))
+        .ok_or("missing synthetic JWT signature segment")?;
     assert!(verify_jwt(&tampered, &config, 1_500, &keys).is_err());
     Ok(())
 }

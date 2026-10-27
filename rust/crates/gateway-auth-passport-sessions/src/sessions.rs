@@ -1,6 +1,6 @@
 use gateway_auth_contracts::{types::AuthHost, upstream::AuthUpstreamRequest};
 use gateway_auth_passport_contracts::{
-    actor_data::{PassportAppSessionBinding, PassportAppSessionData, digest_shape},
+    actor_data::{PassportAppSessionBinding, PassportAppSessionData},
     passport::PassportConfig,
     session::{PassportDate, PassportSessionIdentity},
 };
