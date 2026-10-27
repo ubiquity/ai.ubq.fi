@@ -1,5 +1,5 @@
 //! Pinned source cohort/probe capabilities; never an ordinary admitted request.
-use super::{RefreshPermit, state::CyclePermit};
+use super::RefreshPermit;
 use crate::{routing::read_pinned_view, store::Authority, store::Transaction};
 use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_auth::provider_credentials::parse_codex_source_pool;
@@ -8,6 +8,7 @@ use gateway_authority_contracts::TokenSource;
 use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_records::{types::ProbeCircuit, types::ProbeLease};
 use gateway_authority_routing_signal::SignalOperations;
+use gateway_cache_experiment_campaign::CyclePermit;
 use gateway_cache_experiment_records::source::record_key;
 use gateway_cache_experiment_records::{RefreshContext, model::Reason, model::Sample};
 use gateway_cache_experiment_records::{model::TargetBinding, model::failed};
@@ -369,9 +370,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             v: 1,
             release_git_sha: release.into(),
             target: target.clone(),
-            campaign_owner: permit.state.campaign_owner.clone(),
-            cycle_owner: permit.cycle_owner.clone(),
-            cycle: permit.state.next_cycle,
+            campaign_owner: permit.state().campaign_owner.clone(),
+            cycle_owner: permit.cycle_owner().to_owned(),
+            cycle: permit.state().next_cycle,
             source_pool_revision: target.auth_pool_versionstamp.clone(),
             slot: 1,
             state_revision: tx

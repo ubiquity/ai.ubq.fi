@@ -1,6 +1,5 @@
 //! The source-owned cache campaign shares the existing transactional authority.
 //! A campaign is not inference admission, account election or another paid ledger.
-mod promotion;
 pub mod run;
 mod state;
 mod target;

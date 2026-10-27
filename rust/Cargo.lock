@@ -983,6 +983,7 @@ dependencies = [
  "gateway-authority-routing-selection",
  "gateway-authority-routing-signal",
  "gateway-authority-test-support",
+ "gateway-cache-experiment-campaign",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
  "gateway-core",
@@ -1460,6 +1461,20 @@ dependencies = [
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-cache-experiment-campaign"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-cache-experiment-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-core",
+ "gateway-schema",
  "serde",
  "serde_json",
 ]

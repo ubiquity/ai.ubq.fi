@@ -563,3 +563,17 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_routing_signal::Signal
         )
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_campaign::CacheCampaignFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn cache_campaign(&self) -> gateway_cache_experiment_campaign::CacheCampaignService<'_, S, I> {
+        gateway_cache_experiment_campaign::CacheCampaignService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}

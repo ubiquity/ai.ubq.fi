@@ -1,7 +1,9 @@
 //! One awaited source cycle per invocation; actual network/native I/O is a finite host capability.
-use super::{PreparedTarget, RefreshPermit, state::CyclePermit, transport::CacheDispatch};
+use super::{PreparedTarget, RefreshPermit, transport::CacheDispatch};
 use crate::store::Authority;
 use gateway_authority_contracts::TokenSource;
+use gateway_cache_experiment_campaign::promotion::CachePromotionOperations;
+use gateway_cache_experiment_campaign::{CacheCampaignOperations, CyclePermit};
 use gateway_cache_experiment_records::model::{
     CYCLE_MS, Cycle, Outcome, Reason, SAMPLE_MS, SLOTS, Sample, TargetBinding, classify, failed,
     sample_signal, unavailable,
@@ -120,7 +122,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         promoted: &mut bool,
         now: i64,
     ) -> Result<Value, GatewayError> {
-        let state = &permit.state;
+        let state = permit.state();
         let guard = if state.expires_at_ms <= self.fresh_time(now)? {
             Some(Reason::SessionExpired)
         } else if state.auth_pool_versionstamp != session.revision {
@@ -330,14 +332,11 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             .persist_cache_cycle(permit, &next, &cycle, self.fresh_time(now)?)
             .await?;
         if next.next_cycle <= 3 {
-            return Ok(intermediate);
+            return Ok(intermediate.into_response());
         }
         let target = next.target.clone();
-        let pending = CyclePermit {
-            state: next,
-            cycle_owner: permit.cycle_owner.clone(),
-        };
-        self.promote_cache_scope(&pending, &target, promoted, self.fresh_time(now)?)
+        let pending = intermediate.permit();
+        self.promote_cache_scope(pending, &target, promoted, self.fresh_time(now)?)
             .await
     }
 }
