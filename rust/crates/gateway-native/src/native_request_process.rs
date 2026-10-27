@@ -1,11 +1,13 @@
 //! An inherited native client is served in one expendable process. No listener.
 use crate::{
-    connector_fd::{ControlEndpoint, ReceiveProcess, Side},
-    connector_protocol::{ControlError, ControlFrame},
     daemon_config::NativeDaemonConfig,
     live_bridge::socket::{LiveDialContext, NativeLiveConnector},
 };
 use gateway_core::error::GatewayError;
+use gateway_native_connector::{
+    connector_fd::{ControlEndpoint, ReceiveProcess, Side},
+    connector_protocol::{ControlError, ControlFrame},
+};
 use rustix::event::PollFlags;
 use std::{
     io::{self, Read},
@@ -19,11 +21,11 @@ use std::{
     time::Duration,
 };
 pub fn run_native_request() -> ! {
-    if crate::require_production_artifact().is_err() {
+    if gateway_native_connector::artifact::require_production_artifact().is_err() {
         std::process::exit(ControlError::UnsupportedPlatform.exit_code());
     }
     ReceiveProcess::run(|process| {
-        crate::connector_policy::inherited_only_stdio()?;
+        gateway_native_connector::connector_policy::inherited_only_stdio()?;
         let mode = rustix::fs::fstat(std::io::stdin())
             .map_err(|_| ControlError::InvalidDescriptor)?
             .st_mode;
@@ -41,7 +43,7 @@ pub fn run_native_request() -> ! {
                     .try_clone_to_owned()
                     .map_err(io_error)?,
             );
-            crate::connector_policy::validate_unix_control(&channel)?;
+            gateway_native_connector::connector_policy::validate_unix_control(&channel)?;
             crate::daemon_startup::live_bootstrap::read_timeout(
                 &channel,
                 Some(Duration::from_secs(10)),
@@ -158,7 +160,7 @@ impl RequestConnector {
         process: Arc<ReceiveProcess>,
         completed: Arc<AtomicBool>,
     ) -> Result<Self, ControlError> {
-        crate::connector_policy::validate_unix_control(&control)?;
+        gateway_native_connector::connector_policy::validate_unix_control(&control)?;
         Ok(Self {
             control: Mutex::new(Some(control)),
             process,
@@ -192,9 +194,11 @@ impl NativeLiveConnector for RequestConnector {
                 endpoint.close();
                 return Err(error);
             }
-            let events =
-                crate::connector_worker::channel_events(&control, Duration::from_millis(2))
-                    .map_err(|_| unavailable())?;
+            let events = gateway_native_connector::connector_worker::channel_events(
+                &control,
+                Duration::from_millis(2),
+            )
+            .map_err(|_| unavailable())?;
             if events.contains(PollFlags::IN) {
                 break;
             }
@@ -203,9 +207,12 @@ impl NativeLiveConnector for RequestConnector {
             }
         }
         if let Err(error) = control.set_read_timeout(Some(context.remaining()?)) {
-            let ended = crate::connector_worker::channel_events(&control, Duration::ZERO)
-                .map_err(|_| unavailable())?
-                .contains(PollFlags::HUP);
+            let ended = gateway_native_connector::connector_worker::channel_events(
+                &control,
+                Duration::ZERO,
+            )
+            .map_err(|_| unavailable())?
+            .contains(PollFlags::HUP);
             if error.kind() != io::ErrorKind::InvalidInput || !ended {
                 return Err(unavailable());
             }

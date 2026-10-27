@@ -1,11 +1,13 @@
+#![cfg(all(target_os = "macos", feature = "native-import-fixture"))]
 //! Actual source-generated import policies with bounded synthetic local controls.
-use super::*;
+use gateway_native_connector::{connector_policy::import_actor, connector_protocol::ControlError};
 use std::{
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
     process::{Command, Stdio},
 };
+use std::{net::SocketAddr, path::Path};
 struct Root(std::path::PathBuf);
 impl Root {
     fn new() -> Self {

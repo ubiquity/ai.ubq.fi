@@ -1,6 +1,6 @@
-use crate::{connector_policy, connector_protocol::ControlError};
 use gateway_auth::crypto::base64url;
 use gateway_native_confinement::confinement::NativeConfinement;
+use gateway_native_connector::{connector_policy, connector_protocol::ControlError};
 use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
 use std::{
     io::{IoSlice, Read, Write},

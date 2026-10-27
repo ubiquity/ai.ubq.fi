@@ -24,7 +24,7 @@ pub struct LiveDialContext {
     alive: Arc<AtomicBool>,
     downstream: TcpStream,
     deadline: Instant,
-    connector_frame: Option<crate::connector_protocol::ControlFrame>,
+    connector_frame: Option<gateway_native_connector::connector_protocol::ControlFrame>,
 }
 impl LiveDialContext {
     pub(super) fn new(alive: Arc<AtomicBool>, downstream: TcpStream, deadline: Instant) -> Self {
@@ -42,9 +42,9 @@ impl LiveDialContext {
             self.downstream.try_clone().map_err(|_| unavailable())?,
             self.deadline,
         );
-        let frame = crate::connector_protocol::ControlFrame::Connect {
+        let frame = gateway_native_connector::connector_protocol::ControlFrame::Connect {
             v: 1,
-            channel: crate::connector_protocol::Channel::ProviderLive,
+            channel: gateway_native_connector::connector_protocol::Channel::ProviderLive,
             action_ref: authorization.action_ref.clone(),
             connection_id: authorization.connection_id.clone(),
             authorization_ref: authorization.authorization_ref.clone(),
@@ -55,7 +55,7 @@ impl LiveDialContext {
     }
     pub(crate) fn connector_frame(
         &self,
-    ) -> Result<crate::connector_protocol::ControlFrame, GatewayError> {
+    ) -> Result<gateway_native_connector::connector_protocol::ControlFrame, GatewayError> {
         self.check()?;
         self.connector_frame.clone().ok_or_else(unavailable)
     }

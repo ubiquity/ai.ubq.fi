@@ -80,7 +80,7 @@ pub fn request(
 /// Observe descriptor numbers only; never adopt or close a numeric FD. This
 /// runs before role threads/clones, so the directory iterator's FD is replaced
 /// by the safe marker after the iterator closes, without a concurrent opener.
-pub(crate) fn inherited_only_stdio() -> Result<(), ControlError> {
+pub fn inherited_only_stdio() -> Result<(), ControlError> {
     use std::{collections::BTreeSet, fs::File, os::fd::AsRawFd};
     let descriptors = std::fs::read_dir("/dev/fd").map_err(|_| ControlError::InvalidDescriptor)?;
     let mut numbers = BTreeSet::new();
@@ -101,9 +101,7 @@ pub(crate) fn inherited_only_stdio() -> Result<(), ControlError> {
     Ok(())
 }
 
-pub(crate) fn validate_unix_control(
-    control: &std::os::unix::net::UnixStream,
-) -> Result<(), ControlError> {
+pub fn validate_unix_control(control: &std::os::unix::net::UnixStream) -> Result<(), ControlError> {
     if rustix::net::sockopt::socket_type(control).map_err(|_| ControlError::InvalidDescriptor)?
         != rustix::net::SocketType::STREAM
     {
@@ -222,6 +220,3 @@ pub fn import_actor(
     }
     Ok(policy)
 }
-
-#[cfg(all(test, target_os = "macos", feature = "native-import-fixture"))]
-mod import_policy_tests;

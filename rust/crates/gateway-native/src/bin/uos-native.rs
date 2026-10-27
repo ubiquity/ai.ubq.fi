@@ -23,7 +23,7 @@ fn main() {
 
 #[cfg(unix)]
 fn run() -> Result<(), GatewayError> {
-    gateway_native::require_production_artifact()?;
+    gateway_native_connector::artifact::require_production_artifact()?;
     use gateway_native::{daemon_config::NativeDaemonConfig, http_server::NativeHttpService};
     use gateway_native_confinement::confinement::{NativeConfinement, enforce};
     use gateway_native_replay::nonce_sqlite::SqliteNonceStore;

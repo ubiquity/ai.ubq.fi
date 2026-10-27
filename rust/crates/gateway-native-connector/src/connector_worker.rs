@@ -17,7 +17,7 @@ use std::{
 };
 
 pub fn run_native_connector() -> ! {
-    if crate::require_production_artifact().is_err() {
+    if crate::artifact::require_production_artifact().is_err() {
         std::process::exit(ControlError::UnsupportedPlatform.exit_code());
     }
     ReceiveProcess::run(|process| {
@@ -140,10 +140,7 @@ fn io_error(error: io::Error) -> ControlError {
     ControlError::Io(error.kind())
 }
 
-pub(crate) fn channel_events(
-    stream: &UnixStream,
-    wait: Duration,
-) -> Result<PollFlags, ControlError> {
+pub fn channel_events(stream: &UnixStream, wait: Duration) -> Result<PollFlags, ControlError> {
     let timeout = Timespec::try_from(wait).map_err(|_| ControlError::InvalidFrame)?;
     let mut descriptors = [PollFd::new(stream, PollFlags::IN)];
     poll(&mut descriptors, Some(&timeout)).map_err(|error| io_error(error.into()))?;

@@ -386,7 +386,7 @@ fn actual_lost_publication_reply_reconciles_only_the_same_native_receipt() {
 
 #[test]
 fn fixture_enabled_ordinary_entrypoints_refuse_before_reading_stdin() {
-    assert!(crate::require_production_artifact().is_err());
+    assert!(gateway_native_connector::artifact::require_production_artifact().is_err());
     for name in [
         "uos-native",
         "uos-native-supervisor",

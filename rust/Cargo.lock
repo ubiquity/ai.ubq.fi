@@ -1116,6 +1116,7 @@ dependencies = [
  "gateway-authority",
  "gateway-core",
  "gateway-native-confinement",
+ "gateway-native-connector",
  "gateway-native-connected-io",
  "gateway-native-http-framing",
  "gateway-native-import-client",
@@ -1154,11 +1155,25 @@ dependencies = [
  "seccompiler",
 ]
 
+
 [[package]]
 name = "gateway-native-connected-io"
 version = "0.1.0"
 dependencies = [
  "ureq",
+]
+
+[[package]]
+name = "gateway-native-connector"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-native-confinement",
+ "rustix",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

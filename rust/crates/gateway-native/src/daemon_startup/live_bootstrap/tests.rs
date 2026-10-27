@@ -83,7 +83,7 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         #[cfg(target_os = "macos")]
-        let profile = crate::connector_policy::request(
+        let profile = gateway_native_connector::connector_policy::request(
             &binary,
             &gateway_native_confinement::confinement::NativeConfinement {
                 readonly_paths: Vec::new(),

@@ -2,8 +2,8 @@
 //! Named connector fixture runner. Test harness only; not a product role.
 mod connector_bootstrap_cases;
 mod connector_cases;
-use gateway_native::{connector_policy, connector_worker};
 use gateway_native_confinement::confinement;
+use gateway_native_connector::{connector_policy, connector_worker};
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
@@ -82,8 +82,8 @@ fn print_policy(name: &str) {
     );
 }
 
-use gateway_native::connector_fd::{ControlEndpoint, ReceiveProcess, Side};
-use gateway_native::connector_protocol::{Channel, ControlError, ControlFrame};
+use gateway_native_connector::connector_fd::{ControlEndpoint, ReceiveProcess, Side};
+use gateway_native_connector::connector_protocol::{Channel, ControlError, ControlFrame};
 use std::{
     os::{fd::AsFd, unix::net::UnixStream},
     time::Duration,

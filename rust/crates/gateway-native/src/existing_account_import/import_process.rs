@@ -118,7 +118,9 @@ impl PreparedImportActor {
 /// Ordinary executable always refuses fixture-enabled artifacts before stdin,
 /// credentials, sockets or replay storage. The fixed test harness is separate.
 pub fn run_native_import() -> ! {
-    if crate::require_production_artifact().is_err() || !cfg!(target_os = "macos") {
+    if gateway_native_connector::artifact::require_production_artifact().is_err()
+        || !cfg!(target_os = "macos")
+    {
         std::process::exit(78);
     }
     exit_actor()

@@ -206,7 +206,7 @@ where
     I: TokenSource + Send + Sync,
     H: NativeImportHandler + ?Sized,
 {
-    crate::require_production_artifact()?;
+    gateway_native_connector::artifact::require_production_artifact()?;
     if !stream
         .peer_addr()
         .map_err(|_| unavailable())?

@@ -123,7 +123,7 @@ fn reference(value: &str) -> Result<(), ControlError> {
 }
 
 impl ControlError {
-    pub(crate) fn exit_code(self) -> i32 {
+    pub fn exit_code(self) -> i32 {
         match self {
             Self::InvalidFrame => 64,
             Self::FrameTooLarge => 65,

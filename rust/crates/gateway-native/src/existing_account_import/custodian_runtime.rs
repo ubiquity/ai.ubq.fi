@@ -50,7 +50,7 @@ impl CustodianRuntime {
         client: std::net::TcpStream,
         config: &[u8],
     ) -> Result<(), GatewayError> {
-        crate::require_production_artifact()?;
+        gateway_native_connector::artifact::require_production_artifact()?;
         let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
         let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
         let endpoints =

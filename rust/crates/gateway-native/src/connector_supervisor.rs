@@ -1,10 +1,8 @@
 //! Trusted prelaunch authority. Owns child handles, never ancillary/provider I/O.
-use crate::{
-    connector_policy, connector_protocol::ControlError, daemon_config::NativeDaemonConfig,
-    http_server,
-};
+use crate::{daemon_config::NativeDaemonConfig, http_server};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::error::GatewayError;
+use gateway_native_connector::{connector_policy, connector_protocol::ControlError};
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
     fs,
@@ -22,7 +20,7 @@ use std::{
 };
 
 pub fn run_native_supervisor() -> ! {
-    if crate::require_production_artifact().is_err() {
+    if gateway_native_connector::artifact::require_production_artifact().is_err() {
         std::process::exit(ControlError::UnsupportedPlatform.exit_code());
     }
     let code = match run() {

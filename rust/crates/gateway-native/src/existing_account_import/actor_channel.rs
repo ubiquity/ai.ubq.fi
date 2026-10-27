@@ -179,7 +179,7 @@ impl OwnedImportChildChannel {
             account_id_hash: account_id_hash.into(),
         };
         boot.validate()?;
-        let profile = crate::connector_policy::import_actor(
+        let profile = gateway_native_connector::connector_policy::import_actor(
             actor.path(),
             owner_root,
             replay_directory,
@@ -427,7 +427,8 @@ pub(super) struct ActorBootstrap {
 impl ActorBootstrap {
     // Only the fixed parameterless import role calls this, before any thread or FD clone.
     pub(super) fn from_stdio() -> Result<Self, GatewayError> {
-        crate::connector_policy::inherited_only_stdio().map_err(|_| unavailable())?;
+        gateway_native_connector::connector_policy::inherited_only_stdio()
+            .map_err(|_| unavailable())?;
         let stdin = std::io::stdin();
         if rustix::fs::FileType::from_raw_mode(
             rustix::fs::fstat(&stdin)

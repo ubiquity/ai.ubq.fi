@@ -1,6 +1,6 @@
 //! One purpose-bound reverse FD, delivered only to an expendable request process.
-use crate::{connector_fd::ReceiveProcess, connector_protocol::ControlError};
 use gateway_auth::crypto::sha256_hex;
+use gateway_native_connector::{connector_fd::ReceiveProcess, connector_protocol::ControlError};
 use rustix::{
     io::{FdFlags, fcntl_getfd, fcntl_setfd},
     net::{
@@ -53,8 +53,11 @@ pub(crate) fn read_timeout(
     // control receiver, retain queued final bytes/rights until recvmsg/EOF.
     if let Err(error) = channel.set_read_timeout(timeout)
         && (error.kind() != std::io::ErrorKind::InvalidInput
-            || !crate::connector_worker::channel_events(channel, Duration::ZERO)?
-                .contains(rustix::event::PollFlags::HUP))
+            || !gateway_native_connector::connector_worker::channel_events(
+                channel,
+                Duration::ZERO,
+            )?
+            .contains(rustix::event::PollFlags::HUP))
     {
         return Err(io_error(error));
     }

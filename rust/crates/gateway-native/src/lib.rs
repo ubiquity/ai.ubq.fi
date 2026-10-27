@@ -1,32 +1,8 @@
 //! Narrow native capabilities. No shell, arbitrary URL/path or generic JSON-RPC ingress.
-use gateway_core::error::GatewayError;
-/// A compile-time fixture artifact is never an ordinary native service, even
-/// when dependency feature unification enabled it without the native feature.
-pub fn require_production_artifact() -> Result<(), GatewayError> {
-    if gateway_authority::NATIVE_IMPORT_FIXTURE_ENABLED {
-        return Err(GatewayError::unavailable(
-            "Fixture-enabled artifacts cannot run native services",
-            "native_fixture_artifact_forbidden",
-        ));
-    }
-    Ok(())
-}
 #[cfg(unix)]
 pub mod authority_http;
 #[cfg(unix)]
-#[doc(hidden)]
-pub mod connector_fd;
-#[cfg(unix)]
-#[doc(hidden)]
-pub mod connector_policy;
-#[cfg(unix)]
-#[doc(hidden)]
-pub mod connector_protocol;
-#[cfg(unix)]
 pub mod connector_supervisor;
-#[cfg(unix)]
-#[doc(hidden)]
-pub mod connector_worker;
 pub mod daemon_config;
 #[cfg(unix)]
 mod daemon_startup;
