@@ -1,6 +1,6 @@
 //! Current Claude subscription block projection, retaining source property order and UTF16 leaves.
 use gateway_auth::types::AuthResponseBody;
-use gateway_core::{error::GatewayError,source_json::SourceJson};
+use gateway_core::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 pub fn subscription_block(body: AuthResponseBody) -> Result<SourceJson, GatewayError> {
     match body {
@@ -25,10 +25,10 @@ pub fn subscription_block(body: AuthResponseBody) -> Result<SourceJson, GatewayE
 
 #[cfg(test)]
 mod tests {
-use super::subscription_block;
-use gateway_auth::types::{AuthResponse,AuthResponseBody};
-use gateway_core::source_json::SourceJson;
-use serde_json::{Value,json};
+    use super::subscription_block;
+    use gateway_auth::types::{AuthResponse, AuthResponseBody};
+    use gateway_core::source_json::SourceJson;
+    use serde_json::{Value, json};
     #[test]
     fn admin_readback_preserves_both_unpaired_utf16_directions_in_raw_quota() {
         let raw = r#"{"claude_code":{"accounts":[{"quota":{"last_error":{"message":"high\ud800"}}}],"quota":{"last_error":{"message":"low\udfff"}}}}"#;
@@ -68,5 +68,4 @@ use serde_json::{Value,json};
             "null"
         );
     }
-
 }

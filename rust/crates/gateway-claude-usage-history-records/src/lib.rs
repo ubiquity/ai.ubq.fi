@@ -47,17 +47,29 @@ pub fn used_percent(value: Option<f64>) -> Option<f64> {
         .map(|n| (n * 100.0).min(100.0))
 }
 /// Source capacity projection for one canonical window, retaining nullable leaves.
-pub fn window_source(windows:&SourceJson,name:&str)->Result<Option<SourceJson>,GatewayError>{
-    if !windows.as_str().trim_start().starts_with('{'){return Ok(None);}
-    let input=SourceObject::parse(windows)?;
-    let Some(input)=input.get(name).filter(|v|v.as_str().trim_start().starts_with('{')) else{return Ok(None);};
-    let input=SourceObject::parse(input)?;
-    let null=SourceJson::parse("null")?;
-    let leaf=|name|input.get(name).cloned().unwrap_or_else(||null.clone());
-    let utilization=source::number(&leaf("utilization")).filter(|n|n.is_finite());
+pub fn window_source(windows: &SourceJson, name: &str) -> Result<Option<SourceJson>, GatewayError> {
+    if !windows.as_str().trim_start().starts_with('{') {
+        return Ok(None);
+    }
+    let input = SourceObject::parse(windows)?;
+    let Some(input) = input
+        .get(name)
+        .filter(|v| v.as_str().trim_start().starts_with('{'))
+    else {
+        return Ok(None);
+    };
+    let input = SourceObject::parse(input)?;
+    let null = SourceJson::parse("null")?;
+    let leaf = |name| input.get(name).cloned().unwrap_or_else(|| null.clone());
+    let utilization = source::number(&leaf("utilization")).filter(|n| n.is_finite());
     Ok(Some(source::object(vec![
-        ("status",leaf("status")),("used_percent",SourceJson::from_serializable(&used_percent(utilization))?),
-        ("reset_at_ms",leaf("reset_at_ms")),("observed_at_ms",leaf("observed_at_ms")),
+        ("status", leaf("status")),
+        (
+            "used_percent",
+            SourceJson::from_serializable(&used_percent(utilization))?,
+        ),
+        ("reset_at_ms", leaf("reset_at_ms")),
+        ("observed_at_ms", leaf("observed_at_ms")),
     ])?))
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -122,11 +134,19 @@ pub struct Point {
     pub state: ClaudeObservationState,
     pub response_status: Option<f64>,
     pub windows: Windows,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with="present_snapshot")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_snapshot"
+    )]
     pub usage_snapshot: Option<SourceJson>,
     pub standard: Vec<Standard>,
 }
-fn present_snapshot<'de,D:serde::Deserializer<'de>>(deserializer:D)->Result<Option<SourceJson>,D::Error>{<SourceJson as Deserialize>::deserialize(deserializer).map(Some)}
+fn present_snapshot<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<SourceJson>, D::Error> {
+    <SourceJson as Deserialize>::deserialize(deserializer).map(Some)
+}
 impl Point {
     pub fn clock(&self) -> f64 {
         self.source_observed_at_ms.unwrap_or(self.sampled_at_ms)
@@ -176,7 +196,10 @@ impl Point {
             * HOUR_MS as f64
     }
     pub fn rollup_key(&self, name: &str) -> Result<RecordKey, GatewayError> {
-        let w = self.windows.get(name).ok_or_else(||error("Claude rollup window is absent"))?;
+        let w = self
+            .windows
+            .get(name)
+            .ok_or_else(|| error("Claude rollup window is absent"))?;
         Ok(rollup_key_parts(
             self.rollup_bucket(w),
             &self.account_id,
@@ -616,15 +639,15 @@ pub fn retain_source(
                 .as_ref()
                 .and_then(source::array)?;
             rows.iter()
-                    .map(|m| {
-                        Some((
-                            source::member(m, "id").as_ref().and_then(source::string)?,
-                            source::member(m, "resets_at")
-                                .as_ref()
-                                .and_then(source::string),
-                        ))
-                    })
-                    .collect::<Option<Vec<_>>>()
+                .map(|m| {
+                    Some((
+                        source::member(m, "id").as_ref().and_then(source::string)?,
+                        source::member(m, "resets_at")
+                            .as_ref()
+                            .and_then(source::string),
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()
         };
         let before = parsed
             .iter()
@@ -735,12 +758,12 @@ pub fn merge_source(
         last_used_percent: if newer {
             w.used_percent
         } else {
-            old.as_ref().and_then(|p|p.last_used_percent)
+            old.as_ref().and_then(|p| p.last_used_percent)
         },
         last_status: if newer {
             w.status.clone()
         } else {
-            old.as_ref().and_then(|p|p.last_status.clone())
+            old.as_ref().and_then(|p| p.last_status.clone())
         },
     };
     source::canonical(&SourceJson::from_serializable(&rollup)?)

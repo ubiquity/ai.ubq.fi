@@ -8,8 +8,8 @@ use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
 use gateway_auth::webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto};
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_runtime::host::{
-    ClaudePoolHost, HealthObservation, OutcomeDecision, PoolConfig,
-    PoolSelection, ResponseObservation, SelectedAccount, SelectionInput, WorkspaceResponse,
+    ClaudePoolHost, HealthObservation, OutcomeDecision, PoolConfig, PoolSelection,
+    ResponseObservation, SelectedAccount, SelectionInput, WorkspaceResponse,
 };
 use gateway_claude_runtime::persistence::quota_key;
 use gateway_claude_runtime::pool::ClaudePoolSession;

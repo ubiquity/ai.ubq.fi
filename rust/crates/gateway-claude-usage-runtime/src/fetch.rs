@@ -210,7 +210,10 @@ fn retry_after(
         .filter(|at| *at > 0)
         .map(|date| ((date as f64) - (at as f64)).max(0.0))
 }
-pub async fn fetch<H: UsageHost>(host: &H, account: &AccountBinding) -> Result<ResultData,GatewayError> {
+pub async fn fetch<H: UsageHost>(
+    host: &H,
+    account: &AccountBinding,
+) -> Result<ResultData, GatewayError> {
     if account.credential.kind != CredentialKind::Oauth {
         return Ok(fail("unsupported_credential",None,host.now_ms(),Some("Claude Console API keys do not expose the OAuth usage endpoint; gateway traffic continues to update the meter.".into()),None));
     }

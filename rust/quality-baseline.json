@@ -5,17 +5,17 @@
     "gateway-auth": 8509,
     "gateway-authority": 32269,
     "gateway-catalog-runtime": 3357,
-    "gateway-claude-runtime": 1731,
+    "gateway-claude-runtime": 1730,
     "gateway-compaction": 3177,
     "gateway-core": 4791,
     "gateway-extras-runtime": 2440,
     "gateway-migration": 9759,
     "gateway-native": 22320,
-    "gateway-observability": 11450,
+    "gateway-observability": 11435,
     "gateway-providers": 9739,
     "gateway-routing-runtime": 7944,
     "gateway-schema": 7618,
-    "gateway-worker": 20072
+    "gateway-worker": 20069
   },
   "targets": {
     "gateway-authority/test/conformance": 5558,

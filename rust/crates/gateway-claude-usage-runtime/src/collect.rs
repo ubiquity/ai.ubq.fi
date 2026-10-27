@@ -126,66 +126,64 @@ fn unavailable() -> GatewayError {
     )
 }
 
-async fn collect_claimed<S: AuthorityStore,H:UsageHost>(store:&S,host:&H,account:&AccountBinding)->Result<Refresh,GatewayError>{
-
-        if let Some(usage) = load(store, account, host.now_ms())
-            .await?
-            .and_then(|q| q.usage)
-            .filter(|u| u.fresh(host.now_ms()))
-        {
-            return Ok(Refresh::Fresh(usage));
-        }
-        if claude::current_binding(store, account, host.now_ms())
-            .await?
-            .is_none()
-        {
-            return Ok(Refresh::Changed);
-        }
-        let result = fetch::fetch(host, account).await?;
-        let usage = result.usage();
-        let Some(state) = gateway_claude_runtime::quota::record_usage(
-            store,
-            host,
-            account,
-            result.observation(),
-            &usage,
-        )
+async fn collect_claimed<S: AuthorityStore, H: UsageHost>(
+    store: &S,
+    host: &H,
+    account: &AccountBinding,
+) -> Result<Refresh, GatewayError> {
+    if let Some(usage) = load(store, account, host.now_ms())
         .await?
-        else {
-            return Ok(Refresh::Changed);
+        .and_then(|q| q.usage)
+        .filter(|u| u.fresh(host.now_ms()))
+    {
+        return Ok(Refresh::Fresh(usage));
+    }
+    if claude::current_binding(store, account, host.now_ms())
+        .await?
+        .is_none()
+    {
+        return Ok(Refresh::Changed);
+    }
+    let result = fetch::fetch(host, account).await?;
+    let usage = result.usage();
+    let Some(state) = gateway_claude_runtime::quota::record_usage(
+        store,
+        host,
+        account,
+        result.observation(),
+        &usage,
+    )
+    .await?
+    else {
+        return Ok(Refresh::Changed);
+    };
+    if let Some(observation) = result.observation() {
+        let event = gateway_claude_usage_quota::observation::AcceptedObservation {
+            v: 1,
+            observation_id: uuid_from_random(&host.random_bytes(16)?)?,
+            account_id: account.account_id.clone(),
+            account_cohort_id: account.account_cohort_id.clone(),
+            credential_kind: match account.credential.kind {
+                claude::CredentialKind::Oauth => "oauth",
+                claude::CredentialKind::ApiKey => "api_key",
+            }
+            .into(),
+            workspace_id: account.workspace.as_ref().map(|w| w.id.clone()),
+            source_observed_at_ms: usage.observed_at_ms,
+            sampled_at_ms: usage.attempted_at_ms,
+            response_status: usage.status,
+            state: if gateway_claude_runtime::quota::blocked(Some(&state), usage.attempted_at_ms)
+                || gateway_claude_runtime::quota::cooling_down(Some(&state), usage.attempted_at_ms)
+            {
+                "unavailable"
+            } else {
+                "available"
+            }
+            .into(),
+            observation: observation.clone(),
         };
-        if let Some(observation) = result.observation() {
-            let event = gateway_claude_usage_quota::observation::AcceptedObservation {
-                v: 1,
-                observation_id: uuid_from_random(&host.random_bytes(16)?)?,
-                account_id: account.account_id.clone(),
-                account_cohort_id: account.account_cohort_id.clone(),
-                credential_kind: match account.credential.kind {
-                    claude::CredentialKind::Oauth => "oauth",
-                    claude::CredentialKind::ApiKey => "api_key",
-                }
-                .into(),
-                workspace_id: account.workspace.as_ref().map(|w| w.id.clone()),
-                source_observed_at_ms: usage.observed_at_ms,
-                sampled_at_ms: usage.attempted_at_ms,
-                response_status: usage.status,
-                state: if gateway_claude_runtime::quota::blocked(
-                    Some(&state),
-                    usage.attempted_at_ms,
-                ) || gateway_claude_runtime::quota::cooling_down(
-                    Some(&state),
-                    usage.attempted_at_ms,
-                ) {
-                    "unavailable"
-                } else {
-                    "available"
-                }
-                .into(),
-                observation: observation.clone(),
-            };
-            // Source post-acceptance telemetry failure cannot revoke accepted quota.
-            let _ = host.accepted_usage(&event).await;
-        }
-        Ok(Refresh::Completed { result, usage })
-
+        // Source post-acceptance telemetry failure cannot revoke accepted quota.
+        let _ = host.accepted_usage(&event).await;
+    }
+    Ok(Refresh::Completed { result, usage })
 }

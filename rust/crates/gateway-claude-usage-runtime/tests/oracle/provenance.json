@@ -1,6 +1,7 @@
 {
   "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
   "files": {
+    "generate-wire.ts": "931176df002ed66b64b6a11a822b75f4052c2b647cba9bf0c3c243a11a231664",
     "generate-history.ts": "7979a60f5e72c730f7236c6afc7bf2b8d15fcb44879109c2b3e6794e300f024d",
     "generate.ts": "ee7825deb80571ed04f4c11d01dc8935406944323f009451c5630edd9630e109",
     "source-constants.ts": "8f3a1d1e613efcacd2099507de36f58a6e3c257560d226061f96272e04c8409a",

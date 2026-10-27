@@ -1,5 +1,5 @@
 use crate::{
-    host::{ClaudePoolHost, PoolConfig, ResponseObservation, CommittedOutcome},
+    host::{ClaudePoolHost, CommittedOutcome, PoolConfig, ResponseObservation},
     quota::{self, Outcome},
     response::{Classification, ResponseKind},
 };

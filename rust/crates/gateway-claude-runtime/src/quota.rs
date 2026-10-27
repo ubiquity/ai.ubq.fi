@@ -1,10 +1,11 @@
 //! Current-account quota outcome authority; codecs are defined in the data owner.
 use gateway_admin_runtime::claude::AccountBinding;
+use gateway_auth::types::AuthHost;
 use gateway_claude_usage_quota::{
     AUTH_INVALID_PROOF_TTL_MS, CONFIG_COOLDOWN_MS, Exhaustion, MIN_BLOCK_MS, PoolProof, QuotaError,
     QuotaObservation, QuotaState, RESET_MARGIN_MS, TRANSIENT_COOLDOWN_MS,
 };
-use gateway_core::{js_string::JsString16, model::ModelId};
+use gateway_core::{js_string::JsString16, model::ModelId, state::AuthorityStore};
 use std::collections::BTreeMap;
 fn safe_integer(n: f64) -> bool {
     n.is_finite() && n.fract() == 0.0 && n.abs() <= gateway_core::identity::MAX_SAFE_INTEGER as f64
@@ -70,7 +71,7 @@ pub(crate) fn merge(
         last_error: None,
         updated_at_ms: now as f64,
     });
-    merge_observation(&mut next,observation);
+    merge_observation(&mut next, observation);
     if next.blocked_until_ms.is_some_and(|at| at <= now as f64) {
         next.blocked_until_ms = None;
         next.block_window = None;
@@ -183,10 +184,7 @@ pub(crate) fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
 
 /// Usage has no model, served outcome, credential-invalidity or exhaustion proof.
 /// The same current roster revision and quota revision are checked in the write.
-pub async fn record_usage<
-    S: gateway_core::state::AuthorityStore,
-    H: gateway_auth::types::AuthHost,
->(
+pub async fn record_usage<S: AuthorityStore, H: AuthHost>(
     store: &S,
     host: &H,
     binding: &AccountBinding,
@@ -226,7 +224,9 @@ pub async fn record_usage<
             next.blocked_until_ms = None;
             next.block_window = None;
         }
-        if let Some(observation)=observation {merge_observation(&mut next,observation);}
+        if let Some(observation) = observation {
+            merge_observation(&mut next, observation);
+        }
         if next
             .usage
             .as_ref()
@@ -236,7 +236,7 @@ pub async fn record_usage<
         }
         next.updated_at_ms = now as f64;
         // A bound source outcome records an empty proof map when no proof exists.
-        if next.pool_proofs.is_none() { next.pool_proofs=Some(BTreeMap::new()); }
+        next.pool_proofs = Some(next.pool_proofs.take().unwrap_or_default());
         let revision = gateway_auth::crypto::uuid_from_random(&host.random_bytes(16)?)?;
         let record = gateway_claude_usage_quota::stored_state(&next, revision)?;
         if commit(
@@ -252,7 +252,7 @@ pub async fn record_usage<
     Ok(None)
 }
 
-fn merge_observation(next:&mut QuotaState,observation:&QuotaObservation) {
+fn merge_observation(next: &mut QuotaState, observation: &QuotaObservation) {
     for (id, window) in &observation.windows {
         if next
             .windows

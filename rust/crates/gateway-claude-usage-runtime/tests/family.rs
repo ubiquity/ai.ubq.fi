@@ -5,9 +5,9 @@ use gateway_auth::{
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_claude_runtime::host::ClaudePoolHost;
-use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_claude_runtime_test_support::fixture::{Host, NOW, Store, account, run, seed};
 use gateway_claude_usage_protocol::state::UsageState;
+use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_claude_usage_runtime::{
     admin,
     collect::{self, Refresh},
@@ -32,6 +32,7 @@ struct Fixture {
     response: RefCell<(u16, JsString16, Option<String>)>,
     dates: Vec<(JsString16, Option<i64>)>,
     unreachable: Cell<bool>,
+    setup_failure: Cell<bool>,
 }
 impl Fixture {
     fn new(store: &Store) -> Result<Self, Box<dyn std::error::Error>> {
@@ -49,6 +50,7 @@ impl Fixture {
                 .ok_or("dates absent")?
                 .deserialize()?,
             unreachable: Cell::new(false),
+            setup_failure: Cell::new(false),
         })
     }
 }
@@ -93,7 +95,17 @@ impl UsageHost for Fixture {
     async fn accepted_usage(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
         self.base.accepted_observation(event).await
     }
-    async fn usage_get(&self, _: &AccountBinding) -> Result<Response, gateway_claude_usage_runtime::fetch::GetFailure> {
+    async fn usage_get(
+        &self,
+        _: &AccountBinding,
+    ) -> Result<Response, gateway_claude_usage_runtime::fetch::GetFailure> {
+        if self.setup_failure.get() {
+            return Err(fetch::GetFailure::Setup(GatewayError::new(
+                500,
+                "Internal server error",
+                Some("server_error"),
+            )));
+        }
         self.calls.set(self.calls.get() + 1);
         std::future::poll_fn(|_| {
             if self.held.get() {
@@ -104,7 +116,9 @@ impl UsageHost for Fixture {
         })
         .await;
         if self.unreachable.get() {
-            return Err(fetch::GetFailure::Unreachable(Some(" disconnected\n diagnostic ".into())));
+            return Err(fetch::GetFailure::Unreachable(Some(
+                " disconnected\n diagnostic ".into(),
+            )));
         }
         let (status, body, retry_after) = self.response.borrow().clone();
         Ok(Response {
@@ -218,7 +232,12 @@ fn inference_recency_is_independent_and_usage_failure_never_mints_pool_proof() -
         q.usage.as_ref().ok_or("usage absent")?.state,
         "auth_invalid"
     );
-    assert!(q.pool_proofs.as_ref().ok_or("bound proof map absent")?.is_empty());
+    assert!(
+        q.pool_proofs
+            .as_ref()
+            .ok_or("bound proof map absent")?
+            .is_empty()
+    );
     assert!(q.last_error.is_none());
     assert!(q.cooldown_until_ms.is_none());
     assert!(q.blocked_until_ms.is_none());
@@ -456,36 +475,116 @@ fn older_attempts_and_snapshots_do_not_replace_newer_success_and_restart_retains
 }
 
 #[test]
-fn a_refresh_committing_before_claim_is_found_by_the_second_freshness_check()->TestResult{
- let store=Store::new();let a=account(1);seed(&store,vec![a.clone()]);let host=Fixture::new(&store)?;
- let s=store.clone();let binding=a.clone();
- *store.after_read.borrow_mut()=Some((gateway_claude_runtime::persistence::quota_key(&a),Box::new(move||{
-  let h=Host::new(&s);let result=run(gateway_claude_runtime::quota::record_usage(&s,&h,&binding,None,&usage(NOW,"ok")));
-  assert!(result.is_ok());
- })));
- assert!(matches!(run(collect::refresh(&store,&host,&a))?,Refresh::Fresh(_)));
- assert_eq!(host.calls.get(),0);assert!(store.get(&collect::lease_key(&a)).is_none());Ok(())
+fn a_refresh_committing_before_claim_is_found_by_the_second_freshness_check() -> TestResult {
+    let store = Store::new();
+    let a = account(1);
+    seed(&store, vec![a.clone()]);
+    let host = Fixture::new(&store)?;
+    let s = store.clone();
+    let binding = a.clone();
+    *store.after_read.borrow_mut() = Some((
+        gateway_claude_runtime::persistence::quota_key(&a),
+        Box::new(move || {
+            let h = Host::new(&s);
+            let result = run(gateway_claude_runtime::quota::record_usage(
+                &s,
+                &h,
+                &binding,
+                None,
+                &usage(NOW, "ok"),
+            ));
+            assert!(result.is_ok());
+        }),
+    ));
+    assert!(matches!(
+        run(collect::refresh(&store, &host, &a))?,
+        Refresh::Fresh(_)
+    ));
+    assert_eq!(host.calls.get(), 0);
+    assert!(store.get(&collect::lease_key(&a)).is_none());
+    Ok(())
 }
 #[test]
-fn roster_change_between_strong_read_and_lease_claim_is_rejected_by_the_real_cas()->TestResult{
- let store=Store::new();let a=account(1);seed(&store,vec![a.clone()]);let host=Fixture::new(&store)?;
- let s=store.clone();let id=a.account_id.clone();
- *store.after_read.borrow_mut()=Some((gateway_claude_runtime::persistence::quota_key(&a),Box::new(move||{
-  let h=Host::new(&s);assert!(run(claude::remove_account(&s,&h,&claude::Bootstrap::default(),Some(&id))).is_ok());
- })));
- assert!(matches!(run(collect::refresh(&store,&host,&a))?,Refresh::Busy));assert_eq!(host.calls.get(),0);assert!(store.get(&collect::lease_key(&a)).is_none());Ok(())
+fn roster_change_between_strong_read_and_lease_claim_is_rejected_by_the_real_cas() -> TestResult {
+    let store = Store::new();
+    let a = account(1);
+    seed(&store, vec![a.clone()]);
+    let host = Fixture::new(&store)?;
+    let s = store.clone();
+    let id = a.account_id.clone();
+    *store.after_read.borrow_mut() = Some((
+        gateway_claude_runtime::persistence::quota_key(&a),
+        Box::new(move || {
+            let h = Host::new(&s);
+            assert!(
+                run(claude::remove_account(
+                    &s,
+                    &h,
+                    &claude::Bootstrap::default(),
+                    Some(&id)
+                ))
+                .is_ok()
+            );
+        }),
+    ));
+    assert!(matches!(
+        run(collect::refresh(&store, &host, &a))?,
+        Refresh::Busy
+    ));
+    assert_eq!(host.calls.get(), 0);
+    assert!(store.get(&collect::lease_key(&a)).is_none());
+    Ok(())
 }
 
 #[test]
-fn pristine_bootstrap_returns_empty_before_legacy_workspace_and_tombstone_prevents_resurrection()->TestResult {
-    let store=Store::new();let host=Host::new(&store);
-    let read=std::rc::Rc::new(Cell::new(false));let mark=read.clone();
-    *store.after_read.borrow_mut()=Some((gateway_auth::store::key(json!(["ubq_ai","claude_code_workspace"])),Box::new(move||mark.set(true))));
-    let empty=run(claude::load_roster(&store,&host,&claude::Bootstrap::default()))?;
-    assert!(empty.roster.accounts.is_empty());assert!(empty.revision.is_none());assert!(!read.get());assert_eq!(store.commits.get(),0);
-    seed(&store,vec![]);
-    let a=account(1);
-    let seed=claude::Bootstrap{credential:Some(a.credential),workspace:None};
-    let empty=run(claude::load_roster(&store,&host,&seed))?;
-    assert!(empty.roster.accounts.is_empty());assert!(empty.revision.is_some());assert!(!read.get());Ok(())
+fn pristine_bootstrap_returns_empty_before_legacy_workspace_and_tombstone_prevents_resurrection()
+-> TestResult {
+    let store = Store::new();
+    let host = Host::new(&store);
+    let read = std::rc::Rc::new(Cell::new(false));
+    let mark = read.clone();
+    *store.after_read.borrow_mut() = Some((
+        gateway_auth::store::key(json!(["ubq_ai", "claude_code_workspace"])),
+        Box::new(move || mark.set(true)),
+    ));
+    let empty = run(claude::load_roster(
+        &store,
+        &host,
+        &claude::Bootstrap::default(),
+    ))?;
+    assert!(empty.roster.accounts.is_empty());
+    assert!(empty.revision.is_none());
+    assert!(!read.get());
+    assert_eq!(store.commits.get(), 0);
+    seed(&store, vec![]);
+    let a = account(1);
+    let seed = claude::Bootstrap {
+        credential: Some(a.credential),
+        workspace: None,
+    };
+    let empty = run(claude::load_roster(&store, &host, &seed))?;
+    assert!(empty.roster.accounts.is_empty());
+    assert!(empty.revision.is_some());
+    assert!(!read.get());
+    Ok(())
+}
+
+#[test]
+fn pre_fetch_setup_error_releases_only_owned_lease_without_quota_or_auth_mutation() -> TestResult {
+    let store = Store::new();
+    let a = account(1);
+    seed(&store, vec![a.clone()]);
+    let before = store.roster();
+    let host = Fixture::new(&store)?;
+    host.setup_failure.set(true);
+    let error = run(collect::refresh(&store, &host, &a))
+        .err()
+        .ok_or("setup failure was hidden")?;
+    assert_eq!(error.status, 500);
+    assert_eq!(host.calls.get(), 0);
+    assert!(store.get(&collect::lease_key(&a)).is_none());
+    assert!(store.quota(&a).is_none());
+    assert_eq!(store.roster(), before);
+    assert!(host.base.accepted.borrow().is_empty());
+    Ok(())
 }

@@ -107,34 +107,6 @@ fn credential_view(credential: &host::CredentialMetadata) -> Result<SourceJson, 
     document.set("refresh_material_present", &false)?;
     document.source_json()
 }
-fn safe_quota(
-    quota: &gateway_core::source_json::SourceJson,
-    dates: &impl Fn(&gateway_core::js_string::JsString16) -> Option<i64>,
-) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
-    let selected = crate::replay_values::SourceObject::parse(quota)?.select(&[
-        "windows",
-        "usage",
-        "standard",
-        "representative_claim",
-        "blocked_until_ms",
-        "block_window",
-        "cooldown_until_ms",
-        "last_error",
-        "updated_at_ms",
-    ])?;
-    let mut selected = SourceObject::parse(&selected)?;
-    let usage = selected
-        .get("usage")
-        .and_then(gateway_claude_usage_protocol::state::read);
-    selected.set("usage", &usage)?;
-    if let Some(snapshot) = gateway_core::source_serialization::member(quota, "usage_snapshot")
-        .as_ref()
-        .and_then(|s| gateway_claude_usage_protocol::snapshot::read(s, dates))
-    {
-        selected.set("usage_snapshot", &snapshot)?;
-    }
-    selected.source_json()
-}
 fn identity_headers(
     response: &mut AuthResponse,
     identity: host::BuildIdentity,
@@ -160,7 +132,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut codex_accounts = auth["accounts"]
             .as_array()
             .cloned()
-            .ok_or_else(||store::error("Source account array is invalid"))?;
+            .ok_or_else(|| store::error("Source account array is invalid"))?;
         let mut states = Vec::new();
         for (index, account) in inventory.codex.accounts.iter().enumerate() {
             let health = self
@@ -211,7 +183,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         gateway_health["stale"] = json!(false);
         body["ubiquity"] =
             json!({"configured":inventory.ubiquity_configured,"health":gateway_health});
-        let (accounts,active)=self.claude_health_accounts(&inventory.claude,at).await?;
+        let (accounts, active) = self.claude_health_accounts(&inventory.claude, at).await?;
         let mut claude = SourceObject::parse(&SourceJson::from_serializable(
             &json!({"configured":active.is_some(),"active_account_id":inventory.claude.active_account_id,"account_scan":"ok","principal_allowlist_configured":inventory.claude.access.as_ref().is_some_and(|a|!a.allowed_key_ids.is_empty()),"enabled":inventory.claude.enabled}),
         )?)?;
@@ -241,8 +213,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         identity_headers(&mut response, self.host.build_identity()?)?;
         Ok(response)
     }
-    async fn claude_health_accounts(&self,roster:&host::ClaudeRosterReadback,at:i64)->Result<(Vec<SourceJson>,Option<SourceObject>),GatewayError>{
-        let mut accounts=Vec::new();let mut active=None;
+    async fn claude_health_accounts(
+        &self,
+        roster: &host::ClaudeRosterReadback,
+        at: i64,
+    ) -> Result<(Vec<SourceJson>, Option<SourceObject>), GatewayError> {
+        let mut accounts = Vec::new();
+        let mut active = None;
         for account in &roster.accounts {
             if account.target.provider != HealthProvider::ClaudeCode {
                 return Err(store::error("Claude health target provider mismatch"));
@@ -267,7 +244,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 account
                     .quota
                     .as_ref()
-                    .map(|q| safe_quota(q, &|s| self.host.parse_claude_usage_date(s)))
+                    .map(|q| {
+                        gateway_claude_usage_protocol::readback::quota(q, &|s| {
+                            self.host.parse_claude_usage_date(s)
+                        })
+                    })
                     .transpose()?
             } else {
                 None
@@ -278,7 +259,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             accounts.push(document.source_json()?);
         }
-        Ok((accounts,active))
+        Ok((accounts, active))
     }
 }
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {

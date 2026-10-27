@@ -1,4 +1,7 @@
-use crate::{collect::Refresh, fetch::ResultData};
+use crate::{
+    collect::{self, Refresh},
+    fetch::{ResultData, UsageHost},
+};
 use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap};
 use gateway_auth::types::{AuthHost, AuthResponse};
 use gateway_core::{
@@ -9,6 +12,21 @@ use gateway_core::{
 pub struct Target {
     pub account_id: JsString16,
     pub cohort_id: Option<JsString16>,
+}
+/// Existing authenticated composition owns access; this owns the complete fenced action.
+pub async fn refresh<S: AuthorityStore, H: UsageHost>(
+    store: &S,
+    host: &H,
+    seed: &Bootstrap,
+    body: &SourceJson,
+) -> Result<Refresh, GatewayError> {
+    let target = parse(body)?;
+    let account = resolve(store, host, seed, &target).await?;
+    let result = collect::refresh(store, host, &account).await?;
+    if matches!(result, Refresh::Changed) {
+        return Err(changed("Claude account changed during usage refresh"));
+    }
+    Ok(result)
 }
 /// Called only after existing administrative authentication; no input is authority.
 pub fn parse(body: &SourceJson) -> Result<Target, GatewayError> {

@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+serde_json.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-admin-runtime.workspace = true

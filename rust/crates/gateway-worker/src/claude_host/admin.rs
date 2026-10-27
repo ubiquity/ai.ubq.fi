@@ -13,8 +13,8 @@ use gateway_admin_runtime::{
 };
 use gateway_auth::types::{AuthHost, AuthResponse};
 use gateway_claude_usage_admin::{
-    check_target_cohort, matching_target, select_source_account, submitted_workspace,
-    readback::subscription_block,
+    check_target_cohort, matching_target, readback::subscription_block, select_source_account,
+    submitted_workspace,
 };
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -50,20 +50,14 @@ pub async fn admin<H: ObservabilityHost>(
 ) -> Result<AuthResponse, GatewayError> {
     match request {
         ClaudeRequest::RefreshUsage { document } => {
-            let target = gateway_claude_usage_runtime::admin::parse(&document)?;
             let seed = super::platform::bootstrap_for_source(store, platform).await?;
-            let account =
-                gateway_claude_usage_runtime::admin::resolve(store, platform, &seed, &target)
-                    .await?;
             let host = super::platform::Host {
                 store: store.clone(),
                 platform: platform.clone(),
             };
             let result =
-                gateway_claude_usage_runtime::collect::refresh(store, &host, &account).await?;
-            if matches!(result,gateway_claude_usage_runtime::collect::Refresh::Changed) {
-                return gateway_claude_usage_runtime::admin::response(result,SourceJson::parse("null")?);
-            }
+                gateway_claude_usage_runtime::admin::refresh(store, &host, &seed, &document)
+                    .await?;
             gateway_claude_usage_runtime::admin::response(
                 result,
                 block(observations, context).await?,

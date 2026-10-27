@@ -1,4 +1,5 @@
 //! Complete direct-usage source data, without credentials, storage or host authority.
+pub mod readback;
 pub mod snapshot;
 pub mod state;
 /// Original optional target parser: cohort validation remains after account lookup.

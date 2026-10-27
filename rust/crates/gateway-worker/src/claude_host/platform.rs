@@ -10,9 +10,7 @@ use gateway_auth::{
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_claude_runtime::host::{
-    ClaudePoolHost, HealthObservation, WorkspaceResponse,
-};
+use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
 use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::{error::GatewayError, state::RevisionCheck};
 use gateway_observability::{
@@ -350,8 +348,12 @@ impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
         gateway_claude_usage_runtime::fetch::Response,
         gateway_claude_usage_runtime::fetch::GetFailure,
     > {
-        gateway_claude_usage_runtime::platform::get(account,
-            &self.platform.cancellation.source_signal(), &||self.now_ms()).await
+        gateway_claude_usage_runtime::platform::get(
+            account,
+            &self.platform.cancellation.source_signal(),
+            &|| self.now_ms(),
+        )
+        .await
     }
 }
 
@@ -417,4 +419,3 @@ mod physical_tests {
         }
     }
 }
-

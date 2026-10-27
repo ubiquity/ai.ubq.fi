@@ -1,6 +1,9 @@
 //! Accepted-observation data and its source producer codec; this type carries no current-account proof.
 use crate::QuotaObservation;
-use gateway_core::{error::GatewayError,js_string::JsString16,source_json::SourceJson,source_serialization as source};
+use gateway_core::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde::Serialize;
 #[derive(Clone, Debug, Serialize)]
 pub struct AcceptedObservation {
@@ -19,10 +22,8 @@ pub struct AcceptedObservation {
 impl AcceptedObservation {
     /// Source JSON number spelling also supports m19's integer timestamp DTO.
     pub fn source_value(&self) -> Result<SourceJson, GatewayError> {
-        let mut fields = source::entries(
-            &SourceJson::from_serializable(self)?,
-        )
-        .ok_or_else(invalid_observation)?;
+        let mut fields = source::entries(&SourceJson::from_serializable(self)?)
+            .ok_or_else(invalid_observation)?;
         let observation = fields
             .iter_mut()
             .find(|(name, _)| name == &JsString16::from_utf8("observation"))
@@ -33,8 +34,7 @@ impl AcceptedObservation {
             .iter_mut()
             .find(|(name, _)| name == &JsString16::from_utf8("standard"))
             .ok_or_else(invalid_observation)?;
-        let mut remaining =
-            source::entries(&standard.1).ok_or_else(invalid_observation)?;
+        let mut remaining = source::entries(&standard.1).ok_or_else(invalid_observation)?;
         let mut ordered = Vec::new();
         // Actual observeClaudeCodeQuota producer order, not arbitrary consumer input order.
         for family in crate::STANDARD_FAMILIES {
@@ -48,25 +48,25 @@ impl AcceptedObservation {
         ordered.extend(remaining);
         standard.1 = source::object_keys(ordered)?;
         observation.1 = source::object_keys(observation_fields)?;
-        source::object_keys(fields)
-            .and_then(|value| source::canonical(&value))
+        source::object_keys(fields).and_then(|value| source::canonical(&value))
     }
 }
 
 fn invalid_observation() -> GatewayError {
-    GatewayError::unavailable("Claude observation is invalid", "claude_observation_invalid")
+    GatewayError::unavailable(
+        "Claude observation is invalid",
+        "claude_observation_invalid",
+    )
 }
 
 #[cfg(test)]
 mod producer_order_tests {
     use super::*;
     #[test]
-    fn accepted_standard_families_follow_actual_source_producer_order() -> Result<(),Box<dyn std::error::Error>> {
+    fn accepted_standard_families_follow_actual_source_producer_order()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut quota = QuotaObservation::empty(1_800_000_000_000);
-        for (index, family) in crate::STANDARD_FAMILIES
-            .into_iter()
-            .enumerate()
-        {
+        for (index, family) in crate::STANDARD_FAMILIES.into_iter().enumerate() {
             quota.standard.insert(
                 family.into(),
                 crate::StandardWindow {
@@ -98,7 +98,7 @@ mod producer_order_tests {
             fields
                 .iter()
                 .map(|(name, _)| name.try_utf8())
-                .collect::<Result<Vec<_>,_>>()?,
+                .collect::<Result<Vec<_>, _>>()?,
             crate::STANDARD_FAMILIES
         );
         for (index, (_, value)) in fields.iter().enumerate() {

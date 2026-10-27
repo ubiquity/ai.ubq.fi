@@ -1077,6 +1077,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-core",
+ "serde_json",
 ]
 
 [[package]]

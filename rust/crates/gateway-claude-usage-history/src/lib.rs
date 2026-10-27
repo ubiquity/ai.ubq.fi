@@ -3,7 +3,9 @@ mod store;
 pub mod usage;
 use gateway_auth::store as atomic;
 use gateway_claude_usage_history_records::{
-    Point,Bucket,Rollup,WINDOWS,BUCKET_MS,HOUR_MS,RETENTION_MS,STALE_MS,LIMIT,point_for_observation,retain_source,claude_history_bucket_record_source,claude_rollup_record_source,merge_source,object::SourceObject,types::ClaudeAcceptedObservation,
+    BUCKET_MS, Bucket, HOUR_MS, LIMIT, Point, RETENTION_MS, Rollup, STALE_MS, WINDOWS,
+    claude_history_bucket_record_source, claude_rollup_record_source, merge_source,
+    object::SourceObject, point_for_observation, retain_source, types::ClaudeAcceptedObservation,
 };
 use gateway_core::{
     error::GatewayError,
@@ -139,9 +141,9 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
             let mut truncated = rows.len() > LIMIT;
             for entry in rows.into_iter().take(LIMIT) {
                 let value = claude_history_bucket_record_source(&entry.key, &entry.record)?;
-                let recent=recent_points(self.host,&value,at,cutoff)?;
-                let remaining=LIMIT.saturating_sub(points.len());
-                truncated |= recent.len()>remaining;
+                let recent = recent_points(self.host, &value, at, cutoff)?;
+                let remaining = LIMIT.saturating_sub(points.len());
+                truncated |= recent.len() > remaining;
                 points.extend(recent.into_iter().take(remaining));
                 if points.len() >= LIMIT && truncated {
                     break;
@@ -210,20 +212,30 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
     }
 }
 
-fn recent_points<H:HistoryHost>(host:&H,value:&SourceJson,at:i64,cutoff:i64)->Result<Vec<(SourceJson,i64)>,GatewayError>{
-    let bucket:Bucket=value.deserialize()?;
-    let mut points=Vec::new();
-    for point in bucket.points.into_iter().rev(){
-        let p:Point=point.deserialize()?;
-        if p.sampled_at_ms>at as f64 || p.clock()<cutoff as f64 {continue;}
-        let point=if let Some(snapshot)=&p.usage_snapshot {
-            let snapshot=gateway_claude_usage_protocol::snapshot::read(snapshot,&|s|host.parse_date(s))
-                .ok_or_else(||error("Claude snapshot is invalid"))?;
-            let mut projected=SourceObject::parse(&point)?;
-            projected.set("usage_snapshot",&snapshot)?;
+fn recent_points<H: HistoryHost>(
+    host: &H,
+    value: &SourceJson,
+    at: i64,
+    cutoff: i64,
+) -> Result<Vec<(SourceJson, i64)>, GatewayError> {
+    let bucket: Bucket = value.deserialize()?;
+    let mut points = Vec::new();
+    for point in bucket.points.into_iter().rev() {
+        let p: Point = point.deserialize()?;
+        if p.sampled_at_ms > at as f64 || p.clock() < cutoff as f64 {
+            continue;
+        }
+        let point = if let Some(snapshot) = &p.usage_snapshot {
+            let snapshot =
+                gateway_claude_usage_protocol::snapshot::read(snapshot, &|s| host.parse_date(s))
+                    .ok_or_else(|| error("Claude snapshot is invalid"))?;
+            let mut projected = SourceObject::parse(&point)?;
+            projected.set("usage_snapshot", &snapshot)?;
             projected.source_json()?
-        }else{point};
-        points.push((point,p.clock() as i64));
+        } else {
+            point
+        };
+        points.push((point, p.clock() as i64));
     }
     Ok(points)
 }

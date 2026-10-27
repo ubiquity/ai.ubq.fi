@@ -124,7 +124,7 @@ pub fn claude_source(
                 None
             }
         });
-    let window = |name| gateway_claude_usage_history_records::window_source(&windows,name);
+    let window = |name| gateway_claude_usage_history_records::window_source(&windows, name);
     let mut standard_rows = Vec::new();
     if standard.as_str().trim_start().starts_with('{') {
         for (family, value) in source::entries(&standard)
@@ -260,9 +260,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             self.slot_capacity(accounts.iter().find(|a| a.slot == 2), 2, fence.as_ref(), at),
         );
         let (((one, two), metered), _usage) = futures_util::future::join(
-            futures_util::future::join(codex,self.host.metered_quota_snapshot(force_metered, at + 8000)),
+            futures_util::future::join(
+                codex,
+                self.host.metered_quota_snapshot(force_metered, at + 8000),
+            ),
             self.host.collect_claude_usage(),
-        ).await;
+        )
+        .await;
         let one = one?;
         let two = two?;
         let metered = metered?;

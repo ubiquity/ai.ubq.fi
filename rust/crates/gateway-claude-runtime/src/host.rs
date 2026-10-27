@@ -192,4 +192,3 @@ pub trait ClaudePoolHost: AuthHost {
 pub(crate) struct CommittedOutcome {
     pub state: QuotaState,
 }
-

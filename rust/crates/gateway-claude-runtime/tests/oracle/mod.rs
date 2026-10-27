@@ -80,7 +80,8 @@ fn exact_bun_source_classification_vectors_preserve_all_detail_units() -> crate:
 }
 
 #[test]
-fn exact_bun_source_observation_vectors_preserve_missing_and_numeric_headers() -> crate::support::TestResult {
+fn exact_bun_source_observation_vectors_preserve_missing_and_numeric_headers()
+-> crate::support::TestResult {
     let fixture = fixture();
     let cases = crate::support::required(fixture["observations"].as_array())?;
     assert_eq!(cases.len(), 8);
@@ -97,7 +98,8 @@ fn exact_bun_source_observation_vectors_preserve_missing_and_numeric_headers() -
 }
 
 #[test]
-fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior() -> crate::support::TestResult {
+fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior()
+-> crate::support::TestResult {
     let fixture = fixture();
     let cases = crate::support::required(fixture["states"].as_array())?;
     assert_eq!(cases.len(), 7);

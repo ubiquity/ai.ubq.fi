@@ -299,7 +299,10 @@ pub fn read_meter(value: &SourceJson) -> Option<Meter> {
     if source::member(value, "scope").is_none() {
         fields.push(("scope".into(), SourceJson::parse("null").ok()?));
     }
-    source::canonical(&source::object_keys(fields).ok()?).ok()?.deserialize().ok()
+    source::canonical(&source::object_keys(fields).ok()?)
+        .ok()?
+        .deserialize()
+        .ok()
 }
 pub fn serialize(snapshot: &Snapshot) -> Result<SourceJson, GatewayError> {
     source::canonical(&SourceJson::from_serializable(snapshot)?)

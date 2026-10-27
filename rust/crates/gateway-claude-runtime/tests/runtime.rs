@@ -601,38 +601,30 @@ fn valid_source_negative_zero_does_not_disable_quota_or_full_pool_proof() {
     assert!(quota::applicable_proof(Some(&quota), &account, &MODEL.into(), NOW).is_some());
 }
 #[test]
-fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted() -> Result<(),Box<dyn std::error::Error>> {
+fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted()
+-> Result<(), Box<dyn std::error::Error>> {
     let value = json!({"updated_at_ms":NOW});
     let json_record = gateway_core::state::StoredRecord::json("old", value.clone(), None);
-    assert!(
-        gateway_claude_usage_quota::parse_record(&json_record, NOW)
-            ?
-            .is_some()
-    );
+    assert!(gateway_claude_usage_quota::parse_record(&json_record, NOW)?.is_some());
     let portable = gateway_core::value::PortableValue::from_json(&value);
-    let legacy =
-        gateway_core::state::StoredRecord::profile("legacy", portable.clone(), None)?;
+    let legacy = gateway_core::state::StoredRecord::profile("legacy", portable.clone(), None)?;
     assert_eq!(
         gateway_claude_usage_quota::parse_record(&legacy, NOW)
-            .err().ok_or("incompatible encoding accepted")?
+            .err()
+            .ok_or("incompatible encoding accepted")?
             .envelope
             .error
             .code
             .as_deref(),
         Some("incompatible_value_encoding")
     );
-    let explicit =
-        gateway_core::state::StoredRecord::profile_v2("current", portable, None)?;
+    let explicit = gateway_core::state::StoredRecord::profile_v2("current", portable, None)?;
     assert_eq!(
         gateway_claude_usage_quota::parse_record(&explicit, NOW)?,
         gateway_claude_usage_quota::parse_record(&json_record, NOW)?
     );
     let tagged_json = gateway_core::state::StoredRecord::json("tagged", explicit.value, None);
-    assert!(
-        gateway_claude_usage_quota::parse_record(&tagged_json, NOW)
-            ?
-            .is_none()
-    );
+    assert!(gateway_claude_usage_quota::parse_record(&tagged_json, NOW)?.is_none());
     Ok(())
 }
 #[test]
