@@ -5,9 +5,10 @@ use gateway_admin_runtime::{
         AnalyticsRequest, CatalogRequest, Context, ProviderRequest, RuntimeCapabilities,
     },
 };
-use gateway_auth::types::AuthResponse;
-use gateway_core::{error::GatewayError, identity::RequestId};
+use gateway_auth_contracts::types::{AuthConfig, AuthRequest, AuthResponse};
+use gateway_core::identity::RequestId;
 use gateway_schema::util::js_trim;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::cmp::Ordering;
 use worker::{
     Env,
@@ -38,8 +39,8 @@ pub struct Capabilities {
     catalog_host: crate::catalog_host::Host,
     observations: crate::observability_host::Runtime,
     support: crate::admin_support_host::Binding,
-    original: gateway_auth::types::AuthRequest,
-    auth_config: gateway_auth::types::AuthConfig,
+    original: AuthRequest,
+    auth_config: AuthConfig,
     actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 }
 
@@ -47,7 +48,7 @@ impl Capabilities {
     pub fn new(
         request_id: &RequestId,
         original_body: &[u8],
-        original_request: &gateway_auth::types::AuthRequest,
+        original_request: &AuthRequest,
         store: crate::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
@@ -71,7 +72,7 @@ impl Capabilities {
             crate::admin_support_host::Binding::new(catalog_host.clone(), observations.clone());
         // AuthService consumes the exact original authentication metadata. Its
         // raw body stays in the separately measured request receipt, not a second copy.
-        let original = gateway_auth::types::AuthRequest {
+        let original = AuthRequest {
             method: original_request.method.clone(),
             url: original_request.url.clone(),
             headers: original_request.headers.clone(),
@@ -122,7 +123,10 @@ impl RuntimeCapabilities for Capabilities {
         use gateway_admin_runtime::capabilities::CaptureRequest;
         match request {
             CaptureRequest::Request { request_id } => {
-                self.observations.export_capture_request(&request_id).await
+                self.observations
+                    .exports()
+                    .export_capture_request(&request_id)
+                    .await
             }
             CaptureRequest::Interval {
                 after_ms,
@@ -130,6 +134,7 @@ impl RuntimeCapabilities for Capabilities {
                 cursor,
             } => {
                 self.observations
+                    .exports()
                     .export_capture_interval(after_ms, before_ms, cursor.as_deref())
                     .await
             }
@@ -138,6 +143,7 @@ impl RuntimeCapabilities for Capabilities {
                 cursor,
             } => {
                 self.observations
+                    .exports()
                     .export_incident_captures(&incident_id, cursor.as_deref())
                     .await
             }
@@ -147,6 +153,7 @@ impl RuntimeCapabilities for Capabilities {
                 limit,
             } => {
                 self.observations
+                    .incidents()
                     .list_incidents(incident_id.as_deref(), cursor.as_deref(), limit)
                     .await
             }
@@ -263,8 +270,8 @@ impl RuntimeCapabilities for Capabilities {
     }
     fn compare_admin_labels(
         &self,
-        left: &gateway_core::js_string::JsString16,
-        right: &gateway_core::js_string::JsString16,
+        left: &JsString16,
+        right: &JsString16,
     ) -> Result<Ordering, GatewayError> {
         gateway_worker_platform::source_collator::shared().compare(left, right)
     }

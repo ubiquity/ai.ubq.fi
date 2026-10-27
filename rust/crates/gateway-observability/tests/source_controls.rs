@@ -127,21 +127,23 @@ fn incident_latest_intentionally_redacts_non_slug_source_units_without_hashing_t
         let host = Host::default();
         host.at.set(1000);
         let runtime = ObservabilityRuntime::new(memory, host);
-        let receipt = run(runtime.record_incident_index(&IncidentObservation {
-            endpoint: "/v1/responses".into(),
-            method: "POST".into(),
-            git_sha: "a".repeat(40),
-            observed_at_ms: 1000,
-            status: 502,
-            stream: true,
-            completed: false,
-            framing_valid: true,
-            terminal_type: Some("response.failed".into()),
-            provider: Some("surplus".into()),
-            model: Some(model),
-            reasoning: Some(effort),
-            failure_kind: None,
-        }))
+        let receipt = run(runtime
+            .incidents()
+            .record_incident_index(&IncidentObservation {
+                endpoint: "/v1/responses".into(),
+                method: "POST".into(),
+                git_sha: "a".repeat(40),
+                observed_at_ms: 1000,
+                status: 502,
+                stream: true,
+                completed: false,
+                framing_valid: true,
+                terminal_type: Some("response.failed".into()),
+                provider: Some("surplus".into()),
+                model: Some(model),
+                reasoning: Some(effort),
+                failure_kind: None,
+            }))
         .unwrap();
         let document = receipt.record.json_value().unwrap();
         match expected {

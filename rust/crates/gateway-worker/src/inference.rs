@@ -1,30 +1,23 @@
 //! Actual schema -> admission -> provider -> terminal transport path.
 use crate::authority::RemoteAuthorityStore;
 use crate::catalog::CatalogState;
-use crate::host::PlatformClock;
-use crate::host::PlatformHost;
-use crate::host::PlatformTokens;
-use crate::inference_lifecycle::Lifecycle;
-use crate::inference_lifecycle::Session;
-use crate::inference_lifecycle::finish_hook;
+use crate::host::{PlatformClock, PlatformHost, PlatformTokens};
+use crate::inference_lifecycle::{Lifecycle, Session, finish_hook};
 use crate::routing_host;
-use crate::transport::outbound::DispatchAttempt;
-use crate::transport::outbound::DispatchFailure;
-use crate::transport::outbound::DispatchOrigin;
-use crate::transport::outbound::PinnedDestination;
-use crate::transport::outbound::send_constructed;
-use crate::transport::outbound::send_http;
+use crate::transport::outbound::{
+    DispatchAttempt, DispatchFailure, DispatchOrigin, PinnedDestination, send_constructed,
+    send_http,
+};
 use crate::{
     inference_capture::Capture, inference_currentness::CurrentnessGuard, inference_local::Start,
 };
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
+use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
 use gateway_core::{
     claude::ClaudeErrorEvidence,
-    error::GatewayError,
     identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
     provider::UpstreamProvider,
 };
-use gateway_observability::replay_trace::{AttemptTrace, TraceTerminal};
+use gateway_observability_replay_observation::replay_trace::{AttemptTrace, TraceTerminal};
 use gateway_providers::types::Headers;
 use gateway_routing_runtime::{
     local_work::LocalRequestMetadata,
@@ -39,6 +32,7 @@ use gateway_schema::{
     request::RequestSurface,
     source_request::{SourceRequestDocument, parse_http_body},
 };
+use gateway_source::error::GatewayError;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;

@@ -87,7 +87,7 @@ fn restart_exports_only_frozen_manifest_fields_and_the_actual_binary_view() {
     host.at.set(100);
     let m = capture(&store, 100);
     let runtime = ObservabilityRuntime::new(store.clone(), host.clone());
-    let response = run(runtime.export_capture_request("request-1")).unwrap();
+    let response = run(runtime.exports().export_capture_request("request-1")).unwrap();
     let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
     assert_eq!(
         body["data"][0]["chunks"][0],
@@ -100,7 +100,7 @@ fn restart_exports_only_frozen_manifest_fields_and_the_actual_binary_view() {
     host.at.set(101);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
     assert_eq!(
-        run(runtime.export_capture_request("request-1"))
+        run(runtime.exports().export_capture_request("request-1"))
             .unwrap()
             .status,
         200
@@ -110,7 +110,7 @@ fn restart_exports_only_frozen_manifest_fields_and_the_actual_binary_view() {
         .borrow_mut()
         .remove(&model::chunk_key(&m.capture_id, 0).0);
     assert_eq!(
-        run(runtime.export_capture_request("request-1"))
+        run(runtime.exports().export_capture_request("request-1"))
             .unwrap_err()
             .status,
         503
@@ -124,15 +124,15 @@ fn status_expiry_remains_truthful_and_unknown_has_no_capture() {
     capture(&store, 100);
     host.at.set(101 + model::PAYLOAD_TTL);
     let runtime = ObservabilityRuntime::new(store, host);
-    let response = run(runtime.export_capture_request("request-1")).unwrap();
+    let response = run(runtime.exports().export_capture_request("request-1")).unwrap();
     let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
     assert_eq!(body["capture_status"]["status"], "expired");
     assert!(body["data"].as_array().unwrap().is_empty());
-    let response = run(runtime.export_capture_request("request-absent")).unwrap();
+    let response = run(runtime.exports().export_capture_request("request-absent")).unwrap();
     let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
     assert_eq!(body["capture_status"]["status"], "unknown");
     assert_eq!(
-        run(runtime.export_capture_request("not/a/request"))
+        run(runtime.exports().export_capture_request("not/a/request"))
             .unwrap_err()
             .status,
         400
@@ -145,27 +145,31 @@ fn interval_cursor_is_bounded_and_selector_bound() {
     host.at.set(100);
     capture(&store, 100);
     let runtime = ObservabilityRuntime::new(store, host);
-    let response = run(runtime.export_capture_interval(0, 100, None)).unwrap();
+    let response = run(runtime.exports().export_capture_interval(0, 100, None)).unwrap();
     let body: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
     let cursor = body["cursor"].as_str().unwrap();
     assert!(model::cursor_shape(cursor));
     assert!(!cursor.contains(':'));
     assert_eq!(
-        run(runtime.export_capture_interval(1, 100, Some(cursor)))
-            .unwrap_err()
-            .status,
+        run(runtime
+            .exports()
+            .export_capture_interval(1, 100, Some(cursor)))
+        .unwrap_err()
+        .status,
         503
     );
     assert_eq!(
-        run(runtime.export_capture_interval(-1, 100, None))
+        run(runtime.exports().export_capture_interval(-1, 100, None))
             .unwrap_err()
             .status,
         400
     );
     assert_eq!(
-        run(runtime.export_capture_interval(0, 100, Some("query-v1:00")))
-            .unwrap_err()
-            .status,
+        run(runtime
+            .exports()
+            .export_capture_interval(0, 100, Some("query-v1:00")))
+        .unwrap_err()
+        .status,
         400
     );
 }
@@ -196,7 +200,7 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
     let input = observation(100);
     let expected=gateway_auth_primitives::crypto::sha256_hex(br#"{"endpoint":"/v1/responses","method":"POST","status":502,"stream":true,"completed":false,"framing_valid":false,"terminal":"stream_framing"}"#);
     assert_eq!(input.fingerprint().unwrap(), expected);
-    let first = run(runtime.record_incident_index(&input)).unwrap();
+    let first = run(runtime.incidents().record_incident_index(&input)).unwrap();
     let document = gateway_source::source_json::SourceJson::parse(&format!(
         "{},\"future\":{{\"text\":\"\\ud800\"}}}}",
         first
@@ -224,11 +228,11 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
         first.key.0.clone(),
         StoredRecord::profile_v2("extension", PortableValue::Object(fields), None).unwrap(),
     );
-    let second = run(runtime.record_incident_index(&observation(90))).unwrap();
+    let second = run(runtime.incidents().record_incident_index(&observation(90))).unwrap();
     assert_eq!(first.incident_id, second.incident_id);
     let document = second.record.profile_v2_source_json().unwrap();
     assert!(document.as_str().contains("\\ud800"));
-    let response = run(runtime.list_incidents(None, None, 20)).unwrap();
+    let response = run(runtime.incidents().list_incidents(None, None, 20)).unwrap();
     let bytes = response.body.to_bytes().unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
     assert!(text.contains("\\ud800"));
@@ -236,8 +240,11 @@ fn safe_incident_group_retries_preserves_first_identity_and_surrogate_extensions
     assert!(!text.contains("private=yes"));
     let mut p = observation(200);
     p.endpoint = "/v1/chat/completions".into();
-    run(runtime.record_incident_index(&p)).unwrap();
-    let response = run(runtime.list_incidents(Some(&first.incident_id), None, 1)).unwrap();
+    run(runtime.incidents().record_incident_index(&p)).unwrap();
+    let response = run(runtime
+        .incidents()
+        .list_incidents(Some(&first.incident_id), None, 1))
+    .unwrap();
     let source =
         gateway_source::source_json::SourceJson::parse_bytes(&response.body.to_bytes().unwrap())
             .unwrap();
@@ -265,13 +272,13 @@ fn malformed_or_miskeyed_incident_is_never_a_successful_empty_page() {
     );
     let runtime = ObservabilityRuntime::new(store, host);
     assert_eq!(
-        run(runtime.list_incidents(None, None, 20))
+        run(runtime.incidents().list_incidents(None, None, 20))
             .unwrap_err()
             .status,
         503
     );
     assert_eq!(
-        run(runtime.list_incidents(None, None, 0))
+        run(runtime.incidents().list_incidents(None, None, 0))
             .unwrap_err()
             .status,
         400

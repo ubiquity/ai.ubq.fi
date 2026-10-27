@@ -1633,10 +1633,14 @@ dependencies = [
  "gateway-core",
  "gateway-observability-contracts",
  "gateway-observability-health",
+ "gateway-observability-incidents",
  "gateway-observability-ledger",
  "gateway-observability-metered",
  "gateway-observability-prompt",
+ "gateway-observability-replay-capture",
  "gateway-observability-replay-model",
+ "gateway-observability-replay-observation",
+ "gateway-observability-replay-read",
  "gateway-observability-replay-records",
  "gateway-observability-replay-retention",
  "gateway-observability-replay-state",
@@ -1684,6 +1688,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-observability-incidents"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime",
+ "gateway-auth-contracts",
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-observability-ledger"
 version = "0.1.0"
 dependencies = [
@@ -1723,6 +1742,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-observability-replay-capture"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-observability-incidents",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-observation",
+ "gateway-observability-replay-read",
+ "gateway-observability-replay-records",
+ "gateway-observability-replay-retention",
+ "gateway-observability-replay-state",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
 name = "gateway-observability-replay-model"
 version = "0.1.0"
 dependencies = [
@@ -1738,6 +1779,35 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-replay-observation"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-replay-read"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-auth-contracts",
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
+ "gateway-source",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2046,7 +2116,9 @@ dependencies = [
  "gateway-observability-ledger",
  "gateway-observability-metered",
  "gateway-observability-prompt",
+ "gateway-observability-replay-capture",
  "gateway-observability-replay-model",
+ "gateway-observability-replay-observation",
  "gateway-observability-test-support",
  "gateway-profile-values",
  "gateway-providers",

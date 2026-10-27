@@ -1,6 +1,5 @@
 //! Source incident-outbox.ts: durable safe classifications, never raw request data.
-use crate::{ObservabilityRuntime, store};
-use gateway_admin_runtime::{capabilities::CaptureRequest, capabilities::Context};
+use crate::{IncidentIndex, store};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::{
     query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordKey,
@@ -18,6 +17,7 @@ use gateway_observability_replay_records::{
     incident::full_sha, incident::index_key, incident::valid_incident_id,
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
+use serde::Serialize;
 use serde_json::json;
 
 fn prefix() -> RecordKey {
@@ -42,7 +42,7 @@ pub struct IncidentEvidence<'a> {
     pub ciphertext_sha256: &'a str,
     pub observed_at_ms: i64,
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> IncidentIndex<'_, S, H> {
     pub async fn record_incident_index(
         &self,
         input: &IncidentObservation,
@@ -64,7 +64,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     IncidentIndexData::parse(&source)?,
                 )
             } else {
-                let incident_id = format!("provider-{}", data::uuid(self.host.as_ref())?);
+                let incident_id = format!("provider-{}", data::uuid(self.host)?);
                 let data = IncidentIndexData {
                     version: 1.0,
                     incident_id,
@@ -113,7 +113,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 document.set(name, &value)?
             }
             let mutation = crate::replay_values::put_json(
-                self.host.as_ref(),
+                self.host,
                 key.clone(),
                 &document.source_json()?,
                 None,
@@ -122,7 +122,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 unreachable!()
             };
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&key, previous.as_ref())],
                 vec![gateway_core::state::RecordMutation::Put {
                     key: key.clone(),
@@ -164,14 +164,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 reverse: false,
                 limit,
                 cursor: cursor.map(model::core_cursor).transpose()?,
-                now_ms: data::now(self.host.as_ref())?,
+                now_ms: data::now(self.host)?,
             };
             let page = self.store.query(query).await?;
             let mut rows = Vec::new();
             for entry in page.entries {
                 let source = read_json_record(&entry.record)?;
                 let row = IncidentIndexData::parse(&source)?;
-                if key(&row.fingerprint) != entry.key {
+                if index_key(&row.fingerprint) != entry.key {
                     return Err(data::error("Sentinel incident index key is invalid"));
                 }
                 if id.is_none_or(|id| row.incident_id == id) {
@@ -219,7 +219,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 "Sentinel incident index evidence binding is invalid",
             ));
         }
-        let key = key(input.index_fingerprint);
+        let key = index_key(input.index_fingerprint);
         for _ in 0..8 {
             let previous = self
                 .store
@@ -248,7 +248,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let document = document.source_json()?;
             IncidentIndexData::parse(&document)?;
             let mut mutations = vec![crate::replay_values::put_json(
-                self.host.as_ref(),
+                self.host,
                 key.clone(),
                 &document,
                 None,
@@ -256,7 +256,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if input.expires_at_ms > input.observed_at_ms {
                 let parts = data::parts(input.manifest_key)?;
                 mutations.push(store::put(
-                    self.host.as_ref(),
+                    self.host,
                     data::key(json!([
                         "uos_ai",
                         "sentinel_incident",
@@ -270,7 +270,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 )?)
             }
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![
                     data::check(&key, Some(&previous)),
                     data::check(input.manifest_key, Some(input.manifest_record)),
@@ -285,39 +285,5 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Err(data::error(
             "Sentinel incident index evidence binding conflicted repeatedly",
         ))
-    }
-    pub async fn capture(
-        &self,
-        request: CaptureRequest,
-        _context: Context,
-    ) -> Result<AuthResponse, GatewayError> {
-        match request {
-            CaptureRequest::Request { request_id } => {
-                self.export_capture_request(&request_id).await
-            }
-            CaptureRequest::Interval {
-                after_ms,
-                before_ms,
-                cursor,
-            } => {
-                self.export_capture_interval(after_ms, before_ms, cursor.as_deref())
-                    .await
-            }
-            CaptureRequest::Incident {
-                incident_id,
-                cursor,
-            } => {
-                self.export_incident_captures(&incident_id, cursor.as_deref())
-                    .await
-            }
-            CaptureRequest::Incidents {
-                incident_id,
-                cursor,
-                limit,
-            } => {
-                self.list_incidents(incident_id.as_deref(), cursor.as_deref(), limit)
-                    .await
-            }
-        }
     }
 }

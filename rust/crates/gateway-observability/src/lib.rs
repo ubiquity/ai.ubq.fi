@@ -4,14 +4,10 @@ pub mod api;
 pub mod capacity;
 pub mod capacity_events;
 mod capacity_store;
+mod capture_dispatch;
 pub mod claude_capacity;
-pub mod incidents;
 pub mod remote_capacity;
 mod replay_maintenance;
-pub mod replay_producer;
-pub mod replay_read;
-pub mod replay_trace;
-mod replay_values;
 pub mod settings;
 mod store;
 pub mod telemetry;
@@ -96,5 +92,21 @@ impl<S, H> ObservabilityRuntime<S, H> {
             self.host.as_ref(),
             self.replay_bootstrap.clone(),
         )
+    }
+    pub fn captures(&self) -> gateway_observability_replay_capture::ReplayCapture<'_, S, H> {
+        gateway_observability_replay_capture::ReplayCapture::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.replay_bootstrap.clone(),
+        )
+    }
+    pub fn exports(&self) -> gateway_observability_replay_read::ReplayReader<'_, S, H> {
+        gateway_observability_replay_read::ReplayReader::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+        )
+    }
+    pub fn incidents(&self) -> gateway_observability_incidents::IncidentIndex<'_, S, H> {
+        gateway_observability_incidents::IncidentIndex::new(self.store.as_ref(), self.host.as_ref())
     }
 }

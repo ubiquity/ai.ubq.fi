@@ -5,8 +5,11 @@ use gateway_observability::{ObservabilityRuntime, ObservabilityState};
 use gateway_observability_contracts::host_types;
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
 use gateway_observability_metered::metered;
+use gateway_observability_replay_capture::replay_producer;
 use gateway_observability_replay_model::replay_crypto;
 use gateway_observability_replay_model::replay_crypto::ReplayBody;
+use gateway_observability_replay_observation::observation;
+use gateway_observability_replay_observation::replay_trace;
 use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
@@ -23,14 +26,14 @@ pub fn shared_state() -> ObservabilityState {
 }
 pub type Runtime = ObservabilityRuntime<crate::authority::RemoteAuthorityStore, RequestHost>;
 pub enum CaptureInput {
-    Ready(gateway_observability::replay_producer::ReplayInput),
+    Ready(replay_producer::ReplayInput),
     Omitted(&'static str),
 }
 /// The original accepted body receipt and actual request headers supply capture input.
 pub fn capture_input(
     runtime: &Runtime,
     request: &worker::Request,
-    upstream: gateway_observability::replay_trace::UpstreamTrace,
+    upstream: replay_trace::UpstreamTrace,
 ) -> Result<CaptureInput, GatewayError> {
     if request.method() != worker::Method::Post {
         return Ok(CaptureInput::Omitted("non_post"));
@@ -48,7 +51,7 @@ pub fn capture_input(
         url.query().map(|q| format!("?{q}")).unwrap_or_default()
     );
     let headers = request.headers().entries().collect();
-    let request = gateway_observability::replay_producer::ReplayRequest {
+    let request = replay_producer::ReplayRequest {
         endpoint,
         method: "POST".into(),
         body: ReplayBody::from_vec(host.original_body.as_bytes().to_vec()),
@@ -60,23 +63,24 @@ pub fn capture_input(
         request_id: host.request_id.clone(),
         upstream,
     };
-    Ok(CaptureInput::Ready(
-        gateway_observability::replay_producer::ReplayInput::new(host, request)?,
-    ))
+    Ok(CaptureInput::Ready(replay_producer::ReplayInput::new(
+        host, request,
+    )?))
 }
 /// Await from the same request/terminal event owner; no capture task is left floating.
 pub async fn persist_failure(
     runtime: &Runtime,
-    input: gateway_observability::replay_producer::ReplayInput,
-    observation: gateway_observability::replay_producer::FailureObservation,
-    client: gateway_observability::replay_producer::ClientFailureObservation,
-) -> Result<gateway_observability::replay_producer::PersistResult, GatewayError> {
+    input: replay_producer::ReplayInput,
+    observation: observation::FailureObservation,
+    client: observation::ClientFailureObservation,
+) -> Result<replay_producer::PersistResult, GatewayError> {
     let key =
         crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
             replay_crypto::ReplayKey::decode(raw.trim_matches(gateway_schema::util::js_whitespace))
                 .ok()
         });
     runtime
+        .captures()
         .persist_failure(input, observation, client, key.as_ref())
         .await
 }

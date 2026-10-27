@@ -8,8 +8,8 @@ use gateway_core::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
-use gateway_observability::{
-    replay_producer::{ClientFailureObservation, FailureObservation, should_persist},
+use gateway_observability_replay_observation::{
+    observation::{ClientFailureObservation, FailureObservation, should_persist},
     replay_trace::{AttemptTrace, TraceProvider, TraceRecorder, TraceTerminal},
 };
 use gateway_providers::sse::{
@@ -678,6 +678,7 @@ impl Capture {
             }
             CaptureInput::Omitted(reason) => {
                 self.runtime
+                    .captures()
                     .record_capture_omission(&self.request_id, reason)
                     .await?;
             }

@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-observability-replay-capture.workspace = true
+gateway-observability-incidents.workspace = true
+gateway-observability-replay-read.workspace = true
 gateway-observability-replay-retention.workspace = true
 gateway-observability-replay-state.workspace = true
 gateway-observability-replay-records.workspace = true
@@ -44,6 +47,7 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
+gateway-observability-replay-observation.workspace = true
 gateway-observability-metered.workspace = true
 gateway-admin.workspace = true
 gateway-claude-runtime.workspace = true

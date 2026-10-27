@@ -14,6 +14,8 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-observability-replay-capture.workspace = true
+gateway-observability-replay-observation.workspace = true
 gateway-observability-metered.workspace = true
 gateway-observability-replay-model.workspace = true
 gateway-auth-contracts.workspace = true

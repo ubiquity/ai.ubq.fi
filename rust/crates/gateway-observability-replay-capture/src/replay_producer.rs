@@ -1,14 +1,20 @@
 //! Source request-owned failure capture. No caller JSON can mint this transport input.
-use crate::{ObservabilityRuntime, incidents::IncidentEvidence, replay_trace::UpstreamTrace};
-use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
+use crate::ReplayCapture;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_core::{query::QueryStore, state::RecordKey};
+use gateway_core::{query::QueryStore, state::RecordKey, state::StoredRecord};
 use gateway_observability_contracts::{
     data, host_types::BuildIdentity, source_object::SourceObject, types::ObservabilityHost,
 };
+use gateway_observability_incidents::incidents::IncidentEvidence;
 use gateway_observability_replay_model::{
     records::read_json_record, replay_crypto, replay_crypto::FingerprintInput,
     replay_crypto::ReplayBody, replay_crypto::ReplayKey, replay_model as model,
+};
+use gateway_observability_replay_observation::{
+    observation::ClientFailureObservation, observation::FailureObservation, observation::bounded,
+    observation::bounded_param, observation::should_persist, observation::should_signal,
+    replay_trace::UpstreamTrace,
 };
 use gateway_observability_replay_records::{
     accounting as schema, accounting::RetentionLimits, incident::IncidentObservation,
@@ -34,30 +40,6 @@ pub const COMPATIBILITY_HEADERS: &[&str] = &[
     "x-stainless-runtime",
     "x-stainless-runtime-version",
 ];
-#[derive(Clone, Serialize)]
-pub struct FailureObservation {
-    pub status: u16,
-    pub stream: Option<bool>,
-    pub completed: bool,
-    pub terminal_type: Option<String>,
-    pub failure_kind: Option<String>,
-    pub synthetic_terminal_type: Option<String>,
-    pub provider_route: String,
-}
-#[derive(Clone, Serialize)]
-pub struct ClientFailureObservation {
-    pub status: u16,
-    pub stream: bool,
-    pub completed: bool,
-    pub terminal_type: Option<String>,
-    pub failure_kind: Option<String>,
-    pub framing_valid: bool,
-    pub provider_route: String,
-    pub error_code: Option<String>,
-    pub error_param: Option<JsString16>,
-    pub terminal_body_base64: Option<String>,
-    pub terminal_body_truncated: bool,
-}
 pub struct ReplayRequest {
     pub endpoint: String,
     pub method: String,
@@ -142,211 +124,6 @@ pub enum PersistResult {
         reason: &'static str,
     },
 }
-fn bounded(s: Option<&str>, param: bool) -> Option<String> {
-    s.filter(|s| {
-        !s.is_empty()
-            && s.len() <= 128
-            && s.bytes().all(|b| {
-                b.is_ascii_alphanumeric() || b"_.:-".contains(&b) || (param && b"[]".contains(&b))
-            })
-    })
-    .map(str::to_owned)
-}
-// The stored Sentinel param policy remains the exact existing ASCII whitelist.
-// Raw input may contain arbitrary UTF16; rejected units stay only in body evidence.
-fn bounded_param(value: Option<&JsString16>) -> Option<JsString16> {
-    value
-        .filter(|value| {
-            !value.as_units().is_empty()
-                && value.as_units().len() <= 128
-                && value.as_units().iter().all(|unit| {
-                    u8::try_from(*unit)
-                        .is_ok_and(|byte| byte.is_ascii_alphanumeric() || b"_.:-[]".contains(&byte))
-                })
-        })
-        .cloned()
-}
-fn generic(value: Option<&str>) -> bool {
-    value.is_none_or(|v| matches!(v, "server_error" | "error" | "internal_error" | "api_error"))
-}
-fn upstream_incomplete(value: Option<&str>) -> bool {
-    let Some(value) = value else { return false };
-    let lower = value.to_ascii_lowercase();
-    let s = lower.strip_prefix("response_incomplete:").unwrap_or(&lower);
-    [
-        "gateway", "provider", "upstream", "server", "network", "timeout", "deadline",
-    ]
-    .iter()
-    .any(|p| s.starts_with(p))
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
-}
-impl ClientFailureObservation {
-    pub fn from_internal(internal: &FailureObservation) -> Self {
-        let cancelled = internal.terminal_type.as_deref() == Some("cancelled");
-        let terminal = if cancelled {
-            Some("cancelled".into())
-        } else {
-            internal.synthetic_terminal_type.clone().or_else(|| {
-                match internal.terminal_type.as_deref() {
-                    Some(
-                        "response.completed" | "response.failed" | "response.incomplete" | "error",
-                    ) => internal.terminal_type.clone(),
-                    _ if internal.status >= 400 => Some("http.error".into()),
-                    _ if internal.completed => Some("http.completed".into()),
-                    _ => internal.terminal_type.clone(),
-                }
-            })
-        };
-        Self {
-            status: internal.status,
-            stream: internal.stream.unwrap_or(false),
-            completed: internal.completed,
-            terminal_type: terminal,
-            failure_kind: if cancelled {
-                None
-            } else {
-                internal.failure_kind.clone().or_else(|| {
-                    internal
-                        .synthetic_terminal_type
-                        .as_ref()
-                        .map(|_| "server_error".into())
-                })
-            },
-            framing_valid: internal.stream != Some(true),
-            provider_route: internal.provider_route.clone(),
-            error_code: (!cancelled && internal.synthetic_terminal_type.is_some())
-                .then(|| "server_error".into()),
-            error_param: None,
-            terminal_body_base64: None,
-            terminal_body_truncated: false,
-        }
-    }
-    pub fn observed_body(&mut self, bytes: &[u8]) {
-        let keep = bytes.len().min(64 * 1024);
-        self.terminal_body_base64 = Some(STANDARD.encode(&bytes[..keep]));
-        self.terminal_body_truncated = keep < bytes.len();
-    }
-    pub fn prefer_internal_cause(&mut self, internal: &FailureObservation) {
-        if internal.terminal_type.as_deref() == Some("cancelled") {
-            self.failure_kind = None;
-            self.error_code = None;
-            self.error_param = None;
-            self.terminal_body_base64 = None;
-            self.terminal_body_truncated = false;
-            self.terminal_type = Some("cancelled".into());
-            return;
-        }
-        if generic(self.failure_kind.as_deref()) && !generic(internal.failure_kind.as_deref()) {
-            self.failure_kind = internal.failure_kind.clone()
-        }
-    }
-    fn signature(&self) -> Result<String, GatewayError> {
-        #[derive(Serialize)]
-        struct Signature<'a> {
-            status: u16,
-            stream: bool,
-            completed: bool,
-            terminal_type: &'a Option<String>,
-            failure_kind: &'a Option<String>,
-            framing_valid: bool,
-            provider_route: &'a str,
-        }
-        Ok(SourceJson::from_serializable(&Signature {
-            status: self.status,
-            stream: self.stream,
-            completed: self.completed,
-            terminal_type: &self.terminal_type,
-            failure_kind: &self.failure_kind,
-            framing_valid: self.framing_valid,
-            provider_route: &self.provider_route,
-        })?
-        .as_str()
-        .to_owned())
-    }
-}
-fn persistable(
-    status: u16,
-    stream: bool,
-    completed: bool,
-    terminal: Option<&str>,
-    failure: Option<&str>,
-    synthetic: Option<&str>,
-    framing: Option<bool>,
-) -> bool {
-    if terminal == Some("cancelled") {
-        return false;
-    }
-    if stream && framing == Some(false) {
-        return true;
-    }
-    if status < 400 && completed && terminal == Some("response.completed") {
-        return false;
-    }
-    if status >= 400 {
-        return true;
-    }
-    if terminal == Some("response.incomplete") {
-        return upstream_incomplete(failure) || synthetic.is_some();
-    }
-    failure.is_some()
-        || synthetic.is_some()
-        || matches!(
-            terminal,
-            Some("deadline" | "eof" | "error" | "response.failed")
-        )
-        || (stream && !completed && terminal.is_some())
-}
-pub fn should_persist(internal: &FailureObservation, client: &ClientFailureObservation) -> bool {
-    internal.terminal_type.as_deref() != Some("cancelled")
-        && (persistable(
-            internal.status,
-            internal.stream.unwrap_or(false),
-            internal.completed,
-            internal.terminal_type.as_deref(),
-            internal.failure_kind.as_deref(),
-            internal.synthetic_terminal_type.as_deref(),
-            None,
-        ) || persistable(
-            client.status,
-            client.stream,
-            client.completed,
-            client.terminal_type.as_deref(),
-            client.failure_kind.as_deref(),
-            None,
-            Some(client.framing_valid),
-        ))
-}
-pub fn should_signal(internal: &FailureObservation, client: &ClientFailureObservation) -> bool {
-    if internal.terminal_type.as_deref() == Some("cancelled") {
-        return false;
-    }
-    if client.stream && !client.framing_valid {
-        return true;
-    }
-    if internal.status < 400
-        && internal.completed
-        && internal.terminal_type.as_deref() == Some("response.completed")
-    {
-        return false;
-    }
-    if internal.status >= 500 || upstream_incomplete(client.failure_kind.as_deref()) {
-        return true;
-    }
-    if internal.terminal_type.as_deref() == Some("response.incomplete") {
-        return upstream_incomplete(internal.failure_kind.as_deref())
-            || internal.synthetic_terminal_type.is_some()
-            || (client.terminal_type.as_deref() == Some("response.incomplete")
-                && upstream_incomplete(client.failure_kind.as_deref()));
-    }
-    internal.synthetic_terminal_type.is_some()
-        || internal.failure_kind.is_some()
-        || matches!(
-            internal.terminal_type.as_deref(),
-            Some("deadline" | "eof" | "error")
-        )
-}
-
 fn settings(input: &ReplayInput, observation: &FailureObservation) -> serde_json::Value {
     let mut out = serde_json::json!({"source":"unavailable","provider_route":observation.provider_route,"model_requested":null,"reasoning_requested":null,"stream_requested":null,"stream_observed":observation.stream});
     let decoded = String::from_utf8_lossy(input.body.as_bytes());
@@ -428,7 +205,7 @@ struct CaptureEvent<'a> {
     at: i64,
     limits: RetentionLimits,
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ReplayCapture<'_, S, H> {
     pub async fn record_capture_omission(
         &self,
         request_id: &str,
@@ -449,7 +226,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     request_id: request_id.into(),
                     status: model::CaptureState::Disabled,
                     reason: Some(reason.into()),
-                    captured_at_ms: data::now(self.host.as_ref())? as f64,
+                    captured_at_ms: data::now(self.host)? as f64,
                     manifest_key: None,
                     fingerprint: None,
                     expires_at_ms: None,
@@ -495,25 +272,26 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         client.error_code = bounded(client.error_code.as_deref(), false);
         client.error_param = bounded_param(client.error_param.as_ref());
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let index = if should_signal(&observation, &client) {
-            self.record_incident_index(&IncidentObservation {
-                endpoint: input.endpoint.clone(),
-                method: input.method.clone(),
-                git_sha: build.git_sha.clone(),
-                observed_at_ms: at,
-                status: client.status,
-                stream: client.stream,
-                completed: client.completed,
-                framing_valid: client.framing_valid,
-                terminal_type: client.terminal_type.clone(),
-                provider: Some(client.provider_route.clone()),
-                model: None,
-                reasoning: None,
-                failure_kind: client.failure_kind.clone(),
-            })
-            .await
-            .ok()
+            self.incidents()
+                .record_incident_index(&IncidentObservation {
+                    endpoint: input.endpoint.clone(),
+                    method: input.method.clone(),
+                    git_sha: build.git_sha.clone(),
+                    observed_at_ms: at,
+                    status: client.status,
+                    stream: client.stream,
+                    completed: client.completed,
+                    framing_valid: client.framing_valid,
+                    terminal_type: client.terminal_type.clone(),
+                    provider: Some(client.provider_route.clone()),
+                    model: None,
+                    reasoning: None,
+                    failure_kind: client.failure_kind.clone(),
+                })
+                .await
+                .ok()
         } else {
             None
         };
@@ -695,7 +473,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if metadata.len() > replay_crypto::MAX_METADATA_BYTES {
             return Err(data::error("Replay metadata is too large"));
         }
-        let capture_id = data::uuid(self.host.as_ref())?;
+        let capture_id = data::uuid(self.host)?;
         let iv: [u8; 12] = self
             .host
             .random_bytes(12)?
@@ -860,7 +638,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let manifest = manifest
                 .as_ref()
                 .ok_or_else(|| data::error("Incident replay winner is unavailable"))?;
-            let exported = self.export_manifest(manifest).await?;
+            let exported = self.reader().export_manifest(manifest).await?;
             let mut ciphertext = Zeroizing::new(Vec::new());
             for chunk in exported.chunks {
                 ciphertext.extend(
@@ -885,19 +663,20 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let git_sha = metadata
                 .get("git_sha")
                 .and_then(|v| v.deserialize::<String>().ok());
-            self.bind_incident_evidence(&IncidentEvidence {
-                index_fingerprint: index,
-                reference_fingerprint: fingerprint,
-                manifest_key: &manifest_key,
-                manifest_record: winner.as_ref().expect("manifest owner"),
-                capture_id: &manifest.capture_id,
-                git_sha: git_sha.as_deref(),
-                captured_at_ms: manifest.captured_at_ms as i64,
-                expires_at_ms: manifest.expires_at_ms as i64,
-                ciphertext_sha256: &sha256_hex(&ciphertext),
-                observed_at_ms: at,
-            })
-            .await?;
+            self.incidents()
+                .bind_incident_evidence(&IncidentEvidence {
+                    index_fingerprint: index,
+                    reference_fingerprint: fingerprint,
+                    manifest_key: &manifest_key,
+                    manifest_record: winner.as_ref().expect("manifest owner"),
+                    capture_id: &manifest.capture_id,
+                    git_sha: git_sha.as_deref(),
+                    captured_at_ms: manifest.captured_at_ms as i64,
+                    expires_at_ms: manifest.expires_at_ms as i64,
+                    ciphertext_sha256: &sha256_hex(&ciphertext),
+                    observed_at_ms: at,
+                })
+                .await?;
         }
         let status = model::Status {
             version: 1.0,
@@ -917,5 +696,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             fingerprint: fingerprint.into(),
             manifest_key,
         })
+    }
+    async fn replay_row(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        let row = self.store.read(key).await?;
+        let at = data::now(self.host)?;
+        Ok(row.filter(|r| r.expires_at_ms.is_none_or(|t| t > at)))
     }
 }

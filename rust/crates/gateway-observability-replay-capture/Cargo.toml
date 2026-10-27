@@ -1,0 +1,27 @@
+[package]
+name = "gateway-observability-replay-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-source.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-schema.workspace = true
+gateway-observability-contracts.workspace = true
+gateway-observability-replay-model.workspace = true
+gateway-observability-replay-records.workspace = true
+gateway-observability-replay-state.workspace = true
+gateway-observability-replay-retention.workspace = true
+gateway-observability-replay-read.workspace = true
+gateway-observability-replay-observation.workspace = true
+gateway-observability-incidents.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+base64 = "=0.22.1"
+zeroize = "=1.9.1"
+
+[lints]
+workspace = true

@@ -28,36 +28,3 @@ pub(crate) async fn commit<S: AuthorityStore>(
     // Unknown committed outcomes remain errors; do not replay their mutation.
     Ok(store.commit(AtomicTransition { checks, mutations }).await? == CommitOutcome::Committed)
 }
-
-pub(crate) fn replay_mutation<
-    H: gateway_observability_contracts::types::ObservabilityHost,
-    T: serde::Serialize,
->(
-    host: &H,
-    key: gateway_core::state::RecordKey,
-    previous: Option<&gateway_core::state::StoredRecord>,
-    value: &T,
-    expiry: Option<i64>,
-) -> Result<gateway_core::state::RecordMutation, gateway_source::error::GatewayError> {
-    let document =
-        gateway_observability_replay_records::accounting::merged_document(previous, value)?;
-    crate::replay_values::put_json(host, key, &document, expiry)
-}
-pub(crate) fn ledger_mutation<H: gateway_observability_contracts::types::ObservabilityHost>(
-    host: &H,
-    previous: Option<&gateway_core::state::StoredRecord>,
-    value: &gateway_observability_replay_records::accounting::LedgerData,
-) -> Result<gateway_core::state::RecordMutation, gateway_source::error::GatewayError> {
-    if !value.valid() {
-        return Err(gateway_observability_contracts::data::error(
-            "Sentinel replay budget counter overflow",
-        ));
-    }
-    replay_mutation(
-        host,
-        gateway_observability_replay_model::replay_model::key("budget"),
-        previous,
-        value,
-        None,
-    )
-}

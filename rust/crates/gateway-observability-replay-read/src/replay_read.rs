@@ -1,5 +1,5 @@
 //! Source replay-read.ts. Reads preserve expiry/status truth and export only frozen manifest fields.
-use crate::{ObservabilityRuntime, store};
+use crate::{ReplayReader, store};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::{
@@ -156,16 +156,16 @@ fn response(
         })?,
     ))
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ReplayReader<'_, S, H> {
     pub(crate) async fn replay_row(
         &self,
         key: &RecordKey,
     ) -> Result<Option<StoredRecord>, GatewayError> {
         let row = self.store.read(key).await?;
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         Ok(row.filter(|r| r.expires_at_ms.is_none_or(|t| t > at)))
     }
-    pub(crate) async fn export_manifest(
+    pub async fn export_manifest(
         &self,
         manifest: &Manifest,
     ) -> Result<ExportedCapture, GatewayError> {
@@ -253,7 +253,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if !model::request_id(id) {
             return Err(invalid());
         }
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let result = async {
             let mut status = self.capture_status(id, at).await?;
             let Some(parts) = status.data.manifest_key.as_ref() else {
@@ -330,7 +330,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 reverse: false,
                 limit: 1,
                 cursor: cursor.map(model::core_cursor).transpose()?,
-                now_ms: data::now(self.host.as_ref())?,
+                now_ms: data::now(self.host)?,
             };
             let validated = query.validate()?;
             let page = self.store.query(query).await?;
@@ -381,7 +381,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     reverse: false,
                     limit: 1,
                     cursor: cursor.clone(),
-                    now_ms: data::now(self.host.as_ref())?,
+                    now_ms: data::now(self.host)?,
                 };
                 let validated = query.validate()?;
                 let page = self.store.query(query).await?;
@@ -409,7 +409,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let key = model::tuple_from_source(&manifest_parts)?;
                 let Some(row) = self.replay_row(&key).await? else {
                     let _ = store::commit(
-                        self.store.as_ref(),
+                        self.store,
                         vec![data::check(&reference.key, Some(&reference.record))],
                         vec![RecordMutation::Delete {
                             key: reference.key.clone(),

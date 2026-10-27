@@ -4,14 +4,17 @@ use gateway_core::{
     state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::RecordMutation,
     state::StoredRecord, tuple_key::DecodedKeyPart, tuple_key::TupleKey,
 };
-use gateway_observability::{
-    ObservabilityRuntime, replay_producer::ClientFailureObservation,
-    replay_producer::FailureObservation, replay_producer::PersistResult,
-    replay_producer::ReplayInput, replay_producer::ReplayRequest, replay_trace::UpstreamTrace,
-};
+use gateway_observability::ObservabilityRuntime;
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
+use gateway_observability_replay_capture::{
+    replay_producer::PersistResult, replay_producer::ReplayInput, replay_producer::ReplayRequest,
+};
 use gateway_observability_replay_model::{
     replay_crypto::ReplayBody, replay_crypto::ReplayKey, replay_model,
+};
+use gateway_observability_replay_observation::{
+    observation::ClientFailureObservation, observation::FailureObservation,
+    replay_trace::UpstreamTrace,
 };
 use gateway_observability_replay_records::accounting::RetentionLimits;
 use gateway_source::{
@@ -125,7 +128,7 @@ fn actual_ciphertext_publication_exports_decrypts_and_duplicate_keeps_the_origin
     ready(&runtime, limits);
     let key = key();
     let f = failure();
-    let first = run(runtime.persist_failure_with_limits(
+    let first = run(runtime.captures().persist_failure_with_limits(
         input(&host, "one", body()),
         f.clone(),
         client(&f),
@@ -140,7 +143,7 @@ fn actual_ciphertext_publication_exports_decrypts_and_duplicate_keeps_the_origin
     else {
         panic!("stored capture")
     };
-    let response = run(runtime.export_capture_request("one")).unwrap();
+    let response = run(runtime.exports().export_capture_request("one")).unwrap();
     let exported: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
     let mut encrypted = Vec::new();
     for chunk in exported["data"][0]["chunks"].as_array().unwrap() {
@@ -171,7 +174,7 @@ fn actual_ciphertext_publication_exports_decrypts_and_duplicate_keeps_the_origin
     assert_eq!(metadata["git_sha"], "a".repeat(40));
     *host.revision.borrow_mut() = "b".repeat(40);
     host.clock.at.set(2000);
-    let duplicate = run(runtime.persist_failure_with_limits(
+    let duplicate = run(runtime.captures().persist_failure_with_limits(
         input(&host, "two", body()),
         f.clone(),
         client(&f),
@@ -187,14 +190,14 @@ fn actual_ciphertext_publication_exports_decrypts_and_duplicate_keeps_the_origin
         panic!("duplicate")
     };
     assert_eq!(winning, manifest_key);
-    let response = run(runtime.export_capture_request("two")).unwrap();
+    let response = run(runtime.exports().export_capture_request("two")).unwrap();
     let exported: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
     assert_eq!(exported["capture_status"]["captured_at_ms"], 1000.0);
     assert_eq!(
         exported["capture_status"]["expires_at_ms"],
         manifest.expires_at_ms
     );
-    let incidents = run(runtime.list_incidents(None, None, 20)).unwrap();
+    let incidents = run(runtime.incidents().list_incidents(None, None, 20)).unwrap();
     let incidents: Value = serde_json::from_slice(&incidents.body.to_bytes().unwrap()).unwrap();
     assert_eq!(incidents["data"][0]["failing_revision"], "a".repeat(40));
     assert_eq!(incidents["data"][0]["latest"]["revision"], "b".repeat(40));
@@ -281,7 +284,7 @@ fn interrupted_multibatch_staging_keeps_charge_until_restart_proves_all_chunks_g
     }
     text.push_str("\"}");
     let f = failure();
-    let result = run(runtime.persist_failure_with_limits(
+    let result = run(runtime.captures().persist_failure_with_limits(
         input(&host, "staging", text.into_bytes()),
         f.clone(),
         client(&f),
@@ -318,7 +321,7 @@ fn success_and_cancelled_transport_never_write_capture_or_incident_rows() {
     f.terminal_type = Some("response.completed".into());
     f.failure_kind = None;
     assert!(
-        run(runtime.persist_failure(
+        run(runtime.captures().persist_failure(
             input(&host, "success", body()),
             f.clone(),
             client(&f),
@@ -330,7 +333,7 @@ fn success_and_cancelled_transport_never_write_capture_or_incident_rows() {
     f.completed = false;
     f.terminal_type = Some("cancelled".into());
     assert!(
-        run(runtime.persist_failure(
+        run(runtime.captures().persist_failure(
             input(&host, "cancelled", body()),
             f.clone(),
             client(&f),
@@ -377,7 +380,7 @@ fn raw_error_param_retains_units_but_stored_ascii_policy_and_body_evidence_are_u
         )])
         .unwrap();
         client.observed_body(terminal.as_bytes());
-        let result = run(runtime.persist_failure_with_limits(
+        let result = run(runtime.captures().persist_failure_with_limits(
             input(&host, "param", body()),
             failure,
             client,
@@ -388,7 +391,7 @@ fn raw_error_param_retains_units_but_stored_ascii_policy_and_body_evidence_are_u
         let PersistResult::Stored { manifest, .. } = result else {
             panic!("stored parameter fixture")
         };
-        let response = run(runtime.export_capture_request("param")).unwrap();
+        let response = run(runtime.exports().export_capture_request("param")).unwrap();
         let exported: Value = serde_json::from_slice(&response.body.to_bytes().unwrap()).unwrap();
         let mut encrypted = Vec::new();
         for chunk in exported["data"][0]["chunks"].as_array().unwrap() {

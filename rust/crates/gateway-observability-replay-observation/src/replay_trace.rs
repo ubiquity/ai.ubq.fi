@@ -78,7 +78,7 @@ impl UpstreamTrace {
             chunks_truncated: false,
         }))
     }
-    pub(crate) fn canonical(&self) -> Result<String, GatewayError> {
+    pub fn canonical(&self) -> Result<String, GatewayError> {
         self.validate()?;
         let value = serde_json::to_value(self.0.as_ref())
             .map_err(|_| crate::data::error("Upstream trace serialization failed"))?;
@@ -110,7 +110,7 @@ impl UpstreamTrace {
         }
         Ok(canonical(&value))
     }
-    pub(crate) fn validate(&self) -> Result<(), GatewayError> {
+    pub fn validate(&self) -> Result<(), GatewayError> {
         for attempt in &self.0.attempts {
             if matches!(attempt.provider, TraceProvider::ClaudeCode) {
                 return Err(crate::data::error(
@@ -134,9 +134,9 @@ impl UpstreamTrace {
         }
         Ok(())
     }
-    pub(crate) fn reasons(
+    pub fn reasons(
         &self,
-        client: &crate::replay_producer::ClientFailureObservation,
+        client: &crate::observation::ClientFailureObservation,
     ) -> Vec<&'static str> {
         let mut out = Vec::new();
         if self.0.attempts.is_empty() && !(400..500).contains(&client.status) {
@@ -161,9 +161,9 @@ impl UpstreamTrace {
         }
         out
     }
-    pub(crate) fn coverage(
+    pub fn coverage(
         &self,
-        client: &crate::replay_producer::ClientFailureObservation,
+        client: &crate::observation::ClientFailureObservation,
         reasons: &[&str],
     ) -> &'static str {
         if reasons.contains(&"upstream_trace_truncated")
