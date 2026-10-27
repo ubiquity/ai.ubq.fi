@@ -3,11 +3,12 @@ use super::{
     actor_channel::{ImportChildCommand, OwnedImportChildChannel},
     owner_runtime::OwnedRuntime,
 };
-use crate::import_custody_protocol::{Header, unavailable};
+use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::import::{
     custody_session::VerifiedCurrentImportStarted, remote::VerifiedCurrentImportTerminal,
 };
 use gateway_core::error::GatewayError;
+use gateway_native_custody_wire::wire::Header;
 use std::time::{Duration, Instant};
 
 pub(crate) struct KernelSnapshot {

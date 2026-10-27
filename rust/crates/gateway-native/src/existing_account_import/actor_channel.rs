@@ -3,11 +3,10 @@ use super::{
     exclusive_owner::PinnedExecutable,
     import_endpoints::{ImportEndpointData, ResolvedImportEndpoints},
 };
-use crate::import_custody_protocol::{
-    self as wire, Frame, Header, HeaderView, Stopped, unavailable,
-};
+use crate::import_custody_protocol::{self as wire, unavailable};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::error::GatewayError;
+use gateway_native_custody_wire::wire::{self as data, Frame, Header, HeaderView, Stopped};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
@@ -34,9 +33,9 @@ impl Bootstrap {
     fn validate(&self) -> Result<(), GatewayError> {
         if self.native_owner_id.trim().is_empty()
             || self.native_owner_id.len() > 4096
-            || !wire::hash(&self.account_id_hash)
+            || !data::hash(&self.account_id_hash)
             || self.v != 1
-            || !wire::hash(&self.session_ref)
+            || !data::hash(&self.session_ref)
             || [
                 self.client_local,
                 self.client_peer,

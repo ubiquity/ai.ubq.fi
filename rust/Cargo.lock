@@ -1118,6 +1118,7 @@ dependencies = [
  "gateway-native-confinement",
  "gateway-native-connector",
  "gateway-native-connected-io",
+ "gateway-native-custody-wire",
  "gateway-native-http-framing",
  "gateway-native-https-test-support",
  "gateway-native-import-client",
@@ -1173,6 +1174,16 @@ dependencies = [
  "gateway-core",
  "gateway-native-confinement",
  "rustix",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-native-custody-wire"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority",
+ "gateway-core",
  "serde",
  "serde_json",
 ]
