@@ -104,6 +104,35 @@ test("steering rejects ACK-only, duplicate, reordered, wrong-turn and wrong-answ
   assert.ok(validateSteering([{ ...first, cancelled: false }, second], "thread", "turn", "marker", "marker"));
 });
 
+test("steering preserves independent native session and thread IDs", () => {
+  const identity = { thread_id: "thread", session_id: "session", turn_id: "turn" };
+  const first: RequestSample = { started: 0, bytes: 1, markerCount: 0, ordered: false, identity, cancelled: true };
+  const second: RequestSample = { started: 1, bytes: 1, markerCount: 1, ordered: true, identity };
+  assert.equal(validateSteering([first, second], "thread", "turn", "marker", "marker"), null);
+  for (const field of ["session_id", "thread_id", "turn_id"] as const) {
+    for (const value of ["other", "", " \t", undefined, null, 0]) {
+      const badIdentity = { ...identity, [field]: value };
+      assert.ok(validateSteering([{ ...first, identity: badIdentity }, second], "thread", "turn", "marker", "marker"));
+      assert.ok(validateSteering([first, { ...second, identity: badIdentity }], "thread", "turn", "marker", "marker"));
+    }
+    for (const value of ["", " \t"]) {
+      const emptyIdentity = { ...identity, [field]: value };
+      assert.ok(
+        validateSteering(
+          [{ ...first, identity: emptyIdentity }, { ...second, identity: emptyIdentity }],
+          emptyIdentity.thread_id,
+          emptyIdentity.turn_id,
+          "marker",
+          "marker"
+        )
+      );
+    }
+  }
+  for (const markerCount of [0, 2]) {
+    assert.ok(validateSteering([first, { ...second, markerCount }], "thread", "turn", "marker", "marker"));
+  }
+});
+
 test("identity refusal spends no inference and cleans up", async () => {
   const gateway = await fixtureGateway("identity");
   try {
