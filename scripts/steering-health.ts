@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { parseEnv } from "node:util";
 import { runSteeringProbe } from "./steering-health/probe.ts";
 
 const repositoryEnv = async (): Promise<string> => {
@@ -9,18 +10,15 @@ const repositoryEnv = async (): Promise<string> => {
   return await readFile(join(repository, ".env"), "utf8");
 };
 
-const readToken = (text: string): string => {
-  for (const line of text.split("\n")) {
-    const statement = line.trim().replace(/^export /, "");
-    const separator = statement.indexOf("=");
-    if (statement.slice(0, separator).trim() !== "UOS_AI_TOKEN") continue;
-    const value = statement.slice(separator + 1).trim();
-    const quoted = value.startsWith('"') || value.startsWith("'");
-    const token = quoted ? value.slice(1, -1) : value.split(" #")[0].trim();
-    if (!token) throw new Error("Repository-root UOS_AI_TOKEN is empty");
-    return token;
-  }
-  throw new Error("Repository-root .env lacks UOS_AI_TOKEN");
+export const readToken = (text: string): string => {
+  const value = parseEnv(text).UOS_AI_TOKEN;
+  if (value === undefined) throw new Error("Repository-root .env lacks UOS_AI_TOKEN");
+  const token = value
+    .split(/[\n,]/g)
+    .map((entry) => entry.trim())
+    .find(Boolean);
+  if (!token) throw new Error("Repository-root UOS_AI_TOKEN is empty");
+  return token;
 };
 
 export const steeringHealthMain = async (args: string[]): Promise<Record<string, unknown>> => {
