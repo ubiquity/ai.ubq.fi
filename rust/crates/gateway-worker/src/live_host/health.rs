@@ -44,6 +44,7 @@ pub(super) async fn response(
         .iter()
         .find_map(|name| response.headers.get(*name));
     let _ = runtime
+        .health()
         .observe_provider(
             HealthTarget::codex(account.account_id()),
             event,
@@ -79,6 +80,7 @@ pub(super) async fn failure(
     }
     let runtime = runtime(store);
     let _ = runtime
+        .health()
         .observe_provider(
             HealthTarget::codex(account.account_id()),
             HealthEvent::UpstreamError,

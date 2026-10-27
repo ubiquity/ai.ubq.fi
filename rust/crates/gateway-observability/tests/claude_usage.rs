@@ -278,7 +278,9 @@ fn automatic_capture_visits_unused_and_guarded_accounts_then_returns_updated_ros
             .len(),
         2
     );
-    let health = document(run(runtime.passive_provider_response(true, context()))?)?;
+    let health = document(run(runtime
+        .health()
+        .passive_provider_response(true, context()))?)?;
     let health = member(&health, "claude_code")?;
     assert!(member(&member(&health, "quota")?, "usage_snapshot").is_ok());
     let rollup = document(run(runtime.capacity_rollups_response(90))?)?;
@@ -564,7 +566,10 @@ impl gateway_admin_runtime::capabilities::RuntimeCapabilities for AdminCompositi
         )
         .await?;
         let runtime = ObservabilityRuntime::new(self.0.store.clone(), self.0.clone());
-        let block = runtime.passive_provider_response(true, context).await?;
+        let block = runtime
+            .health()
+            .passive_provider_response(true, context)
+            .await?;
         let data = member(
             &SourceJson::parse_bytes(&block.body.to_bytes()?)?,
             "claude_code",

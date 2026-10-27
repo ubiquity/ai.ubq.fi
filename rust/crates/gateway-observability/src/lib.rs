@@ -5,11 +5,8 @@ pub mod capacity;
 pub mod capacity_events;
 mod capacity_store;
 pub mod claude_capacity;
-mod completion;
-pub mod health;
 pub mod incidents;
 pub mod metered;
-pub mod providers;
 pub mod remote_capacity;
 mod replay_bootstrap;
 mod replay_cleanup;
@@ -31,8 +28,7 @@ use std::rc::Rc;
 /// Isolate-owned coordination data only. It never retains a store, host, or I/O future.
 #[derive(Clone, Default)]
 pub struct ObservabilityState {
-    health: health::HealthWriter,
-    active_health: providers::ActiveHealth,
+    health: gateway_observability_health::HealthState,
     sampled_bucket: Rc<std::cell::Cell<i64>>,
     replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
 }
@@ -40,8 +36,7 @@ pub struct ObservabilityState {
 pub struct ObservabilityRuntime<S, H> {
     pub(crate) store: Rc<S>,
     pub(crate) host: Rc<H>,
-    pub(crate) health: health::HealthWriter,
-    pub(crate) active_health: providers::ActiveHealth,
+    pub(crate) health: gateway_observability_health::HealthState,
     pub(crate) sampled_bucket: Rc<std::cell::Cell<i64>>,
     pub(crate) replay_bootstrap: Rc<std::cell::RefCell<replay_bootstrap::OwnerIndex>>,
 }
@@ -51,7 +46,6 @@ impl<S, H> Clone for ObservabilityRuntime<S, H> {
             store: self.store.clone(),
             host: self.host.clone(),
             health: self.health.clone(),
-            active_health: self.active_health.clone(),
             sampled_bucket: self.sampled_bucket.clone(),
             replay_bootstrap: self.replay_bootstrap.clone(),
         }
@@ -66,7 +60,6 @@ impl<S, H> ObservabilityRuntime<S, H> {
             store: Rc::new(store),
             host: Rc::new(host),
             health: state.health,
-            active_health: state.active_health,
             sampled_bucket: state.sampled_bucket,
             replay_bootstrap: state.replay_bootstrap,
         }
@@ -74,7 +67,6 @@ impl<S, H> ObservabilityRuntime<S, H> {
     pub fn shared_state(&self) -> ObservabilityState {
         ObservabilityState {
             health: self.health.clone(),
-            active_health: self.active_health.clone(),
             sampled_bucket: self.sampled_bucket.clone(),
             replay_bootstrap: self.replay_bootstrap.clone(),
         }
@@ -90,5 +82,12 @@ impl<S, H> ObservabilityRuntime<S, H> {
     }
     pub fn prompt(&self) -> gateway_observability_prompt::PromptAnalytics<'_, S, H> {
         gateway_observability_prompt::PromptAnalytics::new(self.store.as_ref(), self.host.as_ref())
+    }
+    pub fn health(&self) -> gateway_observability_health::ProviderHealth<'_, S, H> {
+        gateway_observability_health::ProviderHealth::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.health.clone(),
+        )
     }
 }

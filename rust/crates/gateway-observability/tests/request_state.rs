@@ -122,7 +122,9 @@ fn rebound_runtime_shares_heartbeat_data_and_never_retains_a_finished_request_ho
     let a = ObservabilityRuntime::with_state(memory.clone(), host, state.clone());
     let target = HealthTarget::codex("account");
     assert_eq!(
-        run(a.observe_provider(target.clone(), E::Success, Some(200), None)),
+        run(a
+            .health()
+            .observe_provider(target.clone(), E::Success, Some(200), None)),
         W::Stored
     );
     drop(a);
@@ -130,12 +132,16 @@ fn rebound_runtime_shares_heartbeat_data_and_never_retains_a_finished_request_ho
     let (host, b_drops, b_random, _, _) = request_host(&clock);
     let b = ObservabilityRuntime::with_state(memory, host, state);
     assert_eq!(
-        run(b.observe_provider(target.clone(), E::Success, Some(200), None)),
+        run(b
+            .health()
+            .observe_provider(target.clone(), E::Success, Some(200), None)),
         W::Throttled
     );
     assert_eq!(b_random.get(), 0);
     assert_eq!(
-        run(b.observe_provider(target, E::UpstreamError, Some(503), None)),
+        run(b
+            .health()
+            .observe_provider(target, E::UpstreamError, Some(503), None)),
         W::Stored
     );
     assert_eq!(b_random.get(), 2);
@@ -155,8 +161,16 @@ fn cancelled_producer_drops_its_host_and_releases_data_only_health_waiters() {
     let (host, _, b_random, _, _) = request_host(&clock);
     let b = ObservabilityRuntime::with_state(memory.clone(), host, state);
     let target = HealthTarget::codex("account");
-    let mut first = Box::pin(a.observe_provider(target.clone(), E::Success, Some(200), None));
-    let mut same = Box::pin(b.observe_provider(target.clone(), E::Success, Some(200), None));
+    let mut first =
+        Box::pin(
+            a.health()
+                .observe_provider(target.clone(), E::Success, Some(200), None),
+        );
+    let mut same =
+        Box::pin(
+            b.health()
+                .observe_provider(target.clone(), E::Success, Some(200), None),
+        );
     let mut cx = Context::from_waker(Waker::noop());
     assert!(matches!(first.as_mut().poll(&mut cx), Poll::Pending));
     assert!(matches!(same.as_mut().poll(&mut cx), Poll::Pending));
@@ -168,7 +182,9 @@ fn cancelled_producer_drops_its_host_and_releases_data_only_health_waiters() {
     assert_eq!(b_random.get(), 0);
     memory.pause.set(false);
     assert_eq!(
-        run(b.observe_provider(target, E::UpstreamError, Some(503), None)),
+        run(b
+            .health()
+            .observe_provider(target, E::UpstreamError, Some(503), None)),
         W::Stored
     );
     assert_eq!(b_random.get(), 2);
@@ -184,8 +200,8 @@ fn active_health_coalesces_only_a_receipt_and_never_reuses_an_old_io_host() {
     let a = ObservabilityRuntime::with_state(memory.clone(), host, state.clone());
     let (host, _, _, b_probes, _) = request_host(&clock);
     let b = ObservabilityRuntime::with_state(memory, host, state);
-    let mut first = Box::pin(a.upstream_health_response());
-    let mut second = Box::pin(b.upstream_health_response());
+    let mut first = Box::pin(a.health().upstream_health_response());
+    let mut second = Box::pin(b.health().upstream_health_response());
     let mut cx = Context::from_waker(Waker::noop());
     assert!(matches!(first.as_mut().poll(&mut cx), Poll::Pending));
     assert!(matches!(second.as_mut().poll(&mut cx), Poll::Pending));
@@ -198,7 +214,7 @@ fn active_health_coalesces_only_a_receipt_and_never_reuses_an_old_io_host() {
         Some("active_upstream_health_interrupted")
     );
     assert_eq!(b_probes.get(), 0);
-    let response = run(b.upstream_health_response()).unwrap();
+    let response = run(b.health().upstream_health_response()).unwrap();
     assert_eq!(response.status, 200);
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&response.body.to_bytes().unwrap()).unwrap()["probes"]
@@ -223,11 +239,20 @@ fn cancelled_coalescer_releases_its_executor_waker_while_the_producer_remains_pe
     memory.pause.set(true);
     let runtime = ObservabilityRuntime::new(memory.clone(), Host::default());
     let target = HealthTarget::codex("fixture");
-    let mut producer =
-        Box::pin(runtime.observe_provider(target.clone(), E::Success, Some(200), None));
+    let mut producer = Box::pin(runtime.health().observe_provider(
+        target.clone(),
+        E::Success,
+        Some(200),
+        None,
+    ));
     let mut noop = Context::from_waker(Waker::noop());
     assert!(matches!(producer.as_mut().poll(&mut noop), Poll::Pending));
-    let mut waiter = Box::pin(runtime.observe_provider(target, E::Success, Some(200), None));
+    let mut waiter = Box::pin(runtime.health().observe_provider(
+        target,
+        E::Success,
+        Some(200),
+        None,
+    ));
     assert!(matches!(waiter.as_mut().poll(&mut cx), Poll::Pending));
     assert_eq!(std::sync::Arc::strong_count(&executor), 3);
     drop(waiter);

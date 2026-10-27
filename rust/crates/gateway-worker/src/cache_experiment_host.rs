@@ -1,11 +1,8 @@
 //! Request-owned fixed Codex control experiment. No generic inference or paid fallback.
 mod sample;
 use crate::authority::RemoteAuthorityStore;
-use crate::host::PlatformClock;
-use crate::host::PlatformHost;
-use crate::host::PlatformTokens;
-use crate::transport::outbound::PinnedDestination;
-use crate::transport::outbound::send_http;
+use crate::host::{PlatformClock, PlatformHost, PlatformTokens};
+use crate::transport::outbound::{PinnedDestination, send_http};
 use futures_util::StreamExt;
 use gateway_authority::{
     cache_experiment::{
@@ -19,13 +16,10 @@ use gateway_authority::{
 };
 use gateway_core::identity::PoolVersionstamp;
 use gateway_observability::ObservabilityRuntime;
-use gateway_observability_contracts::{
-    types::HealthEvent, types::HealthTarget, types::ObservabilityHost,
-};
+use gateway_observability_contracts::types::{HealthEvent, HealthTarget, ObservabilityHost};
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_platform::cancellation::{Cancellation, Deadline};
 use gateway_worker_platform::random;
 use gateway_worker_storage::store::now_ms;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
@@ -98,6 +92,7 @@ impl Host<'_> {
             crate::observability_host::shared_state(),
         );
         let _ = runtime
+            .health()
             .observe_provider(HealthTarget::codex(account), event, status, request_id)
             .await;
     }

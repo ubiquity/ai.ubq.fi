@@ -1610,7 +1610,6 @@ dependencies = [
 name = "gateway-observability"
 version = "0.1.0"
 dependencies = [
- "gateway-auth-credentials",
  "aes-gcm",
  "base64 0.22.1",
  "flate2",
@@ -1620,6 +1619,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-auth-contracts",
+ "gateway-auth-credentials",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-capacity-projection",
@@ -1632,6 +1632,7 @@ dependencies = [
  "gateway-claude-usage-runtime",
  "gateway-core",
  "gateway-observability-contracts",
+ "gateway-observability-health",
  "gateway-observability-ledger",
  "gateway-observability-prompt",
  "gateway-observability-request-records",
@@ -1657,6 +1658,21 @@ dependencies = [
  "gateway-claude-usage-history-records",
  "gateway-core",
  "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-observability-health"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime",
+ "gateway-auth-contracts",
+ "gateway-capacity-projection",
+ "gateway-claude-usage-protocol",
+ "gateway-core",
+ "gateway-observability-contracts",
  "gateway-source",
  "serde",
  "serde_json",

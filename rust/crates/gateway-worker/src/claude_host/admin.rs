@@ -345,6 +345,7 @@ async fn block<H: ObservabilityHost>(
     context: Context,
 ) -> Result<SourceJson, GatewayError> {
     let response = observations
+        .health()
         .passive_provider_response(true, context)
         .await?;
     subscription_block(response.body)

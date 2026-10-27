@@ -260,6 +260,7 @@ impl RequestHost {
                 HealthEvent::Reachable
             };
             let _ = runtime
+                .health()
                 .observe_provider(
                     HealthTarget::codex(&account.account_id),
                     event,

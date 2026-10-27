@@ -84,9 +84,15 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         match request {
-            ProviderRequest::Inventory => self.passive_provider_response(true, context).await,
-            ProviderRequest::PassiveHealth => self.passive_provider_response(false, context).await,
-            ProviderRequest::UpstreamHealth => self.upstream_health_response().await,
+            ProviderRequest::Inventory => {
+                self.health().passive_provider_response(true, context).await
+            }
+            ProviderRequest::PassiveHealth => {
+                self.health()
+                    .passive_provider_response(false, context)
+                    .await
+            }
+            ProviderRequest::UpstreamHealth => self.health().upstream_health_response().await,
             ProviderRequest::Capacity { live } => self.capacity_response(live, context).await,
             ProviderRequest::Observations { document } => {
                 let raw = self.host.capacity_observation_body(&context).await?;

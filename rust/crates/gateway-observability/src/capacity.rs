@@ -1,5 +1,5 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
-use crate::{ObservabilityRuntime, health};
+use crate::ObservabilityRuntime;
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_primitives::crypto::sha256_hex;
@@ -11,6 +11,7 @@ use gateway_observability_contracts::{
     data, host_types::CapacityAccountRef, host_types::CapacityProbe,
     host_types::ClaudeAccountReadback, source_object::SourceObject, types::ObservabilityHost,
 };
+use gateway_observability_health::health;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
@@ -500,6 +501,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut source_accounts = Vec::new();
         for account in &inventory.claude.accounts {
             let health = self
+                .health()
                 .provider_health(&account.target, at)
                 .await
                 .unwrap_or_else(|_| health::unknown_health());

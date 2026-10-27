@@ -1,5 +1,5 @@
 //! Source ba5ef05e provider/health.ts and paid-fallback/health.ts.
-use crate::{ObservabilityRuntime, completion::Completion, store};
+use crate::{ProviderHealth, completion::Completion, store};
 use gateway_capacity_projection::{scalars::is_record, scalars::trim};
 use gateway_core::{query::QueryStore, state::AuthorityStore, state::RecordKey};
 use gateway_observability_contracts::{data, types::*};
@@ -237,7 +237,7 @@ pub(crate) async fn binding_current<S: AuthorityStore>(
     }
     Ok(true)
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ProviderHealth<'_, S, H> {
     pub async fn provider_health(
         &self,
         target: &HealthTarget,
@@ -252,14 +252,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
         }
         if target.provider == HealthProvider::ClaudeCode
-            && !binding_current(self.store.as_ref(), target).await?
+            && !binding_current(self.store, target).await?
         {
             return Ok(unknown_health());
         }
         Ok(project_health(&observations, at_ms))
     }
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ProviderHealth<'_, S, H> {
     /// Arrival-ordered isolate queue; clones share this state. Optional writes never error to routing.
     pub async fn observe_provider(
         &self,
@@ -268,7 +268,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         status: Option<u16>,
         provider_request_id: Option<&str>,
     ) -> HealthWrite {
-        let Ok(at) = data::now(self.host.as_ref()) else {
+        let Ok(at) = data::now(self.host) else {
             return HealthWrite::Unavailable;
         };
         let observation = HealthObservation {
@@ -348,27 +348,27 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             return HealthWrite::Throttled;
         }
         let result: Result<HealthWrite, GatewayError> = async {
-            if !binding_current(self.store.as_ref(), target).await? {
+            if !binding_current(self.store, target).await? {
                 return Ok(HealthWrite::BindingChanged);
             }
             let value = serde_json::to_value(&observation)
                 .map_err(|_| data::error("Invalid health observation"))?;
             let writes = vec![
                 store::put(
-                    self.host.as_ref(),
+                    self.host,
                     health_key(target, "current"),
                     value.clone(),
                     None,
                 )?,
                 store::put(
-                    self.host.as_ref(),
+                    self.host,
                     health_key(target, observation.event.record()),
                     value,
                     None,
                 )?,
             ];
             Ok(
-                if store::commit(self.store.as_ref(), target.source_checks.clone(), writes).await? {
+                if store::commit(self.store, target.source_checks.clone(), writes).await? {
                     HealthWrite::Stored
                 } else {
                     HealthWrite::BindingChanged

@@ -13,9 +13,7 @@ use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceR
 use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::state::RevisionCheck;
 use gateway_observability::ObservabilityRuntime;
-use gateway_observability_contracts::{
-    types::HealthEvent, types::HealthProvider, types::HealthTarget,
-};
+use gateway_observability_contracts::types::{HealthEvent, HealthProvider, HealthTarget};
 use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::error::GatewayError;
 use serde_json::json;
@@ -198,6 +196,7 @@ impl ClaudePoolHost for Host {
             observability_host::shared_state(),
         );
         let _written = runtime
+            .health()
             .observe_provider(
                 HealthTarget {
                     provider: HealthProvider::ClaudeCode,

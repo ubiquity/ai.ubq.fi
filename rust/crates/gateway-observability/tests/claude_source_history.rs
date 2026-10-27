@@ -595,7 +595,9 @@ fn passive_response_preserves_actual_source_masked_hint_labels_workspace_allowli
         assert_eq!(hint.as_units()[13], 0xd83d);
         let runtime = ObservabilityRuntime::new(memory.clone(), host);
         let before = snapshot(&memory);
-        let body = response(run(runtime.passive_provider_response(false, context()))?)?;
+        let body = response(run(runtime
+            .health()
+            .passive_provider_response(false, context()))?)?;
         let claude = member(&body, "claude_code");
         let account = &member(&claude, "accounts").array_items()?[0];
         assert_eq!(text(&member(account, "credential"), "hint"), hint);
@@ -682,7 +684,7 @@ fn actual_capacity_history_rollups_and_upstream_response_bytes_keep_one_source_d
         text(&rollups, "claude_rollup_scan"),
         JsString16::from_utf8("ok")
     );
-    let health = response(run(runtime.upstream_health_response())?)?;
+    let health = response(run(runtime.health().upstream_health_response())?)?;
     assert_eq!(
         text(
             &member(&member(&health, "probes"), "claude_workspace"),

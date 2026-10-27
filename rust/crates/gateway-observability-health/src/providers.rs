@@ -1,6 +1,6 @@
 use crate::{
-    ObservabilityRuntime, completion::Completion, health::aggregate_states,
-    health::binding_current, health::unknown_health,
+    ProviderHealth, completion::Completion, health::aggregate_states, health::binding_current,
+    health::unknown_health,
 };
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
@@ -121,14 +121,14 @@ fn identity_headers(
         .insert("x-uos-deployment-id".into(), identity.deployment_id);
     Ok(())
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ProviderHealth<'_, S, H> {
     pub async fn passive_provider_response(
         &self,
         include_quota: bool,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         let inventory = self.host.provider_inventory(&context).await?;
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let auth = auth_view(&inventory.codex, at);
         let mut codex_accounts = auth["accounts"]
             .as_array()
@@ -227,7 +227,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if account.target.provider != HealthProvider::ClaudeCode {
                 return Err(data::error("Claude health target provider mismatch"));
             }
-            let current = binding_current(self.store.as_ref(), &account.target)
+            let current = binding_current(self.store, &account.target)
                 .await
                 .unwrap_or(false);
             let health = if current {
@@ -257,7 +257,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Ok((accounts, active))
     }
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ProviderHealth<'_, S, H> {
     pub async fn upstream_health_response(&self) -> Result<AuthResponse, GatewayError> {
         let pending = self.active_health.0.borrow().clone();
         if let Some(pending) = pending {
@@ -271,7 +271,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             finished: false,
         };
         let response = async {
-            let at = data::now(self.host.as_ref())?;
+            let at = data::now(self.host)?;
             let evidence = self.host.probe_upstream_health(at + 3000).await?;
             if !matches!(evidence.codex.provider, host::ProbeProvider::ChatgptCodex)
                 || evidence

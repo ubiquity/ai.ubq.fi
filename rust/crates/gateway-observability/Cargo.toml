@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-observability-health.workspace = true
 gateway-auth-credentials.workspace = true
 gateway-auth-contracts.workspace = true
 gateway-auth-primitives.workspace = true

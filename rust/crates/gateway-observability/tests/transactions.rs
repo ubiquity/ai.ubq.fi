@@ -140,7 +140,9 @@ fn changed_explicit_source_fence_never_becomes_an_observation_write() {
         }],
     };
     assert_eq!(
-        run(runtime.observe_provider(target, HealthEvent::Success, Some(200), None)),
+        run(runtime
+            .health()
+            .observe_provider(target, HealthEvent::Success, Some(200), None)),
         HealthWrite::BindingChanged
     );
     assert_eq!(store.memory.rows.borrow().len(), 1);
