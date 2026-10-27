@@ -4,6 +4,8 @@ use crate::{types::ClaudeSelection, types::CodexRecovery, types::CredentialFence
 use crate::{types::PreparedAttempt, types::PublishedCredential, types::RoutingError};
 use crate::{types::RoutingHost, types::RoutingResult, types::SourceRefusalBody};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_authority_paid_records::{PaidAdmission, PaidRequest, PaidReservation};
 use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};

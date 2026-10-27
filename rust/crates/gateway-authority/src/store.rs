@@ -1,10 +1,10 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::source_control::decode_source_control_record;
-use gateway_core::{error::GatewayError, state::StoredRecord};
-use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
-use gateway_core::{state::AtomicTransition, state::AuthorityStore, state::CommitOutcome};
-use gateway_core::{state::RecordKey, state::RecordMutation, state::RevisionCheck};
+use gateway_core::{error::GatewayError, state::RevisionCheck};
+use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
+use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::AuthorityStore};
+use gateway_core::{state::CommitOutcome, state::RecordKey, state::RecordMutation};
 use gateway_schema::aliases::SourceStringCollator;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
@@ -457,42 +457,6 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_claude_proof::ClaudePr
         gateway_authority_claude_proof::ClaudeProofService::new(&self.store, self.clock.as_deref())
     }
 }
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
-    pub(crate) async fn require_claude_proof(
-        &self,
-        tx: &mut Transaction<'_, S, I>,
-        proof: &gateway_authority_claude_proof::ClaudeCohortProof,
-        model: &gateway_core::model::ModelId,
-        now: i64,
-    ) -> Result<(), GatewayError> {
-        let fail = || {
-            crate::unavailable(
-                "claude_code_upstream_unreachable",
-                "Claude full-pool proof is stale, expired, or not applicable.",
-            )
-        };
-        gateway_authority_claude_proof::require_model(proof, model)?;
-        tx.now = self.fresh_time(tx.now.max(now))?;
-        let observed_now = tx.now;
-        let _ = {
-            let reader = tx.routing_read_store();
-            gateway_authority_claude_proof::capture_evidence(&reader, model, observed_now).await?
-        };
-        for check in proof.revision_checks() {
-            if !tx.expect(&check.key, &check.expected_revision) {
-                return Err(fail());
-            }
-        }
-        tx.now = self.fresh_time(tx.now)?;
-        let observed_now = tx.now;
-        let evidence = {
-            let reader = tx.routing_read_store();
-            gateway_authority_claude_proof::capture_evidence(&reader, model, observed_now).await?
-        };
-        gateway_authority_claude_proof::require_current(proof, &evidence)?;
-        Ok(())
-    }
-}
 
 impl<S: AuthorityStore, I: TokenSource> gateway_authority_routing_selection::SelectionFactory
     for Authority<S, I>
@@ -520,8 +484,28 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_route::PaidRouteF
         )
     }
 }
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
-    pub(crate) fn paid_route_clock(&self) -> Option<&dyn AuthorityClock> {
-        self.clock.as_deref()
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_admission::PaidAdmissionFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn paid_admission(&self) -> gateway_authority_paid_admission::PaidAdmissionService<'_, S, I> {
+        gateway_authority_paid_admission::PaidAdmissionService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            self.source_string_collator(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_paid_ledger::PaidLedgerFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn paid_ledger(&self) -> gateway_authority_paid_ledger::PaidLedgerService<'_, S, I> {
+        gateway_authority_paid_ledger::PaidLedgerService::new(&self.store, &self.tokens)
     }
 }

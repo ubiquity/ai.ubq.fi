@@ -1,5 +1,6 @@
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiKeyPolicy;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_authority_paid_control_records::{PaidControlOwner, PaidProviderObservation};
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};

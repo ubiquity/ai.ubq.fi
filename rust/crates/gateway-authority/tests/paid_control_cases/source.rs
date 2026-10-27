@@ -1,5 +1,6 @@
 use super::*;
 use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_records::{PaidAttempt, PaidReservation};
 use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_authority_test_support::TestResult;

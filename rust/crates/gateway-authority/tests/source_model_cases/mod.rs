@@ -1,5 +1,6 @@
 use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_route::authorization::PaidAuthorization;
 use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};

@@ -10,6 +10,7 @@ use gateway_auth::{crypto::Secret, types::AuthConfig, upstream::AuthUpstreamResp
 use gateway_auth::{types::AuthHost, types::AuthMethod, types::AuthPrincipal, types::AuthRequest};
 use gateway_auth::{types::AuthResponse, types::AuthResponseBody, upstream::AuthUpstreamRequest};
 use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
 use gateway_authority_paid_records::PaidRequest;
 use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};

@@ -5,6 +5,7 @@ use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal};
 use gateway_core::{lifecycle::TransportObservation, query::QueryRequest, query::QuerySelector};
 use gateway_core::{query::QueryStore, state::AuthorityStore, state::RevisionCheck};

@@ -842,6 +842,7 @@ dependencies = [
 name = "gateway-admin"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-admission",
  "gateway-authority-paid-route",
  "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
@@ -950,6 +951,8 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-ledger",
+ "gateway-authority-paid-admission",
  "gateway-authority-paid-route",
  "gateway-authority-paid-evidence",
  "gateway-authority-routing-selection",
@@ -1126,6 +1129,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-paid-admission"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-api-protocol",
+ "gateway-authority-claude-proof",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-records",
+ "gateway-authority-paid-route",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-selection",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-authority-paid-control-records"
 version = "0.1.0"
 dependencies = [
@@ -1149,6 +1170,19 @@ dependencies = [
  "gateway-authority-reset-records",
  "gateway-core",
  "gateway-providers",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-paid-ledger"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-records",
+ "gateway-core",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -1249,6 +1283,7 @@ dependencies = [
 name = "gateway-authority-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-admission",
  "gateway-authority-paid-route",
  "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
@@ -1299,6 +1334,7 @@ dependencies = [
 name = "gateway-catalog-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-admission",
  "gateway-authority-paid-route",
  "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
@@ -1416,6 +1452,7 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-ledger",
  "gateway-authority-routing-selection",
  "gateway-authority-reset-records",
  "gateway-authority-paid-records",
@@ -1641,6 +1678,8 @@ dependencies = [
 name = "gateway-routing-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-paid-ledger",
+ "gateway-authority-paid-admission",
  "gateway-authority-paid-route",
  "gateway-authority-paid-evidence",
  "gateway-authority-routing-selection",

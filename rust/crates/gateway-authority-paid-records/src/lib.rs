@@ -2,14 +2,10 @@
 pub mod source_records;
 pub mod source_usage;
 use gateway_authority_contracts::{invalid, nonnegative, positive};
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, MicrocreditLimit, PaidAttemptId, RequestId},
-    js_string::JsString16,
-    lifecycle::{BillingState, DispatchState, PaidTerminalState},
-    model::ModelId,
-    provider::PaidProvider,
-};
+use gateway_core::{error::GatewayError, identity::ApiKeyId, identity::MicrocreditLimit};
+use gateway_core::{identity::PaidAttemptId, identity::RequestId, js_string::JsString16};
+use gateway_core::{lifecycle::BillingState, lifecycle::DispatchState};
+use gateway_core::{lifecycle::PaidTerminalState, model::ModelId, provider::PaidProvider};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -212,4 +208,16 @@ pub fn rollup_shard(request: &str) -> u8 {
         hash = (hash ^ u32::from(code)).wrapping_mul(16_777_619);
     }
     (hash % 16) as u8
+}
+
+pub fn pending_id(key: &ApiKeyId, attempt: &PaidAttemptId) -> String {
+    serde_json::json!([key.0, attempt.0]).to_string()
+}
+
+pub fn arm_gate(gate: &mut ReconciliationGate) {
+    gate.next_due_at_ms = gate
+        .pending
+        .values()
+        .map(|row| row.next_reconciliation_at_ms)
+        .min();
 }

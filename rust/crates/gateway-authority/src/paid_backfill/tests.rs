@@ -1,18 +1,12 @@
 use super::*;
-use gateway_authority_paid_records::{PaidCorrelation, PaidRollup, PaidUsage, PaidWindow};
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_authority_paid_records::{PaidCorrelation, source_usage::surplus_usage_from_source};
+use gateway_authority_paid_records::{PaidRollup, PaidUsage, PaidWindow};
+use gateway_core::{provider::PaidProvider, state::AtomicTransition, state::AuthorityStore};
+use gateway_core::{state::CommitOutcome, state::RecordMutation, state::StoredRecord};
+use std::{cell::Cell, cell::RefCell, collections::BTreeMap, future::Future, rc::Rc};
+use std::{task::Context, task::Poll, task::Waker};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-use gateway_authority_paid_records::source_usage::surplus_usage_from_source;
-use gateway_core::{
-    provider::PaidProvider,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
-};
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    future::Future,
-    rc::Rc,
-    task::{Context, Poll, Waker},
-};
 const NOW: i64 = 1_792_329_600_000;
 #[derive(Clone, Default)]
 struct Store {

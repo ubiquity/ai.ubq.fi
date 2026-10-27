@@ -58,6 +58,7 @@ path = "tests/support/worker-custody-fixture.rs"
 workspace = true
 
 [dev-dependencies]
+gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
 gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
 gateway-authority-kernel = { path = "../gateway-authority-kernel" }
 gateway-authority-api-release = { path = "../gateway-authority-api-release" }

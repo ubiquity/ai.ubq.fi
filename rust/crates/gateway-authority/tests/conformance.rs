@@ -6,6 +6,7 @@ use gateway_authority_contracts::{DAY_MS, PAID_RETENTION_MS, QUOTA_RETENTION_MS}
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelTerminal, KernelWindow};
 use gateway_authority_keys as keys;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_authority_paid_records::{PaidCorrelation, PaidUsage, PaidWindow};
 use gateway_authority_paid_route::authorization::PaidAuthorization;
 use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetCredit};

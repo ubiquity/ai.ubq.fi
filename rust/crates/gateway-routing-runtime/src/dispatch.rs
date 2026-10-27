@@ -1,17 +1,20 @@
 use crate::journal::{AttemptRecord, BillingUsage, Journal, Phase, unavailable};
-use crate::types::{AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin};
+use crate::session::RoutingSession;
+use crate::types::{AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin, TransportState};
 use crate::types::{PreparedAttempt, RecoveredSession, RefreshOutcome, RefusalDecision};
-use crate::types::{RevisionCheckWire, RoutingHost, RoutingResult, TransportState};
-use crate::{classify, journal, session::RoutingSession, settlement};
+use crate::types::{RevisionCheckWire, RoutingHost, RoutingResult};
+use crate::{classify, journal, settlement};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
 use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
-use gateway_core::lifecycle::TransportObservation;
-use gateway_core::{error::GatewayError, provider::UpstreamProvider, query::QueryStore};
-use gateway_core::{lifecycle::PaidTerminalState, lifecycle::SemanticTerminal};
+use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal};
+use gateway_core::{lifecycle::PaidTerminalState, lifecycle::TransportObservation};
+use gateway_core::{provider::UpstreamProvider, query::QueryStore};
 use gateway_providers::{policy::HopDecision, policy::HopFailure};
 
 impl<

@@ -1,5 +1,6 @@
 use gateway_authority_contracts::{DAY_MS, PAID_RETENTION_MS};
 use gateway_authority_keys as keys;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_control_records::{PaidControlConfig, PaidSyntheticHop};
 use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_authority_paid_records::{PaidAdmission, PaidRequest};
@@ -12,10 +13,9 @@ use gateway_core::{identity::ApiKeyId, identity::PaidAttemptId, identity::Reques
 use gateway_core::{provider::PaidProvider, state::AtomicTransition, state::RecordKey};
 use gateway_core::{state::RecordMutation, state::RevisionCheck};
 use gateway_providers::types::ClientSurface;
-use gateway_routing_runtime_test_support::authority::policy;
-use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::run};
-use gateway_routing_runtime_test_support::{authority::NOW, authority::TestAuthority};
-use gateway_routing_runtime_test_support::{authority::Tokens, authority::authority};
+use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::authority};
+use gateway_routing_runtime_test_support::{authority::NOW, authority::policy, authority::run};
+use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::Tokens};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
