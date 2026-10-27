@@ -10,13 +10,13 @@ use gateway_auth::{
     crypto::base64url,
     managed_access::ManagedAccessProjection,
     native_auth::AuthenticatedNativeOwner,
-    native_control::{
-        NativeControlDisposition as Disposition, NativeControlEnvelope, NativeControlRequest,
-        NativeControlResponse, unverified,
-    },
     native_credentials::{
         NativeCredentials, NativeGeneration, NativeOwnerId, OwnerFence, native_refresh_time_ns,
     },
+};
+use gateway_auth_native_wire::control::{
+    NativeControlDisposition as Disposition, NativeControlEnvelope, NativeControlRequest,
+    NativeControlResponse, unverified,
 };
 use gateway_authority::native_control::{
     NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode,
@@ -201,7 +201,7 @@ impl<P: NativeAccessPublisher> NativeOwnerRenewalHandler for NativeOwnerRenewalS
     ) -> Result<NativeControlResponse, GatewayError> {
         proof.require_request(
             gateway_auth::native_auth::NativeCapability::OwnerRenewal,
-            gateway_auth::native::NATIVE_CONTROL_PATH,
+            gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
             raw,
             context.now_ms()?,
         )?;

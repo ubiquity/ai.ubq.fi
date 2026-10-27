@@ -1,12 +1,12 @@
-use gateway_auth::{
-    crypto::{Secret, base64url, sha256_hex},
-    native_auth::{NativeCapability, NativeTransportIdentity},
-    native_import::publication::{
-        self, NativeImportPublication, NativeImportPublicationDisposition, command::*, data::*,
-    },
-    provider_credentials::codex_credential_identity,
+use gateway_auth_credentials::provider_credentials::codex_credential_identity;
+use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_protocol::native_import::publication;
+use gateway_auth_native_protocol::native_import::publication::{
+    NativeImportPublication, NativeImportPublicationDisposition,
 };
-use gateway_core::source_json::SourceJson;
+use gateway_auth_native_wire::{publication_command::*, publication_data::*};
+use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
+use gateway_source::source_json::SourceJson;
 use std::collections::BTreeSet;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn request(normalized: bool) -> ImportPublicationCommandData {

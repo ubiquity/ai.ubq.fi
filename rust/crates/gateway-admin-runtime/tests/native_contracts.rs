@@ -11,7 +11,8 @@ use gateway_admin_test_support::{
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::{native::NativeReadRequest, types::AuthResponse};
+use gateway_auth::types::AuthResponse;
+use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_core::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -198,7 +199,7 @@ fn supervisor_follow_dispatches_only_validated_finite_identifiers() -> TestResul
 
 #[test]
 fn shared_native_follow_descriptor_is_preserved_and_json_success_is_rejected() -> TestResult {
-    use gateway_auth::native::AuthStream;
+    use gateway_auth_native_wire::native_read::AuthStream;
     enum Reply {
         Prepared,
         JsonOnly,

@@ -366,7 +366,7 @@ fn normalized_catalog(
                 error
             }
         })?;
-    let gateway_auth::native_import::publication::command::ImportCatalogData::Normalized {
+    let gateway_auth_native_wire::publication_command::ImportCatalogData::Normalized {
         snapshot,
         client_version,
         upstream_status,

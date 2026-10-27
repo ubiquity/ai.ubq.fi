@@ -847,10 +847,15 @@ dependencies = [
  "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-core",
  "gateway-providers",
  "gateway-publication-policy",
+ "gateway-source",
  "serde",
  "serde_json",
  "url",
@@ -921,6 +926,7 @@ dependencies = [
  "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-claude-usage-protocol",
  "gateway-core",
@@ -960,7 +966,21 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ciborium",
+ "gateway-auth-attestation",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-import-data",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
  "gateway-core",
+ "gateway-source",
  "getrandom 0.2.16",
  "getrandom 0.3.4",
  "hmac 0.12.1",
@@ -978,10 +998,187 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-auth-attestation"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "p256",
+ "p384",
+ "p521",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "time",
+ "webauthn-rs-core",
+]
+
+[[package]]
+name = "gateway-auth-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "gateway-auth-credentials"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "gateway-auth-native-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-auth-native-import-data"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-wire",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-auth-native-proof"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-protocol",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "hmac 0.12.1",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-auth-native-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-import-data",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-auth-native-wire"
+version = "0.1.0"
+dependencies = [
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-auth-passkeys"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-attestation",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "gateway-auth-passport"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "url",
+]
+
+[[package]]
+name = "gateway-auth-passport-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "url",
+]
+
+[[package]]
+name = "gateway-auth-passport-sessions"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-auth-primitives"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-core",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
@@ -1026,6 +1223,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-catalog-provider",
  "gateway-core",
@@ -1161,6 +1359,7 @@ dependencies = [
 name = "gateway-core"
 version = "0.1.0"
 dependencies = [
+ "gateway-source",
  "ryu-js",
  "serde",
  "serde_json",
@@ -1259,6 +1458,7 @@ dependencies = [
  "gateway-admin-keys",
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-claude-runtime",
  "gateway-claude-usage-quota",
@@ -1303,6 +1503,7 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-native-supervisor-read",
@@ -1428,6 +1629,7 @@ name = "gateway-publication"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-publication-policy",
@@ -1442,6 +1644,7 @@ name = "gateway-publication-policy"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "serde",
@@ -1453,6 +1656,7 @@ name = "gateway-publication-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-publication",
@@ -1466,6 +1670,7 @@ name = "gateway-publication-transport"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-publication",
@@ -1553,6 +1758,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-source"
+version = "0.1.0"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-source-audit"
 version = "0.1.0"
 dependencies = [
@@ -1582,6 +1796,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-admission",
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-capacity-recovery",
  "gateway-catalog-provider",
@@ -1644,6 +1859,7 @@ name = "gateway-worker-fixture-setup"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
  "gateway-publication",

@@ -1,5 +1,5 @@
-use gateway_auth::types::AuthResponse;
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use serde_json::json;
 

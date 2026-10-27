@@ -6,10 +6,8 @@ use crate::native_control::import::{
     custody_session::ImportCustodyStartedRequest,
     effects::{NativeImportClaim, NativeImportMode},
 };
-use gateway_auth::{
-    native::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH},
-    native_auth::AuthenticatedNativeOwner,
-};
+use gateway_auth::native_auth::AuthenticatedNativeOwner;
+use gateway_auth_native_wire::native_read::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH};
 use std::sync::atomic::AtomicBool;
 #[derive(Default)]
 struct UniqueTokens(AtomicUsize);

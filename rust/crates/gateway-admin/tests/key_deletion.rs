@@ -223,9 +223,10 @@ async fn paid_fixture_owner_proof(
     body: &[u8],
 ) -> gateway_auth::native_auth::AuthenticatedNativeOwner {
     use gateway_auth::{
-        crypto::base64url, native::NATIVE_PUBLICATION_PATH, native_auth::*,
+        crypto::base64url, native_auth::*,
         native_replay::StoreNonceAuthority,
     };
+    use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
     let nonce = base64url(&host.random_bytes(32).unwrap());
     let time = host.now_ms().to_string();
     let mac = identity

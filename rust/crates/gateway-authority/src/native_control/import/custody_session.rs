@@ -2,10 +2,8 @@
 //! No native effect, new start, nonce consumption or deserialized permission.
 use super::super::rows::{GenerationEffect, OperationRow, Phase};
 use super::*;
-use gateway_auth::{
-    native::NATIVE_RENEWAL_AUTHORITY_PATH,
-    native_auth::{AuthenticatedNativeOwner, NativeCapability},
-};
+use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeCapability};
+use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

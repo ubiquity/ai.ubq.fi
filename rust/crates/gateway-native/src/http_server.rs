@@ -6,23 +6,23 @@ use crate::owner_control::{NativeControlContext, NativeOwnerRenewalHandler};
 use crate::supervisor::{FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, follow_update};
 use crate::supervisor_data::SupervisorData;
 use crate::unix::UnixSupervisor;
-use gateway_auth::native::{
-    AuthStream, NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,
-    NATIVE_MAX_BODY_BYTES, NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH,
-    NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER, NativeReadRequest, NativeRpcEnvelope,
-    NativeRpcResponse,
-};
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-};
-use gateway_auth::native_control::{
-    NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlDisposition,
-    NativeControlEnvelope, NativeControlReason, NativeControlResponse,
 };
 use gateway_auth::native_live::{
     NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH, NativeLiveAuthenticator,
 };
 use gateway_auth::native_replay::StoreNonceAuthority;
+use gateway_auth_native_wire::control::{
+    NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS, NativeControlDisposition,
+    NativeControlEnvelope, NativeControlReason, NativeControlResponse,
+};
+use gateway_auth_native_wire::native_read::{
+    AuthStream, NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,
+    NATIVE_MAX_BODY_BYTES, NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH,
+    NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER, NativeReadRequest, NativeRpcEnvelope,
+    NativeRpcResponse,
+};
 use gateway_core::error::GatewayError;
 use serde_json::{Value, json};
 use std::{

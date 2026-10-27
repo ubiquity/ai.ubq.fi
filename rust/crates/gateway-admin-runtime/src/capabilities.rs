@@ -1,8 +1,8 @@
 //! Finite native/provider capabilities. No URL, process, path, SQL, or Bun relay interface.
-use gateway_auth::{native::NativeReadRequest, types::AuthResponse};
 use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
+use {gateway_auth::types::AuthResponse, gateway_auth_native_wire::native_read::NativeReadRequest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SupervisorBriefTarget {

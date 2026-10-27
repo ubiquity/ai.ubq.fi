@@ -1,11 +1,5 @@
-use gateway_core::{
-    claude::ClaudeErrorEvidence,
-    js_string::JsString16,
-    source_json::SourceJson,
-    state::StoredRecord,
-    tuple_key::{KeyPart, TupleKey},
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_core::{claude::ClaudeErrorEvidence, state::StoredRecord, tuple_key::{KeyPart, TupleKey}, value::{PortableValue, ValueEncoding}};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

@@ -115,7 +115,7 @@ pub async fn fetch_with_bindings(
         };
         return Ok(response.into());
     }
-    if request.path() == gateway_auth::native::NATIVE_PUBLICATION_PATH {
+    if request.path() == gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH {
         let mut response = match publication::handle(request, &env, receiver, &native).await {
             Ok(response) => response,
             Err(error) => error_response(error)?,

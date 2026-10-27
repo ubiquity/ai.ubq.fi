@@ -20,10 +20,8 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as source_body,
 };
-use gateway_auth::{
-    native::NativeReadRequest,
-    types::{AuthHost, AuthResponse, invalid},
-};
+use gateway_auth::types::{AuthHost, AuthResponse, invalid};
+use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_core::{error::GatewayError, query::QueryStore, state::RevisionCheck};
 use serde_json::{Value, json};
 
@@ -563,7 +561,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         request: NativeReadRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
-        use gateway_auth::native::{NATIVE_WIRE_VERSION, NativeRpcEnvelope, NativeRpcResponse};
+        use gateway_auth_native_wire::native_read::{
+            NATIVE_WIRE_VERSION, NativeRpcEnvelope, NativeRpcResponse,
+        };
         let envelope = NativeRpcEnvelope {
             v: NATIVE_WIRE_VERSION,
             request: request.clone(),

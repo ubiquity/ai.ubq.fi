@@ -1,13 +1,13 @@
 //! Finite JSON-tree conversion for explicitly selected control record families.
 //! This data codec never reads storage, validates a family, renews expiry or grants authority.
 use crate::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
-    source_serialization as source,
     state::StoredRecord,
     value::{PortableValue, ValueEncoding},
 };
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde_json::Value;
 
 fn invalid() -> GatewayError {

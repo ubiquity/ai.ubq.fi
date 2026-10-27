@@ -11,11 +11,11 @@ use crate::{
     paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig},
     routing_types::SubscriptionPool,
 };
-use gateway_auth::{
-    native_import::publication::data::{ImportCatalogDisposition, ImportPublicationDataV1},
-    provider_credentials::{
-        MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key, parse_codex_source_pool,
-    },
+use gateway_auth::provider_credentials::{
+    MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key, parse_codex_source_pool,
+};
+use gateway_auth_native_wire::publication_data::{
+    ImportCatalogDisposition, ImportPublicationDataV1,
 };
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};

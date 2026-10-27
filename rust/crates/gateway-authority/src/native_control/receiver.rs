@@ -10,10 +10,12 @@ use crate::{
 };
 use gateway_auth::{
     crypto::sha256_hex,
-    native::NATIVE_CONTROL_PATH,
     native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
-    native_control::{NativeControlEnvelope, NativeControlRequest},
     types::{AuthConfig, AuthHost, AuthRequest},
+};
+use gateway_auth_native_wire::{
+    control::{NativeControlEnvelope, NativeControlRequest},
+    native_read::NATIVE_CONTROL_PATH,
 };
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 

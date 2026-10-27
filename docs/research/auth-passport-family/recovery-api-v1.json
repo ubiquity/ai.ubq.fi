@@ -1,0 +1,1755 @@
+{
+  "classification": "SOURCE DATA/API; COMPONENT QUALIFICATION IN SEPARATE MECHANICAL VIEW; NOT INTEGRATION ACCEPTANCE",
+  "contract": "v7-recovery",
+  "module": "auth-passport-recovered",
+  "aid10": "5dc1f65be3",
+  "plan": "/Users/nv/repos/ubiquity/HANDOFF-2026-10-18-ai-rust-wasm.md",
+  "new_recovery_base": "34925e53677f95d4cab891a426765e04d2042cd0",
+  "new_recovery_tree": "62bfc7373db84f212b72455ec2b1b2be938e2148",
+  "legacy_frozen_a976": "a976c878beb0e2d83ac2b958ab34222140c32479",
+  "feature_commit_binding": "PRESERVE_READY manifest.head and source.bundle HEAD; no self-referential commit hash in this document",
+  "source_oracle": "b59243d674567d418d1410f8390fc7fe47a08c92",
+  "host": "actual Linux x86_64; native Rust host x86_64-unknown-linux-gnu",
+  "actual_model": "unknown",
+  "actual_effort": "unknown",
+  "critical_exact_defining_bodies": [
+    {
+      "path": "rust/crates/gateway-auth/src/resolve.rs",
+      "sha256": "2ba15cf8672cf8bcc3beb4bb16cb39da3f985e1090aaeb804d62283c976f68aa",
+      "bytes": 27316,
+      "physical_lines": 693,
+      "public_declaration_locations": [
+        {
+          "line": 22,
+          "declaration_start": "pub struct AuthService<'a, S, H> {"
+        },
+        {
+          "line": 33,
+          "declaration_start": "pub fn new(store: &'a S, host: &'a H, config: &'a AuthConfig) -> Self {"
+        },
+        {
+          "line": 42,
+          "declaration_start": "pub fn passkeys(&self) -> PasskeyService<'_, S, H> {"
+        },
+        {
+          "line": 357,
+          "declaration_start": "pub async fn authenticate_client("
+        },
+        {
+          "line": 454,
+          "declaration_start": "pub async fn authenticate_admin("
+        },
+        {
+          "line": 522,
+          "declaration_start": "pub async fn handle_auth_route("
+        },
+        {
+          "line": 671,
+          "declaration_start": "pub fn token_shape(token: &str) -> &'static str {"
+        }
+      ],
+      "exact_defining_source": "use gateway_auth_attestation::upstream::{\n    console_title_matches, deno_token_shape, github_rejected, github_token_shape,\n    kernel_public_keys_key, upstream_unavailable, verify_kernel,\n};\nuse gateway_auth_contracts::{\n    passkeys::SessionView,\n    types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse},\n    upstream::AuthUpstreamRequest,\n};\nuse gateway_auth_passkeys::{origin::local_bypass, passkeys::PasskeyService};\nuse gateway_auth_primitives::{\n    api_keys,\n    crypto::{Secret, sha256_base64url},\n    error::unauthorized,\n};\nuse gateway_core::state::AuthorityStore;\nuse gateway_source::error::GatewayError;\nuse serde_json::{Value, json};\nuse std::{cell::RefCell, collections::BTreeMap};\nuse url::Url;\n\npub struct AuthService<'a, S, H> {\n    pub store: &'a S,\n    pub host: &'a H,\n    pub config: &'a AuthConfig,\n    github_cache: RefCell<BTreeMap<String, i64>>,\n    deno_cache: RefCell<BTreeMap<String, i64>>,\n}\n\nimpl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::session::PassportDate>\n    AuthService<'a, S, H>\n{\n    pub fn new(store: &'a S, host: &'a H, config: &'a AuthConfig) -> Self {\n        Self {\n            store,\n            host,\n            config,\n            github_cache: RefCell::new(BTreeMap::new()),\n            deno_cache: RefCell::new(BTreeMap::new()),\n        }\n    }\n    pub fn passkeys(&self) -> PasskeyService<'_, S, H> {\n        PasskeyService {\n            store: self.store,\n            host: self.host,\n            config: self.config,\n        }\n    }\n    fn allowlisted(tokens: &[Secret], token: &str) -> bool {\n        tokens.iter().any(|value| value.expose() == token)\n    }\n    fn principal(\n        token: Option<&str>,\n        method: AuthMethod,\n        is_admin: bool,\n        is_super_admin: bool,\n    ) -> AuthPrincipal {\n        AuthPrincipal {\n            token: token.map(|v| Secret::new(v.to_owned())),\n            method,\n            is_admin,\n            is_super_admin,\n        }\n    }\n    fn passport_principal(\n        claims: gateway_auth_passport_contracts::session::PassportSourceClaims,\n        bearer: bool,\n    ) -> AuthPrincipal {\n        let eligible_admin = claims.is_admin && claims.agent_token_id.is_none();\n        let method = if bearer {\n            AuthMethod::PassportBearer { claims }\n        } else {\n            AuthMethod::PassportSession {\n                identity: gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt(\n                    claims,\n                ),\n            }\n        };\n        Self::principal(None, method, eligible_admin, false)\n    }\n    fn passkey_principal(view: SessionView) -> AuthPrincipal {\n        let is_admin = view.user.is_admin;\n        Self::principal(\n            Some(&view.session.token),\n            AuthMethod::PasskeySession {\n                user_id: view.user.id,\n                handle: view.user.handle,\n                is_admin,\n                credential_count: view.user.credential_ids.len(),\n            },\n            is_admin,\n            false,\n        )\n    }\n    fn legacy_local(&self, request: &AuthRequest) -> bool {\n        !self.config.production\n            && !self.config.hosted\n            && !self.config.git_sha_known\n            && Url::parse(&request.url)\n                .ok()\n                .and_then(|u| u.host_str().map(str::to_owned))\n                .is_some_and(|h| matches!(h.as_str(), \"localhost\" | \"127.0.0.1\" | \"::1\" | \"[::1]\"))\n    }\n    async fn github(\n        &self,\n        request: &AuthRequest,\n        token: &str,\n    ) -> Result<AuthPrincipal, GatewayError> {\n        if Self::allowlisted(&self.config.admin_tokens, token) {\n            return Err(unauthorized());\n        }\n        let has_repo = request\n            .header(\"x-github-owner\")\n            .is_some_and(|s| !s.trim().is_empty())\n            && request\n                .header(\"x-github-repo\")\n                .is_some_and(|s| !s.trim().is_empty());\n        if !has_repo\n            && request\n                .header(\"x-ubiquity-kernel-token\")\n                .is_none_or(|s| s.trim().is_empty())\n        {\n            return Err(unauthorized());\n        }\n        let mut verification_config = self.config.clone();\n        let key_row = self.store.read(&kernel_public_keys_key()).await?;\n        // Named kernel-public-key row only: generic auth storage remains Json.\n        let stored_keys =\n            key_row\n                .as_ref()\n                .map(\n                    |record| -> Result<\n                        Option<Vec<gateway_source::source_json::SourceJson>>,\n                        GatewayError,\n                    > {\n                        record.validate_version()?;\n                        if record\n                            .expires_at_ms\n                            .is_some_and(|expiry| expiry <= self.host.now_ms())\n                        {\n                            return Ok(None);\n                        }\n                        gateway_core::source_control::decode_source_control_record(record)?\n                            .deserialize::<Vec<gateway_source::source_json::SourceJson>>()\n                            .map(Some)\n                            .map_err(|_| {\n                                GatewayError::unavailable(\n                                    \"Authentication state is corrupt\",\n                                    \"auth_state_corrupt\",\n                                )\n                            })\n                    },\n                )\n                .transpose()?\n                .flatten();\n        if let Some(stored_keys) = stored_keys {\n            for record in stored_keys {\n                // Source skips each failed PEM import. Lone units necessarily\n                // fail atob; reject only this crypto projection, never storage.\n                if let Some(pem) = gateway_source::source_serialization::member(&record, \"pem\")\n                    .as_ref()\n                    .and_then(gateway_source::source_serialization::string)\n                    .and_then(|pem| pem.try_utf8().ok())\n                    && !verification_config\n                        .kernel_public_keys_pem\n                        .iter()\n                        .any(|key| key == &pem)\n                {\n                    verification_config.kernel_public_keys_pem.push(pem);\n                }\n            }\n        }\n        let claims = verify_kernel(request, token, &verification_config, self.host.now_ms())?;\n        let cache_key =\n            sha256_base64url(format!(\"{token}:{}/{}\", claims.owner, claims.repo).as_bytes());\n        let cached = self\n            .github_cache\n            .borrow()\n            .get(&cache_key)\n            .is_some_and(|expiry| *expiry > self.host.now_ms());\n        if !cached {\n            let reply = self\n                .host\n                .fetch_auth(AuthUpstreamRequest::GitHubRepository {\n                    token: Secret::new(token.to_owned()),\n                    owner: claims.owner.clone(),\n                    repo: claims.repo.clone(),\n                })\n                .await\n                .map_err(|_| upstream_unavailable())?;\n            if !reply.success() {\n                return Err(if matches!(reply.status, 401 | 404) {\n                    github_rejected()\n                } else {\n                    upstream_unavailable()\n                });\n            }\n            self.github_cache\n                .borrow_mut()\n                .insert(cache_key, self.host.now_ms() + 300_000);\n        }\n        let path = Url::parse(&request.url)\n            .ok()\n            .map(|u| u.path().to_owned())\n            .unwrap_or_else(|| \"unknown\".into());\n        let limit_scope = self\n            .host\n            .kernel_principal(&claims.owner, &claims.repo, &claims.state_id, &path)\n            .await?;\n        if !matches!(limit_scope.as_str(), \"repo\" | \"org\") {\n            return Err(GatewayError::unavailable(\n                \"Kernel policy scope is invalid\",\n                \"kernel_policy_invalid\",\n            ));\n        }\n        Ok(Self::principal(\n            Some(token),\n            AuthMethod::GithubToken {\n                owner: claims.owner,\n                repo: claims.repo,\n                state_id: claims.state_id,\n                limit_scope,\n            },\n            false,\n            false,\n        ))\n    }\n    async fn admin_token(&self, token: &str) -> Result<AuthPrincipal, GatewayError> {\n        if Self::allowlisted(&self.config.admin_tokens, token) {\n            return Ok(Self::principal(\n                Some(token),\n                AuthMethod::AdminAllowlist,\n                true,\n                true,\n            ));\n        }\n        if github_token_shape(token) || !deno_token_shape(token) {\n            return Err(unauthorized());\n        }\n        let cache_key = sha256_base64url(token.as_bytes());\n        if self\n            .deno_cache\n            .borrow()\n            .get(&cache_key)\n            .is_some_and(|expiry| *expiry > self.host.now_ms())\n        {\n            return Ok(Self::principal(\n                Some(token),\n                AuthMethod::DenoDeployToken,\n                true,\n                true,\n            ));\n        }\n        let secret = Secret::new(token.to_owned());\n        let mut verified = false;\n        if let Some(app) = self.config.deno_app_slug.as_ref().filter(|s| !s.is_empty()) {\n            let reply = self\n                .host\n                .fetch_auth(AuthUpstreamRequest::DenoApplication {\n                    token: secret.clone(),\n                    app: app.clone(),\n                })\n                .await\n                .map_err(|_| {\n                    GatewayError::new(502, \"Failed to verify admin token\", Some(\"bad_gateway\"))\n                })?;\n            verified = reply.success();\n            if !verified\n                && let Some(org) = self.config.deno_org_slug.as_ref().filter(|s| !s.is_empty())\n            {\n                let reply = self\n                    .host\n                    .fetch_auth(AuthUpstreamRequest::DenoConsole {\n                        token: secret.clone(),\n                        organization: org.clone(),\n                        app: app.clone(),\n                    })\n                    .await\n                    .map_err(|_| {\n                        GatewayError::new(502, \"Failed to verify admin token\", Some(\"bad_gateway\"))\n                    })?;\n                verified = reply.success() && console_title_matches(&reply.body, app);\n            }\n        }\n        if !verified\n            && let Some(deployment) = self\n                .config\n                .deno_deployment_id\n                .as_ref()\n                .filter(|s| !s.is_empty())\n        {\n            verified = self\n                .host\n                .fetch_auth(AuthUpstreamRequest::DenoDeployment {\n                    token: secret,\n                    deployment: deployment.clone(),\n                })\n                .await\n                .map_err(|_| {\n                    GatewayError::new(502, \"Failed to verify admin token\", Some(\"bad_gateway\"))\n                })?\n                .success();\n        }\n        if !verified {\n            return Err(unauthorized());\n        }\n        self.deno_cache\n            .borrow_mut()\n            .insert(cache_key, self.host.now_ms() + 600_000);\n        Ok(Self::principal(\n            Some(token),\n            AuthMethod::DenoDeployToken,\n            true,\n            true,\n        ))\n    }\n    async fn local_api_key_policy(\n        &self,\n    ) -> Result<Option<gateway_auth_primitives::api_keys::ApiKeyPolicy>, GatewayError> {\n        let Some(row) = self\n            .store\n            .read(&api_keys::id_key(\"local-development\"))\n            .await?\n        else {\n            return Ok(None);\n        };\n        row.validate_version()?;\n        // This named source metadata read grants no role. Preserve the checked\n        // native listener gate and the separate model-free hash-policy read.\n        let metadata = gateway_core::source_control::decode_source_control_record(&row)?;\n        if !gateway_source::source_serialization::member(&metadata, \"revoked_at_ms\")\n            .is_some_and(|value| value.as_str() == \"null\")\n        {\n            return Ok(None);\n        }\n        let (Some(hash), Some(id)) = (\n            gateway_source::source_serialization::member(&metadata, \"hash\")\n                .and_then(|v| v.deserialize::<String>().ok()),\n            gateway_source::source_serialization::member(&metadata, \"id\")\n                .and_then(|v| v.deserialize::<String>().ok()),\n        ) else {\n            return Ok(None);\n        };\n        let Some(row) = self.store.read(&api_keys::hash_key(&hash)).await? else {\n            return Ok(None);\n        };\n        row.validate_version()?;\n        let record = serde_json::from_value(row.json_value()?.clone()).map_err(|_| {\n            GatewayError::unavailable(\n                \"Local API key quota migration is incomplete\",\n                \"server_error\",\n            )\n        })?;\n        let policy = api_keys::policy_from_record(hash, record, self.host.now_ms())?;\n        Ok((id == \"local-development\").then_some(policy))\n    }\n    pub async fn authenticate_client(\n        &self,\n        request: &AuthRequest,\n    ) -> Result<AuthPrincipal, GatewayError> {\n        let token = request.bearer();\n        if local_bypass(request, self.config) {\n            // Only the checked native listener can resolve the existing local-development principal.\n            if let Some(policy) = self.local_api_key_policy().await? {\n                return Ok(Self::principal(\n                    token,\n                    AuthMethod::KvApiKey {\n                        key_id: policy.key_id.clone(),\n                        policy,\n                    },\n                    false,\n                    false,\n                ));\n            }\n            return Ok(Self::principal(token, AuthMethod::Disabled, false, false));\n        }\n        if self.legacy_local(request) {\n            return Ok(Self::principal(token, AuthMethod::Disabled, false, false));\n        }\n        if let Some(principal) = self.passport_cookie(request).await? {\n            return Ok(principal);\n        }\n        let Some(token) = token else {\n            return self\n                .passkeys()\n                .session(request, None)\n                .await?\n                .map(Self::passkey_principal)\n                .ok_or_else(unauthorized);\n        };\n        if Self::allowlisted(&self.config.auth_tokens, token) {\n            return Ok(Self::principal(\n                Some(token),\n                AuthMethod::AuthTokensAllowlist,\n                false,\n                false,\n            ));\n        }\n        if token.starts_with(\"uos_ai_session_\") {\n            return self\n                .passkeys()\n                .session(request, None)\n                .await?\n                .map(Self::passkey_principal)\n                .ok_or_else(unauthorized);\n        }\n        if github_token_shape(token) && !Self::allowlisted(&self.config.admin_tokens, token) {\n            match self.github(request, token).await {\n                Ok(principal) => return Ok(principal),\n                Err(error) if error.status == 401 && request.header(\"cookie\").is_some() => {\n                    if let Some(session) = self\n                        .passkeys()\n                        .session(&request.without_bearer(), None)\n                        .await?\n                    {\n                        return Ok(Self::passkey_principal(session));\n                    }\n                    return Err(error);\n                }\n                Err(error) => return Err(error),\n            }\n        }\n        if api_keys::api_key_shape(token) {\n            let policy = api_keys::authenticate(self.store, token, self.host.now_ms()).await?;\n            return Ok(Self::principal(\n                Some(token),\n                AuthMethod::KvApiKey {\n                    key_id: policy.key_id.clone(),\n                    policy,\n                },\n                false,\n                false,\n            ));\n        }\n        // A JWT-shaped credential is never an admin or opaque token. Invalid\n        // Passport material fails closed instead of reaching the admin path.\n        if gateway_auth_passport::passport::jwt_shaped(token) {\n            let config = gateway_auth_passport::passport::config_for_request(self.config, request)\n                .ok_or_else(unauthorized)?;\n            let passport = gateway_auth_passport::passport::PassportService {\n                host: self.host,\n                config: &config,\n            };\n            let claims = gateway_auth_passport::passport::verify_source_for_config(\n                self.host,\n                passport.config,\n                token,\n            )\n            .await?;\n            return Ok(Self::passport_principal(claims, true));\n        }\n        self.admin_token(token).await\n    }\n    pub async fn authenticate_admin(\n        &self,\n        request: &AuthRequest,\n    ) -> Result<AuthPrincipal, GatewayError> {\n        if local_bypass(request, self.config) {\n            return Ok(Self::principal(\n                request.bearer().or(Some(\"local-dev-admin\")),\n                AuthMethod::Disabled,\n                true,\n                true,\n            ));\n        }\n        // Passport-admin authority is cookie-only; a Passport/agent bearer can\n        // never be promoted even when its own claims say isAdmin.\n        if request\n            .bearer()\n            .is_some_and(gateway_auth_passport::passport::jwt_shaped)\n        {\n            return Err(unauthorized());\n        }\n        if let Some(principal) = self.passport_cookie(request).await? {\n            if matches!(&principal.method,AuthMethod::PassportSession {identity:gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt(c)} if c.agent_token_id.is_some())\n            {\n                return Err(unauthorized());\n            }\n            if !principal.is_admin {\n                return Err(GatewayError::new(403, \"Forbidden\", Some(\"forbidden\")));\n            }\n            if !gateway_auth_passkeys::origin::same_origin_mutation(request) {\n                return Err(GatewayError::new(403, \"Forbidden\", Some(\"forbidden\")));\n            }\n            return Ok(principal);\n        }\n        let mut session = self.passkeys().session(request, None).await?;\n        if session.is_none()\n            && let Some(token) = request.bearer().filter(|token| {\n                github_token_shape(token)\n                    && !Self::allowlisted(&self.config.admin_tokens, token)\n                    && !Self::allowlisted(&self.config.auth_tokens, token)\n                    && request.header(\"cookie\").is_some()\n            })\n        {\n            match self.github(request, token).await {\n                Ok(_) => return Err(unauthorized()),\n                Err(error) if error.status == 401 => {\n                    session = self\n                        .passkeys()\n                        .session(&request.without_bearer(), None)\n                        .await?;\n                }\n                Err(error) => return Err(error),\n            }\n        }\n        if let Some(view) = session {\n            if !view.user.is_admin {\n                return Err(GatewayError::new(403, \"Forbidden\", Some(\"forbidden\")));\n            }\n            if request.bearer().is_none()\n                && request.header(\"cookie\").is_some()\n                && !gateway_auth_passkeys::origin::same_origin_mutation(request)\n            {\n                return Err(GatewayError::new(403, \"Forbidden\", Some(\"forbidden\")));\n            }\n            return Ok(Self::passkey_principal(view));\n        }\n        self.admin_token(request.bearer().ok_or_else(unauthorized)?)\n            .await\n    }\n    pub async fn handle_auth_route(\n        &self,\n        request: &AuthRequest,\n    ) -> Result<Option<AuthResponse>, GatewayError> {\n        let url = Url::parse(&request.url)\n            .map_err(|_| gateway_auth_primitives::error::invalid(\"Invalid request URL\"))?;\n        if let Some(response) = (gateway_auth_passport::browser::PassportBrowser {\n            store: self.store,\n            host: self.host,\n        })\n        .route(request)\n        .await\n        {\n            return Ok(Some(response));\n        }\n        let result = match (request.method.as_str(), url.path()) {\n            (\"POST\", \"/api/auth/register/start\") => {\n                let admin = self.authenticate_admin(request).await?;\n                let token = if matches!(admin.method, AuthMethod::PasskeySession { .. }) {\n                    admin.token.as_ref().map(Secret::expose)\n                } else {\n                    None\n                };\n                self.passkeys().register_start(request, token).await?\n            }\n            (\"POST\", \"/api/auth/register/finish\") => {\n                self.passkeys().register_finish(request).await?\n            }\n            (\"POST\", \"/api/auth/login/start\") => self.passkeys().login_start(request).await?,\n            (\"POST\", \"/api/auth/login/finish\") => self.passkeys().login_finish(request).await?,\n            (\"GET\", \"/api/auth/session\") | (\"POST\", \"/api/auth/logout\") => {\n                let auth = if request.header(\"authorization\").is_some()\n                    && request.header(\"cookie\").is_some()\n                {\n                    self.authenticate_client(request).await.ok()\n                } else {\n                    None\n                };\n                let token = auth\n                    .as_ref()\n                    .filter(|auth| matches!(auth.method, AuthMethod::PasskeySession { .. }))\n                    .and_then(|auth| auth.token.as_ref())\n                    .map(Secret::expose);\n                if request.method == \"GET\" {\n                    self.passkeys().session_response(request, token).await?\n                } else {\n                    self.passkeys().logout(request, token).await?\n                }\n            }\n            (\"GET\", \"/uos/auth\") => {\n                let mut auth = self.authenticate_client(request).await?;\n                if (local_bypass(request, self.config) || self.legacy_local(request))\n                    && let Ok(admin) = self.authenticate_admin(request).await\n                {\n                    auth = admin;\n                }\n                let method = self.method_wire(&auth.method).await?;\n                let token = auth.token.as_ref().map(Secret::expose);\n                let shape = token.map(token_shape);\n                let principal = auth.method.principal_id(token);\n                let mut response = AuthResponse::source_json(\n                    200,\n                    crate::report::document(\n                        if local_bypass(request, self.config) || self.legacy_local(request) {\n                            \"disabled\"\n                        } else {\n                            \"required\"\n                        },\n                        &auth,\n                        &principal,\n                        &method,\n                        token,\n                        shape,\n                    )?,\n                );\n                gateway_auth_passport::browser::renew_report_cookie(request, &mut response);\n                response\n            }\n            _ => return Ok(None),\n        };\n        Ok(Some(result))\n    }\n    async fn method_wire(\n        &self,\n        method: &AuthMethod,\n    ) -> Result<gateway_source::source_json::SourceJson, GatewayError> {\n        let value = match method {\n            AuthMethod::PasskeySession {\n                user_id,\n                handle,\n                is_admin,\n                credential_count,\n            } => {\n                json!({\"kind\":\"passkey_session\",\"user\":{\"id\":user_id,\"handle\":handle,\"is_admin\":is_admin,\"credential_count\":credential_count}})\n            }\n            AuthMethod::GithubToken {\n                owner,\n                repo,\n                state_id,\n                limit_scope,\n            } => {\n                json!({\"kind\":\"github_token\",\"repo\":{\"owner\":owner,\"repo\":repo},\"state_id\":state_id,\"limit_scope\":limit_scope})\n            }\n            AuthMethod::PassportSession { identity } => {\n                return gateway_auth_passport::identity_report::session(identity);\n            }\n            AuthMethod::PassportBearer { claims } => {\n                return gateway_auth_passport::identity_report::jwt(claims, true);\n            }\n            AuthMethod::KvApiKey { key_id, policy } => {\n                let mut key = json!({\"id\":key_id});\n                if let Some(row) = self.store.read(&api_keys::id_key(key_id)).await? {\n                    row.validate_version()?;\n                    let record = row.json_value()?.clone();\n                    let wk = gateway_auth_primitives::store::key(json!([\n                        \"uos_ai\",\n                        \"api_key_usage\",\n                        \"v3\",\n                        \"window\",\n                        key_id,\n                        policy.policy_version,\n                        policy.window_start_ms\n                    ]));\n                    let usage = match self.store.read(&wk).await? {\n                        None => 0,\n                        Some(row) => {\n                            row.validate_version()?;\n                            row.json_value()?\n                                .get(\"committed_requests\")\n                                .and_then(Value::as_i64)\n                                .filter(|n| *n >= 0)\n                                .ok_or_else(quota_ledger_unavailable)?\n                        }\n                    };\n                    key = json!({\"id\":key_id,\"name\":record.get(\"name\"),\"prefix\":record.get(\"prefix\"),\"created_at_ms\":record.get(\"created_at_ms\"),\"expires_at_ms\":policy.expires_at_ms,\"revoked_at_ms\":record.get(\"revoked_at_ms\"),\"usage_limit_requests\":policy.usage_limit_requests,\"usage_requests\":usage,\"usage_reset_at_ms\":policy.usage_reset_at_ms,\"window_ms\":policy.window_ms});\n                }\n                json!({\"kind\":\"kv_api_key\",\"key\":key})\n            }\n            _ => serde_json::to_value(method).map_err(|_| {\n                GatewayError::unavailable(\n                    \"Authentication method cannot be encoded\",\n                    \"auth_state_corrupt\",\n                )\n            })?,\n        };\n        gateway_source::source_json::SourceJson::from_serializable(&value)\n    }\n}\n\npub fn token_shape(token: &str) -> &'static str {\n    if token.is_empty() {\n        \"unset\"\n    } else if token.starts_with(\"ddw_\") {\n        \"deno_deploy_like(ddw_)\"\n    } else if github_token_shape(token) {\n        \"github_prefix\"\n    } else if token.starts_with(\"uos_ai_session_\") {\n        \"uos_ai_session_prefix\"\n    } else if api_keys::api_key_shape(token) {\n        \"uos_api_key\"\n    } else if token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()) {\n        \"hex64\"\n    } else if token.contains('_') {\n        \"has_underscore\"\n    } else {\n        \"other\"\n    }\n}\n\nfn quota_ledger_unavailable() -> GatewayError {\n    GatewayError::unavailable(\"API key quota ledger is unavailable\", \"server_error\")\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth/src/passport_current.rs",
+      "sha256": "7210c0ac53136016317779f1a93ae60790b612845d2140bc696436b42759c395",
+      "bytes": 2453,
+      "physical_lines": 64,
+      "public_declaration_locations": [
+        {
+          "line": 13,
+          "declaration_start": "pub(crate) async fn passport_cookie("
+        },
+        {
+          "line": 53,
+          "declaration_start": "pub async fn check_passport_app_session("
+        }
+      ],
+      "exact_defining_source": "//! Concrete Passport preflight. Authority owns its private single-use effect proof.\nuse crate::resolve::AuthService;\nuse gateway_auth_contracts::types::AuthHost;\nuse gateway_auth_passport_contracts::{\n    actor_data::{PassportAppSessionBinding, PassportAppSessionData},\n    session::PassportDate,\n};\nuse gateway_auth_passport_sessions::sessions::PassportSessions;\nuse gateway_core::state::AuthorityStore;\nuse gateway_source::error::GatewayError;\n\nimpl<S: AuthorityStore, H: AuthHost + PassportDate> AuthService<'_, S, H> {\n    pub(crate) async fn passport_cookie(\n        &self,\n        request: &gateway_auth_contracts::types::AuthRequest,\n    ) -> Result<Option<gateway_auth_contracts::types::AuthPrincipal>, GatewayError> {\n        use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};\n        use gateway_auth_passport::{\n            browser::{cookie, production_request},\n            passport::verify_source,\n        };\n        use gateway_auth_passport_contracts::{\n            actor_data::PassportSessionData, passport::PASSPORT_COOKIE,\n        };\n        let Some(token) = cookie(request, PASSPORT_COOKIE) else {\n            return Ok(None);\n        };\n        if !production_request(request) {\n            return Err(gateway_auth_primitives::error::unauthorized());\n        }\n        let identity = if gateway_auth_passport_sessions::sessions::token_shape(&token) {\n            PassportSessionData::App(\n                PassportSessions {\n                    store: self.store,\n                    host: self.host,\n                }\n                .authenticate(&token)\n                .await?,\n            )\n        } else {\n            PassportSessionData::Jwt(verify_source(self.host, &token).await?)\n        };\n        let is_admin = identity.is_admin();\n        Ok(Some(AuthPrincipal {\n            token: None,\n            method: AuthMethod::PassportSession { identity },\n            is_admin,\n            is_super_admin: false,\n        }))\n    }\n    /// Performs fixed central introspection outside an Authority transaction, then\n    /// rereads the exact row revision/token/subject/date/fixed binding. DATA only.\n    pub async fn check_passport_app_session(\n        &self,\n        binding: &PassportAppSessionBinding,\n    ) -> Result<PassportAppSessionData, GatewayError> {\n        PassportSessions {\n            store: self.store,\n            host: self.host,\n        }\n        .check_bound(binding)\n        .await\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth-contracts/src/types.rs",
+      "sha256": "40b8f24c7a24ba817d1c7b97743cb5215f958534f8cd75b9a1276a3d7caad0e0",
+      "bytes": 9620,
+      "physical_lines": 283,
+      "public_declaration_locations": [
+        {
+          "line": 10,
+          "declaration_start": "pub const CANONICAL_ORIGIN: &str = \"https://ai.ubq.fi\";"
+        },
+        {
+          "line": 11,
+          "declaration_start": "pub const CANDIDATE_ORIGIN: &str = \"https://rust-candidate.ai.ubq.fi\";"
+        },
+        {
+          "line": 12,
+          "declaration_start": "pub const RELAY_COOKIE: &str = \"__Host-uos_ai_relay_session\";"
+        },
+        {
+          "line": 15,
+          "declaration_start": "pub struct AuthRequest {"
+        },
+        {
+          "line": 42,
+          "declaration_start": "pub fn header(&self, name: &str) -> Option<&str> {"
+        },
+        {
+          "line": 45,
+          "declaration_start": "pub fn bearer(&self) -> Option<&str> {"
+        },
+        {
+          "line": 55,
+          "declaration_start": "pub fn without_bearer(&self) -> Self {"
+        },
+        {
+          "line": 63,
+          "declaration_start": "pub struct NativePeer {"
+        },
+        {
+          "line": 70,
+          "declaration_start": "pub enum AuthResponseBody {"
+        },
+        {
+          "line": 76,
+          "declaration_start": "pub fn as_json(&self) -> Option<&Value> {"
+        },
+        {
+          "line": 83,
+          "declaration_start": "pub fn to_bytes(&self) -> Result<Vec<u8>, GatewayError> {"
+        },
+        {
+          "line": 117,
+          "declaration_start": "pub struct AuthResponse {"
+        },
+        {
+          "line": 128,
+          "declaration_start": "pub fn json(status: u16, body: Value) -> Self {"
+        },
+        {
+          "line": 140,
+          "declaration_start": "pub fn source_json(status: u16, body: gateway_source::source_json::SourceJson) -> Self {"
+        },
+        {
+          "line": 152,
+          "declaration_start": "pub fn with_stream("
+        },
+        {
+          "line": 159,
+          "declaration_start": "pub fn error(error: GatewayError) -> Self {"
+        },
+        {
+          "line": 168,
+          "declaration_start": "pub struct AuthConfig {"
+        },
+        {
+          "line": 188,
+          "declaration_start": "pub enum AuthMethod {"
+        },
+        {
+          "line": 222,
+          "declaration_start": "pub fn principal_id(&self, bearer: Option<&str>) -> gateway_core::identity::PrincipalId {"
+        },
+        {
+          "line": 260,
+          "declaration_start": "pub struct AuthPrincipal {"
+        },
+        {
+          "line": 267,
+          "declaration_start": "pub trait AuthHost: crate::webauthn::WebAuthnCrypto {"
+        }
+      ],
+      "exact_defining_source": "use gateway_auth_primitives::crypto::Secret;\nuse gateway_source::error::GatewayError;\nuse serde::{Deserialize, Serialize};\nuse serde_json::Value;\nuse std::{\n    collections::{BTreeMap, BTreeSet},\n    future::Future,\n};\n\npub const CANONICAL_ORIGIN: &str = \"https://ai.ubq.fi\";\npub const CANDIDATE_ORIGIN: &str = \"https://rust-candidate.ai.ubq.fi\";\npub const RELAY_COOKIE: &str = \"__Host-uos_ai_relay_session\";\n\n#[derive(Clone, Default)]\npub struct AuthRequest {\n    pub method: String,\n    pub url: String,\n    /// Lowercase HTTP header names; the adapter rejects ambiguous duplicate credentials.\n    pub headers: BTreeMap<String, String>,\n    pub body: Vec<u8>,\n    pub native_peer: Option<NativePeer>,\n}\n\nimpl std::fmt::Debug for AuthRequest {\n    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        formatter\n            .debug_struct(\"AuthRequest\")\n            .field(\"method\", &self.method)\n            .field(\n                \"path\",\n                &url::Url::parse(&self.url)\n                    .ok()\n                    .map(|url| url.path().to_owned()),\n            )\n            .field(\"header_names\", &self.headers.keys().collect::<Vec<_>>())\n            .field(\"body_bytes\", &self.body.len())\n            .finish()\n    }\n}\n\nimpl AuthRequest {\n    pub fn header(&self, name: &str) -> Option<&str> {\n        self.headers.get(name).map(String::as_str)\n    }\n    pub fn bearer(&self) -> Option<&str> {\n        let value = self.header(\"authorization\")?;\n        let (scheme, token) = value.split_once(char::is_whitespace)?;\n        if !scheme.eq_ignore_ascii_case(\"bearer\") {\n            return None;\n        }\n        let token = token.trim();\n        (!token.is_empty() && !token.contains(['\\r', '\\n', '\\u{2028}', '\\u{2029}']))\n            .then_some(token)\n    }\n    pub fn without_bearer(&self) -> Self {\n        let mut next = self.clone();\n        next.headers.remove(\"authorization\");\n        next\n    }\n}\n\n#[derive(Clone, Debug)]\npub struct NativePeer {\n    pub listener_bypass_enabled: bool,\n    pub tcp: bool,\n    pub hostname: String,\n}\n\n#[derive(Clone, Debug)]\npub enum AuthResponseBody {\n    Empty,\n    Json(Value),\n    SourceJson(gateway_source::source_json::SourceJson),\n}\nimpl AuthResponseBody {\n    pub fn as_json(&self) -> Option<&Value> {\n        if let Self::Json(value) = self {\n            Some(value)\n        } else {\n            None\n        }\n    }\n    pub fn to_bytes(&self) -> Result<Vec<u8>, GatewayError> {\n        match self {\n            Self::Empty => Ok(Vec::new()),\n            Self::Json(value) => serde_json::to_vec(value).map_err(|_| {\n                GatewayError::unavailable(\n                    \"JSON response serialization failed\",\n                    \"response_json_invalid\",\n                )\n            }),\n            Self::SourceJson(value) => Ok(value.as_bytes().to_vec()),\n        }\n    }\n}\nimpl serde::Serialize for AuthResponseBody {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        match self {\n            Self::Empty => serializer.serialize_none(),\n            Self::Json(value) => value.serialize(serializer),\n            Self::SourceJson(value) => value.serialize(serializer),\n        }\n    }\n}\nimpl PartialEq<Value> for AuthResponseBody {\n    fn eq(&self, other: &Value) -> bool {\n        self.as_json() == Some(other)\n    }\n}\nimpl PartialEq<AuthResponseBody> for Value {\n    fn eq(&self, other: &AuthResponseBody) -> bool {\n        other == self\n    }\n}\n\n#[derive(Clone, Debug)]\npub struct AuthResponse {\n    pub status: u16,\n    pub headers: BTreeMap<String, String>,\n    /// Repeated `Set-Cookie` values are kept separate so one header never\n    /// overwrites another or weakens their exact attributes.\n    pub set_cookies: Vec<String>,\n    pub body: AuthResponseBody,\n    pub stream: Option<gateway_auth_native_wire::native_read::AuthStream>,\n}\n\nimpl AuthResponse {\n    pub fn json(status: u16, body: Value) -> Self {\n        Self {\n            status,\n            headers: BTreeMap::from([\n                (\"cache-control\".into(), \"no-store\".into()),\n                (\"content-type\".into(), \"application/json\".into()),\n            ]),\n            set_cookies: Vec::new(),\n            body: AuthResponseBody::Json(body),\n            stream: None,\n        }\n    }\n    pub fn source_json(status: u16, body: gateway_source::source_json::SourceJson) -> Self {\n        Self {\n            status,\n            headers: BTreeMap::from([\n                (\"cache-control\".into(), \"no-store\".into()),\n                (\"content-type\".into(), \"application/json\".into()),\n            ]),\n            set_cookies: Vec::new(),\n            body: AuthResponseBody::SourceJson(body),\n            stream: None,\n        }\n    }\n    pub fn with_stream(\n        mut self,\n        stream: gateway_auth_native_wire::native_read::AuthStream,\n    ) -> Self {\n        self.stream = Some(stream);\n        self\n    }\n    pub fn error(error: GatewayError) -> Self {\n        Self::json(\n            error.status,\n            serde_json::to_value(error.envelope).expect(\"error envelope serializes\"),\n        )\n    }\n}\n\n#[derive(Clone, Debug, Default)]\npub struct AuthConfig {\n    pub auth_tokens: Vec<Secret>,\n    pub admin_tokens: Vec<Secret>,\n    pub production: bool,\n    pub hosted: bool,\n    pub git_sha_known: bool,\n    /// Prepared candidate mapping must be deliberately activated by runtime configuration.\n    pub candidate_passkeys: bool,\n    pub extra_relay_origins: BTreeSet<String>,\n    pub kernel_public_keys_pem: Vec<String>,\n    pub deno_app_slug: Option<String>,\n    pub deno_org_slug: Option<String>,\n    pub deno_deployment_id: Option<String>,\n    /// Explicit Passport client registration; absent means browser login is\n    /// unavailable unless the request itself is the canonical production host.\n    pub passport: Option<gateway_auth_passport_contracts::passport::PassportConfig>,\n}\n\n#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]\n#[serde(tag = \"kind\", rename_all = \"snake_case\")]\npub enum AuthMethod {\n    Disabled,\n    AuthTokensAllowlist,\n    AdminAllowlist,\n    DenoDeployToken,\n    KvApiKey {\n        key_id: String,\n        policy: gateway_auth_primitives::api_keys::ApiKeyPolicy,\n    },\n    GithubToken {\n        owner: String,\n        repo: String,\n        state_id: String,\n        limit_scope: String,\n    },\n    PasskeySession {\n        user_id: String,\n        handle: String,\n        is_admin: bool,\n        credential_count: usize,\n    },\n    PassportSession {\n        #[serde(rename = \"claims\", with = \"crate::passport_serde::session\")]\n        identity: gateway_auth_passport_contracts::actor_data::PassportSessionData,\n    },\n    PassportBearer {\n        #[serde(with = \"crate::passport_serde::jwt\")]\n        claims: gateway_auth_passport_contracts::session::PassportSourceClaims,\n    },\n}\n\nimpl AuthMethod {\n    /// Stable principal identity shared by admission, history and routing.\n    /// Passport identity is the Passport subject, never a token or handle.\n    pub fn principal_id(&self, bearer: Option<&str>) -> gateway_core::identity::PrincipalId {\n        use gateway_core::identity::PrincipalId;\n        let scalar = match self {\n            Self::PassportSession { identity } => return passport_principal(identity.subject()),\n            Self::PassportBearer { claims } => return passport_principal(&claims.sub),\n            Self::KvApiKey { key_id, .. } => format!(\"api-key:{key_id}\"),\n            Self::GithubToken { owner, repo, .. } => format!(\n                \"github-repo:{}/{}\",\n                owner.to_lowercase(),\n                repo.to_lowercase()\n            ),\n            Self::PasskeySession { user_id, .. } => format!(\"passkey-user:{user_id}\"),\n            Self::AuthTokensAllowlist => \"auth-method:auth_tokens_allowlist\".into(),\n            Self::AdminAllowlist => \"auth-method:admin_allowlist\".into(),\n            Self::DenoDeployToken => \"auth-method:deno_deploy_token\".into(),\n            Self::Disabled => bearer\n                .map(|token| {\n                    format!(\n                        \"bearer-sha256:{}\",\n                        gateway_auth_primitives::crypto::sha256_hex(token.as_bytes())\n                    )\n                })\n                .unwrap_or_else(|| \"local-auth-disabled\".into()),\n        };\n        PrincipalId::from_scalar(scalar)\n    }\n}\nfn passport_principal(\n    subject: &gateway_source::js_string::JsString16,\n) -> gateway_core::identity::PrincipalId {\n    let mut units = \"passport-user:\".encode_utf16().collect::<Vec<_>>();\n    units.extend_from_slice(subject.as_units());\n    gateway_core::identity::PrincipalId::from_source(\n        gateway_source::js_string::JsString16::from_units(units),\n    )\n}\n\n#[derive(Clone, Debug)]\npub struct AuthPrincipal {\n    pub token: Option<Secret>,\n    pub method: AuthMethod,\n    pub is_admin: bool,\n    pub is_super_admin: bool,\n}\n\npub trait AuthHost: crate::webauthn::WebAuthnCrypto {\n    fn now_ms(&self) -> i64;\n    fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError>;\n    /// Fixed, typed remote reads; implementations must disable automatic redirects.\n    fn fetch_auth(\n        &self,\n        request: crate::upstream::AuthUpstreamRequest,\n    ) -> impl Future<Output = Result<crate::upstream::AuthUpstreamResponse, GatewayError>>;\n    /// Called only after upstream and attestation verification; preserves the kernel authority.\n    fn kernel_principal(\n        &self,\n        owner: &str,\n        repo: &str,\n        state_id: &str,\n        path: &str,\n    ) -> impl Future<Output = Result<String, GatewayError>>;\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth-contracts/src/upstream.rs",
+      "sha256": "fc4c7adcbdf8d4600774cb2e835739881f804c41612aef7b78b2df7821699bab",
+      "bytes": 6824,
+      "physical_lines": 186,
+      "public_declaration_locations": [
+        {
+          "line": 4,
+          "declaration_start": "pub enum AuthUpstreamRequest {"
+        },
+        {
+          "line": 44,
+          "declaration_start": "pub fn url(&self) -> String {"
+        },
+        {
+          "line": 86,
+          "declaration_start": "pub fn method(&self) -> &'static str {"
+        },
+        {
+          "line": 97,
+          "declaration_start": "pub fn body(&self) -> Result<Vec<u8>, GatewayError> {"
+        },
+        {
+          "line": 127,
+          "declaration_start": "pub fn app_session_operation(&self) -> bool {"
+        },
+        {
+          "line": 135,
+          "declaration_start": "pub fn status_only(&self, status: u16) -> bool {"
+        },
+        {
+          "line": 139,
+          "declaration_start": "pub fn headers(&self) -> Vec<(String, String)> {"
+        },
+        {
+          "line": 177,
+          "declaration_start": "pub struct AuthUpstreamResponse {"
+        },
+        {
+          "line": 183,
+          "declaration_start": "pub fn success(&self) -> bool {"
+        }
+      ],
+      "exact_defining_source": "use gateway_auth_primitives::crypto::Secret;\nuse gateway_source::error::GatewayError;\n#[derive(Clone, Debug)]\npub enum AuthUpstreamRequest {\n    GitHubRepository {\n        token: Secret,\n        owner: String,\n        repo: String,\n    },\n    DenoApplication {\n        token: Secret,\n        app: String,\n    },\n    DenoConsole {\n        token: Secret,\n        organization: String,\n        app: String,\n    },\n    DenoDeployment {\n        token: Secret,\n        deployment: String,\n    },\n    PassportJwks,\n    PassportPkceExchange {\n        code: Secret,\n        code_verifier: Secret,\n    },\n    PassportSession {\n        app_session_token: Secret,\n    },\n    PassportRevoke {\n        app_session_token: Secret,\n    },\n    PassportExchange {\n        code: Secret,\n        client_id: String,\n        audience: String,\n        origin: String,\n        redirect_uri: String,\n    },\n}\n\nimpl AuthUpstreamRequest {\n    pub fn url(&self) -> String {\n        let component = |value: &str| {\n            url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()\n        };\n        match self {\n            Self::GitHubRepository { owner, repo, .. } => format!(\n                \"https://api.github.com/repos/{}/{}\",\n                component(owner),\n                component(repo)\n            ),\n            Self::DenoApplication { app, .. } => {\n                format!(\"https://api.deno.com/v2/apps/{}\", component(app))\n            }\n            Self::DenoConsole {\n                organization, app, ..\n            } => format!(\n                \"https://console.deno.com/{}/{}\",\n                component(organization),\n                component(app)\n            ),\n            Self::DenoDeployment { deployment, .. } => format!(\n                \"https://api.deno.com/v1/deployments/{}\",\n                component(deployment)\n            ),\n            Self::PassportPkceExchange { .. } => {\n                gateway_auth_passport_contracts::passport::PASSPORT_EXCHANGE_URL.into()\n            }\n            Self::PassportSession { .. } => {\n                gateway_auth_passport_contracts::session::PASSPORT_SESSION_URL.into()\n            }\n            Self::PassportRevoke { .. } => {\n                gateway_auth_passport_contracts::session::PASSPORT_REVOKE_URL.into()\n            }\n            Self::PassportJwks => {\n                gateway_auth_passport_contracts::passport::PASSPORT_JWKS_URL.into()\n            }\n            Self::PassportExchange { .. } => {\n                gateway_auth_passport_contracts::passport::PASSPORT_EXCHANGE_URL.into()\n            }\n        }\n    }\n\n    pub fn method(&self) -> &'static str {\n        match self {\n            Self::PassportExchange { .. }\n            | Self::PassportPkceExchange { .. }\n            | Self::PassportSession { .. }\n            | Self::PassportRevoke { .. } => \"POST\",\n            _ => \"GET\",\n        }\n    }\n\n    /// Fixed typed bodies only. A request-selected URL or body never exists.\n    pub fn body(&self) -> Result<Vec<u8>, GatewayError> {\n        match self {\n            Self::PassportPkceExchange { code, code_verifier } => Ok(serde_json::to_vec(&serde_json::json!({\n                \"code\":code.expose(), \"codeVerifier\":code_verifier.expose(), \"appSession\":true,\n                \"clientId\":\"ai\", \"audience\":\"ai\", \"origin\":\"https://ai.ubq.fi\", \"redirectUri\":\"https://ai.ubq.fi/auth/callback\"\n            })).map_err(|_| GatewayError::unavailable(\"Passport body encoding failed\", \"passport_unavailable\"))?),\n            Self::PassportSession { .. } | Self::PassportRevoke { .. } => Ok(br#\"{\"clientId\":\"ai\",\"audience\":\"ai\",\"origin\":\"https://ai.ubq.fi\",\"redirectUri\":\"https://ai.ubq.fi/auth/callback\"}\"#.to_vec()),\n            Self::PassportExchange {\n                code,\n                client_id,\n                audience,\n                origin,\n                redirect_uri,\n            } => serde_json::to_vec(&serde_json::json!({\n                \"code\": code.expose(),\n                \"clientId\": client_id,\n                \"audience\": audience,\n                \"origin\": origin,\n                \"redirectUri\": redirect_uri,\n            }))\n            .map_err(|_| {\n                GatewayError::unavailable(\n                    \"Passport exchange body could not be encoded.\",\n                    \"passport_unavailable\",\n                )\n            }),\n            _ => Ok(Vec::new()),\n        }\n    }\n    /// Source bounds apply only to the new app-session operations.\n    pub fn app_session_operation(&self) -> bool {\n        matches!(\n            self,\n            Self::PassportPkceExchange { .. }\n                | Self::PassportSession { .. }\n                | Self::PassportRevoke { .. }\n        )\n    }\n    pub fn status_only(&self, status: u16) -> bool {\n        matches!(self, Self::PassportRevoke { .. })\n            || matches!(self, Self::PassportSession { .. }) && status == 401\n    }\n    pub fn headers(&self) -> Vec<(String, String)> {\n        match self {\n            Self::GitHubRepository { token, .. } => vec![\n                (\"authorization\".into(), format!(\"Bearer {}\", token.expose())),\n                (\"accept\".into(), \"application/vnd.github+json\".into()),\n                (\"x-github-api-version\".into(), \"2022-11-28\".into()),\n                (\"user-agent\".into(), \"ai.ubq.fi\".into()),\n            ],\n            Self::DenoConsole { token, .. } => vec![\n                (\n                    \"cookie\".into(),\n                    format!(\"token={}; deno_auth_ghid=force\", token.expose()),\n                ),\n                (\"accept\".into(), \"text/html\".into()),\n            ],\n            Self::DenoApplication { token, .. } | Self::DenoDeployment { token, .. } => vec![\n                (\"authorization\".into(), format!(\"Bearer {}\", token.expose())),\n                (\"accept\".into(), \"application/json\".into()),\n            ],\n            Self::PassportJwks => vec![(\"accept\".into(), \"application/json\".into())],\n            Self::PassportSession { app_session_token }\n            | Self::PassportRevoke { app_session_token } => vec![\n                (\n                    \"authorization\".into(),\n                    format!(\"Bearer {}\", app_session_token.expose()),\n                ),\n                (\"accept\".into(), \"application/json\".into()),\n                (\"content-type\".into(), \"application/json\".into()),\n            ],\n            Self::PassportExchange { .. } | Self::PassportPkceExchange { .. } => vec![\n                (\"accept\".into(), \"application/json\".into()),\n                (\"content-type\".into(), \"application/json\".into()),\n            ],\n        }\n    }\n}\n\n#[derive(Clone, Debug)]\npub struct AuthUpstreamResponse {\n    pub status: u16,\n    pub body: Vec<u8>,\n}\n\nimpl AuthUpstreamResponse {\n    pub fn success(&self) -> bool {\n        (200..300).contains(&self.status)\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth-contracts/src/passport_serde.rs",
+      "sha256": "afa22bdf6c3ca19493a95e3fe38c9237201f64af5c3bcb20e69fbde464aa459f",
+      "bytes": 1717,
+      "physical_lines": 44,
+      "public_declaration_locations": [
+        {
+          "line": 11,
+          "declaration_start": "pub fn serialize<S: Serializer>("
+        },
+        {
+          "line": 20,
+          "declaration_start": "pub fn deserialize<'de, D: Deserializer<'de>>("
+        },
+        {
+          "line": 28,
+          "declaration_start": "pub fn serialize<S: Serializer>("
+        },
+        {
+          "line": 39,
+          "declaration_start": "pub fn deserialize<'de, D: Deserializer<'de>>("
+        }
+      ],
+      "exact_defining_source": "//! Historical AuthMethod scalar serde stays exact. New source/app DATA uses its\n//! explicit v2 codecs; it cannot be silently flattened into an old JWT schema.\nuse gateway_auth_passport_contracts::{\n    actor_data::PassportSessionData, passport::PassportClaims, session::PassportSourceClaims,\n};\nuse serde::{Deserialize, Deserializer, Serialize, Serializer};\npub(crate) mod jwt {\n    use super::{\n        Deserialize, Deserializer, PassportClaims, PassportSourceClaims, Serialize, Serializer,\n    };\n    pub fn serialize<S: Serializer>(\n        value: &PassportSourceClaims,\n        serializer: S,\n    ) -> Result<S::Ok, S::Error> {\n        value\n            .try_legacy_scalar()\n            .map_err(serde::ser::Error::custom)?\n            .serialize(serializer)\n    }\n    pub fn deserialize<'de, D: Deserializer<'de>>(\n        deserializer: D,\n    ) -> Result<PassportSourceClaims, D::Error> {\n        PassportClaims::deserialize(deserializer).map(PassportSourceClaims::from_legacy)\n    }\n}\npub(crate) mod session {\n    use super::{Deserializer, PassportSessionData, Serializer};\n    pub fn serialize<S: Serializer>(\n        value: &PassportSessionData,\n        serializer: S,\n    ) -> Result<S::Ok, S::Error> {\n        match value {\n            PassportSessionData::Jwt(value) => super::jwt::serialize(value, serializer),\n            PassportSessionData::App(_) => Err(serde::ser::Error::custom(\n                \"Persistent Passport DATA requires its explicit v2 schema\",\n            )),\n        }\n    }\n    pub fn deserialize<'de, D: Deserializer<'de>>(\n        deserializer: D,\n    ) -> Result<PassportSessionData, D::Error> {\n        super::jwt::deserialize(deserializer).map(PassportSessionData::Jwt)\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport-contracts/src/actor_data.rs",
+      "sha256": "9e086af737a1d247b25ab7cab23ac6ec6f3952539db2ac5e0fc3483127de8779",
+      "bytes": 5435,
+      "physical_lines": 154,
+      "public_declaration_locations": [
+        {
+          "line": 12,
+          "declaration_start": "pub struct PassportAppSessionBinding {"
+        },
+        {
+          "line": 25,
+          "declaration_start": "pub fn has_valid_shape(&self) -> bool {"
+        },
+        {
+          "line": 37,
+          "declaration_start": "pub fn digest_shape(value: &str) -> bool {"
+        },
+        {
+          "line": 51,
+          "declaration_start": "pub struct PassportJwtBindingV2 {"
+        },
+        {
+          "line": 57,
+          "declaration_start": "pub enum PassportActorDataV2 {"
+        },
+        {
+          "line": 69,
+          "declaration_start": "pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {"
+        },
+        {
+          "line": 90,
+          "declaration_start": "pub fn from_source_json(value: &SourceJson) -> Result<Self, GatewayError> {"
+        },
+        {
+          "line": 105,
+          "declaration_start": "pub fn framed_bytes(&self) -> Result<Vec<u8>, GatewayError> {"
+        },
+        {
+          "line": 120,
+          "declaration_start": "pub struct PassportAppSessionData {"
+        },
+        {
+          "line": 125,
+          "declaration_start": "pub enum PassportSessionData {"
+        },
+        {
+          "line": 130,
+          "declaration_start": "pub fn subject(&self) -> &JsString16 {"
+        },
+        {
+          "line": 136,
+          "declaration_start": "pub fn handle(&self) -> &JsString16 {"
+        },
+        {
+          "line": 142,
+          "declaration_start": "pub fn scopes(&self) -> &[JsString16] {"
+        },
+        {
+          "line": 148,
+          "declaration_start": "pub fn is_admin(&self) -> bool {"
+        }
+      ],
+      "exact_defining_source": "//! Versioned private actor DATA, never a currentness or authentication proof.\nuse crate::{\n    passport::PassportConfig,\n    session::{PassportSessionIdentity, PassportSourceClaims},\n};\nuse gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};\nuse serde::{Deserialize, Serialize};\n\n/// Exact local source row binding. No credentials, role/scope snapshot or expiry.\n#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]\n#[serde(deny_unknown_fields)]\npub struct PassportAppSessionBinding {\n    pub session_digest: String,\n    pub row_revision: String,\n    pub subject: JsString16,\n    pub created_at: JsString16,\n    pub app_token_digest: String,\n    pub client_id: String,\n    pub audience: String,\n    pub origin: String,\n    pub redirect_uri: String,\n}\nimpl PassportAppSessionBinding {\n    /// DATA shape only. Date.parse, row currentness and central authority are not inferred here.\n    pub fn has_valid_shape(&self) -> bool {\n        let fixed = PassportConfig::production();\n        digest_shape(&self.session_digest)\n            && digest_shape(&self.app_token_digest)\n            && source_bound(&self.subject, 500, false)\n            && source_bound(&self.created_at, 100, false)\n            && self.client_id == fixed.client_id\n            && self.audience == fixed.audience\n            && self.origin == fixed.origin\n            && self.redirect_uri == fixed.redirect_uri\n    }\n}\npub fn digest_shape(value: &str) -> bool {\n    value.len() == 64\n        && value\n            .bytes()\n            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))\n}\nfn source_bound(value: &JsString16, max: usize, empty: bool) -> bool {\n    (empty || !value.as_units().is_empty()) && value.as_units().len() <= max\n}\n\n/// Separate lossless JWT provenance; historical native v1 stays scalar and unchanged.\n/// Both fields and expiry remain mandatory. Authority alone mints live actor proofs.\n#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]\n#[serde(deny_unknown_fields)]\npub struct PassportJwtBindingV2 {\n    pub sub: JsString16,\n    pub jti: JsString16,\n    pub expires_at_ms: i64,\n}\n#[derive(Clone, Debug, Eq, PartialEq)]\npub enum PassportActorDataV2 {\n    PassportAppSession(PassportAppSessionBinding),\n    PassportJwt(PassportJwtBindingV2),\n}\n#[derive(Deserialize, Serialize)]\n#[serde(deny_unknown_fields)]\nstruct Envelope<T> {\n    version: u8,\n    kind: String,\n    data: T,\n}\nimpl PassportActorDataV2 {\n    pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {\n        match self {\n            Self::PassportAppSession(data) if data.has_valid_shape() => {\n                SourceJson::from_serializable(&Envelope {\n                    version: 2,\n                    kind: \"passport_app_session\".into(),\n                    data,\n                })\n            }\n            Self::PassportJwt(data)\n                if source_bound(&data.sub, 500, false) && source_bound(&data.jti, 500, false) =>\n            {\n                SourceJson::from_serializable(&Envelope {\n                    version: 2,\n                    kind: \"passport_jwt\".into(),\n                    data,\n                })\n            }\n            _ => Err(invalid()),\n        }\n    }\n    pub fn from_source_json(value: &SourceJson) -> Result<Self, GatewayError> {\n        // RawValue keeps source units; internally tagged serde Content must not buffer this DATA.\n        let raw: Envelope<SourceJson> = value.deserialize()?;\n        if raw.version != 2 {\n            return Err(invalid());\n        }\n        let value = match raw.kind.as_str() {\n            \"passport_app_session\" => Self::PassportAppSession(raw.data.deserialize()?),\n            \"passport_jwt\" => Self::PassportJwt(raw.data.deserialize()?),\n            _ => return Err(invalid()),\n        };\n        value.to_source_json()?;\n        Ok(value)\n    }\n    /// New v2 digest/MAC input only. Never substitute this for historical v1 framing.\n    pub fn framed_bytes(&self) -> Result<Vec<u8>, GatewayError> {\n        let mut bytes = b\"uos_ai:auth:passport_actor:v2\\0\".to_vec();\n        bytes.extend_from_slice(self.to_source_json()?.as_bytes());\n        Ok(bytes)\n    }\n}\nfn invalid() -> GatewayError {\n    GatewayError::unavailable(\n        \"Passport actor DATA is invalid.\",\n        \"passport_actor_data_invalid\",\n    )\n}\n\n/// Authenticated service output DATA. It never constructs an Authority currentness value.\n#[derive(Clone, Debug, PartialEq)]\npub struct PassportAppSessionData {\n    pub identity: PassportSessionIdentity,\n    pub binding: PassportAppSessionBinding,\n}\n#[derive(Clone, Debug, PartialEq)]\npub enum PassportSessionData {\n    Jwt(PassportSourceClaims),\n    App(PassportAppSessionData),\n}\nimpl PassportSessionData {\n    pub fn subject(&self) -> &JsString16 {\n        match self {\n            Self::Jwt(c) => &c.sub,\n            Self::App(c) => &c.identity.subject,\n        }\n    }\n    pub fn handle(&self) -> &JsString16 {\n        match self {\n            Self::Jwt(c) => &c.handle,\n            Self::App(c) => &c.identity.handle,\n        }\n    }\n    pub fn scopes(&self) -> &[JsString16] {\n        match self {\n            Self::Jwt(c) => &c.scopes,\n            Self::App(c) => &c.identity.scopes,\n        }\n    }\n    pub fn is_admin(&self) -> bool {\n        match self {\n            Self::Jwt(c) => c.is_admin && c.agent_token_id.is_none(),\n            Self::App(c) => c.identity.is_admin,\n        }\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport-contracts/src/session.rs",
+      "sha256": "5459f073e667424dc22546e25040ecda838de7f85253841ecb8374dc708f602d",
+      "bytes": 5242,
+      "physical_lines": 137,
+      "public_declaration_locations": [
+        {
+          "line": 5,
+          "declaration_start": "pub const PASSPORT_COOKIE_MAX_AGE_SECONDS: i64 = 400 * 24 * 60 * 60;"
+        },
+        {
+          "line": 6,
+          "declaration_start": "pub const PASSPORT_VERIFIER_COOKIE: &str = \"__Host-uos_ai_passport_verifier\";"
+        },
+        {
+          "line": 7,
+          "declaration_start": "pub const PASSPORT_SESSION_URL: &str = \"https://passport.ubq.fi/api/auth/sso/session\";"
+        },
+        {
+          "line": 8,
+          "declaration_start": "pub const PASSPORT_REVOKE_URL: &str = \"https://passport.ubq.fi/api/auth/sso/session/revoke\";"
+        },
+        {
+          "line": 11,
+          "declaration_start": "pub struct PassportSessionIdentity {"
+        },
+        {
+          "line": 21,
+          "declaration_start": "pub trait PassportDate {"
+        },
+        {
+          "line": 29,
+          "declaration_start": "pub struct PassportSourceClaims {"
+        },
+        {
+          "line": 47,
+          "declaration_start": "pub fn valid(&self, now: i64) -> bool {"
+        },
+        {
+          "line": 50,
+          "declaration_start": "pub fn valid_for(&self, config: &crate::passport::PassportConfig, now: i64) -> bool {"
+        },
+        {
+          "line": 78,
+          "declaration_start": "pub fn parse_source_json("
+        },
+        {
+          "line": 90,
+          "declaration_start": "pub fn from_legacy(value: crate::passport::PassportClaims) -> Self {"
+        },
+        {
+          "line": 111,
+          "declaration_start": "pub fn try_legacy_scalar("
+        }
+      ],
+      "exact_defining_source": "// Persistent identity DATA is separate from strictly expiring JWT claims.\nuse gateway_source::js_string::JsString16;\nuse serde::{Deserialize, Serialize};\n\npub const PASSPORT_COOKIE_MAX_AGE_SECONDS: i64 = 400 * 24 * 60 * 60;\npub const PASSPORT_VERIFIER_COOKIE: &str = \"__Host-uos_ai_passport_verifier\";\npub const PASSPORT_SESSION_URL: &str = \"https://passport.ubq.fi/api/auth/sso/session\";\npub const PASSPORT_REVOKE_URL: &str = \"https://passport.ubq.fi/api/auth/sso/session/revoke\";\n\n#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]\npub struct PassportSessionIdentity {\n    pub subject: JsString16,\n    pub handle: JsString16,\n    #[serde(rename = \"isAdmin\")]\n    pub is_admin: bool,\n    pub scopes: Vec<JsString16>,\n}\n\n/// The source's Date.parse primitive. Returns NaN for invalid dates, never a\n/// policy decision or proof. Production JS hosts must use their actual engine.\npub trait PassportDate {\n    fn parse_date_ms(&self, value: &JsString16) -> f64;\n}\n\n/// Source JWT DATA. Expiration stays mandatory; this is never a persistent SSO\n/// record and there is no public authenticity constructor.\n#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]\n#[serde(rename_all = \"camelCase\")]\npub struct PassportSourceClaims {\n    pub iss: String,\n    pub sub: JsString16,\n    #[serde(default)]\n    pub handle: JsString16,\n    pub is_admin: bool,\n    #[serde(default)]\n    pub scopes: Vec<JsString16>,\n    pub aud: String,\n    pub client_id: String,\n    pub auth: JsString16,\n    pub iat: i64,\n    pub exp: i64,\n    pub jti: JsString16,\n    #[serde(default)]\n    pub agent_token_id: Option<JsString16>,\n}\nimpl PassportSourceClaims {\n    pub fn valid(&self, now: i64) -> bool {\n        self.valid_for(&crate::passport::PassportConfig::production(), now)\n    }\n    pub fn valid_for(&self, config: &crate::passport::PassportConfig, now: i64) -> bool {\n        let bound = |value: &JsString16, max, empty| {\n            (empty || !value.as_units().is_empty()) && value.as_units().len() <= max\n        };\n        let safe = gateway_core::identity::MAX_SAFE_INTEGER;\n        self.iss == \"https://passport.ubq.fi\"\n            && self.aud == config.audience\n            && self.client_id == config.client_id\n            && bound(&self.sub, 500, false)\n            && bound(&self.jti, 500, false)\n            && bound(&self.auth, 160, false)\n            && bound(&self.handle, 500, true)\n            && self.scopes.len() <= 128\n            && self.scopes.iter().all(|scope| bound(scope, 500, true))\n            && (-safe..=safe).contains(&self.iat)\n            && (-safe..=safe).contains(&self.exp)\n            && self.exp > now\n            && self.exp > self.iat\n            && self.iat <= now.saturating_add(60)\n            && self\n                .agent_token_id\n                .as_ref()\n                .is_none_or(|id| bound(id, 500, false))\n    }\n}\n\n/// JSON.parse after TextDecoder's replacement/BOM behavior, followed by the\n/// existing lossless JS JSON normalization (including last duplicate fields).\npub fn parse_source_json(\n    bytes: &[u8],\n) -> Result<gateway_source::source_json::SourceJson, gateway_source::error::GatewayError> {\n    let text = String::from_utf8_lossy(bytes);\n    let value = gateway_source::source_json::SourceJson::parse(\n        text.strip_prefix('\\u{feff}').unwrap_or(&text),\n    )?;\n    gateway_source::source_serialization::canonical(&value)\n}\n\nimpl PassportSourceClaims {\n    /// Historical scalar DATA conversion only; never the new authentication parser.\n    pub fn from_legacy(value: crate::passport::PassportClaims) -> Self {\n        Self {\n            iss: value.iss,\n            sub: JsString16::from_utf8(&value.sub),\n            handle: JsString16::from_utf8(&value.handle),\n            is_admin: value.is_admin,\n            scopes: value\n                .scopes\n                .iter()\n                .map(|v| JsString16::from_utf8(v))\n                .collect(),\n            aud: value.aud,\n            client_id: value.client_id,\n            auth: JsString16::from_utf8(&value.auth),\n            iat: value.iat,\n            exp: value.exp,\n            jti: JsString16::from_utf8(&value.jti),\n            agent_token_id: value.agent_token_id.as_deref().map(JsString16::from_utf8),\n        }\n    }\n    /// Explicit legacy serde boundary. Source authentication must retain self's units.\n    pub fn try_legacy_scalar(\n        &self,\n    ) -> Result<crate::passport::PassportClaims, gateway_source::error::GatewayError> {\n        Ok(crate::passport::PassportClaims {\n            iss: self.iss.clone(),\n            sub: self.sub.try_utf8()?,\n            handle: self.handle.try_utf8()?,\n            is_admin: self.is_admin,\n            scopes: self\n                .scopes\n                .iter()\n                .map(JsString16::try_utf8)\n                .collect::<Result<_, _>>()?,\n            aud: self.aud.clone(),\n            client_id: self.client_id.clone(),\n            auth: self.auth.try_utf8()?,\n            iat: self.iat,\n            exp: self.exp,\n            jti: self.jti.try_utf8()?,\n            agent_token_id: self\n                .agent_token_id\n                .as_ref()\n                .map(JsString16::try_utf8)\n                .transpose()?,\n        })\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport-contracts/src/passport.rs",
+      "sha256": "8c6d84cbe72b0583fb796a226810759ca3441fecc934c7477bcaf308d4c045ad",
+      "bytes": 5206,
+      "physical_lines": 139,
+      "public_declaration_locations": [
+        {
+          "line": 4,
+          "declaration_start": "pub const PASSPORT_ISSUER: &str = \"https://passport.ubq.fi\";"
+        },
+        {
+          "line": 5,
+          "declaration_start": "pub const PASSPORT_AUTHORIZE_URL: &str = \"https://passport.ubq.fi/authorize\";"
+        },
+        {
+          "line": 6,
+          "declaration_start": "pub const PASSPORT_EXCHANGE_URL: &str = \"https://passport.ubq.fi/api/auth/sso/exchange\";"
+        },
+        {
+          "line": 7,
+          "declaration_start": "pub const PASSPORT_JWKS_URL: &str = \"https://passport.ubq.fi/api/auth/jwks\";"
+        },
+        {
+          "line": 8,
+          "declaration_start": "pub const PASSPORT_PRODUCTION_CLIENT_ID: &str = \"ai\";"
+        },
+        {
+          "line": 9,
+          "declaration_start": "pub const PASSPORT_PRODUCTION_AUDIENCE: &str = \"ai\";"
+        },
+        {
+          "line": 10,
+          "declaration_start": "pub const PASSPORT_PRODUCTION_ORIGIN: &str = \"https://ai.ubq.fi\";"
+        },
+        {
+          "line": 11,
+          "declaration_start": "pub const PASSPORT_PRODUCTION_REDIRECT_URI: &str = \"https://ai.ubq.fi/auth/callback\";"
+        },
+        {
+          "line": 12,
+          "declaration_start": "pub const PASSPORT_COOKIE: &str = \"__Host-uos_ai_passport_session\";"
+        },
+        {
+          "line": 13,
+          "declaration_start": "pub const PASSPORT_STATE_COOKIE: &str = \"__Host-uos_ai_passport_state\";"
+        },
+        {
+          "line": 14,
+          "declaration_start": "pub const PASSPORT_STATE_TTL_SECONDS: i64 = 600;"
+        },
+        {
+          "line": 15,
+          "declaration_start": "pub const PASSPORT_JWKS_CACHE_MS: i64 = 300_000;"
+        },
+        {
+          "line": 16,
+          "declaration_start": "pub const PASSPORT_JWKS_MAX_BYTES: usize = 262_144;"
+        },
+        {
+          "line": 17,
+          "declaration_start": "pub const PASSPORT_EXCHANGE_MAX_BYTES: usize = 65_536;"
+        },
+        {
+          "line": 20,
+          "declaration_start": "pub struct PassportConfig {"
+        },
+        {
+          "line": 28,
+          "declaration_start": "pub fn production() -> Self {"
+        },
+        {
+          "line": 39,
+          "declaration_start": "pub fn from_values(values: &BTreeMap<String, String>) -> Option<Self> {"
+        },
+        {
+          "line": 84,
+          "declaration_start": "pub struct PassportClaims {"
+        },
+        {
+          "line": 109,
+          "declaration_start": "pub fn valid(&self, config: &PassportConfig, now_seconds: i64) -> bool {"
+        }
+      ],
+      "exact_defining_source": "use serde::{Deserialize, Serialize};\nuse std::collections::BTreeMap;\nuse url::Url;\npub const PASSPORT_ISSUER: &str = \"https://passport.ubq.fi\";\npub const PASSPORT_AUTHORIZE_URL: &str = \"https://passport.ubq.fi/authorize\";\npub const PASSPORT_EXCHANGE_URL: &str = \"https://passport.ubq.fi/api/auth/sso/exchange\";\npub const PASSPORT_JWKS_URL: &str = \"https://passport.ubq.fi/api/auth/jwks\";\npub const PASSPORT_PRODUCTION_CLIENT_ID: &str = \"ai\";\npub const PASSPORT_PRODUCTION_AUDIENCE: &str = \"ai\";\npub const PASSPORT_PRODUCTION_ORIGIN: &str = \"https://ai.ubq.fi\";\npub const PASSPORT_PRODUCTION_REDIRECT_URI: &str = \"https://ai.ubq.fi/auth/callback\";\npub const PASSPORT_COOKIE: &str = \"__Host-uos_ai_passport_session\";\npub const PASSPORT_STATE_COOKIE: &str = \"__Host-uos_ai_passport_state\";\npub const PASSPORT_STATE_TTL_SECONDS: i64 = 600;\npub const PASSPORT_JWKS_CACHE_MS: i64 = 300_000;\npub const PASSPORT_JWKS_MAX_BYTES: usize = 262_144;\npub const PASSPORT_EXCHANGE_MAX_BYTES: usize = 65_536;\n\n#[derive(Clone, Debug, PartialEq, Eq)]\npub struct PassportConfig {\n    pub client_id: String,\n    pub audience: String,\n    pub origin: String,\n    pub redirect_uri: String,\n}\n\nimpl PassportConfig {\n    pub fn production() -> Self {\n        Self {\n            client_id: PASSPORT_PRODUCTION_CLIENT_ID.into(),\n            audience: PASSPORT_PRODUCTION_AUDIENCE.into(),\n            origin: PASSPORT_PRODUCTION_ORIGIN.into(),\n            redirect_uri: PASSPORT_PRODUCTION_REDIRECT_URI.into(),\n        }\n    }\n\n    /// Explicit preview registration only. Partial or non-HTTPS values disable\n    /// browser login rather than silently reusing the production `ai` client.\n    pub fn from_values(values: &BTreeMap<String, String>) -> Option<Self> {\n        let value = |name: &str| {\n            values\n                .get(name)\n                .map(|value| value.trim())\n                .filter(|value| !value.is_empty())\n        };\n        let client_id = value(\"UOS_AI_PASSPORT_CLIENT_ID\")?;\n        let audience = value(\"UOS_AI_PASSPORT_AUDIENCE\").unwrap_or(PASSPORT_PRODUCTION_AUDIENCE);\n        let origin = value(\"UOS_AI_PASSPORT_ORIGIN\")?;\n        let redirect_uri = value(\"UOS_AI_PASSPORT_REDIRECT_URI\")?;\n        if !valid_https_origin(origin) || client_id.len() > 120 || audience.len() > 160 {\n            return None;\n        }\n        let redirect = Url::parse(redirect_uri).ok()?;\n        if redirect.scheme() != \"https\"\n            || redirect.origin().ascii_serialization() != origin.trim_end_matches('/')\n            || redirect.query().is_some()\n            || redirect.fragment().is_some()\n        {\n            return None;\n        }\n        Some(Self {\n            client_id: client_id.into(),\n            audience: audience.into(),\n            origin: origin.trim_end_matches('/').into(),\n            redirect_uri: redirect_uri.into(),\n        })\n    }\n}\n\nfn valid_https_origin(value: &str) -> bool {\n    let Ok(url) = Url::parse(value) else {\n        return false;\n    };\n    url.scheme() == \"https\"\n        && url.port().is_none()\n        && url.host_str().is_some()\n        && url.path() == \"/\"\n        && url.query().is_none()\n        && url.fragment().is_none()\n        && url.origin().ascii_serialization() == value.trim_end_matches('/')\n}\n\n#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]\npub struct PassportClaims {\n    pub iss: String,\n    pub sub: String,\n    #[serde(default)]\n    pub handle: String,\n    #[serde(rename = \"isAdmin\")]\n    pub is_admin: bool,\n    #[serde(default)]\n    pub scopes: Vec<String>,\n    pub aud: String,\n    #[serde(rename = \"clientId\")]\n    pub client_id: String,\n    pub auth: String,\n    pub iat: i64,\n    pub exp: i64,\n    pub jti: String,\n    #[serde(\n        rename = \"agentTokenId\",\n        default,\n        skip_serializing_if = \"Option::is_none\"\n    )]\n    pub agent_token_id: Option<String>,\n}\n\nimpl PassportClaims {\n    pub fn valid(&self, config: &PassportConfig, now_seconds: i64) -> bool {\n        self.iss == PASSPORT_ISSUER\n            && self.aud == config.audience\n            && self.client_id == config.client_id\n            && !self.sub.is_empty()\n            && self.sub.encode_utf16().count() <= 500\n            && !self.jti.is_empty()\n            && self.jti.encode_utf16().count() <= 500\n            && !self.auth.is_empty()\n            && self.auth.encode_utf16().count() <= 160\n            && self.handle.encode_utf16().count() <= 500\n            && self.scopes.len() <= 128\n            && self\n                .scopes\n                .iter()\n                .all(|scope| scope.encode_utf16().count() <= 500)\n            && (-gateway_core::identity::MAX_SAFE_INTEGER\n                ..=gateway_core::identity::MAX_SAFE_INTEGER)\n                .contains(&self.iat)\n            && (-gateway_core::identity::MAX_SAFE_INTEGER\n                ..=gateway_core::identity::MAX_SAFE_INTEGER)\n                .contains(&self.exp)\n            && self.exp > now_seconds\n            && self.iat <= now_seconds.saturating_add(60)\n            && self.exp > self.iat\n            && self\n                .agent_token_id\n                .as_ref()\n                .is_none_or(|id| !id.is_empty() && id.encode_utf16().count() <= 500)\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport-sessions/src/sessions.rs",
+      "sha256": "bc727ffae762fcf4983c56ac05ebe519719098b00ff6111378f52625a1c51287",
+      "bytes": 13942,
+      "physical_lines": 400,
+      "public_declaration_locations": [
+        {
+          "line": 20,
+          "declaration_start": "pub fn token_shape(token: &str) -> bool {"
+        },
+        {
+          "line": 34,
+          "declaration_start": "pub fn session_key(token: &str) -> RecordKey {"
+        },
+        {
+          "line": 42,
+          "declaration_start": "pub fn unavailable() -> GatewayError {"
+        },
+        {
+          "line": 200,
+          "declaration_start": "pub struct PassportSessions<'a, S, H> {"
+        },
+        {
+          "line": 237,
+          "declaration_start": "pub async fn create("
+        },
+        {
+          "line": 307,
+          "declaration_start": "pub async fn get(&self, token: &str) -> Result<PassportSessionIdentity, GatewayError> {"
+        },
+        {
+          "line": 311,
+          "declaration_start": "pub async fn authenticate(&self, token: &str) -> Result<PassportAppSessionData, GatewayError> {"
+        },
+        {
+          "line": 329,
+          "declaration_start": "pub async fn check_bound("
+        },
+        {
+          "line": 385,
+          "declaration_start": "pub async fn revoke(&self, token: &str) -> Result<&'static str, GatewayError> {"
+        }
+      ],
+      "exact_defining_source": "use gateway_auth_contracts::{types::AuthHost, upstream::AuthUpstreamRequest};\nuse gateway_auth_passport_contracts::{\n    actor_data::{PassportAppSessionBinding, PassportAppSessionData},\n    passport::PassportConfig,\n    session::{PassportDate, PassportSessionIdentity},\n};\nuse gateway_auth_primitives::{\n    crypto::{Secret, base64url, sha256_hex},\n    store,\n};\nuse gateway_core::{\n    source_control,\n    state::{\n        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,\n    },\n};\nuse gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};\nuse serde::{Deserialize, Serialize};\n\npub fn token_shape(token: &str) -> bool {\n    suffix(token, \"uos_ai_passport_session_\")\n}\nfn suffix(token: &str, prefix: &str) -> bool {\n    token.strip_prefix(prefix).is_some_and(|tail| {\n        tail.len() == 43\n            && tail\n                .bytes()\n                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))\n    })\n}\nfn bounded(value: &JsString16, max: usize, empty: bool) -> bool {\n    (empty || !value.as_units().is_empty()) && value.as_units().len() <= max\n}\npub fn session_key(token: &str) -> RecordKey {\n    digest_key(&sha256_hex(token.as_bytes()))\n}\nfn digest_key(digest: &str) -> RecordKey {\n    store::key(serde_json::json!([\n        \"uos_ai\", \"auth\", \"passport\", \"sessions\", digest\n    ]))\n}\npub fn unavailable() -> GatewayError {\n    GatewayError::new(\n        503,\n        \"Passport session verification is unavailable.\",\n        Some(\"passport_unavailable\"),\n    )\n}\nfn unauthorized() -> GatewayError {\n    gateway_auth_primitives::error::unauthorized()\n}\n\n#[derive(Clone, Deserialize, Serialize)]\n#[serde(rename_all = \"camelCase\")]\nstruct Binding {\n    client_id: String,\n    audience: String,\n    origin: String,\n    redirect_uri: String,\n}\nimpl Binding {\n    fn fixed() -> Self {\n        let fixed = PassportConfig::production();\n        Self {\n            client_id: fixed.client_id,\n            audience: fixed.audience,\n            origin: fixed.origin,\n            redirect_uri: fixed.redirect_uri,\n        }\n    }\n    fn valid(&self) -> bool {\n        let fixed = Self::fixed();\n        self.client_id == fixed.client_id\n            && self.audience == fixed.audience\n            && self.origin == fixed.origin\n            && self.redirect_uri == fixed.redirect_uri\n    }\n}\n// Flatten buffers would lose lone UTF16 units. Binding fields are declared\n// directly; each source string decodes from RawValue through JsString16.\n#[derive(Clone, Deserialize, Serialize)]\n#[serde(rename_all = \"camelCase\")]\nstruct Record {\n    version: f64,\n    subject: JsString16,\n    client_id: String,\n    audience: String,\n    origin: String,\n    redirect_uri: String,\n    created_at: JsString16,\n    app_session_token: String,\n}\nimpl Record {\n    fn binding(&self, session_digest: String, revision: &str) -> PassportAppSessionBinding {\n        PassportAppSessionBinding {\n            session_digest,\n            row_revision: revision.into(),\n            subject: self.subject.clone(),\n            created_at: self.created_at.clone(),\n            app_token_digest: sha256_hex(self.app_session_token.as_bytes()),\n            client_id: self.client_id.clone(),\n            audience: self.audience.clone(),\n            origin: self.origin.clone(),\n            redirect_uri: self.redirect_uri.clone(),\n        }\n    }\n    fn valid<H: PassportDate>(&self, host: &H) -> bool {\n        self.version == 1.0\n            && bounded(&self.subject, 500, false)\n            && bounded(&self.created_at, 100, false)\n            && host.parse_date_ms(&self.created_at).is_finite()\n            && suffix(&self.app_session_token, \"uos_app_session_\")\n            && Binding {\n                client_id: self.client_id.clone(),\n                audience: self.audience.clone(),\n                origin: self.origin.clone(),\n                redirect_uri: self.redirect_uri.clone(),\n            }\n            .valid()\n    }\n}\n#[derive(Deserialize)]\n#[serde(rename_all = \"camelCase\")]\nstruct Grant {\n    subject: JsString16,\n    client_id: String,\n    audience: String,\n    origin: String,\n    redirect_uri: String,\n    created_at: JsString16,\n    token: String,\n}\nimpl Grant {\n    fn record(self) -> Record {\n        Record {\n            version: 1.0,\n            subject: self.subject,\n            client_id: self.client_id,\n            audience: self.audience,\n            origin: self.origin,\n            redirect_uri: self.redirect_uri,\n            created_at: self.created_at,\n            app_session_token: self.token,\n        }\n    }\n}\n#[derive(Deserialize)]\n#[serde(rename_all = \"camelCase\")]\nstruct CentralSession {\n    subject: JsString16,\n    client_id: String,\n    audience: String,\n    origin: String,\n    redirect_uri: String,\n    created_at: JsString16,\n}\n#[derive(Deserialize)]\n#[serde(rename_all = \"camelCase\")]\nstruct CentralUser {\n    id: JsString16,\n    handle: JsString16,\n    is_admin: bool,\n    scopes: Vec<JsString16>,\n}\n#[derive(Deserialize)]\nstruct Introspection {\n    authenticated: bool,\n    session: CentralSession,\n    user: CentralUser,\n}\nimpl Introspection {\n    fn identity(self, record: &Record) -> Result<PassportSessionIdentity, GatewayError> {\n        let s = self.session;\n        if !self.authenticated\n            || s.subject != record.subject\n            || s.created_at != record.created_at\n            || !(Binding {\n                client_id: s.client_id,\n                audience: s.audience,\n                origin: s.origin,\n                redirect_uri: s.redirect_uri,\n            })\n            .valid()\n            || self.user.id != record.subject\n            || !bounded(&self.user.handle, 500, true)\n            || self.user.scopes.len() > 128\n            || self.user.scopes.iter().any(|s| !bounded(s, 500, true))\n        {\n            return Err(unavailable());\n        }\n        Ok(PassportSessionIdentity {\n            subject: record.subject.clone(),\n            handle: self.user.handle,\n            is_admin: self.user.is_admin,\n            scopes: self.user.scopes,\n        })\n    }\n}\n\npub struct PassportSessions<'a, S, H> {\n    pub store: &'a S,\n    pub host: &'a H,\n}\nimpl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {\n    fn decode(&self, row: &StoredRecord) -> Result<Record, GatewayError> {\n        if row.expires_at_ms.is_some() {\n            return Err(unavailable());\n        }\n        let document =\n            source_control::decode_source_control_record(row).map_err(|_| unavailable())?;\n        let record: Record = document.deserialize().map_err(|_| unavailable())?;\n        if !record.valid(self.host) {\n            return Err(unavailable());\n        }\n        Ok(record)\n    }\n    async fn request(\n        &self,\n        record: &Record,\n        revoke: bool,\n    ) -> Result<gateway_auth_contracts::upstream::AuthUpstreamResponse, GatewayError> {\n        self.host\n            .fetch_auth(if revoke {\n                AuthUpstreamRequest::PassportRevoke {\n                    app_session_token: Secret::new(record.app_session_token.clone()),\n                }\n            } else {\n                AuthUpstreamRequest::PassportSession {\n                    app_session_token: Secret::new(record.app_session_token.clone()),\n                }\n            })\n            .await\n            .map_err(|_| unavailable())\n    }\n    /// Validate the complete grant before touching prior authority. Creation and\n    /// optional replacement are one atomic transition, never delete-then-create.\n    pub async fn create(\n        &self,\n        grant: &SourceJson,\n        subject: &JsString16,\n        previous: Option<&str>,\n    ) -> Result<String, GatewayError> {\n        let record = gateway_source::source_serialization::canonical(grant)?\n            .deserialize::<Grant>()\n            .map_err(|_| unavailable())?\n            .record();\n        if &record.subject != subject || !record.valid(self.host) {\n            return Err(unavailable());\n        }\n        let bytes = self.host.random_bytes(32).map_err(|_| unavailable())?;\n        if bytes.len() != 32 {\n            return Err(unavailable());\n        }\n        let token = format!(\"uos_ai_passport_session_{}\", base64url(&bytes));\n        let key = session_key(&token);\n        let previous_key = previous.filter(|token| token_shape(token)).map(session_key);\n        let previous_record = match &previous_key {\n            Some(key) => self.store.read(key).await.map_err(|_| unavailable())?,\n            None => None,\n        };\n        let revision = sha256_hex(format!(\"passport-session-v1\\0{token}\").as_bytes());\n        let document = SourceJson::from_serializable(&record).map_err(|_| unavailable())?;\n        let stored = source_control::encode_source_control_record(revision, &document, None)\n            .map_err(|_| unavailable())?;\n        let mut mutations = vec![RecordMutation::Put {\n            key: key.clone(),\n            record: stored,\n        }];\n        if let Some(key) = previous_key {\n            mutations.push(RecordMutation::Delete { key });\n        }\n        let outcome = self\n            .store\n            .commit(AtomicTransition {\n                checks: vec![store::check(&key, None)],\n                mutations,\n            })\n            .await\n            .map_err(|_| unavailable())?;\n        if outcome != CommitOutcome::Committed {\n            return Err(unavailable());\n        }\n        if let Some(previous) = previous_record\n            .as_ref()\n            .and_then(|row| self.decode(row).ok())\n        {\n            let _ = self.request(&previous, true).await;\n        }\n        Ok(token)\n    }\n    // The source's unconditional KV deletion is a finite mutation in the common\n    // authority, not a reconstructed write grant or an expiring session index.\n    async fn delete(&self, key: RecordKey) -> Result<(), GatewayError> {\n        let outcome = self\n            .store\n            .commit(AtomicTransition {\n                checks: Vec::new(),\n                mutations: vec![RecordMutation::Delete { key }],\n            })\n            .await\n            .map_err(|_| unavailable())?;\n        if outcome != CommitOutcome::Committed {\n            return Err(unavailable());\n        }\n        Ok(())\n    }\n    pub async fn get(&self, token: &str) -> Result<PassportSessionIdentity, GatewayError> {\n        Ok(self.authenticate(token).await?.identity)\n    }\n    /// Authenticates the actual cookie and returns identity plus its exact source binding DATA.\n    pub async fn authenticate(&self, token: &str) -> Result<PassportAppSessionData, GatewayError> {\n        if !token_shape(token) {\n            return Err(unauthorized());\n        }\n        let digest = sha256_hex(token.as_bytes());\n        let key = digest_key(&digest);\n        let row = self\n            .store\n            .read(&key)\n            .await\n            .map_err(|_| unavailable())?\n            .ok_or_else(unauthorized)?;\n        let record = self.decode(&row)?;\n        let binding = record.binding(digest, &row.revision);\n        self.introspect(key, &binding, &record).await\n    }\n    /// Concrete constructor-held preflight for Authority. Reads the stored app token;\n    /// no caller verification callback or token reconstruction. Return value is DATA.\n    pub async fn check_bound(\n        &self,\n        binding: &PassportAppSessionBinding,\n    ) -> Result<PassportAppSessionData, GatewayError> {\n        if !binding.has_valid_shape() {\n            return Err(unauthorized());\n        }\n        let key = digest_key(&binding.session_digest);\n        let row = self\n            .store\n            .read(&key)\n            .await\n            .map_err(|_| unavailable())?\n            .ok_or_else(unauthorized)?;\n        let record = self.decode(&row)?;\n        if record.binding(binding.session_digest.clone(), &row.revision) != *binding {\n            return Err(unauthorized());\n        }\n        self.introspect(key, binding, &record).await\n    }\n    async fn introspect(\n        &self,\n        key: RecordKey,\n        binding: &PassportAppSessionBinding,\n        record: &Record,\n    ) -> Result<PassportAppSessionData, GatewayError> {\n        let response = self.request(record, false).await?;\n        // Authoritative 401 remains authoritative even when body cancellation fails.\n        if response.status == 401 {\n            self.delete(key).await?;\n            return Err(unauthorized());\n        }\n        if !response.success() || response.body.len() > 65_536 {\n            return Err(unavailable());\n        }\n        let document = gateway_auth_passport_contracts::session::parse_source_json(&response.body)\n            .map_err(|_| unavailable())?;\n        let identity = document\n            .deserialize::<Introspection>()\n            .map_err(|_| unavailable())?\n            .identity(record)?;\n        let row = self\n            .store\n            .read(&key)\n            .await\n            .map_err(|_| unavailable())?\n            .ok_or_else(unauthorized)?;\n        let current = self.decode(&row)?;\n        if current.binding(binding.session_digest.clone(), &row.revision) != *binding {\n            return Err(unauthorized());\n        }\n        Ok(PassportAppSessionData {\n            identity,\n            binding: binding.clone(),\n        })\n    }\n    pub async fn revoke(&self, token: &str) -> Result<&'static str, GatewayError> {\n        if !token_shape(token) {\n            return Ok(\"not_applicable\");\n        }\n        let key = session_key(token);\n        let row = self.store.read(&key).await.map_err(|_| unavailable())?;\n        self.delete(key).await?;\n        let Some(record) = row.as_ref().and_then(|row| self.decode(row).ok()) else {\n            return Ok(\"not_applicable\");\n        };\n        Ok(match self.request(&record, true).await {\n            Ok(response) if response.status == 204 => \"revoked\",\n            _ => \"unavailable\",\n        })\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-core/src/identity.rs",
+      "sha256": "7da99d46e4f034042348135a03ee74003cc47f99e79d8dd4298304b50ac65c3f",
+      "bytes": 5703,
+      "physical_lines": 170,
+      "public_declaration_locations": [
+        {
+          "line": 7,
+          "declaration_start": "pub struct $name(pub String);"
+        },
+        {
+          "line": 16,
+          "declaration_start": "pub struct PrincipalId(gateway_source::js_string::JsString16);"
+        },
+        {
+          "line": 19,
+          "declaration_start": "pub fn from_scalar(value: String) -> Self {"
+        },
+        {
+          "line": 22,
+          "declaration_start": "pub fn from_source(value: gateway_source::js_string::JsString16) -> Self {"
+        },
+        {
+          "line": 25,
+          "declaration_start": "pub fn as_source(&self) -> &gateway_source::js_string::JsString16 {"
+        },
+        {
+          "line": 29,
+          "declaration_start": "pub fn try_scalar(&self) -> Result<String, gateway_source::error::GatewayError> {"
+        },
+        {
+          "line": 32,
+          "declaration_start": "pub fn to_source_json("
+        },
+        {
+          "line": 37,
+          "declaration_start": "pub fn from_source_json("
+        },
+        {
+          "line": 64,
+          "declaration_start": "pub type UnixMillis = i64;"
+        },
+        {
+          "line": 69,
+          "declaration_start": "pub struct AccountBinding {"
+        },
+        {
+          "line": 79,
+          "declaration_start": "pub enum ActiveTransitionReason {"
+        },
+        {
+          "line": 89,
+          "declaration_start": "pub struct ActiveSelection {"
+        },
+        {
+          "line": 100,
+          "declaration_start": "pub struct RequestContext {"
+        },
+        {
+          "line": 110,
+          "declaration_start": "pub struct PaidAttemptIdentity {"
+        },
+        {
+          "line": 116,
+          "declaration_start": "pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;"
+        },
+        {
+          "line": 121,
+          "declaration_start": "pub struct Microcredits(i64);"
+        },
+        {
+          "line": 142,
+          "declaration_start": "pub enum MicrocreditLimit {"
+        }
+      ],
+      "exact_defining_source": "use serde::{Deserialize, Serialize};\n\nmacro_rules! opaque_id {\n    ($name:ident) => {\n        #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]\n        #[serde(transparent)]\n        pub struct $name(pub String);\n    };\n}\n\nopaque_id!(RequestId);\nopaque_id!(PaidAttemptId);\n/// Logical principal identity. Other opaque IDs keep their historical domains.\n/// Legacy serde remains scalar; source DATA must use the explicit source codec.\n#[derive(Clone, Debug, Eq, Hash, PartialEq)]\npub struct PrincipalId(gateway_source::js_string::JsString16);\nimpl PrincipalId {\n    /// The old tuple constructor was infallible; caller-owned guards still apply.\n    pub fn from_scalar(value: String) -> Self {\n        Self(gateway_source::js_string::JsString16::from_utf8(&value))\n    }\n    pub fn from_source(value: gateway_source::js_string::JsString16) -> Self {\n        Self(value)\n    }\n    pub fn as_source(&self) -> &gateway_source::js_string::JsString16 {\n        &self.0\n    }\n    /// Only a boundary whose scalar domain was established may use this result.\n    pub fn try_scalar(&self) -> Result<String, gateway_source::error::GatewayError> {\n        self.0.try_utf8()\n    }\n    pub fn to_source_json(\n        &self,\n    ) -> Result<gateway_source::source_json::SourceJson, gateway_source::error::GatewayError> {\n        self.0.to_source_json()\n    }\n    pub fn from_source_json(\n        value: &gateway_source::source_json::SourceJson,\n    ) -> Result<Self, gateway_source::error::GatewayError> {\n        value.deserialize().map(Self::from_source)\n    }\n}\nimpl Serialize for PrincipalId {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        self.try_scalar()\n            .map_err(serde::ser::Error::custom)?\n            .serialize(serializer)\n    }\n}\nimpl<'de> Deserialize<'de> for PrincipalId {\n    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n        String::deserialize(deserializer).map(Self::from_scalar)\n    }\n}\nopaque_id!(ApiKeyId);\nopaque_id!(PoolVersionstamp);\n\n// These are source-proven opaque digests, not raw credentials. They are intentionally\n// different types: the administrative/selection hash and salted routing hash differ.\nopaque_id!(SubscriptionSelectionHash);\nopaque_id!(RoutingAccountHash);\nopaque_id!(CredentialVersion);\n\npub type UnixMillis = i64;\n\n/// Account-generation fence from RoutingAccount and CodexActiveAccountSelection.\n/// The native owner supplies the credential version; WASM must not substitute a new recipe.\n#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]\npub struct AccountBinding {\n    pub account_id_hash: RoutingAccountHash,\n    pub credential_version: CredentialVersion,\n    pub pool_versionstamp: PoolVersionstamp,\n    pub slot: u64,\n    pub routing_generation: u64,\n}\n\n#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]\n#[serde(rename_all = \"snake_case\")]\npub enum ActiveTransitionReason {\n    QuotaExhausted,\n    CredentialInvalid,\n    AccountRemovedOrReplaced,\n    ModelUnavailable,\n    ManualReset,\n}\n\n/// Version 1 shape mirrors the existing durable active-account record.\n#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]\npub struct ActiveSelection {\n    pub v: u32,\n    #[serde(flatten)]\n    pub binding: AccountBinding,\n    pub generation: u64,\n    pub transition_reason: Option<ActiveTransitionReason>,\n    pub updated_at_ms: UnixMillis,\n}\n\n/// One client correlation survives all provider attempts and paid hops.\n#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]\npub struct RequestContext {\n    pub request_id: RequestId,\n    pub principal: PrincipalId,\n    pub key_id: Option<ApiKeyId>,\n    pub route: String,\n    pub started_at_ms: UnixMillis,\n}\n\n/// Paid attempt correlation never replaces the admitted request's original request_id.\n#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]\npub struct PaidAttemptIdentity {\n    pub request_id: RequestId,\n    pub paid_attempt_id: PaidAttemptId,\n    pub provider: crate::provider::PaidProvider,\n}\n\npub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;\n\n/// Source counters use exact JavaScript safe integers; preserve their range in portable JSON.\n#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]\n#[serde(try_from = \"i64\", into = \"i64\")]\npub struct Microcredits(i64);\n\nimpl TryFrom<i64> for Microcredits {\n    type Error = &'static str;\n\n    fn try_from(value: i64) -> Result<Self, Self::Error> {\n        if (0..=MAX_SAFE_INTEGER).contains(&value) {\n            Ok(Self(value))\n        } else {\n            Err(\"microcredits must be a non-negative safe integer\")\n        }\n    }\n}\n\nimpl From<Microcredits> for i64 {\n    fn from(value: Microcredits) -> Self {\n        value.0\n    }\n}\n\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum MicrocreditLimit {\n    Unlimited,\n    Bounded(Microcredits),\n}\n\nimpl TryFrom<i64> for MicrocreditLimit {\n    type Error = &'static str;\n\n    fn try_from(value: i64) -> Result<Self, Self::Error> {\n        match value {\n            -1 => Ok(Self::Unlimited),\n            1..=MAX_SAFE_INTEGER => Ok(Self::Bounded(Microcredits::try_from(value)?)),\n            _ => Err(\"a paid limit must be -1 or a positive safe integer\"),\n        }\n    }\n}\n\n#[cfg(test)]\nmod manual_reset_tests {\n    use super::ActiveTransitionReason;\n\n    #[test]\n    fn manual_reset_transition_reason_roundtrips() -> Result<(), serde_json::Error> {\n        let reason: ActiveTransitionReason = serde_json::from_str(r#\"\"manual_reset\"\"#)?;\n        assert_eq!(reason, ActiveTransitionReason::ManualReset);\n        assert_eq!(serde_json::to_string(&reason)?, r#\"\"manual_reset\"\"#);\n        Ok(())\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-core/src/principal_source.rs",
+      "sha256": "4e7af08b9d56c0747d0b7730d83664135dddcbf59be943608798109c8e05aa74",
+      "bytes": 1290,
+      "physical_lines": 34,
+      "public_declaration_locations": [
+        {
+          "line": 15,
+          "declaration_start": "pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {"
+        },
+        {
+          "line": 24,
+          "declaration_start": "pub fn from_source_json(value: &SourceJson) -> Result<Self, GatewayError> {"
+        }
+      ],
+      "exact_defining_source": "//! Explicit lossless RequestContext DATA codec. Historical scalar serde is unchanged.\nuse crate::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId, UnixMillis};\nuse gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};\nuse serde::{Deserialize, Serialize};\n\n#[derive(Deserialize, Serialize)]\nstruct SourceContext {\n    request_id: RequestId,\n    principal: JsString16,\n    key_id: Option<ApiKeyId>,\n    route: String,\n    started_at_ms: UnixMillis,\n}\nimpl RequestContext {\n    pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {\n        SourceJson::from_serializable(&SourceContext {\n            request_id: self.request_id.clone(),\n            principal: self.principal.as_source().clone(),\n            key_id: self.key_id.clone(),\n            route: self.route.clone(),\n            started_at_ms: self.started_at_ms,\n        })\n    }\n    pub fn from_source_json(value: &SourceJson) -> Result<Self, GatewayError> {\n        let value: SourceContext = value.deserialize()?;\n        Ok(Self {\n            request_id: value.request_id,\n            principal: PrincipalId::from_source(value.principal),\n            key_id: value.key_id,\n            route: value.route,\n            started_at_ms: value.started_at_ms,\n        })\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-source/src/js_string.rs",
+      "sha256": "a195bcc036b9f184bc562e89fa27b862c2238345a79d2a400a1b435f469b9c81",
+      "bytes": 5939,
+      "physical_lines": 162,
+      "public_declaration_locations": [
+        {
+          "line": 7,
+          "declaration_start": "pub struct JsString16(Vec<u16>);"
+        },
+        {
+          "line": 16,
+          "declaration_start": "pub fn from_units(units: Vec<u16>) -> Self {"
+        },
+        {
+          "line": 19,
+          "declaration_start": "pub fn from_utf8(text: &str) -> Self {"
+        },
+        {
+          "line": 22,
+          "declaration_start": "pub fn as_units(&self) -> &[u16] {"
+        },
+        {
+          "line": 25,
+          "declaration_start": "pub fn into_units(self) -> Vec<u16> {"
+        },
+        {
+          "line": 28,
+          "declaration_start": "pub fn prefix_units(&self, limit: usize) -> Self {"
+        },
+        {
+          "line": 31,
+          "declaration_start": "pub fn try_utf8(&self) -> Result<String, GatewayError> {"
+        },
+        {
+          "line": 35,
+          "declaration_start": "pub fn sanitize_js_whitespace_prefix(&self, limit: usize) -> Option<Self> {"
+        },
+        {
+          "line": 56,
+          "declaration_start": "pub fn from_json_token(raw: &RawValue) -> Result<Self, GatewayError> {"
+        },
+        {
+          "line": 96,
+          "declaration_start": "pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {"
+        },
+        {
+          "line": 101,
+          "declaration_start": "pub fn json_token(&self) -> String {"
+        }
+      ],
+      "exact_defining_source": "//! A JavaScript string is a sequence of UTF16 code units, not necessarily scalar text.\nuse crate::{error::GatewayError, source_json::SourceJson};\nuse serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};\nuse serde_json::value::RawValue;\n\n#[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]\npub struct JsString16(Vec<u16>);\n\nimpl std::fmt::Debug for JsString16 {\n    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        out.debug_tuple(\"JsString16\").field(&self.0).finish()\n    }\n}\n\nimpl JsString16 {\n    pub fn from_units(units: Vec<u16>) -> Self {\n        Self(units)\n    }\n    pub fn from_utf8(text: &str) -> Self {\n        Self(text.encode_utf16().collect())\n    }\n    pub fn as_units(&self) -> &[u16] {\n        &self.0\n    }\n    pub fn into_units(self) -> Vec<u16> {\n        self.0\n    }\n    pub fn prefix_units(&self, limit: usize) -> Self {\n        Self(self.0[..self.0.len().min(limit)].to_vec())\n    }\n    pub fn try_utf8(&self) -> Result<String, GatewayError> {\n        String::from_utf16(&self.0).map_err(|_| invalid())\n    }\n    /// Source replace(/\\s+/g, \" \").trim(), followed by slice(0, limit).\n    pub fn sanitize_js_whitespace_prefix(&self, limit: usize) -> Option<Self> {\n        let mut units = Vec::new();\n        let mut pending = false;\n        for &unit in &self.0 {\n            if whitespace(unit) {\n                pending = !units.is_empty();\n            } else {\n                if pending {\n                    units.push(32);\n                }\n                units.push(unit);\n                pending = false;\n            }\n        }\n        if units.is_empty() {\n            return None;\n        }\n        units.truncate(limit);\n        Some(Self(units))\n    }\n    /// The safe RawValue parser has already checked the surrounding JSON grammar.\n    pub fn from_json_token(raw: &RawValue) -> Result<Self, GatewayError> {\n        let text = raw.get();\n        let bytes = text.as_bytes();\n        if bytes.len() < 2 || bytes.first() != Some(&b'\"') || bytes.last() != Some(&b'\"') {\n            return Err(invalid());\n        }\n        let mut units = Vec::new();\n        let mut at = 1;\n        let end = bytes.len() - 1;\n        while at < end {\n            if bytes[at] == b'\\\\' {\n                at += 1;\n                let unit = match bytes.get(at).copied().ok_or_else(invalid)? {\n                    b'\"' => 34,\n                    b'\\\\' => 92,\n                    b'/' => 47,\n                    b'b' => 8,\n                    b'f' => 12,\n                    b'n' => 10,\n                    b'r' => 13,\n                    b't' => 9,\n                    b'u' => {\n                        let digits = text.get(at + 1..at + 5).ok_or_else(invalid)?;\n                        let value = u16::from_str_radix(digits, 16).map_err(|_| invalid())?;\n                        at += 4;\n                        value\n                    }\n                    _ => return Err(invalid()),\n                };\n                units.push(unit);\n                at += 1;\n            } else {\n                let ch = text[at..end].chars().next().ok_or_else(invalid)?;\n                let mut encoded = [0; 2];\n                units.extend_from_slice(ch.encode_utf16(&mut encoded));\n                at += ch.len_utf8();\n            }\n        }\n        Ok(Self(units))\n    }\n    pub fn to_source_json(&self) -> Result<SourceJson, GatewayError> {\n        SourceJson::parse(&self.json_token())\n    }\n    /// Encodes every source UTF16 sequence as one JSON string token.\n    /// This returns bytes only; it does not construct SourceJson or an authority.\n    pub fn json_token(&self) -> String {\n        fn append_hex(out: &mut String, unit: u16) {\n            const HEX: &[u8; 16] = b\"0123456789abcdef\";\n            out.push_str(\"\\\\u\");\n            for shift in [12, 8, 4, 0] {\n                out.push(char::from(HEX[usize::from((unit >> shift) & 15)]));\n            }\n        }\n        let mut out = String::from(\"\\\"\");\n        for decoded in char::decode_utf16(self.0.iter().copied()) {\n            match decoded {\n                Ok('\\u{0008}') => out.push_str(\"\\\\b\"),\n                Ok('\\t') => out.push_str(\"\\\\t\"),\n                Ok('\\n') => out.push_str(\"\\\\n\"),\n                Ok('\\u{000c}') => out.push_str(\"\\\\f\"),\n                Ok('\\r') => out.push_str(\"\\\\r\"),\n                Ok('\"') => out.push_str(\"\\\\\\\"\"),\n                Ok('\\\\') => out.push_str(\"\\\\\\\\\"),\n                Ok(value @ '\\0'..='\\u{001f}') => append_hex(&mut out, value as u16),\n                Ok(value) => out.push(value),\n                Err(unpaired) => append_hex(&mut out, unpaired.unpaired_surrogate()),\n            }\n        }\n        out.push('\"');\n        out\n    }\n}\n\nimpl From<&str> for JsString16 {\n    fn from(value: &str) -> Self {\n        Self::from_utf8(value)\n    }\n}\nimpl std::str::FromStr for JsString16 {\n    type Err = std::convert::Infallible;\n    fn from_str(value: &str) -> Result<Self, Self::Err> {\n        Ok(Self::from_utf8(value))\n    }\n}\nimpl Serialize for JsString16 {\n    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        self.to_source_json()\n            .map_err(|_| serde::ser::Error::custom(\"Invalid source JSON string\"))?\n            .serialize(serializer)\n    }\n}\nimpl<'de> Deserialize<'de> for JsString16 {\n    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n        let raw = Box::<RawValue>::deserialize(deserializer)?;\n        Self::from_json_token(&raw).map_err(|_| D::Error::custom(\"Expected a source JSON string\"))\n    }\n}\n\nfn whitespace(unit: u16) -> bool {\n    matches!(unit, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)\n}\nfn invalid() -> GatewayError {\n    GatewayError::unavailable(\n        \"Source JSON string is invalid or cannot be represented as UTF8\",\n        \"source_json_string_invalid\",\n    )\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-admin/src/audit.rs",
+      "sha256": "ceac097cdc866d283832c4ff474de87c4a8163a138a787765a6ab10c9ed7a59d",
+      "bytes": 10207,
+      "physical_lines": 315,
+      "public_declaration_locations": [
+        {
+          "line": 12,
+          "declaration_start": "pub const RETENTION_MS: i64 = 7_776_000_000;"
+        },
+        {
+          "line": 14,
+          "declaration_start": "pub struct ChangeActor {"
+        },
+        {
+          "line": 21,
+          "declaration_start": "pub struct KeyChange {"
+        },
+        {
+          "line": 33,
+          "declaration_start": "pub fn actor(principal: &AuthPrincipal) -> ChangeActor {"
+        },
+        {
+          "line": 60,
+          "declaration_start": "pub fn safe_changed(value: &Value) -> Result<SourceJson, GatewayError> {"
+        },
+        {
+          "line": 64,
+          "declaration_start": "pub fn safe_changed_source(value: &SourceJson) -> Result<SourceJson, GatewayError> {"
+        },
+        {
+          "line": 107,
+          "declaration_start": "pub fn event_key(event: &KeyChange) -> RecordKey {"
+        },
+        {
+          "line": 116,
+          "declaration_start": "pub struct ChangeInput<'a> {"
+        },
+        {
+          "line": 126,
+          "declaration_start": "pub struct SourceChangeInput<'a> {"
+        },
+        {
+          "line": 137,
+          "declaration_start": "pub fn build_event("
+        },
+        {
+          "line": 177,
+          "declaration_start": "pub fn mutation<H: AuthHost>("
+        },
+        {
+          "line": 199,
+          "declaration_start": "pub fn event_mutation(event: &KeyChange, revision: &str) -> Result<RecordMutation, GatewayError> {"
+        },
+        {
+          "line": 268,
+          "declaration_start": "pub fn decode_event(record: &StoredRecord) -> Result<KeyChange, GatewayError> {"
+        },
+        {
+          "line": 273,
+          "declaration_start": "pub fn retained_event("
+        },
+        {
+          "line": 298,
+          "declaration_start": "pub fn page(events: &[SourceJson], next_cursor: Option<&str>) -> Result<SourceJson, GatewayError> {"
+        }
+      ],
+      "exact_defining_source": "use gateway_auth::crypto::uuid_from_random;\nuse gateway_auth::store;\nuse gateway_auth::types::{AuthHost, AuthMethod, AuthPrincipal};\nuse gateway_core::error::GatewayError;\nuse gateway_core::js_string::JsString16;\nuse gateway_core::source_json::SourceJson;\nuse gateway_core::state::{RecordKey, RecordMutation, StoredRecord};\nuse gateway_core::value::PortableValue;\nuse serde::{Deserialize, Serialize};\nuse serde_json::{Value, json};\n\npub const RETENTION_MS: i64 = 7_776_000_000;\n#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]\npub struct ChangeActor {\n    pub kind: String,\n    pub principal_id: Option<JsString16>,\n    pub principal_label: Option<JsString16>,\n    pub is_super_admin: bool,\n}\n#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]\npub struct KeyChange {\n    pub id: String,\n    pub at_ms: i64,\n    pub action: String,\n    pub actor: ChangeActor,\n    pub target_key_id: String,\n    pub target_key_name: Option<JsString16>,\n    pub changed: SourceJson,\n    pub request_id: String,\n    pub release: String,\n}\n\npub fn actor(principal: &AuthPrincipal) -> ChangeActor {\n    let identity = |id: &String, label: &String| {\n        (\n            \"passkey_user\",\n            Some(JsString16::from_utf8(id)),\n            Some(JsString16::from_utf8(label)),\n        )\n    };\n    let (kind, id, label) = match &principal.method {\n        AuthMethod::PasskeySession {\n            user_id, handle, ..\n        } => identity(user_id, handle),\n        AuthMethod::PassportSession { identity } => (\n            \"passkey_user\",\n            Some(identity.subject().clone()),\n            Some(identity.handle().clone()),\n        ),\n        AuthMethod::Disabled => (\"local_admin\", None, None),\n        _ => (\"shared_admin_credential\", None, None),\n    };\n    ChangeActor {\n        kind: kind.into(),\n        principal_id: id,\n        principal_label: label,\n        is_super_admin: principal.is_super_admin,\n    }\n}\npub fn safe_changed(value: &Value) -> Result<SourceJson, GatewayError> {\n    safe_changed_source(&SourceJson::from_serializable(value)?)\n}\n\npub fn safe_changed_source(value: &SourceJson) -> Result<SourceJson, GatewayError> {\n    let allowed = [\n        \"name\",\n        \"expires_at_ms\",\n        \"usage_limit_requests\",\n        \"window_ms\",\n        \"paid_fallback_enabled\",\n        \"paid_fallback_limit_credits\",\n        \"reset_usage\",\n        \"revoked_at_ms\",\n    ];\n    let fields = if value.as_str().trim_start().starts_with('{') {\n        value.object_entries()?\n    } else {\n        Vec::new()\n    };\n    let mut result = Vec::new();\n    for name in allowed {\n        let key = JsString16::from_utf8(name);\n        let Some((_, value)) = fields.iter().rev().find(|(field, _)| field == &key) else {\n            continue;\n        };\n        let raw = value.as_str().trim();\n        let safe = if raw.starts_with('\"') {\n            value\n                .deserialize::<JsString16>()?\n                .prefix_units(200)\n                .to_source_json()?\n        } else if matches!(raw, \"null\" | \"true\" | \"false\")\n            || value.deserialize::<f64>().is_ok_and(f64::is_finite)\n        {\n            value.clone()\n        } else {\n            continue;\n        };\n        result.push(format!(\n            \"{}:{}\",\n            key.to_source_json()?.as_str(),\n            safe.as_str()\n        ));\n    }\n    SourceJson::parse(&format!(\"{{{}}}\", result.join(\",\")))\n}\npub fn event_key(event: &KeyChange) -> RecordKey {\n    store::key(json!([\n        \"uos_ai\",\n        \"api_keys\",\n        \"change\",\n        gateway_core::identity::MAX_SAFE_INTEGER - event.at_ms,\n        event.id\n    ]))\n}\npub struct ChangeInput<'a> {\n    pub principal: &'a AuthPrincipal,\n    pub request_id: &'a str,\n    pub release: &'a str,\n    pub action: &'a str,\n    pub id: &'a str,\n    pub name: Option<&'a JsString16>,\n    pub changed: &'a SourceJson,\n}\n\npub struct SourceChangeInput<'a> {\n    pub principal: Option<&'a AuthPrincipal>,\n    pub request_id: &'a str,\n    pub action: &'a str,\n    pub id: &'a str,\n    pub name: Option<&'a JsString16>,\n    pub changed: &'a SourceJson,\n    pub now_ms: Option<i64>,\n}\n\n/// The source evaluates UUID, trimmed request ID, optional clock, sanitizer, then release.\npub fn build_event(\n    input: SourceChangeInput<'_>,\n    uuid: impl FnOnce() -> Result<String, GatewayError>,\n    now: impl FnOnce() -> Result<i64, GatewayError>,\n    release: impl FnOnce() -> Result<String, GatewayError>,\n) -> Result<KeyChange, GatewayError> {\n    let id = uuid()?;\n    let request_id = input.request_id.trim_matches(js_whitespace);\n    let at_ms = match input.now_ms {\n        Some(value) => value,\n        None => now()?,\n    };\n    let actor = input.principal.map(actor).unwrap_or(ChangeActor {\n        kind: \"unknown\".into(),\n        principal_id: None,\n        principal_label: None,\n        is_super_admin: false,\n    });\n    let target_key_name = input\n        .name\n        .filter(|name| !name.as_units().is_empty())\n        .map(|name| name.prefix_units(200));\n    let changed = safe_changed_source(input.changed)?;\n    Ok(KeyChange {\n        request_id: if request_id.is_empty() {\n            id.clone()\n        } else {\n            request_id.into()\n        },\n        id,\n        at_ms,\n        action: input.action.into(),\n        actor,\n        target_key_id: input.id.into(),\n        target_key_name,\n        changed,\n        release: release()?,\n    })\n}\n\npub fn mutation<H: AuthHost>(\n    host: &H,\n    input: ChangeInput<'_>,\n) -> Result<RecordMutation, GatewayError> {\n    let event = build_event(\n        SourceChangeInput {\n            principal: Some(input.principal),\n            request_id: input.request_id,\n            action: input.action,\n            id: input.id,\n            name: input.name,\n            changed: input.changed,\n            now_ms: None,\n        },\n        || uuid_from_random(&host.random_bytes(16)?),\n        || Ok(host.now_ms()),\n        || Ok(input.release.into()),\n    )?;\n    event_mutation(&event, &uuid_from_random(&host.random_bytes(16)?)?)\n}\n\n/// Ordinary audit rows stay JSON. Only non-scalar UTF16 needs the existing typed codec.\npub fn event_mutation(event: &KeyChange, revision: &str) -> Result<RecordMutation, GatewayError> {\n    let source = SourceJson::from_serializable(event)?;\n    let expiry = Some(event.at_ms + RETENTION_MS);\n    let record = match source.deserialize::<Value>() {\n        Ok(value) => StoredRecord::json(revision, value, expiry),\n        Err(_) => StoredRecord::profile_v2(revision, portable_audit(&source)?, expiry)?,\n    };\n    Ok(RecordMutation::Put {\n        key: event_key(event),\n        record,\n    })\n}\n\nfn portable_audit(value: &SourceJson) -> Result<PortableValue, GatewayError> {\n    match value.as_str().trim_start().as_bytes().first() {\n        Some(b'\"') => {\n            let text = value.deserialize::<JsString16>()?;\n            Ok(match text.try_utf8() {\n                Ok(text) => PortableValue::String(text),\n                Err(_) => PortableValue::StringUtf16(text),\n            })\n        }\n        Some(b'{') => Ok(PortableValue::Object(\n            value\n                .object_entries()?\n                .into_iter()\n                .map(|(key, value)| Ok((key.try_utf8()?, portable_audit(&value)?)))\n                .collect::<Result<_, GatewayError>>()?,\n        )),\n        _ => Ok(PortableValue::from_json(&value.deserialize::<Value>()?)),\n    }\n}\n\n// JSON.stringify renders non-finite values as null and either signed zero as 0.\n// This is only the audit HTTP projection; durable typed number bits are unchanged.\nfn wire_numbers(value: &mut PortableValue) {\n    match value {\n        PortableValue::NumberBits(_) => {\n            if let Some(number) = value.number_value() {\n                if !number.is_finite() {\n                    *value = PortableValue::Null;\n                } else if number == 0.0 {\n                    *value = PortableValue::number(0.0);\n                }\n            }\n        }\n        PortableValue::Object(fields) => {\n            for (_, value) in fields {\n                wire_numbers(value);\n            }\n        }\n        PortableValue::ObjectUtf16(fields) => {\n            for (_, value) in fields {\n                wire_numbers(value);\n            }\n        }\n        PortableValue::Array(values) => {\n            for value in values {\n                wire_numbers(value);\n            }\n        }\n        _ => {}\n    }\n}\nfn wire_record(record: &StoredRecord) -> Result<SourceJson, GatewayError> {\n    let mut value = record.portable_value()?;\n    wire_numbers(&mut value);\n    value.to_source_json()\n}\npub fn decode_event(record: &StoredRecord) -> Result<KeyChange, GatewayError> {\n    wire_record(record)?.deserialize()\n}\n\n/// Visibility is based on the source timestamp alone, not complete event decoding.\npub fn retained_event(\n    record: &StoredRecord,\n    oldest: i64,\n) -> Result<Option<SourceJson>, GatewayError> {\n    let value = record.portable_value()?;\n    let timestamp = match &value {\n        PortableValue::Object(fields) => fields\n            .iter()\n            .rev()\n            .find(|(key, _)| key == \"at_ms\")\n            .and_then(|(_, value)| value.number_value()),\n        PortableValue::ObjectUtf16(fields) => fields\n            .iter()\n            .rev()\n            .find(|(key, _)| key == &JsString16::from_utf8(\"at_ms\"))\n            .and_then(|(_, value)| value.number_value()),\n        _ => None,\n    };\n    if timestamp.is_some_and(|at| at >= oldest as f64) {\n        wire_record(record).map(Some)\n    } else {\n        Ok(None)\n    }\n}\n\npub fn page(events: &[SourceJson], next_cursor: Option<&str>) -> Result<SourceJson, GatewayError> {\n    #[derive(Serialize)]\n    struct Page<'a> {\n        object: &'static str,\n        data: &'a [SourceJson],\n        next_cursor: Option<&'a str>,\n        retention_days: u8,\n    }\n    SourceJson::from_serializable(&Page {\n        object: \"list\",\n        data: events,\n        next_cursor,\n        retention_days: 90,\n    })\n}\nfn js_whitespace(value: char) -> bool {\n    matches!(value, '\\u{0009}'..='\\u{000d}' | '\\u{0020}' | '\\u{00a0}' | '\\u{1680}' | '\\u{2000}'..='\\u{200a}' | '\\u{2028}' | '\\u{2029}' | '\\u{202f}' | '\\u{205f}' | '\\u{3000}' | '\\u{feff}')\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-live-runtime/src/mapping.rs",
+      "sha256": "b7fe00c195f483ac172122505a8dddda7c72bbd0b685918938d4048b91486f98",
+      "bytes": 13122,
+      "physical_lines": 381,
+      "public_declaration_locations": [
+        {
+          "line": 18,
+          "declaration_start": "pub(crate) struct State<S> {"
+        },
+        {
+          "line": 24,
+          "declaration_start": "pub struct LiveRuntime<S> {"
+        },
+        {
+          "line": 41,
+          "declaration_start": "pub(crate) struct Mapping {"
+        },
+        {
+          "line": 46,
+          "declaration_start": "pub fn mapping_key(call_id: &str) -> RecordKey {"
+        },
+        {
+          "line": 57,
+          "declaration_start": "pub fn retirement_key(call_id: &str) -> RecordKey {"
+        },
+        {
+          "line": 69,
+          "declaration_start": "pub enum RetirementOutcome {"
+        },
+        {
+          "line": 79,
+          "declaration_start": "pub struct Retirement<S> {"
+        },
+        {
+          "line": 86,
+          "declaration_start": "pub async fn on_handshake_rejection(&self, status: u16, now_ms: i64) -> RetirementOutcome {"
+        },
+        {
+          "line": 102,
+          "declaration_start": "pub async fn retry_once(&self) -> RetirementOutcome {"
+        },
+        {
+          "line": 120,
+          "declaration_start": "pub fn new(store: Rc<S>, next_revision: Rc<dyn Fn() -> Result<String, GatewayError>>) -> Self {"
+        },
+        {
+          "line": 130,
+          "declaration_start": "pub(crate) async fn write_mapping("
+        },
+        {
+          "line": 157,
+          "declaration_start": "pub(crate) async fn read_mapping(&self, call_id: &str, now: i64) -> Option<Mapping> {"
+        },
+        {
+          "line": 289,
+          "declaration_start": "pub(crate) fn mapping_missing() -> GatewayError {"
+        }
+      ],
+      "exact_defining_source": "use crate::types::LIVE_CALL_ACCOUNT_TTL_MS;\nuse gateway_core::source_control;\nuse gateway_core::{\n    error::GatewayError,\n    state::{\n        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,\n        StoredRecord,\n    },\n    tuple_key::{ScalarKeyPart, TupleKey},\n};\nuse gateway_source::{\n    js_string::JsString16, source_json::SourceJson, source_serialization as source,\n};\nuse serde::Serialize;\nuse serde_json::json;\nuse std::{cell::RefCell, collections::BTreeMap, rc::Rc};\n\npub(crate) struct State<S> {\n    pub store: Rc<S>,\n    next_revision: Rc<dyn Fn() -> Result<String, GatewayError>>,\n    pending: RefCell<BTreeMap<String, Pending>>,\n}\n\npub struct LiveRuntime<S> {\n    pub(crate) state: Rc<State<S>>,\n}\nimpl<S> Clone for LiveRuntime<S> {\n    fn clone(&self) -> Self {\n        Self {\n            state: self.state.clone(),\n        }\n    }\n}\n\n#[derive(Clone)]\nstruct Pending {\n    status: u16,\n    created_at_ms: i64,\n}\n\npub(crate) struct Mapping {\n    pub account_id: String,\n    pub principal_id: Option<JsString16>,\n}\n\npub fn mapping_key(call_id: &str) -> RecordKey {\n    TupleKey::from_scalar_parts(&[\n        ScalarKeyPart::String(\"uos_ai\"),\n        ScalarKeyPart::String(\"codex_live_calls\"),\n        ScalarKeyPart::String(\"v1\"),\n        ScalarKeyPart::String(call_id),\n    ])\n    .to_record_key()\n}\n\n/// Private control custody, retained until known mapping deletion. M20 must preserve this marker.\npub fn retirement_key(call_id: &str) -> RecordKey {\n    TupleKey::from_scalar_parts(&[\n        ScalarKeyPart::String(\"uos_ai\"),\n        ScalarKeyPart::String(\"codex_live_calls\"),\n        ScalarKeyPart::String(\"v1\"),\n        ScalarKeyPart::String(\"pending_retirement\"),\n        ScalarKeyPart::String(call_id),\n    ])\n    .to_record_key()\n}\n\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum RetirementOutcome {\n    NotTerminal,\n    Retired,\n    /// Marker persists; originating operation retries at250ms only while actually alive.\n    Pending,\n    /// Storage cannot establish the effect. Never label this retired or clear the local guard.\n    Unknown,\n}\n\n/// Minted ONLY with a prepared authorized sideband. No public constructor or serde implementation.\npub struct Retirement<S> {\n    pub(crate) runtime: LiveRuntime<S>,\n    pub(crate) call_id: String,\n}\n\nimpl<S: AuthorityStore> Retirement<S> {\n    /// The trusted physical bridge calls this only for its ACTUAL upstream handshake response.\n    pub async fn on_handshake_rejection(&self, status: u16, now_ms: i64) -> RetirementOutcome {\n        if status != 404 && status != 410 {\n            return RetirementOutcome::NotTerminal;\n        }\n        self.runtime\n            .state\n            .pending\n            .borrow_mut()\n            .entry(self.call_id.clone())\n            .or_insert(Pending {\n                status,\n                created_at_ms: now_ms,\n            });\n        self.runtime.retire_once(&self.call_id).await\n    }\n\n    pub async fn retry_once(&self) -> RetirementOutcome {\n        self.runtime.retire_once(&self.call_id).await\n    }\n}\n\nimpl<S: AuthorityStore> LiveRuntime<S> {\n    fn revision(&self) -> Result<String, GatewayError> {\n        let revision = (self.state.next_revision)()?;\n        if revision.is_empty() {\n            return Err(GatewayError::unavailable(\n                \"Live state revision is unavailable.\",\n                \"live_revision_unavailable\",\n            ));\n        }\n        Ok(revision)\n    }\n\n    /// The injected store is the SAME existing authority, never a new live ledger.\n    pub fn new(store: Rc<S>, next_revision: Rc<dyn Fn() -> Result<String, GatewayError>>) -> Self {\n        Self {\n            state: Rc::new(State {\n                store,\n                next_revision,\n                pending: RefCell::new(BTreeMap::new()),\n            }),\n        }\n    }\n\n    pub(crate) async fn write_mapping(\n        &self,\n        call_id: &str,\n        account: &str,\n        principal: &JsString16,\n        now: i64,\n    ) {\n        // Deliberately best-effort and unconditional. Never clears a pending-retirement marker.\n        let Ok(revision) = self.revision() else {\n            return;\n        };\n        let Ok(record) = encode_mapping(revision, account, principal, now) else {\n            return;\n        };\n        let _ = self\n            .state\n            .store\n            .commit(AtomicTransition {\n                checks: vec![],\n                mutations: vec![RecordMutation::Put {\n                    key: mapping_key(call_id),\n                    record,\n                }],\n            })\n            .await;\n    }\n\n    pub(crate) async fn read_mapping(&self, call_id: &str, now: i64) -> Option<Mapping> {\n        let marker = self.state.store.read(&retirement_key(call_id)).await.ok()?;\n        if marker.is_some() || self.state.pending.borrow().contains_key(call_id) {\n            // Related authenticated request event resumes ONE step; no background scheduler.\n            self.retire_once(call_id).await;\n            return None;\n        }\n        let record = self.state.store.read(&mapping_key(call_id)).await.ok()??;\n        // Suppress a retirement started while the mapping read was awaiting, also after restart.\n        if self.state.pending.borrow().contains_key(call_id)\n            || self\n                .state\n                .store\n                .read(&retirement_key(call_id))\n                .await\n                .ok()?\n                .is_some()\n        {\n            return None;\n        }\n        if record.expires_at_ms.is_some_and(|expiry| expiry <= now) {\n            return None;\n        }\n        decode_mapping(&record)\n    }\n\n    async fn retire_once(&self, call_id: &str) -> RetirementOutcome {\n        let key = retirement_key(call_id);\n        let mut marker = match self.state.store.read(&key).await {\n            Ok(value) => value,\n            Err(_) => return RetirementOutcome::Unknown,\n        };\n        if let Some(record) = marker.as_ref() {\n            let Some(pending) = parse_marker(record, call_id) else {\n                return RetirementOutcome::Unknown;\n            };\n            self.state\n                .pending\n                .borrow_mut()\n                .insert(call_id.into(), pending);\n        } else {\n            let Some(pending) = self.state.pending.borrow().get(call_id).cloned() else {\n                return RetirementOutcome::NotTerminal;\n            };\n            let Ok(revision) = self.revision() else {\n                return RetirementOutcome::Unknown;\n            };\n            let record = StoredRecord::json(\n                revision,\n                json!({\"schema_version\":1,\"call_id\":call_id,\"upstream_status\":pending.status,\"created_at_ms\":pending.created_at_ms}),\n                None,\n            );\n            match self\n                .state\n                .store\n                .commit(AtomicTransition {\n                    checks: vec![],\n                    mutations: vec![RecordMutation::Put {\n                        key: key.clone(),\n                        record,\n                    }],\n                })\n                .await\n            {\n                Ok(CommitOutcome::Committed) => {}\n                Ok(CommitOutcome::Conflict) => return RetirementOutcome::Pending,\n                Err(_) => return RetirementOutcome::Unknown,\n            }\n            marker = match self.state.store.read(&key).await {\n                Ok(Some(record)) => Some(record),\n                _ => return RetirementOutcome::Unknown,\n            };\n        }\n        // Source deletion remains unconditional, not a join claim or a mapping revision lease.\n        match self\n            .state\n            .store\n            .commit(AtomicTransition {\n                checks: vec![],\n                mutations: vec![RecordMutation::Delete {\n                    key: mapping_key(call_id),\n                }],\n            })\n            .await\n        {\n            Ok(CommitOutcome::Committed) => {}\n            Ok(CommitOutcome::Conflict) => return RetirementOutcome::Pending,\n            Err(_) => return RetirementOutcome::Unknown,\n        }\n        // Clear only after known successful deletion. A concurrent reused ID or newer terminal\n        // marker retains suppression instead of clearing another operation's control record.\n        let marker = marker.expect(\"marker was read after a successful write or existed\");\n        match self\n            .state\n            .store\n            .commit(AtomicTransition {\n                checks: vec![\n                    RevisionCheck {\n                        key: mapping_key(call_id),\n                        expected_revision: None,\n                    },\n                    RevisionCheck {\n                        key: key.clone(),\n                        expected_revision: Some(marker.revision),\n                    },\n                ],\n                mutations: vec![RecordMutation::Delete { key }],\n            })\n            .await\n        {\n            Ok(CommitOutcome::Committed) => {\n                self.state.pending.borrow_mut().remove(call_id);\n                RetirementOutcome::Retired\n            }\n            Ok(CommitOutcome::Conflict) => RetirementOutcome::Pending,\n            Err(_) => RetirementOutcome::Unknown,\n        }\n    }\n}\n\nfn parse_marker(record: &StoredRecord, call_id: &str) -> Option<Pending> {\n    let value = record.json_value().ok()?;\n    if value.get(\"schema_version\")?.as_u64()? != 1 || value.get(\"call_id\")?.as_str()? != call_id {\n        return None;\n    }\n    let status = u16::try_from(value.get(\"upstream_status\")?.as_u64()?).ok()?;\n    matches!(status, 404 | 410).then_some(Pending {\n        status,\n        created_at_ms: value.get(\"created_at_ms\")?.as_i64()?,\n    })\n}\n\npub(crate) fn mapping_missing() -> GatewayError {\n    crate::types::invalid(404, \"Unknown realtime call.\")\n}\n\n/// Mapping DATA only. Other fields retain their scalar domains and original expiry.\nfn encode_mapping(\n    revision: String,\n    account: &str,\n    principal: &JsString16,\n    now: i64,\n) -> Result<StoredRecord, GatewayError> {\n    #[derive(Serialize)]\n    struct Data<'a> {\n        account_id: &'a str,\n        principal_id: &'a JsString16,\n        created_at_ms: i64,\n    }\n    let source = SourceJson::from_serializable(&Data {\n        account_id: account,\n        principal_id: principal,\n        created_at_ms: now,\n    })?;\n    source_control::encode_source_control_record(\n        revision,\n        &source,\n        Some(now.saturating_add(LIVE_CALL_ACCOUNT_TTL_MS)),\n    )\n}\nfn decode_mapping(record: &StoredRecord) -> Option<Mapping> {\n    let value = source_control::decode_source_control_record(record).ok()?;\n    Some(Mapping {\n        account_id: source::member(&value, \"account_id\")?\n            .deserialize::<String>()\n            .ok()?,\n        // Source getString accepts every string, including empty. Non-string/absent stays null.\n        principal_id: source::member(&value, \"principal_id\").and_then(|v| source::string(&v)),\n    })\n}\n\n#[cfg(test)]\nmod passport_data_cases {\n    use super::{decode_mapping, encode_mapping};\n    use gateway_core::state::StoredRecord;\n    use gateway_core::value::ValueEncoding;\n    use gateway_source::js_string::JsString16;\n\n    #[test]\n    fn mapping_codec_preserves_exact_identity_units_and_scalar_history()\n    -> Result<(), Box<dyn std::error::Error>> {\n        for units in [\n            vec![],\n            vec![112, 0, 0xd800, 0xdfff],\n            \"ordinary\".encode_utf16().collect(),\n        ] {\n            let principal = JsString16::from_units(units);\n            let row = encode_mapping(\"revision\".into(), \"account\", &principal, 100)?;\n            let decoded = decode_mapping(&row).ok_or(\"mapping codec refused its valid output\")?;\n            assert_eq!(decoded.account_id, \"account\");\n            assert_eq!(decoded.principal_id, Some(principal.clone()));\n            assert_eq!(\n                row.expires_at_ms,\n                Some(100 + crate::types::LIVE_CALL_ACCOUNT_TTL_MS)\n            );\n            assert_eq!(row.revision, \"revision\");\n            assert_eq!(\n                row.value_encoding,\n                if principal.try_utf8().is_ok() {\n                    ValueEncoding::Json\n                } else {\n                    ValueEncoding::ProfileV2\n                }\n            );\n        }\n        for value in [\n            serde_json::json!({\"account_id\":\"account\"}),\n            serde_json::json!({\"account_id\":\"account\",\"principal_id\":false}),\n            serde_json::json!({\"account_id\":\"account\",\"principal_id\":null}),\n        ] {\n            assert!(\n                decode_mapping(&StoredRecord::json(\"revision\", value, None))\n                    .ok_or(\"legacy mapping\")?\n                    .principal_id\n                    .is_none()\n            );\n        }\n        let scalar = encode_mapping(\"r\".into(), \"account\", &JsString16::from_utf8(\"p\"), 100)?;\n        assert_eq!(\n            serde_json::to_string(scalar.json_value()?)?,\n            r#\"{\"account_id\":\"account\",\"principal_id\":\"p\",\"created_at_ms\":100}\"#\n        );\n        Ok(())\n    }\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-live-runtime/src/protocol.rs",
+      "sha256": "8caad7b585ffb8674c8e57ddaf320922383b0d7c22c2328c69a3ebaf299ffba3",
+      "bytes": 9021,
+      "physical_lines": 269,
+      "public_declaration_locations": [
+        {
+          "line": 7,
+          "declaration_start": "pub enum LiveRoute {"
+        },
+        {
+          "line": 12,
+          "declaration_start": "pub fn live_route(method: &str, path: &str) -> Option<LiveRoute> {"
+        },
+        {
+          "line": 42,
+          "declaration_start": "pub fn encode_call_id(id: &str) -> String {"
+        },
+        {
+          "line": 54,
+          "declaration_start": "pub fn call_id_from_location(location: &str) -> Option<String> {"
+        },
+        {
+          "line": 73,
+          "declaration_start": "pub fn principal_id(principal: &AuthPrincipal) -> gateway_core::identity::PrincipalId {"
+        },
+        {
+          "line": 103,
+          "declaration_start": "pub fn validate_declared_length(value: Option<&str>) -> Result<(), GatewayError> {"
+        },
+        {
+          "line": 125,
+          "declaration_start": "pub fn validate_body_read(bytes: usize, complete: bool) -> Result<(), GatewayError> {"
+        },
+        {
+          "line": 145,
+          "declaration_start": "pub(crate) fn parse_create("
+        },
+        {
+          "line": 246,
+          "declaration_start": "pub(crate) fn create_headers("
+        }
+      ],
+      "exact_defining_source": "use crate::types::*;\nuse gateway_auth::types::{AuthMethod, AuthPrincipal};\nuse gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};\nuse std::collections::BTreeMap;\n\n#[derive(Clone, Debug, Eq, PartialEq)]\npub enum LiveRoute {\n    Create,\n    Sideband(String),\n}\n\npub fn live_route(method: &str, path: &str) -> Option<LiveRoute> {\n    let path = if path == \"/\" {\n        path\n    } else {\n        path.trim_end_matches('/')\n    };\n    if method == \"POST\" && path == \"/v1/live\" {\n        return Some(LiveRoute::Create);\n    }\n    let raw = path.strip_prefix(\"/v1/live/\")?;\n    if method != \"GET\" || raw.contains('/') {\n        return None;\n    }\n    let bytes = raw.as_bytes();\n    let mut decoded = Vec::new();\n    let mut at = 0;\n    while at < bytes.len() {\n        if bytes[at] == b'%' {\n            let value = u8::from_str_radix(raw.get(at + 1..at + 3)?, 16).ok()?;\n            decoded.push(value);\n            at += 3;\n        } else {\n            decoded.push(bytes[at]);\n            at += 1;\n        }\n    }\n    let id = String::from_utf8(decoded).ok()?;\n    (!matches!(id.as_str(), \"\" | \".\" | \"..\")).then_some(LiveRoute::Sideband(id))\n}\n\npub fn encode_call_id(id: &str) -> String {\n    let mut result = String::new();\n    for byte in id.bytes() {\n        if byte.is_ascii_alphanumeric() || b\"-_.!~*'()\".contains(&byte) {\n            result.push(char::from(byte));\n        } else {\n            result.push_str(&format!(\"%{byte:02X}\"));\n        }\n    }\n    result\n}\n\npub fn call_id_from_location(location: &str) -> Option<String> {\n    location\n        .split('?')\n        .next()?\n        .split('/')\n        .rev()\n        .find_map(|part| {\n            let uuid = part.len() == 36\n                && part.bytes().enumerate().all(|(i, c)| {\n                    if [8, 13, 18, 23].contains(&i) {\n                        c == b'-'\n                    } else {\n                        c.is_ascii_hexdigit()\n                    }\n                });\n            ((part.starts_with(\"rtc_\") && part.len() > 4) || uuid).then(|| part.to_owned())\n        })\n}\n\npub fn principal_id(principal: &AuthPrincipal) -> gateway_core::identity::PrincipalId {\n    let scalar = match &principal.method {\n        AuthMethod::KvApiKey { key_id, .. } => format!(\"api-key:{key_id}\"),\n        AuthMethod::GithubToken { owner, repo, .. } => format!(\n            \"github-repo:{}/{}\",\n            owner.to_lowercase(),\n            repo.to_lowercase()\n        ),\n        AuthMethod::PasskeySession { user_id, .. } => format!(\"passkey-user:{user_id}\"),\n        AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {\n            return principal.method.principal_id(None);\n        }\n        AuthMethod::AuthTokensAllowlist => \"auth-method:auth_tokens_allowlist\".into(),\n        AuthMethod::AdminAllowlist => \"auth-method:admin_allowlist\".into(),\n        AuthMethod::DenoDeployToken => \"auth-method:deno_deploy_token\".into(),\n        AuthMethod::Disabled => principal\n            .token\n            .as_ref()\n            .map(|t| {\n                format!(\n                    \"bearer-sha256:{}\",\n                    gateway_auth::crypto::sha256_hex(t.expose().as_bytes())\n                )\n            })\n            .unwrap_or_else(|| \"local-auth-disabled\".into()),\n    };\n    gateway_core::identity::PrincipalId::from_scalar(scalar)\n}\n\n/// Source Content-Length canonicality is checked before any actual body read.\npub fn validate_declared_length(value: Option<&str>) -> Result<(), GatewayError> {\n    let Some(value) = value else { return Ok(()) };\n    let value = value.trim();\n    if value.is_empty()\n        || !value.bytes().all(|b| b.is_ascii_digit())\n        || (value.starts_with('0') && value.len() > 1)\n    {\n        return Err(invalid(\n            400,\n            \"Live call creation Content-Length is invalid.\",\n        ));\n    }\n    if value\n        .parse::<u64>()\n        .ok()\n        .is_none_or(|n| n > LIVE_CALL_MAX_BODY_BYTES as u64)\n    {\n        return Err(body_too_large());\n    }\n    Ok(())\n}\n\npub fn validate_body_read(bytes: usize, complete: bool) -> Result<(), GatewayError> {\n    if bytes > LIVE_CALL_MAX_BODY_BYTES {\n        return Err(body_too_large());\n    }\n    if !complete {\n        return Err(invalid(\n            400,\n            \"Live call creation body could not be read completely.\",\n        ));\n    }\n    Ok(())\n}\n\nfn body_too_large() -> GatewayError {\n    invalid(\n        413,\n        \"Live call creation bodies must be no larger than 1048576 bytes.\",\n    )\n}\n\npub(crate) fn parse_create(\n    input: &LiveCreateInput,\n) -> Result<(SourceJson, Option<JsString16>), GatewayError> {\n    let media = input.content_type.split(';').next().unwrap_or(\"\").trim();\n    if !media.eq_ignore_ascii_case(\"multipart/form-data\")\n        || !input\n            .content_type\n            .to_ascii_lowercase()\n            .contains(\"boundary=\")\n    {\n        return Err(invalid(\n            400,\n            \"Live call creation requires multipart/form-data with a declared boundary.\",\n        ));\n    }\n    let sdp = input\n        .sdp\n        .as_ref()\n        .filter(|s| !s.is_empty())\n        .ok_or_else(|| {\n            invalid(400, \"Live call creation requires a non-empty `sdp` part.\")\n                .with_param(Some(\"sdp\"))\n        })?;\n    let text = input.session.as_ref().ok_or_else(|| {\n        invalid(400, \"Live call creation requires a `session` part.\").with_param(Some(\"session\"))\n    })?;\n    let session = SourceJson::parse(text.trim()).map_err(|_| {\n        invalid(400, \"Live call creation `session` part must be valid JSON.\")\n            .with_param(Some(\"session\"))\n    })?;\n    let entries = session.object_entries().map_err(|_| {\n        invalid(\n            400,\n            \"Live call creation `session` part must be a JSON object.\",\n        )\n        .with_param(Some(\"session\"))\n    })?;\n    let model = entries\n        .iter()\n        .rev()\n        .find(|(key, _)| key == &JsString16::from_utf8(\"model\"))\n        .and_then(|(_, v)| JsString16::from_json_token(v.as_raw()).ok());\n    let normalized = normalize_json(&session)?;\n    let body = SourceJson::parse(&format!(\n        \"{{\\\"sdp\\\":{},\\\"session\\\":{normalized}}}\",\n        serde_json::to_string(sdp).expect(\"SDP string serializes\")\n    ))?;\n    Ok((body, model))\n}\n\n/// Match JSON.parse/stringify: last duplicate wins, source object key order, JS number precision,\n/// infinity->null and -0->0. String code units never pass through serde_json::Value.\nfn normalize_json(raw: &SourceJson) -> Result<String, GatewayError> {\n    let text = raw.as_str().trim();\n    if text.starts_with('{') {\n        let mut members: Vec<(JsString16, SourceJson)> = Vec::new();\n        for (key, value) in raw.object_entries()? {\n            if let Some((_, previous)) = members.iter_mut().find(|(existing, _)| existing == &key) {\n                *previous = value;\n            } else {\n                members.push((key, value));\n            }\n        }\n        fn index(key: &JsString16) -> Option<u32> {\n            let text = key.try_utf8().ok()?;\n            let n = text.parse::<u32>().ok()?;\n            (n != u32::MAX && n.to_string() == text).then_some(n)\n        }\n        members.sort_by_key(|(key, _)| index(key).map_or((1, 0), |n| (0, n)));\n        let entries = members\n            .iter()\n            .map(|(k, v)| {\n                Ok(format!(\n                    \"{}:{}\",\n                    serde_json::to_string(k).expect(\"source string serializes\"),\n                    normalize_json(v)?\n                ))\n            })\n            .collect::<Result<Vec<_>, GatewayError>>()?;\n        return Ok(format!(\"{{{}}}\", entries.join(\",\")));\n    }\n    if text.starts_with('[') {\n        let values = raw\n            .array_items()?\n            .iter()\n            .map(normalize_json)\n            .collect::<Result<Vec<_>, _>>()?;\n        return Ok(format!(\"[{}]\", values.join(\",\")));\n    }\n    if text.starts_with('\"') || matches!(text, \"null\" | \"true\" | \"false\") {\n        return Ok(text.into());\n    }\n    let number = text\n        .parse::<f64>()\n        .map_err(|_| invalid(400, \"Invalid session JSON number.\"))?;\n    if !number.is_finite() {\n        return Ok(\"null\".into());\n    }\n    Ok(ryu_js::Buffer::new().format(number).into())\n}\n\npub(crate) fn create_headers(\n    input: &LiveCreateInput,\n    user_agent: String,\n) -> BTreeMap<String, String> {\n    let mut headers = BTreeMap::from([\n        (\"content-type\".into(), \"application/json\".into()),\n        (\"originator\".into(), \"codex_cli_rs\".into()),\n        (\"user-agent\".into(), user_agent),\n        (\"openai-alpha\".into(), LIVE_OPENAI_ALPHA_DEFAULT.into()),\n    ]);\n    for name in [\n        \"openai-alpha\",\n        \"x-session-id\",\n        \"session-id\",\n        \"thread-id\",\n        \"x-codex-turn-metadata\",\n        \"x-oai-attestation\",\n    ] {\n        if let Some(value) = input.headers.get(name).filter(|v| !v.trim().is_empty()) {\n            headers.insert(name.into(), value.clone());\n        }\n    }\n    headers\n}\n"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/auth_passport_host.rs",
+      "sha256": "167013c9eaa43c601ed96e3418809c7aa705b2cf99b7a3b631171c3330d4b870",
+      "bytes": 5117,
+      "physical_lines": 145,
+      "public_declaration_locations": [
+        {
+          "line": 36,
+          "declaration_start": "pub async fn fetch("
+        }
+      ],
+      "exact_defining_source": "//! Auth-only fixed transport. Preserve PlatformHost's actual cancellation and\n//! store; bounds here apply only to new Passport app-session operations.\nuse crate::{\n    host::{PlatformHost, response_bytes},\n    transport::outbound::{Cancellation, PinnedDestination, send_http},\n};\nuse gateway_auth_contracts::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};\nuse gateway_auth_passport_contracts::session::PassportDate;\nuse gateway_source::{error::GatewayError, js_string::JsString16};\nuse std::{cell::Cell, collections::BTreeMap, task::Poll};\nuse worker::{\n    Method, ResponseBody,\n    js_sys::{Function, JsString, Reflect},\n    wasm_bindgen::{JsCast, JsValue},\n};\n\nimpl PassportDate for PlatformHost {\n    fn parse_date_ms(&self, value: &JsString16) -> f64 {\n        // Date::parse(&str) narrows the source domain before the actual JS\n        // primitive. Pass a JS UTF16 string directly to Date.parse instead.\n        let parsed = (|| {\n            let date = Reflect::get(&worker::js_sys::global(), &JsValue::from_str(\"Date\")).ok()?;\n            let parse = Reflect::get(&date, &JsValue::from_str(\"parse\"))\n                .ok()?\n                .dyn_into::<Function>()\n                .ok()?;\n            parse\n                .call1(&date, &JsString::from_char_code(value.as_units()))\n                .ok()?\n                .as_f64()\n        })();\n        parsed.unwrap_or(f64::NAN)\n    }\n}\n\npub async fn fetch(\n    host: &PlatformHost,\n    request: AuthUpstreamRequest,\n) -> Result<AuthUpstreamResponse, GatewayError> {\n    if !request.app_session_operation() {\n        return fetch_inner(\n            request,\n            &host.cancellation,\n            4 * 1024 * 1024,\n            &Cell::new(false),\n        )\n        .await;\n    }\n    // Local logout has already committed. Its best-effort upstream revoke is\n    // independent of caller cancellation; other operations retain the caller.\n    let cancellation = if matches!(request, AuthUpstreamRequest::PassportRevoke { .. }) {\n        Cancellation::background()?\n    } else {\n        host.cancellation.child()?\n    };\n    let _deadline = cancellation.set_timeout_ms(10_000)?;\n    let rejected = Cell::new(false);\n    let operation = Box::pin(fetch_inner(request, &cancellation, 65_536, &rejected));\n    let interrupted = Box::pin(std::future::poll_fn(|cx| {\n        cancellation.register_waker(cx.waker());\n        if cancellation.signal().aborted() {\n            Poll::Ready(())\n        } else {\n            Poll::Pending\n        }\n    }));\n    let result = match futures_util::future::select(operation, interrupted).await {\n        futures_util::future::Either::Left((result, _)) => result,\n        // A rejected body cannot hide an already observed authoritative 401,\n        // including when cancellation itself stalls until the deadline.\n        futures_util::future::Either::Right(_) if rejected.get() => Ok(AuthUpstreamResponse {\n            status: 401,\n            body: Vec::new(),\n        }),\n        futures_util::future::Either::Right(_) => Err(unavailable()),\n    };\n    if result.is_err() {\n        cancellation.abort();\n    }\n    result\n}\nasync fn fetch_inner(\n    request: AuthUpstreamRequest,\n    cancellation: &Cancellation,\n    limit: usize,\n    rejected: &Cell<bool>,\n) -> Result<AuthUpstreamResponse, GatewayError> {\n    let headers = request.headers().into_iter().collect::<BTreeMap<_, _>>();\n    let destination = PinnedDestination::new(&request.url())?;\n    let method = if request.method() == \"POST\" {\n        Method::Post\n    } else {\n        Method::Get\n    };\n    let mut response = send_http(\n        &destination,\n        method,\n        &headers,\n        &request.body()?,\n        cancellation,\n        || async { Ok(()) },\n    )\n    .await\n    .map_err(|failure| failure.error)?;\n    let status = response.status_code();\n    if matches!(request, AuthUpstreamRequest::PassportPkceExchange { .. })\n        && matches!(response.body(), ResponseBody::Empty)\n    {\n        return Err(GatewayError::new(\n            502,\n            \"Passport verification is unavailable.\",\n            Some(\"passport_exchange_body_missing\"),\n        ));\n    }\n    if request.status_only(status) {\n        rejected\n            .set(matches!(request, AuthUpstreamRequest::PassportSession { .. }) && status == 401);\n        let raw: worker::web_sys::Response = response.into();\n        let cancelled = if let Some(body) = raw.body() {\n            worker::wasm_bindgen_futures::JsFuture::from(body.cancel())\n                .await\n                .map(|_| ())\n        } else {\n            Ok(())\n        };\n        if matches!(request, AuthUpstreamRequest::PassportRevoke { .. }) {\n            cancelled.map_err(|_| unavailable())?;\n        }\n        return Ok(AuthUpstreamResponse {\n            status,\n            body: Vec::new(),\n        });\n    }\n    Ok(AuthUpstreamResponse {\n        status,\n        body: response_bytes(&mut response, limit).await?,\n    })\n}\nfn unavailable() -> GatewayError {\n    GatewayError::new(\n        503,\n        \"Passport session verification is unavailable.\",\n        Some(\"passport_unavailable\"),\n    )\n}\n"
+    }
+  ],
+  "complete_current_production_reference_inventory": [
+    {
+      "path": "rust/crates/gateway-admin/src/audit.rs",
+      "sha256": "ceac097cdc866d283832c4ff474de87c4a8163a138a787765a6ab10c9ed7a59d",
+      "references": [
+        {
+          "line": 45,
+          "text": "AuthMethod::PassportSession { identity } => ("
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-contracts/src/passport_serde.rs",
+      "sha256": "afa22bdf6c3ca19493a95e3fe38c9237201f64af5c3bcb20e69fbde464aa459f",
+      "references": [
+        {
+          "line": 4,
+          "text": "actor_data::PassportSessionData, passport::PassportClaims, session::PassportSourceClaims,"
+        },
+        {
+          "line": 27,
+          "text": "use super::{Deserializer, PassportSessionData, Serializer};"
+        },
+        {
+          "line": 29,
+          "text": "value: &PassportSessionData,"
+        },
+        {
+          "line": 33,
+          "text": "PassportSessionData::Jwt(value) => super::jwt::serialize(value, serializer),"
+        },
+        {
+          "line": 34,
+          "text": "PassportSessionData::App(_) => Err(serde::ser::Error::custom("
+        },
+        {
+          "line": 41,
+          "text": ") -> Result<PassportSessionData, D::Error> {"
+        },
+        {
+          "line": 42,
+          "text": "super::jwt::deserialize(deserializer).map(PassportSessionData::Jwt)"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-contracts/src/types.rs",
+      "sha256": "40b8f24c7a24ba817d1c7b97743cb5215f958534f8cd75b9a1276a3d7caad0e0",
+      "references": [
+        {
+          "line": 209,
+          "text": "PassportSession {"
+        },
+        {
+          "line": 211,
+          "text": "identity: gateway_auth_passport_contracts::actor_data::PassportSessionData,"
+        },
+        {
+          "line": 213,
+          "text": "PassportBearer {"
+        },
+        {
+          "line": 222,
+          "text": "pub fn principal_id(&self, bearer: Option<&str>) -> gateway_core::identity::PrincipalId {"
+        },
+        {
+          "line": 223,
+          "text": "use gateway_core::identity::PrincipalId;"
+        },
+        {
+          "line": 225,
+          "text": "Self::PassportSession { identity } => return passport_principal(identity.subject()),"
+        },
+        {
+          "line": 226,
+          "text": "Self::PassportBearer { claims } => return passport_principal(&claims.sub),"
+        },
+        {
+          "line": 246,
+          "text": "PrincipalId::from_scalar(scalar)"
+        },
+        {
+          "line": 251,
+          "text": ") -> gateway_core::identity::PrincipalId {"
+        },
+        {
+          "line": 254,
+          "text": "gateway_core::identity::PrincipalId::from_source("
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-contracts/src/upstream.rs",
+      "sha256": "fc4c7adcbdf8d4600774cb2e835739881f804c41612aef7b78b2df7821699bab",
+      "references": [
+        {
+          "line": 28,
+          "text": "PassportSession {"
+        },
+        {
+          "line": 71,
+          "text": "Self::PassportSession { .. } => {"
+        },
+        {
+          "line": 90,
+          "text": "| Self::PassportSession { .. }"
+        },
+        {
+          "line": 103,
+          "text": "Self::PassportSession { .. } | Self::PassportRevoke { .. } => Ok(br#\"{\"clientId\":\"ai\",\"audience\":\"ai\",\"origin\":\"https://ai.ubq.fi\",\"redirectUri\":\"https://ai.ubq.fi/auth/callback\"}\"#.to_vec()),"
+        },
+        {
+          "line": 131,
+          "text": "| Self::PassportSession { .. }"
+        },
+        {
+          "line": 137,
+          "text": "|| matches!(self, Self::PassportSession { .. }) && status == 401"
+        },
+        {
+          "line": 159,
+          "text": "Self::PassportSession { app_session_token }"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport-contracts/src/actor_data.rs",
+      "sha256": "9e086af737a1d247b25ab7cab23ac6ec6f3952539db2ac5e0fc3483127de8779",
+      "references": [
+        {
+          "line": 4,
+          "text": "session::{PassportSessionIdentity, PassportSourceClaims},"
+        },
+        {
+          "line": 12,
+          "text": "pub struct PassportAppSessionBinding {"
+        },
+        {
+          "line": 23,
+          "text": "impl PassportAppSessionBinding {"
+        },
+        {
+          "line": 51,
+          "text": "pub struct PassportJwtBindingV2 {"
+        },
+        {
+          "line": 57,
+          "text": "pub enum PassportActorDataV2 {"
+        },
+        {
+          "line": 58,
+          "text": "PassportAppSession(PassportAppSessionBinding),"
+        },
+        {
+          "line": 59,
+          "text": "PassportJwt(PassportJwtBindingV2),"
+        },
+        {
+          "line": 68,
+          "text": "impl PassportActorDataV2 {"
+        },
+        {
+          "line": 121,
+          "text": "pub identity: PassportSessionIdentity,"
+        },
+        {
+          "line": 122,
+          "text": "pub binding: PassportAppSessionBinding,"
+        },
+        {
+          "line": 125,
+          "text": "pub enum PassportSessionData {"
+        },
+        {
+          "line": 129,
+          "text": "impl PassportSessionData {"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport-contracts/src/session.rs",
+      "sha256": "5459f073e667424dc22546e25040ecda838de7f85253841ecb8374dc708f602d",
+      "references": [
+        {
+          "line": 11,
+          "text": "pub struct PassportSessionIdentity {"
+        },
+        {
+          "line": 21,
+          "text": "pub trait PassportDate {"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport-sessions/src/sessions.rs",
+      "sha256": "bc727ffae762fcf4983c56ac05ebe519719098b00ff6111378f52625a1c51287",
+      "references": [
+        {
+          "line": 3,
+          "text": "actor_data::{PassportAppSessionBinding, PassportAppSessionData},"
+        },
+        {
+          "line": 5,
+          "text": "session::{PassportDate, PassportSessionIdentity},"
+        },
+        {
+          "line": 94,
+          "text": "fn binding(&self, session_digest: String, revision: &str) -> PassportAppSessionBinding {"
+        },
+        {
+          "line": 95,
+          "text": "PassportAppSessionBinding {"
+        },
+        {
+          "line": 107,
+          "text": "fn valid<H: PassportDate>(&self, host: &H) -> bool {"
+        },
+        {
+          "line": 172,
+          "text": "fn identity(self, record: &Record) -> Result<PassportSessionIdentity, GatewayError> {"
+        },
+        {
+          "line": 191,
+          "text": "Ok(PassportSessionIdentity {"
+        },
+        {
+          "line": 200,
+          "text": "pub struct PassportSessions<'a, S, H> {"
+        },
+        {
+          "line": 204,
+          "text": "impl<S: AuthorityStore, H: AuthHost + PassportDate> PassportSessions<'_, S, H> {"
+        },
+        {
+          "line": 228,
+          "text": "AuthUpstreamRequest::PassportSession {"
+        },
+        {
+          "line": 307,
+          "text": "pub async fn get(&self, token: &str) -> Result<PassportSessionIdentity, GatewayError> {"
+        },
+        {
+          "line": 331,
+          "text": "binding: &PassportAppSessionBinding,"
+        },
+        {
+          "line": 352,
+          "text": "binding: &PassportAppSessionBinding,"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport/src/browser.rs",
+      "sha256": "ff6ffb9bf3c8eb45dd24e251bdb3c5ba6aac5a99f48aee3629cd4aa420c3510b",
+      "references": [
+        {
+          "line": 8,
+          "text": "session::{PASSPORT_COOKIE_MAX_AGE_SECONDS, PASSPORT_VERIFIER_COOKIE, PassportDate},"
+        },
+        {
+          "line": 10,
+          "text": "use gateway_auth_passport_sessions::sessions::{PassportSessions, token_shape};"
+        },
+        {
+          "line": 117,
+          "text": "impl<S: gateway_core::state::AuthorityStore, H: AuthHost + PassportDate> PassportBrowser<'_, S, H> {"
+        },
+        {
+          "line": 252,
+          "text": "let local = PassportSessions {"
+        },
+        {
+          "line": 276,
+          "text": "let result = PassportSessions {"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth-passport/src/identity_report.rs",
+      "sha256": "438868ef3f0455c4d381571f78907667644e2192bdbaa6c89e80b8692ada9798",
+      "references": [
+        {
+          "line": 3,
+          "text": "actor_data::PassportSessionData, session::PassportSourceClaims,"
+        },
+        {
+          "line": 49,
+          "text": "pub fn session(value: &PassportSessionData) -> Result<SourceJson, GatewayError> {"
+        },
+        {
+          "line": 51,
+          "text": "PassportSessionData::Jwt(claims) => jwt(claims, false),"
+        },
+        {
+          "line": 52,
+          "text": "PassportSessionData::App(data) => {"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth/src/passport_current.rs",
+      "sha256": "7210c0ac53136016317779f1a93ae60790b612845d2140bc696436b42759c395",
+      "references": [
+        {
+          "line": 5,
+          "text": "actor_data::{PassportAppSessionBinding, PassportAppSessionData},"
+        },
+        {
+          "line": 6,
+          "text": "session::PassportDate,"
+        },
+        {
+          "line": 8,
+          "text": "use gateway_auth_passport_sessions::sessions::PassportSessions;"
+        },
+        {
+          "line": 12,
+          "text": "impl<S: AuthorityStore, H: AuthHost + PassportDate> AuthService<'_, S, H> {"
+        },
+        {
+          "line": 23,
+          "text": "actor_data::PassportSessionData, passport::PASSPORT_COOKIE,"
+        },
+        {
+          "line": 32,
+          "text": "PassportSessionData::App("
+        },
+        {
+          "line": 33,
+          "text": "PassportSessions {"
+        },
+        {
+          "line": 41,
+          "text": "PassportSessionData::Jwt(verify_source(self.host, &token).await?)"
+        },
+        {
+          "line": 46,
+          "text": "method: AuthMethod::PassportSession { identity },"
+        },
+        {
+          "line": 53,
+          "text": "pub async fn check_passport_app_session("
+        },
+        {
+          "line": 55,
+          "text": "binding: &PassportAppSessionBinding,"
+        },
+        {
+          "line": 57,
+          "text": "PassportSessions {"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth/src/report.rs",
+      "sha256": "fa62a46feb7d34b4949f0fa66a4c92b97d4fecf072d06eaa3f48b4cde4d65d24",
+      "references": [
+        {
+          "line": 3,
+          "text": "use gateway_core::identity::PrincipalId;"
+        },
+        {
+          "line": 31,
+          "text": "principal: &PrincipalId,"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-auth/src/resolve.rs",
+      "sha256": "2ba15cf8672cf8bcc3beb4bb16cb39da3f985e1090aaeb804d62283c976f68aa",
+      "references": [
+        {
+          "line": 30,
+          "text": "impl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::session::PassportDate>"
+        },
+        {
+          "line": 71,
+          "text": "AuthMethod::PassportBearer { claims }"
+        },
+        {
+          "line": 73,
+          "text": "AuthMethod::PassportSession {"
+        },
+        {
+          "line": 74,
+          "text": "identity: gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt("
+        },
+        {
+          "line": 475,
+          "text": "if matches!(&principal.method,AuthMethod::PassportSession {identity:gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt(c)} if c.agent_token_id.is_some())"
+        },
+        {
+          "line": 625,
+          "text": "AuthMethod::PassportSession { identity } => {"
+        },
+        {
+          "line": 628,
+          "text": "AuthMethod::PassportBearer { claims } => {"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-authority/src/local_completion/tests.rs",
+      "sha256": "b959d35da0ef95698be6346d3eb393bd643c3ddd5c48e04cf95426e69c17f9fb",
+      "references": [
+        {
+          "line": 3,
+          "text": "use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};"
+        },
+        {
+          "line": 88,
+          "text": "principal: PrincipalId(\"principal\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-authority/src/native_control/actor.rs",
+      "sha256": "a58d3a9e42b200e44e2fbac3e0f9fbf6c0e893df2a74e38ce1ea6c0c1188a795",
+      "references": [
+        {
+          "line": 339,
+          "text": "AuthMethod::PassportSession { claims }"
+        },
+        {
+          "line": 348,
+          "text": "AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {"
+        },
+        {
+          "line": 674,
+          "text": "AuthMethod::PassportSession { claims } | AuthMethod::PassportBearer { claims } => {"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-authority/src/native_control/actor/tests.rs",
+      "sha256": "2acc5083ee5d601cb60984cd72aa06abe868682dfc81662996102fc9294ece07",
+      "references": [
+        {
+          "line": 8,
+          "text": "use gateway_core::identity::{ApiKeyId, PrincipalId, RequestId};"
+        },
+        {
+          "line": 183,
+          "text": "principal: PrincipalId(principal.into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-core/src/identity.rs",
+      "sha256": "7da99d46e4f034042348135a03ee74003cc47f99e79d8dd4298304b50ac65c3f",
+      "references": [
+        {
+          "line": 16,
+          "text": "pub struct PrincipalId(gateway_source::js_string::JsString16);"
+        },
+        {
+          "line": 17,
+          "text": "impl PrincipalId {"
+        },
+        {
+          "line": 43,
+          "text": "impl Serialize for PrincipalId {"
+        },
+        {
+          "line": 50,
+          "text": "impl<'de> Deserialize<'de> for PrincipalId {"
+        },
+        {
+          "line": 102,
+          "text": "pub principal: PrincipalId,"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-core/src/local_completion.rs",
+      "sha256": "df36ee83857d809b1eb30312d36f3476713ccee2896412ecf417e519997856ab",
+      "references": [
+        {
+          "line": 212,
+          "text": "identity::{PrincipalId, RequestId},"
+        },
+        {
+          "line": 221,
+          "text": "principal: PrincipalId::from_scalar(\"principal\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-core/src/principal_source.rs",
+      "sha256": "4e7af08b9d56c0747d0b7730d83664135dddcbf59be943608798109c8e05aa74",
+      "references": [
+        {
+          "line": 2,
+          "text": "use crate::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId, UnixMillis};"
+        },
+        {
+          "line": 28,
+          "text": "principal: PrincipalId::from_source(value.principal),"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-live-runtime/src/protocol.rs",
+      "sha256": "8caad7b585ffb8674c8e57ddaf320922383b0d7c22c2328c69a3ebaf299ffba3",
+      "references": [
+        {
+          "line": 73,
+          "text": "pub fn principal_id(principal: &AuthPrincipal) -> gateway_core::identity::PrincipalId {"
+        },
+        {
+          "line": 82,
+          "text": "AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {"
+        },
+        {
+          "line": 99,
+          "text": "gateway_core::identity::PrincipalId::from_scalar(scalar)"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-live-runtime/src/runtime.rs",
+      "sha256": "dedd5fb4a328fce5854fdbf365c22a3e71736fe83ec8f4e681f9ea7d3104b7f4",
+      "references": [
+        {
+          "line": 103,
+          "text": "principal: &gateway_core::identity::PrincipalId,"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-native/src/existing_account_import/flow_tests.rs",
+      "sha256": "b5d58e5f0796376414cfc72c290099701b7d3ecc61261676d8998dfdb23da70b",
+      "references": [
+        {
+          "line": 27,
+          "text": "use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};"
+        },
+        {
+          "line": 266,
+          "text": "principal: PrincipalId(\"passkey-user:flow-user\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-native/src/http_server/import_http_tests.rs",
+      "sha256": "fd23ed788a7bc5b2db754abcb5849f3af6e3d9be489ed8ddb830bf902be573c8",
+      "references": [
+        {
+          "line": 28,
+          "text": "use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};"
+        },
+        {
+          "line": 330,
+          "text": "principal: PrincipalId(\"passkey-user:user-fixture\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-native/src/native_import/tests.rs",
+      "sha256": "2f1d404b39687b269114de60caf360ce00064f6328bd60666579e9ecdac42c10",
+      "references": [
+        {
+          "line": 31,
+          "text": "use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};"
+        },
+        {
+          "line": 338,
+          "text": "principal: PrincipalId(\"passkey-user:user-fixture\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime-test-support/src/input.rs",
+      "sha256": "5fe885bda6152060d17ae1a5525431a002f7783a9ba8b05ccd508e16794d36bb",
+      "references": [
+        {
+          "line": 4,
+          "text": "use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};"
+        },
+        {
+          "line": 61,
+          "text": "principal: PrincipalId(\"fixture-principal\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/src/custody.rs",
+      "sha256": "ba23607d2741fba89cf0528b7260d1b5d2eef4dd32569d212ef68ec031a1828d",
+      "references": [
+        {
+          "line": 411,
+          "text": "identity::{PrincipalId, RequestContext, RequestId},"
+        },
+        {
+          "line": 507,
+          "text": "principal: PrincipalId(\"fixture-principal\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/src/wire/response_id_tests.rs",
+      "sha256": "3a8013d03ebfbcc8913cc9950ca3495df687243a94153e5fbc286dfc769c65c1",
+      "references": [
+        {
+          "line": 7,
+          "text": "use gateway_core::identity::{PrincipalId, RequestContext, RequestId};"
+        },
+        {
+          "line": 27,
+          "text": "principal: PrincipalId(\"synthetic\".into()),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-worker-fixture/src/native_import.rs",
+      "sha256": "facb3c3e993886198d7a87a73cd49f8a71426aec171bb93da95d8d1c466c0864",
+      "references": [
+        {
+          "line": 27,
+          "text": "identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},"
+        },
+        {
+          "line": 264,
+          "text": "principal: PrincipalId(format!(\"passkey-user:{USER}\")),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/auth_passport_host.rs",
+      "sha256": "167013c9eaa43c601ed96e3418809c7aa705b2cf99b7a3b631171c3330d4b870",
+      "references": [
+        {
+          "line": 8,
+          "text": "use gateway_auth_passport_contracts::session::PassportDate;"
+        },
+        {
+          "line": 17,
+          "text": "impl PassportDate for PlatformHost {"
+        },
+        {
+          "line": 117,
+          "text": ".set(matches!(request, AuthUpstreamRequest::PassportSession { .. }) && status == 401);"
+        }
+      ],
+      "classification": "auth-owned or defining DATA"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/extras.rs",
+      "sha256": "eea63b1f773729a25a1b7fb6cf7512a16565de5bdc83aa93babd16488772254d",
+      "references": [
+        {
+          "line": 19,
+          "text": "identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},"
+        },
+        {
+          "line": 80,
+          "text": "principal: PrincipalId(crate::lifecycle::principal_id(principal)),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/inference.rs",
+      "sha256": "c2d654e5417d75dd64405b4bd63c2c437d3cdba6659e6047d51c44efbe8f4ec6",
+      "references": [
+        {
+          "line": 25,
+          "text": "identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},"
+        },
+        {
+          "line": 424,
+          "text": "principal: PrincipalId(crate::lifecycle::principal_id(self.principal)),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/lifecycle.rs",
+      "sha256": "dc73ec8701041ce8b44502b05c0f0b8663021999b06cc090e05c3ad2d8725ea8",
+      "references": [
+        {
+          "line": 4,
+          "text": "pub fn principal_id(principal: &AuthPrincipal) -> gateway_core::identity::PrincipalId {"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/live_host.rs",
+      "sha256": "bac51c5af678634a6ea71a3d68e57a1b064dd7fe9fb7419254f1f5a12d6c738e",
+      "references": [
+        {
+          "line": 18,
+          "text": "identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},"
+        },
+        {
+          "line": 46,
+          "text": "principal: PrincipalId(principal_id(&principal)),"
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/runtime.rs",
+      "sha256": "405a1366785c446cba5467ec5ebdc3a89201e7536314f5db69a89f9eb05fdc11",
+      "references": [
+        {
+          "line": 291,
+          "text": "principal: gateway_core::identity::PrincipalId("
+        }
+      ],
+      "classification": "external consumer; defining import separate, semantic ownership retained by its owner"
+    }
+  ],
+  "owned_source_inventory": [
+    {
+      "crate": "gateway-auth",
+      "src_physical_owned_lines": 816,
+      "files": [
+        "rust/crates/gateway-auth/src/lib.rs",
+        "rust/crates/gateway-auth/src/passport_current.rs",
+        "rust/crates/gateway-auth/src/report.rs",
+        "rust/crates/gateway-auth/src/resolve.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-attestation",
+      "src_physical_owned_lines": 583,
+      "files": [
+        "rust/crates/gateway-auth-attestation/src/lib.rs",
+        "rust/crates/gateway-auth-attestation/src/upstream.rs",
+        "rust/crates/gateway-auth-attestation/src/webauthn.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-contracts",
+      "src_physical_owned_lines": 839,
+      "files": [
+        "rust/crates/gateway-auth-contracts/src/bootstrap.rs",
+        "rust/crates/gateway-auth-contracts/src/lib.rs",
+        "rust/crates/gateway-auth-contracts/src/passkeys.rs",
+        "rust/crates/gateway-auth-contracts/src/passport_serde.rs",
+        "rust/crates/gateway-auth-contracts/src/types.rs",
+        "rust/crates/gateway-auth-contracts/src/upstream.rs",
+        "rust/crates/gateway-auth-contracts/src/webauthn.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-credentials",
+      "src_physical_owned_lines": 763,
+      "files": [
+        "rust/crates/gateway-auth-credentials/src/lib.rs",
+        "rust/crates/gateway-auth-credentials/src/managed_access.rs",
+        "rust/crates/gateway-auth-credentials/src/native_credentials.rs",
+        "rust/crates/gateway-auth-credentials/src/provider_credentials.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-native-contracts",
+      "src_physical_owned_lines": 398,
+      "files": [
+        "rust/crates/gateway-auth-native-contracts/src/lib.rs",
+        "rust/crates/gateway-auth-native-contracts/src/native_import/catalog_seed.rs",
+        "rust/crates/gateway-auth-native-contracts/src/native_import/state.rs",
+        "rust/crates/gateway-auth-native-contracts/src/native_import.rs",
+        "rust/crates/gateway-auth-native-contracts/src/native_live.rs",
+        "rust/crates/gateway-auth-native-contracts/src/nonce.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-native-import-data",
+      "src_physical_owned_lines": 835,
+      "files": [
+        "rust/crates/gateway-auth-native-import-data/src/lib.rs",
+        "rust/crates/gateway-auth-native-import-data/src/native_import/authority/completion.rs",
+        "rust/crates/gateway-auth-native-import-data/src/native_import/authority/result.rs",
+        "rust/crates/gateway-auth-native-import-data/src/native_import/authority.rs",
+        "rust/crates/gateway-auth-native-import-data/src/native_import.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-native-proof",
+      "src_physical_owned_lines": 811,
+      "files": [
+        "rust/crates/gateway-auth-native-proof/src/lib.rs",
+        "rust/crates/gateway-auth-native-proof/src/native_auth.rs",
+        "rust/crates/gateway-auth-native-proof/src/native_import.rs",
+        "rust/crates/gateway-auth-native-proof/src/native_live.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-native-protocol",
+      "src_physical_owned_lines": 452,
+      "files": [
+        "rust/crates/gateway-auth-native-protocol/src/import_frame.rs",
+        "rust/crates/gateway-auth-native-protocol/src/lib.rs",
+        "rust/crates/gateway-auth-native-protocol/src/native.rs",
+        "rust/crates/gateway-auth-native-protocol/src/native_control.rs",
+        "rust/crates/gateway-auth-native-protocol/src/native_import/publication.rs",
+        "rust/crates/gateway-auth-native-protocol/src/native_import.rs",
+        "rust/crates/gateway-auth-native-protocol/src/native_replay.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-native-wire",
+      "src_physical_owned_lines": 669,
+      "files": [
+        "rust/crates/gateway-auth-native-wire/src/control.rs",
+        "rust/crates/gateway-auth-native-wire/src/lib.rs",
+        "rust/crates/gateway-auth-native-wire/src/native_read.rs",
+        "rust/crates/gateway-auth-native-wire/src/publication_command.rs",
+        "rust/crates/gateway-auth-native-wire/src/publication_data.rs",
+        "rust/crates/gateway-auth-native-wire/src/validation.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-passkeys",
+      "src_physical_owned_lines": 977,
+      "files": [
+        "rust/crates/gateway-auth-passkeys/src/lib.rs",
+        "rust/crates/gateway-auth-passkeys/src/origin.rs",
+        "rust/crates/gateway-auth-passkeys/src/passkeys.rs",
+        "rust/crates/gateway-auth-passkeys/src/session_index.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-passport",
+      "src_physical_owned_lines": 836,
+      "files": [
+        "rust/crates/gateway-auth-passport/src/browser.rs",
+        "rust/crates/gateway-auth-passport/src/identity_report.rs",
+        "rust/crates/gateway-auth-passport/src/lib.rs",
+        "rust/crates/gateway-auth-passport/src/passport.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-passport-contracts",
+      "src_physical_owned_lines": 434,
+      "files": [
+        "rust/crates/gateway-auth-passport-contracts/src/actor_data.rs",
+        "rust/crates/gateway-auth-passport-contracts/src/lib.rs",
+        "rust/crates/gateway-auth-passport-contracts/src/passport.rs",
+        "rust/crates/gateway-auth-passport-contracts/src/session.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-passport-sessions",
+      "src_physical_owned_lines": 402,
+      "files": [
+        "rust/crates/gateway-auth-passport-sessions/src/lib.rs",
+        "rust/crates/gateway-auth-passport-sessions/src/sessions.rs"
+      ]
+    },
+    {
+      "crate": "gateway-auth-primitives",
+      "src_physical_owned_lines": 318,
+      "files": [
+        "rust/crates/gateway-auth-primitives/src/api_keys.rs",
+        "rust/crates/gateway-auth-primitives/src/crypto.rs",
+        "rust/crates/gateway-auth-primitives/src/error.rs",
+        "rust/crates/gateway-auth-primitives/src/lib.rs",
+        "rust/crates/gateway-auth-primitives/src/store.rs"
+      ]
+    },
+    {
+      "crate": "gateway-source",
+      "src_physical_owned_lines": 595,
+      "files": [
+        "rust/crates/gateway-source/src/error.rs",
+        "rust/crates/gateway-source/src/js_string.rs",
+        "rust/crates/gateway-source/src/js_string_case.rs",
+        "rust/crates/gateway-source/src/lib.rs",
+        "rust/crates/gateway-source/src/source_json.rs",
+        "rust/crates/gateway-source/src/source_serialization.rs"
+      ]
+    }
+  ],
+  "authority_semantics": {
+    "current_tree": "c07a5c60ea6b91c1a45f80ae5a8aeb28eee95ba4",
+    "M67_tree": "c07a5c60ea6b91c1a45f80ae5a8aeb28eee95ba4",
+    "written": false,
+    "semantic_owner": "authority_continue",
+    "held_sites": [
+      "rust/crates/gateway-authority/src/native_control/actor.rs:339",
+      "rust/crates/gateway-authority/src/native_control/actor.rs:674"
+    ]
+  },
+  "native_semantic_owner": "native_continue; consumes only after authority API freeze",
+  "mechanical_manifest": "handoff-evidence/recovery-20261027T143350Z/mechanical-manifest.json",
+  "fresh_case_summary": "handoff-evidence/recovery-20261027T143350Z/fresh-test-case-summary.json",
+  "qualification": "final receipt index is separate; all pre-recovery/old passes remain scoped historical evidence",
+  "pending": [
+    "actual Authority v2 mint/currentness/nonclone single-use preflight/final effect CAS and after-await native operations",
+    "new v2 fence/response MAC/runtime refusal and capture/migration adapters",
+    "source JS Date.parse Worker-vs-Bun oracle execution",
+    "actual compiled Worker entrypoint/common Authority/repeated-cookie conformance",
+    "real Mac confinement/native/custody/descriptor and browser/client integration",
+    "separate exact admin+M60 candidate composition and full external consumer integration"
+  ],
+  "D_dependency_input": {
+    "path": "/workspace/.ai-rust-output/D/recovery-20261027T143350Z/gap-repair-v1/closed-body-encoder-dependency-v1.json",
+    "bytes": 4389,
+    "sha256": "6f1d31a877b4cd4ad51929f7c8fca368de1afe013a54b3e3239d19836732ee79",
+    "read_and_verified": true,
+    "defining_API": "gateway_source::js_string::JsString16::json_token(&self) -> String",
+    "integration_consequence": "D currently uses gateway_core::js_string::JsString16. ROOT must lease incorporation of the C defining foundation and mechanical consumers. No D/Core edit, copy, old-path facade or conversion backedge was made by C."
+  }
+}

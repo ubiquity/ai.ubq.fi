@@ -4,14 +4,14 @@
 use crate::owner_control::NativeControlContext;
 use crate::private_https::PrivateHttps;
 use gateway_auth::crypto::base64url;
-use gateway_auth::native::{
-    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
-    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
-};
 use gateway_auth::native_auth::NativeTransportIdentity;
-use gateway_auth::native_control::{
+use gateway_auth_native_wire::control::{
     NATIVE_AUTHORITY_MAX_BYTES, NATIVE_CONTROL_MAX_BYTES, NATIVE_RENEWAL_MAX_MS,
     NativeControlEnvelope, NativeControlRequest, unverified,
+};
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
+    NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_authority::native_control::{
     NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode,

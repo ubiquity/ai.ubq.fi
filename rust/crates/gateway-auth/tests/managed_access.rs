@@ -1,9 +1,9 @@
-use gateway_auth::{
-    crypto::base64url,
+use gateway_auth_credentials::{
     managed_access::ManagedAccessProjection,
     native_credentials::{NativeGeneration, NativeOwnerId, OwnerFence, parse_native_document},
     provider_credentials::*,
 };
+use gateway_auth_primitives::crypto::base64url;
 use serde_json::{Value, json};
 
 fn managed_generation() -> NativeGeneration {
@@ -113,7 +113,8 @@ fn projection_requires_managed_local_custody_fixed_account_and_usable_access() {
     generation.credentials.external_user_id = Some("synthetic-user".into());
     assert!(ManagedAccessProjection::from_native(&generation).is_err());
     let mut generation = managed_generation();
-    generation.credentials.refresh_token = gateway_auth::crypto::Secret::new(String::new());
+    generation.credentials.refresh_token =
+        gateway_auth_primitives::crypto::Secret::new(String::new());
     assert!(ManagedAccessProjection::from_native(&generation).is_err());
     let mut generation = managed_generation();
     generation.fence.account_id = "different-workspace".into();

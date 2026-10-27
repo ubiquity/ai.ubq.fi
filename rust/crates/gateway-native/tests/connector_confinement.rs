@@ -166,7 +166,12 @@ fn actual_request_worker_uses_inherited_client_and_one_persistent_replay_fence()
     let now = gateway_native::http_server::now_ms().unwrap();
     let nonce = base64url(&[19; 32]);
     let mac = identity
-        .sign(gateway_auth::native::NATIVE_RPC_PATH, now, &nonce, body)
+        .sign(
+            gateway_auth_native_wire::native_read::NATIVE_RPC_PATH,
+            now,
+            &nonce,
+            body,
+        )
         .unwrap();
     let mut request = format!("POST /v1/native/rpc HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nx-uos-native-version: 1\r\nx-uos-native-key-id: fixture-key\r\nx-uos-native-time-ms: {now}\r\nx-uos-native-nonce: {nonce}\r\nx-uos-native-mac: {mac}\r\n\r\n",body.len()).into_bytes();
     request.extend_from_slice(body);

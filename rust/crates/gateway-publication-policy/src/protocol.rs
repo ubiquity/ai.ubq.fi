@@ -1,4 +1,4 @@
-use gateway_auth::native::{
+use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
     NATIVE_VERSION_HEADER,
 };

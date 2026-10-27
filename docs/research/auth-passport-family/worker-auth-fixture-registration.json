@@ -1,0 +1,13 @@
+{
+  "classification": "source definitions; not executed acceptance",
+  "feature_modules": ["tools/cloudflare/fixtures/auth-passport-upstream.mjs", "tools/cloudflare/runtime-matrix/auth-passport.ts"],
+  "mechanical_registration": [
+    "runtime-driver.mjs: import auth-only helper; FixtureControl.fetch dispatch its exact /auth-passport/control and fixed Passport upstream paths; retain all other bodies",
+    "runtime-conformance.ts: embed auth-only helper module and register the new matrix against the actual compiled entrypoint/common persisted authority",
+    "runtime-auth-conformance.ts: retain legacy source fixtures; new persistent cases are a separate registration"
+  ],
+  "canonical_fixture_binding": "constructor-owned auth-only bridge sends browser requests to exact https://ai.ubq.fi; no request-provided destination or forwarded-host authorization",
+  "restart": "owned workerd process restart with the same common Authority and fixture-control persistence; not an in-memory service reconstruction",
+  "hold_release": "fixture DO promise events for introspection/revoke entry and release; no model polling or fabricated response",
+  "pending": "shared identity/actor foundation API, compiler lease, tool/confinement gates"
+}

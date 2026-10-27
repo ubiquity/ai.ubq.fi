@@ -9,6 +9,19 @@ members = [
   "crates/gateway-decision-runtime",
   "crates/gateway-extras-contract",
   "crates/gateway-decision-protocol",
+  "crates/gateway-auth-attestation",
+  "crates/gateway-auth-contracts",
+  "crates/gateway-auth-credentials",
+  "crates/gateway-auth-native-contracts",
+  "crates/gateway-auth-native-import-data",
+  "crates/gateway-auth-native-proof",
+  "crates/gateway-auth-native-protocol",
+  "crates/gateway-auth-passkeys",
+  "crates/gateway-auth-passport",
+  "crates/gateway-auth-passport-contracts",
+  "crates/gateway-auth-passport-sessions",
+  "crates/gateway-auth-primitives",
+  "crates/gateway-source",
   "crates/gateway-quality",
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
@@ -20,6 +33,7 @@ members = [
   "crates/gateway-catalog-provider",
   "crates/gateway-catalog-runtime",
   "crates/gateway-auth",
+  "crates/gateway-auth-native-wire",
   "crates/gateway-admin",
   "crates/gateway-admin-contracts",
   "crates/gateway-admin-keys",
@@ -81,6 +95,19 @@ gateway-claude-usage-quota = { path = "crates/gateway-claude-usage-quota" }
 gateway-decision-runtime = { path = "crates/gateway-decision-runtime" }
 gateway-extras-contract = { path = "crates/gateway-extras-contract" }
 gateway-decision-protocol = { path = "crates/gateway-decision-protocol" }
+gateway-auth-attestation = { path = "crates/gateway-auth-attestation" }
+gateway-auth-contracts = { path = "crates/gateway-auth-contracts" }
+gateway-auth-credentials = { path = "crates/gateway-auth-credentials" }
+gateway-auth-native-contracts = { path = "crates/gateway-auth-native-contracts" }
+gateway-auth-native-import-data = { path = "crates/gateway-auth-native-import-data" }
+gateway-auth-native-proof = { path = "crates/gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "crates/gateway-auth-native-protocol" }
+gateway-auth-passkeys = { path = "crates/gateway-auth-passkeys" }
+gateway-auth-passport = { path = "crates/gateway-auth-passport" }
+gateway-auth-passport-contracts = { path = "crates/gateway-auth-passport-contracts" }
+gateway-auth-passport-sessions = { path = "crates/gateway-auth-passport-sessions" }
+gateway-auth-primitives = { path = "crates/gateway-auth-primitives" }
+gateway-source = { path = "crates/gateway-source" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
@@ -95,6 +122,7 @@ gateway-catalog-provider = { path = "crates/gateway-catalog-provider" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
+gateway-auth-native-wire = { path = "crates/gateway-auth-native-wire" }
 gateway-admin = { path = "crates/gateway-admin" }
 gateway-admin-contracts = { path = "crates/gateway-admin-contracts" }
 gateway-admin-keys = { path = "crates/gateway-admin-keys" }
