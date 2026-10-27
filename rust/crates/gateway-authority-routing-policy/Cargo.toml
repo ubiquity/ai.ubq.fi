@@ -1,0 +1,16 @@
+[package]
+name = "gateway-authority-routing-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-authority-capacity-policy = { path = "../gateway-authority-capacity-policy" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-core = { path = "../gateway-core" }
+
+[lints]
+workspace = true
