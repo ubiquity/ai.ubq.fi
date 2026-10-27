@@ -1615,7 +1615,6 @@ dependencies = [
  "flate2",
  "futures-util",
  "gateway-admin",
- "gateway-admin-data",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-auth-contracts",
