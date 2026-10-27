@@ -5,31 +5,12 @@ use gateway_auth::{
     provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
 };
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::import_facts::ImportFacts;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
 use serde_json::Value;
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ImportFacts {
-    pub owner_id: String,
-    pub owner_epoch: String,
-    pub native_owner_id: String,
-    pub slot: u64,
-    pub account_id_hash: String,
-    pub credential_version: String,
-    pub access_generation: String,
-    pub source_native_generation: String,
-    pub owner_revision: String,
-    pub source_revision: String,
-    pub normalized_revision: String,
-    #[serde(deserialize_with = "required_nullable")]
-    pub runtime_revision: Option<String>,
-    pub control_checks_digest: String,
-    pub account_digests: Vec<String>,
-    pub checks_digest: String,
-}
 pub(super) async fn read<
     S: AuthorityStore,
     I: TokenSource,

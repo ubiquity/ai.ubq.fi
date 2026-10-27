@@ -6,10 +6,6 @@ use super::actor;
 use super::actor::NativeRenewalActor;
 use super::facts;
 use super::receiver::NativeRenewalAuthority;
-use super::rows;
-use super::rows::ActionRow;
-use super::rows::conflict;
-use super::rows::fail;
 use crate::native_live::mapping_key;
 use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
@@ -20,6 +16,10 @@ use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::ActionRow;
+use gateway_authority_native_records::rows::conflict;
+use gateway_authority_native_records::rows::fail;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };

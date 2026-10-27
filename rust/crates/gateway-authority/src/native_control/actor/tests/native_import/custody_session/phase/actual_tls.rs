@@ -308,7 +308,7 @@ fn actual_tls_local_body_mac_original_claim_start_and_readonly_b1_agree() {
         assert!(!text.contains(std::str::from_utf8(PRIVATE_BODY).unwrap()));
         assert!(!text.contains(&sha256_hex(PRIVATE_BODY)));
     }
-    let key = crate::native_control::rows::key("operation", &metadata.operation_id);
+    let key = gateway_authority_native_records::rows::key("operation", &metadata.operation_id);
     assert_eq!(result.final_rows[&key.0]["value"]["phase"], "unknown");
 }
 #[test]
@@ -340,7 +340,7 @@ fn wrong_body_or_mac_and_revoked_finish_cannot_mint_remote_body_proof() {
                 1
             }
         );
-        let key = crate::native_control::rows::key("operation", &metadata.operation_id);
+        let key = gateway_authority_native_records::rows::key("operation", &metadata.operation_id);
         assert!(result.final_rows.get(&key.0).is_none());
     }
 }
@@ -358,7 +358,7 @@ fn lost_actual_start_reply_consumes_client_permit_and_cannot_repeat_effect() {
     assert!(client.start_import(&mut claim, &proof).unwrap().is_none());
     drop(client);
     let result = task.join().unwrap();
-    let key = crate::native_control::rows::key("operation", &metadata.operation_id);
+    let key = gateway_authority_native_records::rows::key("operation", &metadata.operation_id);
     assert_eq!(result.final_rows[&key.0]["value"]["phase"], "started");
     assert_eq!(result.bodies.len(), 4);
 }

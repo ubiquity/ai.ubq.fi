@@ -2,9 +2,9 @@
 //! This private issuer never accepts arbitrary revisions, flags or ignored keys.
 use super::super::actor;
 use super::super::receiver::NativeRenewalAuthority;
-use super::super::rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication};
 use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
-use super::{action::ImportActionRow, effects, unavailable};
+use super::effects;
+use super::unavailable;
 use crate::store::Transaction;
 use gateway_auth::provider_credentials::{
     MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key, parse_codex_source_pool,
@@ -16,6 +16,12 @@ use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::import_action::ImportActionRow;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::GenerationEffect;
+use gateway_authority_native_records::rows::OperationRow;
+use gateway_authority_native_records::rows::Phase;
+use gateway_authority_native_records::rows::TerminalPublication;
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::AuthorityStore;

@@ -1,10 +1,10 @@
 //! Real original import/publication and the existing versioned catalog writer.
 use super::*;
-use crate::native_control::rows;
 use gateway_auth::native_import::catalog_seed::{
     IMPORT_CATALOG_SEED_OPERATION, ImportCatalogSeedReplyData as SeedReply,
     ImportCatalogSeedRequestData as SeedRequest,
 };
+use gateway_authority_native_records::rows;
 use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
 use gateway_schema::catalog_cache::CatalogMetadata;
 use gateway_schema::catalog_store;

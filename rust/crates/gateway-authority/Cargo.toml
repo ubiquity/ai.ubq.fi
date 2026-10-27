@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-authority-manual-reset = { path = "../gateway-authority-manual-reset" }
 gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }

@@ -11,7 +11,6 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
-use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
@@ -52,33 +51,7 @@ pub(crate) fn mapping_key(call: &str, pending: bool) -> RecordKey {
     parts.push(Text(call));
     TupleKey::from_scalar_parts(&parts).to_record_key()
 }
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ActionRow {
-    v: u8,
-    action_ref: String,
-    request_id: String,
-    actor: StoredNativeActor,
-    call_id: String,
-    account_id: String,
-    mapping_revision: String,
-    created_at_ms: i64,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ConnectionRow {
-    v: u8,
-    action_ref: String,
-    connection_id: String,
-    authorization_ref: String,
-    owner_id: String,
-    owner_epoch: String,
-    key_fingerprint: String,
-    call_id: String,
-    created_at_ms: i64,
-    upstream_status: Option<u16>,
-    retired: bool,
-}
+use gateway_authority_native_records::live::{ActionRow, ConnectionRow};
 /// Server-created selector, deliberately neither Serialize nor Deserialize.
 pub struct NativeLiveAction {
     action_ref: String,

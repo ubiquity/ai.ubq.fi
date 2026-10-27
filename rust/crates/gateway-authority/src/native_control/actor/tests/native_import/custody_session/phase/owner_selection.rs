@@ -62,17 +62,18 @@ fn import_owner_missing_malformed_and_foreign_source_never_select_a_profile() {
             let (_, _, started) = f.prepare_version(true, true).await;
             let owners = registry(&f);
             if kind == 0 {
-                f.store
-                    .rows
-                    .lock()
-                    .unwrap()
-                    .remove(&crate::native_control::rows::key("action", &started.action_ref).0);
+                f.store.rows.lock().unwrap().remove(
+                    &gateway_authority_native_records::rows::key("action", &started.action_ref).0,
+                );
             } else if kind == 1 {
                 f.store
                     .rows
                     .lock()
                     .unwrap()
-                    .get_mut(&crate::native_control::rows::key("action", &started.action_ref).0)
+                    .get_mut(
+                        &gateway_authority_native_records::rows::key("action", &started.action_ref)
+                            .0,
+                    )
                     .unwrap()
                     .value
                     .as_object_mut()

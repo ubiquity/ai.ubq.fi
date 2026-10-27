@@ -1,5 +1,3 @@
-use super::rows::fail;
-use super::rows::session_key;
 use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
@@ -11,6 +9,8 @@ use gateway_authority_api_protocol::{
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::rows::fail;
+use gateway_authority_native_records::rows::session_key;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
@@ -62,7 +62,7 @@ pub(super) fn digest<T: serde::Serialize>(value: &T) -> Result<String, GatewayEr
     Ok(sha256_hex(&serde_json::to_vec(value).map_err(|_| fail())?))
 }
 pub(super) fn checks_digest(checks: &[RevisionCheck]) -> Result<String, GatewayError> {
-    let prefix = super::rows::prefix();
+    let prefix = gateway_authority_native_records::rows::prefix();
     digest(
         &checks
             .iter()

@@ -98,15 +98,23 @@ fn original_import_v2_single_start_replay_unknown_and_no_forged_terminal() -> Te
         let mut replay = control.claim_import(&proof).await?;
         assert_eq!(replay.mode(), NativeImportMode::ReconcileOnly);
         assert!(control.start_import(&mut replay, &proof).await?.is_none());
-        let operation_key =
-            crate::native_control::rows::key("operation", &proof.metadata().operation_id);
+        let operation_key = gateway_authority_native_records::rows::key(
+            "operation",
+            &proof.metadata().operation_id,
+        );
         let forged = {
             let rows = store.rows.lock().map_err(|error| error.to_string())?;
             let operation = rows.get(&operation_key.0).ok_or("missing value")?;
             assert_eq!(operation.value["phase"], "unknown");
             assert!(operation.value["terminal"].is_null());
             let action = rows
-                .get(&crate::native_control::rows::key("action", &proof.metadata().action_ref).0)
+                .get(
+                    &gateway_authority_native_records::rows::key(
+                        "action",
+                        &proof.metadata().action_ref,
+                    )
+                    .0,
+                )
                 .ok_or("missing value")?;
             assert_eq!(action.value["v"], 2);
             assert_ne!(
@@ -119,7 +127,8 @@ fn original_import_v2_single_start_replay_unknown_and_no_forged_terminal() -> Te
                 &hash,
                 sha256_hex(b"physical-native-generation"),
             ))?;
-            let generation_key = crate::native_control::rows::key("generation", &generation_id);
+            let generation_key =
+                gateway_authority_native_records::rows::key("generation", &generation_id);
             let generation = rows.get(&generation_key.0).ok_or("missing value")?;
             assert_eq!(
                 generation.value["operation_id"],
@@ -206,7 +215,7 @@ fn cancellation_before_effect_and_current_actor_source_races_never_start() {
                         sha256_hex(b"physical-native-generation"),
                     ))
                     .unwrap();
-                    let key = crate::native_control::rows::key("generation", &id);
+                    let key = gateway_authority_native_records::rows::key("generation", &id);
                     store.rows.lock().unwrap().get_mut(&key.0).unwrap().value["operation_id"] =
                         json!("foreign-operation");
                 }
@@ -217,8 +226,11 @@ fn cancellation_before_effect_and_current_actor_source_races_never_start() {
             let rows = store.rows.lock().unwrap();
             let operation = rows
                 .get(
-                    &crate::native_control::rows::key("operation", &proof.metadata().operation_id)
-                        .0,
+                    &gateway_authority_native_records::rows::key(
+                        "operation",
+                        &proof.metadata().operation_id,
+                    )
+                    .0,
                 )
                 .unwrap();
             assert_eq!(operation.value["phase"], "claimed", "{changed}");
@@ -238,7 +250,8 @@ fn legacy_import_v1_custody_is_lossless_but_cannot_acquire_effects() -> TestResu
         let control =
             NativeRenewalAuthority::configured(&authority, &id, &registered, &cfg, &Cancel);
         let proof = proof(&control, &store, &id, &cfg, &hash, 22).await;
-        let key = crate::native_control::rows::key("action", &proof.metadata().action_ref);
+        let key =
+            gateway_authority_native_records::rows::key("action", &proof.metadata().action_ref);
         {
             let mut rows = store.rows.lock().map_err(|error| error.to_string())?;
             let action = rows.get_mut(&key.0).ok_or("missing value")?;
@@ -271,7 +284,7 @@ fn legacy_import_v1_custody_is_lossless_but_cannot_acquire_effects() -> TestResu
                 .map_err(|error| error.to_string())?
                 .keys()
                 .any(|key| key
-                    == &crate::native_control::rows::key(
+                    == &gateway_authority_native_records::rows::key(
                         "operation",
                         &proof.metadata().operation_id
                     )

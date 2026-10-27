@@ -1245,6 +1245,7 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-local-completion",
  "gateway-authority-manual-reset",
+ "gateway-authority-native-records",
  "gateway-authority-paid-admission",
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-control-records",
@@ -1516,6 +1517,24 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-native-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-wire",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-native-authority-wire",
  "gateway-source",
  "serde",
  "serde_json",

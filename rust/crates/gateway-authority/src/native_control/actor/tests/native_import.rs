@@ -207,7 +207,8 @@ fn existing_import_uses_actual_admin_source_before_header_and_body_proof() -> Te
         control.recheck_import(&proof).await?;
         {
             let rows = store.rows.lock().map_err(|error| error.to_string())?;
-            let custody_key = crate::native_control::rows::key("action", &meta.action_ref);
+            let custody_key =
+                gateway_authority_native_records::rows::key("action", &meta.action_ref);
             let row = rows.get(&custody_key.0).ok_or("missing action row")?;
             let json = serde_json::to_string(&row.value)?;
             assert!(!json.contains(&sha256_hex(body)));

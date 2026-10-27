@@ -4,7 +4,6 @@ use super::OWNER_RENEWAL_MAX_MS;
 use super::actor;
 use super::actor::NativeRenewalActor;
 use super::receiver::NativeRenewalAuthority;
-use super::rows;
 use gateway_auth::native_import::{
     NativeImportAdmission, NativeImportKind, NativeImportMetadata, NativeImportTarget,
     VerifiedNativeImportBody,
@@ -12,11 +11,11 @@ use gateway_auth::native_import::{
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_native_records::import_action::ImportActionRow;
+use gateway_authority_native_records::rows;
 use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-mod action;
-use action::ImportActionRow;
 pub(super) mod custody;
 pub mod custody_session;
 pub mod effects;

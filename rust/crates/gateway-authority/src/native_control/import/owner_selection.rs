@@ -1,6 +1,7 @@
 //! Private readonly resource facts, never import permission or a reconstructed proof.
 use super::*;
 use crate::store::Transaction;
+use gateway_authority_native_records::rows;
 pub(in crate::native_control) async fn read<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     action_ref: &str,

@@ -187,7 +187,11 @@ fn completion_foreign_source_catalog_wrong_slot_and_selected_account_refuse_read
                     }
                     "slot" => {
                         rows.get_mut(
-                            &crate::native_control::rows::key("action", &started.action_ref).0,
+                            &gateway_authority_native_records::rows::key(
+                                "action",
+                                &started.action_ref,
+                            )
+                            .0,
                         )
                         .unwrap()
                         .value["facts"]["slot"] = json!(1)

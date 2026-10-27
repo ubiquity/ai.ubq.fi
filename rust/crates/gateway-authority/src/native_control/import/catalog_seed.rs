@@ -5,6 +5,7 @@ use gateway_auth::native_import::catalog_seed::{
     ImportCatalogSeedReplyData as Reply, ImportCatalogSeedRequestData as Request,
 };
 use gateway_auth_native_wire::publication_data::ImportCatalogDisposition;
+use gateway_authority_native_records::rows;
 use gateway_core::{
     query::QueryStore,
     state::{AtomicTransition, CommitOutcome, RevisionCheck, StoredRecord},

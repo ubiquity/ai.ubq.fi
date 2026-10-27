@@ -150,7 +150,7 @@ impl Fixture {
             None
         };
         let binding = claim.binding();
-        let key = crate::native_control::rows::key("operation", &binding.operation_id);
+        let key = gateway_authority_native_records::rows::key("operation", &binding.operation_id);
         let revision = self
             .store
             .rows
@@ -365,7 +365,8 @@ fn unstarted_unknown_completed_and_generation_or_operation_outcomes_never_author
         ] {
             let f = Fixture::new();
             let (_, claim, data) = f.prepare(changed != "unstarted").await;
-            let opkey = crate::native_control::rows::key("operation", &data.operation_id);
+            let opkey =
+                gateway_authority_native_records::rows::key("operation", &data.operation_id);
             let generation_id = crate::native_control::facts::digest(&(
                 "uos-native-renewal-generation-v1",
                 &data.native_owner_id,
@@ -373,7 +374,7 @@ fn unstarted_unknown_completed_and_generation_or_operation_outcomes_never_author
                 &data.source_native_generation,
             ))
             .unwrap();
-            let genkey = crate::native_control::rows::key("generation", &generation_id);
+            let genkey = gateway_authority_native_records::rows::key("generation", &generation_id);
             if changed == "unknown" {
                 f.control().unknown_import(&claim).await.unwrap();
             } else if changed != "unstarted" {
@@ -467,7 +468,10 @@ fn current_admin_session_owner_source_config_time_cancellation_and_cas_races_ref
                 "expired" => f.store.now.store(data.deadline_ms + 1, Ordering::SeqCst),
                 "cancel" => f.cancel.0.store(true, Ordering::SeqCst),
                 "race" => {
-                    let key = crate::native_control::rows::key("operation", &data.operation_id);
+                    let key = gateway_authority_native_records::rows::key(
+                        "operation",
+                        &data.operation_id,
+                    );
                     let mut row = f.store.rows.lock().unwrap().get(&key.0).unwrap().clone();
                     row.revision = "raced-started".into();
                     f.store.race(key, Some(row));
@@ -539,7 +543,7 @@ fn normal_v3_required_null_action_and_actual_started_request_preserve_original_l
     run(async {
         let f = Fixture::new();
         let (proof, mut claim, data) = f.prepare_version(true, true).await;
-        let key = crate::native_control::rows::key("action", &data.action_ref);
+        let key = gateway_authority_native_records::rows::key("action", &data.action_ref);
         let row = f
             .store
             .rows
@@ -592,7 +596,7 @@ fn historical_v2_preparation_remains_lossless_without_publication_permission() -
     run(async {
         let f = Fixture::new();
         let (_, _, data) = f.prepare(true).await;
-        let key = crate::native_control::rows::key("action", &data.action_ref);
+        let key = gateway_authority_native_records::rows::key("action", &data.action_ref);
         let row = f
             .store
             .rows

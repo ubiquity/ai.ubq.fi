@@ -1,8 +1,10 @@
-use super::{
-    NativeRenewalAction, NativeRenewalCancellation, NativeRenewalClaim, NativeRenewalControl,
-    NativeRenewalPublished, OWNER_RENEWAL_MAX_MS, facts,
-    rows::{self, ActionRow, GenerationEffect, OperationRow, Phase, conflict, fail},
-};
+use super::NativeRenewalAction;
+use super::NativeRenewalCancellation;
+use super::NativeRenewalClaim;
+use super::NativeRenewalControl;
+use super::NativeRenewalPublished;
+use super::OWNER_RENEWAL_MAX_MS;
+use super::facts;
 use crate::{
     add,
     store::{Authority, Transaction},
@@ -18,6 +20,13 @@ use gateway_auth_native_wire::{
     native_read::NATIVE_CONTROL_PATH,
 };
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::ActionRow;
+use gateway_authority_native_records::rows::GenerationEffect;
+use gateway_authority_native_records::rows::OperationRow;
+use gateway_authority_native_records::rows::Phase;
+use gateway_authority_native_records::rows::conflict;
+use gateway_authority_native_records::rows::fail;
 use gateway_core::state::AuthorityStore;
 use gateway_native_authority_wire::renewal::{NativeRenewalFence, NativeRenewalMode};
 use gateway_source::error::GatewayError;

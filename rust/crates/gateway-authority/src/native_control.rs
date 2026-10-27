@@ -13,7 +13,6 @@ mod live_renewal;
 pub mod managed;
 pub mod owners;
 pub mod receiver;
-mod rows;
 pub mod wire;
 
 pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
