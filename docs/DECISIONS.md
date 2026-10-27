@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Capacity projection has one finite defining crate - 2026-10-27
+
+The structural capacity leaf moves the existing finite JSON capacity validation, chart/history projection and folding into `gateway-capacity-projection`. It defines the five existing scalar data helpers and depends only on `gateway-core` and `serde_json`. Observability retains event identity, privacy selection, storage, currentness, authority acceptance and all effects; recovery and Worker consumers import the defining data functions directly. Bodies, thresholds, ordering, comparator errors and wire shapes remain source-compatible.
+
+This registration is a mechanical integration candidate for the separately owned leaf. Root integration and final acceptance remain separate; observability is still oversized and this transfer does not complete that family or the Rust port.
+
 ## Passport browser sign-in uses revocable permanent app sessions - 2026-10-27
 
 The Bun gateway requests an explicitly opted-in persistent Passport app grant only through a fresh browser SSO code exchange, using PKCE S256 and the existing fixed issuer, client, audience, origin and callback. Its host-only HttpOnly/Secure/SameSite cookie contains a random local session identifier; existing private KV stores its SHA-256 key and the app-scoped upstream grant without a time-based expiry or a saved administrator-role authority. Every authenticated request introspects the grant against Passport's current user. Demotion denies admin access, deletion or authoritative revocation removes local authority, and temporary verification failures return 503 while retaining the saved session. Legacy JWT cookies remain verification-only until their normal expiry and cannot create permanent grants.

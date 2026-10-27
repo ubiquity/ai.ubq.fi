@@ -6,12 +6,13 @@ use gateway_authority::{
     routing_types::{CapacityState, CohortProof, RouteSelection},
     store::{Authority, TokenSource},
 };
-use gateway_core::{error::GatewayError, model::ModelId, state::AuthorityStore};
+use gateway_capacity_projection::shapes;
+use gateway_core::{model::ModelId, state::AuthorityStore};
 use gateway_observability::{
-    capacity_shapes,
     host_types::{CapacityAccountRef, CapacityProbe},
     types::ObservabilityHost,
 };
+use gateway_source::error::GatewayError;
 use std::future::Future;
 
 fn changed() -> GatewayError {
@@ -106,7 +107,7 @@ where
         else {
             return Ok(None);
         };
-        let Some(windows) = capacity_shapes::parse_codex_usage(&json) else {
+        let Some(windows) = shapes::parse_codex_usage(&json) else {
             return Ok(None);
         };
         samples.push(CodexCapacitySample {
@@ -119,7 +120,7 @@ where
             snapshot_at_ms: at,
             windows: serde_json::from_value(windows.clone()).map_err(|_| changed())?,
             additional_rate_limits: serde_json::from_value(serde_json::json!(
-                capacity_shapes::additional_for_routing(&windows["additional_rate_limits"], at)
+                shapes::additional_for_routing(&windows["additional_rate_limits"], at)
             ))
             .map_err(|_| changed())?,
         });

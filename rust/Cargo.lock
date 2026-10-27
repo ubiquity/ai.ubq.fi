@@ -1193,15 +1193,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-capacity-projection"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority",
+ "gateway-capacity-projection",
  "gateway-core",
  "gateway-observability",
  "gateway-observability-test-support",
  "gateway-schema",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -1551,6 +1562,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-capacity-projection",
  "gateway-claude-runtime",
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-history",
@@ -1563,6 +1575,7 @@ dependencies = [
  "gateway-observability-test-support",
  "gateway-quota-projection",
  "gateway-schema",
+ "gateway-source",
  "hkdf",
  "hmac 0.12.1",
  "serde",
@@ -1798,6 +1811,7 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-native-wire",
  "gateway-authority",
+ "gateway-capacity-projection",
  "gateway-capacity-recovery",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
@@ -1824,6 +1838,7 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-source",
  "gateway-wait-observation",
  "gateway-worker-http-body",
  "gateway-worker-platform",

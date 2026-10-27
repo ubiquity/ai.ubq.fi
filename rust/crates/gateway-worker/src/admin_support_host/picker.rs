@@ -1,4 +1,6 @@
-use gateway_core::{error::GatewayError, source_json::SourceJson, source_serialization as source};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -166,7 +168,7 @@ pub(super) async fn subscriptions(store: &crate::authority::RemoteAuthorityStore
     pool.pool.accounts.iter().enumerate().map(|(index, account)| {
         let email = account_email(account.access_token.expose());
         let slot = (index + 1) as u8;
-        json!({"id":format!("codex:{}",gateway_auth::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_observability::capacity_shapes::codex_label(slot,email.as_deref()),"slot":slot})
+        json!({"id":format!("codex:{}",gateway_auth::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_capacity_projection::shapes::codex_label(slot,email.as_deref()),"slot":slot})
     }).collect()
 }
 
@@ -221,7 +223,7 @@ mod tests {
 mod source_tests {
     #[test]
     fn picker_counts_source_models_without_scalarizing_their_labels() {
-        let document = gateway_core::source_json::SourceJson::parse(r#"{"models":[{"id":"model\ud800","providers":[{"id":"codex"}]}],"sources":{"codex":{"status":"available","configured":true}}}"#).unwrap();
+        let document = gateway_source::source_json::SourceJson::parse(r#"{"models":[{"id":"model\ud800","providers":[{"id":"codex"}]}],"sources":{"codex":{"status":"available","configured":true}}}"#).unwrap();
         let body = super::project(&document, Vec::new(), &Default::default()).unwrap();
         let codex = body["providers"]
             .as_array()

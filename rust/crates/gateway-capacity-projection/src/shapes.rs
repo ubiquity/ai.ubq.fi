@@ -1,9 +1,9 @@
 //! Source provider/capacity-parse.ts. Unknown is never converted to zero.
-use crate::store;
+use crate::scalars::{DAY, is_record, safe_i64, trim};
 use serde_json::{Value, json};
 pub const BUCKET_MS: i64 = 900_000;
 pub const HOUR_MS: i64 = 3_600_000;
-pub const RETENTION_MS: i64 = 7 * store::DAY;
+pub const RETENTION_MS: i64 = 7 * DAY;
 pub const STALE_MS: i64 = 1_800_000;
 pub const METERED_FRESH_MS: i64 = 5 * 60_000;
 fn nullable(v: Option<&Value>, valid: impl Fn(&Value) -> bool) -> bool {
@@ -17,7 +17,7 @@ fn percent(v: &Value) -> bool {
         .is_some_and(|n| n.is_finite() && (0.0..=100.0).contains(&n))
 }
 fn timestamp(v: &Value) -> bool {
-    store::safe_i64(v).is_some()
+    safe_i64(v).is_some()
 }
 fn digest(v: &Value) -> Option<&str> {
     v.as_str().filter(|s| {
@@ -32,13 +32,13 @@ fn source_state(v: &Value) -> Option<&str> {
 }
 pub fn codex_label(slot: u8, email: Option<&str>) -> String {
     email
-        .map(store::trim)
+        .map(trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Codex account {slot}"))
 }
 pub fn parse_window(value: &Value, upstream: bool) -> Option<Value> {
-    if !store::is_record(value) {
+    if !is_record(value) {
         return None;
     }
     if !upstream
@@ -56,14 +56,14 @@ pub fn parse_window(value: &Value, upstream: bool) -> Option<Value> {
     {
         return None;
     }
-    let seconds = store::safe_i64(&value["limit_window_seconds"]);
+    let seconds = safe_i64(&value["limit_window_seconds"]);
     let used = percent(&value["used_percent"]).then(|| value["used_percent"].clone());
     let reset = if upstream {
-        store::safe_i64(&value["reset_at"])
+        safe_i64(&value["reset_at"])
             .and_then(|n| n.checked_mul(1000))
             .filter(|n| *n <= 9_007_199_254_740_991)
     } else {
-        store::safe_i64(&value["reset_at_ms"])
+        safe_i64(&value["reset_at_ms"])
     };
     if upstream && seconds.is_none() && used.is_none() && reset.is_none() {
         return None;
@@ -71,18 +71,18 @@ pub fn parse_window(value: &Value, upstream: bool) -> Option<Value> {
     Some(json!({"limit_window_seconds":seconds,"used_percent":used,"reset_at_ms":reset}))
 }
 pub fn parse_codex_usage(value: &Value) -> Option<Value> {
-    let limits = value.get("rate_limit").filter(|v| store::is_record(v))?;
+    let limits = value.get("rate_limit").filter(|v| is_record(v))?;
     let additional:Vec<Value>=value["additional_rate_limits"].as_array().into_iter().flatten().filter_map(|v|{
-        let name=v["limit_name"].as_str().map(store::trim).filter(|s|!s.is_empty())?;
+        let name=v["limit_name"].as_str().map(trim).filter(|s|!s.is_empty())?;
         let p=parse_window(&v["rate_limit"]["primary_window"],true);let s=parse_window(&v["rate_limit"]["secondary_window"],true);if p.is_none()&&s.is_none(){return None}
-        Some(json!({"limit_name":name,"metered_feature":v["metered_feature"].as_str().map(store::trim).filter(|s|!s.is_empty()),"windows":{"primary":p,"secondary":s}}))
+        Some(json!({"limit_name":name,"metered_feature":v["metered_feature"].as_str().map(trim).filter(|s|!s.is_empty()),"windows":{"primary":p,"secondary":s}}))
     }).collect();
     Some(
         json!({"primary":parse_window(&limits["primary_window"],true),"secondary":parse_window(&limits["secondary_window"],true),"additional_rate_limits":additional}),
     )
 }
 pub fn parse_codex_overage(value: &Value) -> Option<Value> {
-    let credits = value.get("credits").filter(|v| store::is_record(v))?;
+    let credits = value.get("credits").filter(|v| is_record(v))?;
     let balance = credits["balance"].as_str();
     let reached = credits["overage_limit_reached"].as_bool();
     if balance.is_none() && reached.is_none() {
@@ -112,17 +112,15 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
     if value["source"] != "codex" {
         return None;
     }
-    let slot = store::safe_i64(&value["slot"]).filter(|n| *n == 1 || *n == 2)? as u8;
+    let slot = safe_i64(&value["slot"]).filter(|n| *n == 1 || *n == 2)? as u8;
     let state = source_state(&value["state"])?;
-    if !nullable(value.get("source_observed_at_ms"), timestamp)
-        || !store::is_record(&value["windows"])
-    {
+    if !nullable(value.get("source_observed_at_ms"), timestamp) || !is_record(&value["windows"]) {
         return None;
     }
     let at = if value.get("snapshot_at_ms").is_none() {
         fallback
     } else {
-        store::safe_i64(&value["snapshot_at_ms"])?
+        safe_i64(&value["snapshot_at_ms"])?
     };
     let kind = match value.get("failure_kind") {
         Some(Value::Null) | None => {
@@ -150,8 +148,8 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
         return None;
     }
     let additional:Vec<Value>=value["additional_rate_limits"].as_array().into_iter().flatten().filter_map(|v|{
-        let name=v["limit_name"].as_str().map(store::trim).filter(|s|!s.is_empty())?;if !store::is_record(&v["windows"])||!nullable(v.get("metered_feature"),Value::is_string){return None}
-        Some(json!({"limit_name":name,"metered_feature":v["metered_feature"].as_str().map(store::trim).filter(|s|!s.is_empty()),"windows":{"primary":parse_window(&v["windows"]["primary"],false),"secondary":parse_window(&v["windows"]["secondary"],false)}}))
+        let name=v["limit_name"].as_str().map(trim).filter(|s|!s.is_empty())?;if !is_record(&v["windows"])||!nullable(v.get("metered_feature"),Value::is_string){return None}
+        Some(json!({"limit_name":name,"metered_feature":v["metered_feature"].as_str().map(trim).filter(|s|!s.is_empty()),"windows":{"primary":parse_window(&v["windows"]["primary"],false),"secondary":parse_window(&v["windows"]["secondary"],false)}}))
     }).collect();
     Some(
         json!({"source":"codex","label":codex_label(slot,value["label"].as_str()),"slot":slot,"account_cohort_id":digest(&value["account_cohort_id"]),"state":state,"source_observed_at_ms":value["source_observed_at_ms"],"snapshot_at_ms":at,"failure_kind":kind,"failure_status":status,"windows":{"primary":parse_window(&value["windows"]["primary"],false),"secondary":parse_window(&value["windows"]["secondary"],false)},"additional_rate_limits":additional}),
@@ -159,7 +157,7 @@ pub fn read_codex(value: &Value, fallback: i64) -> Option<Value> {
 }
 pub fn read_metered(value: &Value, at: i64) -> Option<Value> {
     if value["source"] != "metered"
-        || !store::is_record(&value["wallet"])
+        || !is_record(&value["wallet"])
         || !nullable(value.get("source_observed_at_ms"), timestamp)
     {
         return None;
@@ -179,7 +177,7 @@ pub fn read_metered(value: &Value, at: i64) -> Option<Value> {
         wallet[f] = finite(&w[f]).unwrap_or(Value::Null)
     }
     for f in ["cycle_started_at_ms", "last_credit_at_ms"] {
-        wallet[f] = json!(store::safe_i64(&w[f]));
+        wallet[f] = json!(safe_i64(&w[f]));
     }
     wallet["unlimited_quota"] = json!(w["unlimited_quota"].as_bool());
     wallet["confidence"] = json!(
@@ -204,10 +202,10 @@ pub fn source(value: &Value, slot: u8) -> Option<&Value> {
     value["sources"]
         .as_array()?
         .iter()
-        .find(|v| v["source"] == "codex" && store::safe_i64(&v["slot"]) == Some(i64::from(slot)))
+        .find(|v| v["source"] == "codex" && safe_i64(&v["slot"]) == Some(i64::from(slot)))
 }
 pub fn read_snapshot(value: &Value) -> Option<Value> {
-    let at = store::safe_i64(&value["snapshot_at_ms"])?;
+    let at = safe_i64(&value["snapshot_at_ms"])?;
     let sources = value["sources"].as_array()?;
     let one = read_codex(source(value, 1)?, at)?;
     let two = read_codex(source(value, 2)?, at)?;
@@ -215,8 +213,8 @@ pub fn read_snapshot(value: &Value) -> Option<Value> {
     Some(json!({"snapshot_at_ms":at,"stale_after_ms":STALE_MS,"sources":[one,two,metered]}))
 }
 pub fn read_history(value: &Value) -> Option<Value> {
-    store::safe_i64(&value["bucket_start_at_ms"])?;
-    let at = store::safe_i64(&value["sampled_at_ms"])?;
+    safe_i64(&value["bucket_start_at_ms"])?;
+    let at = safe_i64(&value["sampled_at_ms"])?;
     let sources = value["sources"].as_array()?;
     Some(
         json!({"bucket_start_at_ms":value["bucket_start_at_ms"],"sampled_at_ms":value["sampled_at_ms"],"sources":[read_codex(source(value,1)?,at)?,read_codex(source(value,2)?,at)?,sources.iter().find(|v|v["source"]=="metered").and_then(|v|read_metered(v,at)).unwrap_or_else(||unavailable_metered(at))]}),
@@ -256,7 +254,7 @@ pub fn metered_source(snapshot: Option<&Value>, at: i64) -> Value {
     let Some(snapshot) = snapshot else {
         return unavailable_metered(at);
     };
-    let observed = store::safe_i64(&snapshot["state"]["observed_at_ms"]);
+    let observed = safe_i64(&snapshot["state"]["observed_at_ms"]);
     let stale =
         snapshot["cache_state"] == "stale" || observed.is_none_or(|t| at - t >= METERED_FRESH_MS);
     let token = snapshot["unlimited_quota"] == true

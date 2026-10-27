@@ -1,6 +1,7 @@
 //! Exact chart transitions and hourly research folds from source capacity-history/rollups.
-use crate::capacity_shapes::{BUCKET_MS, HOUR_MS, source};
-use gateway_core::error::GatewayError;
+use crate::scalars::safe_i64;
+use crate::shapes::{BUCKET_MS, HOUR_MS, source};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 pub fn same_cohort(a: &Value, b: &Value) -> bool {
     a["account_cohort_id"].is_string() && a["account_cohort_id"] == b["account_cohort_id"]
@@ -148,7 +149,7 @@ pub fn merge_remote_history(
     });
     let local_buckets: std::collections::BTreeSet<i64> = ordered
         .iter()
-        .filter_map(|p| crate::store::safe_i64(&p["bucket_start_at_ms"]))
+        .filter_map(|p| safe_i64(&p["bucket_start_at_ms"]))
         .collect();
     let mut gaps: std::collections::BTreeMap<
         i64,
@@ -156,8 +157,8 @@ pub fn merge_remote_history(
     > = std::collections::BTreeMap::new();
     for (host, point) in remote {
         let (Some(bucket), Some(sample)) = (
-            crate::store::safe_i64(&point["bucket_start_at_ms"]),
-            crate::store::safe_i64(&point["sampled_at_ms"]),
+            safe_i64(&point["bucket_start_at_ms"]),
+            safe_i64(&point["sampled_at_ms"]),
         ) else {
             continue;
         };
@@ -178,8 +179,7 @@ pub fn merge_remote_history(
         if !available || configured == 0 {
             continue;
         }
-        let i = ordered
-            .partition_point(|p| crate::store::safe_i64(&p["sampled_at_ms"]).unwrap_or(0) < sample);
+        let i = ordered.partition_point(|p| safe_i64(&p["sampled_at_ms"]).unwrap_or(0) < sample);
         let identity = |p: &Value, slot| {
             let s = source(p, slot)?;
             Some(if s["failure_kind"] == "not_configured" {
@@ -234,7 +234,7 @@ pub fn merge_remote_history(
     Ok(ordered)
 }
 pub fn bucketed(point: &Value) -> bool {
-    crate::store::safe_i64(&point["bucket_start_at_ms"])
-        .zip(crate::store::safe_i64(&point["sampled_at_ms"]))
+    safe_i64(&point["bucket_start_at_ms"])
+        .zip(safe_i64(&point["sampled_at_ms"]))
         .is_some_and(|(b, t)| b % BUCKET_MS == 0 && t >= b && t < b + BUCKET_MS)
 }
