@@ -11,6 +11,10 @@ native-import-fixture = ["gateway-authority/native-import-fixture"]
 
 [dependencies]
 gateway-auth-native-wire.workspace = true
+gateway-auth-native-contracts.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-native-protocol.workspace = true
+gateway-source.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-authority = { path = "../gateway-authority" }
@@ -27,6 +31,7 @@ gateway-native-local-transport.workspace = true
 gateway-native-replay.workspace = true
 gateway-native-supervisor.workspace = true
 gateway-native-supervisor-data.workspace = true
+gateway-native-supervisor-http.workspace = true
 gateway-publication-policy.workspace = true
 gateway-publication-transport.workspace = true
 serde.workspace = true

@@ -1503,6 +1503,9 @@ version = "0.1.0"
 dependencies = [
  "futures-executor",
  "gateway-auth",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
@@ -1520,9 +1523,11 @@ dependencies = [
  "gateway-native-replay",
  "gateway-native-supervisor",
  "gateway-native-supervisor-data",
+ "gateway-native-supervisor-http",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
+ "gateway-source",
  "getrandom 0.4.3",
  "httparse",
  "landlock",
@@ -1722,6 +1727,21 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "tungstenite",
+]
+
+[[package]]
+name = "gateway-native-supervisor-http"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-native-http-framing",
+ "gateway-native-local-transport",
+ "gateway-native-supervisor",
+ "gateway-native-supervisor-data",
+ "gateway-source",
+ "serde_json",
 ]
 
 [[package]]

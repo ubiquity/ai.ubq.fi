@@ -73,6 +73,7 @@ members = [
   "crates/gateway-native-replay",
   "crates/gateway-native-supervisor",
   "crates/gateway-native-supervisor-data",
+  "crates/gateway-native-supervisor-http",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
   "crates/gateway-wait-observation",
@@ -177,6 +178,7 @@ gateway-native-publication = { path = "crates/gateway-native-publication" }
 gateway-native-replay = { path = "crates/gateway-native-replay" }
 gateway-native-supervisor = { path = "crates/gateway-native-supervisor" }
 gateway-native-supervisor-data = { path = "crates/gateway-native-supervisor-data" }
+gateway-native-supervisor-http = { path = "crates/gateway-native-supervisor-http" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
 gateway-wait-observation = { path = "crates/gateway-wait-observation" }
