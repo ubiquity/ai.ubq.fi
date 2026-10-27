@@ -9,8 +9,7 @@ use gateway_core::error::GatewayError;
 use gateway_core::identity::{ApiKeyId, RequestId};
 use gateway_core::source_graph::GraphNode;
 use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-    StoredRecord,
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
 use gateway_migration_fixture_port::{executor::support_run, port};
 use gateway_migration_test_support::fixture::{RUNTIME_CASES, Receipt};
