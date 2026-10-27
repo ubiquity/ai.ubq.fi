@@ -7,7 +7,6 @@ use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_auth::provider_credentials::parse_codex_source_pool;
 use gateway_authority_contracts::{AuthorityClock, TokenSource, unavailable, validate_time};
 use gateway_authority_keys as keys;
-use gateway_authority_reset_evidence::types::Facts;
 use gateway_authority_reset_records::full_pool::FullPoolShadowDecision;
 use gateway_authority_reset_records::full_pool::SourceResetInventory;
 use gateway_authority_reset_records::{ResetConfig, ResetMode, full_pool::CreditCandidateData};
@@ -226,7 +225,7 @@ pub trait ResetPermitOperations: ResetPermitFactory {
                     }
                 };
                 let audit_present = if facts.config().mode == ResetMode::Shadow {
-                    let (present, prior) = read_audit(&mut tx, &facts.episode_hash()).await?;
+                    let (present, prior) = read_audit(&mut tx, facts.episode_hash()).await?;
                     if let Some(decision) = prior.as_ref() {
                         let matches = decision.episode_hash.as_str()
                             == facts.episode_hash().as_str()
