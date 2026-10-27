@@ -1,3 +1,4 @@
+import { chatResponsesProjectionFailure } from "./context-admission-failure.ts";
 // DeepSeek Chat and Responses handlers and support, extracted from src/openai.ts.
 
 import {
@@ -656,7 +657,7 @@ export const handleDeepSeekResponses = async (
 
   const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, clientWantsStream);
   const upstreamModel = deepSeekUpstreamModelFor(modelRaw) ?? DEEPSEEK_FLASH_MODEL;
-  if (!translated.ok) return openaiError(400, translated.message, translated.code ?? "invalid_request_error", { param: translated.param });
+  if (!translated.ok) return chatResponsesProjectionFailure(req, rawRecord, translated, usageContext);
   const { body: chatBody, toolNames, customToolNames, warnings } = translated.value;
   if (translated.value.elisions.length) logForwardedPayloadElisions(translated.value.elisions);
   if (translated.value.exemptions.length)

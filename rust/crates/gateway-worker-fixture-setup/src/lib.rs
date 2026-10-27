@@ -24,16 +24,15 @@ use gateway_core::{
         StoredRecord,
     },
 };
-use gateway_publication::{
-    control_publication::{
-        ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
-        fixture_owner_statement, runtime_config_key,
-    },
-    transport::{
-        NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
-        PublicationResponse,
-    },
+use gateway_publication::sender::NativePublicationSender;
+use gateway_publication_policy::control_publication::{
+    ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
+    fixture_owner_statement, runtime_config_key,
 };
+use gateway_publication_policy::protocol::{
+    PublicationCarrier, PublicationRequest, PublicationResponse,
+};
+use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_worker::authority::RemoteAuthorityStore;
 
 fn nonce() -> Result<[u8; 32], GatewayError> {
@@ -120,7 +119,7 @@ async fn send_configuration<S: AuthorityStore>(
     now: i64,
     nonce: [u8; 32],
 ) -> Result<(), GatewayError> {
-    let command = prepared.command(revision)?;
+    let command = gateway_publication::wire::configuration_command(&prepared, revision)?;
     let carrier = Carrier { store, receiver };
     NativePublicationSender::configured(identity, &carrier)
         .send(&command, nonce, now)
@@ -377,13 +376,11 @@ mod tests {
             StoredRecord,
         },
     };
-    use gateway_publication::{
-        control_publication::{
-            PreparedConfigurationPublication, bootstrap_fixture_owner, fixture_owner_statement,
-            runtime_config_key,
-        },
-        transport::PublicationReceiver,
+    use gateway_publication_policy::control_publication::{
+        PreparedConfigurationPublication, bootstrap_fixture_owner, fixture_owner_statement,
+        runtime_config_key,
     };
+    use gateway_publication_transport::transport::PublicationReceiver;
     use std::{
         cell::RefCell,
         collections::{BTreeMap, BTreeSet},

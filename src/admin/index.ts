@@ -23,6 +23,7 @@ export {
   handleAdminClaudeCodeAuthGet,
   handleAdminClaudeCodeAuthSet,
   handleAdminClaudeCodeQuotaClear,
+  handleAdminClaudeCodeQuotaRefresh,
 } from "./claude-code.ts";
 export { handleAdminDefaults, handleAdminKvMigrationImport, handleAdminKvMigrationValidate } from "./defaults.ts";
 export { handleAdminApiKeysCreate, handleAdminApiKeysList, handleAdminApiKeysPaidFallbacks } from "./api-keys.ts";

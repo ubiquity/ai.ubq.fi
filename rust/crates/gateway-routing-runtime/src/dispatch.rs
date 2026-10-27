@@ -309,10 +309,9 @@ impl<
             .into());
         }
         if failure.transport == TransportState::NotStarted && record.transport_started {
-            return Err(journal::unavailable(
-                "NotStarted report conflicts with durable transport intent.",
-            )
-            .into());
+            return Err(
+                unavailable("NotStarted report conflicts with durable transport intent.").into(),
+            );
         }
         if failure.transport == TransportState::NotStarted {
             self.change(|j| {
@@ -349,7 +348,7 @@ impl<
         }
         let mut decision = RefusalDecision::Return;
         let mut cursor = record.cursor;
-        if self.plan.synthetic {
+        if self.plan.synthetic && record.paid.is_none() {
             decision = match gateway_providers::policy::deepseek_decision(failure.failure, false) {
                 HopDecision::Advance => {
                     cursor += 1;
@@ -361,66 +360,8 @@ impl<
         } else if let CredentialFence::Codex { admission, .. } = &record.fence
             && failure.origin == FailureOrigin::Provider
         {
-            if let Some(block) = classify::codex_quota(
-                failure.status,
-                &failure.headers,
-                &failure.body,
-                failure.body_complete,
-                self.now()?,
-            ) {
-                if self
-                    .authority()
-                    .record_quota_block(admission, block, self.now()?)
-                    .await?
-                {
-                    decision = RefusalDecision::Continue;
-                }
-            } else if failure.status == Some(401) {
-                let version = admission.binding.credential_version.0.clone();
-                let refreshed = row.refreshed_versions.contains(&version);
-                if !refreshed {
-                    self.change(|j| {
-                        j.refreshed_versions.push(version.clone());
-                        Ok(())
-                    })
-                    .await?;
-                    let published =
-                        self.host.refresh_codex(&record.fence).await? == RefreshOutcome::Published;
-                    if published
-                        || self
-                            .authority()
-                            .mark_credential_invalid(admission, self.now()?)
-                            .await?
-                    {
-                        decision = RefusalDecision::Continue;
-                    }
-                } else if self
-                    .authority()
-                    .mark_credential_invalid(admission, self.now()?)
-                    .await?
-                {
-                    decision = RefusalDecision::Continue;
-                }
-            } else if let Some(detail) = classify::unsupported_model(
-                failure.status,
-                &failure.body,
-                failure.body_complete,
-                &record.model,
-            ) && self
-                .authority()
-                .learn_model_unavailable(admission, &detail, self.now()?)
-                .await?
-            {
-                if row.model_sibling_retries < 1 {
-                    self.change(|j| {
-                        j.model_sibling_retries += 1;
-                        Ok(())
-                    })
-                    .await?;
-                    decision = RefusalDecision::Continue;
-                } else {
-                    return Err(classify::model_unavailable_error(&record.model).into());
-                }
+            if self.codex_retry(&row, &record, admission, &failure).await? {
+                decision = RefusalDecision::Continue;
             }
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
             if gateway_providers::policy::paid_should_advance(
@@ -434,58 +375,7 @@ impl<
             && failure.origin == FailureOrigin::Provider
             && failure.status == Some(429)
         {
-            let now = self.now()?;
-            let response_prohibited = gateway_providers::lithos::retry_prohibited(&failure.headers);
-            let wait = lithos_wait_ms(&failure.headers, now);
-            let rung = gateway_providers::policy::lithos_canonical(&record.model);
-            self.lithos_attempted.borrow_mut().insert(rung.clone());
-            if response_prohibited {
-                self.lithos_no_retry.borrow_mut().insert(rung);
-            }
-            if !self.input.retry_prohibited {
-                let next = {
-                    let no_retry = self.lithos_no_retry.borrow();
-                    let attempted = self.lithos_attempted.borrow();
-                    self.lithos
-                        .borrow()
-                        .eligible(&record.model, now, &no_retry, &attempted)
-                };
-                if let Some(next) = next
-                    && next != record.model
-                {
-                    if !response_prohibited && let Some(wait) = wait {
-                        self.lithos.borrow_mut().refuse(&record.model, now, wait);
-                    }
-                    decision = RefusalDecision::Continue;
-                } else if !response_prohibited && let Some(wait) = wait {
-                    let retry_target = {
-                        let no_retry = self.lithos_no_retry.borrow();
-                        self.lithos
-                            .borrow()
-                            .retry_eligible(&record.model, &no_retry)
-                    };
-                    if retry_target.is_some() && self.waits.borrow_mut().claim(wait, false) {
-                        self.lithos_attempted.borrow_mut().clear();
-                        self.renew().await?;
-                        let outcome = self.host.wait(wait).await;
-                        if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
-                            return Err(
-                                journal::unavailable("The host wait duration is invalid.").into()
-                            );
-                        }
-                        self.elapsed_wait_ms.set(
-                            self.elapsed_wait_ms
-                                .get()
-                                .saturating_add(outcome.elapsed_ms),
-                        );
-                        outcome.result?;
-                        if self.host.cancelled() {
-                            return Ok(RefusalDecision::Abort);
-                        }
-                        decision = RefusalDecision::Continue;
-                    }
-                }
-            }
+            decision = self.lithos_refusal(&record.model, &failure).await?;
         }
         if decision == RefusalDecision::Continue {
             self.change(|j| {
@@ -514,6 +404,116 @@ impl<
             }
         }
         Ok(decision)
+    }
+    async fn codex_retry(
+        &self,
+        row: &Journal,
+        record: &AttemptRecord,
+        admission: &gateway_authority::routing_types::AdmittedAccount,
+        failure: &AttemptFailure,
+    ) -> RoutingResult<bool> {
+        if let Some(block) = classify::codex_quota(
+            failure.status,
+            &failure.headers,
+            &failure.body,
+            failure.body_complete,
+            self.now()?,
+        ) {
+            return Ok(self
+                .authority()
+                .record_quota_block(admission, block, self.now()?)
+                .await?);
+        }
+        if failure.status == Some(401) {
+            let version = admission.binding.credential_version.0.clone();
+            let published = !row.refreshed_versions.contains(&version) && {
+                self.change(|j| {
+                    j.refreshed_versions.push(version.clone());
+                    Ok(())
+                })
+                .await?;
+                self.host.refresh_codex(&record.fence).await? == RefreshOutcome::Published
+            };
+            return Ok(published
+                || self
+                    .authority()
+                    .mark_credential_invalid(admission, self.now()?)
+                    .await?);
+        }
+        if let Some(detail) = classify::unsupported_model(
+            failure.status,
+            &failure.body,
+            failure.body_complete,
+            &record.model,
+        ) && self
+            .authority()
+            .learn_model_unavailable(admission, &detail, self.now()?)
+            .await?
+        {
+            if row.model_sibling_retries >= 1 {
+                return Err(classify::model_unavailable_error(&record.model).into());
+            }
+            self.change(|j| {
+                j.model_sibling_retries += 1;
+                Ok(())
+            })
+            .await?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    async fn lithos_refusal(
+        &self,
+        model: &gateway_core::model::ModelId,
+        failure: &AttemptFailure,
+    ) -> RoutingResult<RefusalDecision> {
+        let now = self.now()?;
+        let response_prohibited = gateway_providers::lithos::retry_prohibited(&failure.headers);
+        let wait = lithos_wait_ms(&failure.headers, now);
+        let rung = gateway_providers::policy::lithos_canonical(model);
+        self.lithos_attempted.borrow_mut().insert(rung.clone());
+        if response_prohibited {
+            self.lithos_no_retry.borrow_mut().insert(rung);
+        }
+        if self.input.retry_prohibited {
+            return Ok(RefusalDecision::Return);
+        }
+        let next = {
+            let denied = self.lithos_no_retry.borrow();
+            let tried = self.lithos_attempted.borrow();
+            self.lithos.borrow().eligible(model, now, &denied, &tried)
+        };
+        if let Some(next) = next
+            && &next != model
+        {
+            if !response_prohibited && let Some(wait) = wait {
+                self.lithos.borrow_mut().refuse(model, now, wait);
+            }
+            return Ok(RefusalDecision::Continue);
+        }
+        let Some(wait) = wait.filter(|_| !response_prohibited) else {
+            return Ok(RefusalDecision::Return);
+        };
+        let retry_target = {
+            let no_retry = self.lithos_no_retry.borrow();
+            self.lithos.borrow().retry_eligible(model, &no_retry)
+        };
+        if retry_target.is_none() || !self.waits.borrow_mut().claim(wait, false) {
+            return Ok(RefusalDecision::Return);
+        }
+        self.lithos_attempted.borrow_mut().clear();
+        self.renew().await?;
+        let outcome = self.host.wait(wait).await;
+        if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
+            return Err(journal::unavailable("The host wait duration is invalid.").into());
+        }
+        let elapsed = &self.elapsed_wait_ms;
+        elapsed.set(elapsed.get().saturating_add(outcome.elapsed_ms));
+        outcome.result?;
+        if self.host.cancelled() {
+            return Ok(RefusalDecision::Abort);
+        }
+        Ok(RefusalDecision::Continue)
     }
     pub async fn finish(
         &self,

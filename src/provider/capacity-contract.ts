@@ -1,3 +1,4 @@
+import type { ClaudeCodeUsageSnapshot } from "./claude-code-usage-schema.ts";
 import type { Kv } from "#kv";
 /**
  * Shared provider-capacity storage keys. Keeping the key outside the sampler
@@ -14,6 +15,7 @@ export const PROVIDER_CAPACITY_HISTORY_BUCKET_MS = 15 * 60_000;
 
 import { type MeteredQuotaSnapshot } from "../metered-quota.ts";
 import { type ProviderCapacityDowntimeEvent, type ProviderCapacityRateLimitResetEvent, type ProviderCapacityResetEvent } from "./capacity-events.ts";
+import type { ClaudeCodeUsageState } from "./claude-code-quota.ts";
 
 export const PROVIDER_CAPACITY_LEASE_KEY = ["uos_ai", "provider_capacity", "v1", "lease"] as const;
 export const PROVIDER_CAPACITY_HISTORY_KEY_PREFIX = ["uos_ai", "provider_capacity", "v1", "history"] as const;
@@ -116,6 +118,8 @@ export type ProviderCapacityClaudeError = Readonly<{
 }>;
 
 export type ProviderCapacityClaudeSource = Readonly<{
+  usage_snapshot?: ClaudeCodeUsageSnapshot;
+  usage_stale?: boolean;
   source: "claude_code";
   label: "Claude subscription";
   account_id?: string | null;
@@ -134,6 +138,7 @@ export type ProviderCapacityClaudeSource = Readonly<{
     seven_day: ProviderCapacityClaudeWindow | null;
   }>;
   standard: readonly ProviderCapacityClaudeStandardLimit[];
+  usage: ClaudeCodeUsageState | null;
   blocked_until_ms: number | null;
   cooldown_until_ms: number | null;
   last_error: ProviderCapacityClaudeError | null;
@@ -174,6 +179,7 @@ export type ProviderCapacityView = Readonly<
 
 /** Additive Claude evidence; never widen the persisted Codex/metered tuple. */
 export type ClaudeCapacityHistoryPoint = Readonly<{
+  usage_snapshot?: ClaudeCodeUsageSnapshot;
   v: 1;
   point_id: string;
   bucket_start_at_ms: number;

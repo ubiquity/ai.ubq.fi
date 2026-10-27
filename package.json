@@ -65,7 +65,8 @@
     "verify": "sh scripts/verify.sh",
     "prune:releases": "bun --no-env-file --no-install ops/prune-releases.ts",
     "deploy:vps": "bun --no-env-file --no-install ops/deploy.ts",
-    "deploy:mac": "bun --no-env-file --no-install ops/deploy-mac.ts"
+    "deploy:mac": "bun --no-env-file --no-install ops/deploy-mac.ts",
+    "steering:health": "bun --no-env-file --no-install scripts/steering-health.ts"
   },
   "dependencies": {
     "@deno/kv": "0.14.0",

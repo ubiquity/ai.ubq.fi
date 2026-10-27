@@ -16,7 +16,7 @@ import {
   parseClaudeCodeWorkspaceId,
   partialClaudeCodeCredentialHint,
 } from "../provider/claude-code-credentials.ts";
-import { claudeCodeCredentialKind, type ClaudeCodeEnvLookup } from "../provider/claude-code.ts";
+import { claudeCodeCredentialKind, type ClaudeCodeEnvLookup, type ClaudeCodeFetch } from "../provider/claude-code.ts";
 import {
   cacheValidatedClaudeCodeModels,
   ClaudeCodeModelsError,
@@ -24,6 +24,7 @@ import {
   type ClaudeCodeModelsSnapshot,
 } from "../provider/claude-code-models.ts";
 import { clearClaudeCodeQuotaGuards } from "../provider/claude-code-quota.ts";
+import { refreshClaudeCodeUsage } from "../provider/claude-code-usage-refresh.ts";
 import { getPassiveProviderHealthSnapshot } from "../health.ts";
 import {
   resolveClaudeCodeAccount,
@@ -198,6 +199,79 @@ export const handleAdminClaudeCodeAuthSet = async (req: Request, options: Readon
     validation: { status: validation.status, detail: validation.detail },
     hint: credential.secret ? partialClaudeCodeCredentialHint(secret) : null,
   });
+};
+
+type ClaudeUsageRefreshOptions = Readonly<{ env?: ClaudeCodeEnvLookup; fetcher?: ClaudeCodeFetch; now?: () => number }>;
+type ClaudeUsageRefreshTarget = Readonly<{ kind: "response"; response: Response }> | Readonly<{ kind: "refresh"; account: ClaudeCodeAccountBinding }>;
+
+const resolveClaudeUsageRefreshTarget = async (req: Request, kv: Kv, options: ClaudeUsageRefreshOptions): Promise<ClaudeUsageRefreshTarget> => {
+  const body = await readJsonBody(req);
+  if (!isRecord(body) || typeof body.account_id !== "string")
+    return { kind: "response", response: openaiError(400, "account_id is required", "invalid_request_error") };
+  if (body.account_cohort_id !== undefined && typeof body.account_cohort_id !== "string")
+    return { kind: "response", response: openaiError(400, "account_cohort_id must be a string", "invalid_request_error") };
+  const account = await resolveClaudeCodeAccount(kv, options.env, { accountId: body.account_id });
+  if (!account) return { kind: "response", response: openaiError(404, "Claude account was not found", "not_found") };
+  if (body.account_cohort_id !== undefined && body.account_cohort_id !== account.account_cohort_id)
+    return { kind: "response", response: openaiError(409, "Claude account generation changed", "claude_code_account_changed") };
+  return { kind: "refresh", account };
+};
+
+const runClaudeUsageRefresh = async (kv: Kv, account: ClaudeCodeAccountBinding, options: ClaudeUsageRefreshOptions): Promise<Response> => {
+  const refreshed = await refreshClaudeCodeUsage(kv, account, options);
+  if (refreshed.kind === "changed") return openaiError(409, "Claude account changed during usage refresh", "claude_code_account_changed");
+  if (refreshed.kind === "busy")
+    return json(200, {
+      data: await claudeSubscriptionBlock(),
+      refreshed: false,
+      reason: "refresh_in_progress",
+      message: "A usage refresh is already in progress.",
+    });
+  if (refreshed.kind === "fresh")
+    return json(200, {
+      data: await claudeSubscriptionBlock(),
+      refreshed: false,
+      reason: "fresh",
+      observed_at_ms: refreshed.usage.attempted_at_ms,
+      usage: refreshed.usage,
+    });
+  const { result, usage } = refreshed;
+  const data = await claudeSubscriptionBlock();
+  if (result.ok) {
+    return json(200, {
+      data,
+      refreshed: true,
+      source: "oauth_usage",
+      observed_at_ms: result.observed_at_ms,
+      usage,
+    });
+  }
+  if (result.kind === "scope_missing" || result.kind === "unsupported_credential") {
+    return json(200, {
+      data,
+      refreshed: false,
+      reason: result.kind,
+      message: result.message ?? "This credential cannot read Claude usage.",
+      usage,
+    });
+  }
+  return openaiError(502, result.message ?? "Claude usage could not be read from the upstream service", "claude_usage_unavailable", {
+    headers: result.retry_after_ms === null ? undefined : { "Retry-After": String(Math.max(1, Math.ceil(result.retry_after_ms / 1_000))) },
+  });
+};
+
+/**
+ * Explicit operator refresh for the quota meter. This reads Anthropic's OAuth
+ * usage endpoint directly; it never sends a Messages request or starts a turn.
+ * A setup token without `user:profile` returns a non-fatal, explicit state so
+ * inference remains available and the missing scope is visible in diagnostics.
+ */
+export const handleAdminClaudeCodeQuotaRefresh = async (req: Request, options: ClaudeUsageRefreshOptions = {}): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "Claude quota storage is unavailable", "server_error");
+  const target = await resolveClaudeUsageRefreshTarget(req, kv, options);
+  if (target.kind === "response") return target.response;
+  return await runClaudeUsageRefresh(kv, target.account, options);
 };
 
 export const handleAdminClaudeCodeAuthDelete = async (req?: Request): Promise<Response> => {

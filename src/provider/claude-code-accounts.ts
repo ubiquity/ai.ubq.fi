@@ -140,20 +140,18 @@ const bootstrapWorkspace = (value: unknown, env?: ClaudeCodeEnvLookup): ClaudeCo
 /** Exactly-once compatible bootstrap; legacy keys remain untouched and unbound evidence is not imported. */
 export const loadClaudeCodeAccountStore = async (kv: Kv, env?: ClaudeCodeEnvLookup): Promise<ClaudeCodeAccountStore> => {
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
-    const [entry, legacyCredential, legacyWorkspace] = await Promise.all([
-      kv.get(CLAUDE_CODE_ACCOUNTS_KEY, { consistency: "strong" }),
-      kv.get(CLAUDE_CODE_AUTH_KV_KEY, { consistency: "strong" }),
-      kv.get(CLAUDE_CODE_WORKSPACE_KV_KEY, { consistency: "strong" }),
-    ]);
+    const entry = await kv.get(CLAUDE_CODE_ACCOUNTS_KEY, { consistency: "strong" });
     if (entry.value !== null) {
       const store = parseClaudeCodeAccountStore(entry.value);
       if (!store) throw new Error("Claude account roster is invalid; refusing legacy fallback");
       return store;
     }
+    const legacyCredential = await kv.get(CLAUDE_CODE_AUTH_KV_KEY, { consistency: "strong" });
     const stored = parseClaudeCodeStoredCredential(legacyCredential.value);
     const credential: ClaudeCodeResolvedCredential | null = stored ? { ...stored, source: "kv" } : readClaudeCodeEnvCredential(env);
     // Absence is not an intentional removal: a passive read must not retire a future first credential.
     if (!credential) return emptyAccountStore();
+    const legacyWorkspace = await kv.get(CLAUDE_CODE_WORKSPACE_KV_KEY, { consistency: "strong" });
     const workspace = bootstrapWorkspace(legacyWorkspace.value, env);
     const account = await makeAccount(credential, workspace);
     const store: ClaudeCodeAccountStore = {

@@ -1,3 +1,4 @@
+import { codexContextFailureEvent } from "./codex/responses-error.ts";
 import {
   RESPONSES_TERMINAL_EVENT_TYPES,
   ResponsesStreamError,
@@ -514,6 +515,7 @@ const emptyCompletionEventAfterCommit = (sequenceNumber: number): ResponsesStrea
 export const isSyntheticResponsesFailureEvent = (event: ResponsesStreamEvent): boolean => syntheticFailureEvents.has(event);
 
 type OwnedResponsesStreamOptions = Readonly<{
+  codexContextErrorCompatibility?: boolean;
   initial: readonly ResponsesStreamEvent[];
   iterator: ResponsesStreamIterator;
   responseId: string | null;
@@ -897,7 +899,9 @@ export const createOwnedResponsesStream = (options: OwnedResponsesStreamOptions)
       return;
     }
     terminalEmitted = event.terminal;
-    controller.enqueue(encoder.encode(event.raw));
+    const visibleEvent =
+      options.codexContextErrorCompatibility && event.type === "error" ? codexContextFailureEvent(event, responseId, responseTemplate, failureOutput()) : event;
+    controller.enqueue(encoder.encode(visibleEvent.raw));
     invoke(() => options.onEvent?.(event));
     if (event.terminal) {
       closed = true;

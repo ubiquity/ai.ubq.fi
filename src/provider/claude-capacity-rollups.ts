@@ -1,5 +1,6 @@
 import type { Kv, KvEntry, KvKey } from "#kv";
-import { isRecord } from "../utils.ts";
+import { readClaudeCodeUsageMeter, type ClaudeCodeUsageMeter } from "./claude-code-usage-schema.ts";
+import { isRecord, sha256Hex } from "../utils.ts";
 import type { ClaudeCapacityHistoryPoint } from "./capacity-contract.ts";
 
 export const CLAUDE_CAPACITY_ROLLUP_PREFIX = ["uos_ai", "provider_capacity", "claude", "v1", "rollup"] as const;
@@ -177,6 +178,129 @@ export const listClaudeCapacityRollups = async (
       if (point) points.push(point);
     }
     return { scan: "ok", truncated, points: points.toSorted((a, b) => a.bucket_start_at_ms - b.bucket_start_at_ms) };
+  } catch {
+    return { scan: "unavailable", truncated: false, points: [] };
+  }
+};
+
+/** Direct meters have a separate namespace; no dynamic meter enters canonical quota guards. */
+export const CLAUDE_USAGE_ROLLUP_PREFIX = ["uos_ai", "provider_capacity", "claude", "v1", "usage_rollup"] as const;
+export type ClaudeUsageRollup = Readonly<{
+  v: 1;
+  bucket_start_at_ms: number;
+  account_id: string;
+  account_cohort_id: string;
+  credential_kind: "oauth" | "api_key";
+  workspace_id: string | null;
+  meter: ClaudeCodeUsageMeter;
+  samples: number;
+  first_observed_at_ms: number;
+  last_observed_at_ms: number;
+  min_used_percent: number | null;
+  max_used_percent: number | null;
+}>;
+export const claudeUsageRollupKey = async (
+  point: Pick<ClaudeCapacityHistoryPoint, "account_id" | "account_cohort_id">,
+  meter: ClaudeCodeUsageMeter
+): Promise<KvKey> => [
+  ...CLAUDE_USAGE_ROLLUP_PREFIX,
+  Math.floor(meter.observed_at_ms / CLAUDE_CAPACITY_ROLLUP_BUCKET_MS) * CLAUDE_CAPACITY_ROLLUP_BUCKET_MS,
+  point.account_id,
+  point.account_cohort_id,
+  await sha256Hex(JSON.stringify([meter.id, meter.resets_at])),
+];
+export const readClaudeUsageRollup = (value: unknown): ClaudeUsageRollup | null => {
+  if (!isRecord(value) || value.v !== 1 || !claudeCapacityIdentity(value.account_id) || !claudeCapacityIdentity(value.account_cohort_id)) return null;
+  if (
+    (value.credential_kind !== "oauth" && value.credential_kind !== "api_key") ||
+    (value.workspace_id !== null && !claudeCapacityIdentity(value.workspace_id))
+  )
+    return null;
+  if (
+    ![value.bucket_start_at_ms, value.first_observed_at_ms, value.last_observed_at_ms, value.samples].every(claudeCapacityTimestamp) ||
+    Number(value.samples) < 1
+  )
+    return null;
+  if (Number(value.first_observed_at_ms) > Number(value.last_observed_at_ms) || Number(value.bucket_start_at_ms) % CLAUDE_CAPACITY_ROLLUP_BUCKET_MS !== 0)
+    return null;
+  const meter = readClaudeCodeUsageMeter(value.meter);
+  if (!meter || meter.observed_at_ms !== value.last_observed_at_ms) return null;
+  if (
+    Number(value.first_observed_at_ms) < Number(value.bucket_start_at_ms) ||
+    value.last_observed_at_ms >= Number(value.bucket_start_at_ms) + CLAUDE_CAPACITY_ROLLUP_BUCKET_MS
+  )
+    return null;
+  const min = value.min_used_percent;
+  const max = value.max_used_percent;
+  if (![min, max].every((item) => item === null || (typeof item === "number" && Number.isFinite(item))) || (min === null) !== (max === null)) return null;
+  if (
+    typeof min === "number" &&
+    typeof max === "number" &&
+    (min > max || (meter.used_percent !== null && (meter.used_percent < min || meter.used_percent > max)))
+  )
+    return null;
+  return value as ClaudeUsageRollup;
+};
+export const mergeClaudeUsageRollup = (
+  previous: ClaudeUsageRollup | null,
+  point: ClaudeCapacityHistoryPoint,
+  meter: ClaudeCodeUsageMeter
+): ClaudeUsageRollup => {
+  const bucket = Math.floor(meter.observed_at_ms / CLAUDE_CAPACITY_ROLLUP_BUCKET_MS) * CLAUDE_CAPACITY_ROLLUP_BUCKET_MS;
+  if (
+    previous &&
+    (previous.account_id !== point.account_id ||
+      previous.account_cohort_id !== point.account_cohort_id ||
+      previous.bucket_start_at_ms !== bucket ||
+      previous.credential_kind !== point.credential_kind ||
+      previous.workspace_id !== point.workspace_id ||
+      previous.meter.id !== meter.id ||
+      previous.meter.resets_at !== meter.resets_at)
+  )
+    throw new Error("Claude usage rollup binding mismatch");
+  const values = [previous?.min_used_percent, previous?.max_used_percent, meter.used_percent].filter((value): value is number => typeof value === "number");
+  return {
+    v: 1,
+    bucket_start_at_ms: bucket,
+    account_id: point.account_id,
+    account_cohort_id: point.account_cohort_id,
+    credential_kind: point.credential_kind,
+    workspace_id: point.workspace_id,
+    meter: !previous || meter.observed_at_ms >= previous.last_observed_at_ms ? meter : previous.meter,
+    samples: (previous?.samples ?? 0) + 1,
+    first_observed_at_ms: Math.min(previous?.first_observed_at_ms ?? meter.observed_at_ms, meter.observed_at_ms),
+    last_observed_at_ms: Math.max(previous?.last_observed_at_ms ?? meter.observed_at_ms, meter.observed_at_ms),
+    min_used_percent: values.length ? Math.min(...values) : null,
+    max_used_percent: values.length ? Math.max(...values) : null,
+  };
+};
+export const listClaudeUsageRollups = async (
+  kv: Kv | null,
+  sinceMs: number,
+  nowMs: number
+): Promise<Readonly<{ scan: "ok" | "unavailable"; truncated: boolean; points: readonly ClaudeUsageRollup[] }>> => {
+  if (!kv) return { scan: "unavailable", truncated: false, points: [] };
+  const points: ClaudeUsageRollup[] = [];
+  try {
+    const first = Math.floor(sinceMs / CLAUDE_CAPACITY_ROLLUP_BUCKET_MS) * CLAUDE_CAPACITY_ROLLUP_BUCKET_MS;
+    const last = Math.floor(nowMs / CLAUDE_CAPACITY_ROLLUP_BUCKET_MS) * CLAUDE_CAPACITY_ROLLUP_BUCKET_MS;
+    let scanned = 0;
+    for await (const entry of kv.list(
+      { start: [...CLAUDE_USAGE_ROLLUP_PREFIX, first], end: [...CLAUDE_USAGE_ROLLUP_PREFIX, last + CLAUDE_CAPACITY_ROLLUP_BUCKET_MS] },
+      { limit: CLAUDE_CAPACITY_READ_LIMIT + 1 }
+    )) {
+      if (++scanned > CLAUDE_CAPACITY_READ_LIMIT) return { scan: "ok", truncated: true, points };
+      const point = readClaudeUsageRollup(entry.value);
+      if (
+        !point ||
+        point.last_observed_at_ms > nowMs ||
+        JSON.stringify(entry.key) !==
+          JSON.stringify(await claudeUsageRollupKey({ account_id: point.account_id, account_cohort_id: point.account_cohort_id }, point.meter))
+      )
+        throw new Error("Claude usage rollup evidence is corrupt");
+      points.push(point);
+    }
+    return { scan: "ok", truncated: false, points };
   } catch {
     return { scan: "unavailable", truncated: false, points: [] };
   }

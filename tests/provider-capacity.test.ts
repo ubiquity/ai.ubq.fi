@@ -34,6 +34,8 @@ import {
   recordProviderCapacityDowntimeEvent,
 } from "../src/provider/capacity-events.ts";
 import { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } from "../src/metered-quota.ts";
+import { CLAUDE_CODE_ACCOUNTS_KEY } from "../src/provider/claude-code-accounts.ts";
+import { CLAUDE_CODE_AUTH_KV_KEY, CLAUDE_CODE_WORKSPACE_KV_KEY } from "../src/provider/claude-code-credentials.ts";
 import { CountingKv } from "./helpers/counting-kv.ts";
 import { createFetcher, keyToString, kvStore, kvStub, nowMs, requestUrl, seed } from "./helpers/provider-capacity-harness.ts";
 
@@ -1076,9 +1078,24 @@ test("event sampler persists capacity without building the discarded admin proje
       0,
       "the event sampler must not enumerate history or reset-event projection prefixes"
     );
-    // The quota refresh inside a sample also appends at most one hourly
-    // balance-history read plus one upsert; the rollup read is the 23rd command.
-    assert.ok(samplerBudget.commands <= 23, `event sampler budget unexpectedly grew to ${samplerBudget.commands} KV commands`);
+    const discoveryKeys = [CLAUDE_CODE_ACCOUNTS_KEY, CLAUDE_CODE_AUTH_KV_KEY, CLAUDE_CODE_WORKSPACE_KV_KEY].map(keyToString);
+    const discoveryReads = samplerKv.commands.filter(
+      (command) => command.scenario === "background:capacity_sampler" && command.keys.some((key) => discoveryKeys.includes(keyToString(key)))
+    );
+    assert.deepEqual(
+      discoveryReads.map((command) => ({ command: command.command, keys: command.keys })),
+      [
+        { command: "get", keys: [CLAUDE_CODE_ACCOUNTS_KEY] },
+        { command: "get", keys: [CLAUDE_CODE_AUTH_KV_KEY] },
+      ],
+      "a never-configured account needs roster and credential discovery, without a workspace read"
+    );
+    // Preserve the original non-discovery bound; direct Claude polling adds the two proven discovery reads.
+    assert.ok(
+      samplerBudget.commands - discoveryReads.length <= 23,
+      `non-discovery sampler budget unexpectedly grew to ${samplerBudget.commands - discoveryReads.length}`
+    );
+    assert.ok(samplerBudget.commands <= 25, `event sampler budget unexpectedly grew to ${samplerBudget.commands} KV commands`);
     assert.notEqual((await samplerKv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY)).value, null);
     assert.notEqual((await samplerKv.get(providerCapacityHistoryKey(nowMs))).value, null);
     assert.notEqual((await samplerKv.get(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)).value, null);

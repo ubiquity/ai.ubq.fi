@@ -1,8 +1,6 @@
 //! Fixed authenticated sanitized import publication. The constructor inputs and
 //! original authority own the decision; wire DATA never supplies config or KV.
-use crate::transport::{
-    PublicationReceiver, PublicationRequest, PublicationResponse, error_response,
-};
+use crate::transport::{PublicationReceiver, borrowed_headers};
 use gateway_auth::{
     native::{NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER},
     native_import::publication::{
@@ -15,6 +13,9 @@ use gateway_authority::{
     store::TokenSource,
 };
 use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_publication_policy::protocol::{
+    PublicationRequest, PublicationResponse, error_response,
+};
 
 impl PublicationReceiver {
     /// Dedicated finite entry, deliberately not selected by an old operation's
@@ -38,9 +39,10 @@ impl PublicationReceiver {
                 Some("native_publication_body_too_large"),
             ));
         }
-        let nonce = request.headers.borrowed().nonce.to_owned();
+        let header_pairs = request.headers.pairs();
+        let nonce = header_pairs[3].1.clone();
         let peer = match control
-            .authenticate_import_publication(request.headers.borrowed(), &request.raw_body)
+            .authenticate_import_publication(borrowed_headers(&header_pairs), &request.raw_body)
             .await
         {
             Ok(peer) => peer,

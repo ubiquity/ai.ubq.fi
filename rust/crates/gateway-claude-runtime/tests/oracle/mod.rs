@@ -26,7 +26,7 @@ fn headers(value: &Value) -> Headers {
         .map(|(key, value)| (key, value.trim_matches([' ', '\t']).into()))
         .collect()
 }
-fn evidence(case: &Value) -> super::TestResult<ErrorEvidence> {
+fn evidence(case: &Value) -> crate::support::TestResult<ErrorEvidence> {
     Ok(ErrorEvidence::from_prefix(
         serde_json::from_value(case["body_units"].clone())?,
         case["complete"].as_bool().unwrap_or(true),
@@ -34,13 +34,14 @@ fn evidence(case: &Value) -> super::TestResult<ErrorEvidence> {
 }
 
 #[test]
-fn exact_bun_source_classification_vectors_preserve_all_detail_units() -> super::TestResult {
+fn exact_bun_source_classification_vectors_preserve_all_detail_units() -> crate::support::TestResult
+{
     let fixture = fixture();
-    let cases = super::required(fixture["classes"].as_array())?;
+    let cases = crate::support::required(fixture["classes"].as_array())?;
     assert_eq!(cases.len(), 83);
     for (index, case) in cases.iter().enumerate() {
         let classified = response::classify_headers(
-            super::required(case["status"].as_u64())? as u16,
+            crate::support::required(case["status"].as_u64())? as u16,
             &headers(&case["headers"]),
             NOW,
             &|date| (date == "Wed, 18 Nov 2026 00:00:00 GMT").then_some(1_794_960_000_000),
@@ -49,7 +50,7 @@ fn exact_bun_source_classification_vectors_preserve_all_detail_units() -> super:
         let expected = &case["expected"];
         assert_eq!(
             actual.kind.id(),
-            super::required(expected["kind"].as_str())?,
+            crate::support::required(expected["kind"].as_str())?,
             "classification {index}"
         );
         assert_eq!(
@@ -107,9 +108,9 @@ fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior() 
 }
 
 #[test]
-fn exact_bun_source_outcomes_match_real_same_store_publication() -> super::TestResult {
+fn exact_bun_source_outcomes_match_real_same_store_publication() -> crate::support::TestResult {
     let fixture = fixture();
-    let cases = super::required(fixture["outcomes"].as_array())?;
+    let cases = crate::support::required(fixture["outcomes"].as_array())?;
     assert_eq!(cases.len(), 4);
     for (index, case) in cases.iter().enumerate() {
         let store = Store::new();
@@ -128,16 +129,16 @@ fn exact_bun_source_outcomes_match_real_same_store_publication() -> super::TestR
             &host,
             &selected,
             head(
-                super::required(case["status"].as_u64())? as u16,
+                crate::support::required(case["status"].as_u64())? as u16,
                 headers(&case["headers"]),
                 NOW,
             ),
         ))?;
         run(session.after_outcome(&store, &host, head, evidence(case)?))?;
         let expected: quota::QuotaState =
-            serde_json::from_str(super::required(case["expected_raw"].as_str())?)?;
+            serde_json::from_str(crate::support::required(case["expected_raw"].as_str())?)?;
         assert_eq!(
-            super::required(store.quota(&account))?,
+            crate::support::required(store.quota(&account))?,
             expected,
             "persisted outcome {index}"
         );
