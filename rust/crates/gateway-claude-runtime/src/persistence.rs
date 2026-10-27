@@ -1,6 +1,6 @@
 use crate::{
     host::*,
-    quota::{self, Outcome, QuotaError, QuotaState},
+    quota::{self, Outcome},
     response::{Classification, ResponseKind},
 };
 use gateway_admin_runtime::claude::{self, AccountBinding, RosterRead};
@@ -9,6 +9,7 @@ use gateway_auth::{
     store::{check, commit, key},
     types::AuthHost,
 };
+use gateway_claude_usage_quota::{QuotaError, QuotaState};
 use gateway_core::{
     error::GatewayError,
     model::ModelId,
@@ -45,7 +46,7 @@ pub(crate) async fn load_quota<S: AuthorityStore>(
     let row = store.read(&key).await?;
     let parsed = row
         .as_ref()
-        .map(|row| quota::parse_record(row, now))
+        .map(|row| gateway_claude_usage_quota::parse_record(row, now))
         .transpose()?
         .flatten();
     Ok((parsed, check(&key, row.as_ref())))
@@ -168,7 +169,7 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
     model: &ModelId,
     response: &ResponseObservation,
     classification: &Classification,
-    observation: Option<&quota::QuotaObservation>,
+    observation: Option<&gateway_claude_usage_quota::QuotaObservation>,
 ) -> Result<Option<CommittedOutcome>, GatewayError> {
     let now = now(host)?;
     let config = classification.kind.is_configuration();
@@ -210,7 +211,7 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
             vec![roster_check, quota_check],
             vec![RecordMutation::Put {
                 key: quota_key(binding),
-                record: quota::stored_state(&state, revision(host)?)?,
+                record: gateway_claude_usage_quota::stored_state(&state, revision(host)?)?,
             }],
         )
         .await?
@@ -256,7 +257,7 @@ pub async fn clear_guards<S: AuthorityStore, H: ClaudePoolHost>(
         },
         RecordMutation::Put {
             key: quota_key(binding),
-            record: quota::stored_state(&cleared, revision(host)?)?,
+            record: gateway_claude_usage_quota::stored_state(&cleared, revision(host)?)?,
         },
     ];
     Ok(commit(store, checks, mutations).await?.then_some(cleared))

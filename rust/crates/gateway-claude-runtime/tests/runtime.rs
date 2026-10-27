@@ -604,12 +604,16 @@ fn valid_source_negative_zero_does_not_disable_quota_or_full_pool_proof() {
 fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted() {
     let value = json!({"updated_at_ms":NOW});
     let json_record = gateway_core::state::StoredRecord::json("old", value.clone(), None);
-    assert!(quota::parse_record(&json_record, NOW).unwrap().is_some());
+    assert!(
+        gateway_claude_usage_quota::parse_record(&json_record, NOW)
+            .unwrap()
+            .is_some()
+    );
     let portable = gateway_core::value::PortableValue::from_json(&value);
     let legacy =
         gateway_core::state::StoredRecord::profile("legacy", portable.clone(), None).unwrap();
     assert_eq!(
-        quota::parse_record(&legacy, NOW)
+        gateway_claude_usage_quota::parse_record(&legacy, NOW)
             .unwrap_err()
             .envelope
             .error
@@ -620,11 +624,15 @@ fn quota_codec_selection_is_explicit_and_profile_v1_is_not_reinterpreted() {
     let explicit =
         gateway_core::state::StoredRecord::profile_v2("current", portable, None).unwrap();
     assert_eq!(
-        quota::parse_record(&explicit, NOW).unwrap(),
-        quota::parse_record(&json_record, NOW).unwrap()
+        gateway_claude_usage_quota::parse_record(&explicit, NOW).unwrap(),
+        gateway_claude_usage_quota::parse_record(&json_record, NOW).unwrap()
     );
     let tagged_json = gateway_core::state::StoredRecord::json("tagged", explicit.value, None);
-    assert!(quota::parse_record(&tagged_json, NOW).unwrap().is_none());
+    assert!(
+        gateway_claude_usage_quota::parse_record(&tagged_json, NOW)
+            .unwrap()
+            .is_none()
+    );
 }
 #[test]
 fn real_sqlite_close_reopen_retains_global_active_and_quota() {

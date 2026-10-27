@@ -917,6 +917,7 @@ dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-authority",
+ "gateway-claude-usage-protocol",
  "gateway-core",
  "gateway-profile-values",
  "gateway-schema",
@@ -1041,6 +1042,8 @@ dependencies = [
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime-test-support",
+ "gateway-claude-usage-protocol",
+ "gateway-claude-usage-quota",
  "gateway-core",
  "gateway-profile-values",
  "gateway-providers",
@@ -1059,10 +1062,79 @@ dependencies = [
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
+ "gateway-claude-usage-quota",
  "gateway-core",
  "gateway-providers",
  "gateway-schema",
  "rusqlite",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-claude-usage-admin"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-core",
+]
+
+[[package]]
+name = "gateway-claude-usage-history"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-claude-usage-history-records",
+ "gateway-claude-usage-protocol",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-claude-usage-history-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-claude-usage-protocol",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-claude-usage-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-claude-usage-quota"
+version = "0.1.0"
+dependencies = [
+ "gateway-claude-usage-protocol",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-claude-usage-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-claude-runtime-test-support",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-claude-runtime",
+ "gateway-claude-usage-protocol",
+ "gateway-claude-usage-quota",
+ "gateway-core",
+ "gateway-profile-values",
+ "serde",
  "serde_json",
 ]
 
@@ -1171,6 +1243,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-claude-runtime",
+ "gateway-claude-usage-quota",
  "gateway-core",
  "gateway-migration-test-support",
  "gateway-native",
@@ -1238,6 +1311,10 @@ dependencies = [
 name = "gateway-observability"
 version = "0.1.0"
 dependencies = [
+ "gateway-claude-runtime",
+ "gateway-claude-usage-runtime",
+ "gateway-claude-usage-quota",
+ "gateway-claude-runtime-test-support",
  "aes-gcm",
  "base64 0.22.1",
  "flate2",
@@ -1246,6 +1323,9 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-claude-usage-history",
+ "gateway-claude-usage-history-records",
+ "gateway-claude-usage-protocol",
  "gateway-core",
  "gateway-observability-test-support",
  "gateway-schema",
@@ -1423,6 +1503,11 @@ dependencies = [
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
+ "gateway-claude-usage-admin",
+ "gateway-claude-usage-history-records",
+ "gateway-claude-usage-protocol",
+ "gateway-claude-usage-quota",
+ "gateway-claude-usage-runtime",
  "gateway-compaction",
  "gateway-core",
  "gateway-decision-protocol",
