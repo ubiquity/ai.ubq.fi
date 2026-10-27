@@ -1,7 +1,7 @@
 //! Fixed native Worker usage transport. No caller-selected URL, method or inference capability.
 use crate::fetch::{self, GetFailure, Response};
 use gateway_admin_runtime::claude::AccountBinding;
-use gateway_core::{error::GatewayError, js_string::JsString16};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use worker::{
     Fetch, Headers, Method, Request, RequestInit, RequestRedirect,
     js_sys::{Array, Function, JSON, Reflect},
@@ -46,7 +46,7 @@ fn message(error: worker::Error) -> Option<JsString16> {
     if !message.is_string() {
         return None;
     }
-    gateway_core::source_json::SourceJson::parse(&JSON::stringify(&message).ok()?.as_string()?)
+    gateway_source::source_json::SourceJson::parse(&JSON::stringify(&message).ok()?.as_string()?)
         .ok()?
         .deserialize()
         .ok()

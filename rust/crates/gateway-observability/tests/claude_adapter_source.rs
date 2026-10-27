@@ -5,8 +5,9 @@ use gateway_admin_runtime::capabilities::{CodexRequest, Context, ProviderRequest
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
-    state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::StoredRecord,
+    state::AuthorityStore, state::CommitOutcome, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_observability::{
     ObservabilityRuntime, host_types::CapacityAccountRef, types::ObservabilityHost,
 };

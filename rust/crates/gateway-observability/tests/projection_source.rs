@@ -1,15 +1,15 @@
 mod support;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::QueryStore,
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    source_usage::extract_usage_tokens,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{KeyPart, TupleKey},
-    value::{PortableValue, ValueEncoding},
+};
+use gateway_core::{
+    query::QueryStore, source_control::encode_source_control_record, state::StoredRecord,
+};
+use gateway_contracts::source_usage::extract_usage_tokens;
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey, value::PortableValue,
+    value::ValueEncoding,
 };
 use gateway_observability::{
     ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup,

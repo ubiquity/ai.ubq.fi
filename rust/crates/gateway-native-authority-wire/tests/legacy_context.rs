@@ -1,4 +1,4 @@
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_native_authority_wire::context::NativeRenewalContext;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,

@@ -6,13 +6,12 @@ use gateway_catalog_provider::host::{
 use gateway_catalog_provider::response::AdminCatalogResponse;
 use gateway_catalog_runtime::admin::{AdminCatalogHost, AdminCatalogOperation};
 use gateway_catalog_runtime::{CatalogRuntime, state};
-use gateway_core::error::GatewayError;
-use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::{
+    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
-use gateway_core::tuple_key::TupleKey;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_schema::{
     aliases::SourceStringCollator,
     catalog_store,
@@ -920,10 +919,9 @@ fn save_while_versioned_discovery_waits_cannot_be_replaced_by_older_version() {
 
 #[test]
 fn actual_admin_source_documents_publish_opaque_models_source_labels_and_whitelist_units() {
-    use gateway_core::{
-        source_control::decode_source_control_record, source_serialization as source,
-        value::ValueEncoding,
-    };
+    use gateway_core::source_control::decode_source_control_record;
+    use gateway_source::source_serialization as source;
+    use gateway_kv_codec::value::ValueEncoding;
     let runtime = CatalogRuntime::new();
     let store = Store::default();
     let host = Host::new();

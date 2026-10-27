@@ -1,5 +1,7 @@
 //! Named new-row/source digest RequestContext codec. Historical/general serde remains scalar.
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
+use gateway_contracts::{
+    identity::ApiKeyId, identity::PrincipalId, identity::RequestContext, identity::RequestId,
+};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 #[derive(Deserialize, Serialize)]

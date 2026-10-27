@@ -9,7 +9,7 @@ use gateway_authority_routing_records::{
     codec::normalize, codec::parse_routing_state, types::PoolAccount, types::SubscriptionPool,
 };
 use gateway_authority_routing_selection::SelectionOperations;
-use gateway_core::{identity::PoolVersionstamp, identity::SubscriptionSelectionHash};
+use gateway_contracts::{identity::PoolVersionstamp, identity::SubscriptionSelectionHash};
 use serde_json::{Value, from_value, json};
 mod live_selection;
 use super::support::*;
@@ -108,7 +108,7 @@ fn named_limit_applicability_and_ordered_capacity_reconciliation_match_source() 
                 &row,
                 case["model"]
                     .as_str()
-                    .map(gateway_core::model::ModelId::from_scalar)
+                    .map(gateway_contracts::model::ModelId::from_scalar)
                     .as_ref(),
             ))
             .unwrap(),
@@ -125,7 +125,7 @@ fn named_limit_applicability_and_ordered_capacity_reconciliation_match_source() 
             case["now"].as_i64().unwrap(),
             case["model"]
                 .as_str()
-                .map(gateway_core::model::ModelId::from_scalar)
+                .map(gateway_contracts::model::ModelId::from_scalar)
                 .as_ref(),
             case["updated_at_ms"].as_i64().unwrap(),
         )
@@ -176,7 +176,7 @@ fn hot_selection_uses_check_only_identity_and_never_balances_to_sibling() {
         .revision;
     let RouteSelection::Eligible(second) = run(authority.select_account(
         &"gpt-test".into(),
-        gateway_core::provider::CodexQuotaClass::Standard,
+        gateway_contracts::provider::CodexQuotaClass::Standard,
         NOW + 1,
     ))
     .unwrap() else {

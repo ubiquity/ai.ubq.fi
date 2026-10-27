@@ -1,7 +1,7 @@
 use gateway_authority_reset_evidence::{types::Facts, types::ResetCandidate};
 use gateway_authority_reset_records::full_pool::FullPoolShadowDecision;
 use gateway_authority_reset_records::full_pool::SourceResetCredit;
-use gateway_core::{identity::AccountBinding, identity::RequestContext};
+use gateway_contracts::{identity::AccountBinding, identity::RequestContext};
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use serde::Serialize;

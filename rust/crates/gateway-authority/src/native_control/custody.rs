@@ -2,10 +2,8 @@
 use super::rows::{
     self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, fail,
 };
-use gateway_core::{
-    source_control::decode_source_control_record, state::RecordKey, state::StoredRecord,
-    tuple_key::DecodedKeyPart, tuple_key::TupleKey,
-};
+use gateway_core::{source_control::decode_source_control_record, state::StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_native_authority_wire::{context::NativeRenewalContext, renewal::NativeRenewalFence};
 use gateway_source::{error::GatewayError, source_serialization as source};
 use serde_json::Value;
@@ -93,7 +91,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
                 return Err(fail());
             }
             hash(original_admission_digest)?;
-            if *slot > gateway_core::identity::MAX_SAFE_INTEGER as u64 {
+            if *slot > gateway_contracts::identity::MAX_SAFE_INTEGER as u64 {
                 return Err(fail());
             }
         }
@@ -104,7 +102,7 @@ fn fence(row: &NativeRenewalFence) -> Result<(), GatewayError> {
         } => {
             gateway_authority_routing_evidence::validation::validate_binding(binding)?;
             if *active_generation == 0
-                || *active_generation > gateway_core::identity::MAX_SAFE_INTEGER as u64
+                || *active_generation > gateway_contracts::identity::MAX_SAFE_INTEGER as u64
             {
                 return Err(fail());
             }

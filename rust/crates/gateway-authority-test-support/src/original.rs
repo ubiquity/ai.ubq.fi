@@ -5,12 +5,12 @@ use gateway_authority_contracts::REQUEST_LEASE_MS;
 use gateway_authority_paid_control_records::PaidRequestContext;
 use gateway_authority_paid_records::PaidRequest;
 use gateway_authority_paid_route::{PaidRouteOperations, PaidRoutingReceipt};
-use gateway_core::{identity::PrincipalId, identity::RequestContext};
-use gateway_core::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext};
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::json;
 
-pub fn journal_key(id: &str) -> gateway_core::state::RecordKey {
+pub fn journal_key(id: &str) -> gateway_kv_codec::key::RecordKey {
     TupleKey::from_scalar_parts(&[
         ScalarKeyPart::String("uos_ai"),
         ScalarKeyPart::String("routing_runtime"),

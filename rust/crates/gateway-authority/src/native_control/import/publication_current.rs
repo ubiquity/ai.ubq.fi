@@ -69,7 +69,7 @@ pub(super) async fn completion_metadata<
             return Err(unavailable());
         }
         record.validate_version()?;
-        let sort_key = gateway_core::tuple_key::TupleKey::from_record_key(&key)?;
+        let sort_key = gateway_kv_codec::tuple_key::TupleKey::from_record_key(&key)?;
         let payload = serde_json::to_string(&record.value).map_err(|_| unavailable())?;
         let encoding = serde_json::to_value(record.value_encoding).map_err(|_| unavailable())?;
         let encoding = encoding.as_str().ok_or_else(unavailable)?;

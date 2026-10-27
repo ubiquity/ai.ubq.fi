@@ -1,4 +1,4 @@
-use gateway_core::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use gateway_contracts::{lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use gateway_providers::{response, response::decode_response, source_tools::ToolMap, types::*};
 use serde_json::{Value, json};
 
@@ -12,7 +12,7 @@ fn plan(stream: bool) -> DecodePlan {
         response_id: "resp_fixture".into(),
         created_at: 1,
         stream,
-        request: gateway_core::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
+        request: gateway_source::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
         tool_names: ToolMap::new(),
         reasoning_summary: None,
     }
@@ -142,7 +142,7 @@ fn first_completed_terminal_survives_a_later_error_in_both_client_modes() {
     }
 }
 
-fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")

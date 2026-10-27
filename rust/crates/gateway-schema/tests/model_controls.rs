@@ -1,8 +1,10 @@
 //! Model/effort controls and pinned Bun ordering evidence; not a host Intl or runtime substitute.
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_control,
-    source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
+use gateway_core::source_control;
 use gateway_schema::{
     aliases::SourceStringCollator,
     catalog::{CatalogInput, request_model_metadata, validate_model_available},

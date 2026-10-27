@@ -3,10 +3,10 @@ pub mod backfill;
 pub mod source_records;
 pub mod source_usage;
 use gateway_authority_contracts::{invalid, nonnegative, positive};
-use gateway_core::{identity::ApiKeyId, identity::MicrocreditLimit};
-use gateway_core::{identity::PaidAttemptId, identity::RequestId};
-use gateway_core::{lifecycle::BillingState, lifecycle::DispatchState};
-use gateway_core::{lifecycle::PaidTerminalState, model::ModelId, provider::PaidProvider};
+use gateway_contracts::{identity::ApiKeyId, identity::MicrocreditLimit};
+use gateway_contracts::{identity::PaidAttemptId, identity::RequestId};
+use gateway_contracts::{lifecycle::BillingState, lifecycle::DispatchState};
+use gateway_contracts::{lifecycle::PaidTerminalState, model::ModelId, provider::PaidProvider};
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};
@@ -165,7 +165,7 @@ fn serialize_rollup_spend<S: serde::Serializer>(
     if !value.is_finite() || *value < 0.0 {
         return Err(serde::ser::Error::custom("Invalid source aggregate spend"));
     }
-    if value.fract() == 0.0 && *value <= gateway_core::identity::MAX_SAFE_INTEGER as f64 {
+    if value.fract() == 0.0 && *value <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64 {
         serializer.serialize_i64(*value as i64)
     } else {
         serializer.serialize_f64(*value)

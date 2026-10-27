@@ -9,9 +9,12 @@ use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_authority_routing_selection::types::RouteSelection;
 use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
 use gateway_authority_routing_signal::SignalOperations;
-use gateway_core::{error::GatewayError, source_serialization as source};
-use gateway_core::{lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider};
-use gateway_core::{query::QueryStore, source_json::SourceJson};
+use gateway_contracts::{
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
+};
+use gateway_core::query::QueryStore;
+use gateway_source::source_json::SourceJson;
+use gateway_source::{error::GatewayError, source_serialization as source};
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 

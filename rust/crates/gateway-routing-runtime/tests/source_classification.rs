@@ -1,4 +1,5 @@
-use gateway_core::{model::ModelId, source_json::SourceJson, source_serialization as source};
+use gateway_contracts::model::ModelId;
+use gateway_source::{source_json::SourceJson, source_serialization as source};
 use gateway_routing_runtime::classify;
 
 #[test]

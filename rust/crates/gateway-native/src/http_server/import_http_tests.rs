@@ -27,7 +27,10 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
-use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
+use gateway_contracts::{
+    identity::PoolVersionstamp, identity::PrincipalId, identity::RequestContext,
+    identity::RequestId,
+};
 use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;

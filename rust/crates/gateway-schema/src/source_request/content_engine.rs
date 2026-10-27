@@ -4,7 +4,7 @@ use super::{
     error::SourceRequestError as GatewayError,
     value::{Text, Value, normalized_string},
 };
-use gateway_core::{js_string::JsString16, source_serialization as source};
+use gateway_source::{js_string::JsString16, source_serialization as source};
 fn invalid(message: impl AsRef<str>, param: Option<&str>) -> GatewayError {
     GatewayError::scalar(message.as_ref(), param)
 }

@@ -6,9 +6,10 @@ use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_row, paid_request, paid_setup};
-use gateway_core::value::ValueEncoding;
-use gateway_core::{model::ModelId, provider::CodexQuotaClass};
-use gateway_core::{provider::PaidProvider, source_control};
+use gateway_contracts::provider::PaidProvider;
+use gateway_contracts::{model::ModelId, provider::CodexQuotaClass};
+use gateway_core::source_control;
+use gateway_kv_codec::value::ValueEncoding;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::admin_hash, authority::admitted};
 use gateway_routing_runtime_test_support::{authority::authority, authority::block};
@@ -44,7 +45,7 @@ fn source_model_learning_preserves_raw_catalogs_and_unknown_metadata() {
             &gateway_source::source_json::SourceJson::from_serializable(&result).unwrap()
         )
         .unwrap()
-        .unsupported["a"][&gateway_core::model::ModelId::from_scalar("gpt-test")],
+        .unsupported["a"][&gateway_contracts::model::ModelId::from_scalar("gpt-test")],
         NOW
     );
 }

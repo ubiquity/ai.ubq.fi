@@ -1,12 +1,8 @@
 //! Raw terminal fields share the core source parser; unrelated UTF16 remains untouched.
 use gateway_cache_experiment_records::{model::Reason, model::STEPS, model::Sample, model::Usage};
 use gateway_cache_experiment_runner::io::ReadSample;
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
-    source_usage::{UsageStatus, extract_source_usage_tokens},
-};
+use gateway_contracts::{source_usage::UsageStatus, source_usage::extract_source_usage_tokens};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 pub(super) fn member(value: &SourceJson, name: &str) -> Result<Option<SourceJson>, GatewayError> {
     let mut found = None;
     for (key, value) in value.object_entries()? {

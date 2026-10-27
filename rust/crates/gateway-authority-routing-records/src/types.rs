@@ -1,8 +1,9 @@
 //! Source-shaped serial routing records; parsed rows are observations, never grants.
-use gateway_core::identity::{
-    CredentialVersion, PoolVersionstamp, RoutingAccountHash, SubscriptionSelectionHash,
+use gateway_contracts::provider::CodexQuotaClass;
+use gateway_contracts::{
+    identity::CredentialVersion, identity::PoolVersionstamp, identity::RoutingAccountHash,
+    identity::SubscriptionSelectionHash,
 };
-use gateway_core::provider::CodexQuotaClass;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

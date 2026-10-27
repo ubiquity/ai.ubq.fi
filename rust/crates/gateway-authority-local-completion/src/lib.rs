@@ -8,9 +8,9 @@ use gateway_authority_kernel_protocol::{
     kernel_identity,
 };
 use gateway_authority_keys as keys;
-use gateway_core::{
+use gateway_core::state::AuthorityStore;
+use gateway_local_journal::{
     local_completion::LocalCompletedJournalPlan, local_completion::LocalCompletedJournalState,
-    state::AuthorityStore,
 };
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
@@ -107,7 +107,7 @@ fn kernel_snapshot_matches(
 
 async fn read_kernel_window<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
-    key: &gateway_core::state::RecordKey,
+    key: &gateway_kv_codec::key::RecordKey,
     owner: &str,
     repo: Option<&str>,
 ) -> Result<Option<KernelWindow>, GatewayError> {

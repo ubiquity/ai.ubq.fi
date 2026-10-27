@@ -23,10 +23,15 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
-use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_contracts::{
+    identity::PoolVersionstamp, identity::PrincipalId, identity::RequestContext,
+    identity::RequestId,
 };
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::json;
@@ -411,11 +416,8 @@ impl gateway_core::query::QueryStore for Store {
         &self,
         request: gateway_core::query::QueryRequest,
     ) -> Result<gateway_core::query::QueryPage, GatewayError> {
-        use gateway_core::{
-            query::{QueryEntry, QueryPage},
-            state::RecordKey,
-            tuple_key::TupleKey,
-        };
+        use gateway_core::{query::QueryEntry, query::QueryPage};
+        use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
         let checked = request.validate()?;
         let rows = self.rows.lock().map_err(|_| fail())?;
         let mut matching = Vec::new();

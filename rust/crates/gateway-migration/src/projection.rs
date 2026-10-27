@@ -2,7 +2,9 @@ use crate::{Row, Transform, decode, invalid, starts, unavailable};
 use gateway_authority_api_protocol::{ApiUsageRequest, ApiUsageWindow};
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelReservation, KernelWindow};
 use gateway_authority_paid_records::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate};
-use gateway_core::{error::GatewayError, lifecycle::BillingState, value::PortableValue};
+use gateway_contracts::lifecycle::BillingState;
+use gateway_kv_codec::value::PortableValue;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
@@ -39,11 +41,11 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             return Err(invalid("Catalog chunk view is unsupported"));
         }
         row.record.value = json!(bytes);
-        row.record.value_encoding = gateway_core::value::ValueEncoding::Json;
+        row.record.value_encoding = gateway_kv_codec::value::ValueEncoding::Json;
         row.mapping.transform = Transform::CatalogBytes;
         return Ok(());
     }
-    if row.record.value_encoding != gateway_core::value::ValueEncoding::Json {
+    if row.record.value_encoding != gateway_kv_codec::value::ValueEncoding::Json {
         if quota_family(p) {
             gateway_claude_usage_quota::parse_record(&row.record, 0)?;
             return Ok(());
@@ -73,7 +75,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             ));
         }
     } else if starts(p, &["uos_ai", "codex_active_account"]) {
-        let _: gateway_core::identity::ActiveSelection = decode(&v)?;
+        let _: gateway_contracts::identity::ActiveSelection = decode(&v)?;
     } else if starts(p, &["uos_ai", "codex_account_routing"]) {
         gateway_authority_routing_records::codec::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {

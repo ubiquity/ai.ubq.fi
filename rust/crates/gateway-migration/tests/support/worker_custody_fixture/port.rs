@@ -1,10 +1,11 @@
 //! Fixture-only synchronous port to the existing private authority wire.
 //! The controller forwards requests to the actual common DO, never a local mirror.
-use gateway_core::error::GatewayError;
-use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore};
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_source::error::GatewayError;
+use gateway_core::{
+    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
+use gateway_kv_codec::key::RecordKey;
 use serde::{Deserialize, Serialize};
 use std::{
     cell::Cell,
@@ -320,7 +321,7 @@ impl QueryStore for Store {
 #[cfg(test)]
 mod frame_tests {
     use super::*;
-    use gateway_core::source_json::SourceJson;
+    use gateway_source::source_json::SourceJson;
     use std::io::{BufReader, Cursor};
     fn raw(bytes: &[u8], capacity: usize) -> Result<SourceJson, GatewayError> {
         read_frame(&mut BufReader::with_capacity(capacity, Cursor::new(bytes)))

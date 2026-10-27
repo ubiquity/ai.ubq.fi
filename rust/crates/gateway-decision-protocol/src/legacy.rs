@@ -3,7 +3,7 @@ use crate::{
     catalog::{equals, trim},
     request::RequestError,
 };
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 

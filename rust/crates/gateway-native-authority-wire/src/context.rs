@@ -1,5 +1,5 @@
 //! Ordinary renewal context DATA; no permits or authority.
-use gateway_core::{identity::AccountBinding, model::ModelId};
+use gateway_contracts::{identity::AccountBinding, model::ModelId};
 use serde::Serialize;
 mod codec;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

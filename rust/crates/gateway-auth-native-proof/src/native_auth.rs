@@ -320,7 +320,7 @@ impl<'a, R: NativeNonceAuthority> NativeAuthenticator<'a, R> {
     ) -> Result<AuthenticatedNativeOwner, GatewayError> {
         if headers.version != "1"
             || headers.key_id != self.identity.key_id
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now_ms)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now_ms)
         {
             return Err(unauthorized());
         }

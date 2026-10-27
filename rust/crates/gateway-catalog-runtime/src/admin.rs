@@ -2,13 +2,12 @@
 use crate::{CatalogRuntime, state};
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
 use gateway_catalog_provider::response::AdminCatalogResponse;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{AtomicTransition, CommitOutcome, RecordMutation},
+    query::QueryStore, source_control::encode_source_control_record, state::AtomicTransition,
+    state::CommitOutcome, state::RecordMutation,
 };
 use gateway_schema::{
     catalog::ProviderCatalog,
@@ -462,7 +461,7 @@ mod source_error_tests {
     use super::*;
     #[test]
     fn runtime_error_keeps_opaque_model_units_and_original_status_mapping() {
-        let message = gateway_core::js_string::JsString16::from_units(
+        let message = gateway_source::js_string::JsString16::from_units(
             "runtime config default model is absent from the catalog: "
                 .encode_utf16()
                 .chain([0xd800])

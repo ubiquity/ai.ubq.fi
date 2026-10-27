@@ -2,19 +2,16 @@ use gateway_catalog_provider::{
     host::{CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable},
     providers,
 };
-use gateway_core::{
-    error::GatewayError,
-    model::ModelId,
-    query::QueryStore,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
+use gateway_core::{
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
+};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_cache::{PreparedCatalog, REFRESH_LEASE_MS},
@@ -83,7 +80,7 @@ pub fn parse_full_snapshot(value: &SourceJson) -> Option<ModelSnapshot> {
         || !updated.is_finite()
         || updated.fract() != 0.0
         || updated <= 0.0
-        || updated > gateway_core::identity::MAX_SAFE_INTEGER as f64
+        || updated > gateway_contracts::identity::MAX_SAFE_INTEGER as f64
     {
         return None;
     }
@@ -567,7 +564,7 @@ fn observation_wire(snapshot: &ProviderCatalog) -> Result<ProviderObservationWir
             .models
             .iter()
             .map(|model| {
-                gateway_core::source_serialization::canonical(model)
+                gateway_source::source_serialization::canonical(model)
                     .map(|value| value.as_str().to_owned())
                     .map_err(|_| unavailable("Provider catalog observation could not be encoded"))
             })
@@ -598,7 +595,7 @@ pub(crate) async fn load_provider_observation<S: AuthorityStore>(
         models: wire
             .models
             .iter()
-            .map(|model| gateway_core::source_json::SourceJson::parse(model))
+            .map(|model| gateway_source::source_json::SourceJson::parse(model))
             .collect::<Result<Vec<_>, _>>()
             .unwrap_or_default(),
         updated_at_ms: wire.updated_at_ms,

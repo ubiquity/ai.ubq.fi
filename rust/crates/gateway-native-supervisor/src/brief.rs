@@ -1,7 +1,7 @@
 //! Bounded redacted context only. No provider/network inference capability.
 use crate::rollout::SupervisorLogEvent;
-use gateway_core::redaction::{redact, redact_parts};
 use gateway_native_supervisor_read::inventory::{epoch_ms, text};
+use gateway_redaction::{redaction::redact, redaction::redact_parts};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -216,7 +216,7 @@ pub fn append_rollout_tail(
     let mut dropped = 0;
     for (event, result) in filtered.into_iter().zip(texts) {
         let clipped = bounded(&result.text, if event.kind == "tool" { 400 } else { 1200 });
-        let content = clipped.trim_matches(gateway_core::redaction::source_whitespace);
+        let content = clipped.trim_matches(gateway_redaction::redaction::source_whitespace);
         if content.is_empty() || !known.insert(content.into()) {
             dropped += 1;
             continue;

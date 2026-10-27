@@ -15,8 +15,9 @@ use gateway_authority_routing_records::{codec::normalize, codec::parse_routing_s
 use gateway_authority_routing_records::{types::PoolAccount, types::QuotaBlock};
 use gateway_authority_routing_records::{types::QuotaBlockSource, types::SubscriptionPool};
 use gateway_authority_routing_selection::types::*;
-use gateway_core::{identity::ActiveSelection, identity::ActiveTransitionReason};
-use gateway_core::{identity::PoolVersionstamp, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_contracts::identity::PoolVersionstamp;
+use gateway_contracts::{identity::ActiveSelection, identity::ActiveTransitionReason};
+use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_native_authority_wire::live::NativeLiveAuthorityResponse;
 use gateway_native_authority_wire::live::NativeLiveRetirement;
 use std::collections::BTreeSet;

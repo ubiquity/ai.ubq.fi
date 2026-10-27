@@ -100,10 +100,7 @@ fn bounded_closed_frames_and_global_source_audit_are_not_per_batch_guesses() {
 
 #[test]
 fn moved_complete_audit_retains_expired_typed_metadata_and_rejects_orphan_coupling() {
-    use gateway_core::{
-        tuple_key::{KeyPart, TupleKey},
-        value::PortableValue,
-    };
+    use gateway_kv_codec::{tuple_key::KeyPart, tuple_key::TupleKey, value::PortableValue};
     let source = fixture();
     let mut corrupt = source.clone();
     corrupt.entries.retain(|entry| {
@@ -152,8 +149,8 @@ fn moved_complete_audit_retains_expired_typed_metadata_and_rejects_orphan_coupli
 
 fn add_expired_and_utf16_entries(
     capture: &mut NativeCapture,
-) -> Result<(gateway_core::tuple_key::TupleKey, i64), Box<dyn std::error::Error>> {
-    use gateway_core::tuple_key::{KeyPart, TupleKey};
+) -> Result<(gateway_kv_codec::tuple_key::TupleKey, i64), Box<dyn std::error::Error>> {
+    use gateway_kv_codec::tuple_key::{KeyPart, TupleKey};
     let expired_key = TupleKey::from_parts(&[
         KeyPart::String("default".into()),
         KeyPart::String("expired-native-replay".into()),
@@ -176,9 +173,9 @@ fn add_expired_and_utf16_entries(
         .sort_bytes()
         .to_vec(),
         value: NativeValue::SourceGraphV1(graph_transport::to_source_graph(
-            &gateway_core::source_graph::SourceGraph {
-                root: gateway_core::source_graph::GraphAtom::String(
-                    gateway_core::js_string::JsString16::from_units(vec![0xd800, 0, 0xdc00]),
+            &gateway_source_graph::graph::SourceGraph {
+                root: gateway_source_graph::graph::GraphAtom::String(
+                    gateway_source::js_string::JsString16::from_units(vec![0xd800, 0, 0xdc00]),
                 ),
                 nodes: vec![],
             },
@@ -191,14 +188,14 @@ fn add_expired_and_utf16_entries(
 #[test]
 fn sealed_file_inventory_matches_slice_audit_and_rejects_truncated_native_document()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_core::{tuple_key::TupleKey, value::PortableValue};
+    use gateway_kv_codec::{tuple_key::TupleKey, value::PortableValue};
     struct Host;
     impl NativeCustody for Host {
         async fn observe(
             &self,
             _: &str,
-        ) -> Result<OwnedNativeSnapshot, gateway_core::error::GatewayError> {
-            Err(gateway_core::error::GatewayError::unavailable(
+        ) -> Result<OwnedNativeSnapshot, gateway_source::error::GatewayError> {
+            Err(gateway_source::error::GatewayError::unavailable(
                 "Unexpected custody request",
                 "fixture",
             ))
@@ -318,8 +315,8 @@ fn sealed_native_frame_emitter_refuses_spool_and_sink_faults()
         async fn observe(
             &self,
             _: &str,
-        ) -> Result<OwnedNativeSnapshot, gateway_core::error::GatewayError> {
-            Err(gateway_core::error::GatewayError::unavailable(
+        ) -> Result<OwnedNativeSnapshot, gateway_source::error::GatewayError> {
+            Err(gateway_source::error::GatewayError::unavailable(
                 "Unexpected custody request",
                 "fixture",
             ))

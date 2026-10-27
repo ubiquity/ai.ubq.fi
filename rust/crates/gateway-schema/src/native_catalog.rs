@@ -1,6 +1,7 @@
 //! Rich exact-client-version Codex catalog. Never substitute the official model-list envelope.
 use crate::{catalog::*, metadata::*, model_control as c, provider_catalog::*};
-use gateway_core::{js_string::JsString16, model::ModelId, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::model::ModelId;
 fn description(effort: &JsString16) -> JsString16 {
     if c::matches(effort, "none") {
         "No reasoning".into()

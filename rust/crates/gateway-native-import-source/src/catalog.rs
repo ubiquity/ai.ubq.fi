@@ -53,7 +53,7 @@ pub fn selected_version(version: Option<&JsString16>) -> String {
                     digits.is_empty()
                         || (digits.len() <= 16
                             && digits.parse::<u64>().is_ok_and(|n| {
-                                n <= gateway_core::identity::MAX_SAFE_INTEGER as u64
+                                n <= gateway_contracts::identity::MAX_SAFE_INTEGER as u64
                             }))
                 }
             })

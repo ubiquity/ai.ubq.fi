@@ -1,4 +1,4 @@
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_native_authority_wire::context::NativeRenewalContext;
 use gateway_native_authority_wire::{
     renewal::{NativeRenewalFence, NativeRenewalMode},

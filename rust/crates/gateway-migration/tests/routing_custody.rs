@@ -1,10 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
+use gateway_source::error::GatewayError;
 use gateway_core::{
-    error::GatewayError,
-    query::*,
-    state::*,
-    tuple_key::{DecodedKeyPart, TupleKey},
-    value::PortableValue,
+    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
+};
+use gateway_kv_codec::{
+    key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue,
 };
 use gateway_migration::{
     capture::{PrivateCapture, SourceEntry},

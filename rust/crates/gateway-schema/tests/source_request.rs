@@ -1,5 +1,5 @@
 //! Source string controls: these remain data until the separately owned runtime cutover.
-use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use gateway_schema::source_request::{
     self, SourceField, SourceModelRequest, SourceRequestDocument,
 };

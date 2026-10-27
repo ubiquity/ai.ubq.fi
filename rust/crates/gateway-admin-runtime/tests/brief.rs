@@ -1,5 +1,5 @@
 use gateway_admin_runtime::{brief::*, capabilities::SupervisorBriefTarget};
-use gateway_core::redaction::{redact, redact_parts};
+use gateway_redaction::redaction::{redact, redact_parts};
 use serde_json::{Value, json};
 fn golden() -> Value {
     serde_json::from_str(include_str!("fixtures/supervisor-portable-golden.json")).unwrap()

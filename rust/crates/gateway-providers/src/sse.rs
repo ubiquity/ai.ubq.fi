@@ -4,7 +4,8 @@ use crate::{
     types::{ChatProfile, ClientSurface, DecodePlan, ProviderEvent, ResponseDecode, malformed},
     writer::ResponseWriter,
 };
-use gateway_core::{error::GatewayError, provider::UpstreamProvider};
+use gateway_source::error::GatewayError;
+use gateway_contracts::provider::UpstreamProvider;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 pub const MAX_RESPONSES_EVENT_BYTES: usize = 16 * 1024 * 1024;
@@ -542,7 +543,7 @@ impl StreamDecoder {
                 );
                 self.terminal = true;
                 if self.writer.terminal
-                    == Some(gateway_core::lifecycle::SemanticTerminal::Completed)
+                    == Some(gateway_contracts::lifecycle::SemanticTerminal::Completed)
                 {
                     self.native_replay = Some(
                         json!({"role":"assistant","content":self.native.values().map(|b|b.native.clone()).collect::<Vec<_>>() }),

@@ -19,7 +19,7 @@ pub struct SupervisorLogEvent {
 pub fn parse_rollout_tail(input: &str) -> Vec<SupervisorLogEvent> {
     let mut events = std::collections::VecDeque::new();
     for line in input.lines() {
-        let line = line.trim_matches(gateway_core::redaction::source_whitespace);
+        let line = line.trim_matches(gateway_redaction::redaction::source_whitespace);
         let Ok(record) = serde_json::from_str::<Value>(line) else {
             continue;
         };

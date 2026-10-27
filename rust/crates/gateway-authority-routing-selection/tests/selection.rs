@@ -9,10 +9,10 @@ use gateway_authority_routing_selection::{
     SelectionOperations,
     types::{LiveRouteSelection, RouteSelection},
 };
-use gateway_core::{
+use gateway_contracts::{
     identity::ActiveTransitionReason, identity::CredentialVersion, model::ModelId,
-    source_control::encode_source_control_record, state::RecordMutation,
 };
+use gateway_core::{source_control::encode_source_control_record, state::RecordMutation};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde_json::json;
 use std::sync::atomic::Ordering;
@@ -93,7 +93,7 @@ fn applicable_quota_advances_once_and_other_classes_keep_global_stickiness() -> 
     );
     let RouteSelection::Eligible(reserve) = ready(fixture.select_account(
         &ModelId::from("gpt-reserve"),
-        gateway_core::provider::CodexQuotaClass::Reserve,
+        gateway_contracts::provider::CodexQuotaClass::Reserve,
         NOW,
     ))?
     else {

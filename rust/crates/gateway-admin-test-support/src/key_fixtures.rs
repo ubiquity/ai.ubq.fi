@@ -9,13 +9,9 @@ use gateway_auth::{
     crypto::Secret,
     types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse, AuthResponseBody},
 };
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};

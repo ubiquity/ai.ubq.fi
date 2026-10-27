@@ -1,5 +1,5 @@
 //! One source ordinary outcome is visible before real selected-account capability lookup.
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use gateway_providers::types::{

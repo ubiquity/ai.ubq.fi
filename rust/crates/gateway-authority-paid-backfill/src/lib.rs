@@ -5,8 +5,9 @@ use gateway_authority_contracts::{TokenSource, invalid, validate_time};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidAttempt, backfill as values};
 use gateway_core::{query::QueryPage, query::QueryRequest};
-use gateway_core::{query::QuerySelector, query::QueryStore, state::RecordKey};
-use gateway_core::{tuple_key::DecodedKeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_core::{query::QuerySelector, query::QueryStore};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -206,10 +207,10 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
         if !may_fold {
             return Ok(RequestStep::Budget);
         }
-        let model = gateway_core::model::ModelId::from_source(
+        let model = gateway_contracts::model::ModelId::from_source(
             gateway_schema::reasoning::js_trim_source(row.model.as_js_string()),
         );
-        let eligible = row.billing_state == gateway_core::lifecycle::BillingState::Settled
+        let eligible = row.billing_state == gateway_contracts::lifecycle::BillingState::Settled
             && row.provider_quota.is_some()
             && row.spend_microcredits.is_some()
             && !model.as_js_string().as_units().is_empty();
@@ -231,8 +232,8 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
         if eligible {
             let bucket = row.reservation.created_at_ms / 3_600_000 * 3_600_000;
             let provider = match row.reservation.provider {
-                gateway_core::provider::PaidProvider::Surplus => "surplus",
-                gateway_core::provider::PaidProvider::Metered => "metered",
+                gateway_contracts::provider::PaidProvider::Surplus => "surplus",
+                gateway_contracts::provider::PaidProvider::Metered => "metered",
             };
             let rollup_key = keys::paid_rollup_model(
                 bucket,

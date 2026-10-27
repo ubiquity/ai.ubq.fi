@@ -1,7 +1,7 @@
 //! Pure class fallback operations on source-shaped routing rows.
 use crate::codec::CLASSES;
 use crate::types::{QuotaBlock, QuotaBlockSource, RoutingSlot};
-use gateway_core::provider::CodexQuotaClass;
+use gateway_contracts::provider::CodexQuotaClass;
 use std::collections::BTreeMap;
 
 impl RoutingSlot {

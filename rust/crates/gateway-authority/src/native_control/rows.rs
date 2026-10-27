@@ -1,4 +1,4 @@
-use gateway_core::{state::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};

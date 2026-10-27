@@ -1,6 +1,7 @@
-use gateway_core::{
-    js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::model::ModelId;
 
 pub const MODELS_URL: &str =
     "https://openrouter.ai/api/v1/models?output_modalities=text%2Cdecisions";

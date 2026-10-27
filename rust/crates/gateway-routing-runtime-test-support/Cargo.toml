@@ -12,6 +12,9 @@ gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
 gateway-wait-observation.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true

@@ -2,13 +2,11 @@ use crate::{
     Row, Transform, capture::PrivateCapture, digest, error::MigrationError, invalid, json, key,
 };
 use gateway_admin_data::inventory::SliceInventory;
-use gateway_core::error::GatewayError;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::RecordKey;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
-use gateway_core::tuple_key::TupleKey;
 use gateway_profile_values::date::SourceDateHost;
 use serde::Deserialize;
 use serde::Serialize;

@@ -1,9 +1,9 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 mod source_input;
-use gateway_core::{
-    js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
-    source_serialization as source,
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
 use gateway_providers::types::ClientSurface;
 use gateway_routing_runtime::{
     policy::{self, RouteHop},

@@ -5,10 +5,10 @@ use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, Kerne
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::source_records::decode_paid_attempt_record;
 use gateway_authority_paid_records::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate};
-use gateway_core::error::GatewayError;
-use gateway_core::state::RecordKey;
+use gateway_contracts::{identity::ApiKeyId, lifecycle::BillingState};
 use gateway_core::state::StoredRecord;
-use gateway_core::{identity::ApiKeyId, lifecycle::BillingState};
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use serde_json::json;
 use std::{
@@ -135,7 +135,9 @@ fn derive_basics<'a>(
             .collect();
         let normalized = gateway_authority_routing_records::types::SubscriptionPool {
             v: 1,
-            pool_versionstamp: gateway_core::identity::PoolVersionstamp(source.revision.clone()),
+            pool_versionstamp: gateway_contracts::identity::PoolVersionstamp(
+                source.revision.clone(),
+            ),
             accounts,
         };
         derived.push((

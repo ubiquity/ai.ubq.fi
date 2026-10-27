@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-kv-codec.workspace = true
 gateway-source.workspace = true
 gateway-authority = { path = "../gateway-authority" }
 gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }

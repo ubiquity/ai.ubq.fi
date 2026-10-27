@@ -1,7 +1,6 @@
 //! Runtime-facing Claude native replay publication and PrepareOptions restoration.
-use gateway_core::model::ModelId;
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::source_json::SourceJson;
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
+use gateway_source::source_json::SourceJson;
 use gateway_providers::{
     anthropic, replay,
     source_request::prepare_source_request,

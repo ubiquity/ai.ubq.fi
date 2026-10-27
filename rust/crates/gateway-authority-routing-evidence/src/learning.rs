@@ -1,6 +1,6 @@
 //! Adapt the one raw source account-model record; never persist normalized hash-keyed hints there.
 use gateway_authority_contracts::invalid;
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_schema::selection::AccountModelsStore;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_source::{source_json::SourceJson, source_serialization as source};

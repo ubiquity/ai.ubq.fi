@@ -12,8 +12,9 @@ use gateway_authority_reset_records::full_pool::SourceResetInventory;
 use gateway_authority_reset_records::{ResetConfig, ResetMode, full_pool::CreditCandidateData};
 use gateway_authority_reset_records::{full_pool::SourceCreditCollation, full_pool::selection};
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::identity::RequestContext;
-use gateway_core::{state::AuthorityStore, value::ValueEncoding};
+use gateway_contracts::identity::RequestContext;
+use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::value::ValueEncoding;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use types::{AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, FullPoolResetPlan};
@@ -33,14 +34,14 @@ fn reason(error: GatewayError) -> String {
         .code
         .unwrap_or_else(|| "configuration_unavailable".into())
 }
-fn marker_key() -> gateway_core::state::RecordKey {
+fn marker_key() -> gateway_kv_codec::key::RecordKey {
     gateway_auth::store::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"
     ]))
 }
-fn legacy_key() -> gateway_core::state::RecordKey {
+fn legacy_key() -> gateway_kv_codec::key::RecordKey {
     gateway_auth::store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
 }
 fn opt_out(value: Option<&Value>) -> bool {

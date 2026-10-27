@@ -5,15 +5,15 @@ use gateway_admin_contracts::{fields, source_input as body};
 use gateway_auth::types::invalid;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelWindow};
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{RecordKey, RecordMutation, StoredRecord},
-    tuple_key::{DecodedKeyPart, TupleKey},
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_profile_values::coercion::js_number;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 

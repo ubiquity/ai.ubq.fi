@@ -9,7 +9,7 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
     NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_publication::wire::PublicationDisposition;
 use gateway_publication_policy::protocol::{
     OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest, decode_response_error, invalid,

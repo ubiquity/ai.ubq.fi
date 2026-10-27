@@ -10,11 +10,13 @@ use gateway_authority_paid_records::{PaidAdmission, PaidRequest, PaidReservation
 use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
-use gateway_core::{error::GatewayError, model::ModelId, provider::UpstreamProvider::ChatgptCodex};
-use gateway_core::{identity::PaidAttemptId, provider::UpstreamProvider, query::QueryStore};
-use gateway_core::{provider::PaidProvider, provider::UpstreamProvider::ClaudeCode};
+use gateway_contracts::{identity::PaidAttemptId, provider::UpstreamProvider};
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider::ChatgptCodex};
+use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider::ClaudeCode};
+use gateway_core::query::QueryStore;
 use gateway_providers::types::ClientSurface;
 use gateway_schema::source_request::error::SourceRequestError;
+use gateway_source::error::GatewayError;
 
 type SelectedHop = (
     UpstreamProvider,
@@ -280,7 +282,7 @@ impl<
                     let mut units = "The model '".encode_utf16().collect::<Vec<_>>();
                     units.extend_from_slice(model.as_js_string().as_units());
                     units.extend("' is not available for these subscriptions.".encode_utf16());
-                    gateway_core::js_string::JsString16::from_units(units)
+                    gateway_source::js_string::JsString16::from_units(units)
                 });
                 return Err(SourceRequestError::new(
                     404,

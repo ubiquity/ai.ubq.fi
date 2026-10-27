@@ -1,9 +1,11 @@
 //! Native replay metadata only. The fixed marker and key prevent this adapter
 //! from adopting a gateway KV, credential database or arbitrary record writer.
 use gateway_auth_native_protocol::native_replay::native_nonce_key;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::{fs, io::Read, os::unix::fs::OpenOptionsExt, path::Path, sync::Mutex, time::Duration};

@@ -1,5 +1,5 @@
 //! Selected HTTP failure DATA and Responses encoding; no capture or transport authority.
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

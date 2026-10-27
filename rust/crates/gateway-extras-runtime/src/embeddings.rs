@@ -4,10 +4,9 @@ use crate::{
     idempotency::{self, Acquired, Lease},
 };
 use chrono::{DateTime, Utc};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, lifecycle::SemanticTerminal, query::QueryStore,
-    source_json::SourceJson,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_contracts::lifecycle::SemanticTerminal;
+use gateway_core::query::QueryStore;
 use gateway_extras_contract::errors::{cancelled, invalid, server};
 use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider,

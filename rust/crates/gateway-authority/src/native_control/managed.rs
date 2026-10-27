@@ -21,9 +21,10 @@ use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_core::{
-    identity::PoolVersionstamp, state::AtomicTransition, state::AuthorityStore,
-    state::CommitOutcome, state::RecordMutation, state::StoredRecord,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
 };
 use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_source::error::GatewayError;

@@ -1,8 +1,8 @@
 //! Source key families encoded by the single shared tuple codec; no JSON identity fallback.
-use gateway_core::state::RecordKey;
-use gateway_core::tuple_key::{
-    ScalarKeyPart::{self, Number, String as Text},
-    TupleKey,
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::{
+    tuple_key::ScalarKeyPart, tuple_key::ScalarKeyPart::Number,
+    tuple_key::ScalarKeyPart::String as Text, tuple_key::TupleKey,
 };
 use gateway_source::error::GatewayError;
 
@@ -141,7 +141,7 @@ fn kernel_source_key(
     owner: &gateway_source::js_string::JsString16,
     repo: Option<&gateway_source::js_string::JsString16>,
 ) -> Result<RecordKey, GatewayError> {
-    use gateway_core::tuple_key::KeyPart;
+    use gateway_kv_codec::tuple_key::KeyPart;
     let mut parts = vec![
         KeyPart::String("uos_ai".into()),
         KeyPart::String("kernel_quota".into()),
@@ -252,10 +252,10 @@ pub fn paid_control_config() -> RecordKey {
         Text("paid_control_config"),
     ])
 }
-pub fn paid_control_observation(provider: gateway_core::provider::PaidProvider) -> RecordKey {
+pub fn paid_control_observation(provider: gateway_contracts::provider::PaidProvider) -> RecordKey {
     let provider = match provider {
-        gateway_core::provider::PaidProvider::Surplus => "surplus",
-        gateway_core::provider::PaidProvider::Metered => "openlux",
+        gateway_contracts::provider::PaidProvider::Surplus => "surplus",
+        gateway_contracts::provider::PaidProvider::Metered => "openlux",
     };
     key(&[
         Text("uos_ai"),
@@ -337,7 +337,7 @@ pub fn paid_rollup(bucket: i64, model: &str, provider: &str, shard: u8) -> Recor
 /// share the existing TextEncoder key bytes; callers retain each logical label.
 pub fn paid_rollup_model(
     bucket: i64,
-    model: &gateway_core::model::ModelId,
+    model: &gateway_contracts::model::ModelId,
     provider: &str,
     shard: u8,
 ) -> RecordKey {
@@ -354,11 +354,11 @@ pub fn paid_rollup_model(
 /// Callers retain the source value predicate and bucket/shard guards.
 pub fn paid_rollup_source(
     bucket: f64,
-    model: &gateway_core::model::ModelId,
+    model: &gateway_contracts::model::ModelId,
     provider: &gateway_source::js_string::JsString16,
     shard: f64,
 ) -> Result<RecordKey, GatewayError> {
-    use gateway_core::tuple_key::KeyPart;
+    use gateway_kv_codec::tuple_key::KeyPart;
     Ok(TupleKey::from_parts(&[
         KeyPart::String("uos_ai".into()),
         KeyPart::String("paid_fallback".into()),

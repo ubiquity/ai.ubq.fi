@@ -42,7 +42,7 @@ impl<'a> NativeControlContext<'a> {
             .duration_since(UNIX_EPOCH)
             .ok()
             .and_then(|duration| i64::try_from(duration.as_millis()).ok())
-            .filter(|value| *value <= gateway_core::identity::MAX_SAFE_INTEGER)
+            .filter(|value| *value <= gateway_contracts::identity::MAX_SAFE_INTEGER)
             .ok_or_else(|| {
                 GatewayError::unavailable(
                     "Native control clock is unavailable",

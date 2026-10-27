@@ -156,7 +156,7 @@ impl<'a, R: NativeNonceAuthority> NativeLiveAuthenticator<'a, R> {
     ) -> Result<AuthenticatedNativeLive, GatewayError> {
         if headers.version != NATIVE_WIRE_VERSION.to_string()
             || headers.key_id != self.identity.key_id()
-            || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now_ms)
+            || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now_ms)
         {
             return Err(invalid());
         }

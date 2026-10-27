@@ -1,5 +1,5 @@
 use crate::types::{ExtrasRoute, ImageKind};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 pub fn route(path: &str, method: &str) -> Result<Option<ExtrasRoute>, GatewayError> {
     let route = match path {

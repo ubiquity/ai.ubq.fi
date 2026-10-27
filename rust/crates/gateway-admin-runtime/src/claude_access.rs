@@ -5,14 +5,15 @@ use gateway_auth::{
     store::{check, commit},
     types::{AuthHost, conflict, invalid},
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{AuthorityStore, RecordKey, RevisionCheck, StoredRecord},
 };
+use gateway_core::{
+    source_control::{decode_source_control_record, encode_source_control_record},
+    state::{AuthorityStore, RevisionCheck, StoredRecord},
+};
+use gateway_kv_codec::key::RecordKey;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{cmp::Ordering, collections::BTreeSet};
@@ -118,7 +119,7 @@ pub fn parse_source_policy(
             n.is_finite()
                 && n.fract() == 0.0
                 && *n > 0.0
-                && *n <= gateway_core::identity::MAX_SAFE_INTEGER as f64
+                && *n <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
         })
         .ok_or_else(malformed)? as i64;
     let ids = source::member(value, "allowed_key_ids")
@@ -182,7 +183,7 @@ pub async fn load_policy<S: AuthorityStore, H: AuthHost>(
             });
         }
         let now = host.now_ms();
-        if !(1..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now) {
+        if !(1..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&now) {
             return Err(invalid("Claude policy clock is invalid"));
         }
         let policy = ClaudeAccessPolicy {

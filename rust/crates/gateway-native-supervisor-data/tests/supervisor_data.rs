@@ -1,7 +1,7 @@
-use gateway_core::redaction;
 use gateway_native_supervisor::{rollout as supervisor_rollout, supervisor::SourceId};
 use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
 use gateway_native_supervisor_read::metadata as supervisor_metadata;
+use gateway_redaction::redaction;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::{

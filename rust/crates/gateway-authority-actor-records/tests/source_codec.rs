@@ -1,5 +1,5 @@
 use gateway_authority_actor_records::{context, source::StoredNativeActorV2, versions};
-use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;

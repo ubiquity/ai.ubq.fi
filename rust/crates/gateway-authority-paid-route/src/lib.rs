@@ -1,5 +1,5 @@
 //! Checked paid receipt mint, original binding and current-source validation.
-use gateway_core::identity::RequestContext;
+use gateway_contracts::identity::RequestContext;
 pub mod authorization;
 mod backend;
 use backend::ReadTransaction;
@@ -23,7 +23,7 @@ pub struct PaidRoutingReceipt {
     request: PaidRequest,
     context: PaidRequestContext,
     checks: Vec<RevisionCheck>,
-    original_request: Option<gateway_core::identity::RequestContext>,
+    original_request: Option<gateway_contracts::identity::RequestContext>,
     existing_paid: Option<gateway_authority_paid_records::PaidReservation>,
     owner_id: String,
     owner_epoch: String,
@@ -246,7 +246,7 @@ async fn route_current<S: AuthorityStore>(
 async fn require_original<S: AuthorityStore>(
     tx: &mut ReadTransaction<'_, S>,
     request: &PaidRequest,
-    original: &gateway_core::identity::RequestContext,
+    original: &gateway_contracts::identity::RequestContext,
     existing: Option<&PaidReservation>,
 ) -> Result<(), GatewayError> {
     let now = tx.now;

@@ -21,7 +21,7 @@ fn counter(value: &SourceJson) -> Option<i64> {
         .filter(|n| {
             n.is_finite()
                 && n.fract() == 0.0
-                && (0.0..=gateway_core::identity::MAX_SAFE_INTEGER as f64).contains(n)
+                && (0.0..=gateway_contracts::identity::MAX_SAFE_INTEGER as f64).contains(n)
         })
         .map(|n| n as i64)
 }
@@ -175,7 +175,8 @@ impl RequestHost {
                 let parsed = worker::js_sys::Date::parse(&text);
                 if !parsed.is_finite()
                     || parsed.fract() != 0.0
-                    || !(0.0..=gateway_core::identity::MAX_SAFE_INTEGER as f64).contains(&parsed)
+                    || !(0.0..=gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
+                        .contains(&parsed)
                 {
                     return Ok(None);
                 }

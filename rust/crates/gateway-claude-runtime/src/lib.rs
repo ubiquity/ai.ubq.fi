@@ -7,7 +7,7 @@ pub mod quota;
 pub mod response;
 mod workspace;
 
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 pub(crate) fn unavailable(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "claude_code_upstream_unreachable")
 }

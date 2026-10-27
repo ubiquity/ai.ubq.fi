@@ -7,12 +7,12 @@ use gateway_auth::provider_credentials::{
     CodexSourceAccount, CodexSourcePool, ManagedNativeSource, codex_source_pool_key,
     parse_codex_source_pool, read_codex_source_pool,
 };
-use gateway_core::error::GatewayError;
-use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
-use gateway_core::tuple_key::TupleKey;
+use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration::native_capture::{NativeCapture, NativeValue};
 use gateway_migration::native_custody::{
     NativeCustody, OwnedNativeSnapshot, export_native_rollback_with_custody,

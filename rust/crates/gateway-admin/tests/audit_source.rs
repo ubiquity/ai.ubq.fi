@@ -1,13 +1,11 @@
 use gateway_admin::reads;
 use gateway_admin_contracts::audit::{self, KeyChange, SourceChangeInput};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
-    source_json::SourceJson,
     state::{RecordMutation, StoredRecord},
-    value::ValueEncoding,
 };
+use gateway_kv_codec::value::ValueEncoding;
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,
@@ -61,7 +59,7 @@ struct Rows(Vec<QueryEntry>);
 impl gateway_core::state::AuthorityStore for Rows {
     async fn read(
         &self,
-        key: &gateway_core::state::RecordKey,
+        key: &gateway_kv_codec::key::RecordKey,
     ) -> Result<Option<StoredRecord>, GatewayError> {
         Ok(self
             .0
@@ -155,7 +153,7 @@ fn source_audit_utf16_caps_persist_and_read_lone_surrogates_without_replacement(
                 "uos_ai",
                 "api_keys",
                 "change",
-                gateway_core::identity::MAX_SAFE_INTEGER - NOW,
+                gateway_contracts::identity::MAX_SAFE_INTEGER - NOW,
                 ID
             ]))
         );

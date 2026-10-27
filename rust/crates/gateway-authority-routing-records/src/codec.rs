@@ -6,7 +6,7 @@ use crate::{
         SubscriptionPool,
     },
 };
-use gateway_core::{
+use gateway_contracts::{
     identity::CredentialVersion, identity::MAX_SAFE_INTEGER, identity::RoutingAccountHash,
     provider::CodexQuotaClass,
 };

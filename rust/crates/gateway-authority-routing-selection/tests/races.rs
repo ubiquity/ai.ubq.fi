@@ -3,13 +3,12 @@ use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_authority_contracts::invalid;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
+use gateway_contracts::{model::ModelId, provider::CodexQuotaClass};
 use gateway_core::{
-    model::ModelId,
-    provider::CodexQuotaClass,
-    state::{
-        AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
-    },
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use support::{CLASS, Fixture, NOW, TestResult, block, lease, ready};

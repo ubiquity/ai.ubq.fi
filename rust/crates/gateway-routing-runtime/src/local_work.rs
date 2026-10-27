@@ -10,14 +10,18 @@ use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal};
 use gateway_authority_keys as keys;
-use gateway_core::{error::GatewayError, local_work::SOURCE_REQUEST_BINDING_DOMAIN};
-use gateway_core::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
-use gateway_core::{lifecycle::TransportObservation, local_work::LocalSemanticOutcome};
-use gateway_core::{local_work::LocalTerminalObservation, local_work::LocalWorkKind};
-use gateway_core::{local_work::LocalWorkPhase, local_work::LocalWorkRecord};
-use gateway_core::{local_work::SOURCE_REQUEST_BINDING_VERSION, query::QueryStore};
-use gateway_core::{source_json::SourceJson, state::AuthorityStore, state::StoredRecord};
+use gateway_contracts::lifecycle::TransportObservation;
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
+use gateway_core::query::QueryStore;
+use gateway_core::{state::AuthorityStore, state::StoredRecord};
+use gateway_local_journal::local_work::LocalSemanticOutcome;
+use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_DOMAIN;
+use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_VERSION;
+use gateway_local_journal::{local_work::LocalTerminalObservation, local_work::LocalWorkKind};
+use gateway_local_journal::{local_work::LocalWorkPhase, local_work::LocalWorkRecord};
 use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 
 pub mod completion;
 mod coordination;
@@ -95,7 +99,7 @@ pub const KERNEL_RENEWAL_INTERVAL_MS: i64 = 60_000;
 
 /// Binding v2 deliberately does not change any legacy ordinary v1 digest.
 pub fn original_source_digest(original: &SourceJson) -> Result<String, GatewayError> {
-    let canonical = gateway_core::source_serialization::canonical(original)?;
+    let canonical = gateway_source::source_serialization::canonical(original)?;
     let mut bytes = SOURCE_REQUEST_BINDING_DOMAIN.to_vec();
     bytes.extend_from_slice(canonical.as_bytes());
     Ok(sha256_hex(&bytes))
@@ -211,7 +215,7 @@ impl<
                     semantic: LocalSemanticOutcome::Incomplete,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::OriginalBinding {
                     context,
@@ -250,7 +254,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&handle)),
             )
@@ -482,7 +486,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&self)),
             )
@@ -509,7 +513,7 @@ impl<
                     semantic: LocalSemanticOutcome::Cancelled,
                     reader_termination: None,
                     body: None,
-                    delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+                    delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
                 },
                 Some(completion::binding(&self)),
             )
@@ -598,7 +602,7 @@ impl<
             semantic: LocalSemanticOutcome::Incomplete,
             reader_termination: None,
             body: None,
-            delivery: gateway_core::lifecycle::DeliveryOutcome::Unobserved,
+            delivery: gateway_contracts::lifecycle::DeliveryOutcome::Unobserved,
         };
         journal::change(
             &original.store,

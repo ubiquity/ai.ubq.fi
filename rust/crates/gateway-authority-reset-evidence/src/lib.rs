@@ -11,7 +11,7 @@ use gateway_authority_reset_records::full_pool::policy;
 use gateway_authority_reset_records::reset_invocation;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
+use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
 use gateway_core::{state::AuthorityStore, state::RevisionCheck};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
@@ -25,7 +25,7 @@ fn invalid() -> GatewayError {
 fn declined(reason: &str) -> GatewayError {
     GatewayError::unavailable("Automatic banked reset is not authorized.", reason)
 }
-fn marker_key() -> gateway_core::state::RecordKey {
+fn marker_key() -> gateway_kv_codec::key::RecordKey {
     gateway_auth::store::key(json!([
         "uos_ai",
         "migrations",
@@ -68,7 +68,7 @@ async fn validate_cohort<S: AuthorityStore>(
 struct RoutingView {
     pool: gateway_authority_routing_records::types::SubscriptionPool,
     state: gateway_authority_routing_records::types::RoutingState,
-    active: Option<gateway_core::identity::ActiveSelection>,
+    active: Option<gateway_contracts::identity::ActiveSelection>,
     models: gateway_authority_routing_evidence::models::ModelAvailability,
     capacity: gateway_authority_routing_evidence::capacity::CapacityStore,
     overage: std::collections::BTreeMap<String, bool>,

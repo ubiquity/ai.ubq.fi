@@ -1,7 +1,7 @@
 //! Source-compatible FoundationDB tuple bytes, shared by every portable storage operation.
 //! Matches patched @deno/kv 0.14.0 and src/storage/key-compatibility.ts.
 
-use crate::state::RecordKey;
+use crate::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 
@@ -339,7 +339,7 @@ fn walk_source_bytes(
     Ok(())
 }
 
-pub(crate) fn encode_hex(bytes: &[u8]) -> String {
+pub fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -349,7 +349,7 @@ pub(crate) fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 
-pub(crate) fn decode_hex(encoded: &str) -> Result<Vec<u8>, ()> {
+pub fn decode_hex(encoded: &str) -> Result<Vec<u8>, ()> {
     fn digit(byte: u8) -> Result<u8, ()> {
         match byte {
             b'0'..=b'9' => Ok(byte - b'0'),

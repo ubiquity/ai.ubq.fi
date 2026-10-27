@@ -28,8 +28,9 @@ use gateway_authority_reset_recovery::ResetRecoveryOperations;
 use gateway_authority_reset_spend::ResetSpendOperations;
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
-use gateway_core::{error::GatewayError, identity::AccountBinding, identity::RequestContext};
+use gateway_contracts::{identity::AccountBinding, identity::RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;
+use gateway_source::error::GatewayError;
 use gateway_worker_storage::store::now_ms;
 use std::cell::RefCell;
 use worker::Method;
@@ -112,7 +113,7 @@ pub async fn recover_full_pool(
     config: &AuthConfig,
     request: &RequestContext,
     proof: &CohortProof,
-    model: &gateway_core::model::ModelId,
+    model: &gateway_contracts::model::ModelId,
 ) -> Result<CodexRecovery, GatewayError> {
     check_client(store, platform, original, config, request).await?;
     if proof.model() != model {

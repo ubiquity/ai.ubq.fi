@@ -10,6 +10,8 @@ default = []
 native-import-fixture = ["gateway-authority/native-import-fixture"]
 
 [dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 gateway-native-authority-wire.workspace = true
 gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
@@ -69,6 +71,7 @@ path = "src/bin/uos-native.rs"
 landlock = "=0.4.7"
 
 [dev-dependencies]
+gateway-kv-codec.workspace = true
 gateway-native-https-test-support.workspace = true
 gateway-native-import-test-support.workspace = true
 

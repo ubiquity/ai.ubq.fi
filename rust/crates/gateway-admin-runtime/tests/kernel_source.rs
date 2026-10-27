@@ -13,13 +13,14 @@ use gateway_auth::{
 };
 use gateway_authority_kernel::KernelOperations;
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::*,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
+    query::*, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::*,
+};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::*,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -369,7 +370,7 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
     let reservation = run(authority.reserve_kernel(
         "owner",
         "repo",
-        &gateway_core::identity::RequestId("real-reservation".into()),
+        &gateway_contracts::identity::RequestId("real-reservation".into()),
         "responses",
         NOW,
     ))?;
@@ -466,7 +467,7 @@ fn positive_mapless_source_view_is_not_a_writable_or_live_bound_window()
         run(authority.reserve_kernel(
             "owner",
             "repo",
-            &gateway_core::identity::RequestId("unbound".into()),
+            &gateway_contracts::identity::RequestId("unbound".into()),
             "responses",
             NOW
         ))
@@ -640,7 +641,7 @@ fn inherited_active_org_index_is_not_discarded_by_source_repo_policy_creation()
     let reservation = run(authority.reserve_kernel(
         "owner",
         "repo",
-        &gateway_core::identity::RequestId("actual-org-reservation".into()),
+        &gateway_contracts::identity::RequestId("actual-org-reservation".into()),
         "responses",
         NOW,
     ))?;

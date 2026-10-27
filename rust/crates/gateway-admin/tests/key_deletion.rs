@@ -17,13 +17,11 @@ use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -257,7 +255,7 @@ async fn prepare_paid_fixture_custody(
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
     use gateway_authority_keys as keys;
     use gateway_authority_paid_control_records::{self as paid_control, PaidRoutingPolicy};
-    use gateway_core::provider::PaidProvider;
+    use gateway_contracts::provider::PaidProvider;
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
         fixture_owner_statement,
@@ -399,8 +397,8 @@ fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admi
         use gateway_authority_paid_control_records::PaidRequestContext;
         use gateway_authority_paid_records::PaidRequest;
         use gateway_authority_paid_route::authorization::PaidAuthorization;
-        use gateway_core::{
-            identity::{ApiKeyId, PaidAttemptId, RequestId},
+        use gateway_contracts::{
+            identity::ApiKeyId, identity::PaidAttemptId, identity::RequestId,
             provider::PaidProvider,
         };
         let store = Store::default();
@@ -500,9 +498,9 @@ async fn bind_paid_fixture_original(
 ) -> Result<gateway_authority_paid_route::PaidRoutingReceipt, GatewayError> {
     // Controlled authority regression: use the canonical finite original
     // fixture chain, not a route-only receipt or a Worker-runtime claim.
-    let original = gateway_core::identity::RequestContext {
+    let original = gateway_contracts::identity::RequestContext {
         request_id: request.request_id.clone(),
-        principal: gateway_core::identity::PrincipalId("fixture-original-principal".into()),
+        principal: gateway_contracts::identity::PrincipalId("fixture-original-principal".into()),
         key_id: Some(request.key_id.clone()),
         route: request.route.clone(),
         started_at_ms: request.created_at_ms,

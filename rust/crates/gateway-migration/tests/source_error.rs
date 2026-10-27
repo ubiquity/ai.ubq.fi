@@ -1,5 +1,5 @@
 use gateway_admin_data::report::Audit;
-use gateway_core::{error::GatewayError, js_string::JsString16, source_serialization as source};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_serialization as source};
 use gateway_migration::error::MigrationError;
 use std::collections::BTreeMap;
 

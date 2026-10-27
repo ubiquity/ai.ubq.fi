@@ -1,9 +1,8 @@
 use gateway_admin_kernel::kernel_auth;
 use gateway_admin_test_support::{contract_host::Host, runtime_host::run, source_store::Store};
-use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use serde_json::{Value, json};
 use std::cell::Cell;
 

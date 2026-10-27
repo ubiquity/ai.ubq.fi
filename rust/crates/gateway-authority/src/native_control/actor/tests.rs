@@ -5,7 +5,7 @@ mod native_import;
 mod renewal_v2;
 use gateway_auth::crypto::{Secret, sha256_base64url};
 use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestId};
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestId};
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};
 use std::{
     collections::BTreeMap,

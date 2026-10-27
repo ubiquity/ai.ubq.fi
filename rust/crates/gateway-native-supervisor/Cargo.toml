@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-redaction.workspace = true
 gateway-core.workspace = true
 gateway-native-local-transport.workspace = true
 gateway-native-supervisor-read.workspace = true
@@ -17,6 +18,7 @@ serde_json.workspace = true
 time = { version = "=0.3.44", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
+gateway-redaction.workspace = true
 gateway-auth-credentials.workspace = true
 gateway-auth-primitives.workspace = true
 futures-executor = "=0.3.34"

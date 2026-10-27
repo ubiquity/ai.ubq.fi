@@ -6,7 +6,9 @@ use crate::{
     types::ObservabilityHost,
 };
 use gateway_auth::crypto::sha256_hex;
-use gateway_core::{error::GatewayError, query::QueryStore, state::RecordKey};
+use gateway_source::error::GatewayError;
+use gateway_core::query::QueryStore;
+use gateway_kv_codec::key::RecordKey;
 use serde_json::{Value, json};
 
 fn counter_key(

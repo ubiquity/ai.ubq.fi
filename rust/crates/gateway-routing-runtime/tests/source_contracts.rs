@@ -5,10 +5,11 @@ use gateway_authority_paid_control_records::PaidRoutingProjection;
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidSourceCheck};
 use gateway_authority_paid_control_records::{PaidControlConfig, PaidControlOwner};
 use gateway_authority_paid_control_records::{PaidProjectionProvenance, PaidProviderObservation};
-use gateway_core::{js_string::JsString16, lifecycle::BodyOutcome, lifecycle::DeliveryOutcome};
-use gateway_core::{lifecycle::ReaderTermination, lifecycle::SemanticTerminal};
-use gateway_core::{lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider};
-use gateway_core::{source_json::SourceJson, source_serialization as source};
+use gateway_contracts::{lifecycle::BodyOutcome, lifecycle::DeliveryOutcome};
+use gateway_contracts::{lifecycle::ReaderTermination, lifecycle::SemanticTerminal};
+use gateway_contracts::{
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
+};
 use gateway_providers::policy::HopFailure;
 use gateway_routing_runtime::{classify, policy, session::RoutingSession};
 use gateway_routing_runtime::{settlement::recover_pending, types::AttemptFailure};
@@ -17,6 +18,8 @@ use gateway_routing_runtime::{types::PreparedWireRequest, types::RefusalDecision
 use gateway_routing_runtime::{types::RoutingHost, types::RoutingInput, types::RoutingResult};
 use gateway_routing_runtime::{types::SourceRefusalBody, types::TransportState};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
+use gateway_source::js_string::JsString16;
+use gateway_source::{source_json::SourceJson, source_serialization as source};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 
@@ -61,7 +64,8 @@ fn fixture_collator_refuses_unproven_operands_even_when_equal() {
 fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> {
     use gateway_authority_keys as keys;
     use gateway_authority_paid_evidence::paid_projection_source_keys;
-    use gateway_core::{provider::PaidProvider, state::AuthorityStore};
+    use gateway_contracts::provider::PaidProvider;
+    use gateway_core::state::AuthorityStore;
     let mut request = input(id, model, &["surplus", "openlux"]);
     let models = ["paid-model", "deepseek-v4.1-flash"]
         .map(|id| {
@@ -231,7 +235,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
 fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
     use gateway_authority::store::Authority;
     use gateway_authority_keys as keys;
-    use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+    use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 
     run(async {
         let store = Store::new();
@@ -341,7 +345,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
             reservation.attempt_id.0,
             gateway_providers::policy::paid_hop_identity(
                 "synthetic-paid",
-                gateway_core::provider::PaidProvider::Surplus
+                gateway_contracts::provider::PaidProvider::Surplus
             )
         );
         session.before_dispatch(&first).await?;

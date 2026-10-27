@@ -19,6 +19,8 @@ gateway-auth-primitives.workspace = true
 gateway-source.workspace = true
 
 [dev-dependencies]
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

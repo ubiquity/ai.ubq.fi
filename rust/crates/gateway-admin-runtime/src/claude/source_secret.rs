@@ -1,6 +1,6 @@
 //! Claude record data, not a validated token, header or runtime permission.
 use gateway_auth::crypto::Secret;
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
 #[derive(Eq, PartialEq)]
 pub struct ClaudeSourceSecret(JsString16);

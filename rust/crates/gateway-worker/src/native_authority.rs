@@ -17,8 +17,8 @@ use gateway_authority::{
     native_control::receiver::NativeRenewalAuthority,
     native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest, store::Authority,
 };
-use gateway_core::error::GatewayError;
 use gateway_native_authority_wire::renewal_response::NativeRenewalAuthorityResponse as RenewalResponse;
+use gateway_source::error::GatewayError;
 use gateway_worker_http_body::body::request_bytes;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::headers::HeaderLimits;

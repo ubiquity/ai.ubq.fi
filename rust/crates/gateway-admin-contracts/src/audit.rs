@@ -1,11 +1,9 @@
 use gateway_auth::crypto::uuid_from_random;
 use gateway_auth::store;
 use gateway_auth::types::{AuthHost, AuthMethod, AuthPrincipal};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, RecordMutation, StoredRecord};
-use gateway_core::value::PortableValue;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_kv_codec::{key::RecordKey, value::PortableValue};
+use gateway_core::state::{RecordMutation, StoredRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -109,7 +107,7 @@ pub fn event_key(event: &KeyChange) -> RecordKey {
         "uos_ai",
         "api_keys",
         "change",
-        gateway_core::identity::MAX_SAFE_INTEGER - event.at_ms,
+        gateway_contracts::identity::MAX_SAFE_INTEGER - event.at_ms,
         event.id
     ]))
 }

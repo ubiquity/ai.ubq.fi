@@ -1,12 +1,11 @@
 //! Raw adapter for the fixed private route; all publication policy is shared.
 use crate::authority::RemoteAuthorityStore;
 use gateway_auth_native_wire::native_read::NATIVE_MAX_BODY_BYTES;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_publication_policy::protocol::{OwnedNativeAuthHeaders, PublicationRequest};
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_worker_http_body::body::request_bytes;
-use gateway_worker_platform::headers::HeaderLimits;
-use gateway_worker_platform::headers::bounded_headers;
+use gateway_worker_platform::headers::{HeaderLimits, bounded_headers};
 use worker::{Env, Request, Response};
 
 pub async fn handle(

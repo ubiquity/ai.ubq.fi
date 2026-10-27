@@ -35,10 +35,9 @@ mod rollup_source;
 mod source_metadata;
 pub mod staged;
 
-use gateway_core::error::GatewayError;
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, StoredRecord};
-use gateway_core::tuple_key::TupleKey;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_core::state::StoredRecord;
 use gateway_profile_values::coercion::encode_base64;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -114,7 +113,7 @@ fn decode<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, GatewayErr
         .map_err(|_| invalid("Source state does not match its explicit schema"))
 }
 fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
-    use gateway_core::tuple_key::DecodedKeyPart;
+    use gateway_kv_codec::tuple_key::DecodedKeyPart;
     TupleKey::from_record_key(key)?
         .decoded_parts()?
         .into_iter()
@@ -125,7 +124,7 @@ fn parts(key: &RecordKey) -> Result<Vec<Value>, GatewayError> {
             }),
             DecodedKeyPart::Number(v) if v.is_finite() => {
                 let v = if v == 0.0 { 0.0 } else { v };
-                gateway_core::value::PortableValue::number(v)
+                gateway_kv_codec::value::PortableValue::number(v)
                     .to_json_lossless()
                     .ok_or_else(|| invalid("Finite source key number cannot be projected"))
             }

@@ -5,7 +5,7 @@ use gateway_authority_paid_records::{PaidCorrelation, PaidRollup, PaidWindow};
 use gateway_authority_paid_test_support::{NOW, Store, TestResult, decode_json, key, request, run};
 use gateway_authority_paid_test_support::{backfill, rollup_key, window};
 use gateway_authority_paid_test_support::{live_usage, pending_for_live_settlement};
-use gateway_core::provider::PaidProvider;
+use gateway_contracts::provider::PaidProvider;
 use serde_json::{Value, json};
 #[test]
 fn pending_backfill_marker_does_not_block_later_real_settlement_or_double_fold() {
@@ -106,7 +106,7 @@ fn shared_surplus_usage_adapter_matches_all_actual_source_pricing_cases() -> Tes
         row.reservation.attempt_id.0 = case["attempt_id"].as_str().ok_or("missing value")?.into();
         row.model = case["model"].as_str().ok_or("missing value")?.into();
         row.quota_per_credit = case["quota_per_credit"].as_i64().ok_or("missing value")?;
-        let usage = gateway_core::source_usage::extract_usage_tokens(Some(&case["raw"]));
+        let usage = gateway_contracts::source_usage::extract_usage_tokens(Some(&case["raw"]));
         let pricing = case
             .get("pricing")
             .filter(|value| !value.is_null())

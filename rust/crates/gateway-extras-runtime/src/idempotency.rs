@@ -1,9 +1,7 @@
 use crate::store::{check, commit, decoded, hash, key, now, put};
-use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    state::{RecordKey, RecordMutation, StoredRecord},
-};
+use gateway_source::error::GatewayError;
+use gateway_core::{query::QueryStore, state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_extras_contract::errors::invalid_state;
 use gateway_extras_contract::types::{ExtrasHost, ExtrasResponse};
 use serde::{Deserialize, Serialize};

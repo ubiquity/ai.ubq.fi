@@ -1,5 +1,5 @@
 //! Explicit native-source object identity. This is data, never an evaluator.
-use crate::value::PortableValue;
+use gateway_kv_codec::value::PortableValue;
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ pub enum GraphAtom {
     Undefined,
     Null,
     Boolean(bool),
-    String(#[serde(with = "crate::value::source_units")] JsString16),
+    String(#[serde(with = "gateway_kv_codec::value::source_units")] JsString16),
     NumberBits(String),
     BigInt(String),
     Ref(u32),
@@ -60,15 +60,15 @@ pub enum GraphNode {
         epoch_ms: Option<i64>,
     },
     RegExp {
-        #[serde(with = "crate::value::source_units")]
+        #[serde(with = "gateway_kv_codec::value::source_units")]
         source: JsString16,
         flags: String,
     },
     Error {
         kind: ErrorKind,
-        #[serde(with = "crate::value::source_units")]
+        #[serde(with = "gateway_kv_codec::value::source_units")]
         message: JsString16,
-        #[serde(with = "crate::value::optional_source_units")]
+        #[serde(with = "gateway_kv_codec::value::optional_source_units")]
         stack: Option<JsString16>,
     },
 }

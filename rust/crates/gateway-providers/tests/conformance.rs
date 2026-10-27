@@ -1,7 +1,7 @@
 //! Frozen source-derived cases from e706343d: deepseek-responses, oss-terminal-parity,
 //! anthropic-responses/replay, lithos-tier-windows, images and embeddings fixtures.
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::source_json::SourceJson;
+use gateway_contracts::provider::{PaidProvider, UpstreamProvider};
+use gateway_source::source_json::SourceJson;
 use gateway_providers::{
     chat, extras, policy, replay,
     request::{self, prepare_request},
@@ -60,7 +60,7 @@ fn plan(profile: ChatProfile) -> DecodePlan {
         response_id: "resp_parity".into(),
         created_at: 1_780_000_000,
         stream: true,
-        request: gateway_core::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
+        request: gateway_source::source_json::SourceJson::from_serializable(&json!({})).unwrap(),
         tool_names: ToolMap::new(),
         reasoning_summary: None,
     }
@@ -586,10 +586,10 @@ fn direct_paid_and_synthetic_pins_preserve_catalog_admission() {
         surplus_configured: true,
         openlux_configured: true,
         surplus_catalog: Some(vec![
-            gateway_core::source_json::SourceJson::from_serializable(&surplus).unwrap(),
+            gateway_source::source_json::SourceJson::from_serializable(&surplus).unwrap(),
         ]),
         openlux_catalog: Some(vec![
-            gateway_core::source_json::SourceJson::from_serializable(&openlux).unwrap(),
+            gateway_source::source_json::SourceJson::from_serializable(&openlux).unwrap(),
         ]),
         allowed_paid_providers: None,
         synthetic_hop: None,
@@ -851,12 +851,12 @@ fn native_messages_unclosed_blocks_fail_before_terminal() {
     );
 }
 
-fn scalar(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value
         .deserialize()
         .expect("This frozen regression fixture has scalar text")
 }
 
-fn scalar_source(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
+fn scalar_source(value: &gateway_source::source_json::SourceJson) -> serde_json::Value {
     value.deserialize().expect("actual scalar fixture output")
 }

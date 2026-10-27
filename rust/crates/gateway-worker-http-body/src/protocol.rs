@@ -1,5 +1,6 @@
 //! Exact Worker error/header/correlation projections; no transport or admission authority.
-use gateway_core::{error::GatewayError, provider::UpstreamProvider};
+use gateway_source::error::GatewayError;
+use gateway_contracts::provider::UpstreamProvider;
 use serde_json::json;
 use worker::Response;
 

@@ -7,8 +7,9 @@ use gateway_authority_reset_permit::types::AutomaticResetPermit;
 use gateway_authority_reset_records::utc_day;
 use gateway_authority_reset_records::{ResetInvocation, ResetRecord, hash, reset_invocation};
 use gateway_authority_routing_records::slot::class_name;
+use gateway_contracts::identity::RequestContext;
 use gateway_core::state::AuthorityStore;
-use gateway_core::{identity::RequestContext, state::RevisionCheck};
+use gateway_core::state::RevisionCheck;
 use gateway_source::error::GatewayError;
 #[derive(Clone, Copy)]
 pub enum ResetAuthorization<'a> {

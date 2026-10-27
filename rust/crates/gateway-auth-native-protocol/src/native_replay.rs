@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
 
-pub fn native_nonce_key() -> gateway_core::state::RecordKey {
+pub fn native_nonce_key() -> gateway_kv_codec::key::RecordKey {
     store::key(json!(["uos_ai", "native_nonce_registry", "v1"]))
 }
 

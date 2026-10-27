@@ -11,7 +11,8 @@ use gateway_authority_kernel_protocol::{
     validate_kernel_window,
 };
 use gateway_authority_keys as keys;
-use gateway_core::{identity::RequestId, state::AuthorityStore};
+use gateway_contracts::identity::RequestId;
+use gateway_core::state::AuthorityStore;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use std::collections::BTreeMap;
 
@@ -35,7 +36,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> KernelService<'a, S, I> {
 }
 async fn read_kernel_policy<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
-    key: &gateway_core::state::RecordKey,
+    key: &gateway_kv_codec::key::RecordKey,
     owner: &str,
     repo: Option<&str>,
 ) -> Result<Option<KernelPolicy<String, f64>>, GatewayError> {
@@ -44,7 +45,7 @@ async fn read_kernel_policy<S: AuthorityStore, I: TokenSource>(
 }
 async fn read_kernel_window<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
-    key: &gateway_core::state::RecordKey,
+    key: &gateway_kv_codec::key::RecordKey,
     owner: &str,
     repo: Option<&str>,
 ) -> Result<Option<KernelWindow>, GatewayError> {

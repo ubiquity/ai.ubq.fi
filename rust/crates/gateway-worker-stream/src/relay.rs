@@ -5,10 +5,9 @@ use crate::{
     observed::ObservationHandle,
 };
 use futures_util::Stream;
-use gateway_core::{
-    error::GatewayError,
-    lifecycle::{SemanticTerminal, TransportObservation},
-    provider::UpstreamProvider,
+use gateway_source::error::GatewayError;
+use gateway_contracts::{
+    lifecycle::SemanticTerminal, lifecycle::TransportObservation, provider::UpstreamProvider,
 };
 use gateway_providers::{
     sse::{KEEPALIVE_INTERVAL_MS, StreamDecoder},

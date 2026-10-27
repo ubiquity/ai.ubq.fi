@@ -5,7 +5,7 @@ use gateway_auth::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
     NATIVE_MAX_BODY_BYTES, NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::state::AuthorityStore;
 use gateway_publication::access_publication::RegisteredAccessOwner;
 use gateway_publication_policy::control_publication::ConfiguredPaidInputs;

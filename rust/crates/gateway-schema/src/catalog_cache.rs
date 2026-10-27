@@ -1,8 +1,8 @@
 //! Exact-version cache values, real portable gzip and deterministic refresh decisions.
 use crate::{metadata::MetadataHint, model_control as c, util::sha256};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use gateway_core::{
-    error::GatewayError, model::ModelId, source_json::SourceJson, source_serialization as source,
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -131,7 +131,7 @@ pub fn decode_chunks(
 }
 pub fn widen_catalog_windows(
     body: &str,
-    enrichment: &std::collections::BTreeMap<ModelId, MetadataHint>,
+    enrichment: &std::collections::BTreeMap<gateway_contracts::model::ModelId, MetadataHint>,
 ) -> Option<String> {
     let mut parsed = parse_catalog(body)?;
     let mut changed = false;
@@ -185,7 +185,7 @@ pub fn prepare_catalog(
     etag: Option<&str>,
     content_type: Option<&str>,
     fetched_at_ms: i64,
-    enrichment: &std::collections::BTreeMap<ModelId, MetadataHint>,
+    enrichment: &std::collections::BTreeMap<gateway_contracts::model::ModelId, MetadataHint>,
 ) -> Result<PreparedCatalog, GatewayError> {
     if crate::snapshot::parse_client_version(identity.client_version).is_none()
         || parse_catalog(source_body).is_none()

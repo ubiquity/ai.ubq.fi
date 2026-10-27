@@ -229,11 +229,11 @@ fn closed_secrets_cross_records_but_unclosed_values_do_not() {
         "password: \"first-secret".into(),
         "second-secret\" done".into(),
     ];
-    let masked = gateway_core::redaction::redact_parts(&parts);
+    let masked = gateway_redaction::redaction::redact_parts(&parts);
     assert!(masked.iter().all(|part| !part.text.contains("secret")));
     assert!(masked[1].text.ends_with(" done"));
     let parts = vec!["password: \"private".into(), "Working on refresh".into()];
-    let masked = gateway_core::redaction::redact_parts(&parts);
+    let masked = gateway_redaction::redaction::redact_parts(&parts);
     assert_eq!(masked[1].text, "Working on refresh");
 }
 

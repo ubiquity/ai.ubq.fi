@@ -3,7 +3,8 @@ use crate::{invalid, store::Transaction};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_routing_evidence::{capacity::CapacityStore, models::ModelAvailability};
 use gateway_authority_routing_records::{types::RoutingState, types::SubscriptionPool};
-use gateway_core::{identity::ActiveSelection, state::AuthorityStore};
+use gateway_contracts::identity::ActiveSelection;
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 

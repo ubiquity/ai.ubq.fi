@@ -1,7 +1,7 @@
 //! Original fixed awaited cache experiment host interface and source request body.
 use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
 use gateway_cache_experiment_records::model::{Reason, Sample};
-use gateway_core::identity::PoolVersionstamp;
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::future::Future;

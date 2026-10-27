@@ -12,8 +12,9 @@ use gateway_cache_experiment_records::{
     RefreshContext, model::PROFILE, model::PROVIDER, model::SLOTS, model::STEPS, model::Sample,
     model::TELEMETRY_PROVIDER, model::TargetBinding, model::Usage,
 };
-use gateway_core::identity::{
-    AccountBinding, CredentialVersion, PoolVersionstamp, RoutingAccountHash,
+use gateway_contracts::{
+    identity::AccountBinding, identity::CredentialVersion, identity::PoolVersionstamp,
+    identity::RoutingAccountHash,
 };
 use gateway_native_authority_wire::context::NativeRenewalContext;
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
@@ -405,7 +406,7 @@ fn actual_signed_v2_rechecks_preserve_four_contexts_and_opaque_old_new_versions(
 }
 #[test]
 fn actual_signed_v2_rechecks_preserve_source_model_units_as_ordinary_strings() {
-    use gateway_core::model::ModelId;
+    use gateway_contracts::model::ModelId;
     use gateway_source::js_string::JsString16;
     for units in [
         vec![0xd800],

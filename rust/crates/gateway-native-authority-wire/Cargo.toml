@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-contracts.workspace = true
 gateway-core.workspace = true
 gateway-source.workspace = true
 gateway-cache-experiment-records.workspace = true
@@ -14,6 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-contracts.workspace = true
 gateway-auth-native-proof.workspace = true
 gateway-auth-primitives.workspace = true
 

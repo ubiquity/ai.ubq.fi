@@ -1,7 +1,7 @@
-use gateway_core::redaction;
 use gateway_native_supervisor::{brief, rollout};
 use gateway_native_supervisor_data::data as supervisor_data;
 use gateway_native_supervisor_read::{inventory, metadata, state as supervisor};
+use gateway_redaction::redaction;
 use serde_json::{Value, json};
 fn corpus() -> Value {
     serde_json::from_str(include_str!("fixtures/supervisor-source-golden.json")).unwrap()

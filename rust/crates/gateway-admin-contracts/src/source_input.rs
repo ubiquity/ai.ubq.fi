@@ -1,13 +1,10 @@
 //! Data-only admin field views over the shared source JSON/string grammar.
 //! The single AdminInput body stays SourceJson; these views grant no authority.
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::RecordKey,
-    tuple_key::{KeyPart, TupleKey},
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
 use serde::Serialize;
 
 pub fn json<T: Serialize + ?Sized>(value: &T) -> SourceJson {

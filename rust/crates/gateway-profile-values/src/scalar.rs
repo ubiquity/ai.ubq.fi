@@ -1,6 +1,6 @@
 //! Pure JSON scalar and error helpers shared by admin data consumers.
 
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 pub fn number(value: &Value, field: &str) -> Option<f64> {

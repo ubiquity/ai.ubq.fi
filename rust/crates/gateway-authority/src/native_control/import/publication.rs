@@ -24,7 +24,7 @@ use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
-use gateway_core::provider::PaidProvider;
+use gateway_contracts::provider::PaidProvider;
 use gateway_core::source_control::encode_source_control_record;
 use gateway_core::state::AuthorityStore;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};

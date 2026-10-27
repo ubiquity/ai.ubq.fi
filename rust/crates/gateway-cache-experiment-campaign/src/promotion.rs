@@ -6,7 +6,7 @@ use gateway_cache_experiment_records::{
     model::{LEASE_MS, Outcome, PROVIDER, Reason, Scope, TargetBinding, failed},
     source::{catalog_key, json as source_json, owns, record_key, runtime_key, set_member},
 };
-use gateway_core::model::ModelId;
+use gateway_contracts::model::ModelId;
 use gateway_schema::{
     runtime_config::{
         build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,

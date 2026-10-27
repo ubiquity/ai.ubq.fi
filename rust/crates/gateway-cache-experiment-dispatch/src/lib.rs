@@ -19,7 +19,8 @@ use gateway_cache_experiment_records::{
     model::{Evidence, Reason, Sample, State, TargetBinding, failed},
     source::record_key,
 };
-use gateway_core::{identity::AccountBinding, identity::PoolVersionstamp, state::AuthorityStore};
+use gateway_contracts::{identity::AccountBinding, identity::PoolVersionstamp};
+use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 use view::read_pinned_view;
@@ -61,13 +62,13 @@ impl CacheDispatch {
 /// ```
 pub struct RefreshPermit {
     context: RefreshContext,
-    binding: gateway_core::identity::AccountBinding,
+    binding: gateway_contracts::identity::AccountBinding,
 }
 impl RefreshPermit {
     pub fn context(&self) -> &RefreshContext {
         &self.context
     }
-    pub fn binding(&self) -> &gateway_core::identity::AccountBinding {
+    pub fn binding(&self) -> &gateway_contracts::identity::AccountBinding {
         &self.binding
     }
 }
@@ -209,7 +210,9 @@ pub trait CacheDispatchOperations: CacheDispatchFactory + SignalOperations {
         async move {
             self.record_bound_quota_block(
                 &dispatch.binding,
-                model_quota_class(&gateway_core::model::ModelId::from_scalar(&dispatch.model)),
+                model_quota_class(&gateway_contracts::model::ModelId::from_scalar(
+                    &dispatch.model,
+                )),
                 dispatch.probe.as_ref(),
                 block,
                 now,
@@ -357,8 +360,10 @@ pub trait CacheDispatchOperations: CacheDispatchFactory + SignalOperations {
                 let evaluation = gateway_authority_routing_policy::evaluate(
                     &view.policy(),
                     index,
-                    &gateway_core::model::ModelId::from_scalar(&target.model),
-                    model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
+                    &gateway_contracts::model::ModelId::from_scalar(&target.model),
+                    model_quota_class(&gateway_contracts::model::ModelId::from_scalar(
+                        &target.model,
+                    )),
                     current,
                 );
                 if !evaluation.eligible {
@@ -383,7 +388,7 @@ pub trait CacheDispatchOperations: CacheDispatchFactory + SignalOperations {
                         generation: row.generation as i64,
                         circuit: ProbeCircuit::Quota,
                         quota_class: Some(model_quota_class(
-                            &gateway_core::model::ModelId::from_scalar(&target.model),
+                            &gateway_contracts::model::ModelId::from_scalar(&target.model),
                         )),
                         expires_at_ms: add(current, PROBE_LEASE_MS)?,
                     };
@@ -434,9 +439,9 @@ pub trait CacheDispatchOperations: CacheDispatchFactory + SignalOperations {
                 row.probe_lease = None;
                 match expected.circuit {
                     ProbeCircuit::Quota => {
-                        let class = model_quota_class(&gateway_core::model::ModelId::from_scalar(
-                            &dispatch.model,
-                        ));
+                        let class = model_quota_class(
+                            &gateway_contracts::model::ModelId::from_scalar(&dispatch.model),
+                        );
                         let retained = (row.retained_reset_at_ms, row.reset_identity_stable);
                         let recovering = row.recovery_pending;
                         let block = row.quota_block_for(class);
@@ -498,8 +503,10 @@ pub trait CacheDispatchOperations: CacheDispatchFactory + SignalOperations {
                 || !gateway_authority_routing_policy::evaluate(
                     &view.policy(),
                     0,
-                    &gateway_core::model::ModelId::from_scalar(&target.model),
-                    model_quota_class(&gateway_core::model::ModelId::from_scalar(&target.model)),
+                    &gateway_contracts::model::ModelId::from_scalar(&target.model),
+                    model_quota_class(&gateway_contracts::model::ModelId::from_scalar(
+                        &target.model,
+                    )),
                     current,
                 )
                 .eligible

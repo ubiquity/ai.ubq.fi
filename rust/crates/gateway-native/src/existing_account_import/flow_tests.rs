@@ -29,7 +29,10 @@ use gateway_authority::store::Authority;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
-use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
+use gateway_contracts::{
+    identity::PoolVersionstamp, identity::PrincipalId, identity::RequestContext,
+    identity::RequestId,
+};
 use gateway_core::state::AuthorityStore;
 use gateway_native_import_test_support::fixture as base;
 use gateway_publication_policy::control_publication::{
@@ -72,11 +75,11 @@ fn authority(store: &base::Store) -> Authority<base::Store, FlowTokens> {
     Authority::with_clock(store.clone(), FlowTokens, store.clone())
 }
 const MODELS: &[u8] = br#"{"models":[{"slug":"synthetic-model","display_name":"Synthetic","supported_reasoning_levels":[{"effort":"none","description":"None"}]}]}"#;
-fn key(parts: &[&str]) -> gateway_core::state::RecordKey {
-    gateway_core::tuple_key::TupleKey::from_scalar_parts(
+fn key(parts: &[&str]) -> gateway_kv_codec::key::RecordKey {
+    gateway_kv_codec::tuple_key::TupleKey::from_scalar_parts(
         &parts
             .iter()
-            .map(|part| gateway_core::tuple_key::ScalarKeyPart::String(part))
+            .map(|part| gateway_kv_codec::tuple_key::ScalarKeyPart::String(part))
             .collect::<Vec<_>>(),
     )
     .to_record_key()

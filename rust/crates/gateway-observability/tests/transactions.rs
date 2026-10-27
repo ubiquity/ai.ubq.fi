@@ -1,14 +1,12 @@
 mod support;
+use gateway_source::error::GatewayError;
+use gateway_contracts::lifecycle::DeliveryOutcome;
 use gateway_core::{
-    error::GatewayError,
-    lifecycle::DeliveryOutcome,
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::TupleKey,
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_observability::{
     ObservabilityRuntime,
     ledger::ErrorObservation,
@@ -97,7 +95,7 @@ fn error() -> ErrorObservation {
 fn fixture(mode: Race) -> (Store, Host) {
     let memory = Memory::default();
     let source =
-        TupleKey::from_scalar_parts(&[gateway_core::tuple_key::ScalarKeyPart::String("source")])
+        TupleKey::from_scalar_parts(&[gateway_kv_codec::tuple_key::ScalarKeyPart::String("source")])
             .to_record_key();
     memory.rows.borrow_mut().insert(
         source.0.clone(),

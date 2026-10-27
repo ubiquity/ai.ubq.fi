@@ -2,10 +2,9 @@
 use super::{ReservationIndexes, bind_identity, derive_basics};
 use crate::native_spool::{Spool, Writer};
 use crate::{Row, Transform, decode, invalid, parts, starts};
-use gateway_core::{
-    error::GatewayError,
-    state::{RecordKey, StoredRecord},
-};
+use gateway_source::error::GatewayError;
+use gateway_kv_codec::key::RecordKey;
+use gateway_core::state::StoredRecord;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},

@@ -1,6 +1,5 @@
 //! Constructor-owned read-only source registry, snapshot cache and selection capabilities.
 use crate::collect;
-use gateway_core::redaction::redact;
 use gateway_native_local_transport::{
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
@@ -13,6 +12,7 @@ use gateway_native_supervisor_read::{
     inventory::{self, SessionParts, ThreadProbe, text},
     metadata::{self as supervisor_metadata, MetadataRead},
 };
+use gateway_redaction::redaction::redact;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{
@@ -39,7 +39,7 @@ impl SupervisorSourceConfig {
         codex_home: Option<PathBuf>,
     ) -> Result<Self, GatewayError> {
         let name = name
-            .trim_matches(gateway_core::redaction::source_whitespace)
+            .trim_matches(gateway_redaction::redaction::source_whitespace)
             .to_owned();
         if name.is_empty()
             || name.encode_utf16().count() > 64

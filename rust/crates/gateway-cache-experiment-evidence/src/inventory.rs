@@ -8,7 +8,8 @@ use gateway_cache_experiment_records::{
     model::{PROFILE, PROVIDER, Reason, TELEMETRY_PROVIDER, TargetBinding, failed, unavailable},
     source::{catalog_key, json, runtime_key},
 };
-use gateway_core::{model::ModelId, state::AuthorityStore};
+use gateway_contracts::model::ModelId;
+use gateway_core::state::AuthorityStore;
 use gateway_schema::{runtime_config::normalize_runtime_config, snapshot::ModelSnapshot};
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};

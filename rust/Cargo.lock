@@ -861,7 +861,9 @@ dependencies = [
  "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
  "gateway-authority-paid-route",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-providers",
  "gateway-publication-policy",
  "gateway-source",
@@ -875,9 +877,12 @@ name = "gateway-admin-contracts"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-values",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -887,12 +892,14 @@ name = "gateway-admin-data"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-ledger-audit",
  "gateway-migration-ledger",
  "gateway-profile-source",
  "gateway-profile-values",
  "gateway-quota-projection",
  "gateway-schema",
+ "gateway-source",
  "gateway-source-audit",
  "ryu-js",
  "serde",
@@ -907,7 +914,9 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-migration-ledger",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -922,8 +931,11 @@ dependencies = [
  "gateway-authority-api-protocol",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-values",
+ "gateway-source",
  "gateway-source-audit",
  "serde",
  "serde_json",
@@ -946,9 +958,13 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-paid-records",
  "gateway-claude-usage-protocol",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-values",
+ "gateway-redaction",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -965,8 +981,11 @@ dependencies = [
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -974,8 +993,9 @@ dependencies = [
 name = "gateway-admission"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-contracts",
  "gateway-routing-runtime",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -998,7 +1018,9 @@ dependencies = [
  "gateway-auth-passport-contracts",
  "gateway-auth-passport-sessions",
  "gateway-auth-primitives",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "getrandom 0.2.16",
  "getrandom 0.3.4",
@@ -1023,7 +1045,7 @@ dependencies = [
  "ciborium",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
- "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "p256",
  "p384",
@@ -1043,7 +1065,7 @@ dependencies = [
  "gateway-auth-native-wire",
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
- "gateway-core",
+ "gateway-contracts",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1056,7 +1078,9 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "gateway-auth-primitives",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1069,7 +1093,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
- "gateway-core",
+ "gateway-contracts",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1081,7 +1105,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth-native-contracts",
  "gateway-auth-native-wire",
- "gateway-core",
+ "gateway-contracts",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1095,7 +1119,7 @@ dependencies = [
  "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
- "gateway-core",
+ "gateway-contracts",
  "gateway-source",
  "hmac 0.12.1",
  "serde_json",
@@ -1111,7 +1135,9 @@ dependencies = [
  "gateway-auth-native-import-data",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1133,7 +1159,9 @@ dependencies = [
  "gateway-auth-attestation",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1161,7 +1189,7 @@ dependencies = [
 name = "gateway-auth-passport-contracts"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-contracts",
  "gateway-source",
  "serde",
  "url",
@@ -1175,6 +1203,7 @@ dependencies = [
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1186,6 +1215,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1235,7 +1265,10 @@ dependencies = [
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
  "gateway-cache-experiment-runner",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-local-journal",
  "gateway-native-authority-wire",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
@@ -1257,6 +1290,7 @@ dependencies = [
  "gateway-auth-contracts",
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
  "serde",
@@ -1269,6 +1303,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-paid-control-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
  "serde",
@@ -1282,7 +1317,9 @@ dependencies = [
  "gateway-authority-api-protocol",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1297,7 +1334,9 @@ dependencies = [
  "gateway-authority-api-quota",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1314,7 +1353,9 @@ dependencies = [
  "gateway-authority-paid-control-records",
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1327,6 +1368,7 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
 ]
@@ -1337,7 +1379,9 @@ version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1349,6 +1393,7 @@ dependencies = [
 name = "gateway-authority-contracts"
 version = "0.1.0"
 dependencies = [
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
 ]
@@ -1360,6 +1405,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
  "serde",
@@ -1373,7 +1419,9 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1384,6 +1432,7 @@ name = "gateway-authority-kernel-protocol"
 version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
+ "gateway-contracts",
  "gateway-core",
  "gateway-schema",
  "gateway-source",
@@ -1395,7 +1444,9 @@ dependencies = [
 name = "gateway-authority-keys"
 version = "0.1.0"
 dependencies = [
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
 ]
 
@@ -1408,6 +1459,8 @@ dependencies = [
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-local-journal",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1426,7 +1479,9 @@ dependencies = [
  "gateway-authority-paid-route",
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1443,7 +1498,9 @@ dependencies = [
  "gateway-authority-paid-ledger",
  "gateway-authority-paid-records",
  "gateway-authority-paid-test-support",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1454,6 +1511,7 @@ dependencies = [
 name = "gateway-authority-paid-control-records"
 version = "0.1.0"
 dependencies = [
+ "gateway-contracts",
  "gateway-core",
  "gateway-providers",
  "gateway-source",
@@ -1473,7 +1531,10 @@ dependencies = [
  "gateway-authority-paid-control-records",
  "gateway-authority-paid-records",
  "gateway-authority-reset-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-local-journal",
  "gateway-providers",
  "gateway-schema",
  "gateway-source",
@@ -1488,7 +1549,9 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-paid-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1502,7 +1565,9 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-paid-test-support",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1520,7 +1585,9 @@ dependencies = [
  "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1537,6 +1604,7 @@ dependencies = [
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-records",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1553,7 +1621,9 @@ dependencies = [
  "gateway-authority-reset-records",
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde_json",
 ]
@@ -1573,6 +1643,7 @@ dependencies = [
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1590,7 +1661,9 @@ dependencies = [
  "gateway-authority-routing-policy",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1607,7 +1680,9 @@ dependencies = [
  "gateway-authority-reset-evidence",
  "gateway-authority-reset-records",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1619,7 +1694,9 @@ version = "0.1.0"
 dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1641,7 +1718,9 @@ dependencies = [
  "gateway-authority-routing-policy",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1662,6 +1741,7 @@ dependencies = [
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1675,7 +1755,9 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1690,6 +1772,7 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
 ]
@@ -1698,6 +1781,7 @@ dependencies = [
 name = "gateway-authority-routing-records"
 version = "0.1.0"
 dependencies = [
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
  "serde",
@@ -1716,7 +1800,9 @@ dependencies = [
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-policy",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1733,7 +1819,9 @@ dependencies = [
  "gateway-authority-routing-policy",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1754,7 +1842,9 @@ dependencies = [
  "gateway-authority-paid-evidence",
  "gateway-authority-paid-records",
  "gateway-authority-paid-route",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-source",
@@ -1770,7 +1860,9 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1791,7 +1883,9 @@ dependencies = [
  "gateway-cache-experiment-campaign",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1805,7 +1899,9 @@ dependencies = [
  "gateway-auth",
  "gateway-authority-contracts",
  "gateway-cache-experiment-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1817,6 +1913,7 @@ name = "gateway-cache-experiment-records"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
  "gateway-source",
  "serde",
@@ -1833,6 +1930,7 @@ dependencies = [
  "gateway-cache-experiment-dispatch",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-schema",
  "gateway-source",
@@ -1863,7 +1961,9 @@ dependencies = [
  "gateway-authority-routing-selection",
  "gateway-authority-routing-signal",
  "gateway-capacity-projection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-observability",
  "gateway-observability-test-support",
  "gateway-schema",
@@ -1876,10 +1976,12 @@ name = "gateway-catalog-provider"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-providers",
  "gateway-schema",
+ "gateway-source",
  "serde",
 ]
 
@@ -1901,12 +2003,15 @@ dependencies = [
  "gateway-authority-paid-records",
  "gateway-authority-paid-route",
  "gateway-catalog-provider",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-native",
  "gateway-providers",
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1922,10 +2027,13 @@ dependencies = [
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-protocol",
  "gateway-claude-usage-quota",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-values",
  "gateway-providers",
  "gateway-schema",
+ "gateway-source",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1941,9 +2049,12 @@ dependencies = [
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
  "gateway-claude-usage-quota",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-providers",
  "gateway-schema",
+ "gateway-source",
  "rusqlite",
  "serde_json",
 ]
@@ -1955,6 +2066,7 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-core",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -1965,7 +2077,10 @@ dependencies = [
  "gateway-auth",
  "gateway-claude-usage-history-records",
  "gateway-claude-usage-protocol",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1977,6 +2092,8 @@ dependencies = [
  "gateway-auth",
  "gateway-claude-usage-protocol",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1985,7 +2102,8 @@ dependencies = [
 name = "gateway-claude-usage-protocol"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-contracts",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1995,8 +2113,11 @@ name = "gateway-claude-usage-quota"
 version = "0.1.0"
 dependencies = [
  "gateway-claude-usage-protocol",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2011,8 +2132,11 @@ dependencies = [
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-protocol",
  "gateway-claude-usage-quota",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-values",
+ "gateway-source",
  "serde",
  "serde_json",
  "worker",
@@ -2030,6 +2154,9 @@ dependencies = [
  "gateway-core",
  "gateway-prompt-policy",
  "gateway-source",
+ "regress",
+ "ryu-js",
+ "serde",
  "serde_json",
 ]
 
@@ -2083,10 +2210,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "gateway-core"
+name = "gateway-contracts"
 version = "0.1.0"
 dependencies = [
  "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-core"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-kv-codec",
+ "gateway-source",
+ "gateway-source-graph",
  "ryu-js",
  "serde",
  "serde_json",
@@ -2096,7 +2235,8 @@ dependencies = [
 name = "gateway-decision-protocol"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-contracts",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2105,11 +2245,14 @@ dependencies = [
 name = "gateway-decision-runtime"
 version = "0.1.0"
 dependencies = [
+ "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",
+ "gateway-kv-codec",
  "gateway-providers",
  "gateway-schema",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -2118,9 +2261,10 @@ name = "gateway-extras-contract"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
- "gateway-core",
+ "gateway-contracts",
  "gateway-providers",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2134,12 +2278,15 @@ dependencies = [
  "chrono",
  "futures-util",
  "gateway-auth",
+ "gateway-contracts",
  "gateway-core",
  "gateway-decision-runtime",
  "gateway-extras-contract",
  "gateway-extras-runtime-test-support",
+ "gateway-kv-codec",
  "gateway-providers",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2150,6 +2297,17 @@ name = "gateway-extras-runtime-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-kv-codec"
+version = "0.1.0"
+dependencies = [
+ "gateway-source",
+ "serde",
  "serde_json",
 ]
 
@@ -2161,6 +2319,7 @@ dependencies = [
  "gateway-core",
  "gateway-migration-ledger",
  "gateway-profile-values",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -2170,8 +2329,23 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
  "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-local-journal"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2205,7 +2379,9 @@ dependencies = [
  "gateway-authority-routing-selection",
  "gateway-claude-runtime",
  "gateway-claude-usage-quota",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-migration-ledger",
  "gateway-migration-test-support",
  "gateway-native-authority-wire",
@@ -2215,7 +2391,9 @@ dependencies = [
  "gateway-profile-values",
  "gateway-routing-runtime",
  "gateway-schema",
+ "gateway-source",
  "gateway-source-audit",
+ "gateway-source-graph",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2227,7 +2405,9 @@ name = "gateway-migration-ledger"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-values",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -2236,6 +2416,8 @@ name = "gateway-migration-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2261,7 +2443,9 @@ dependencies = [
  "gateway-authority-paid-control-records",
  "gateway-authority-routing-records",
  "gateway-cache-experiment-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-native-authority-wire",
  "gateway-native-confinement",
  "gateway-native-connected-io",
@@ -2306,6 +2490,7 @@ dependencies = [
  "gateway-auth-primitives",
  "gateway-authority-actor-records",
  "gateway-cache-experiment-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
  "serde",
@@ -2321,7 +2506,6 @@ dependencies = [
  "libc",
  "seccompiler",
 ]
-
 
 [[package]]
 name = "gateway-native-connected-io"
@@ -2391,7 +2575,9 @@ dependencies = [
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
@@ -2405,6 +2591,7 @@ dependencies = [
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
  "gateway-authority",
+ "gateway-contracts",
  "gateway-core",
  "gateway-source",
  "serde",
@@ -2428,7 +2615,9 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-native-import-client",
  "gateway-native-replay",
  "gateway-source",
@@ -2491,6 +2680,7 @@ dependencies = [
  "gateway-auth-native-protocol",
  "gateway-auth-primitives",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "rusqlite",
  "serde_json",
@@ -2506,6 +2696,7 @@ dependencies = [
  "gateway-core",
  "gateway-native-local-transport",
  "gateway-native-supervisor-read",
+ "gateway-redaction",
  "gateway-source",
  "serde",
  "serde_json",
@@ -2521,6 +2712,7 @@ dependencies = [
  "gateway-native-local-transport",
  "gateway-native-supervisor",
  "gateway-native-supervisor-read",
+ "gateway-redaction",
  "gateway-source",
  "rusqlite",
  "serde_json",
@@ -2547,6 +2739,7 @@ name = "gateway-native-supervisor-read"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-redaction",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2580,7 +2773,9 @@ dependencies = [
  "gateway-claude-usage-protocol",
  "gateway-claude-usage-quota",
  "gateway-claude-usage-runtime",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-observability-request-records",
  "gateway-observability-test-support",
  "gateway-quota-projection",
@@ -2598,8 +2793,8 @@ dependencies = [
 name = "gateway-observability-request-records"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2609,16 +2804,19 @@ name = "gateway-observability-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-observability",
  "gateway-schema",
+ "gateway-source",
 ]
 
 [[package]]
 name = "gateway-profile-source"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-values",
+ "gateway-source",
  "ryu-js",
  "serde_json",
 ]
@@ -2628,8 +2826,9 @@ name = "gateway-profile-values"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "gateway-core",
+ "gateway-kv-codec",
  "gateway-schema",
+ "gateway-source",
  "regress",
  "ryu-js",
  "serde_json",
@@ -2649,9 +2848,10 @@ dependencies = [
 name = "gateway-providers"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-contracts",
  "gateway-decision-protocol",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
  "url",
@@ -2667,10 +2867,12 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-test-support",
  "gateway-publication-transport",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2684,7 +2886,10 @@ dependencies = [
  "gateway-authority",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2698,10 +2903,13 @@ dependencies = [
  "gateway-authority",
  "gateway-authority-keys",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -2716,6 +2924,7 @@ dependencies = [
  "gateway-core",
  "gateway-publication",
  "gateway-publication-policy",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -2744,9 +2953,16 @@ dependencies = [
 name = "gateway-quota-projection"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
  "gateway-profile-values",
  "gateway-schema",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-redaction"
+version = "0.1.0"
+dependencies = [
  "serde_json",
 ]
 
@@ -2777,12 +2993,16 @@ dependencies = [
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
  "gateway-authority-routing-signal",
+ "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",
+ "gateway-kv-codec",
+ "gateway-local-journal",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-source",
  "gateway-wait-observation",
  "serde",
  "serde_json",
@@ -2800,10 +3020,13 @@ dependencies = [
  "gateway-authority-paid-records",
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-providers",
  "gateway-routing-runtime",
  "gateway-schema",
+ "gateway-source",
  "gateway-wait-observation",
  "serde",
  "serde_json",
@@ -2814,8 +3037,11 @@ name = "gateway-schema"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
+ "gateway-kv-codec",
+ "gateway-source",
  "indexmap 2.14.2",
  "ryu-js",
  "serde",
@@ -2841,6 +3067,17 @@ dependencies = [
  "gateway-ledger-audit",
  "gateway-migration-ledger",
  "gateway-profile-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-source-graph"
+version = "0.1.0"
+dependencies = [
+ "gateway-kv-codec",
+ "gateway-source",
+ "serde",
  "serde_json",
 ]
 
@@ -2848,7 +3085,7 @@ dependencies = [
 name = "gateway-wait-observation"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-source",
 ]
 
 [[package]]
@@ -2902,10 +3139,12 @@ dependencies = [
  "gateway-claude-usage-runtime",
  "gateway-compaction",
  "gateway-compaction-source",
+ "gateway-contracts",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",
  "gateway-extras-runtime",
+ "gateway-kv-codec",
  "gateway-live-runtime",
  "gateway-migration",
  "gateway-native-authority-wire",
@@ -2941,9 +3180,11 @@ dependencies = [
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
  "gateway-publication-policy",
  "gateway-publication-transport",
+ "gateway-source",
  "gateway-worker",
  "gateway-worker-fixture-setup",
  "gateway-worker-platform",
@@ -2963,10 +3204,13 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
  "gateway-authority-routing-records",
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
+ "gateway-source",
  "gateway-worker",
  "gateway-worker-platform",
  "gateway-worker-storage",
@@ -2978,8 +3222,9 @@ name = "gateway-worker-http-body"
 version = "0.1.0"
 dependencies = [
  "futures-util",
- "gateway-core",
+ "gateway-contracts",
  "gateway-providers",
+ "gateway-source",
  "gateway-worker-platform",
  "serde_json",
  "worker",
@@ -2991,8 +3236,8 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-admission",
- "gateway-core",
  "gateway-schema",
+ "gateway-source",
  "gateway-worker-stream",
  "serde_json",
  "worker",
@@ -3002,7 +3247,10 @@ dependencies = [
 name = "gateway-worker-storage"
 version = "0.1.0"
 dependencies = [
+ "gateway-contracts",
  "gateway-core",
+ "gateway-kv-codec",
+ "gateway-source",
  "serde",
  "serde_json",
  "worker",
@@ -3013,8 +3261,9 @@ name = "gateway-worker-stream"
 version = "0.1.0"
 dependencies = [
  "futures-util",
- "gateway-core",
+ "gateway-contracts",
  "gateway-providers",
+ "gateway-source",
  "serde_json",
  "worker",
 ]
@@ -3023,8 +3272,8 @@ dependencies = [
 name = "gateway-worker-web"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
  "gateway-schema",
+ "gateway-source",
  "gateway-worker-platform",
  "gateway-worker-storage",
  "serde_json",
@@ -4857,35 +5106,6 @@ dependencies = [
  "serde_with",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "webauthn-rs-core"
-version = "0.6.1-dev"
-dependencies = [
- "base64 0.21.7",
- "crypto-glue",
- "der-parser",
- "ed25519-dalek",
- "hex",
- "nom",
- "p521",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
- "rsa",
- "serde",
- "serde_cbor_2",
- "serde_json",
- "serde_with",
- "sha1",
- "sha2 0.10.9",
- "thiserror 1.0.69",
- "tracing",
- "url",
- "uuid",
- "webauthn-attestation-ca",
- "webauthn-rs-proto",
- "x509-parser",
 ]
 
 [[package]]

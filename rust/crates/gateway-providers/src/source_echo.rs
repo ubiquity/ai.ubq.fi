@@ -1,6 +1,6 @@
 //! Source-bearing envelope composition; scalar upstream fragments are lifted, not request text.
 use crate::{source as s, types::DecodePlan};
-use gateway_core::{source_json::SourceJson, source_serialization as json};
+use gateway_source::{source_json::SourceJson, source_serialization as json};
 
 pub(crate) fn envelope(plan: &DecodePlan, status: &str) -> SourceJson {
     let instructions = s::get(&plan.request, "instructions");
@@ -58,11 +58,12 @@ mod tests {
     use super::*;
     use crate::source_tools::ToolMap;
     use crate::types::{ChatProfile, ClientSurface, ResponseDecode};
-    use gateway_core::{js_string::JsString16, provider::UpstreamProvider};
+    use gateway_source::js_string::JsString16;
+    use gateway_contracts::provider::UpstreamProvider;
 
     #[test]
     fn instructions_tools_and_choice_never_cross_a_scalar_envelope()
-    -> Result<(), gateway_core::error::GatewayError> {
+    -> Result<(), gateway_source::error::GatewayError> {
         let request = SourceJson::parse(
             r#"{"instructions":"\ud800","tools":[{"type":"function","name":"f\udc00","parameters":{"\ud800":{"type":"string"}}}],"tool_choice":{"type":"function","name":"\udc00"}}"#,
         )?;

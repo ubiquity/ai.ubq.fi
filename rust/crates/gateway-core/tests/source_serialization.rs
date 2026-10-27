@@ -1,5 +1,7 @@
 //! Exact logical-value corpus from frozen M31 source oracle; no compaction algorithm dependency.
-use gateway_source::{js_string::JsString16, source_json::SourceJson, source_serialization as source};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::Value;
 #[test]
 fn frozen_source_canonical_vectors_keep_js_numbers_order_and_utf16() {

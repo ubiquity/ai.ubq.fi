@@ -39,7 +39,7 @@ pub fn signature_input(
         || !key_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&time_ms)
+        || !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&time_ms)
         || body.len() > NATIVE_MAX_BODY_BYTES
         || path == NATIVE_CONTROL_PATH
             && body.len() > gateway_auth_native_wire::control::NATIVE_CONTROL_MAX_BYTES

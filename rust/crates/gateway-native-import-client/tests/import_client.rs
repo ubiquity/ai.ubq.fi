@@ -39,12 +39,15 @@ use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_core::{
-    identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+use gateway_contracts::{
+    identity::PoolVersionstamp, identity::PrincipalId, identity::RequestContext,
+    identity::RequestId,
 };
+use gateway_core::{
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
+    state::StoredRecord,
+};
+use gateway_kv_codec::key::RecordKey;
 use gateway_native_import_client::client::{ClientError, NativeImportClient};
 use gateway_source::error::GatewayError;
 use serde::Serialize;

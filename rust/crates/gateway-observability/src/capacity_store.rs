@@ -2,7 +2,8 @@ use crate::{ObservabilityRuntime, capacity_events::event_key, store, types::Obse
 use gateway_capacity_projection::scalars::safe_i64;
 use gateway_capacity_projection::{events::valid_event, math as capacity_math, shapes as shape};
 use gateway_core::query::{QuerySelector, QueryStore};
-use gateway_core::state::{RecordKey, RecordMutation, StoredRecord};
+use gateway_core::{state::RecordMutation, state::StoredRecord};
+use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 pub(crate) fn key(name: &str) -> RecordKey {

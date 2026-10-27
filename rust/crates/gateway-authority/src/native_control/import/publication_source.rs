@@ -11,10 +11,11 @@ use gateway_auth::{
 use gateway_auth_native_wire::publication_command as command;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
+use gateway_contracts::identity::PoolVersionstamp;
 use gateway_core::{
-    identity::PoolVersionstamp, source_control::encode_source_control_record, state::RecordKey,
-    state::RecordMutation, state::StoredRecord,
+    source_control::encode_source_control_record, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};

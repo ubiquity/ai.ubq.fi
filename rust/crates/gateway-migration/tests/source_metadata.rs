@@ -1,8 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Invalid source metadata views are retained raw, not promoted into normalized authority.
-use gateway_core::{
-    source_control::source_json_tree, source_json::SourceJson, value::PortableValue,
-};
+use gateway_core::source_control::source_json_tree;
+use gateway_source::source_json::SourceJson;
+use gateway_kv_codec::value::PortableValue;
 use gateway_migration::{
     capture::{PrivateCapture, SourceEntry},
     engine::{adopt_empty, prepare},

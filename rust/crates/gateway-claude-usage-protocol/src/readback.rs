@@ -1,6 +1,6 @@
 //! Source quota readback data projection. This codec confers no account authority.
 use crate::{snapshot, state};
-use gateway_core::{
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };

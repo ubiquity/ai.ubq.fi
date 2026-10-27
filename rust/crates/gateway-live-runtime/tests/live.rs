@@ -2,13 +2,11 @@ use gateway_auth::{
     crypto::Secret,
     types::{AuthMethod, AuthPrincipal},
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_live_runtime::{
     mapping::{LiveRuntime, RetirementOutcome, mapping_key, retirement_key},
     protocol::{

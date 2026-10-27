@@ -42,6 +42,9 @@ gateway-authority-paid-control-records = { path = "../gateway-authority-paid-con
 gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts.workspace = true
+gateway-kv-codec.workspace = true
+gateway-local-journal.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }

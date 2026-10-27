@@ -1,15 +1,13 @@
 //! SQLite-backed coordination storage. Transactions never contain external I/O.
 
+use gateway_source::error::GatewayError;
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_core::{
-    error::GatewayError,
-    identity::MAX_SAFE_INTEGER,
-    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, PORTABLE_STATE_VERSION, RecordKey,
-        RecordMutation, StoredRecord,
-    },
-    tuple_key::TupleKey,
+    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QueryStore,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
+    state::PORTABLE_STATE_VERSION, state::RecordMutation, state::StoredRecord,
 };
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use serde::Deserialize;
 use std::{
     cell::{Cell, RefCell},

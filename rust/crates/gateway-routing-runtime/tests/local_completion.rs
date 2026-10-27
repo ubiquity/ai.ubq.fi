@@ -6,15 +6,14 @@ use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::REQUEST_LEASE_MS;
 use gateway_authority_kernel_protocol::KernelPolicy;
 use gateway_authority_keys as keys;
-use gateway_core::{
-    error::GatewayError,
-    lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{ScalarKeyPart, TupleKey},
+use gateway_contracts::{
+    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
 };
+use gateway_core::{
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
+};
+use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_routing_runtime::{
     local_work::{
         completion::response::{LocalAccountingProgress, LocalSelectedResponse, LocalWireKind},
@@ -25,6 +24,7 @@ use gateway_routing_runtime::{
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::source_request::SourceRequestDocument;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::{
     future::Future,
@@ -476,7 +476,7 @@ fn source_release_noops_do_not_refund_dispatched_or_require_a_missing_request_ro
             _ => {
                 run(authority.dispatch_api_key(
                     &reservation,
-                    gateway_core::provider::UpstreamProvider::ChatgptCodex,
+                    gateway_contracts::provider::UpstreamProvider::ChatgptCodex,
                     NOW,
                 ))
                 .unwrap();

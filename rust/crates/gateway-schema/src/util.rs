@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 pub const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
