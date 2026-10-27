@@ -44,14 +44,13 @@ fn inventory(request: &SourceJson) -> Vec<ObservedRow> {
         row(json!(["uos_ai","paid_fallback","v3","pending","fixture-key","fixture-attempt"]), &SourceJson::parse(r#"{"created_at_ms":100,"next_reconciliation_at_ms":200}"#).unwrap()),
     ]
 }
-fn inspect(rows: &[ObservedRow]) -> gateway_admin_data::report::Audit {
+fn inspect(rows: &[ObservedRow]) -> Result<gateway_admin_data::report::Audit, GatewayError> {
     inspect_paid(
         rows,
         &BTreeSet::from(["fixture-key".into()]),
         &BTreeSet::new(),
         100,
     )
-    .unwrap()
 }
 
 #[test]
@@ -69,7 +68,7 @@ fn named_paid_source_audit_retains_utf16_model_effort_and_exact_counter_inventor
             .iter()
             .map(|row| row.record.clone())
             .collect::<Vec<_>>();
-        let findings = inspect(&rows);
+        let findings = inspect(&rows)?;
         assert!(findings.errors.is_empty());
         assert_eq!(findings.counts["paid_fallback_v3_requests"], 1);
         assert_eq!(findings.counts["paid_fallback_v3_windows"], 1);
@@ -96,14 +95,14 @@ fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals()
     let document = request(r#""\ud800""#, r#""none""#);
     let mut rows = inventory(&document);
     rows.pop();
-    assert!(inspect(&rows).errors.iter().any(|error| {
+    assert!(inspect(&rows)?.errors.iter().any(|error| {
         error
             .try_utf8()
             .is_ok_and(|text| text.contains("missing its pending marker"))
     }));
     rows = inventory(&document);
     rows[0].record.value["reserved_microcredits"] = json!(4);
-    assert!(inspect(&rows).errors.iter().any(|error| {
+    assert!(inspect(&rows)?.errors.iter().any(|error| {
         error
             .try_utf8()
             .is_ok_and(|text| text.contains("window aggregate is inconsistent"))
@@ -116,7 +115,7 @@ fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals()
     ] {
         let malformed = request(model, effort);
         assert!(!audit::paid::valid_source_paid_request(&malformed));
-        assert!(inspect(&inventory(&malformed)).errors.iter().any(|error| {
+        assert!(inspect(&inventory(&malformed))?.errors.iter().any(|error| {
             error
                 .try_utf8()
                 .is_ok_and(|text| text.contains("request is malformed"))
@@ -131,21 +130,18 @@ fn source_paid_audit_keeps_pending_aggregate_and_malformed_control_refusals()
 }
 
 #[test]
-fn scalar_paid_source_stays_json_and_wrong_physical_codec_is_not_reinterpreted() {
+fn scalar_paid_source_stays_json_and_wrong_physical_codec_is_not_reinterpreted()
+-> Result<(), GatewayError> {
     let document = request(r#""scalar-model""#, "null");
     let mut rows = inventory(&document);
     assert_eq!(rows[1].record.value_encoding, ValueEncoding::Json);
-    assert_eq!(
-        rows[1].record.value,
-        document.deserialize::<Value>().unwrap()
-    );
-    assert!(inspect(&rows).errors.is_empty());
+    assert_eq!(rows[1].record.value, document.deserialize::<Value>()?);
+    assert!(inspect(&rows)?.errors.is_empty());
     rows[1].record = StoredRecord::profile(
         "incompatible",
         PortableValue::String("not-json".into()),
         None,
-    )
-    .unwrap();
+    )?;
     assert!(
         inspect_paid(
             &rows,
@@ -155,6 +151,7 @@ fn scalar_paid_source_stays_json_and_wrong_physical_codec_is_not_reinterpreted()
         )
         .is_err()
     );
+    Ok(())
 }
 
 // Independent decoded row lifetimes model the replayable native spool contract.

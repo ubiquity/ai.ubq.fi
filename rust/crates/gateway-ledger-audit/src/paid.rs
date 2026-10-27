@@ -390,50 +390,58 @@ impl PaidAudit {
                 );
             }
         }
-        for (r, w) in &self.windows {
-            if integer(w, "window_reset_at_ms")
-                .and_then(|reset| reset.checked_add((365 - 32) * DAY))
-                .is_some_and(|cutoff| cutoff <= self.now)
-            {
-                continue;
-            }
-            let related: Vec<_> = self
-                .requests
-                .values()
-                .filter(|v| {
-                    source::equals(v, "key_id", &w["key_id"])
-                        && source::equals(v, "window_reset_at_ms", &w["window_reset_at_ms"])
-                })
-                .collect();
-            let outstanding: Vec<_> = related
-                .iter()
-                .filter(|v| {
-                    source::equals(v, "billing_state", &serde_json::json!("pending"))
-                        || source::equals(v, "billing_state", &serde_json::json!("unresolved"))
-                })
-                .collect();
-            let reserved = outstanding
-                .iter()
-                .map(|v| source::number(v, "reserved_microcredits").unwrap_or(0.0))
-                .sum::<f64>();
-            let settled = related
-                .iter()
-                .filter(|v| source::equals(v, "billing_state", &serde_json::json!("settled")))
-                .map(|v| source::number(v, "spend_microcredits").unwrap_or(0.0))
-                .sum::<f64>();
-            if reserved > 9_007_199_254_740_991.0
-                || settled > 9_007_199_254_740_991.0
-                || number(w, "pending_count") != Some(outstanding.len() as f64)
-                || number(w, "reserved_microcredits") != Some(reserved)
-                || number(w, "settled_microcredits") != Some(settled)
-            {
-                a.errors.push(
-                    format!("paid fallback V3 window aggregate is inconsistent: {r}")
-                        .as_str()
-                        .into(),
-                );
-            }
-        }
+        audit_window_totals(&self.windows, &self.requests, self.now, &mut a);
         Ok(a)
+    }
+}
+
+fn audit_window_totals(
+    windows: &BTreeMap<String, Value>,
+    requests: &BTreeMap<String, SourceJson>,
+    now: i64,
+    audit: &mut Audit,
+) {
+    for (r, w) in windows {
+        if integer(w, "window_reset_at_ms")
+            .and_then(|reset| reset.checked_add((365 - 32) * DAY))
+            .is_some_and(|cutoff| cutoff <= now)
+        {
+            continue;
+        }
+        let related: Vec<_> = requests
+            .values()
+            .filter(|v| {
+                source::equals(v, "key_id", &w["key_id"])
+                    && source::equals(v, "window_reset_at_ms", &w["window_reset_at_ms"])
+            })
+            .collect();
+        let outstanding: Vec<_> = related
+            .iter()
+            .filter(|v| {
+                source::equals(v, "billing_state", &serde_json::json!("pending"))
+                    || source::equals(v, "billing_state", &serde_json::json!("unresolved"))
+            })
+            .collect();
+        let reserved = outstanding
+            .iter()
+            .map(|v| source::number(v, "reserved_microcredits").unwrap_or(0.0))
+            .sum::<f64>();
+        let settled = related
+            .iter()
+            .filter(|v| source::equals(v, "billing_state", &serde_json::json!("settled")))
+            .map(|v| source::number(v, "spend_microcredits").unwrap_or(0.0))
+            .sum::<f64>();
+        if reserved > 9_007_199_254_740_991.0
+            || settled > 9_007_199_254_740_991.0
+            || number(w, "pending_count") != Some(outstanding.len() as f64)
+            || number(w, "reserved_microcredits") != Some(reserved)
+            || number(w, "settled_microcredits") != Some(settled)
+        {
+            audit.errors.push(
+                format!("paid fallback V3 window aggregate is inconsistent: {r}")
+                    .as_str()
+                    .into(),
+            );
+        }
     }
 }

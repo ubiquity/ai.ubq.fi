@@ -56,7 +56,8 @@ fn rows(id: &SourceJson, hash: &SourceJson) -> Vec<ObservedRow> {
 }
 
 #[test]
-fn named_key_pair_audit_preserves_complete_utf16_policy_and_finite_facts() {
+fn named_key_pair_audit_preserves_complete_utf16_policy_and_finite_facts()
+-> Result<(), Box<dyn std::error::Error>> {
     let (id, hash) = policies(r#"["\ud800","\udc00","\ufffd","\ud83d\ude00","\\ud800"]"#);
     let rows = rows(&id, &hash);
     assert_eq!(rows[0].record.value_encoding, ValueEncoding::ProfileV2);
@@ -65,28 +66,27 @@ fn named_key_pair_audit_preserves_complete_utf16_policy_and_finite_facts() {
         .iter()
         .map(|row| row.record.clone())
         .collect::<Vec<_>>();
-    let (pairs, findings) = inspect_key_pairs(&rows).unwrap();
+    let (pairs, findings) = inspect_key_pairs(&rows)?;
     assert!(findings.errors.is_empty());
     assert_eq!(findings.counts["api_key_ids"], 1);
     assert_eq!(findings.counts["api_key_hashes"], 1);
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].key_id, "fixture-key");
     assert!(pairs[0].unlimited_paid);
-    assert_eq!(
-        pairs[0].id,
-        decode_source_control_record(&rows[0].record).unwrap()
-    );
+    assert_eq!(pairs[0].id, decode_source_control_record(&rows[0].record)?);
     assert_eq!(
         pairs[0].hash,
-        decode_source_control_record(&rows[1].record).unwrap()
+        decode_source_control_record(&rows[1].record)?
     );
     for field in [
         "paid_fallback_model_ids",
         "paid_fallback_max_exposure_microcredits",
     ] {
         assert_eq!(
-            source_json_tree(&source::member(&pairs[0].id, field).unwrap()).unwrap(),
-            source_json_tree(&source::member(&id, field).unwrap()).unwrap()
+            source_json_tree(
+                &source::member(&pairs[0].id, field).ok_or("Expected paired source field")?
+            )?,
+            source_json_tree(&source::member(&id, field).ok_or("Expected original source field")?)?
         );
     }
     assert_eq!(
@@ -95,8 +95,9 @@ fn named_key_pair_audit_preserves_complete_utf16_policy_and_finite_facts() {
             .collect::<Vec<_>>(),
         before
     );
-    let complete = gateway_source_audit::driver::inspect_source_rows(&rows, true, 0).unwrap();
+    let complete = gateway_source_audit::driver::inspect_source_rows(&rows, true, 0)?;
     assert!(complete.errors.is_empty());
+    Ok(())
 }
 
 #[test]

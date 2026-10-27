@@ -30,15 +30,16 @@ fn assert_source(actual: &Value, expected: &Value, context: &str) {
 }
 
 #[test]
-fn kernel_policy_normalization_matches_frozen_bun_source() {
+fn kernel_policy_normalization_matches_frozen_bun_source() -> Result<(), Box<dyn std::error::Error>>
+{
     let cases: Vec<Value> =
-        serde_json::from_str(include_str!("fixtures/kernel-policy-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/kernel-policy-golden.json"))?;
     assert_eq!(cases.len(), 30);
     for case in cases {
         let result = gateway_migration_ledger::kernel::normalize_policy(
             &case["value"],
-            case["scope"].as_str().unwrap(),
-            case["owner"].as_str().unwrap(),
+            case["scope"].as_str().ok_or("Expected fixture scope")?,
+            case["owner"].as_str().ok_or("Expected fixture owner")?,
             case["repo"].as_str(),
         );
         assert_source(
@@ -47,6 +48,7 @@ fn kernel_policy_normalization_matches_frozen_bun_source() {
             &case.to_string(),
         );
     }
+    Ok(())
 }
 
 #[test]

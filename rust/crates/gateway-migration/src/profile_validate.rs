@@ -176,15 +176,15 @@ pub(crate) async fn validate<S: QueryStore>(
         "api_key_bounded_counter_reconciled_baselines_v2",
         reconciled,
     );
-    let get = |parts: Value| {
+    let get = |parts: &[Value]| {
         rows.iter()
-            .find(|r| r.parts == parts.as_array().unwrap().as_slice())
+            .find(|r| r.parts == parts)
             .map(|r| r.record.json_value())
             .transpose()
     };
     let mut settings = BTreeMap::new();
     for (name, key) in SETTINGS {
-        let parts = json!(key).as_array().unwrap().clone();
+        let parts = key.iter().map(|part| json!(part)).collect::<Vec<_>>();
         let present = if identity_source_control(&parts) {
             rows.iter()
                 .find(|row| row.parts == parts)
@@ -192,19 +192,13 @@ pub(crate) async fn validate<S: QueryStore>(
                 .transpose()?
                 .is_some_and(|value| value.as_str() != "null")
         } else {
-            get(json!(key))?.is_some_and(|value| !value.is_null())
+            get(&parts)?.is_some_and(|value| !value.is_null())
         };
         settings.insert(*name, present);
     }
     let config = rows
         .iter()
-        .find(|row| {
-            row.parts
-                == json!(["uos_ai", "runtime_config", "v2"])
-                    .as_array()
-                    .unwrap()
-                    .as_slice()
-        })
+        .find(|row| row.parts == [json!("uos_ai"), json!("runtime_config"), json!("v2")])
         .map(|row| gateway_core::source_control::decode_source_control_record(&row.record))
         .transpose()?
         .as_ref()

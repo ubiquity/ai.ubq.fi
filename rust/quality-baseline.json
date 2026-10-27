@@ -8,7 +8,7 @@
     "gateway-compaction": 3177,
     "gateway-core": 4791,
     "gateway-extras-runtime": 2851,
-    "gateway-migration": 9759,
+    "gateway-migration": 9753,
     "gateway-native": 22320,
     "gateway-observability": 12243,
     "gateway-providers": 9773,
@@ -24,7 +24,7 @@
     "gateway-extras-runtime/test/runtime": 1001,
     "gateway-migration/example/worker-custody-fixture": 1922,
     "gateway-migration/test/copied_store_inverse": 1075,
-    "gateway-migration/test/runtime": 1187,
+    "gateway-migration/test/runtime": 1183,
     "gateway-routing-runtime/test/source_contracts": 1462
   },
   "violations": {

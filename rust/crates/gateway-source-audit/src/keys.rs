@@ -178,6 +178,49 @@ pub(super) fn visit_key_pairs_with(
         hashes.insert(hash.to_owned(), current);
         Ok(())
     })?;
+    visit_id_policies(rows, &hashes, &mut refs, emit, &mut audit)?;
+    for hash in hashes.keys() {
+        match refs.get(hash).copied().unwrap_or(0) {
+            0 => audit.errors.push(
+                format!("api key hash policy is orphaned: {hash}")
+                    .as_str()
+                    .into(),
+            ),
+            n if n > 1 => audit.errors.push(
+                format!("api key hash policy has multiple id records: {hash}")
+                    .as_str()
+                    .into(),
+            ),
+            _ => {}
+        }
+    }
+    let ids = audit.counts.get("api_key_ids").copied().unwrap_or(0);
+    let hash_count = audit.counts.get("api_key_hashes").copied().unwrap_or(0);
+    if ids != hash_count {
+        audit.errors.insert(
+            0,
+            format!("api key id/hash count mismatch: ids={ids} hashes={hash_count}")
+                .as_str()
+                .into(),
+        );
+    }
+    if let Some(error) = baseline_error {
+        return Err(error);
+    }
+    audit.merge(baselines);
+    audit
+        .counts
+        .insert("api_key_bounded_counters_v2".into(), bounded_counters);
+    Ok(audit)
+}
+
+fn visit_id_policies(
+    rows: &dyn AuditInventory,
+    hashes: &BTreeMap<String, usize>,
+    refs: &mut BTreeMap<String, usize>,
+    emit: &mut dyn FnMut(AuditedKeyPair) -> Result<(), GatewayError>,
+    audit: &mut Audit,
+) -> Result<(), GatewayError> {
     rows.visit(&mut |row| {
         if !under(&row.parts, &["ubq_ai", "api_keys", "id"]) {
             return Ok(());
@@ -240,57 +283,21 @@ pub(super) fn visit_key_pairs_with(
             "paid_fallback_reserved_microcredits",
             "paid_fallback_reservation_request_id",
         ];
-        if paired
-            .as_ref()
-            .is_none_or(|h| fields.iter().any(|f| !source::same(&v, h, f)))
-        {
+        let Some(paired) = paired.filter(|h| fields.iter().all(|f| source::same(&v, h, f))) else {
             audit.errors.push(
                 format!("api key hash policy is missing or inconsistent: {id}")
                     .as_str()
                     .into(),
             );
             return Ok(());
-        }
+        };
         *refs.entry(hash.to_owned()).or_default() += 1;
         emit(AuditedKeyPair {
             key_id: id.to_owned(),
             unlimited_paid: source::equals(&v, "paid_fallback_limit_microcredits", &json!(-1)),
             id: v,
-            hash: paired.expect("validated paired source policy"),
+            hash: paired,
         })?;
         Ok(())
-    })?;
-    for hash in hashes.keys() {
-        match refs.get(hash).copied().unwrap_or(0) {
-            0 => audit.errors.push(
-                format!("api key hash policy is orphaned: {hash}")
-                    .as_str()
-                    .into(),
-            ),
-            n if n > 1 => audit.errors.push(
-                format!("api key hash policy has multiple id records: {hash}")
-                    .as_str()
-                    .into(),
-            ),
-            _ => {}
-        }
-    }
-    let ids = audit.counts.get("api_key_ids").copied().unwrap_or(0);
-    let hash_count = audit.counts.get("api_key_hashes").copied().unwrap_or(0);
-    if ids != hash_count {
-        audit.errors.insert(
-            0,
-            format!("api key id/hash count mismatch: ids={ids} hashes={hash_count}")
-                .as_str()
-                .into(),
-        );
-    }
-    if let Some(error) = baseline_error {
-        return Err(error);
-    }
-    audit.merge(baselines);
-    audit
-        .counts
-        .insert("api_key_bounded_counters_v2".into(), bounded_counters);
-    Ok(audit)
+    })
 }

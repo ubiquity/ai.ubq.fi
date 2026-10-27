@@ -4,7 +4,7 @@ use crate::{
 };
 use gateway_core::{
     error::GatewayError,
-    state::{AtomicTransition, RevisionCheck},
+    state::{AtomicTransition, RecordKey, RevisionCheck},
     value::PortableValue,
 };
 use gateway_profile_values::scalar::{error, integer, number, text};
@@ -80,22 +80,7 @@ pub fn plan_counter_handoff(
     let start = integer(policy, "window_start_ms").ok_or_else(|| error("Invalid window start."))?;
     let reset =
         integer(policy, "usage_reset_at_ms").ok_or_else(|| error("Invalid window reset."))?;
-    let observed = if let Some(counter) = counter {
-        match counter.record.portable_value()? {
-            PortableValue::Null => legacy_usage,
-            PortableValue::KvU64(v) => v
-                .parse::<i64>()
-                .ok()
-                .filter(|v| *v <= 9_007_199_254_740_991)
-                .ok_or_else(|| error("Legacy V2 API-key counter is out of range."))?,
-            _ => return Err(error("Legacy V2 API-key counter is invalid.")),
-        }
-    } else {
-        legacy_usage
-    };
-    if !(0..=9_007_199_254_740_991).contains(&observed) {
-        return Err(error("Legacy V2 API-key counter is out of range."));
-    }
+    let observed = legacy_counter_usage(counter, legacy_usage)?;
     let existing = window
         .map(ObservedRow::value)
         .transpose()?
@@ -149,32 +134,7 @@ pub fn plan_counter_handoff(
     };
     next_window["committed_requests"] = json!(next_committed);
     next_window["updated_at_ms"] = json!(now);
-    let baseline_key = key(&[
-        json!("uos_ai"),
-        json!("migrations"),
-        json!("kv_read_incident_v2"),
-        json!("api_key_usage_baseline"),
-        json!(key_id),
-        json!(version),
-        json!(start),
-    ])?;
-    let counter_key = key(&[
-        json!("uos_ai"),
-        json!("api_key_usage"),
-        json!("v2"),
-        json!(key_id),
-        json!(version.strip_prefix("v3:").unwrap_or(version)),
-        json!(start),
-    ])?;
-    let window_key = key(&[
-        json!("uos_ai"),
-        json!("api_key_usage"),
-        json!("v3"),
-        json!("window"),
-        json!(key_id),
-        json!(version),
-        json!(start),
-    ])?;
+    let (baseline_key, counter_key, window_key) = handoff_keys(key_id, version, start)?;
     let expected = |row: Option<&ObservedRow>, key| -> Result<RevisionCheck, GatewayError> {
         if let Some(row) = row {
             if row.key != key {
@@ -224,4 +184,61 @@ pub fn valid_api_window(v: &Value) -> bool {
         .iter()
         .all(|f| safe(v.get(f)))
         && number(v, "window_reset_at_ms") > number(v, "window_start_ms")
+}
+
+fn handoff_keys(
+    key_id: &str,
+    version: &str,
+    start: i64,
+) -> Result<(RecordKey, RecordKey, RecordKey), GatewayError> {
+    let baseline_key = key(&[
+        json!("uos_ai"),
+        json!("migrations"),
+        json!("kv_read_incident_v2"),
+        json!("api_key_usage_baseline"),
+        json!(key_id),
+        json!(version),
+        json!(start),
+    ])?;
+    let counter_key = key(&[
+        json!("uos_ai"),
+        json!("api_key_usage"),
+        json!("v2"),
+        json!(key_id),
+        json!(version.strip_prefix("v3:").unwrap_or(version)),
+        json!(start),
+    ])?;
+    let window_key = key(&[
+        json!("uos_ai"),
+        json!("api_key_usage"),
+        json!("v3"),
+        json!("window"),
+        json!(key_id),
+        json!(version),
+        json!(start),
+    ])?;
+    Ok((baseline_key, counter_key, window_key))
+}
+
+fn legacy_counter_usage(
+    counter: Option<&ObservedRow>,
+    legacy_usage: i64,
+) -> Result<i64, GatewayError> {
+    let observed = if let Some(counter) = counter {
+        match counter.record.portable_value()? {
+            PortableValue::Null => legacy_usage,
+            PortableValue::KvU64(v) => v
+                .parse::<i64>()
+                .ok()
+                .filter(|v| *v <= 9_007_199_254_740_991)
+                .ok_or_else(|| error("Legacy V2 API-key counter is out of range."))?,
+            _ => return Err(error("Legacy V2 API-key counter is invalid.")),
+        }
+    } else {
+        legacy_usage
+    };
+    if !(0..=9_007_199_254_740_991).contains(&observed) {
+        return Err(error("Legacy V2 API-key counter is out of range."));
+    }
+    Ok(observed)
 }

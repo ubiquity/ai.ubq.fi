@@ -984,7 +984,8 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert()
 }
 
 #[test]
-fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts() {
+fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("typed-key.sqlite3"));
     let entry = SourceEntry {
@@ -1004,25 +1005,20 @@ fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts() {
         expires_at_ms: Some(9000),
     };
     let input = capture(vec![entry]);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
-    let output = run(export_latest(&store, 2300)).unwrap();
-    let before = gateway_profile_source::line::normalize_import_line(
-        &serde_json::to_string(&input.entries[0]).unwrap(),
-    )
-    .unwrap()
-    .unwrap();
-    let after = gateway_profile_source::line::normalize_import_line(
-        &serde_json::to_string(&output.entries[0]).unwrap(),
-    )
-    .unwrap()
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
+    let output = run(export_latest(&store, 2300))?;
+    let before = gateway_profile_source::line::normalize_import_line(&serde_json::to_string(
+        &input.entries[0],
+    )?)?
+    .ok_or("Expected normalized typed tuple fixture")?;
+    let after = gateway_profile_source::line::normalize_import_line(&serde_json::to_string(
+        &output.entries[0],
+    )?)?
+    .ok_or("Expected normalized typed tuple fixture")?;
     assert_eq!(before.key, after.key);
     assert_eq!(before.value, after.value);
     assert_eq!(output.entries[0].versionstamp, "typed-key-source");
+    Ok(())
 }
 
 #[test]

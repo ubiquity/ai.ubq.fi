@@ -131,9 +131,9 @@ fn validate_source_inventories(
             } else {
                 expired.next()
             }
-            .expect("exact retained audit order")
+            .ok_or_else(|| invalid("Source audit order is incomplete."))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok((rows, findings))
 }
 
