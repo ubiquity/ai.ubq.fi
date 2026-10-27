@@ -1,7 +1,7 @@
 //! Authoritative source-wire errors; diagnostics never replace the original body.
 use crate::inference_capture::Capture;
-use gateway_core::error::GatewayError;
-use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
+use gateway_local_refusal::routing_error::RoutingError;
+use gateway_source::error::GatewayError;
 use std::rc::Rc;
 use worker::Response;
 
@@ -12,10 +12,7 @@ pub(crate) async fn error_response(
     let Some(body) = error.source_body else {
         return Err(*error.error);
     };
-    let content_type = match &body {
-        SourceRefusalBody::Json(_) => "application/json",
-        SourceRefusalBody::InternalServerError => "text/plain; charset=utf-8",
-    };
+    let content_type = body.content_type();
     let mut response = Response::from_bytes(body.as_bytes().to_vec())
         .map_err(|_| unavailable())?
         .with_status(error.error.status);

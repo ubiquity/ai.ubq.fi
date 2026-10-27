@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-local-refusal.workspace = true
 gateway-source = { path = "../gateway-source" }
 gateway-auth-native-wire = { path = "../gateway-auth-native-wire" }
 gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }

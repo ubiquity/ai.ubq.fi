@@ -6,15 +6,18 @@ use gateway_admin_runtime::{
     AdminRuntime, RuntimeConfig,
     capabilities::{Context, ErrorDiagnostics, RuntimeCapabilities},
 };
-use gateway_auth::{
+use gateway_auth_contracts::{
     types::{AuthHost, AuthMethod, AuthPrincipal},
-    upstream::*,
-    webauthn::*,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::*, source_json::SourceJson, state::*,
-    tuple_key::TupleKey, value::PortableValue,
+    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, StoredRecord},
+    tuple_key::TupleKey,
+    value::PortableValue,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::Cell,
@@ -36,17 +39,26 @@ fn run<F: Future>(future: F) -> F::Output {
 struct Store {
     rows: BTreeMap<String, StoredRecord>,
     queries: Cell<usize>,
+    reads: Cell<usize>,
 }
 impl Store {
     fn put(&mut self, time: i64, id: &str, record: StoredRecord) {
         self.rows.insert(
-            gateway_auth::store::key(json!(["uos_ai", "admin_error_log", "v1", time, id])).0,
+            gateway_auth_primitives::store::key(json!([
+                "uos_ai",
+                "admin_error_log",
+                "v1",
+                time,
+                id
+            ]))
+            .0,
             record,
         );
     }
 }
 impl AuthorityStore for Store {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
+        self.reads.set(self.reads.get() + 1);
         Ok(self.rows.get(&key.0).cloned())
     }
     async fn commit(&self, _: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
@@ -307,4 +319,44 @@ fn error_history_never_reinterprets_profile_v1_as_json() {
         Some("incompatible_value_encoding")
     );
     assert_eq!(capabilities.0.get(), 0);
+}
+
+#[test]
+fn closed_validation_errors_keep_original_bytes_before_defaults_or_selection_effects()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (operation, raw, expected) in [
+        (
+            AdminOperation::DefaultsSet,
+            r#"{"\ud800":0,"model":7}"#,
+            r#"{"error":{"message":"Unknown defaults field: \ud800","type":"invalid_request_error","code":"invalid_request_error"}}"#,
+        ),
+        (
+            AdminOperation::ProviderSelectionSet,
+            r#"{"provider_ids":["\ud800"]}"#,
+            r#"{"error":{"message":"unknown provider ids: \ud800","type":"invalid_request_error","code":"invalid_request_error"}}"#,
+        ),
+    ] {
+        let store = Store::default();
+        let host = Host;
+        let capabilities = Capabilities::default();
+        let config = RuntimeConfig::default();
+        let runtime = AdminRuntime {
+            store: &store,
+            host: &host,
+            capabilities: &capabilities,
+            config: &config,
+        };
+        let mut request = input(true);
+        request.body = SourceJson::parse(raw)?;
+        let response = run(runtime.execute(operation, request))?;
+        assert_eq!(response.status, 400);
+        assert_eq!(response.body.to_bytes()?, expected.as_bytes());
+        assert_eq!(response.headers["content-type"], "application/json");
+        assert_eq!(response.headers["cache-control"], "no-store");
+        assert_eq!(store.reads.get(), 0);
+        assert_eq!(store.queries.get(), 0);
+        assert!(store.rows.is_empty());
+        assert_eq!(capabilities.0.get(), 0);
+    }
+    Ok(())
 }

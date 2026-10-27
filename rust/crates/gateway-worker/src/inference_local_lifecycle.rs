@@ -153,17 +153,7 @@ pub(crate) fn response_error(
             .map_err(|_| wrapper_error())?
             .with_status(error.error.status);
         wire.headers_mut()
-            .set(
-                "content-type",
-                match body {
-                    gateway_local_refusal::routing_error::SourceRefusalBody::Json(_) => {
-                        "application/json"
-                    }
-                    gateway_local_refusal::routing_error::SourceRefusalBody::InternalServerError => {
-                        "text/plain; charset=utf-8"
-                    }
-                },
-            )
+            .set("content-type", body.content_type())
             .map_err(|_| wrapper_error())?;
         wire.headers_mut()
             .set("cache-control", "no-store")

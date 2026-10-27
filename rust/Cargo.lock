@@ -926,13 +926,16 @@ dependencies = [
  "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-claude-usage-protocol",
  "gateway-core",
  "gateway-local-refusal",
  "gateway-profile-values",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1027,6 +1030,7 @@ dependencies = [
  "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-core",
+ "gateway-local-refusal",
  "gateway-source",
  "serde",
  "serde_json",
@@ -1212,12 +1216,13 @@ dependencies = [
 name = "gateway-catalog-provider"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-local-refusal",
  "gateway-provider-policy",
  "gateway-schema",
+ "gateway-source",
  "serde",
 ]
 
@@ -1238,6 +1243,7 @@ dependencies = [
  "gateway-publication-policy",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1398,13 +1404,14 @@ dependencies = [
 name = "gateway-extras-contract"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-contracts",
  "gateway-core",
  "gateway-local-refusal",
  "gateway-provider-images",
  "gateway-provider-protocol",
  "gateway-provider-services",
  "gateway-schema",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1467,6 +1474,7 @@ name = "gateway-local-refusal"
 version = "0.1.0"
 dependencies = [
  "gateway-source",
+ "serde",
  "serde_json",
 ]
 
@@ -2020,6 +2028,7 @@ dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-local-refusal",
+ "gateway-source",
  "indexmap 2.14.2",
  "ryu-js",
  "serde",
@@ -2104,6 +2113,7 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-source",
  "gateway-wait-observation",
  "gateway-worker-http-body",
  "gateway-worker-platform",

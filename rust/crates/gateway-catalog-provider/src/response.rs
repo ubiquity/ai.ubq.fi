@@ -1,6 +1,7 @@
 //! Catalog wire responses preserve the source document and error envelope.
-use gateway_core::source_json::SourceJson;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_source::source_json::SourceJson;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,16 +25,13 @@ impl AdminCatalogResponse {
 }
 pub fn into_auth_response(
     response: Result<AdminCatalogResponse, SourceRequestError>,
-) -> gateway_auth::types::AuthResponse {
+) -> AuthResponse {
     match response {
         Ok(response) => {
-            let mut wire =
-                gateway_auth::types::AuthResponse::source_json(response.status, response.body);
+            let mut wire = AuthResponse::source_json(response.status, response.body);
             wire.headers.extend(response.headers);
             wire
         }
-        Err(error) => {
-            gateway_auth::types::AuthResponse::source_json(error.status, error.body().clone())
-        }
+        Err(error) => AuthResponse::closed_error(error.status, error.body().clone()),
     }
 }

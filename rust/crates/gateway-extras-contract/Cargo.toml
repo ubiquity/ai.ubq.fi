@@ -6,12 +6,13 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source.workspace = true
 gateway-provider-services.workspace = true
 gateway-provider-protocol.workspace = true
 gateway-provider-images.workspace = true
 gateway-local-refusal.workspace = true
 gateway-core.workspace = true
-gateway-auth.workspace = true
+gateway-auth-contracts.workspace = true
 gateway-schema.workspace = true
 serde.workspace = true
 serde_json.workspace = true

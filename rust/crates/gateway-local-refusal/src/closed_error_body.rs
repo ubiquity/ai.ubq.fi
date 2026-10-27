@@ -80,3 +80,34 @@ impl ClosedErrorBody {
         self.param.as_ref().map(Option::as_ref)
     }
 }
+
+/// Generic serialization retains its real fallible serializer boundary.
+impl serde::Serialize for ClosedErrorBody {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(serde::Serialize)]
+        struct Fields<'a> {
+            message: &'a JsString16,
+            #[serde(rename = "type")]
+            error_type: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            code: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            param: Option<Option<&'a JsString16>>,
+        }
+        #[derive(serde::Serialize)]
+        struct Envelope<'a> {
+            error: Fields<'a>,
+        }
+        serde::Serialize::serialize(
+            &Envelope {
+                error: Fields {
+                    message: self.message(),
+                    error_type: self.error_type(),
+                    code: self.code(),
+                    param: self.param(),
+                },
+            },
+            serializer,
+        )
+    }
+}
