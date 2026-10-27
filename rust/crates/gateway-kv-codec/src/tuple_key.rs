@@ -147,7 +147,7 @@ impl TupleKey {
             .ok_or_else(|| invalid_key("The portable tuple key codec is unsupported."))?;
         Self::from_sort_bytes(
             decode_hex(encoded)
-                .map_err(|()| invalid_key("A tuple key has invalid lowercase hex."))?,
+                .map_err(|_| invalid_key("A tuple key has invalid lowercase hex."))?,
         )
     }
 
@@ -349,16 +349,20 @@ pub fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 
-pub fn decode_hex(encoded: &str) -> Result<Vec<u8>, ()> {
-    fn digit(byte: u8) -> Result<u8, ()> {
+/// The input is not an even-length sequence of lowercase ASCII hexadecimal digits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HexDecodeError;
+
+pub fn decode_hex(encoded: &str) -> Result<Vec<u8>, HexDecodeError> {
+    fn digit(byte: u8) -> Result<u8, HexDecodeError> {
         match byte {
             b'0'..=b'9' => Ok(byte - b'0'),
             b'a'..=b'f' => Ok(byte - b'a' + 10),
-            _ => Err(()),
+            _ => Err(HexDecodeError),
         }
     }
     if !encoded.len().is_multiple_of(2) {
-        return Err(());
+        return Err(HexDecodeError);
     }
     encoded
         .as_bytes()

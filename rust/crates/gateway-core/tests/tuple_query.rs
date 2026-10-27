@@ -377,3 +377,24 @@ fn query_refuses_zero_page_limit_and_invalid_clock() {
     query.now_ms = -1;
     assert!(query.validate().is_err());
 }
+
+#[test]
+fn closed_lowercase_hex_roundtrips_all_bytes_and_refuses_noncanonical_inputs() {
+    use gateway_kv_codec::tuple_key::{HexDecodeError, decode_hex, encode_hex};
+
+    assert_eq!(encode_hex(&[0, 1, 127, 128, 254, 255]), "00017f80feff");
+    assert_eq!(
+        decode_hex("00017f80feff"),
+        Ok(vec![0, 1, 127, 128, 254, 255])
+    );
+    assert_eq!(decode_hex(""), Ok(Vec::new()));
+    let all_bytes: Vec<u8> = (0..=u8::MAX).collect();
+    let encoded = encode_hex(&all_bytes);
+    assert_eq!(encoded.len(), 512);
+    assert_eq!(decode_hex(&encoded), Ok(all_bytes));
+    for invalid in [
+        "0", "f", "00Ff", "00ff ", " 00", "-1", "\0", "é", "١٢", "０",
+    ] {
+        assert_eq!(decode_hex(invalid), Err(HexDecodeError), "{invalid:?}");
+    }
+}
