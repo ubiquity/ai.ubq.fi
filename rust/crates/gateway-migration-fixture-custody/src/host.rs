@@ -326,6 +326,7 @@ fn verify_refresh_only_projection(
 mod tests {
     use super::*;
     type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+    type OriginalAuthFiles = Vec<(PathBuf, Vec<u8>)>;
 
     use gateway_auth::{crypto::base64url, native_credentials::parse_native_document};
     use gateway_migration_test_support::fixture::{Directory, run};
@@ -334,7 +335,7 @@ mod tests {
     fn fixture(
         directory: &Directory,
         expires_at_seconds: u64,
-    ) -> TestResult<(Host, Vec<(PathBuf, Vec<u8>)>)> {
+    ) -> TestResult<(Host, OriginalAuthFiles)> {
         let mut bindings = BTreeMap::new();
         let mut original = Vec::new();
         for id in ["managed-a", "managed-b"] {
