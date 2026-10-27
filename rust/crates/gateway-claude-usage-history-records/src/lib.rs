@@ -46,6 +46,20 @@ pub fn used_percent(value: Option<f64>) -> Option<f64> {
         .filter(|n| n.is_finite() && *n >= 0.0)
         .map(|n| (n * 100.0).min(100.0))
 }
+/// Source capacity projection for one canonical window, retaining nullable leaves.
+pub fn window_source(windows:&SourceJson,name:&str)->Result<Option<SourceJson>,GatewayError>{
+    if !windows.as_str().trim_start().starts_with('{'){return Ok(None);}
+    let input=SourceObject::parse(windows)?;
+    let Some(input)=input.get(name).filter(|v|v.as_str().trim_start().starts_with('{')) else{return Ok(None);};
+    let input=SourceObject::parse(input)?;
+    let null=SourceJson::parse("null")?;
+    let leaf=|name|input.get(name).cloned().unwrap_or_else(||null.clone());
+    let utilization=source::number(&leaf("utilization")).filter(|n|n.is_finite());
+    Ok(Some(source::object(vec![
+        ("status",leaf("status")),("used_percent",SourceJson::from_serializable(&used_percent(utilization))?),
+        ("reset_at_ms",leaf("reset_at_ms")),("observed_at_ms",leaf("observed_at_ms")),
+    ])?))
+}
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Window {
     status: Option<JsString16>,
@@ -161,15 +175,15 @@ impl Point {
             .floor()
             * HOUR_MS as f64
     }
-    pub fn rollup_key(&self, name: &str) -> RecordKey {
-        let w = self.windows.get(name).expect("validated window");
-        rollup_key_parts(
+    pub fn rollup_key(&self, name: &str) -> Result<RecordKey, GatewayError> {
+        let w = self.windows.get(name).ok_or_else(||error("Claude rollup window is absent"))?;
+        Ok(rollup_key_parts(
             self.rollup_bucket(w),
             &self.account_id,
             &self.account_cohort_id,
             name,
             w.reset_at_ms,
-        )
+        ))
     }
 }
 #[derive(Clone, Deserialize, Serialize)]
@@ -721,17 +735,12 @@ pub fn merge_source(
         last_used_percent: if newer {
             w.used_percent
         } else {
-            old.as_ref()
-                .expect("previous observation")
-                .last_used_percent
+            old.as_ref().and_then(|p|p.last_used_percent)
         },
         last_status: if newer {
             w.status.clone()
         } else {
-            old.as_ref()
-                .expect("previous observation")
-                .last_status
-                .clone()
+            old.as_ref().and_then(|p|p.last_status.clone())
         },
     };
     source::canonical(&SourceJson::from_serializable(&rollup)?)

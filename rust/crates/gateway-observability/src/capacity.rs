@@ -124,33 +124,7 @@ pub fn claude_source(
                 None
             }
         });
-    let window = |name: &str| -> Result<Option<SourceJson>, GatewayError> {
-        if !windows.as_str().trim_start().starts_with('{') {
-            return Ok(None);
-        }
-        let input = SourceObject::parse(&windows)?;
-        let Some(input) = input
-            .get(name)
-            .filter(|v| v.as_str().trim_start().starts_with('{'))
-        else {
-            return Ok(None);
-        };
-        let input = SourceObject::parse(input)?;
-        let leaf = |name| input.get(name).cloned().unwrap_or_else(|| null.clone());
-        Ok(Some(source::object(vec![
-            ("status", leaf("status")),
-            (
-                "used_percent",
-                SourceJson::from_serializable(
-                    &gateway_claude_usage_history_records::used_percent(number(&leaf(
-                        "utilization",
-                    ))),
-                )?,
-            ),
-            ("reset_at_ms", leaf("reset_at_ms")),
-            ("observed_at_ms", leaf("observed_at_ms")),
-        ])?))
-    };
+    let window = |name| gateway_claude_usage_history_records::window_source(&windows,name);
     let mut standard_rows = Vec::new();
     if standard.as_str().trim_start().starts_with('{') {
         for (family, value) in source::entries(&standard)

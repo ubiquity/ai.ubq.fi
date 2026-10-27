@@ -126,7 +126,7 @@ impl UsageHost for Fixture {
         &self,
         event: &gateway_claude_runtime::host::AcceptedObservation,
     ) -> Result<(), GatewayError> {
-        let event = ClaudeAcceptedObservation::from_source(&event.source_value())?;
+        let event = ClaudeAcceptedObservation::from_source(&event.source_value()?)?;
         History {
             store: &self.store,
             host: self,

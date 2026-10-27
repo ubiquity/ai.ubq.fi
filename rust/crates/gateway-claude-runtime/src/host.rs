@@ -155,23 +155,23 @@ pub struct AcceptedObservation {
 }
 impl AcceptedObservation {
     /// Source JSON number spelling also supports m19's integer timestamp DTO.
-    pub fn source_value(&self) -> SourceJson {
+    pub fn source_value(&self) -> Result<SourceJson, GatewayError> {
         let mut fields = source::entries(
-            &SourceJson::from_serializable(self).expect("finite source Claude observation"),
+            &SourceJson::from_serializable(self)?,
         )
-        .expect("Claude observation is an object");
+        .ok_or_else(invalid_observation)?;
         let observation = fields
             .iter_mut()
             .find(|(name, _)| name == &JsString16::from_utf8("observation"))
-            .expect("Claude observation field");
+            .ok_or_else(invalid_observation)?;
         let mut observation_fields =
-            source::entries(&observation.1).expect("quota observation is an object");
+            source::entries(&observation.1).ok_or_else(invalid_observation)?;
         let standard = observation_fields
             .iter_mut()
             .find(|(name, _)| name == &JsString16::from_utf8("standard"))
-            .expect("standard observation field");
+            .ok_or_else(invalid_observation)?;
         let mut remaining =
-            source::entries(&standard.1).expect("standard observation is an object");
+            source::entries(&standard.1).ok_or_else(invalid_observation)?;
         let mut ordered = Vec::new();
         // Actual observeClaudeCodeQuota producer order, not arbitrary consumer input order.
         for family in gateway_claude_usage_quota::STANDARD_FAMILIES {
@@ -183,12 +183,15 @@ impl AcceptedObservation {
             }
         }
         ordered.extend(remaining);
-        standard.1 = source::object_keys(ordered).expect("finite standard observation");
-        observation.1 = source::object_keys(observation_fields).expect("finite quota observation");
+        standard.1 = source::object_keys(ordered)?;
+        observation.1 = source::object_keys(observation_fields)?;
         source::object_keys(fields)
             .and_then(|value| source::canonical(&value))
-            .expect("finite source Claude observation")
     }
+}
+
+fn invalid_observation() -> GatewayError {
+    GatewayError::unavailable("Claude observation is invalid", "claude_observation_invalid")
 }
 
 #[derive(Clone, Debug)]
@@ -250,7 +253,7 @@ pub(crate) struct CommittedOutcome {
 mod producer_order_tests {
     use super::*;
     #[test]
-    fn accepted_standard_families_follow_actual_source_producer_order() {
+    fn accepted_standard_families_follow_actual_source_producer_order() -> Result<(),Box<dyn std::error::Error>> {
         let mut quota = QuotaObservation::empty(1_800_000_000_000);
         for (index, family) in gateway_claude_usage_quota::STANDARD_FAMILIES
             .into_iter()
@@ -279,25 +282,25 @@ mod producer_order_tests {
             state: "available".into(),
             observation: quota,
         };
-        let document = event.source_value();
-        let observation = source::member(&document, "observation").unwrap();
-        let standard = source::member(&observation, "standard").unwrap();
-        let fields = source::entries(&standard).unwrap();
+        let document = event.source_value()?;
+        let observation = source::member(&document, "observation").ok_or("observation absent")?;
+        let standard = source::member(&observation, "standard").ok_or("standard absent")?;
+        let fields = source::entries(&standard).ok_or("standard is not an object")?;
         assert_eq!(
             fields
                 .iter()
-                .map(|(name, _)| name.try_utf8().unwrap())
-                .collect::<Vec<_>>(),
+                .map(|(name, _)| name.try_utf8())
+                .collect::<Result<Vec<_>,_>>()?,
             gateway_claude_usage_quota::STANDARD_FAMILIES
         );
         for (index, (_, value)) in fields.iter().enumerate() {
             assert_eq!(
-                source::number(&source::member(value, "limit").unwrap()),
+                source::number(&source::member(value, "limit").ok_or("limit absent")?),
                 Some((index + 1) as f64)
             );
         }
         assert_eq!(
-            source::string(&source::member(&document, "workspace_id").unwrap()),
+            source::string(&source::member(&document, "workspace_id").ok_or("workspace absent")?),
             event.workspace_id
         );
         // Serialization must not mutate the in-memory map or any consumer's source JSON.
@@ -310,5 +313,6 @@ mod producer_order_tests {
                 .collect::<Vec<_>>(),
             vec!["input-tokens", "output-tokens", "requests"]
         );
+        Ok(())
     }
 }

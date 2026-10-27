@@ -23,7 +23,7 @@ fn signal(caller: &worker::web_sys::AbortSignal) -> Result<worker::AbortSignal, 
     Ok(signal.dyn_into::<worker::web_sys::AbortSignal>().map_err(setup)?.into())
 }
 fn message(error: worker::Error) -> Option<JsString16> {
-    let value = error.into_js_value();
+    let value = error.to_js_value();
     if !value.is_instance_of::<worker::js_sys::Error>() { return None; }
     let message = Reflect::get(&value, &JsValue::from_str("message")).ok()?;
     if !message.is_string() { return None; }

@@ -74,7 +74,7 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
                 if p.windows.get(window).is_none() {
                     continue;
                 }
-                let key = p.rollup_key(window);
+                let key = p.rollup_key(window)?;
                 let row = self.store.read(&key).await?;
                 let previous = row
                     .as_ref()
@@ -110,7 +110,8 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
         Err(error("Claude history contention exceeded four attempts"))
     }
     pub async fn claude_capacity_history(&self, at: i64) -> SourceJson {
-        let base=source::canonical(&SourceJson::from_serializable(&json!({"v":1,"bucket_ms":BUCKET_MS,"retention_ms":RETENTION_MS,"stale_after_ms":STALE_MS,"scan":"unavailable","truncated":false,"points":[]})).expect("finite history base")).expect("finite history base");
+        let base=SourceJson::parse(r#"{"v":1,"bucket_ms":900000,"retention_ms":604800000,"stale_after_ms":1800000,"scan":"unavailable","truncated":false,"points":[]}"#)
+            .unwrap_or_else(|_| unreachable!("fixed history JSON literal"));
         let read: Result<SourceJson, GatewayError> = async {
             let cutoff = (at - RETENTION_MS).max(0);
             let first = cutoff / BUCKET_MS * BUCKET_MS;
@@ -138,29 +139,12 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
             let mut truncated = rows.len() > LIMIT;
             for entry in rows.into_iter().take(LIMIT) {
                 let value = claude_history_bucket_record_source(&entry.key, &entry.record)?;
-                let bucket: Bucket = value.deserialize()?;
-                for point in bucket.points.into_iter().rev() {
-                    let p: Point = point.deserialize()?;
-                    if p.sampled_at_ms > at as f64 || p.clock() < cutoff as f64 {
-                        continue;
-                    }
+                for point in recent_points(self.host,&value,at,cutoff)? {
                     if points.len() >= LIMIT {
                         truncated = true;
                         break;
                     }
-                    let point = if let Some(snapshot) = &p.usage_snapshot {
-                        let snapshot =
-                            gateway_claude_usage_protocol::snapshot::read(snapshot, &|s| {
-                                self.host.parse_date(s)
-                            })
-                            .ok_or_else(|| error("Claude snapshot is invalid"))?;
-                        let mut projected = SourceObject::parse(&point)?;
-                        projected.set("usage_snapshot", &snapshot)?;
-                        projected.source_json()?
-                    } else {
-                        point
-                    };
-                    points.push((point, p.clock() as i64));
+                    points.push(point);
                 }
                 if points.len() >= LIMIT && truncated {
                     break;
@@ -181,7 +165,7 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
     }
     pub async fn claude_capacity_rollups(&self, since: i64, at: i64) -> SourceJson {
         let base = SourceJson::parse(r#"{"scan":"unavailable","truncated":false,"points":[]}"#)
-            .expect("finite rollup base");
+            .unwrap_or_else(|_| unreachable!("fixed rollup JSON literal"));
         let read: Result<SourceJson, GatewayError> = async {
             let first = since / HOUR_MS * HOUR_MS;
             let last = at / HOUR_MS * HOUR_MS;
@@ -227,4 +211,22 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
         .await;
         read.unwrap_or(base)
     }
+}
+
+fn recent_points<H:HistoryHost>(host:&H,value:&SourceJson,at:i64,cutoff:i64)->Result<Vec<(SourceJson,i64)>,GatewayError>{
+    let bucket:Bucket=value.deserialize()?;
+    let mut points=Vec::new();
+    for point in bucket.points.into_iter().rev(){
+        let p:Point=point.deserialize()?;
+        if p.sampled_at_ms>at as f64 || p.clock()<cutoff as f64 {continue;}
+        let point=if let Some(snapshot)=&p.usage_snapshot {
+            let snapshot=gateway_claude_usage_protocol::snapshot::read(snapshot,&|s|host.parse_date(s))
+                .ok_or_else(||error("Claude snapshot is invalid"))?;
+            let mut projected=SourceObject::parse(&point)?;
+            projected.set("usage_snapshot",&snapshot)?;
+            projected.source_json()?
+        }else{point};
+        points.push((point,p.clock() as i64));
+    }
+    Ok(points)
 }

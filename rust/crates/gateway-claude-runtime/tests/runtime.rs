@@ -769,7 +769,7 @@ fn source_binding_snapshot_named_rotation_and_clear_preserve_units_without_scala
     assert_eq!(rotated.accounts[0], a);
     let events = host.accepted.borrow();
     let event = required(events.first())?;
-    let document = event.source_value();
+    let document = event.source_value()?;
     assert_eq!(
         source::string(&required(source::member(&document, "workspace_id"))?),
         a.workspace.as_ref().map(|workspace| workspace.id.clone())

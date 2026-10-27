@@ -173,7 +173,7 @@ impl ClaudePoolHost for Host {
     async fn accepted_observation(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
         let event =
             gateway_claude_usage_history_records::types::ClaudeAcceptedObservation::from_source(
-                &event.source_value(),
+                &event.source_value()?,
             )
             .map_err(|_| super::invalid("Accepted Claude history DTO is invalid."))?;
         let runtime = ObservabilityRuntime::with_state(
