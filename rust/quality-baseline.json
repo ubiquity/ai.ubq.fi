@@ -1,6 +1,5 @@
 {
   "crates": {
-    "gateway-admin-data": 4121,
     "gateway-admin-runtime": 5486,
     "gateway-auth": 8509,
     "gateway-authority": 32269,
@@ -25,7 +24,7 @@
     "gateway-extras-runtime/test/runtime": 1001,
     "gateway-migration/example/worker-custody-fixture": 1922,
     "gateway-migration/test/copied_store_inverse": 1075,
-    "gateway-migration/test/runtime": 1188,
+    "gateway-migration/test/runtime": 1187,
     "gateway-routing-runtime/test/source_contracts": 1462
   },
   "violations": {
