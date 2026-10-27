@@ -1,5 +1,6 @@
 //! Ordinary cache campaign records; current campaign/refresh permits remain authority-owned.
 pub mod model;
+pub mod source;
 
 use crate::model::{Sample, TargetBinding};
 use serde::{Deserialize, Serialize};

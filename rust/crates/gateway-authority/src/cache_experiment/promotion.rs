@@ -1,13 +1,13 @@
 //! Source catalog and compact runtime publication is one fenced atomic transition.
-use super::{
-    state::{CyclePermit, record_key},
-    target::{catalog_key, json as source_json, runtime_key, set_member},
-};
+use super::state::CyclePermit;
 use crate::store::Authority;
 use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_authority_contracts::TokenSource;
 use gateway_cache_experiment_records::model::{
     LEASE_MS, Outcome, PROVIDER, Reason, TargetBinding, failed,
+};
+use gateway_cache_experiment_records::source::{
+    catalog_key, json as source_json, owns, record_key, runtime_key, set_member,
 };
 use gateway_core::{
     error::GatewayError, model::ModelId, source_json::SourceJson, state::AuthorityStore,
@@ -50,7 +50,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .as_ref()
                 .and_then(|v| v.deserialize::<ModelSnapshot>().ok());
             let normalized = runtime.as_ref().and_then(normalize_runtime_config);
-            let reason = if !super::state::owns(&lease, &permit.cycle_owner, current) {
+            let reason = if !owns(&lease, &permit.cycle_owner, current) {
                 Some(Reason::PromotionConflict)
             } else if tx.revision(&codex_source_pool_key()).as_deref()
                 != Some(target.auth_pool_versionstamp.as_str())

@@ -1,5 +1,5 @@
 //! Pinned source cohort/probe capabilities; never an ordinary admitted request.
-use super::{RefreshPermit, state::CyclePermit, state::record_key};
+use super::{RefreshPermit, state::CyclePermit};
 use crate::{routing::read_pinned_view, store::Authority, store::Transaction};
 use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_auth::provider_credentials::parse_codex_source_pool;
@@ -8,6 +8,7 @@ use gateway_authority_contracts::TokenSource;
 use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_records::{types::ProbeCircuit, types::ProbeLease};
 use gateway_authority_routing_signal::SignalOperations;
+use gateway_cache_experiment_records::source::record_key;
 use gateway_cache_experiment_records::{RefreshContext, model::Reason, model::Sample};
 use gateway_cache_experiment_records::{model::TargetBinding, model::failed};
 use gateway_core::state::AuthorityStore;

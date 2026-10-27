@@ -1,154 +1,56 @@
 //! Source v3 campaign/evidence CAS, using the one existing authority store.
-use super::target::{key, resolve};
+use super::target::resolve;
 use crate::store::{Authority, Transaction};
 use gateway_authority_contracts::TokenSource;
-use gateway_cache_experiment_records::model::{
-    Cycle, Evidence, LEASE_MS, Outcome, PROVIDER, Reason, SESSION_MS, State, TELEMETRY_PROVIDER,
-    TargetBinding, busy, failed, unavailable,
+use gateway_cache_experiment_evidence::CacheEvidenceReader;
+use gateway_cache_experiment_records::{
+    model::{
+        Cycle, Evidence, LEASE_MS, Outcome, PROVIDER, Reason, SESSION_MS, State,
+        TELEMETRY_PROVIDER, TargetBinding, busy, failed, unavailable,
+    },
+    source::{CampaignLease, CycleLease, active, campaign_owned, owns, record_key},
 };
-use gateway_core::error::GatewayError;
-use gateway_core::state::{AuthorityStore, RecordKey};
-use serde::{Deserialize, Serialize};
+use gateway_core::{error::GatewayError, state::AuthorityStore};
 use serde_json::{Value, json};
-
-pub(crate) fn record_key(kind: &str, target: &TargetBinding) -> RecordKey {
-    let mut parts = vec![
-        "uos_ai",
-        "prompt_cache_scope_experiment",
-        "v5",
-        kind,
-        target.provider.as_str(),
-        target.telemetry_provider.as_str(),
-    ];
-    if kind != "campaign" {
-        parts.push(&target.topology_kind);
-    }
-    parts.push(&target.probe_profile);
-    if kind != "campaign" {
-        parts.push(&target.model);
-    }
-    key(&parts)
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct CycleLease {
-    owner: String,
-    lease_until_ms: i64,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct CampaignLease {
-    owner: String,
-    target_id: String,
-    inventory_fingerprint: String,
-    lease_until_ms: i64,
-}
-fn active(value: &Option<Value>, now: i64) -> bool {
-    value
-        .as_ref()
-        .and_then(|v| v["lease_until_ms"].as_f64())
-        .is_some_and(|v| v.fract() == 0.0 && v > now as f64 && v <= 9_007_199_254_740_991.0)
-}
-pub(super) fn owns(value: &Option<Value>, owner: &str, now: i64) -> bool {
-    active(value, now) && value.as_ref().is_some_and(|v| v["owner"] == owner)
-}
-pub(super) fn campaign_owned(value: &Option<Value>, state: &State, now: i64) -> bool {
-    owns(value, &state.campaign_owner, now)
-        && value.as_ref().is_some_and(|v| {
-            v["target_id"] == state.target.id
-                && v["inventory_fingerprint"] == state.target.inventory_fingerprint
-        })
-}
-fn parse<T: serde::de::DeserializeOwned>(
-    raw: Option<Value>,
-    valid: impl FnOnce(&T) -> bool,
-    label: &str,
-) -> Result<Option<T>, GatewayError> {
-    match raw {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => {
-            let value = serde_json::from_value(value).map_err(|_| unavailable(label))?;
-            if !valid(&value) {
-                return Err(unavailable(label));
-            }
-            Ok(Some(value))
-        }
-    }
-}
 pub(super) async fn records<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     target: &TargetBinding,
 ) -> Result<(Option<State>, Option<Evidence>), GatewayError> {
-    let state = tx.read::<Value>(&record_key("state", target)).await?;
-    let evidence = tx.read::<Value>(&record_key("evidence", target)).await?;
-    let state = parse(
-        state,
-        |s: &State| s.valid(tx.now),
-        "Prompt-cache scope experiment has malformed target-scoped state.",
-    )?;
-    let evidence = parse(
-        evidence,
-        |e: &Evidence| e.valid(tx.now),
-        "Prompt-cache scope experiment has malformed target-scoped evidence.",
-    )?;
-    if let Some(state) = &state {
-        let coherent = if state.classifications.is_empty() {
-            evidence.is_none()
-        } else {
-            evidence.as_ref().is_some_and(|e| e.consistent_with(state))
-        };
-        if !coherent {
-            return Err(unavailable(
-                "Prompt-cache scope experiment has inconsistent target-scoped durable evidence.",
+    let observed_at_ms = tx.now;
+    let evidence = {
+        let reader = tx.routing_read_store();
+        CacheEvidenceReader::new(&reader, observed_at_ms)?
+            .records(target)
+            .await?
+    };
+    for check in evidence.revision_checks() {
+        if !tx.expect(&check.key, &check.expected_revision) {
+            return Err(gateway_authority_contracts::invalid(
+                "Cache evidence conflicts with an existing transaction fence.",
             ));
         }
     }
-    Ok((state, evidence))
+    Ok((evidence.state().cloned(), evidence.evidence().cloned()))
 }
 pub(super) async fn select_target<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     targets: Vec<TargetBinding>,
 ) -> Result<TargetBinding, GatewayError> {
-    if targets.is_empty() {
-        return Err(unavailable(
-            "Prompt-cache scope experiment has no probeable Codex target in the current inventory.",
-        ));
-    }
-    let mut all = Vec::new();
-    for target in targets {
-        let (state, evidence) = records(tx, &target).await?;
-        all.push((target, state, evidence));
-    }
-    let active = all
-        .iter()
-        .filter(|(_, s, _)| s.as_ref().is_some_and(|s| s.expires_at_ms > tx.now))
-        .collect::<Vec<_>>();
-    if active.len() > 1 {
-        return Err(unavailable(
-            "Prompt-cache scope experiment found more than one active provider campaign.",
-        ));
-    }
-    if let Some((target, Some(state), _)) = active.first().copied() {
-        if !state.target.same_core(target) {
-            return Err(unavailable(
-                "Prompt-cache scope experiment target changed while its campaign was active.",
+    let observed_at_ms = tx.now;
+    let evidence = {
+        let reader = tx.routing_read_store();
+        CacheEvidenceReader::new(&reader, observed_at_ms)?
+            .select_target(targets)
+            .await?
+    };
+    for check in evidence.revision_checks() {
+        if !tx.expect(&check.key, &check.expected_revision) {
+            return Err(gateway_authority_contracts::invalid(
+                "Cache evidence conflicts with an existing transaction fence.",
             ));
         }
-        if state.target.inventory_fingerprint != target.inventory_fingerprint {
-            return Err(unavailable(
-                "Prompt-cache scope experiment inventory changed while its campaign was active.",
-            ));
-        }
-        return Ok(target.clone());
     }
-    for (target, _, evidence) in all {
-        if !evidence
-            .is_some_and(|e| e.outcome == Outcome::Completed && e.target.same_definition(&target))
-        {
-            return Ok(target);
-        }
-    }
-    Err(unavailable(
-        "Prompt-cache scope experiment has no nonterminal probeable Codex target in the current inventory.",
-    ))
+    Ok(evidence.target().clone())
 }
 pub(super) struct CyclePermit {
     pub state: State,
