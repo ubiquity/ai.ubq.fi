@@ -2,7 +2,7 @@
 use crate::fixture::{Fixture, fail, now_ms};
 use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_control::receiver::RegisteredRenewalOwner;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use serde_json::json;
 use std::{
     fs,

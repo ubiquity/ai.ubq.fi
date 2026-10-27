@@ -1,8 +1,8 @@
 //! One authenticated/current opaque plan and one fixed import publication CAS.
 //! Config DATA is supplied only by the trusted publication receiver, never wire.
+use super::super::OWNER_RENEWAL_MAX_MS;
 use super::super::actor;
 use super::super::receiver::NativeRenewalAuthority;
-use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
 use super::effects;
 use super::unavailable;
 use crate::store::Transaction;
@@ -19,6 +19,7 @@ use gateway_auth_native_wire::{
     publication_data::{ImportCatalogDisposition, ImportPublicationDataV1},
 };
 use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_native_records::import_action::ImportActionRow;

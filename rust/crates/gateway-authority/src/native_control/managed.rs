@@ -1,5 +1,4 @@
 //! One fixed source/normalized/claim publication in the existing authority CAS.
-use super::NativeRenewalCancellation;
 use super::facts;
 use super::receiver::NativeRenewalAuthority;
 use crate::{store::Transaction, text};
@@ -14,6 +13,7 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_native_records::rows;
@@ -157,7 +157,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         super::actor::validate_current_time(&action.actor, tx.now)?;
         if tx.now >= action.deadline_ms
             || expiry <= tx.now.saturating_add(120_000) as f64
-            || native.codex_home != self.registered.home
+            || native.codex_home != self.registered.registered_home()
             || native.external_user_id.is_some()
             || !account.refresh_token.expose().is_empty()
             || id.routing_account_hash.0 != action.fence.account_id_hash
@@ -282,7 +282,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             // Full managed credentials are normalized only under separately approved offline native custody.
             if !previous.refresh_token.expose().is_empty()
                 || native.external_user_id.is_some()
-                || native.codex_home != self.registered.home
+                || native.codex_home != self.registered.registered_home()
                 || previous_physical.generation_hash != w.previous_native_source_generation
                 || previous.account_id != w.document.account_id
             {
@@ -359,7 +359,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                     refresh_token: Secret::new(String::new()),
                     updated_at_ms: tx.now as f64,
                     native_owner: Some(CodexNativeOwner {
-                        codex_home: self.registered.home.clone(),
+                        codex_home: self.registered.registered_home().clone(),
                         generation_hash: w.access_generation.clone(),
                         native_refreshed_at: w.document.native_refreshed_at.clone(),
                         external_user_id: None,

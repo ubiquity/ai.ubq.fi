@@ -86,11 +86,6 @@ impl NativeRenewalPublished {
     }
 }
 
-/// Constructor-owned cancellation, never a Boolean accepted from an HTTP request.
-pub trait NativeRenewalCancellation {
-    fn cancelled(&self) -> bool;
-}
-
 /// Preparation authenticates the original request through AuthService on the same AuthorityStore.
 /// Reverse calls resolve only captured nonsecret current fences; they never need the original bearer.
 /// Durable rows contain only secretless checks/digests, never the original credential or request body.

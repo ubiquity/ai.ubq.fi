@@ -12,14 +12,14 @@ use gateway_auth::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::actor::authenticate_admin_actor,
-    native_control::owners::RegisteredRenewalOwners,
-    native_control::receiver::NativeRenewalAuthority,
-    native_control::receiver::RegisteredRenewalOwner, store::Authority,
-};
+use gateway_authority::native_control::actor::authenticate_admin_actor;
+use gateway_authority::native_control::owners::RegisteredRenewalOwners;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::{
     identity::PoolVersionstamp, identity::PrincipalId, identity::RequestContext,

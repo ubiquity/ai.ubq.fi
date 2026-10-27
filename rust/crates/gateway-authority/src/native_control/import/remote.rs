@@ -1,6 +1,6 @@
 //! Actual fixed TLS import client. No generic response/carrier/reader input can
 //! mint body, claim, Started, currentness or terminal proofs through this type.
-use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
+use super::super::OWNER_RENEWAL_MAX_MS;
 use super::{
     AuthenticatedNativeImport,
     custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted},
@@ -28,6 +28,7 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
     NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_source::error::GatewayError;
 use std::{
     cell::Cell,

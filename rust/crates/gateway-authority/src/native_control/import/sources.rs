@@ -14,7 +14,7 @@ use serde_json::Value;
 pub(super) async fn read<
     S: AuthorityStore,
     I: TokenSource,
-    C: super::super::NativeRenewalCancellation,
+    C: gateway_authority_contracts::NativeRenewalCancellation,
 >(
     control: &NativeRenewalAuthority<'_, S, I, C>,
     tx: &mut Transaction<'_, S, I>,
@@ -78,7 +78,7 @@ pub(super) async fn read<
         }
         if identity.routing_account_hash.0 == *account_id_hash {
             let native = account.native_owner.as_ref().ok_or_else(unavailable)?;
-            if native.codex_home != control.registered.home
+            if native.codex_home != control.registered.registered_home()
                 || native.generation_hash != identity.native_generation_hash
                 || native.external_user_id.is_none()
                     && (native.managed_source.is_none()

@@ -1,6 +1,5 @@
 //! Explicit non-inference native renewal facts. No manufactured session, attempt or admission.
 use super::NativeRenewalAction;
-use super::NativeRenewalCancellation;
 use super::OWNER_RENEWAL_MAX_MS;
 use super::actor;
 use super::actor::NativeRenewalActor;
@@ -14,6 +13,7 @@ use gateway_auth::provider_credentials::{
 };
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_native_records::rows;
@@ -385,7 +385,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             }
         }
         let native = account.native_owner.as_ref().ok_or_else(fail)?;
-        if native.codex_home != self.registered.home
+        if native.codex_home != self.registered.registered_home()
             || native.generation_hash != id.native_generation_hash
             || (native.external_user_id.is_none()
                 && (native.managed_source.is_none() || !account.refresh_token.expose().is_empty()))

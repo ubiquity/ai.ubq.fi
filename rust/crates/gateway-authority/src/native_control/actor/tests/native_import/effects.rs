@@ -2,6 +2,8 @@
 use super::*;
 use crate::native_control::custody::validate_native_control_custody;
 use crate::native_control::import::{AuthenticatedNativeImport, effects::NativeImportMode};
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use std::sync::atomic::AtomicBool;
 #[derive(Default)]
 struct EffectTokens(AtomicUsize);

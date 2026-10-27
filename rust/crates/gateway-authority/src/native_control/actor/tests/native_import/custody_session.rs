@@ -8,6 +8,8 @@ use crate::native_control::import::{
 };
 use gateway_auth::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::native_read::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH};
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use std::sync::atomic::AtomicBool;
 #[derive(Default)]
 struct UniqueTokens(AtomicUsize);

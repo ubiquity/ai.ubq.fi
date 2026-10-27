@@ -3,6 +3,7 @@ use super::custody_session::ImportCustodyStartedRequest;
 use super::*;
 use crate::store::Transaction;
 use gateway_auth::crypto::sha256_hex;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::GenerationEffect;
 use gateway_authority_native_records::rows::OperationRow;

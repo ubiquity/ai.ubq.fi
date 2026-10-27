@@ -1,7 +1,7 @@
 //! Finite original-import phases. Authentication and coherent authority reads,
 //! never request DATA, select the actual one-use operation/start permission.
+use super::super::actor;
 use super::super::receiver::NativeRenewalAuthority;
-use super::super::{NativeRenewalCancellation, actor};
 use super::custody_session::ImportCustodyStartedRequest;
 use super::effects::{self, NativeImportMode};
 use super::remote_state::{self, ImportActionState};
@@ -20,6 +20,7 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_native_records::import_action::ImportActionRow;
 use gateway_authority_native_records::rows;

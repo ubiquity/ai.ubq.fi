@@ -1,6 +1,6 @@
 //! Trusted prelaunch resolution, then fixed once-connected actor transports.
 use crate::import_custody_protocol::unavailable;
-use gateway_authority::native_control::NativeRenewalCancellation;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_native_custody_wire::bootstrap::ImportEndpointData;
 use gateway_source::error::GatewayError;
 use std::{

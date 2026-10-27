@@ -1,5 +1,4 @@
 use super::NativeRenewalAction;
-use super::NativeRenewalCancellation;
 use super::NativeRenewalClaim;
 use super::NativeRenewalControl;
 use super::NativeRenewalPublished;
@@ -19,6 +18,7 @@ use gateway_auth_native_wire::{
     control::{NativeControlEnvelope, NativeControlRequest},
     native_read::NATIVE_CONTROL_PATH,
 };
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::ActionRow;
@@ -31,35 +31,7 @@ use gateway_core::state::AuthorityStore;
 use gateway_native_authority_wire::renewal::{NativeRenewalFence, NativeRenewalMode};
 use gateway_source::error::GatewayError;
 
-/// Registry construction is a host operation; no request may select a native home.
-pub struct RegisteredRenewalOwner {
-    id: String,
-    pub(super) home: String,
-}
-impl RegisteredRenewalOwner {
-    pub fn configured(id: String, home: String) -> Result<Self, GatewayError> {
-        text(&id)?;
-        // Worker validates a configured native POSIX resource name, not its own
-        // filesystem. wasm32-unknown-unknown Path::is_absolute always refuses it.
-        // Actual native filesystem/custody enforcement remains separately owned.
-        #[cfg(target_arch = "wasm32")]
-        let absolute = home.starts_with('/');
-        #[cfg(not(target_arch = "wasm32"))]
-        let absolute = std::path::Path::new(&home).is_absolute();
-        if !absolute {
-            return Err(fail());
-        }
-        Ok(Self { id, home })
-    }
-    pub fn native_owner_id(&self) -> &str {
-        &self.id
-    }
-    /// Read-only configured native mapping, never a caller-selected path or permission.
-    pub fn registered_home(&self) -> &str {
-        &self.home
-    }
-}
-
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 pub struct NativeRenewalAuthority<'a, S, I, C> {
     pub(super) authority: &'a Authority<S, I>,
     pub(super) identity: &'a NativeTransportIdentity,
@@ -600,7 +572,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation> NativeRene
 
 #[cfg(test)]
 mod registered_home_tests {
-    use super::RegisteredRenewalOwner;
+    use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 
     #[test]
     fn native_registered_home_keeps_absolute_syntax_and_rejects_relative_metadata() {

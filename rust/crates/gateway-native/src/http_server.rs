@@ -74,7 +74,7 @@ impl NativeHttpService {
     pub fn with_imports<S, I, H>(
         mut self,
         authority: gateway_authority::store::Authority<S, I>,
-        owner: gateway_authority::native_control::receiver::RegisteredRenewalOwner,
+        owner: gateway_authority_native_records::owner::RegisteredRenewalOwner,
         current_config: gateway_auth_contracts::types::AuthConfig,
         handler: H,
     ) -> Self

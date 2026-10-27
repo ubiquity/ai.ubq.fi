@@ -3,6 +3,7 @@
 use super::*;
 use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeCapability};
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::GenerationEffect;
 use gateway_authority_native_records::rows::OperationRow;

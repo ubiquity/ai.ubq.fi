@@ -13,12 +13,12 @@ use gateway_auth_native_contracts::native_import::NativeImportTarget;
 use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
 use gateway_auth_passkeys::{passkeys, session_index};
 use gateway_auth_primitives::crypto::{Secret, sha256_hex};
-use gateway_authority::native_control::{
-    NativeRenewalCancellation, actor, receiver::RegisteredRenewalOwner,
-};
+use gateway_authority::native_control::actor;
 use gateway_authority::store::Authority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };

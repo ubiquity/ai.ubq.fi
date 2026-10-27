@@ -250,7 +250,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     expected_attempt: Option<&str>,
     identity: &gateway_auth::native_auth::NativeTransportIdentity,
     current_config: &gateway_auth::types::AuthConfig,
-    registered: &super::receiver::RegisteredRenewalOwner,
+    registered: &gateway_authority_native_records::owner::RegisteredRenewalOwner,
 ) -> Result<Facts, GatewayError> {
     let control = read_control(
         tx,
@@ -267,7 +267,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     let owner_id = identity.owner_id();
     let owner_epoch = identity.owner_epoch();
     let native_owner_id = registered.native_owner_id();
-    let home = registered.home.as_str();
+    let home = registered.registered_home();
     let view = crate::routing::read_view(tx).await?;
     if !view
         .policy()

@@ -9,6 +9,7 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::publication_command as command;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::identity::PoolVersionstamp;
@@ -61,7 +62,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         refresh_token: Secret::new(String::new()),
         updated_at_ms: wire.document.updated_at_ms,
         native_owner: Some(CodexNativeOwner {
-            codex_home: control.registered.home.clone(),
+            codex_home: control.registered.registered_home().to_owned(),
             generation_hash: wire.access_generation.clone(),
             native_refreshed_at: wire.document.native_refreshed_at.clone(),
             external_user_id: None,

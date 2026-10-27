@@ -11,6 +11,7 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_publication_transport::transport::PublicationReceiver;
 
 #[derive(serde::Deserialize)]

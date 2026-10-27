@@ -72,7 +72,7 @@ pub struct PlatformHost {
 #[derive(Clone, Copy)]
 pub struct PlatformTokens;
 
-impl gateway_authority::native_control::NativeRenewalCancellation for PlatformHost {
+impl gateway_authority_contracts::NativeRenewalCancellation for PlatformHost {
     fn cancelled(&self) -> bool {
         self.cancellation.signal().aborted()
     }

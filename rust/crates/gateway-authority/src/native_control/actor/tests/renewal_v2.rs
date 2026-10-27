@@ -1,10 +1,10 @@
 use super::*;
+use crate::native_control::NativeRenewalControl;
 use crate::native_control::custody::validate_native_control_custody;
 use crate::native_control::facts;
 use crate::native_control::managed::NativeManagedPublicationDisposition;
 use crate::native_control::owners::RegisteredRenewalOwners;
-use crate::native_control::receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
-use crate::native_control::{NativeRenewalCancellation, NativeRenewalControl};
+use crate::native_control::receiver::NativeRenewalAuthority;
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
     NativeTransportIdentity,
@@ -15,6 +15,8 @@ use gateway_auth::provider_credentials::{
 };
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_native_records::rows;
 use gateway_authority_paid_control_records::{
     PaidControlConfig, PaidControlOwner, PaidSourceCheck,
