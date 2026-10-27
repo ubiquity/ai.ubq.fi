@@ -3,7 +3,8 @@
 use crate::live_bridge::{NativeLiveHandler, NativeLiveUpgradeRequest};
 use crate::owner_control::{NativeControlContext, NativeOwnerRenewalHandler};
 use gateway_auth::native_auth::{
-    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
+    AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
+    NativeTransportIdentity,
 };
 use gateway_auth::native_live::{
     NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH, NativeLiveAuthenticator,
@@ -21,13 +22,13 @@ use gateway_auth_native_wire::native_read::{
 };
 use gateway_core::error::GatewayError;
 use gateway_native_http_framing::{
-    request::{IncomingRequest, read_request, validate_live_upgrade},
+    request::{HttpRequest, IncomingRequest, read_request, validate_live_upgrade},
     response::{disconnected, now_ms, write_error, write_json},
 };
 use gateway_native_local_transport::unix::UnixSupervisor;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_native_supervisor::supervisor::{
-    FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, follow_update,
+    FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, FollowUpdate, follow_update,
 };
 use gateway_native_supervisor_data::data::SupervisorData;
 use serde_json::{Value, json};
@@ -167,28 +168,17 @@ impl NativeHttpService {
                 Some("native_route_invalid"),
             ));
         }
-        let one = |name: &str| -> Result<&str, GatewayError> {
-            let values: Vec<_> = request
-                .headers
-                .iter()
-                .filter(|(key, _)| key.eq_ignore_ascii_case(name))
-                .collect();
-            if values.len() != 1 {
-                return Err(forbidden());
-            }
-            Ok(values[0].1.as_str())
-        };
         let headers = NativeAuthHeaders {
-            version: one(NATIVE_VERSION_HEADER)?,
-            key_id: one(NATIVE_KEY_HEADER)?,
-            time_ms: one(NATIVE_TIME_HEADER)?,
-            nonce: one(NATIVE_NONCE_HEADER)?,
-            mac: one(NATIVE_MAC_HEADER)?,
+            version: request_header(&request, NATIVE_VERSION_HEADER)?,
+            key_id: request_header(&request, NATIVE_KEY_HEADER)?,
+            time_ms: request_header(&request, NATIVE_TIME_HEADER)?,
+            nonce: request_header(&request, NATIVE_NONCE_HEADER)?,
+            mac: request_header(&request, NATIVE_MAC_HEADER)?,
         };
         let authority = StoreNonceAuthority::new(&self.nonces);
         if live_upgrade {
             validate_live_upgrade(&request)?;
-            let action_ref = one(NATIVE_LIVE_ACTION_HEADER)?.to_owned();
+            let action_ref = request_header(&request, NATIVE_LIVE_ACTION_HEADER)?.to_owned();
             let proof = futures_executor::block_on(
                 NativeLiveAuthenticator::new(&self.identity, &authority).authenticate_upgrade(
                     headers,
@@ -218,66 +208,7 @@ impl NativeHttpService {
             ),
         )?;
         if request.path == NATIVE_CONTROL_PATH {
-            proof.require_request(
-                NativeCapability::OwnerRenewal,
-                NATIVE_CONTROL_PATH,
-                &request.body,
-                now_ms()?,
-            )?;
-            let envelope = NativeControlEnvelope::parse(&request.body)?;
-            let disconnected = || disconnected(stream);
-            let context = NativeControlContext::admitted(
-                Instant::now() + Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64),
-                &disconnected,
-                headers,
-            );
-            context.check()?;
-            let result = self.renewal.as_ref().map_or_else(
-                || {
-                    Ok(NativeControlResponse {
-                        v: 1,
-                        operation_id: envelope.operation_id.clone(),
-                        disposition: NativeControlDisposition::Unavailable,
-                        publication_revision: None,
-                        reason: Some(NativeControlReason::OwnerUnavailable),
-                    })
-                },
-                |handler| handler.renew(&proof, &envelope, &request.body, &context),
-            );
-            let response = match result {
-                Ok(response) => response,
-                Err(error) => {
-                    // Never copy native/socket/provider text into a response.
-                    // An unclassified handler failure is unknown, even if the
-                    // caller disappeared before receiving a durable receipt.
-                    let conflict = error.status == 409;
-                    NativeControlResponse {
-                        v: 1,
-                        operation_id: envelope.operation_id.clone(),
-                        disposition: if conflict {
-                            NativeControlDisposition::Conflict
-                        } else {
-                            NativeControlDisposition::Unknown
-                        },
-                        publication_revision: None,
-                        reason: Some(if conflict {
-                            NativeControlReason::AuthorityChanged
-                        } else {
-                            NativeControlReason::OutcomeUnknown
-                        }),
-                    }
-                }
-            };
-            response.validate_for(&envelope)?;
-            let body = serde_json::to_vec(&response).map_err(|_| unavailable())?;
-            let mac = self.identity.sign_control_response(
-                one(NATIVE_NONCE_HEADER)?,
-                &request.body,
-                200,
-                &body,
-            )?;
-            stream.write_all(format!("HTTP/1.1 200 Native\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n{NATIVE_RESPONSE_MAC_HEADER}: {mac}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).map_err(|_|unavailable())?;
-            return stream.write_all(&body).map_err(|_| unavailable());
+            return self.renew_control(stream, &request, &proof, headers);
         }
         proof.require_request(
             NativeCapability::SupervisorRead,
@@ -286,154 +217,254 @@ impl NativeHttpService {
             now_ms()?,
         )?;
         if request.path == NATIVE_RPC_PATH {
-            let envelope: NativeRpcEnvelope =
-                serde_json::from_slice(&request.body).map_err(|_| invalid())?;
-            envelope.validate()?;
-            let result = (|| -> Result<NativeRpcResponse, GatewayError> {
-                Ok(match &envelope.request {
-                    NativeReadRequest::SupervisorSessions => NativeRpcResponse {
-                        v: 1,
-                        status: 200,
-                        body: self.data.snapshot(now_ms()?)?,
-                        stream: None,
-                    },
-                    NativeReadRequest::SupervisorOutput {
-                        source_id,
-                        thread_id,
-                        cursor,
-                    } => {
-                        self.data.select(source_id, thread_id, now_ms()?)?;
-                        NativeRpcResponse {
-                            v: 1,
-                            status: 200,
-                            body: Value::Null,
-                            stream: Some(AuthStream::SupervisorFollow {
-                                source_id: source_id.clone(),
-                                thread_id: thread_id.clone(),
-                                cursor: cursor.clone(),
-                            }),
-                        }
-                    }
-                    NativeReadRequest::SupervisorBrief {
-                        source_id,
-                        thread_id,
-                    } => {
-                        let selected = self.data.select(source_id, thread_id, now_ms()?)?;
-                        let context = self.data.brief_context(&selected, now_ms()?)?;
-                        NativeRpcResponse {
-                            v: 1,
-                            status: 200,
-                            body: json!({"sampledAtMs":selected.sampled_at_ms(),"context":context}),
-                            stream: None,
-                        }
-                    }
-                })
-            })();
-            let result = match result {
-                Ok(response) => response,
-                Err(error) => NativeRpcResponse {
+            self.read_rpc(stream, &request)
+        } else {
+            self.follow(stream, &request)
+        }
+    }
+    fn renew_control(
+        &self,
+        stream: &mut TcpStream,
+        request: &HttpRequest,
+        proof: &AuthenticatedNativeOwner,
+        headers: NativeAuthHeaders<'_>,
+    ) -> Result<(), GatewayError> {
+        proof.require_request(
+            NativeCapability::OwnerRenewal,
+            NATIVE_CONTROL_PATH,
+            &request.body,
+            now_ms()?,
+        )?;
+        let envelope = NativeControlEnvelope::parse(&request.body)?;
+        let disconnected = || disconnected(stream);
+        let context = NativeControlContext::admitted(
+            Instant::now() + Duration::from_millis(NATIVE_RENEWAL_MAX_MS as u64),
+            &disconnected,
+            headers,
+        );
+        context.check()?;
+        let result = self.renewal.as_ref().map_or_else(
+            || {
+                Ok(NativeControlResponse {
                     v: 1,
-                    status: error.status,
-                    body: serde_json::to_value(&error.envelope).map_err(|_| unavailable())?,
+                    operation_id: envelope.operation_id.clone(),
+                    disposition: NativeControlDisposition::Unavailable,
+                    publication_revision: None,
+                    reason: Some(NativeControlReason::OwnerUnavailable),
+                })
+            },
+            |handler| handler.renew(&proof, &envelope, &request.body, &context),
+        );
+        let response = match result {
+            Ok(response) => response,
+            Err(error) => {
+                // Never copy native/socket/provider text into a response.
+                // An unclassified handler failure is unknown, even if the
+                // caller disappeared before receiving a durable receipt.
+                let conflict = error.status == 409;
+                NativeControlResponse {
+                    v: 1,
+                    operation_id: envelope.operation_id.clone(),
+                    disposition: if conflict {
+                        NativeControlDisposition::Conflict
+                    } else {
+                        NativeControlDisposition::Unknown
+                    },
+                    publication_revision: None,
+                    reason: Some(if conflict {
+                        NativeControlReason::AuthorityChanged
+                    } else {
+                        NativeControlReason::OutcomeUnknown
+                    }),
+                }
+            }
+        };
+        response.validate_for(&envelope)?;
+        let body = serde_json::to_vec(&response).map_err(|_| unavailable())?;
+        let mac = self.identity.sign_control_response(
+            request_header(request, NATIVE_NONCE_HEADER)?,
+            &request.body,
+            200,
+            &body,
+        )?;
+        stream.write_all(format!("HTTP/1.1 200 Native\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n{NATIVE_RESPONSE_MAC_HEADER}: {mac}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).as_bytes()).map_err(|_|unavailable())?;
+        stream.write_all(&body).map_err(|_| unavailable())
+    }
+    fn read_rpc(&self, stream: &mut TcpStream, request: &HttpRequest) -> Result<(), GatewayError> {
+        let envelope: NativeRpcEnvelope =
+            serde_json::from_slice(&request.body).map_err(|_| invalid())?;
+        envelope.validate()?;
+        let result = (|| -> Result<NativeRpcResponse, GatewayError> {
+            Ok(match &envelope.request {
+                NativeReadRequest::SupervisorSessions => NativeRpcResponse {
+                    v: 1,
+                    status: 200,
+                    body: self.data.snapshot(now_ms()?)?,
                     stream: None,
                 },
-            };
-            result.validate_for(&envelope)?;
-            let body = serde_json::to_vec(&result).map_err(|_| unavailable())?;
-            if body.len() > NATIVE_MAX_BODY_BYTES {
-                return Err(unavailable());
+                NativeReadRequest::SupervisorOutput {
+                    source_id,
+                    thread_id,
+                    cursor,
+                } => {
+                    self.data.select(source_id, thread_id, now_ms()?)?;
+                    NativeRpcResponse {
+                        v: 1,
+                        status: 200,
+                        body: Value::Null,
+                        stream: Some(AuthStream::SupervisorFollow {
+                            source_id: source_id.clone(),
+                            thread_id: thread_id.clone(),
+                            cursor: cursor.clone(),
+                        }),
+                    }
+                }
+                NativeReadRequest::SupervisorBrief {
+                    source_id,
+                    thread_id,
+                } => {
+                    let selected = self.data.select(source_id, thread_id, now_ms()?)?;
+                    let context = self.data.brief_context(&selected, now_ms()?)?;
+                    NativeRpcResponse {
+                        v: 1,
+                        status: 200,
+                        body: json!({"sampledAtMs":selected.sampled_at_ms(),"context":context}),
+                        stream: None,
+                    }
+                }
+            })
+        })();
+        let result = match result {
+            Ok(response) => response,
+            Err(error) => NativeRpcResponse {
+                v: 1,
+                status: error.status,
+                body: serde_json::to_value(&error.envelope).map_err(|_| unavailable())?,
+                stream: None,
+            },
+        };
+        result.validate_for(&envelope)?;
+        let body = serde_json::to_vec(&result).map_err(|_| unavailable())?;
+        if body.len() > NATIVE_MAX_BODY_BYTES {
+            return Err(unavailable());
+        }
+        write_json(stream, 200, &body)
+    }
+    fn follow(&self, stream: &mut TcpStream, request: &HttpRequest) -> Result<(), GatewayError> {
+        let descriptor: AuthStream =
+            serde_json::from_slice(&request.body).map_err(|_| invalid())?;
+        let AuthStream::SupervisorFollow {
+            source_id,
+            thread_id,
+            cursor,
+        } = descriptor;
+        let selected = self.data.select(&source_id, &thread_id, now_ms()?)?;
+        if cursor.as_ref().is_some_and(|value| value.len() > 240) {
+            return Err(invalid());
+        }
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n").map_err(|_|unavailable())?;
+        if send_event(stream,"ready",json!({"sourceId":source_id,"threadId":thread_id,"machine":selected.machine(),"mode":"recorded","note":"Updates as Codex records output (about every 2s), not a token-level stream. Only assistant messages and command output are shown."})).is_err(){return Ok(());}
+        let started = Instant::now();
+        let mut revisions = BTreeMap::new();
+        let mut cursor = cursor.unwrap_or_default();
+        let mut polls = 0u64;
+        let mut unavailable_polls = 0u64;
+        let mut last_unavailable = String::new();
+        while started.elapsed().as_millis() < FOLLOW_MAX_DURATION_MS as u128 {
+            if disconnected(stream) {
+                return Ok(());
             }
-            write_json(stream, 200, &body)
-        } else {
-            let descriptor: AuthStream =
-                serde_json::from_slice(&request.body).map_err(|_| invalid())?;
-            let AuthStream::SupervisorFollow {
-                source_id,
-                thread_id,
-                cursor,
-            } = descriptor;
-            let selected = self.data.select(&source_id, &thread_id, now_ms()?)?;
-            if cursor.as_ref().is_some_and(|value| value.len() > 240) {
-                return Err(invalid());
+            let update = UnixSupervisor::configured_socket_until(
+                selected.configured_socket(),
+                Instant::now() + Duration::from_secs(4),
+            )
+            .and_then(|mut transport| {
+                futures_executor::block_on(follow_update(
+                    &mut transport,
+                    selected.known_thread(),
+                    &cursor,
+                    &mut revisions,
+                ))
+            });
+            let event = follow_event(
+                update,
+                &mut cursor,
+                &mut polls,
+                &mut unavailable_polls,
+                &mut last_unavailable,
+            )?;
+            if event.is_some_and(|(name, value)| send_event(stream, name, value).is_err()) {
+                return Ok(());
             }
-            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\nConnection: close\r\n\r\n").map_err(|_|unavailable())?;
-            if send_event(stream,"ready",json!({"sourceId":source_id,"threadId":thread_id,"machine":selected.machine(),"mode":"recorded","note":"Updates as Codex records output (about every 2s), not a token-level stream. Only assistant messages and command output are shown."})).is_err(){return Ok(());}
-            let started = Instant::now();
-            let mut revisions = BTreeMap::new();
-            let mut cursor = cursor.unwrap_or_default();
-            let mut polls = 0u64;
-            let mut unavailable_polls = 0u64;
-            let mut last_unavailable = String::new();
-            while started.elapsed().as_millis() < FOLLOW_MAX_DURATION_MS as u128 {
+            let until = Instant::now() + Duration::from_millis(FOLLOW_POLL_MS);
+            while Instant::now() < until {
                 if disconnected(stream) {
                     return Ok(());
                 }
-                let update = UnixSupervisor::configured_socket_until(
-                    selected.configured_socket(),
-                    Instant::now() + Duration::from_secs(4),
-                )
-                .and_then(|mut transport| {
-                    futures_executor::block_on(follow_update(
-                        &mut transport,
-                        selected.known_thread(),
-                        &cursor,
-                        &mut revisions,
-                    ))
-                });
-                let event = match update {
-                    Ok(update) => {
-                        cursor = update.cursor.clone();
-                        polls += 1;
-                        if !update.entries.is_empty() {
-                            let entries=update.entries.iter().map(|entry|json!({"key":entry.key,"revision":entry.revision,"kind":entry.kind,"turnId":entry.turn_id,"text":entry.text,"command":entry.command,"status":entry.status,"exitCode":entry.exit_code,"atMs":entry.at_ms})).collect::<Vec<_>>();
-                            Some((
-                                "entries",
-                                json!({"entries":entries,"cursor":cursor,"turnId":update.turn_id,"turnStatus":update.turn_status,"enriched":update.enriched,"sampledAtMs":now_ms()?}),
-                            ))
-                        } else if polls.is_multiple_of(5) {
-                            Some((
-                                "heartbeat",
-                                json!({"turnId":update.turn_id,"turnStatus":update.turn_status,"sampledAtMs":now_ms()?}),
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                    Err(error) => {
-                        unavailable_polls += 1;
-                        let message = error.envelope.error.message;
-                        if message != last_unavailable || unavailable_polls.is_multiple_of(5) {
-                            last_unavailable = message.clone();
-                            Some((
-                                "unavailable",
-                                json!({"message":message,"sampledAtMs":now_ms()?}),
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                };
-                if event.is_some_and(|(name, value)| send_event(stream, name, value).is_err()) {
-                    return Ok(());
-                }
-                let until = Instant::now() + Duration::from_millis(FOLLOW_POLL_MS);
-                while Instant::now() < until {
-                    if disconnected(stream) {
-                        return Ok(());
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+                std::thread::sleep(Duration::from_millis(50));
             }
-            let _ = send_event(
-                stream,
-                "end",
-                json!({"reason":"follow duration limit reached"}),
-            );
-            Ok(())
         }
+        let _ = send_event(
+            stream,
+            "end",
+            json!({"reason":"follow duration limit reached"}),
+        );
+        Ok(())
     }
 }
 
+fn follow_event(
+    update: Result<FollowUpdate, GatewayError>,
+    cursor: &mut String,
+    polls: &mut u64,
+    unavailable_polls: &mut u64,
+    last_unavailable: &mut String,
+) -> Result<Option<(&'static str, Value)>, GatewayError> {
+    Ok(match update {
+        Ok(update) => {
+            *cursor = update.cursor.clone();
+            *polls += 1;
+            if !update.entries.is_empty() {
+                let entries=update.entries.iter().map(|entry|json!({"key":entry.key,"revision":entry.revision,"kind":entry.kind,"turnId":entry.turn_id,"text":entry.text,"command":entry.command,"status":entry.status,"exitCode":entry.exit_code,"atMs":entry.at_ms})).collect::<Vec<_>>();
+                Some((
+                    "entries",
+                    json!({"entries":entries,"cursor":*cursor,"turnId":update.turn_id,"turnStatus":update.turn_status,"enriched":update.enriched,"sampledAtMs":now_ms()?}),
+                ))
+            } else if polls.is_multiple_of(5) {
+                Some((
+                    "heartbeat",
+                    json!({"turnId":update.turn_id,"turnStatus":update.turn_status,"sampledAtMs":now_ms()?}),
+                ))
+            } else {
+                None
+            }
+        }
+        Err(error) => {
+            *unavailable_polls += 1;
+            let message = error.envelope.error.message;
+            if message != *last_unavailable || unavailable_polls.is_multiple_of(5) {
+                *last_unavailable = message.clone();
+                Some((
+                    "unavailable",
+                    json!({"message":message,"sampledAtMs":now_ms()?}),
+                ))
+            } else {
+                None
+            }
+        }
+    })
+}
+fn request_header<'a>(request: &'a HttpRequest, name: &str) -> Result<&'a str, GatewayError> {
+    let values: Vec<_> = request
+        .headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+        .collect();
+    if values.len() != 1 {
+        return Err(forbidden());
+    }
+    Ok(values[0].1.as_str())
+}
 fn send_event(stream: &mut TcpStream, name: &str, value: Value) -> Result<(), GatewayError> {
     let body = serde_json::to_string(&value).map_err(|_| unavailable())?;
     stream

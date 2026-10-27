@@ -1,11 +1,22 @@
 //! Only fixed native files are decoded here. No receipt constructor is public.
-use super::*;
+use super::{ExistingAccountImportStore, unavailable};
 #[cfg(test)]
 use gateway_auth::native_credentials::parse_native_document;
-use gateway_auth::{crypto::Secret, native_credentials::NativeCredentials};
+use gateway_auth::{
+    crypto::{Secret, sha256_hex},
+    native_credentials::NativeCredentials,
+};
+use gateway_authority::native_control::import::{
+    AuthenticatedNativeImport, effects::NativeImportBinding,
+};
+use gateway_core::error::GatewayError;
 use rustix::fs::{Mode, OFlags, fstat, openat};
 use serde::{Deserialize, Serialize};
-use std::{io::Read, path::Component};
+use std::{
+    fs::File,
+    io::Read,
+    path::{Component, Path},
+};
 const AUTH_LIMIT: u64 = 1_048_576;
 const RECEIPT_LIMIT: u64 = 4096;
 #[derive(Deserialize, Serialize)]
