@@ -770,7 +770,7 @@ const importFixture = () => {
     if (command.argv.includes("--no-run")) return Promise.resolve({ code: 0, stdout: fixture.json([library, policy]), stderr: "" });
     if (command.argv.includes("--message-format=json")) return Promise.resolve({ code: 0, stdout: fixture.json(built), stderr: "" });
     if (command.argv.includes("--list")) {
-      const cases = NATIVE_IMPORT_CASES.filter((item) => ("target" in item) === (command.argv[0] === policy.executable));
+      const cases = NATIVE_IMPORT_CASES.filter((item) => "target" in item === (command.argv[0] === policy.executable));
       return Promise.resolve({ code: 0, stdout: cases.map((item) => item.name + ": test\n").join(""), stderr: "" });
     }
     assert.equal(command.argv[0], "/usr/bin/python3");
