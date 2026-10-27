@@ -1,18 +1,20 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_source::{error::GatewayError, js_string::JsString16};
-use gateway_core::{
-    query::{QueryPage, QueryRequest, QuerySelector, QueryStore},
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
-};
-use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_core::{query::*, state::*};
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-use gateway_migration::{
-    graph_transport,
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-    staged::*,
-};
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_data::staged::StageOwnerAccount;
+use gateway_migration_data::staged::StageOwnerBinding;
+use gateway_migration_data::staged::StageRequest;
+use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_protocol::staged::execute_staged;
+use gateway_migration_stage::plan::StagePlan;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_source_graph::graph::*;
 use serde_json::{Value, json};
 use std::cell::Cell;
 
@@ -55,17 +57,17 @@ fn graph(value: &Value) -> SourceGraph {
 }
 
 fn fixture() -> NativeCapture {
-    let identity = gateway_auth::provider_credentials::codex_credential_identity(
+    let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
         "initial-account",
-        &gateway_auth::crypto::Secret::new("synthetic-access".into()),
-        &gateway_auth::crypto::Secret::new(String::new()),
+        &gateway_auth_primitives::crypto::Secret::new("synthetic-access".into()),
+        &gateway_auth_primitives::crypto::Secret::new(String::new()),
     );
     let mut capture: NativeCapture =
         serde_json::from_str(include_str!("fixtures/native-source.json")).unwrap();
     let pool = json!({"accounts":[{"account_id":"initial-account","access_token":"synthetic-access","refresh_token":"","updated_at_ms":2200,"native_owner":{"codex_home":"/synthetic/initial-owner","generation_hash":identity.native_generation_hash,"native_refreshed_at":"2026-10-19T00:00:00.000000000Z","managed_source":{"v":2,"generation_hash":"8".repeat(64)}}}],"updated_at_ms":2200});
     capture.entries.push(NativeEntry {
         raw_key: TupleKey::from_record_key(
-            &gateway_auth::provider_credentials::codex_source_pool_key(),
+            &gateway_auth_credentials::provider_credentials::codex_source_pool_key(),
         )
         .unwrap()
         .sort_bytes()
@@ -78,7 +80,7 @@ fn fixture() -> NativeCapture {
 }
 
 fn manifest_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth::store::key(json!(["uos_ai", "migration", "v3", "manifest"]))
+    gateway_auth_primitives::store::key(json!(["uos_ai", "migration", "v3", "manifest"]))
 }
 
 struct Target {
@@ -102,16 +104,18 @@ fn sealed(directory: &Directory, name: &str) -> Target {
     let source_git_sha = value["source_git_sha"].as_str().unwrap().to_owned();
     let native = &value["native_revision"];
     let captured_at_ms = value["captured_at_ms"].as_i64().unwrap();
-    let source = run(store.read(&gateway_auth::provider_credentials::codex_source_pool_key()))
-        .unwrap()
-        .unwrap();
+    let source =
+        run(store.read(&gateway_auth_credentials::provider_credentials::codex_source_pool_key()))
+            .unwrap()
+            .unwrap();
     let normalized = run(store.read(&gateway_authority_keys::pool()))
         .unwrap()
         .unwrap();
-    let pool =
-        gateway_auth::provider_credentials::parse_codex_source_pool(source.json_value().unwrap())
-            .unwrap()
-            .unwrap();
+    let pool = gateway_auth_credentials::provider_credentials::parse_codex_source_pool(
+        source.json_value().unwrap(),
+    )
+    .unwrap()
+    .unwrap();
     let accounts = pool
         .accounts
         .iter()

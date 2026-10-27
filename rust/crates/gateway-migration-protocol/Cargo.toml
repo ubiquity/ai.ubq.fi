@@ -1,0 +1,26 @@
+[package]
+name = "gateway-migration-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-source = { path = "../gateway-source" }
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-core.workspace = true
+gateway-migration-data.workspace = true
+gateway-migration-inverse.workspace = true
+gateway-migration-prepare.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

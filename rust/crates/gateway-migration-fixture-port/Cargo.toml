@@ -1,0 +1,22 @@
+[package]
+name = "gateway-migration-fixture-port"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gateway-migration-data.workspace = true
+gateway-core.workspace = true
+gateway-migration.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-core = { path = "../gateway-core" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-migration-data = { path = "../gateway-migration-data" }
+gateway-source = { path = "../gateway-source" }

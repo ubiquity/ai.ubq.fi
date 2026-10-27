@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-migration-data = { path = "../gateway-migration-data" }
+gateway-migration-profile = { path = "../gateway-migration-profile" }
+gateway-migration-protocol = { path = "../gateway-migration-protocol" }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 gateway-admin-runtime.workspace = true
 gateway-auth-contracts.workspace = true

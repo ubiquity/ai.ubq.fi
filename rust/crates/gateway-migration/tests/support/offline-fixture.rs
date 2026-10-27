@@ -8,11 +8,10 @@ use gateway_source::error::GatewayError;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use fixture::{Directory, run};
     use gateway_contracts::{identity::ApiKeyId, identity::RequestId};
-    use gateway_migration::{
-        capture::PrivateCapture,
-        engine::{adopt_empty, prepare},
-        inverse::export_latest,
-    };
+    use gateway_migration_data::capture::PrivateCapture;
+    use gateway_migration_inverse::inverse::export_latest;
+    use gateway_migration_prepare::engine::adopt_empty;
+    use gateway_migration_prepare::engine::prepare;
     use gateway_profile_values::date::CanonicalDates;
     use serde_json::json;
     use sqlite_store::SqliteStore;
@@ -46,7 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     drop(store);
     let store = SqliteStore::open(&path);
     let token = format!("u_{}", "1".repeat(64));
-    let authenticated = run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?;
+    let authenticated = run(gateway_auth_primitives::api_keys::authenticate(
+        &store, &token, 2300,
+    ))?;
     let authority = gateway_authority::store::Authority::with_clock(
         store.clone(),
         Tokens(AtomicU64::new(1)),

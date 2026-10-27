@@ -1,7 +1,7 @@
 use crate::rows::ObservedRow;
-use gateway_source::error::GatewayError;
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_core::state::{RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 pub(crate) fn check(row: &ObservedRow) -> RevisionCheck {

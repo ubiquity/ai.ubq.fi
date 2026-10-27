@@ -1,0 +1,24 @@
+[package]
+name = "gateway-migration-core-state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+gateway-core.workspace = true
+gateway-migration-data.workspace = true
+gateway-migration-graph.workspace = true
+gateway-migration-spool.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-migration-data = { path = "../gateway-migration-data" }
+gateway-migration-graph = { path = "../gateway-migration-graph" }
+gateway-migration-spool = { path = "../gateway-migration-spool" }
+gateway-source = { path = "../gateway-source" }

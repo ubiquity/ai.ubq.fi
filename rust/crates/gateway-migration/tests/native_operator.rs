@@ -1,12 +1,12 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-use gateway_auth::{
-    crypto::base64url,
-    native_credentials::{NativeOwnerId, OwnerFence, parse_native_document},
+use gateway_auth_credentials::{
+    native_credentials::NativeOwnerId, native_credentials::OwnerFence,
+    native_credentials::parse_native_document,
 };
-use gateway_migration::{
-    native_custody::NativeCustody,
-    native_operator::{ConfiguredNativeCustody, NativeCustodyRegistration},
-};
+use gateway_auth_primitives::crypto::base64url;
+use gateway_migration_native_custody::native_custody::NativeCustody;
+use gateway_migration_native_custody::registry::ConfiguredNativeCustody;
+use gateway_migration_native_custody::registry::NativeCustodyRegistration;
 use gateway_migration_test_support::fixture::{Directory, run};
 use serde_json::{Value, json};
 use std::{

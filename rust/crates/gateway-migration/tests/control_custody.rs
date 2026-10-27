@@ -1,11 +1,13 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_core::state::StoredRecord;
+use gateway_core::state::*;
 use gateway_kv_codec::{key::RecordKey, value::PortableValue};
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::{ArtifactContext, export_latest, export_rollback_bundle},
-};
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_inverse::inverse::export_rollback_bundle;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
@@ -81,7 +83,7 @@ fn native_live_connection_is_private_no_ttl_custody_and_cannot_be_adopted_as_sou
     .unwrap();
     let reference = "a".repeat(64);
     let parts = json!(["uos_ai", "native_live", "v1", "connection", reference]);
-    let key = gateway_auth::store::key(parts.clone());
+    let key = gateway_auth_primitives::store::key(parts.clone());
     let value = json!({"v":1,"action_ref":"b".repeat(64),"connection_id":reference,"authorization_ref":"c".repeat(64),"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"d".repeat(64),"call_id":"fixture-call","created_at_ms":2200,"upstream_status":null,"retired":false});
     store.put(
         key.clone(),
@@ -124,7 +126,7 @@ fn native_generation_and_unknown_operation_remain_private_across_restart() {
         &prepare(&capture, &CanonicalDates).unwrap(),
     ))
     .unwrap();
-    let generation = gateway_auth::store::key(json!([
+    let generation = gateway_auth_primitives::store::key(json!([
         "uos_ai",
         "authority",
         "native_owner_renewal",
@@ -132,7 +134,7 @@ fn native_generation_and_unknown_operation_remain_private_across_restart() {
         "generation",
         "a".repeat(64)
     ]));
-    let operation = gateway_auth::store::key(json!([
+    let operation = gateway_auth_primitives::store::key(json!([
         "uos_ai",
         "authority",
         "native_owner_renewal",
@@ -245,7 +247,7 @@ fn session_index_custody_is_validated_before_private_inverse() {
     ))
     .unwrap();
     let digest = "a".repeat(64);
-    let session_key = gateway_auth::session_index::index_key(&digest).unwrap();
+    let session_key = gateway_auth_passkeys::session_index::index_key(&digest).unwrap();
     let session = StoredRecord::json(
         "source-session",
         json!({"v":1,"session_digest":digest,"user_id":"fixture-user","session_revision":"source-session","expires_at_ms":9000}),

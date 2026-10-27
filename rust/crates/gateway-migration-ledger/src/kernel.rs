@@ -2,12 +2,12 @@ use crate::{
     rows::{DAY, ObservedRow, starts},
     transition::{check, key, put},
 };
-use gateway_source::error::GatewayError;
 use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck};
 use gateway_profile_values::{
     coercion::js_number,
     scalar::{error, integer, json_number, number, present, text},
 };
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 pub fn identity(parts: &[Value], kind: &str) -> Option<(String, String, Option<String>)> {

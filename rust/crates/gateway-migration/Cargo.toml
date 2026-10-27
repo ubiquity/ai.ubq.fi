@@ -20,6 +20,17 @@ gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true
 gateway-source-graph.workspace = true
+gateway-migration-stage.workspace = true
+gateway-migration-protocol.workspace = true
+gateway-migration-native-custody.workspace = true
+gateway-migration-inverse.workspace = true
+gateway-migration-profile.workspace = true
+gateway-migration-prepare.workspace = true
+gateway-migration-indexes.workspace = true
+gateway-migration-values.workspace = true
+gateway-migration-projection.workspace = true
+gateway-migration-data.workspace = true
+gateway-migration-graph.workspace = true
 gateway-source-audit.workspace = true
 gateway-profile-source.workspace = true
 gateway-migration-ledger.workspace = true
@@ -43,9 +54,17 @@ serde_json.workspace = true
 
 [target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
 gateway-native-local-transport.workspace = true
+gateway-migration-latest.workspace = true
+gateway-migration-core-state.workspace = true
+gateway-migration-spool.workspace = true
+gateway-native = { path = "../gateway-native" }
 sha2 = "=0.10.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+gateway-migration-fixture-port.workspace = true
+gateway-migration-fixture-inputs.workspace = true
+gateway-migration-fixture-custody.workspace = true
+gateway-migration-copied-store-support.workspace = true
 gateway-migration-test-support.workspace = true
 gateway-native-local-transport.workspace = true
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
@@ -67,6 +86,19 @@ name = "worker-custody-fixture"
 path = "tests/support/worker-custody-fixture.rs"
 
 [dev-dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-migration-copied-store-support = { path = "../gateway-migration-copied-store-support" }
+gateway-migration-core-state = { path = "../gateway-migration-core-state" }
+gateway-migration-fixture-custody = { path = "../gateway-migration-fixture-custody" }
+gateway-migration-fixture-inputs = { path = "../gateway-migration-fixture-inputs" }
+gateway-migration-fixture-port = { path = "../gateway-migration-fixture-port" }
+gateway-migration-latest = { path = "../gateway-migration-latest" }
+gateway-migration-spool = { path = "../gateway-migration-spool" }
 gateway-native-local-transport.workspace = true
 gateway-migration-test-support.workspace = true
 

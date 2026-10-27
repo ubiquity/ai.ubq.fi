@@ -1,31 +1,29 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
-mod copied_store_inverse {
-    pub mod driver;
-    pub mod store;
-}
+use gateway_migration_graph::transport as graph_transport;
 
-use copied_store_inverse::store::ReadonlyStore;
-use gateway_auth::crypto::base64url;
-use gateway_auth::native_auth::NativeNonceAuthority;
-use gateway_auth::native_credentials::{NativeOwnerId, OwnerFence, parse_native_document};
-use gateway_auth::native_replay::StoreNonceAuthority;
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_source::js_string::JsString16;
-use gateway_core::{
-    query::QueryRequest, query::QuerySelector, query::QueryStore, state::AtomicTransition,
-    state::CommitOutcome, state::PORTABLE_STATE_VERSION, state::RecordMutation,
-    state::StoredRecord,
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::{
+    native_credentials::NativeOwnerId, native_credentials::OwnerFence,
+    native_credentials::parse_native_document,
 };
-use gateway_source_graph::graph::{GraphAtom, GraphNode, SourceGraph};
+use gateway_auth_native_proof::native_auth::NativeNonceAuthority;
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
+use gateway_auth_primitives::crypto::base64url;
+use gateway_core::{query::QueryRequest, query::QuerySelector, query::QueryStore, state::*};
 use gateway_kv_codec::{key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
-use gateway_migration::{
-    engine::adopt_empty,
-    graph_transport,
-    native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native},
-    native_operator::{NativeCustodyRegistration, prepare_local_bootstrap},
-};
+use gateway_migration_copied_store_support::{driver, store::ReadonlyStore};
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_native_custody::registry::NativeCustodyRegistration;
+use gateway_migration_native_custody::registry::prepare_local_bootstrap;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_source::js_string::JsString16;
+use gateway_source_graph::{graph::GraphAtom, graph::GraphNode, graph::SourceGraph};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -127,7 +125,7 @@ impl Fixture {
     fn new() -> Self {
         // These are exact shipping DDLs; the fixture is synthetic, not a claim
         // that the real workerd runtime was launched by this native test.
-        let actual = include_str!("../../gateway-worker/src/storage.rs");
+        let actual = include_str!("../../gateway-worker-storage/src/store.rs");
         assert!(actual.contains(METADATA) && actual.contains(RECORDS));
         let directory = Directory::new();
         let home = directory.file("native-home");
@@ -272,8 +270,8 @@ impl Fixture {
         }
     }
 
-    fn invoke(&self) -> Result<copied_store_inverse::driver::Receipt, Box<dyn std::error::Error>> {
-        copied_store_inverse::driver::execute(serde_json::from_value(self.input.clone()).unwrap())
+    fn invoke(&self) -> Result<driver::Receipt, Box<dyn std::error::Error>> {
+        driver::execute(serde_json::from_value(self.input.clone())?)
     }
 
     fn receipt_path(&self) -> PathBuf {

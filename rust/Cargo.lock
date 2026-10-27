@@ -2360,7 +2360,13 @@ dependencies = [
  "gateway-admin-keys",
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-protocol",
  "gateway-authority-api-quota",
@@ -2382,8 +2388,27 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-migration-copied-store-support",
+ "gateway-migration-core-state",
+ "gateway-migration-data",
+ "gateway-migration-fixture-custody",
+ "gateway-migration-fixture-inputs",
+ "gateway-migration-fixture-port",
+ "gateway-migration-graph",
+ "gateway-migration-indexes",
+ "gateway-migration-inverse",
+ "gateway-migration-latest",
  "gateway-migration-ledger",
+ "gateway-migration-native-custody",
+ "gateway-migration-prepare",
+ "gateway-migration-profile",
+ "gateway-migration-projection",
+ "gateway-migration-protocol",
+ "gateway-migration-spool",
+ "gateway-migration-stage",
  "gateway-migration-test-support",
+ "gateway-migration-values",
+ "gateway-native",
  "gateway-native-authority-wire",
  "gateway-native-local-transport",
  "gateway-observability",
@@ -2401,6 +2426,243 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-migration-copied-store-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-migration",
+ "gateway-migration-data",
+ "gateway-migration-latest",
+ "gateway-migration-native-custody",
+ "gateway-migration-protocol",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-migration-core-state"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-graph",
+ "gateway-migration-spool",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-data"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-auth-primitives",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-graph",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-fixture-custody"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration",
+ "gateway-migration-data",
+ "gateway-migration-fixture-inputs",
+ "gateway-migration-fixture-port",
+ "gateway-migration-graph",
+ "gateway-migration-inverse",
+ "gateway-migration-latest",
+ "gateway-migration-native-custody",
+ "gateway-migration-protocol",
+ "gateway-migration-spool",
+ "gateway-migration-stage",
+ "gateway-migration-test-support",
+ "gateway-native",
+ "gateway-native-local-transport",
+ "gateway-source",
+ "gateway-source-graph",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-fixture-inputs"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-api-quota",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration",
+ "gateway-migration-data",
+ "gateway-migration-fixture-port",
+ "gateway-migration-graph",
+ "gateway-migration-test-support",
+ "gateway-source",
+ "gateway-source-graph",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-fixture-port"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration",
+ "gateway-migration-data",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-graph"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-history"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-spool",
+ "gateway-source",
+ "gateway-source-audit",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-indexes"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-paid-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-migration-spool",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-inverse"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-auth",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-protocol",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-graph",
+ "gateway-migration-prepare",
+ "gateway-migration-projection",
+ "gateway-migration-values",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "gateway-routing-runtime",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-latest"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-auth",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-protocol",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-inverse",
+ "gateway-migration-native-custody",
+ "gateway-migration-projection",
+ "gateway-migration-spool",
+ "gateway-migration-stage",
+ "gateway-migration-values",
+ "gateway-routing-runtime",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-migration-ledger"
 version = "0.1.0"
 dependencies = [
@@ -2412,14 +2674,227 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-migration-native-custody"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-graph",
+ "gateway-migration-inverse",
+ "gateway-migration-prepare",
+ "gateway-native",
+ "gateway-native-local-transport",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-prepare"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-initial-owner",
+ "gateway-authority-keys",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-indexes",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-profile-values",
+ "gateway-source",
+ "gateway-source-audit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-profile"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-data",
+ "gateway-admin-keys",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-migration-validation",
+ "gateway-migration-values",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "gateway-schema",
+ "gateway-source",
+ "gateway-source-audit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-projection"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-keys",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-api-protocol",
+ "gateway-authority-kernel-protocol",
+ "gateway-authority-keys",
+ "gateway-authority-paid-records",
+ "gateway-claude-runtime",
+ "gateway-claude-usage-quota",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-observability",
+ "gateway-profile-source",
+ "gateway-schema",
+ "gateway-source",
+ "gateway-source-audit",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-authority",
+ "gateway-authority-initial-owner",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-inverse",
+ "gateway-migration-prepare",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-spool"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-stage"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-core-state",
+ "gateway-migration-data",
+ "gateway-migration-history",
+ "gateway-migration-indexes",
+ "gateway-migration-native-custody",
+ "gateway-migration-prepare",
+ "gateway-migration-projection",
+ "gateway-migration-spool",
+ "gateway-source",
+ "gateway-source-audit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-migration-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-runtime",
+ "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration",
+ "gateway-migration-data",
+ "gateway-profile-source",
+ "gateway-profile-values",
+ "gateway-source",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-validation"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-ledger",
+ "gateway-migration-projection",
+ "gateway-migration-values",
+ "gateway-schema",
+ "gateway-source",
+ "gateway-source-audit",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-migration-values"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-migration-data",
+ "gateway-migration-projection",
+ "gateway-profile-source",
+ "gateway-profile-values",
  "gateway-source",
- "rusqlite",
- "serde",
  "serde_json",
 ]
 
@@ -3147,6 +3622,10 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-live-runtime",
  "gateway-migration",
+ "gateway-migration-data",
+ "gateway-migration-prepare",
+ "gateway-migration-profile",
+ "gateway-migration-protocol",
  "gateway-native-authority-wire",
  "gateway-observability",
  "gateway-observability-test-support",
@@ -3181,6 +3660,9 @@ dependencies = [
  "gateway-auth-contracts",
  "gateway-core",
  "gateway-migration",
+ "gateway-migration-data",
+ "gateway-migration-profile",
+ "gateway-migration-protocol",
  "gateway-profile-values",
  "gateway-source",
  "gateway-worker-http-body",

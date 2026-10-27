@@ -2,19 +2,19 @@
 use gateway_admin_runtime::capabilities::{
     Context, MigrationImport, MigrationProfile, MigrationRequest,
 };
-use gateway_auth::types::{AuthResponse, AuthResponseBody};
-use gateway_source::error::GatewayError;
-use gateway_core::state::StoredRecord;
-use gateway_kv_codec::value::{PortableValue, ValueEncoding};
-use gateway_migration::{
-    capture::PrivateCapture,
-    engine::{adopt_empty, prepare},
-    profile_runtime::{ProfileHost, execute_profile},
-};
+use gateway_auth_contracts::{types::AuthResponse, types::AuthResponseBody};
+use gateway_core::state::*;
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
+use gateway_migration_profile::profile_runtime::ProfileHost;
+use gateway_migration_profile::profile_runtime::execute_profile;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::{CanonicalDates, SourceDateHost};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::Cell;
 
@@ -58,14 +58,14 @@ fn body(response: AuthResponse) -> Value {
 
 #[test]
 fn validate_renders_lone_default_model_errors_without_null_or_escape_text_substitution() {
+    use gateway_core::source_control::encode_source_control_record;
     use gateway_source::{
         js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
-    use gateway_core::source_control::encode_source_control_record;
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("source-validation.sqlite3"));
-    let model_key = gateway_auth::store::key(json!(["default", "model"]));
-    let snapshot_key = gateway_auth::store::key(json!(["ubq_ai", "codex_models"]));
+    let model_key = gateway_auth_primitives::store::key(json!(["default", "model"]));
+    let snapshot_key = gateway_auth_primitives::store::key(json!(["ubq_ai", "codex_models"]));
     let model = encode_source_control_record(
         "model-revision",
         &SourceJson::parse(r#""\ud800""#).unwrap(),
@@ -138,11 +138,13 @@ fn source_partial_errors_keep_valid_writes_and_return_422() {
     assert_eq!(result["imported"], 1);
     assert_eq!(result["errors"], 1);
     assert_eq!(
-        run(store.read(&gateway_auth::store::key(json!(["default", "model"]))))
-            .unwrap()
-            .unwrap()
-            .json_value()
-            .unwrap(),
+        run(store.read(&gateway_auth_primitives::store::key(json!([
+            "default", "model"
+        ]))))
+        .unwrap()
+        .unwrap()
+        .json_value()
+        .unwrap(),
         "new-model"
     );
 }
@@ -152,7 +154,7 @@ fn dry_run_has_no_revision_or_store_effect_and_null_cas_does_not_overwrite_a_rac
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("dry-run.sqlite3"));
     let host = Host(Cell::new(0));
-    let key = gateway_auth::store::key(json!(["default", "model"]));
+    let key = gateway_auth_primitives::store::key(json!(["default", "model"]));
     let ndjson = line(json!(["default", "model"]), json!("candidate"));
     let result = body(
         run(execute_profile(
@@ -201,7 +203,7 @@ fn malformed_import_invalidates_the_derived_policy_in_the_same_commit() {
     .unwrap();
     let policy = gateway_authority_keys::api_policy("offline-key");
     assert!(run(store.read(&policy)).unwrap().is_some());
-    let key = gateway_auth::api_keys::id_key("offline-key");
+    let key = gateway_auth_primitives::api_keys::id_key("offline-key");
     let mut malformed = run(store.read(&key))
         .unwrap()
         .unwrap()
@@ -266,7 +268,7 @@ fn raw_profile_utf16_remains_explicit_and_refresh_bearing_pool_never_enters_comm
     ))
     .unwrap();
     assert_eq!(response.status, 200);
-    let value = run(store.read(&gateway_auth::store::key(json!([
+    let value = run(store.read(&gateway_auth_primitives::store::key(json!([
         "default",
         "system_prompt"
     ]))))
@@ -290,7 +292,7 @@ fn raw_profile_utf16_remains_explicit_and_refresh_bearing_pool_never_enters_comm
     .unwrap();
     assert_eq!(response.status, 422);
     assert!(
-        run(store.read(&gateway_auth::provider_credentials::codex_source_pool_key()))
+        run(store.read(&gateway_auth_credentials::provider_credentials::codex_source_pool_key()))
             .unwrap()
             .is_none()
     );
