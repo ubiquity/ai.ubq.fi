@@ -19,9 +19,10 @@ use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::Deserialize;
 use serde_json::json;
 pub struct ActorService<'a, S, H> {
-    store: &'a S,
-    config: &'a AuthConfig,
-    auth: AuthService<'a, S, H>,
+    pub(crate) store: &'a S,
+    pub(crate) host: &'a H,
+    pub(crate) config: &'a AuthConfig,
+    pub(crate) auth: AuthService<'a, S, H>,
 }
 /// One actual source operation, not DATA. No Clone/Deserialize/constructor/getter.
 /// ```compile_fail
@@ -62,6 +63,7 @@ impl<'a, S: AuthorityStore, H: AuthHost + PassportDate> ActorService<'a, S, H> {
     pub fn new(store: &'a S, host: &'a H, config: &'a AuthConfig) -> Self {
         Self {
             store,
+            host,
             config,
             auth: AuthService::new(store, host, config),
         }

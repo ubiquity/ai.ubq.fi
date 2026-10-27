@@ -304,3 +304,80 @@ fn checked_phase_is_bound_to_actual_service_store_not_same_typed_foreign_store()
         Ok(())
     })
 }
+
+#[test]
+fn actual_cookie_authentication_mints_source_actor_then_closed_phase_rechecks_role() -> TestResult {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let config = AuthConfig::default();
+        let (_, context, token) = actor(&store, &host, &config).await?;
+        let request = gateway_auth_contracts::types::AuthRequest {
+            method: "POST".into(),
+            url: "https://ai.ubq.fi/admin".into(),
+            headers: BTreeMap::from([(
+                "cookie".into(),
+                format!("__Host-uos_ai_passport_session={token}"),
+            )]),
+            ..Default::default()
+        };
+        let service = ActorService::new(&store, &host, &config);
+        let source = service
+            .authenticate_source_admin_actor(&request, &context)
+            .await?;
+        assert_eq!(source.principal(), &context.principal);
+        let phase = service
+            .prepare_source_phase(&source, NativeActorScope::Admin, host.now_ms())
+            .await?;
+        assert_eq!(phase.actor_data().v, 2);
+        assert_eq!(phase.context(), &context);
+        assert_eq!(phase.current_data().principal(), &context.principal);
+        host.admin.set(false);
+        assert!(
+            service
+                .prepare_source_phase(&source, NativeActorScope::Admin, host.now_ms())
+                .await
+                .is_err()
+        );
+        assert!(store.read(&session_key(&token)).await?.is_some());
+        Ok(())
+    })
+}
+
+#[test]
+fn actual_nonadmin_app_client_uses_client_scope_and_cannot_upgrade_to_admin() -> TestResult {
+    run(async {
+        let store = Store::default();
+        let host = Host::default();
+        let config = AuthConfig::default();
+        let (_, context, token) = actor(&store, &host, &config).await?;
+        host.admin.set(false);
+        let request = gateway_auth_contracts::types::AuthRequest {
+            method: "POST".into(),
+            url: "https://ai.ubq.fi/v1/responses".into(),
+            headers: BTreeMap::from([(
+                "cookie".into(),
+                format!("__Host-uos_ai_passport_session={token}"),
+            )]),
+            ..Default::default()
+        };
+        let service = ActorService::new(&store, &host, &config);
+        let source = service
+            .authenticate_source_client_actor(&request, &context)
+            .await?;
+        assert_eq!(source.scope(), NativeActorScope::Client);
+        assert!(
+            service
+                .prepare_source_phase(&source, NativeActorScope::Client, host.now_ms())
+                .await
+                .is_ok()
+        );
+        assert!(
+            service
+                .prepare_source_phase(&source, NativeActorScope::Admin, host.now_ms())
+                .await
+                .is_err()
+        );
+        Ok(())
+    })
+}

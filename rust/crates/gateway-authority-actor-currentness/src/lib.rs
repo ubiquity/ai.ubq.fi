@@ -3,3 +3,4 @@
 pub mod app;
 mod cache;
 pub mod legacy;
+pub mod source_actor;
