@@ -1,11 +1,11 @@
 use super::NativeImportInputs;
 use super::prepare_flow::VerifiedImportPublication;
-use crate::native_import::{NativeImportCompletion, NativeImportResult};
 use gateway_auth::native_import::authority::completion::ImportCompletionModelsData;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, import::remote::RemoteImportAuthority,
 };
 use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_native_import_source::{catalog::CatalogValidation, display::expiry_display_ms};
 use serde::Serialize;
 use std::collections::BTreeMap;

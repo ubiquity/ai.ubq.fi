@@ -9,12 +9,13 @@ use gateway_authority::{native_control::import::AuthenticatedNativeImport, store
 use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_native::{
     import_ingress::receive_import_connection,
-    native_import::{
-        NativeImportCompletion, NativeImportContext, NativeImportHandler, NativeImportResult,
-    },
+    native_import::{NativeImportContext, NativeImportHandler},
     owner_control::NativeControlContext,
 };
-use gateway_native_import_source::body::{AuthReadFailure, check_auth_content_length};
+use gateway_native_import_source::{
+    body::{AuthReadFailure, check_auth_content_length},
+    result::{NativeImportCompletion, NativeImportResult},
+};
 use gateway_native_import_test_support::{
     fixture::{Fixture, Store, Tokens, now_ms},
     socket::SocketRequest,

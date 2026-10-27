@@ -2,9 +2,7 @@
 use super::{ExistingAccountImportStore, durability::DurableNativeImport};
 use crate::{
     import_ingress::receive_import_connection,
-    native_import::{
-        NativeImportCompletion, NativeImportContext, NativeImportHandler, NativeImportResult,
-    },
+    native_import::{NativeImportContext, NativeImportHandler},
     owner_control::NativeControlContext,
 };
 use gateway_auth::{
@@ -20,6 +18,7 @@ use gateway_authority::{
     store::Authority,
 };
 use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_native_import_test_support::{
     fixture::{Cancel, Fixture, Store, Tokens, fail, now_ms, run},
     receipt::{Home, document, fixture},

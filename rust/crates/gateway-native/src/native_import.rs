@@ -12,8 +12,7 @@ use gateway_authority::{
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
 };
-use gateway_native_import_source::body as import_body;
-use std::collections::BTreeMap;
+use gateway_native_import_source::{body as import_body, result::NativeImportResult};
 
 /// Read-only native credential DATA, not proof, effect authority or CF completion.
 /// Constructed only by dispatch from the one original-body decoder after binding.
@@ -108,30 +107,10 @@ impl<'a> NativeImportContext<'a> {
         self.check()
     }
 }
-/// Native-only source result data, not a durable publication proof or CF completion grant.
-pub struct NativeImportResult {
-    pub status: u16,
-    pub headers: BTreeMap<String, String>,
-    pub body: SourceJson,
-    pub completion: NativeImportCompletion,
-}
-pub enum NativeImportCompletion {
-    Published {
-        publication_revision: String,
-        native_receipt_ref: String,
-    },
-    AlreadyCurrent {
-        publication_revision: String,
-        native_receipt_ref: String,
-    },
-    PendingUnknown,
-    Conflict,
-    Unavailable,
-    Refused,
-}
 /// Admitted borrows cannot escape the finite callback.
 /// ```compile_fail,E0521
-/// use gateway_native::{native_import::{NativeImportHandler,NativeImportContext,NativeImportResult},owner_control::NativeControlContext};
+/// use gateway_native::{native_import::{NativeImportHandler,NativeImportContext},owner_control::NativeControlContext};
+/// use gateway_native_import_source::result::NativeImportResult;
 /// use gateway_auth::native_import::NativeImportMetadata;
 /// use gateway_authority::native_control::import::AuthenticatedNativeImport;
 /// use gateway_core::error::GatewayError;

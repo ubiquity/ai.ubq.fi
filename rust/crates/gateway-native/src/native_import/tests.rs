@@ -144,7 +144,10 @@ fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error() {
             _: &[u8],
             _: &NativeImportContext<'_>,
             _: &NativeControlContext<'_>,
-        ) -> Result<super::NativeImportResult, gateway_core::error::GatewayError> {
+        ) -> Result<
+            gateway_native_import_source::result::NativeImportResult,
+            gateway_core::error::GatewayError,
+        > {
             panic!("binding/cancellation must precede decoder/handler");
         }
     }

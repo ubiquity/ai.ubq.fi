@@ -1,6 +1,6 @@
 //! Real loopback bytes and real AuthService/M22 proofs. Recording only; no credential effects.
 use super::*;
-use crate::native_import::{NativeImportContext, NativeImportHandler, NativeImportResult};
+use crate::native_import::{NativeImportContext, NativeImportHandler};
 use gateway_auth::{
     crypto::{Secret, base64url, sha256_hex},
     native_import::*,
@@ -25,6 +25,7 @@ use gateway_authority::paid_control::{
 use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
 use gateway_authority::store::Authority;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
+use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -72,7 +73,7 @@ impl NativeImportHandler for Recording {
                 status: 503,
                 headers: BTreeMap::from([("x-uos-upstream".into(), "fixture-native-only".into())]),
                 body: gateway_core::source_json::SourceJson::parse(r#"{"error":{"message":"native-only\ud800","code":"fixture_effect_unavailable"}}"#).unwrap(),
-                completion: crate::native_import::NativeImportCompletion::Unavailable,
+                completion: NativeImportCompletion::Unavailable,
             });
         }
         Err(GatewayError::unavailable(

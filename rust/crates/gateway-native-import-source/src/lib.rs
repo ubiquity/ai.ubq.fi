@@ -4,3 +4,4 @@ pub mod catalog;
 pub mod display;
 pub mod documents;
 mod error;
+pub mod result;

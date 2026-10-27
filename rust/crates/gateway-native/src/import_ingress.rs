@@ -148,7 +148,7 @@ where
         head: ImportHead,
         identity: &NativeTransportIdentity,
         nonces: &SqliteNonceStore,
-    ) -> Result<crate::native_import::NativeImportResult, GatewayError> {
+    ) -> Result<gateway_native_import_source::result::NativeImportResult, GatewayError> {
         let auth = auth_headers(&head)?;
         let metadata = metadata(&head)?;
         let watch = stream.try_clone().map_err(|_| unavailable())?;
@@ -200,7 +200,7 @@ pub fn receive_import_connection<S, I, H>(
     config: &AuthConfig,
     nonces: &SqliteNonceStore,
     handler: &H,
-) -> Result<crate::native_import::NativeImportResult, GatewayError>
+) -> Result<gateway_native_import_source::result::NativeImportResult, GatewayError>
 where
     S: AuthorityStore + Send + Sync,
     I: TokenSource + Send + Sync,
