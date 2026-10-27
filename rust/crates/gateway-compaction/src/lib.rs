@@ -1,17 +1,14 @@
 //! Source-compatible Jev compaction. The host owns fixed I/O and request lifecycle.
-macro_rules! text {($($s:expr),*$(,)?)=>{{let mut units=Vec::new();$(crate::text::Part::append(&$s,&mut units);)*crate::text::Text::new(units)}};}
+macro_rules! text {($($s:expr),*$(,)?)=>{{let mut units=Vec::new();$(gateway_compaction_source::text::Part::append(&$s,&mut units);)*gateway_compaction_source::text::Text::new(units)}};}
 mod engine;
 mod hybrid;
-mod model;
 mod response;
-mod state;
 #[cfg(test)]
 mod tests;
-mod text;
-mod transcript;
-pub mod types;
+use gateway_compaction_source::types::{
+    CompactionFailure, CompactionHost, CompactionOutcome, ResponseOptions,
+};
 use gateway_core::{js_string::JsString16, source_json::SourceJson};
-use types::{CompactionFailure, CompactionHost, CompactionOutcome, ResponseOptions};
 
 fn member(value: &SourceJson, name: &str) -> Option<SourceJson> {
     value

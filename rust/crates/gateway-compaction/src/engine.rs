@@ -1,11 +1,13 @@
 //! Source call decisions, request batching, local windows and projected transcript.
-use crate::{
+use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
+use gateway_compaction_history::state::{collect_calls, fit_state};
+use gateway_compaction_render::transcript::truncated_result;
+use gateway_compaction_source::{
     model::{Action, CompactResult, Decision, Message, Options, Reason, Resolved, ToolCall},
-    state::{self, fit_state},
+    state,
     text::{self, Text},
     types::{CompactionFailure, CompactionHost, CompactionStats, FailureKind, JEV_TIMEOUT_MS},
 };
-use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use gateway_core::source_json::SourceJson;
 use gateway_prompt_policy::tokens::estimate_tokens;
 use std::collections::{BTreeMap, BTreeSet};
@@ -122,24 +124,6 @@ async fn ask_batch<H: CompactionHost>(
             ))
         })
         .collect()
-}
-pub fn truncated_result(value: &Text, error: bool, head: usize) -> Text {
-    if value.len() <= head.saturating_add(120) {
-        return value.clone();
-    }
-    let prefix = if head > 0 {
-        text!(value.slice(0, head), "\n")
-    } else {
-        Text::default()
-    };
-    text!(
-        prefix,
-        "[fast-jev-compaction truncated ",
-        value.len() - head,
-        " chars of this tool result",
-        if error { " (error)" } else { "" },
-        "; re-run the tool if needed]"
-    )
 }
 fn projected(
     messages: &[Message],
@@ -273,6 +257,75 @@ pub fn plan_windows(messages: &[Message], calls: &[ToolCall], max: usize) -> Vec
     }
     windows
 }
+struct Window {
+    start: usize,
+    end: usize,
+    own: Vec<ToolCall>,
+    candidates: Vec<ToolCall>,
+}
+struct WindowResult {
+    stage: String,
+    tokens: usize,
+    requests: usize,
+    answers: Vec<(Text, (f64, f64))>,
+}
+fn window_tasks(
+    calls: &[ToolCall],
+    candidates: &[ToolCall],
+    plan: Vec<(usize, usize)>,
+) -> Vec<Window> {
+    let ids = candidates
+        .iter()
+        .map(|c| c.id.clone())
+        .collect::<BTreeSet<_>>();
+    plan.into_iter()
+        .filter_map(|(start, end)| {
+            let own = calls
+                .iter()
+                .filter(|c| c.call_index >= start && c.call_index < end && c.result_index < end)
+                .cloned()
+                .collect::<Vec<_>>();
+            let candidates = own
+                .iter()
+                .filter(|c| ids.contains(&c.id))
+                .cloned()
+                .collect::<Vec<_>>();
+            (!candidates.is_empty()).then_some(Window {
+                start,
+                end,
+                own,
+                candidates,
+            })
+        })
+        .collect::<Vec<_>>()
+}
+async fn ask_window<H: CompactionHost>(
+    messages: &[Message],
+    window: &Window,
+    options: &Resolved,
+    host: &H,
+) -> Result<WindowResult, CompactionFailure> {
+    let local = fit_state(
+        &messages[window.start..window.end],
+        &window.own,
+        &Resolved {
+            recent: 0,
+            ..options.clone()
+        },
+    )?;
+    let wire = state::json(&local.state)?;
+    let mut answers = Vec::new();
+    let groups = batches(&window.candidates, local.tokens, options)?;
+    for group in &groups {
+        answers.extend(ask_batch(host, &wire, group).await?);
+    }
+    Ok(WindowResult {
+        stage: local.stage,
+        tokens: local.tokens,
+        requests: groups.len(),
+        answers,
+    })
+}
 pub async fn compact<H: CompactionHost>(
     messages: &[Message],
     host: &H,
@@ -281,7 +334,7 @@ pub async fn compact<H: CompactionHost>(
     check(host)?;
     let started = now(host)?;
     let options = options.resolve();
-    let calls = state::collect_calls(messages, options.recent);
+    let calls = collect_calls(messages, options.recent);
     let candidates = calls
         .iter()
         .filter(|c| !c.pinned)
@@ -295,68 +348,27 @@ pub async fn compact<H: CompactionHost>(
         let plan = plan_windows(messages, &calls, 80_000);
         let degraded = fitted.stage != "full" && !fitted.stage.starts_with("inputs<=");
         if candidates.len() >= 40 && degraded && plan.len() > 1 {
-            let ids = candidates
-                .iter()
-                .map(|c| c.id.clone())
-                .collect::<BTreeSet<_>>();
-            let tasks = plan
-                .into_iter()
-                .filter_map(|(start, end)| {
-                    let own = calls
-                        .iter()
-                        .filter(|c| {
-                            c.call_index >= start && c.call_index < end && c.result_index < end
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    let candidates = own
-                        .iter()
-                        .filter(|c| ids.contains(&c.id))
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    (!candidates.is_empty()).then_some((start, end, own, candidates))
-                })
-                .collect::<Vec<_>>();
+            let tasks = window_tasks(&calls, &candidates, plan);
             windows = tasks.len();
-            let results = stream::iter(tasks.iter().enumerate().map(
-                |(index, (start, end, own, candidates))| {
-                    let options = &options;
-                    async move {
-                        let local = fit_state(
-                            &messages[*start..*end],
-                            own,
-                            &Resolved {
-                                recent: 0,
-                                ..options.clone()
-                            },
-                        )?;
-                        let wire = state::json(&local.state)?;
-                        let mut answers = Vec::new();
-                        let groups = batches(candidates, local.tokens, options)?;
-                        for group in &groups {
-                            answers.extend(ask_batch(host, &wire, group).await?);
-                        }
-                        Ok::<_, CompactionFailure>((
-                            index,
-                            local.stage,
-                            local.tokens,
-                            groups.len(),
-                            answers,
-                        ))
-                    }
-                },
-            ))
+            let results = stream::iter(tasks.iter().enumerate().map(|(index, window)| {
+                let options = &options;
+                async move {
+                    ask_window(messages, window, options, host)
+                        .await
+                        .map(|result| (index, result))
+                }
+            }))
             .buffer_unordered(3)
             .try_collect::<Vec<_>>()
             .await?;
             let mut results = results;
             results.sort_by_key(|r| r.0);
             let mut stages = Vec::new();
-            for (_, s, t, r, a) in results {
-                stages.push(s);
-                tokens = tokens.max(t);
-                requests += r;
-                answers.extend(a);
+            for (_, result) in results {
+                stages.push(result.stage);
+                tokens = tokens.max(result.tokens);
+                requests += result.requests;
+                answers.extend(result.answers);
             }
             stage = format!("windowed x{windows} [{}]", stages.join(", "));
             stage.truncate(stage.len().min(200));

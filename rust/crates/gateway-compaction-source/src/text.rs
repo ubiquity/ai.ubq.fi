@@ -4,8 +4,14 @@ use gateway_core::{js_string::JsString16, source_json::SourceJson, source_serial
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{ops::Deref, rc::Rc};
 
+/// Shared UTF-16 storage stays private; public construction creates only text data.
+/// ```compile_fail
+/// use gateway_compaction_source::text::Text;
+/// use gateway_core::js_string::JsString16;
+/// let _ = Text(std::rc::Rc::new(JsString16::from_units(vec![0xd800])));
+/// ```
 #[derive(Clone, Default, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(crate) struct Text(Rc<JsString16>);
+pub struct Text(Rc<JsString16>);
 impl Text {
     pub fn new(units: Vec<u16>) -> Self {
         Self(Rc::new(JsString16::from_units(units)))
@@ -77,7 +83,7 @@ impl<'de> Deserialize<'de> for Text {
         JsString16::deserialize(d).map(Self::from)
     }
 }
-pub(crate) trait Part {
+pub trait Part {
     fn append(&self, out: &mut Vec<u16>);
 }
 impl Part for Text {

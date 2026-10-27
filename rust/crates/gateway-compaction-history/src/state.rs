@@ -1,40 +1,15 @@
-//! Mechanical source state fitting ladder and calibrated UTF16 token estimator.
-use crate::{
-    model::{Fitted, HistoryCall, HistoryCalls, HistoryEntry, Message, Resolved, State, ToolCall},
+//! Transcript history and the complete source state-fitting ladder.
+use gateway_compaction_source::{
+    model::{
+        Fitted, HistoryCall, HistoryCalls, HistoryEntry, Message, Resolved, Role, State, ToolCall,
+    },
+    state::{CONTEXT, abridge, json, pinned, truncate},
     text::{self, Text},
     types::{CompactionFailure, FailureKind},
 };
 use gateway_core::source_json::SourceJson;
 use gateway_prompt_policy::tokens::estimate_tokens;
-use serde::Serialize;
 use std::collections::BTreeMap;
-const CONTEXT: &str = "A coding assistant conversation is being compacted to free context. `history` is the whole conversation so far, oldest first; tool outputs are replaced by a short `result` note and long texts may be abridged. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted permanently, but the assistant can always re-run a tool or re-read a file.";
-pub fn json<T: Serialize + ?Sized>(value: &T) -> Result<SourceJson, CompactionFailure> {
-    SourceJson::from_serializable(value)
-        .map_err(|_| CompactionFailure::new(FailureKind::JevFailed, "state serialization failed"))
-}
-pub fn truncate(text: &Text, limit: usize) -> Text {
-    if text.len() <= limit {
-        text.clone()
-    } else {
-        text!(text.slice(0, limit.saturating_sub(1)), "…")
-    }
-}
-fn abridge(value: &Text, head: usize, tail: usize) -> Text {
-    if value.len() <= head + tail + 40 {
-        return value.clone();
-    }
-    text!(
-        value.slice(0, head),
-        "\n[… ",
-        value.len() - head - tail,
-        " chars omitted …]\n",
-        value.slice(value.len().saturating_sub(tail), value.len())
-    )
-}
-fn pinned(i: usize, total: usize, recent: usize) -> bool {
-    i == 0 || i >= total.saturating_sub(recent)
-}
 pub fn collect_calls(messages: &[Message], recent: usize) -> Vec<ToolCall> {
     let mut results = BTreeMap::new();
     for (i, m) in messages.iter().enumerate() {
@@ -138,7 +113,7 @@ fn goal(messages: &[Message]) -> Text {
     let values = messages
         .iter()
         .filter(|m| {
-            m.role == crate::model::Role::User
+            m.role == Role::User
                 && !m.text.blank()
                 && m.tool_results.as_ref().is_none_or(Vec::is_empty)
         })
@@ -184,6 +159,37 @@ fn update(
     *tokens = *tokens - per[i] + now;
     per[i] = now;
     Ok(())
+}
+fn merge_runs(
+    entries: Vec<HistoryEntry>,
+    removed: &[bool],
+    pin: impl Fn(&HistoryEntry) -> bool,
+) -> Vec<HistoryEntry> {
+    let mut merged: Vec<HistoryEntry> = Vec::new();
+    for entry in entries
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, e)| (!removed[i]).then_some(e))
+    {
+        let fold = |e: &HistoryEntry| {
+            !pin(e)
+                && e.text.is_empty()
+                && matches!(&e.tool_calls,Some(HistoryCalls::Compact(v))if!v.is_empty())
+        };
+        if let Some(prev) = merged
+            .last_mut()
+            .filter(|prev| fold(prev) && fold(&entry) && prev.role == entry.role)
+        {
+            if let (Some(HistoryCalls::Compact(prior)), Some(HistoryCalls::Compact(next))) =
+                (&mut prev.tool_calls, entry.tool_calls)
+            {
+                prior.extend(next);
+            }
+        } else {
+            merged.push(entry);
+        }
+    }
+    merged
 }
 pub fn fit_state(
     messages: &[Message],
@@ -283,32 +289,7 @@ pub fn fit_state(
             ));
         }
     }
-    let mut merged: Vec<HistoryEntry> = Vec::new();
-    for entry in entries
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, e)| (!removed[i]).then_some(e))
-    {
-        let fold = |e: &HistoryEntry| {
-            !pin(e)
-                && e.text.is_empty()
-                && matches!(&e.tool_calls,Some(HistoryCalls::Compact(v))if!v.is_empty())
-        };
-        if merged
-            .last()
-            .is_some_and(|prev| fold(prev) && fold(&entry) && prev.role == entry.role)
-        {
-            if let (Some(HistoryCalls::Compact(prior)), Some(HistoryCalls::Compact(next))) = (
-                &mut merged.last_mut().expect("checked prior").tool_calls,
-                entry.tool_calls,
-            ) {
-                prior.extend(next);
-            }
-        } else {
-            merged.push(entry);
-        }
-    }
-    entries = merged;
+    entries = merge_runs(entries, &removed, pin);
     (per, tokens) = recount(&entries, base)?;
     if tokens as f64 <= options.state_tokens {
         return Ok(fitted(entries, &goal, tokens, "old calls merged"));
