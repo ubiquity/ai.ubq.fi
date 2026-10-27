@@ -1,11 +1,12 @@
 //! Source catalog runtime over one strong authority and credential-owner publication.
-use crate::{
-    authority::RemoteAuthorityStore, catalog_host::Host, host::PlatformHost, storage::now_ms,
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::catalog_host::Host;
+use crate::host::PlatformHost;
 use gateway_catalog_provider::host::CatalogHost;
 use gateway_catalog_runtime::CatalogRuntime;
 use gateway_core::{error::GatewayError, source_json::SourceJson};
 use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
+use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Request};
 
@@ -62,7 +63,7 @@ pub fn schedule_warm(
     let store = store.clone();
     let version = version.to_owned();
     context.wait_until(async move {
-        let cancellation = match crate::transport::outbound::Cancellation::background() {
+        let cancellation = match gateway_worker_platform::cancellation::Cancellation::background() {
             Ok(cancellation) => cancellation,
             Err(error) => {
                 worker::console_error!(

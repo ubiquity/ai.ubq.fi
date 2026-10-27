@@ -1,10 +1,9 @@
-use futures_util::task::AtomicWaker;
 use gateway_core::error::GatewayError;
-use std::{collections::BTreeMap, rc::Rc, task::Waker};
+use gateway_worker_platform::{cancellation::Cancellation, error::configuration_error};
+use std::collections::BTreeMap;
 use worker::{
-    AbortSignal, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, Url,
-    js_sys::{Reflect, Uint8Array},
-    wasm_bindgen::{JsCast, JsValue, closure::Closure},
+    Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Response, Url,
+    js_sys::Uint8Array,
 };
 
 /// Constructed by trusted provider/native-host configuration, not request JSON.
@@ -53,128 +52,6 @@ impl PinnedDestination {
             return Err(configuration_error());
         }
         Ok(Self { url })
-    }
-}
-
-/// Owns event listeners until the whole upstream body/stream finishes, not only
-/// until response headers arrive. Drop removes the listener without leaking it.
-pub struct Cancellation {
-    controller: worker::web_sys::AbortController,
-    incoming: worker::web_sys::AbortSignal,
-    listener: Closure<dyn FnMut()>,
-    waker: Rc<AtomicWaker>,
-}
-
-impl Cancellation {
-    pub fn from_request(request: &Request) -> Result<Self, GatewayError> {
-        Self::from_signal(request.inner().signal())
-    }
-
-    pub fn child(&self) -> Result<Self, GatewayError> {
-        Self::from_signal(self.controller.signal())
-    }
-
-    /// Direct usage retains the actual caller abort reason.
-    pub(crate) fn source_signal(&self) -> worker::web_sys::AbortSignal {
-        self.incoming.clone()
-    }
-
-    /// Event-owned billing is independent of a caller's delivery cancellation.
-    pub fn background() -> Result<Self, GatewayError> {
-        let incoming =
-            worker::web_sys::AbortController::new().map_err(|_| configuration_error())?;
-        Self::from_signal(incoming.signal())
-    }
-
-    fn from_signal(incoming: worker::web_sys::AbortSignal) -> Result<Self, GatewayError> {
-        let controller =
-            worker::web_sys::AbortController::new().map_err(|_| configuration_error())?;
-        let forwarded = controller.clone();
-        let waker = Rc::new(AtomicWaker::new());
-        let wake = waker.clone();
-        let listener = Closure::wrap(Box::new(move || {
-            forwarded.abort();
-            wake.wake();
-        }) as Box<dyn FnMut()>);
-        incoming
-            .add_event_listener_with_callback("abort", listener.as_ref().unchecked_ref())
-            .map_err(|_| configuration_error())?;
-        if incoming.aborted() {
-            controller.abort();
-        }
-        Ok(Self {
-            controller,
-            incoming,
-            listener,
-            waker,
-        })
-    }
-
-    pub fn signal(&self) -> AbortSignal {
-        self.controller.signal().into()
-    }
-
-    pub fn abort(&self) {
-        self.controller.abort();
-        self.waker.wake();
-    }
-
-    /// A quiet upstream may never produce another chunk after caller abort.
-    /// Wake the outgoing Rust stream directly from the actual platform signal.
-    pub fn register_waker(&self, waker: &Waker) {
-        self.waker.register(waker);
-    }
-
-    pub fn client_aborted(&self) -> bool {
-        self.incoming.aborted()
-    }
-
-    /// Remaining time computed from the route's absolute host-policy deadline.
-    pub fn set_timeout_ms(&self, milliseconds: i32) -> Result<Deadline, GatewayError> {
-        if milliseconds < 0 {
-            return Err(configuration_error());
-        }
-        let controller = self.controller.clone();
-        let wake = self.waker.clone();
-        let callback = Closure::wrap(Box::new(move || {
-            controller.abort();
-            wake.wake();
-        }) as Box<dyn FnMut()>);
-        let global = worker::js_sys::global();
-        let set_timeout = Reflect::get(&global, &JsValue::from_str("setTimeout"))
-            .map_err(|_| configuration_error())?
-            .dyn_into::<worker::js_sys::Function>()
-            .map_err(|_| configuration_error())?;
-        let handle = set_timeout
-            .call2(&global, callback.as_ref(), &JsValue::from(milliseconds))
-            .map_err(|_| configuration_error())?;
-        Ok(Deadline { handle, callback })
-    }
-}
-
-impl Drop for Cancellation {
-    fn drop(&mut self) {
-        let _ = self
-            .incoming
-            .remove_event_listener_with_callback("abort", self.listener.as_ref().unchecked_ref());
-    }
-}
-
-pub struct Deadline {
-    handle: JsValue,
-    callback: Closure<dyn FnMut()>,
-}
-
-impl Drop for Deadline {
-    fn drop(&mut self) {
-        let global = worker::js_sys::global();
-        if let Ok(clear) = Reflect::get(&global, &JsValue::from_str("clearTimeout"))
-            && let Some(clear) = clear.dyn_ref::<worker::js_sys::Function>()
-        {
-            let _ = clear.call1(&global, &self.handle);
-        }
-        // Keep the closure alive until its timer has been cleared.
-        let _ = &self.callback;
     }
 }
 
@@ -247,22 +124,18 @@ where
             error: if cancellation.signal().aborted() {
                 interrupted()
             } else {
-                super::platform_error("The upstream transport failed.", "upstream_transport_error")
+                gateway_worker_platform::error::platform_error(
+                    "The upstream transport failed.",
+                    "upstream_transport_error",
+                )
             },
             attempt: DispatchAttempt::Started,
             origin: DispatchOrigin::Transport,
         })
 }
 
-fn configuration_error() -> GatewayError {
-    GatewayError::unavailable(
-        "The upstream transport configuration is invalid.",
-        "upstream_transport_configuration_invalid",
-    )
-}
-
 fn interrupted() -> GatewayError {
-    super::platform_error(
+    gateway_worker_platform::error::platform_error(
         "The upstream request was interrupted.",
         "upstream_request_interrupted",
     )

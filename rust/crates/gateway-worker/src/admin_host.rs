@@ -266,7 +266,7 @@ impl RuntimeCapabilities for Capabilities {
         left: &gateway_core::js_string::JsString16,
         right: &gateway_core::js_string::JsString16,
     ) -> Result<Ordering, GatewayError> {
-        crate::source_collator::shared().compare(left, right)
+        gateway_worker_platform::source_collator::shared().compare(left, right)
     }
 }
 

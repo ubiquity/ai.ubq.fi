@@ -1,8 +1,8 @@
 //! Fixed free provider GETs with one actual request cancellation and absolute deadline.
 use super::{RequestHost, unavailable};
-use crate::transport::outbound::{
-    Cancellation, Deadline, PinnedDestination, send_constructed, send_http,
-};
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_constructed;
+use crate::transport::outbound::send_http;
 use gateway_admin_runtime::claude;
 use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
 use gateway_core::{
@@ -13,6 +13,8 @@ use gateway_observability::{
     host_types::*,
     types::{HealthEvent, HealthTarget},
 };
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::cancellation::Deadline;
 use std::collections::BTreeMap;
 use worker::{Method, Response};
 
@@ -40,7 +42,7 @@ fn probe(
     }
 }
 fn timeout(host: &RequestHost, deadline: i64) -> bool {
-    crate::storage::now_ms().map_or(true, |at| at >= deadline)
+    gateway_worker_storage::store::now_ms().map_or(true, |at| at >= deadline)
         || host.platform.cancellation.signal().aborted()
 }
 fn codex_headers(account: &CodexSourceAccount) -> BTreeMap<String, String> {
@@ -65,7 +67,7 @@ impl RequestHost {
         headers: &BTreeMap<String, String>,
         deadline: i64,
     ) -> Result<Reply, GatewayError> {
-        let remaining = deadline.saturating_sub(crate::storage::now_ms()?);
+        let remaining = deadline.saturating_sub(gateway_worker_storage::store::now_ms()?);
         if remaining <= 0 {
             return Err(unavailable("Observational GET deadline expired."));
         }
@@ -112,7 +114,7 @@ impl RequestHost {
         deadline: i64,
     ) -> Result<Reply, GatewayError> {
         // Same bounded observational phase as fixed_get; no account/credential refetch.
-        let remaining = deadline.saturating_sub(crate::storage::now_ms()?);
+        let remaining = deadline.saturating_sub(gateway_worker_storage::store::now_ms()?);
         if remaining <= 0 {
             return Err(unavailable("Observational GET deadline expired."));
         }
@@ -185,7 +187,10 @@ impl RequestHost {
             .map_err(|_| unavailable("Metered account API returned an unreadable body."))?;
         let value = serde_json::from_slice(&bytes)
             .map_err(|_| unavailable("Metered account API returned invalid JSON."))?;
-        gateway_observability::metered::token_usage_state(&value, crate::storage::now_ms()?)?;
+        gateway_observability::metered::token_usage_state(
+            &value,
+            gateway_worker_storage::store::now_ms()?,
+        )?;
         Ok(value)
     }
     async fn codex_probe(&self, accounts: &[CodexSourceAccount], deadline: i64) -> ActiveProbe {
@@ -245,7 +250,7 @@ impl RequestHost {
             let event = if status == 401
                 || (status == 403
                     && codex::codex_access_expiry_ms(&account.access_token).is_some_and(|expiry| {
-                        crate::storage::now_ms().is_ok_and(|at| expiry <= at as f64)
+                        gateway_worker_storage::store::now_ms().is_ok_and(|at| expiry <= at as f64)
                     })) {
                 HealthEvent::AuthInvalid
             } else if status == 429 {
@@ -264,19 +269,7 @@ impl RequestHost {
                 )
                 .await;
             if accounts.len() == 1 {
-                return probe(
-                    ProbeProvider::ChatgptCodex,
-                    if (200..300).contains(&status) {
-                        200
-                    } else if status == 401 {
-                        401
-                    } else {
-                        503
-                    },
-                    content_type,
-                    (!(200..300).contains(&status))
-                        .then_some("Codex models probe returned an error status."),
-                );
+                return codex_status_probe(status, content_type);
             }
             if (200..300).contains(&status) {
                 let bytes = reply.response.bytes().await.ok();
@@ -284,19 +277,7 @@ impl RequestHost {
                     contributed = true;
                 }
             }
-            last = Some(probe(
-                ProbeProvider::ChatgptCodex,
-                if (200..300).contains(&status) {
-                    200
-                } else if status == 401 {
-                    401
-                } else {
-                    503
-                },
-                content_type,
-                (!(200..300).contains(&status))
-                    .then_some("Codex models probe returned an error status."),
-            ));
+            last = Some(codex_status_probe(status, content_type));
         }
         if timeout(self, deadline) {
             probe(
@@ -348,7 +329,7 @@ impl RequestHost {
         &self,
         deadline: i64,
     ) -> Result<(Option<ActiveProbe>, Option<SourceJson>), GatewayError> {
-        let at = crate::storage::now_ms()?;
+        let at = gateway_worker_storage::store::now_ms()?;
         let Some(roster) = claude::read_roster(&self.store, at).await? else {
             return Ok((None, None));
         };
@@ -416,9 +397,13 @@ impl RequestHost {
                 }),
             )
         });
-        if claude::current_binding(&self.store, &account, crate::storage::now_ms()?)
-            .await?
-            .is_none()
+        if claude::current_binding(
+            &self.store,
+            &account,
+            gateway_worker_storage::store::now_ms()?,
+        )
+        .await?
+        .is_none()
         {
             return Ok((
                 Some(probe(
@@ -516,9 +501,10 @@ impl RequestHost {
             .fetch_bindings()
             .find(|b| b.source_slot() == account.slot && b.account_id() == account.account_id)
             .ok_or_else(|| unavailable("Capacity GET is outside its original source fence."))?;
-        let current = codex::read_codex_source_pool(&self.store, crate::storage::now_ms()?)
-            .await?
-            .ok_or_else(|| unavailable("Capacity source pool is unavailable."))?;
+        let current =
+            codex::read_codex_source_pool(&self.store, gateway_worker_storage::store::now_ms()?)
+                .await?
+                .ok_or_else(|| unavailable("Capacity source pool is unavailable."))?;
         let current = current
             .pool
             .accounts
@@ -563,6 +549,21 @@ impl RequestHost {
         };
         Ok(CapacityProbe::Http { status, json })
     }
+}
+
+fn codex_status_probe(status: u16, content_type: Option<String>) -> ActiveProbe {
+    probe(
+        ProbeProvider::ChatgptCodex,
+        if (200..300).contains(&status) {
+            200
+        } else if status == 401 {
+            401
+        } else {
+            503
+        },
+        content_type,
+        (!(200..300).contains(&status)).then_some("Codex models probe returned an error status."),
+    )
 }
 
 fn has_models_array(bytes: &[u8]) -> bool {

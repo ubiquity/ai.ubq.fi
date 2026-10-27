@@ -10,6 +10,7 @@ gateway-quota-projection.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-claude-usage-history.workspace = true
 gateway-claude-usage-history-records.workspace = true
+gateway-observability-request-records.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-schema = { path = "../gateway-schema" }
 gateway-auth = { path = "../gateway-auth" }

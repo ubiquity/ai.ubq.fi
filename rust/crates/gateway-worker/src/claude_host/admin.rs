@@ -1,12 +1,10 @@
 //! Already-authorized finite admin operations; account/quota policy stays in m12/m21.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformHost, response_bytes},
-    transport::{
-        body::discard_response,
-        outbound::{Cancellation, PinnedDestination, construct_request, send_constructed},
-    },
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformHost;
+use crate::host::response_bytes;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::construct_request;
+use crate::transport::outbound::send_constructed;
 use gateway_admin_runtime::{
     capabilities::{ClaudeRequest, ClaudeSubmission, Context},
     claude::{self, AccountBinding, AccountUpdate, Credential},
@@ -21,6 +19,8 @@ use gateway_core::{
     source_serialization as source,
 };
 use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
+use gateway_worker_http_body::body::discard_response;
+use gateway_worker_platform::cancellation::Cancellation;
 use serde::Serialize;
 use std::collections::BTreeSet;
 

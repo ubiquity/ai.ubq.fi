@@ -111,7 +111,7 @@ impl NativeBindings {
         &self,
         action: &gateway_authority::native_live::NativeLiveAction,
         platform: &PlatformHost,
-    ) -> Result<crate::response::GatewayResponse, GatewayError> {
+    ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
         self.transport()?
             .live_upgrade(action.action_ref(), platform)
             .await
@@ -284,7 +284,7 @@ impl NativeBindings {
         use gateway_auth::native_control::{NativeControlDisposition, NativeControlRequest};
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
-            operation_id: crate::transport::random::opaque_token()?,
+            operation_id: gateway_worker_platform::random::opaque_token()?,
             request: NativeControlRequest::CodexRenewAccess {
                 action_ref: action.action_ref().to_owned(),
             },

@@ -162,7 +162,7 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
     let host = runtime.host();
     let configured = inventory::monitoring_key(&host.platform.env).is_some();
     let snapshot = if configured {
-        let deadline = crate::storage::now_ms()?
+        let deadline = gateway_worker_storage::store::now_ms()?
             .checked_add(10_000)
             .ok_or_else(|| unavailable("Metered diagnostics deadline is invalid."))?;
         host.metered_quota_snapshot(false, deadline).await?
@@ -206,14 +206,14 @@ impl ObservabilityHost for Host {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
 
     fn now_ms(&self) -> i64 {
-        crate::storage::now_ms().unwrap_or(i64::MAX)
+        gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX)
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
-        crate::transport::random::random_bytes(length)
+        gateway_worker_platform::random::random_bytes(length)
     }
     fn compare_labels(&self, left: &str, right: &str) -> Result<std::cmp::Ordering, GatewayError> {
         crate::admin_host::compare_labels(left, right)
@@ -257,7 +257,7 @@ impl ObservabilityHost for RequestHost {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
 
     async fn backfill_paid_usage(

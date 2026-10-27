@@ -77,14 +77,16 @@ pub(crate) fn model_text(value: Option<&str>) -> Option<&str> {
         .filter(|value| model_source(Some(&JsString16::from_utf8(value))).is_some())
 }
 fn model_source(value: Option<&JsString16>) -> Option<JsString16> {
-    value.map(crate::records::trim).filter(|value| {
-        !value.as_units().is_empty()
-            && value.as_units().len() <= 256
-            && !value
-                .as_units()
-                .iter()
-                .any(|unit| *unit < 0x20 || *unit == 0x7f)
-    })
+    value
+        .map(gateway_observability_request_records::request::trim)
+        .filter(|value| {
+            !value.as_units().is_empty()
+                && value.as_units().len() <= 256
+                && !value
+                    .as_units()
+                    .iter()
+                    .any(|unit| *unit < 0x20 || *unit == 0x7f)
+        })
 }
 pub(crate) fn model_hash(value: Option<&JsString16>, domain: &str) -> Option<String> {
     let model = model_source(value)?;

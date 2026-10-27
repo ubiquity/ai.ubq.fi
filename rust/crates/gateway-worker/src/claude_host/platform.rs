@@ -129,7 +129,7 @@ impl ClaudePoolHost for Host {
         left: &gateway_core::js_string::JsString16,
         right: &gateway_core::js_string::JsString16,
     ) -> Result<Ordering, GatewayError> {
-        crate::source_collator::shared().compare(left, right)
+        gateway_worker_platform::source_collator::shared().compare(left, right)
     }
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64> {
         let value = worker::js_sys::Date::parse(raw);

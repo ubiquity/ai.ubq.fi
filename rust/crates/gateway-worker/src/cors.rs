@@ -1,6 +1,6 @@
 //! Existing source CORS policy, including trusted credential origins and Vary merging.
-use crate::response::GatewayResponse;
 use gateway_auth::origin::trusted_relay_origin;
+use gateway_worker_web::response::GatewayResponse;
 use worker::{Env, Request};
 
 use crate::host::auth_config;

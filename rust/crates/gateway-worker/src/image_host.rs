@@ -1,12 +1,9 @@
 //! Codex-only image children with actual transport receipts and sibling abort.
-use crate::{
-    extras_host::Handle,
-    host::PlatformHost,
-    transport::{
-        body,
-        outbound::{self, Cancellation, DispatchAttempt, PinnedDestination},
-    },
-};
+use crate::extras_host::Handle;
+use crate::host::PlatformHost;
+use crate::transport::outbound;
+use crate::transport::outbound::DispatchAttempt;
+use crate::transport::outbound::PinnedDestination;
 use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
 use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ImageKind, UpstreamResponse,
@@ -16,6 +13,8 @@ use gateway_routing_runtime::{
     extras::{ChildScope, DispatchTicket},
     types::{AttemptFailure, RefusalDecision, TransportState},
 };
+use gateway_worker_http_body::body;
+use gateway_worker_platform::cancellation::Cancellation;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -223,7 +222,7 @@ impl Images {
             }
             let bytes = body::response_bytes(
                 &mut response,
-                crate::multipart::IMAGE_JSON_BYTES,
+                gateway_worker_http_body::multipart::IMAGE_JSON_BYTES,
                 &child.cancellation.signal(),
             )
             .await

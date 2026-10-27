@@ -1,8 +1,6 @@
 //! Streaming call answers and bounded replacement errors. No extra SDP-answer limit is invented.
-use crate::{
-    host::PlatformHost,
-    transport::outbound::{Cancellation, PinnedDestination},
-};
+use crate::host::PlatformHost;
+use crate::transport::outbound::PinnedDestination;
 use futures_util::StreamExt;
 use gateway_auth::provider_credentials::CodexSourceAccount;
 use gateway_core::error::GatewayError;
@@ -10,6 +8,7 @@ use gateway_live_runtime::types::{
     LIVE_CALL_CAPTURE_TIMEOUT_MS, LIVE_CALL_CAPTURED_ERROR_MAX_BYTES, LIVE_CALL_HEADERS_TIMEOUT_MS,
     LIVE_CALLS_PATH, LiveCreateRequest, LiveDispatchAttempt, LiveDispatchFailure, LiveResponse,
 };
+use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{collections::BTreeMap, rc::Rc, task::Poll};
 use worker::{
@@ -178,7 +177,7 @@ pub(super) async fn capture(
 pub fn into_response(
     response: LiveResponse<Body>,
     context: Rc<Context>,
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let headers = Headers::new();
     for (name, value) in response.headers {
         headers.set(&name, &value).map_err(|_| unreachable())?;
@@ -218,5 +217,5 @@ pub fn into_response(
         &init,
     )
     .map_err(|_| unreachable())?;
-    Ok(crate::response::GatewayResponse::Raw(raw))
+    Ok(gateway_worker_web::response::GatewayResponse::Raw(raw))
 }

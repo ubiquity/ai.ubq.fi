@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isRustDocumentation, isRustGateInput, RUST_NATIVE_PACKAGES, untrackedCargoConfigurations } from "./rust-inputs.ts";
+import { rustScopeForChanges, type RustScope } from "./rust-scope.ts";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GIT = "/usr/bin/git";
@@ -13,7 +15,7 @@ const ALIASES = new Map([
   ["#http", "src/runtime/http.ts"],
   ["#kv", "src/storage/kv.ts"],
 ]);
-const UNTRACKED_ROOTS = ["src/", "scripts/", "tests/", "ops/", "benchmarks/", "tools/", "static/", "rust/"];
+const UNTRACKED_ROOTS = [".cargo/", "src/", "scripts/", "tests/", "ops/", "benchmarks/", "tools/", "static/", "rust/"];
 const PRIVATE_COPY_CONTROLLER = "tests/private-bun-copy-confinement.test.ts";
 const PRIVATE_COPY_PRODUCT = "tools/cloudflare/private-bun-copy.ts";
 const WORKER_RUNTIME_TEST = "tests/native-authority-workerd.test.ts";
@@ -53,6 +55,7 @@ export type CiScope = TestSelection &
     needsRustWasm: boolean;
     needsRustBuild: boolean;
     needsTypeScriptValidate: boolean;
+    rustScope: RustScope | null;
   }>;
 
 const git = (args: readonly string[]): string | null => {
@@ -93,6 +96,7 @@ const changedPathsFromGit = (): string[] | null => {
   const paths = new Set([
     ...pathList(["diff", "--name-only", "-z", `${base}...HEAD`]).map(normalizePath),
     ...pathList(["diff", "--name-only", "-z", "HEAD"]).map(normalizePath),
+    ...untrackedCargoConfigurations(ROOT),
   ]);
   if (process.env.TEST_SCOPE_IGNORE_UNTRACKED !== "1") {
     for (const path of pathList(["ls-files", "--others", "--exclude-standard", "-z"]).map(normalizePath)) {
@@ -102,19 +106,12 @@ const changedPathsFromGit = (): string[] | null => {
   return uniqueSorted(paths);
 };
 
-export const isDocumentationPath = (path: string): boolean => DOCUMENTATION_FILE.test(path);
+export const isDocumentationPath = (path: string): boolean => DOCUMENTATION_FILE.test(path) && isRustDocumentation(path);
 export const isTestPath = (path: string): boolean => TEST_FILE.test(path);
 /** Rust has its own compiler/test graph; never feed it to the Bun import scanner. */
-export const isRustPath = (path: string): boolean => path.startsWith("rust/") && !isDocumentationPath(path);
-export const isRustGatePath = (path: string): boolean => isRustPath(path) || /^scripts\/rust-verify(?:\.test)?\.ts$/.test(path);
-export const RUST_NATIVE_ONLY_PACKAGES = [
-  "gateway-native",
-  "gateway-native-supervisor-read",
-  "gateway-quality",
-  "gateway-quality-syntax",
-  "gateway-claude-runtime-test-support",
-  "gateway-migration-test-support",
-] as const;
+export const isRustPath = (path: string): boolean => (path.startsWith("rust/") || path.startsWith(".cargo/")) && !isDocumentationPath(path);
+export const isRustGatePath = isRustGateInput;
+export const RUST_NATIVE_ONLY_PACKAGES = RUST_NATIVE_PACKAGES;
 const WORKFLOW_CONTRACT_PATH = ".github/workflows/deno-deploy.yml";
 
 export const classifyChangedPaths = (paths: readonly string[]): ChangeScope => {
@@ -242,6 +239,10 @@ export const detectTestSelection = (): TestSelection => {
   return { ...scope, affectedTests, runAll: false, reason: dependencyScoped ? "selected" : "config" };
 };
 
+const rustScopeForSelection = (selection: TestSelection, root: string, complete: boolean, environment: NodeJS.ProcessEnv): RustScope | null => {
+  if (!existsSync(resolve(root, "rust/Cargo.toml")) && !selection.paths.some(isRustGatePath)) return null;
+  return rustScopeForChanges(root, selection.paths, complete, environment);
+};
 export const ciScopeForSelection = (selection: TestSelection, root = ROOT, environment: NodeJS.ProcessEnv = process.env): CiScope => {
   // Sentinel compares head failures with same-name base checks. Exercise every
   // real job for its heads, development baselines and CI-policy changes without
@@ -253,12 +254,11 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
     (environment.GITHUB_EVENT_NAME === "pull_request" &&
       (environment.GITHUB_BASE_REF === "queue-canary" ||
         (environment.GITHUB_BASE_REF === "development" && (environment.GITHUB_PR_AUTHOR === "ubiquity-sentinel[bot]" || changesCiPolicy))));
-  const docsOnly = selection.reason === "documentation-only";
-  const rustSelected = !docsOnly && selection.paths.some(isRustGatePath);
-  const needsRustNative = completeCheckSet || selection.runAll || rustSelected;
-  const rustPaths = selection.paths.filter(isRustGatePath);
-  const nativeOnly = rustPaths.length > 0 && rustPaths.every((path) => RUST_NATIVE_ONLY_PACKAGES.some((name) => path.startsWith(`rust/crates/${name}/`)));
-  const needsRustWasm = needsRustNative && (completeCheckSet || selection.runAll || !nativeOnly);
+  const rustScope = rustScopeForSelection(selection, root, completeCheckSet || selection.runAll, environment);
+  const rustCompilerInput = (rustScope?.inputPaths.length ?? 0) > 0;
+  const docsOnly = selection.reason === "documentation-only" && !rustCompilerInput;
+  const needsRustNative = completeCheckSet || selection.runAll || (rustScope?.nativePackages.length ?? 0) > 0;
+  const needsRustWasm = completeCheckSet || selection.runAll || (rustScope?.wasmPackages.length ?? 0) > 0;
   const hasTypeScriptWork = selection.paths.some((path) => !isDocumentationPath(path) && !isRustPath(path));
   const needsNativeKv =
     selection.runAll ||
@@ -269,6 +269,8 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
   const needsDarwinTests = !docsOnly && (selection.runAll || selection.paths.some((path) => DARWIN_PATH.test(path)));
   return {
     ...selection,
+    documentationOnly: docsOnly,
+    reason: selection.reason === "documentation-only" && !docsOnly ? "no-dependent-tests" : selection.reason,
     completeCheckSet,
     docsOnly,
     needsDocs: completeCheckSet || docsOnly,
@@ -283,7 +285,8 @@ export const ciScopeForSelection = (selection: TestSelection, root = ROOT, envir
     needsArtifact,
     needsRustNative,
     needsRustWasm,
-    needsRustBuild: needsRustWasm,
+    needsRustBuild: completeCheckSet || selection.runAll || (rustScope?.shippingWorkerBuild ?? false),
+    rustScope,
   };
 };
 

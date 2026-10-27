@@ -3,12 +3,12 @@ use super::{
     manual,
     source_inventory::{self, SourceRuntime},
 };
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
-    transport::outbound::{PinnedDestination, send_http},
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
 use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_pool};
 use gateway_auth::resolve::AuthService;
 use gateway_auth::types::{AuthConfig, AuthMethod, AuthRequest};
@@ -21,6 +21,7 @@ use gateway_authority::store::Authority;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;
+use gateway_worker_storage::store::now_ms;
 use std::cell::RefCell;
 use worker::Method;
 type RuntimeAuthority = Authority<RemoteAuthorityStore, PlatformTokens>;
@@ -33,7 +34,11 @@ fn unavailable() -> GatewayError {
 }
 fn original_route_matches(method: &str, path: &str, route: &str) -> bool {
     matches!(
-        (method, crate::normalized_path(path), route),
+        (
+            method,
+            gateway_worker_web::path::normalized_path(path),
+            route
+        ),
         ("POST", "/v1/responses", "responses")
             | ("POST", "/v1/chat/completions", "chat.completions")
     )
@@ -216,7 +221,7 @@ async fn submit(
                     .ok()
                     .and_then(|body| manual::consume_code(&body)),
                 Ok(mut response) => {
-                    crate::transport::body::discard_response(&mut response);
+                    gateway_worker_http_body::body::discard_response(&mut response);
                     None
                 }
                 Err(failure) if matches!(failure.error.status, 401 | 403) => {

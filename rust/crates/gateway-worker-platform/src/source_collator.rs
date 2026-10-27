@@ -11,9 +11,9 @@ use worker::{
     wasm_bindgen::JsValue,
 };
 
-pub(crate) struct PlatformSourceStringCollator;
+struct PlatformSourceStringCollator;
 
-pub(crate) fn shared() -> Arc<dyn SourceStringCollator> {
+pub fn shared() -> Arc<dyn SourceStringCollator> {
     static COLLATOR: OnceLock<Arc<dyn SourceStringCollator>> = OnceLock::new();
     COLLATOR
         .get_or_init(|| Arc::new(PlatformSourceStringCollator))

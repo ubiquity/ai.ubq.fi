@@ -1,12 +1,9 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
-use crate::{
-    authority::RemoteAuthorityStore,
-    catalog::CatalogState,
-    host::{PlatformHost, auth_config},
-    inference,
-    storage::now_ms,
-    transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation},
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::catalog::CatalogState;
+use crate::host::PlatformHost;
+use crate::host::auth_config;
+use crate::inference;
 use gateway_admin::service::AdminService;
 use gateway_auth::{
     resolve::AuthService,
@@ -23,6 +20,11 @@ use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
+use gateway_worker_http_body::body;
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::headers::HeaderLimits;
+use gateway_worker_platform::headers::bounded_headers;
+use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response};
 
@@ -33,10 +35,10 @@ pub async fn route(
     release: &str,
     request_id: RequestId,
     native: crate::native_host::NativeBindings,
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let started_at_ms = now_ms()?;
-    let path = crate::normalized_path(&request.path()).to_owned();
-    if let Some(response) = crate::assets::handle(&request, &env, &path).await? {
+    let path = gateway_worker_web::path::normalized_path(&request.path()).to_owned();
+    if let Some(response) = gateway_worker_web::assets::handle(&request, &env, &path).await? {
         return Ok(response.into());
     }
     if path == "/uos/agent-messages" && !matches!(request.method(), Method::Get | Method::Post) {
@@ -240,7 +242,7 @@ async fn authentication_route(
     path: &str,
     auth: &AuthService<'_, RemoteAuthorityStore, PlatformHost>,
     auth_request: &mut AuthRequest,
-) -> Result<Option<crate::response::GatewayResponse>, GatewayError> {
+) -> Result<Option<gateway_worker_web::response::GatewayResponse>, GatewayError> {
     if path.starts_with("/api/auth/") || path.starts_with("/auth/") || path == "/uos/auth" {
         if request.method() == Method::Post {
             // Source authenticates this admin before the registration handler
@@ -263,7 +265,7 @@ async fn administrative_route(
     auth: &AuthService<'_, RemoteAuthorityStore, PlatformHost>,
     context: &Rc<Context>,
     original: (&RequestId, &str, &str, i64, &Env),
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let (store, host, config) = (auth.store, auth.host, auth.config);
     let (request_id, path, release, started_at_ms, env) = original;
     // Source authenticates an administrative route before its handler can
@@ -351,7 +353,7 @@ async fn provider_health(
     auth: &AuthService<'_, RemoteAuthorityStore, PlatformHost>,
     context: &Rc<Context>,
     request_id: &RequestId,
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let (store, host) = (auth.store, auth.host);
     if request.method() != Method::Get {
         return Err(public_not_found());
@@ -391,7 +393,7 @@ async fn live_response(
     platform: (&PlatformHost, &AuthConfig, RemoteAuthorityStore),
     context: Rc<Context>,
     request_id: RequestId,
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let (host, config, store) = platform;
     let live = crate::live_host::WorkerLiveHost::bind(
         PlatformHost::clone(host),
@@ -404,7 +406,7 @@ async fn live_response(
     .await?;
     let runtime = LiveRuntime::new(
         Rc::new(store),
-        Rc::new(crate::transport::random::opaque_token),
+        Rc::new(gateway_worker_platform::random::opaque_token),
     );
     match route {
         LiveRoute::Create => {
@@ -443,7 +445,7 @@ async fn models_response(
     env: &Env,
     host: &PlatformHost,
     context: &Rc<Context>,
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let url = request.url().map_err(|_| invalid_url())?;
     let versions = url
         .query_pairs()
@@ -497,8 +499,7 @@ enum TerminalRoute {
     Inference(bool),
 }
 fn terminal_target(path: &str, request: &Request) -> Result<Option<TerminalRoute>, GatewayError> {
-    if let Some(route) = gateway_extras_contract::route::route(path, &request.method().to_string())?
-    {
+    if let Some(route) = gateway_extras_contract::route::route(path, request.method().as_ref())? {
         return Ok(Some(TerminalRoute::Extras(route)));
     }
     if !["/v1/responses", "/v1/chat/completions"].contains(&path) {
@@ -522,7 +523,7 @@ async fn terminal_response(
     context: Rc<Context>,
     request_id: RequestId,
     target: TerminalRoute,
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let (host, env) = platform;
     let label = match &target {
         TerminalRoute::Extras(route) => route.label(),

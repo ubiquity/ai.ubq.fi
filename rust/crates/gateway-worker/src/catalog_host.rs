@@ -1,13 +1,10 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformHost, provider_secret, response_bytes},
-    storage::now_ms,
-    transport::{
-        outbound::{PinnedDestination, send_http},
-        random,
-    },
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformHost;
+use crate::host::provider_secret;
+use crate::host::response_bytes;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
@@ -17,6 +14,8 @@ use gateway_core::{
     error::GatewayError,
     state::{AuthorityStore, RevisionCheck},
 };
+use gateway_worker_platform::random;
+use gateway_worker_storage::store::now_ms;
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Url};
 
@@ -80,16 +79,17 @@ impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
         let service = crate::catalog::service();
         let mut host = self.clone();
         self.context.wait_until(async move {
-            let cancellation = match crate::transport::outbound::Cancellation::background() {
-                Ok(cancellation) => cancellation,
-                Err(error) => {
-                    worker::console_error!(
-                        "OpenRouter catalog warm remains unavailable: {}",
-                        error.envelope.error.message
-                    );
-                    return;
-                }
-            };
+            let cancellation =
+                match gateway_worker_platform::cancellation::Cancellation::background() {
+                    Ok(cancellation) => cancellation,
+                    Err(error) => {
+                        worker::console_error!(
+                            "OpenRouter catalog warm remains unavailable: {}",
+                            error.envelope.error.message
+                        );
+                        return;
+                    }
+                };
             // The source warm has its own fixed discovery deadline and does
             // not inherit the downstream caller's disconnect signal.
             host.platform.cancellation = Rc::new(cancellation);
@@ -110,14 +110,13 @@ impl CatalogHost for Host {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
     fn now_ms(&self) -> i64 {
         now_ms().unwrap_or(i64::MAX)
     }
-    fn unique_id(&self) -> String {
-        // Clock and platform RNG are validated by the enclosing public request.
-        random::opaque_token().expect("A catalog lease requires actual platform randomness")
+    fn unique_id(&self) -> Result<String, GatewayError> {
+        random::opaque_token()
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         if self.platform.cancellation.signal().aborted() {
