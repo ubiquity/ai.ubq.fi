@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 gateway-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 worker.workspace = true
 
 [lints]
