@@ -13,7 +13,6 @@ mod replay_metadata;
 pub mod replay_producer;
 pub mod replay_read;
 pub mod replay_retention;
-pub mod replay_retention_schema;
 pub mod replay_trace;
 mod replay_values;
 pub mod settings;

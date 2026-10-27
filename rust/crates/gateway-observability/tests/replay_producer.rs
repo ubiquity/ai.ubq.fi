@@ -7,13 +7,13 @@ use gateway_core::{
 use gateway_observability::{
     ObservabilityRuntime, replay_producer::ClientFailureObservation,
     replay_producer::FailureObservation, replay_producer::PersistResult,
-    replay_producer::ReplayInput, replay_producer::ReplayRequest,
-    replay_retention_schema::RetentionLimits, replay_trace::UpstreamTrace,
+    replay_producer::ReplayInput, replay_producer::ReplayRequest, replay_trace::UpstreamTrace,
 };
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
 use gateway_observability_replay_model::{
     replay_crypto::ReplayBody, replay_crypto::ReplayKey, replay_model,
 };
+use gateway_observability_replay_records::accounting::RetentionLimits;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

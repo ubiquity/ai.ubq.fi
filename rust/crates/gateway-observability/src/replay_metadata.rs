@@ -1,5 +1,5 @@
 //! Source capture-status metadata admission/recount/pruning against the same ledger fence.
-use crate::{ObservabilityRuntime, replay_retention_schema as schema, store};
+use crate::{ObservabilityRuntime, store};
 use gateway_core::{
     query::QueryStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
@@ -8,6 +8,7 @@ use gateway_observability_contracts::{
     types::ObservabilityHost,
 };
 use gateway_observability_replay_model::{records::read_json_record, replay_model as model};
+use gateway_observability_replay_records::accounting as schema;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub(crate) async fn replay_metadata_candidates(
@@ -82,7 +83,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 self.store.as_ref(),
                 vec![data::check(&model::key("budget"), previous.as_ref())],
                 vec![
-                    schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
                     store::put(
                         self.host.as_ref(),
                         marker,
@@ -138,7 +139,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     data::check(&key, Some(&row)),
                 ],
                 vec![
-                    schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
                     RecordMutation::Delete { key },
                 ],
             )
@@ -188,8 +189,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     data::check(&key, raw.as_ref()),
                 ],
                 vec![
-                    schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
-                    schema::mutation(
+                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                    store::replay_mutation(
                         self.host.as_ref(),
                         key.clone(),
                         None,

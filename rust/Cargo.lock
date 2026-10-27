@@ -1637,6 +1637,7 @@ dependencies = [
  "gateway-observability-metered",
  "gateway-observability-prompt",
  "gateway-observability-replay-model",
+ "gateway-observability-replay-records",
  "gateway-observability-request-records",
  "gateway-observability-test-support",
  "gateway-quota-projection",
@@ -1735,6 +1736,19 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "zeroize",
+]
+
+[[package]]
+name = "gateway-observability-replay-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-observability-contracts",
+ "gateway-observability-replay-model",
+ "gateway-source",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

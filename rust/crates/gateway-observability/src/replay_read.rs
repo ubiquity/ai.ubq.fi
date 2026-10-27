@@ -13,6 +13,7 @@ use gateway_observability_replay_model::{
     records::read_json_record, replay_model as model, replay_model::CaptureState,
     replay_model::Manifest, replay_model::Status, replay_model::StatusDocument,
 };
+use gateway_observability_replay_records::incident::valid_incident_id;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::Serialize;
 const MANIFEST_FIELDS: &[&str] = &[
@@ -154,22 +155,6 @@ fn response(
             capture_status: status,
         })?,
     ))
-}
-pub fn valid_incident_id(value: &str) -> bool {
-    let Some(uuid) = value.strip_prefix("provider-") else {
-        return false;
-    };
-    let bytes = uuid.as_bytes();
-    bytes.len() == 36
-        && bytes.iter().enumerate().all(|(i, b)| {
-            if [8, 13, 18, 23].contains(&i) {
-                *b == b'-'
-            } else {
-                b.is_ascii_digit() || (b'a'..=b'f').contains(b)
-            }
-        })
-        && bytes[14] == b'4'
-        && b"89ab".contains(&bytes[19])
 }
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub(crate) async fn replay_row(

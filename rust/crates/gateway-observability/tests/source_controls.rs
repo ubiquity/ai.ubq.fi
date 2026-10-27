@@ -3,12 +3,13 @@ use gateway_core::{
     lifecycle::DeliveryOutcome, state::RecordKey, state::StoredRecord, tuple_key::DecodedKeyPart,
     tuple_key::TupleKey, value::PortableValue, value::ValueEncoding,
 };
-use gateway_observability::{ObservabilityRuntime, incidents::IncidentObservation};
+use gateway_observability::ObservabilityRuntime;
 use gateway_observability_ledger::{
     ledger::ERROR_RETENTION_MS, ledger::ErrorObservation, records::admin_error_record_source,
     records::record_source_json,
 };
 use gateway_observability_prompt::prompt::PromptEvent;
+use gateway_observability_replay_records::incident::IncidentObservation;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

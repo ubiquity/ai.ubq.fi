@@ -1,11 +1,6 @@
 //! Source capture-owned budget/accounting rows. This is unrelated to paid accounting.
-use crate::replay_values;
-use gateway_core::{
-    state::AuthorityStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
-};
-use gateway_observability_contracts::{
-    data, source_object::SourceObject, types::ObservabilityHost,
-};
+use gateway_core::{state::AuthorityStore, state::RecordKey, state::StoredRecord};
+use gateway_observability_contracts::{data, source_object::SourceObject};
 use gateway_observability_replay_model::{
     records::read_json_record, replay_crypto, replay_model as model,
 };
@@ -18,7 +13,7 @@ pub const RESERVATION_MS: i64 = 120_000;
 pub const ATTEMPTS: usize = 5;
 #[derive(Clone, Copy)]
 pub struct RetentionLimits {
-    pub(crate) budget: f64,
+    budget: f64,
 }
 impl Default for RetentionLimits {
     fn default() -> Self {
@@ -28,20 +23,23 @@ impl Default for RetentionLimits {
     }
 }
 impl RetentionLimits {
+    pub fn budget(self) -> f64 {
+        self.budget
+    }
     /// Source's injectable test seam; the public runtime always uses Default.
     pub fn for_fixture(bytes: u64) -> Self {
         Self {
             budget: bytes.clamp(65_536, gateway_core::identity::MAX_SAFE_INTEGER as u64) as f64,
         }
     }
-    pub(crate) fn reserve(self) -> f64 {
+    pub fn reserve(self) -> f64 {
         (self.budget / 16.0).floor().min(67_108_864.0)
     }
-    pub(crate) fn payload(self) -> f64 {
+    pub fn payload(self) -> f64 {
         self.budget - self.reserve()
     }
 }
-pub(crate) fn accounting_key(at: f64, id: &str) -> RecordKey {
+pub fn accounting_key(at: f64, id: &str) -> RecordKey {
     data::key(json!([
         "uos_ai",
         "sentinel_replay",
@@ -51,7 +49,7 @@ pub(crate) fn accounting_key(at: f64, id: &str) -> RecordKey {
         id
     ]))
 }
-pub(crate) fn dedupe_key(fingerprint: &str) -> RecordKey {
+pub fn dedupe_key(fingerprint: &str) -> RecordKey {
     data::key(json!([
         "uos_ai",
         "sentinel_replay",
@@ -60,10 +58,10 @@ pub(crate) fn dedupe_key(fingerprint: &str) -> RecordKey {
         fingerprint
     ]))
 }
-pub(crate) fn charge(ciphertext: usize, metadata: usize) -> f64 {
+pub fn charge(ciphertext: usize, metadata: usize) -> f64 {
     (ciphertext.div_ceil(3) * 4 + metadata) as f64 + OVERHEAD
 }
-pub(crate) fn reservation_charge(plaintext: usize, metadata: usize) -> f64 {
+pub fn reservation_charge(plaintext: usize, metadata: usize) -> f64 {
     charge(
         plaintext
             .saturating_add(65_536 + 16)
@@ -71,16 +69,16 @@ pub(crate) fn reservation_charge(plaintext: usize, metadata: usize) -> f64 {
         metadata,
     )
 }
-pub(crate) fn metadata_charge(document: &SourceJson) -> f64 {
+pub fn metadata_charge(document: &SourceJson) -> f64 {
     document.as_bytes().len() as f64 + OVERHEAD
 }
-pub(crate) fn row_metadata_charge(row: Option<&StoredRecord>) -> Result<f64, GatewayError> {
+pub fn row_metadata_charge(row: Option<&StoredRecord>) -> Result<f64, GatewayError> {
     row.map(|r| read_json_record(r).map(|s| metadata_charge(&s)))
         .transpose()
         .map(|v| v.unwrap_or(0.0))
 }
 #[derive(Clone, Deserialize, Serialize)]
-pub(crate) struct Ledger {
+pub struct LedgerData {
     pub version: f64,
     pub budget_bytes: f64,
     pub stored_bytes: f64,
@@ -133,7 +131,7 @@ const LEDGER_FIELDS: &[&str] = &[
     "accounting_error",
     "over_budget",
 ];
-impl Ledger {
+impl LedgerData {
     pub fn empty(limits: RetentionLimits) -> Self {
         Self {
             version: 1.0,
@@ -190,7 +188,7 @@ impl Ledger {
 }
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum AccountingState {
+pub enum AccountingState {
     Reserved,
     Stored,
     Evicting,
@@ -198,12 +196,12 @@ pub(crate) enum AccountingState {
 }
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ClaimKind {
+pub enum ClaimKind {
     Evicted,
     Expired,
 }
 #[derive(Clone, Deserialize, Serialize)]
-pub(crate) struct Accounting {
+pub struct AccountingData {
     pub version: f64,
     pub capture_id: String,
     pub request_id: String,
@@ -236,7 +234,7 @@ const ACCOUNT_FIELDS: &[&str] = &[
     "stage",
     "claim_kind",
 ];
-impl Accounting {
+impl AccountingData {
     pub fn valid(&self) -> bool {
         self.version == 1.0
             && !self.capture_id.is_empty()
@@ -259,68 +257,51 @@ impl Accounting {
         accounting_key(self.created_at_ms, &self.capture_id) == *key
     }
 }
-pub(crate) fn decode<T: DeserializeOwned>(
-    row: &StoredRecord,
-    names: &[&str],
-) -> Result<T, GatewayError> {
+pub fn decode<T: DeserializeOwned>(row: &StoredRecord, names: &[&str]) -> Result<T, GatewayError> {
     SourceObject::parse(&read_json_record(row)?)?
         .select(names)?
         .deserialize()
 }
-pub(crate) fn accounting(row: &StoredRecord, key: &RecordKey) -> Result<Accounting, GatewayError> {
-    let value: Accounting = decode(row, ACCOUNT_FIELDS)?;
+pub fn accounting(row: &StoredRecord, key: &RecordKey) -> Result<AccountingData, GatewayError> {
+    let value: AccountingData = decode(row, ACCOUNT_FIELDS)?;
     if !value.valid() || !value.matches(key) {
         return Err(data::error("Sentinel replay accounting row is invalid"));
     }
     Ok(value)
 }
-pub(crate) async fn read_ledger<S: AuthorityStore>(
+pub async fn read_ledger<S: AuthorityStore>(
     store: &S,
     limits: RetentionLimits,
-) -> Result<(Ledger, Option<StoredRecord>), GatewayError> {
+) -> Result<(LedgerData, Option<StoredRecord>), GatewayError> {
     let row = store.read(&model::key("budget")).await?;
     let value = if let Some(row) = row.as_ref() {
         decode(row, LEDGER_FIELDS)?
     } else {
-        Ledger::empty(limits)
+        LedgerData::empty(limits)
     };
     if !value.valid() {
         return Err(data::error("Sentinel replay budget ledger is invalid"));
     }
     Ok((
-        Ledger {
+        LedgerData {
             budget_bytes: limits.budget,
             ..value
         },
         row,
     ))
 }
-pub(crate) fn mutation<H: ObservabilityHost, T: Serialize>(
-    host: &H,
-    key: RecordKey,
+pub fn merged_document<T: Serialize>(
     previous: Option<&StoredRecord>,
     value: &T,
-    expiry: Option<i64>,
-) -> Result<RecordMutation, GatewayError> {
+) -> Result<SourceJson, GatewayError> {
     let fresh = SourceJson::from_serializable(value)?;
-    let document = if let Some(row) = previous {
+    if let Some(row) = previous {
         let mut document = SourceObject::parse(&read_json_record(row)?)?;
         for (name, value) in fresh.object_entries()? {
             document.set(&name.try_utf8()?, &value)?;
         }
-        document.source_json()?
+        document.source_json()
     } else {
-        fresh
-    };
-    replay_values::put_json(host, key, &document, expiry)
-}
-pub(crate) fn ledger_mutation<H: ObservabilityHost>(
-    host: &H,
-    previous: Option<&StoredRecord>,
-    value: &Ledger,
-) -> Result<RecordMutation, GatewayError> {
-    if !value.valid() {
-        return Err(data::error("Sentinel replay budget counter overflow"));
+        Ok(fresh)
     }
-    mutation(host, model::key("budget"), previous, value, None)
 }

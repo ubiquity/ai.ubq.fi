@@ -1,5 +1,5 @@
 //! Bounded resumable source accounting bootstrap. Shared state contains owner ids only.
-use crate::{ObservabilityRuntime, replay_retention_schema as schema, store};
+use crate::{ObservabilityRuntime, store};
 use gateway_core::{
     query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordMutation,
 };
@@ -9,6 +9,7 @@ use gateway_observability_contracts::{
 use gateway_observability_replay_model::{
     records::read_json_record, replay_model, replay_model as model,
 };
+use gateway_observability_replay_records::accounting as schema;
 use gateway_source::error::GatewayError;
 use std::{collections::BTreeMap, collections::BTreeSet};
 const PREFIXES: [&str; 7] = [
@@ -125,7 +126,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     store::commit(
                         self.store.as_ref(),
                         vec![data::check(&model::key("budget"), None)],
-                        vec![schema::ledger_mutation(self.host.as_ref(), None, &ledger)?],
+                        vec![store::ledger_mutation(self.host.as_ref(), None, &ledger)?],
                     )
                     .await?;
                 }
@@ -204,7 +205,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                         schema::charge(manifest.ciphertext_bytes as usize, 262_144)
                                             + schema::OVERHEAD
                                     });
-                                    let row = schema::Accounting {
+                                    let row = schema::AccountingData {
                                         version: 1.0,
                                         capture_id: manifest.capture_id,
                                         request_id: manifest.request_id.unwrap_or_default(),
@@ -221,7 +222,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                     };
                                     checks.push(data::check(&entry.key, Some(&entry.record)));
                                     checks.push(data::check(&key, None));
-                                    mutations.push(schema::mutation(
+                                    mutations.push(store::replay_mutation(
                                         self.host.as_ref(),
                                         key.clone(),
                                         None,
@@ -370,7 +371,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ledger.over_budget = ledger.stored_bytes + ledger.reserved_bytes > limits.payload();
             mutations.insert(
                 0,
-                schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
             );
             if store::commit(self.store.as_ref(), checks, mutations).await? {
                 return Ok(ledger.ready());

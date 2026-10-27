@@ -1,8 +1,5 @@
 //! Source replay-retention.ts: fenced reservations, staging and exactly-once charge release.
-use crate::{
-    ObservabilityRuntime, replay_retention_schema as schema,
-    replay_retention_schema::RetentionLimits, store,
-};
+use crate::{ObservabilityRuntime, store};
 use gateway_core::{
     query::QueryStore, state::RecordMutation, state::StoredRecord, value::PortableValue,
 };
@@ -10,10 +7,11 @@ use gateway_observability_contracts::{
     data, query, query::ObservationRead, query::ReplayRows, types::ObservabilityHost,
 };
 use gateway_observability_replay_model::{replay_crypto, replay_model as model};
+use gateway_observability_replay_records::{accounting as schema, accounting::RetentionLimits};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 pub(crate) struct Reservation {
-    pub row: schema::Accounting,
+    pub row: schema::AccountingData,
     pub key: gateway_core::state::RecordKey,
 }
 pub(crate) enum Admission {
@@ -36,7 +34,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if store::commit(
                 self.store.as_ref(),
                 vec![data::check(&model::key("budget"), previous.as_ref())],
-                vec![schema::ledger_mutation(
+                vec![store::ledger_mutation(
                     self.host.as_ref(),
                     previous.as_ref(),
                     &ledger,
@@ -84,7 +82,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 }
                 continue;
             }
-            let row = schema::Accounting {
+            let row = schema::AccountingData {
                 version: 1.0,
                 capture_id: capture_id.into(),
                 request_id: request_id.into(),
@@ -108,8 +106,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     data::check(&key, None),
                 ],
                 vec![
-                    schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
-                    schema::mutation(self.host.as_ref(), key.clone(), None, &row, None)?,
+                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
+                    store::replay_mutation(self.host.as_ref(), key.clone(), None, &row, None)?,
                 ],
             )
             .await?
@@ -149,7 +147,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     return Ok(false);
                 }
                 row.stage += 1.0;
-                let mutation = schema::mutation(
+                let mutation = store::replay_mutation(
                     self.host.as_ref(),
                     reservation.key.clone(),
                     Some(&previous),
@@ -280,15 +278,15 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 data::check(&dk, None),
             ];
             let mut mutations = vec![
-                schema::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
-                schema::mutation(
+                store::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
+                store::replay_mutation(
                     self.host.as_ref(),
                     reservation.key.clone(),
                     Some(&previous),
                     &row,
                     None,
                 )?,
-                schema::mutation(
+                store::replay_mutation(
                     self.host.as_ref(),
                     manifest_key.clone(),
                     None,
@@ -301,7 +299,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     json!({"manifest_key":manifest_parts,"captured_at_ms":manifest.captured_at_ms,"expires_at_ms":manifest.expires_at_ms}),
                     Some(now + model::PAYLOAD_TTL),
                 )?,
-                schema::mutation(
+                store::replay_mutation(
                     self.host.as_ref(),
                     status_key.clone(),
                     None,
@@ -385,7 +383,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if store::commit(
                 self.store.as_ref(),
                 vec![data::check(&reservation.key, Some(&previous))],
-                vec![schema::mutation(
+                vec![store::replay_mutation(
                     self.host.as_ref(),
                     reservation.key.clone(),
                     Some(&previous),
@@ -428,7 +426,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     data::check(&model::key("budget"), ledger_row.as_ref()),
                 ],
                 vec![
-                    schema::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
+                    store::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
                     RecordMutation::Delete {
                         key: reservation.key.clone(),
                     },
@@ -539,10 +537,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         match schema::read_ledger(self.store.as_ref(), limits).await {
             Ok((ledger, _)) => {
                 let used = ledger.stored_bytes + ledger.reserved_bytes;
-                json!({"state":"ok","scope":"capture_owned_kv_payload","budget_bytes":limits.budget,"stored_bytes":ledger.stored_bytes,"reserved_bytes":ledger.reserved_bytes,"records":ledger.records,"metadata_bytes":ledger.metadata_bytes,"status_records":ledger.status_records,"evicted_records":ledger.evicted_records,"evicted_bytes":ledger.evicted_bytes,"expired_records":ledger.expired_records,"last_eviction_at_ms":ledger.last_eviction_at_ms,"last_warning_at_ms":ledger.last_warning_at_ms,"over_budget":used>limits.payload(),"near_capacity":used>=(limits.payload()*0.9).floor(),"accounting_complete":ledger.ready(),"accounting_error":ledger.accounting_error,"skipped_reason":ledger.last_skip_reason})
+                json!({"state":"ok","scope":"capture_owned_kv_payload","budget_bytes":limits.budget(),"stored_bytes":ledger.stored_bytes,"reserved_bytes":ledger.reserved_bytes,"records":ledger.records,"metadata_bytes":ledger.metadata_bytes,"status_records":ledger.status_records,"evicted_records":ledger.evicted_records,"evicted_bytes":ledger.evicted_bytes,"expired_records":ledger.expired_records,"last_eviction_at_ms":ledger.last_eviction_at_ms,"last_warning_at_ms":ledger.last_warning_at_ms,"over_budget":used>limits.payload(),"near_capacity":used>=(limits.payload()*0.9).floor(),"accounting_complete":ledger.ready(),"accounting_error":ledger.accounting_error,"skipped_reason":ledger.last_skip_reason})
             }
             Err(error) => {
-                json!({"state":if error.envelope.error.code.as_deref()==Some("observability_state_invalid"){"ok"}else{"unavailable"},"scope":"capture_owned_kv_payload","budget_bytes":limits.budget,"stored_bytes":null,"reserved_bytes":null,"records":null,"metadata_bytes":null,"status_records":null,"evicted_records":null,"evicted_bytes":null,"expired_records":null,"last_eviction_at_ms":null,"last_warning_at_ms":null,"over_budget":false,"near_capacity":false,"accounting_complete":false,"accounting_error":"ledger_corrupt","skipped_reason":"storage_accounting_in_progress"})
+                json!({"state":if error.envelope.error.code.as_deref()==Some("observability_state_invalid"){"ok"}else{"unavailable"},"scope":"capture_owned_kv_payload","budget_bytes":limits.budget(),"stored_bytes":null,"reserved_bytes":null,"records":null,"metadata_bytes":null,"status_records":null,"evicted_records":null,"evicted_bytes":null,"expired_records":null,"last_eviction_at_ms":null,"last_warning_at_ms":null,"over_budget":false,"near_capacity":false,"accounting_complete":false,"accounting_error":"ledger_corrupt","skipped_reason":"storage_accounting_in_progress"})
             }
         }
     }
