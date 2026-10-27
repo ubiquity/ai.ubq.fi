@@ -42,7 +42,7 @@ impl NativeEntries {
     }
 }
 impl NativeEntryReader {
-    pub fn next(&mut self) -> Result<Option<NativeEntry>, GatewayError> {
+    pub fn next_entry(&mut self) -> Result<Option<NativeEntry>, GatewayError> {
         self.0.next()
     }
     pub fn read(&mut self, index: usize) -> Result<NativeEntry, GatewayError> {

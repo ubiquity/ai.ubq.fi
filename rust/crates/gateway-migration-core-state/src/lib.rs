@@ -382,7 +382,7 @@ pub fn select_spool(
     let mut current_paid_unresolved = 0usize;
     let mut current_api_windows = 0usize;
     let mut reader = entries.reader()?;
-    while let Some(entry) = reader.next()? {
+    while let Some(entry) = reader.next_entry()? {
         let p = key_parts(&entry)?;
         if starts(&p, &["uos_ai", "api_key_usage", "v3", "window"])
             && window_reset(&entry)? > header.captured_at_ms
@@ -401,7 +401,7 @@ pub fn select_spool(
     let mut selected = Vec::new();
     let mut current_paid_pending = 0usize;
     let mut reader = entries.reader()?;
-    while let Some(entry) = reader.next()? {
+    while let Some(entry) = reader.next_entry()? {
         match classify(&entry, header.captured_at_ms, &current_paid_requests)? {
             Decision::Include(rule) => {
                 *included.entry(rule).or_default() += 1;

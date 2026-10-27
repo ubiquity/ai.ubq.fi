@@ -144,7 +144,7 @@ impl Captured {
         custody: &gateway_migration_native_custody::registry::ConfiguredNativeCustody,
     ) -> Result<(), MigrationError> {
         let mut reader = self.entries.reader()?;
-        while let Some(entry) = reader.next()? {
+        while let Some(entry) = reader.next_entry()? {
             custody.verify_access_only_entry(&entry).await?;
         }
         reader.verify_end()?;
@@ -161,7 +161,7 @@ impl Captured {
         // tuple/version/expiry/typed graph/counter and current-custody validators.
         // One sequential pass validates and seals the normalized row inventory.
         let mut reader = self.entries.reader()?;
-        while let Some(mut entry) = reader.next()? {
+        while let Some(mut entry) = reader.next_entry()? {
             gateway_migration_native_custody::native_custody::normalize_entry(&mut entry, host)
                 .await?;
             let key = TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key();
@@ -195,7 +195,7 @@ impl Captured {
         let revision = format!("capture:{capture_id}");
         let mut projected = RowWriter::create(&self.directory.join("projected-rows.spool"))?;
         let mut reader = normalized.reader()?;
-        while let Some(mut row) = reader.next()? {
+        while let Some(mut row) = reader.next_row()? {
             let p = &row.parts;
             // The original generic retained graph branch is an identity return.
             // Its full typed validators and complete audit already ran above.

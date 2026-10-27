@@ -100,7 +100,7 @@ impl RowSpool {
     }
 }
 impl RowReader {
-    pub fn next(&mut self) -> Result<Option<RowData>, GatewayError> {
+    pub fn next_row(&mut self) -> Result<Option<RowData>, GatewayError> {
         self.0.next()
     }
     pub fn next_frame(&mut self) -> Result<Option<RowFrame>, GatewayError> {
@@ -139,7 +139,7 @@ impl AuditInventory for RowInventory<'_> {
         callback: &mut dyn FnMut(&ObservedRow) -> Result<(), GatewayError>,
     ) -> Result<(), GatewayError> {
         let mut reader = self.rows.reader()?;
-        while let Some(row) = reader.next()? {
+        while let Some(row) = reader.next_row()? {
             if row
                 .record
                 .expires_at_ms
