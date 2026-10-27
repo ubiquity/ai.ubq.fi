@@ -1,5 +1,5 @@
 use super as values;
-use gateway_authority_paid_records::PaidAttempt;
+use crate::PaidAttempt;
 use gateway_authority_paid_test_support::{NOW, Store, decode_json, key, request, rollup_key};
 use gateway_authority_paid_test_support::{backfill, family};
 use gateway_core::provider::PaidProvider;
