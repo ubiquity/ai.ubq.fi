@@ -28,7 +28,7 @@ import { JevClient } from "../../lib/jev_compaction/client.ts";
 import { compact } from "../../lib/jev_compaction/compact.ts";
 import { isResponsesCompaction, parseCodexInput, parseTurnMetadata, renderSummary } from "../../lib/jev_compaction/codex_items.ts";
 import { collectToolCalls, estimateTokens } from "../../lib/jev_compaction/state.ts";
-import { hybridResidueEnabled, runHybridResiduePass } from "./hybrid.ts";
+import { runHybridResiduePass } from "./hybrid.ts";
 import type { CallDecision, CompactResult, JevAsker, ToolCall } from "../../lib/jev_compaction/types.ts";
 
 const TURN_METADATA_HEADER = "x-codex-turn-metadata";
@@ -109,14 +109,6 @@ function record(value: unknown): Record<string, unknown> | null {
 
 /** Header-only predicate; absent, malformed or unknown markers stay on the normal route. */
 export function isJevCompactionRequest(req: Request): boolean {
-  // Operator escape hatch: bypass interception entirely and let the marked
-  // request take the ordinary provider route. Unset by default; a denied
-  // environment read keeps the interception enabled.
-  try {
-    if (process.env.JEV_COMPACTION_DISABLED === "1") return false;
-  } catch {
-    // keep interception enabled
-  }
   return isResponsesCompaction(parseTurnMetadata(req.headers.get(TURN_METADATA_HEADER)));
 }
 
@@ -599,15 +591,15 @@ function failureResponse(kind: FailureKind): Response {
 }
 
 /**
- * The hybrid residue pass runs by default (`JEV_COMPACTION_HYBRID=0` disables
- * it). An injected asker marks a test or diagnostic seam, so the default pass is
+ * The isolated library's hybrid residue pass runs by default.
+ * An injected asker marks a test or diagnostic seam, so the default pass is
  * bypassed there unless the caller injects a residue explicitly. The pass never
  * throws: a failed pass returns null and the caller keeps the pure Jev summary.
  */
 function resolveResidue(deps: JevCompactionDeps): CompactionResidue | undefined {
   if (deps.residue) return deps.residue;
   if (deps.asker || askerForTest) return undefined;
-  return hybridResidueEnabled() ? runHybridResiduePass : undefined;
+  return runHybridResiduePass;
 }
 
 function unavailableAskerResponse(error: unknown): Response {

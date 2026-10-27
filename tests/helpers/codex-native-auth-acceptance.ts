@@ -465,7 +465,9 @@ type Gateway = {
   reset: () => void;
 };
 const createGateway = async (endpoint: string, kv: Kv): Promise<Gateway> => {
-  process.env.CODEX_BASE_URL = `${endpoint}/codex`;
+  const { config } = await import("../../src/config.ts");
+  const originalCodexBaseUrl = config.codexBaseUrl;
+  (config as { codexBaseUrl: string }).codexBaseUrl = `${endpoint}/codex`;
   const auth = await import("../../src/codex/auth.ts");
   const refresh = await import("../../src/codex/auth-refresh.ts");
   const native = await import("../../src/codex/native-auth.ts");
@@ -507,6 +509,7 @@ const createGateway = async (endpoint: string, kv: Kv): Promise<Gateway> => {
       native.setNativeCodexAuthHooksForTest(null);
       auth.resetCodexAuthCacheForTest();
       setKvForTest(null);
+      (config as { codexBaseUrl: string }).codexBaseUrl = originalCodexBaseUrl;
     },
   };
 };
