@@ -1,5 +1,6 @@
 use gateway_core::redaction;
-use gateway_native::{supervisor_brief as brief, supervisor_data, supervisor_rollout as rollout};
+use gateway_native_supervisor::{brief, rollout};
+use gateway_native_supervisor_data::data as supervisor_data;
 use gateway_native_supervisor_read::{inventory, metadata, state as supervisor};
 use serde_json::{Value, json};
 fn corpus() -> Value {

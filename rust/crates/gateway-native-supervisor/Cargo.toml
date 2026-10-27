@@ -1,0 +1,22 @@
+[package]
+name = "gateway-native-supervisor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-core.workspace = true
+gateway-native-local-transport.workspace = true
+gateway-native-supervisor-read.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+time = { version = "=0.3.44", features = ["parsing", "formatting"] }
+
+[dev-dependencies]
+gateway-auth.workspace = true
+
+[lints]
+workspace = true

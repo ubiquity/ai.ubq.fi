@@ -1,9 +1,6 @@
 use gateway_core::redaction;
-use gateway_native::{
-    supervisor::SourceId,
-    supervisor_data::{SupervisorData, SupervisorSourceConfig},
-    supervisor_rollout,
-};
+use gateway_native_supervisor::{rollout as supervisor_rollout, supervisor::SourceId};
+use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
 use gateway_native_supervisor_read::metadata as supervisor_metadata;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
@@ -332,7 +329,7 @@ fn raw_follow_redaction_precedes_clipping_and_preserves_indices() {
             && !clean.to_string().contains("zqsecond")
             && !clean.to_string().contains("ZQ_SYNTHETIC_CREDENTIAL")
     );
-    let entries = gateway_native::supervisor::extract_follow("turn", &clean);
+    let entries = gateway_native_supervisor::supervisor::extract_follow("turn", &clean);
     assert_eq!(entries[0].index, 1);
     assert_eq!(entries[1].index, 2);
     assert!(entries[0].text.encode_utf16().count() <= 4000);

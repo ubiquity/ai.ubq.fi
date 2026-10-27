@@ -3,8 +3,6 @@
 use crate::live_bridge::{NativeLiveHandler, NativeLiveUpgradeRequest};
 use crate::nonce_sqlite::SqliteNonceStore;
 use crate::owner_control::{NativeControlContext, NativeOwnerRenewalHandler};
-use crate::supervisor::{FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, follow_update};
-use crate::supervisor_data::SupervisorData;
 use gateway_auth::native_auth::{
     NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
 };
@@ -24,6 +22,10 @@ use gateway_auth_native_wire::native_read::{
 };
 use gateway_core::error::GatewayError;
 use gateway_native_local_transport::unix::UnixSupervisor;
+use gateway_native_supervisor::supervisor::{
+    FOLLOW_MAX_DURATION_MS, FOLLOW_POLL_MS, follow_update,
+};
+use gateway_native_supervisor_data::data::SupervisorData;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,

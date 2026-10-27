@@ -29,9 +29,9 @@ fn run() -> Result<(), GatewayError> {
         daemon_config::NativeDaemonConfig,
         http_server::NativeHttpService,
         nonce_sqlite::SqliteNonceStore,
-        supervisor::SourceId,
-        supervisor_data::{SupervisorData, SupervisorSourceConfig},
     };
+    use gateway_native_supervisor::supervisor::SourceId;
+    use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
     use std::{net::TcpListener, path::PathBuf};
     let config = NativeDaemonConfig::read_stdin(std::io::stdin().lock())?;
     let replay_directory = config

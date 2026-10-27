@@ -28,6 +28,8 @@ members = [
   "crates/gateway-native-import-client",
   "crates/gateway-native-import-source",
   "crates/gateway-native-local-transport",
+  "crates/gateway-native-supervisor",
+  "crates/gateway-native-supervisor-data",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
@@ -81,6 +83,8 @@ gateway-native = { path = "crates/gateway-native" }
 gateway-native-import-client = { path = "crates/gateway-native-import-client" }
 gateway-native-import-source = { path = "crates/gateway-native-import-source" }
 gateway-native-local-transport = { path = "crates/gateway-native-local-transport" }
+gateway-native-supervisor = { path = "crates/gateway-native-supervisor" }
+gateway-native-supervisor-data = { path = "crates/gateway-native-supervisor-data" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
 gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }

@@ -1,12 +1,13 @@
 //! Constructor-owned read-only source registry, snapshot cache and selection capabilities.
-use crate::{
-    supervisor::{InventoryScope, KnownThread, SourceId},
-    supervisor_brief::{self, SupervisorBriefContext},
-};
+use crate::collect;
 use gateway_core::{error::GatewayError, redaction::redact};
 use gateway_native_local_transport::{
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
+};
+use gateway_native_supervisor::{
+    brief::SupervisorBriefContext,
+    supervisor::{InventoryScope, KnownThread, SourceId},
 };
 use gateway_native_supervisor_read::{
     inventory::{self, SessionParts, ThreadProbe, text},
@@ -227,7 +228,7 @@ impl SupervisorData {
                     && s.home == selected.home
             })
             .ok_or_else(unavailable)?;
-        supervisor_brief::collect_context(
+        collect::collect_context(
             &source.socket,
             source.home.as_deref(),
             &selected.thread,

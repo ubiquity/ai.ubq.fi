@@ -1118,7 +1118,8 @@ dependencies = [
  "gateway-native-import-client",
  "gateway-native-import-source",
  "gateway-native-local-transport",
- "gateway-native-supervisor-read",
+ "gateway-native-supervisor",
+ "gateway-native-supervisor-data",
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
@@ -1171,6 +1172,33 @@ dependencies = [
  "gateway-core",
  "serde_json",
  "socket2",
+ "tungstenite",
+]
+
+[[package]]
+name = "gateway-native-supervisor"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-native-local-transport",
+ "gateway-native-supervisor-read",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "gateway-native-supervisor-data"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-core",
+ "gateway-native-local-transport",
+ "gateway-native-supervisor",
+ "gateway-native-supervisor-read",
+ "rusqlite",
+ "serde_json",
  "tungstenite",
 ]
 

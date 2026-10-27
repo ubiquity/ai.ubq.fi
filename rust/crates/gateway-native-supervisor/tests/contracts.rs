@@ -6,12 +6,12 @@ use gateway_auth::{
     },
 };
 use gateway_core::error::GatewayError;
-use gateway_native::supervisor::{
-    InventoryScope, KnownThread, SourceId, extract_follow, follow_update, resolve_rollout_path,
-    select_follow_updates,
-};
 use gateway_native_local_transport::transport::{
     RenewalStep, SupervisorMethod, SupervisorTransport,
+};
+use gateway_native_supervisor::supervisor::{
+    InventoryScope, KnownThread, SourceId, extract_follow, follow_update, resolve_rollout_path,
+    select_follow_updates,
 };
 use gateway_native_supervisor_read::state::{SupervisorState, classify_state};
 use serde_json::json;

@@ -56,10 +56,3 @@ pub mod owner_renewal;
 mod private_https;
 #[cfg(unix)]
 pub mod publication_http;
-pub mod supervisor;
-#[cfg(unix)]
-pub mod supervisor_brief;
-#[cfg(unix)]
-pub mod supervisor_data;
-#[cfg(unix)]
-pub mod supervisor_rollout;

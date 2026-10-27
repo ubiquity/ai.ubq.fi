@@ -1,13 +1,11 @@
 //! Existing source assembly shared by the prelaunch request worker and policy.
 use crate::{
-    confinement::NativeConfinement,
-    daemon_config::PreparedNativeDaemonConfig,
-    http_server::NativeHttpService,
-    nonce_sqlite::SqliteNonceStore,
-    supervisor::SourceId,
-    supervisor_data::{SupervisorData, SupervisorSourceConfig},
+    confinement::NativeConfinement, daemon_config::PreparedNativeDaemonConfig,
+    http_server::NativeHttpService, nonce_sqlite::SqliteNonceStore,
 };
 use gateway_core::error::GatewayError;
+use gateway_native_supervisor::supervisor::SourceId;
+use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
 use std::path::PathBuf;
 pub(crate) mod live_bootstrap;
 pub(crate) fn source_policy(
