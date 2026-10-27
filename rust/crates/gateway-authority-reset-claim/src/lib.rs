@@ -7,7 +7,6 @@ use gateway_authority_reset_evidence::types::ResetCandidate;
 use gateway_authority_reset_records::{ResetClaim, ResetConfig, ResetCredit, reset_invocation};
 use gateway_authority_reset_records::{ResetInvocation, ResetMode, ResetRecord, ResetShadow};
 use gateway_authority_reset_records::{ResetState, hash};
-use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 mod backend;
