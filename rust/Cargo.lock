@@ -1224,6 +1224,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-native-publication"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth",
+ "gateway-auth-native-wire",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-native-http-framing",
+ "gateway-native-local-transport",
+ "gateway-publication",
+ "gateway-publication-policy",
+ "rustix",
+ "rustls",
+ "serde_json",
+ "ureq",
+ "url",
+]
+
+[[package]]
 name = "gateway-native-replay"
 version = "0.1.0"
 dependencies = [
