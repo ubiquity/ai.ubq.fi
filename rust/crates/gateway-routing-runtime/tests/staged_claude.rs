@@ -1,22 +1,24 @@
 use gateway_authority::store::TokenSource;
 use gateway_core::{
-    js_string::JsString16,
     model::ModelId,
     provider::UpstreamProvider,
     source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
     },
     tuple_key::{ScalarKeyPart, TupleKey},
     value::ValueEncoding,
 };
-use gateway_providers::source_request::prepare_source_request;
-use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody};
+use gateway_provider_claude_body::{
+    types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody,
+};
 use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
+use gateway_providers::source_request::prepare_source_request;
 use gateway_routing_runtime::{currentness::*, custody, policy, session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::json;
 
 fn publication(workspace: Option<JsString16>, kind: ClaudeCredentialKind) -> PublishedCredential {
@@ -268,7 +270,7 @@ fn invalid_claude_body_wins_before_hypothetical_physical_headers_without_fallbac
         assert_eq!(error.error.status, 400);
         assert!(matches!(
             error.source_body,
-            Some(SourceRefusalBody::Json(_))
+            Some(SourceRefusalBody::ClosedError(_))
         ));
         assert_eq!(window(&store)["committed_requests"], 0);
         let row = decode_source_control_record(
@@ -482,7 +484,7 @@ fn crossed_publication_variants_and_fences_fail_closed_without_a_ready_request()
             crossed,
             direct_credential(
                 UpstreamProvider::ClaudeCode,
-                &gateway_auth::crypto::Secret::new("fixture-real-scalar".into()),
+                &gateway_auth_primitives::crypto::Secret::new("fixture-real-scalar".into()),
             ),
         ] {
             let store = Store::new();

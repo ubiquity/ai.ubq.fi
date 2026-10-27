@@ -1,12 +1,8 @@
-use gateway_auth::{
-    api_keys::ApiKeyPolicy,
-    types::{AuthMethod, AuthPrincipal},
-};
+use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
+use gateway_auth_primitives::api_keys::ApiKeyPolicy;
 use gateway_core::{
-    error::GatewayError,
     identity::{PrincipalId, RequestContext, RequestId},
     model::ModelId,
-    source_json::SourceJson,
 };
 use gateway_extras_contract::types::{
     DispatchFailure, ExtrasDispatch, ExtrasHost, ExtrasProvider, ExtrasRequest, ExtrasRoute,
@@ -15,6 +11,7 @@ use gateway_extras_contract::types::{
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_extras_runtime_test_support::fixture::Memory;
 use gateway_provider_protocol::types::PrepareOptions;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -170,7 +167,7 @@ fn request(body: Value) -> Result<ExtrasRequest<'static>, GatewayError> {
     static CONTEXT: std::sync::LazyLock<RequestContext> =
         std::sync::LazyLock::new(|| RequestContext {
             request_id: RequestId("decision-original".into()),
-            principal: PrincipalId("api-key:fixture".into()),
+            principal: PrincipalId::from_scalar("api-key:fixture".into()),
             key_id: None,
             route: "decisions".into(),
             started_at_ms: 1_000_000,
@@ -199,7 +196,7 @@ fn actual_extras_dispatch_uses_one_fixed_decisions_call_and_terminal_usage() -> 
         Some("openrouter")
     );
     assert_eq!(
-        result.body.deserialize::<Value>()?["answers"],
+        serde_json::from_slice::<Value>(result.body.as_bytes())?["answers"],
         json!({"go":true})
     );
     assert_eq!(

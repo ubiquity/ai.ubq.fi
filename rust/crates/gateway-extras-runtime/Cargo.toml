@@ -23,6 +23,10 @@ chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+gateway-auth-contracts.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-source.workspace = true
+gateway-local-refusal.workspace = true
 gateway-extras-runtime-test-support.workspace = true
 aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "alloc"] }
 

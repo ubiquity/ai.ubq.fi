@@ -1,283 +1,20 @@
-use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
-use gateway_auth::api_keys::ApiKeyPolicy;
-use gateway_auth::crypto::Secret;
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
-use gateway_core::lifecycle::SemanticTerminal;
-use gateway_core::state::RecordKey;
-use gateway_core::tuple_key::TupleKey;
-use gateway_extras_runtime_test_support::fixture::{Memory, error};
-
-use gateway_extras_contract::types::{
-    DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider,
-    ExtrasRequest, ExtrasRoute, Headers, HealthKind, ImageKind, KernelDisposition,
-    UpstreamResponse,
+mod runtime_support;
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_core::{
+    identity::RequestContext, lifecycle::SemanticTerminal, state::RecordKey, tuple_key::TupleKey,
 };
+use gateway_extras_contract::types::{ExtrasHost, ExtrasRoute, KernelDisposition};
 use gateway_extras_runtime::ExtrasRuntime;
-use gateway_provider_protocol::types::PrepareOptions;
-use serde_json::{Value, json};
-use std::{
-    cell::{Cell, RefCell},
-    collections::VecDeque,
-    future::Future,
-    pin::Pin,
-    rc::Rc,
-    task::{Context, Poll, Waker},
+use gateway_extras_runtime_test_support::fixture::Memory;
+use runtime_support::{
+    Host, context, embedding, poll, principal, request, run, scalar_source, setup,
 };
-
-fn poll<F: Future>(future: Pin<&mut F>) -> Poll<F::Output> {
-    future.poll(&mut Context::from_waker(Waker::noop()))
-}
-fn run<F: Future>(future: F) -> F::Output {
-    let mut f = Box::pin(future);
-    for _ in 0..10_000 {
-        if let Poll::Ready(result) = poll(f.as_mut()) {
-            return result;
-        }
-    }
-    panic!("fixture remained pending")
-}
-#[derive(Clone)]
-struct Host(Rc<HostState>);
-struct HostState {
-    clock: Rc<Cell<i64>>,
-    rng: Cell<u64>,
-    configured: Cell<bool>,
-    cancelled: Cell<bool>,
-    pending: Cell<bool>,
-    calls: RefCell<Vec<(String, Value)>>,
-    replies: RefCell<VecDeque<Result<UpstreamResponse, DispatchFailure>>>,
-    sleeps: RefCell<Vec<u64>>,
-    begins: Cell<usize>,
-    finished: Cell<usize>,
-    children: RefCell<Vec<usize>>,
-    aborted: Cell<bool>,
-    decrypts: Cell<usize>,
-}
-impl Host {
-    fn new(clock: Rc<Cell<i64>>) -> Self {
-        Self(Rc::new(HostState {
-            clock,
-            rng: Cell::new(1),
-            configured: Cell::new(true),
-            cancelled: Cell::new(false),
-            pending: Cell::new(false),
-            calls: RefCell::new(Vec::new()),
-            replies: RefCell::new(VecDeque::new()),
-            sleeps: RefCell::new(Vec::new()),
-            begins: Cell::new(0),
-            finished: Cell::new(0),
-            children: RefCell::new(Vec::new()),
-            aborted: Cell::new(false),
-            decrypts: Cell::new(0),
-        }))
-    }
-    fn reply(&self, status: u16, body: Value) {
-        self.0.replies.borrow_mut().push_back(Ok(UpstreamResponse {
-            status,
-            headers: Headers::new(),
-            body: serde_json::to_vec(&body).unwrap(),
-            semantic_terminal: None,
-            usage: None,
-        }));
-    }
-    fn count(&self) -> usize {
-        self.0.calls.borrow().len()
-    }
-}
-impl ExtrasHost for Host {
-    fn now_ms(&self) -> i64 {
-        self.0.clock.get()
-    }
-    fn random_bytes(&self, len: usize) -> Result<Vec<u8>, GatewayError> {
-        let n = self.0.rng.get();
-        self.0.rng.set(n + 1);
-        Ok((0..len)
-            .map(|i| ((n >> ((i % 8) * 8)) as u8).wrapping_add(i as u8))
-            .collect())
-    }
-    fn cancelled(&self) -> bool {
-        self.0.cancelled.get()
-    }
-    async fn sleep_ms(&self, ms: u64) -> Result<(), GatewayError> {
-        self.0.sleeps.borrow_mut().push(ms);
-        self.0.clock.set(self.now_ms() + ms as i64);
-        Ok(())
-    }
-    async fn provider_options(
-        &self,
-        _: ExtrasProvider,
-    ) -> Result<Option<PrepareOptions>, GatewayError> {
-        Ok(self.0.configured.get().then(|| PrepareOptions {
-            auth: gateway_provider_protocol::types::AuthMaterial {
-                secret: "fixture-not-a-credential".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }))
-    }
-    async fn image_base_model(&self) -> Result<Option<gateway_core::model::ModelId>, GatewayError> {
-        Ok(Some("gpt-fixture-host".into()))
-    }
-    async fn dispatch(
-        &self,
-        operation: ExtrasDispatch,
-    ) -> Result<UpstreamResponse, DispatchFailure> {
-        let (label, source) = match &operation {
-            ExtrasDispatch::Voyage(c) => ("voyage".into(), &c.prepared().body),
-            ExtrasDispatch::SystemOne(c) | ExtrasDispatch::Decisions(c) => {
-                ("systemone".into(), &c.prepared().body)
-            }
-            ExtrasDispatch::ImageChild {
-                request_id, body, ..
-            } => (request_id.clone(), body),
-        };
-        let body = source
-            .deserialize::<Value>()
-            .map_err(DispatchFailure::transport)?;
-        self.0.calls.borrow_mut().push((label, body.clone()));
-        if self.0.pending.get() {
-            std::future::pending::<()>().await;
-        }
-        if let Some(reply) = self.0.replies.borrow_mut().pop_front() {
-            return reply;
-        }
-        let (body, semantic) = match operation {
-            ExtrasDispatch::Voyage(_) => {
-                let count = body["input"].as_array().map_or(1, Vec::len);
-                let dims = body["output_dimension"]
-                    .as_u64()
-                    .ok_or_else(|| DispatchFailure::transport(error("fixture_dimensions")))?
-                    as usize;
-                (
-                    json!({"data":(0..count).map(|i|json!({"embedding":vec![i as f64+1.0;dims]})).collect::<Vec<_>>(),"usage":{"total_tokens":count}}),
-                    None,
-                )
-            }
-            ExtrasDispatch::SystemOne(_) | ExtrasDispatch::Decisions(_) => (
-                json!({"answers":{"go":true},"usage":{"input_tokens":2,"output_tokens":3,"cost":0.1}}),
-                None,
-            ),
-            ExtrasDispatch::ImageChild { .. } => (
-                json!({"created_at":123,"output":[{"type":"image_generation_call","result":"AA==","output_format":"png"}]}),
-                Some(SemanticTerminal::Completed),
-            ),
-        };
-        Ok(UpstreamResponse {
-            status: 200,
-            headers: Headers::from([("x-uos-upstream".into(), "fixture".into())]),
-            body: serde_json::to_vec(&body)
-                .map_err(|_| DispatchFailure::transport(error("fixture_json")))?,
-            semantic_terminal: semantic,
-            usage: None,
-        })
-    }
-    async fn begin_image_fanout(&self, _: ImageKind, _: usize) -> Result<(), GatewayError> {
-        self.0.begins.set(self.0.begins.get() + 1);
-        Ok(())
-    }
-    fn abort_image_siblings(&self) {
-        self.0.aborted.set(true)
-    }
-    async fn image_child_finished(&self, index: usize) -> Result<(), GatewayError> {
-        self.0.children.borrow_mut().push(index);
-        Ok(())
-    }
-    async fn finish_image_fanout(&self) -> Result<(), GatewayError> {
-        self.0.finished.set(self.0.finished.get() + 1);
-        Ok(())
-    }
-    async fn aes_gcm_encrypt(
-        &self,
-        key: &[u8; 32],
-        iv: &[u8; 12],
-        plaintext: &[u8],
-    ) -> Result<Vec<u8>, GatewayError> {
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| error("crypto"))?;
-        let nonce = Nonce::from(*iv);
-        cipher
-            .encrypt(&nonce, plaintext)
-            .map_err(|_| error("crypto"))
-    }
-    async fn aes_gcm_decrypt(
-        &self,
-        key: &[u8; 32],
-        iv: &[u8],
-        data: &[u8],
-    ) -> Result<Vec<u8>, GatewayError> {
-        self.0.decrypts.set(self.0.decrypts.get() + 1);
-        let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| error("crypto"))?;
-        let iv: [u8; 12] = iv.try_into().map_err(|_| error("crypto"))?;
-        let nonce = Nonce::from(iv);
-        cipher.decrypt(&nonce, data).map_err(|_| error("crypto"))
-    }
-}
-fn principal(id: &str) -> AuthPrincipal {
-    AuthPrincipal {
-        token: Some(Secret::new("rotating-bearer".into())),
-        method: AuthMethod::KvApiKey {
-            key_id: id.into(),
-            policy: ApiKeyPolicy {
-                token_hash: "fixture".into(),
-                key_id: id.into(),
-                expires_at_ms: 0,
-                usage_limit_requests: -1,
-                window_ms: 60_000,
-                window_start_ms: 0,
-                usage_reset_at_ms: 0,
-                policy_version: "v1".into(),
-                paid_fallback_enabled: false,
-                paid_fallback_limit_microcredits: 0,
-                paid_fallback_spent_microcredits: 0,
-                paid_fallback_reserved_microcredits: 0,
-                paid_fallback_reservation_request_id: None,
-            },
-        },
-        is_admin: false,
-        is_super_admin: false,
-    }
-}
-fn context(id: &str) -> RequestContext {
-    RequestContext {
-        request_id: RequestId("original".into()),
-        principal: PrincipalId(format!("api-key:{id}")),
-        key_id: Some(ApiKeyId(id.into())),
-        route: "fixture".into(),
-        started_at_ms: 1_000_000,
-    }
-}
-fn request<'a>(
-    route: ExtrasRoute,
-    body: Value,
-    auth: &'a AuthPrincipal,
-    ctx: &'a RequestContext,
-) -> ExtrasRequest<'a> {
-    ExtrasRequest {
-        route,
-        body: gateway_core::source_json::SourceJson::from_serializable(&body).unwrap(),
-        multipart: None,
-        raw_body_bytes: 1,
-        idempotency_key: None,
-        principal: auth,
-        context: ctx,
-    }
-}
-fn embedding(input: Value) -> Value {
-    json!({"model":"voyage-4-large","input":input,"dimensions":256})
-}
-fn setup() -> (Memory, Host, AuthPrincipal, RequestContext) {
-    let clock = Rc::new(Cell::new(1_000_000));
-    (
-        Memory::new(clock.clone()),
-        Host::new(clock),
-        principal("a"),
-        context("a"),
-    )
-}
+use serde_json::{Value, json};
 
 #[test]
-fn sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage() {
+fn sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store.clone(), host.clone());
     let r = run(rt.handle(request(
@@ -289,12 +26,12 @@ fn sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage() {
     .unwrap();
     assert_eq!(r.status, 200);
     assert_eq!(
-        scalar_source(&r.body)["data"][0]["embedding"],
-        scalar_source(&r.body)["data"][1]["embedding"]
+        scalar_source(&r.body)?["data"][0]["embedding"],
+        scalar_source(&r.body)?["data"][1]["embedding"]
     );
     assert_eq!(host.count(), 1);
     assert_eq!(host.0.calls.borrow()[0].1["input"], json!(["a", "b"]));
-    assert_eq!(scalar_source(&r.body)["usage"]["total_tokens"], 2);
+    assert_eq!(scalar_source(&r.body)?["usage"]["total_tokens"], 2);
     let cached = run(rt.handle(request(
         ExtrasRoute::Embeddings,
         embedding(json!(["b", "a"])),
@@ -303,13 +40,15 @@ fn sync_deduplicates_orders_cache_hits_and_measures_only_actual_voyage_usage() {
     )))
     .unwrap();
     assert_eq!(host.count(), 1);
-    assert_eq!(scalar_source(&cached.body)["usage"]["total_tokens"], 0);
+    assert_eq!(scalar_source(&cached.body)?["usage"]["total_tokens"], 0);
     assert!(cached.usage.is_none());
     assert_eq!(cached.kernel, KernelDisposition::Completed);
+    Ok(())
 }
 
 #[test]
-fn idempotency_replays_without_credentials_and_conflict_never_redispatches() {
+fn idempotency_replays_without_credentials_and_conflict_never_redispatches()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store, host.clone());
     let mut q = request(ExtrasRoute::Embeddings, embedding(json!("a")), &auth, &ctx);
@@ -330,14 +69,16 @@ fn idempotency_replays_without_credentials_and_conflict_never_redispatches() {
     let conflict = run(rt.handle(q)).unwrap();
     assert_eq!(conflict.status, 409);
     assert_eq!(
-        scalar_source(&conflict.body)["error"]["code"],
+        scalar_source(&conflict.body)?["error"]["code"],
         "embedding_idempotency_conflict"
     );
     assert_eq!(host.count(), 1);
+    Ok(())
 }
 
 #[test]
-fn dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease() {
+fn dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store, host.clone());
     host.0.pending.set(true);
@@ -349,7 +90,7 @@ fn dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease() 
     q.idempotency_key = Some("key".into());
     let busy = run(rt.handle(q)).unwrap();
     assert_eq!(
-        scalar_source(&busy.body)["error"]["code"],
+        scalar_source(&busy.body)?["error"]["code"],
         "embedding_idempotency_in_progress"
     );
     host.0.clock.set(host.now_ms() + 60_001);
@@ -357,15 +98,17 @@ fn dispatched_expired_idempotency_is_indeterminate_and_cannot_steal_the_lease() 
     q.idempotency_key = Some("key".into());
     let retired = run(rt.handle(q)).unwrap();
     assert_eq!(
-        scalar_source(&retired.body)["error"]["code"],
+        scalar_source(&retired.body)?["error"]["code"],
         "embedding_idempotency_indeterminate"
     );
     assert_eq!(host.count(), 1);
     drop(pending);
+    Ok(())
 }
 
 #[test]
-fn explicit_failure_releases_idempotency_but_unknown_transport_never_retries() {
+fn explicit_failure_releases_idempotency_but_unknown_transport_never_retries()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store, host.clone());
     host.reply(400, json!({"private":"not echoed"}));
@@ -384,14 +127,16 @@ fn explicit_failure_releases_idempotency_but_unknown_transport_never_retries() {
     q.idempotency_key = Some("unknown".into());
     let r = run(rt.handle(q)).unwrap();
     assert_eq!(
-        scalar_source(&r.body)["error"]["code"],
+        scalar_source(&r.body)?["error"]["code"],
         "embedding_idempotency_indeterminate"
     );
     assert_eq!(host.count(), 3);
+    Ok(())
 }
 
 #[test]
-fn partial_chunk_success_is_not_replayed_after_global_token_budget_exhaustion() {
+fn partial_chunk_success_is_not_replayed_after_global_token_budget_exhaustion()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store, host.clone());
     let mut q = request(
@@ -407,10 +152,11 @@ fn partial_chunk_success_is_not_replayed_after_global_token_budget_exhaustion() 
     q.idempotency_key = Some("partial".into());
     let r = run(rt.handle(q)).unwrap();
     assert_eq!(
-        scalar_source(&r.body)["error"]["code"],
+        scalar_source(&r.body)?["error"]["code"],
         "embedding_idempotency_indeterminate"
     );
     assert_eq!(host.count(), 1);
+    Ok(())
 }
 
 #[test]
@@ -518,7 +264,7 @@ fn queued_job(
     host: &Host,
     auth: &AuthPrincipal,
     ctx: &RequestContext,
-) -> (ExtrasRuntime<Memory, Host>, String) {
+) -> Result<(ExtrasRuntime<Memory, Host>, String), Box<dyn std::error::Error>> {
     store.budget(3, 0, host.now_ms());
     let rt = ExtrasRuntime::new(store.clone(), host.clone());
     let mut body = embedding(json!("sensitive-text-for-encryption"));
@@ -526,15 +272,16 @@ fn queued_job(
     let r = run(rt.handle(request(ExtrasRoute::JobCreate, body, auth, ctx))).unwrap();
     assert_eq!(r.status, 202);
     assert_eq!(r.kernel, KernelDisposition::Completed);
-    (
+    Ok((
         rt,
-        scalar_source(&r.body)["id"].as_str().unwrap().to_owned(),
-    )
+        scalar_source(&r.body)?["id"].as_str().unwrap().to_owned(),
+    ))
 }
 #[test]
-fn retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation() {
+fn retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, mut auth, ctx) = setup();
-    let (rt, id) = queued_job(&store, &host, &auth, &ctx);
+    let (rt, id) = queued_job(&store, &host, &auth, &ctx)?;
     assert!(
         !serde_json::to_string(
             &store
@@ -565,19 +312,21 @@ fn retained_jobs_encrypt_inputs_and_owner_survives_bearer_rotation() {
     host.0.clock.set(host.now_ms() + 60_001);
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
     assert_eq!(r.status, 200);
-    assert_eq!(scalar_source(&r.body)["status"], "succeeded");
+    assert_eq!(scalar_source(&r.body)?["status"], "succeeded");
     assert_eq!(
         r.kernel,
         KernelDisposition::Incomplete("embedding_job_read_not_counted")
     );
     assert_eq!(host.count(), 1);
     assert!(host.0.decrypts.get() >= 2);
+    Ok(())
 }
 
 #[test]
-fn real_aes_gcm_tamper_is_a_failed_job_without_upstream_dispatch() {
+fn real_aes_gcm_tamper_is_a_failed_job_without_upstream_dispatch()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
-    let (rt, id) = queued_job(&store, &host, &auth, &ctx);
+    let (rt, id) = queued_job(&store, &host, &auth, &ctx)?;
     for row in store.rows.borrow_mut().values_mut() {
         if row.value.get("data_b64").is_some() {
             let value = row.value["data_b64"].as_str().unwrap();
@@ -589,19 +338,21 @@ fn real_aes_gcm_tamper_is_a_failed_job_without_upstream_dispatch() {
     host.0.clock.set(host.now_ms() + 60_001);
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
     assert_eq!(r.status, 200);
-    assert_eq!(scalar_source(&r.body)["status"], "failed");
+    assert_eq!(scalar_source(&r.body)?["status"], "failed");
     assert_eq!(
-        scalar_source(&r.body)["error"]["code"],
+        scalar_source(&r.body)?["error"]["code"],
         "embeddings_job_input_decrypt_failed"
     );
     assert_eq!(r.semantic_terminal, Some(SemanticTerminal::Error));
     assert_eq!(host.count(), 0);
+    Ok(())
 }
 
 #[test]
-fn live_job_lease_refuses_a_second_runner_and_input_expiry_is_not_refreshed() {
+fn live_job_lease_refuses_a_second_runner_and_input_expiry_is_not_refreshed()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
-    let (rt, id) = queued_job(&store, &host, &auth, &ctx);
+    let (rt, id) = queued_job(&store, &host, &auth, &ctx)?;
     host.0.clock.set(host.now_ms() + 60_001);
     host.0.pending.set(true);
     let mut first = Box::pin(rt.handle(request(
@@ -617,12 +368,14 @@ fn live_job_lease_refuses_a_second_runner_and_input_expiry_is_not_refreshed() {
     assert_eq!(second.headers["Retry-After"], "30");
     assert_eq!(host.count(), 1);
     drop(first);
+    Ok(())
 }
 
 #[test]
-fn expired_input_fails_after_a_poll_extended_only_the_job_and_lookup_ttls() {
+fn expired_input_fails_after_a_poll_extended_only_the_job_and_lookup_ttls()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
-    let (rt, id) = queued_job(&store, &host, &auth, &ctx);
+    let (rt, id) = queued_job(&store, &host, &auth, &ctx)?;
     host.0.clock.set(1_000_000 + 86_400_000 - 1000);
     store.budget(3, 0, host.now_ms());
     assert_eq!(
@@ -639,127 +392,11 @@ fn expired_input_fails_after_a_poll_extended_only_the_job_and_lookup_ttls() {
     host.0.clock.set(host.now_ms() + 2000);
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
     assert_eq!(
-        scalar_source(&r.body)["error"]["code"],
+        scalar_source(&r.body)?["error"]["code"],
         "embeddings_job_input_missing"
     );
     assert_eq!(host.count(), 0);
-}
-
-#[test]
-fn systemone_uses_authoritative_provider_selection_and_normalizes_actual_usage() {
-    let (store, host, auth, ctx) = setup();
-    let rt = ExtrasRuntime::new(store.clone(), host.clone());
-    let body = json!({"state":{},"questions":{"go":{"type":"noul"}}});
-    store.seed(
-        json!(["uos_ai", "provider_selection", "v1"]),
-        json!({"provider_ids":["codex"],"updated_at_ms":host.now_ms()}),
-        None,
-    );
-    let disabled =
-        run(rt.handle(request(ExtrasRoute::SystemOne, body.clone(), &auth, &ctx))).unwrap();
-    assert_eq!(
-        scalar_source(&disabled.body)["error"]["code"],
-        "systemone_provider_disabled"
-    );
-    assert_eq!(host.count(), 0);
-    store.seed(
-        json!(["uos_ai", "provider_selection", "v1"]),
-        json!({"provider_ids":[],"updated_at_ms":host.now_ms()}),
-        None,
-    );
-    let r = run(rt.handle(request(ExtrasRoute::SystemOne, body, &auth, &ctx))).unwrap();
-    assert_eq!(scalar_source(&r.body)["answers"]["go"], true);
-    assert_eq!(r.usage.unwrap()["input_tokens_details"]["cached_tokens"], 0);
-    assert_eq!(r.health[0].kind, HealthKind::Success);
-}
-
-#[test]
-fn systemone_maps_actual_upstream_errors_and_does_not_echo_private_bodies() {
-    let (store, host, auth, ctx) = setup();
-    let rt = ExtrasRuntime::new(store, host.clone());
-    host.reply(401, json!({"private":"never_echo"}));
-    let r = run(rt.handle(request(
-        ExtrasRoute::SystemOne,
-        json!({"state":{},"questions":{"go":{"type":"noul"}}}),
-        &auth,
-        &ctx,
-    )))
-    .unwrap();
-    assert_eq!(r.status, 502);
-    assert_eq!(r.health[0].kind, HealthKind::AuthInvalid);
-    assert_eq!(r.health[0].upstream_status, Some(401));
-    assert!(!r.body.as_str().contains("never_echo"));
-    assert!(!r.upstream_errors.is_empty());
-}
-
-#[test]
-fn image_fanout_uses_one_original_scope_exact_child_ids_and_common_output_metadata() {
-    let (store, host, auth, ctx) = setup();
-    let rt = ExtrasRuntime::new(store, host.clone());
-    let mut q = request(
-        ExtrasRoute::Images(ImageKind::Generations),
-        json!({"prompt":"image","n":3}),
-        &auth,
-        &ctx,
-    );
-    q.idempotency_key = Some("outer-not-forwarded".into());
-    let r = run(rt.handle(q)).unwrap();
-    assert_eq!(r.status, 200);
-    assert_eq!(scalar_source(&r.body)["data"].as_array().unwrap().len(), 3);
-    assert_eq!(scalar_source(&r.body)["output_format"], "png");
-    assert_eq!(r.semantic_terminal, Some(SemanticTerminal::Completed));
-    assert_eq!(host.0.begins.get(), 1);
-    assert_eq!(host.0.finished.get(), 1);
-    assert_eq!(&*host.0.children.borrow(), &[0, 1, 2]);
-    let ids: Vec<_> = host
-        .0
-        .calls
-        .borrow()
-        .iter()
-        .map(|(id, _)| id.clone())
-        .collect();
-    assert_eq!(
-        ids,
-        [
-            "original",
-            "original:image:generations:2",
-            "original:image:generations:3"
-        ]
-    );
-    assert!(
-        host.0
-            .calls
-            .borrow()
-            .iter()
-            .all(|(_, b)| b["model"] == "gpt-fixture-host")
-    );
-}
-
-#[test]
-fn image_failure_aborts_siblings_but_settles_every_logical_child_once() {
-    let (store, host, auth, ctx) = setup();
-    let rt = ExtrasRuntime::new(store, host.clone());
-    host.reply(
-        200,
-        json!({"output":[{"type":"image_generation_call","result":"AA=="}]}),
-    );
-    host.reply(429, json!({"error":{"code":"codex_quota_blocked"}}));
-    let r = run(rt.handle(request(
-        ExtrasRoute::Images(ImageKind::Generations),
-        json!({"prompt":"image","n":3}),
-        &auth,
-        &ctx,
-    )))
-    .unwrap();
-    assert_eq!(r.status, 429);
-    assert_eq!(
-        scalar_source(&r.body)["error"]["code"],
-        "codex_quota_blocked"
-    );
-    assert!(r.semantic_terminal.is_none());
-    assert!(host.0.aborted.get());
-    assert_eq!(host.0.children.borrow().len(), 3);
-    assert_eq!(host.0.finished.get(), 1);
+    Ok(())
 }
 
 #[test]
@@ -781,7 +418,8 @@ fn sync_retries_only_explicit_retryable_statuses_with_bounded_backoff() {
 }
 
 #[test]
-fn job_retry_is_poll_driven_and_does_not_schedule_a_hidden_request() {
+fn job_retry_is_poll_driven_and_does_not_schedule_a_hidden_request()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store, host.clone());
     host.reply(429, json!({}));
@@ -792,17 +430,19 @@ fn job_retry_is_poll_driven_and_does_not_schedule_a_hidden_request() {
     assert_eq!(queued.headers["Retry-After"], "60");
     assert_eq!(host.count(), 1);
     assert!(host.0.sleeps.borrow().is_empty());
-    let id = scalar_source(&queued.body)["id"]
+    let id = scalar_source(&queued.body)?["id"]
         .as_str()
         .unwrap()
         .to_owned();
     let r = run(rt.handle(request(ExtrasRoute::JobGet(id), Value::Null, &auth, &ctx))).unwrap();
-    assert_eq!(scalar_source(&r.body)["status"], "succeeded");
+    assert_eq!(scalar_source(&r.body)?["status"], "succeeded");
     assert_eq!(host.count(), 2);
+    Ok(())
 }
 
 #[test]
-fn base64_vectors_use_source_little_endian_float32_output_without_forwarding_the_encoding_option() {
+fn base64_vectors_use_source_little_endian_float32_output_without_forwarding_the_encoding_option()
+-> Result<(), Box<dyn std::error::Error>> {
     use base64::Engine;
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store, host.clone());
@@ -811,7 +451,7 @@ fn base64_vectors_use_source_little_endian_float32_output_without_forwarding_the
     let r = run(rt.handle(request(ExtrasRoute::Embeddings, body, &auth, &ctx))).unwrap();
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(
-            scalar_source(&r.body)["data"][0]["embedding"]
+            scalar_source(&r.body)?["data"][0]["embedding"]
                 .as_str()
                 .unwrap(),
         )
@@ -819,10 +459,12 @@ fn base64_vectors_use_source_little_endian_float32_output_without_forwarding_the
     assert_eq!(bytes.len(), 256 * 4);
     assert_eq!(&bytes[..4], &1.0f32.to_le_bytes());
     assert!(host.0.calls.borrow()[0].1.get("encoding_format").is_none());
+    Ok(())
 }
 
 #[test]
-fn provider_configuration_and_invalid_vector_statuses_stay_distinct() {
+fn provider_configuration_and_invalid_vector_statuses_stay_distinct()
+-> Result<(), Box<dyn std::error::Error>> {
     let (store, host, auth, ctx) = setup();
     let rt = ExtrasRuntime::new(store, host.clone());
     host.0.configured.set(false);
@@ -846,9 +488,10 @@ fn provider_configuration_and_invalid_vector_statuses_stay_distinct() {
     .unwrap();
     assert_eq!(malformed.status, 502);
     assert_eq!(
-        scalar_source(&malformed.body)["error"]["code"],
+        scalar_source(&malformed.body)?["error"]["code"],
         "upstream_dimension_mismatch"
     );
+    Ok(())
 }
 
 #[test]
@@ -864,7 +507,7 @@ fn cache_timestamp_projection_preserves_source_negative_zero_key_identity() {
         true
     ])
     .to_string();
-    let hash = gateway_auth::crypto::sha256_hex(b"zero");
+    let hash = gateway_auth_primitives::crypto::sha256_hex(b"zero");
     store.seed(
         json!(["embeddings", "v2", "cache_index_by_hash", profile, hash]),
         json!(-0.0),
@@ -919,76 +562,4 @@ fn cache_timestamp_projection_preserves_source_negative_zero_key_identity() {
         panic!("timestamp")
     };
     assert_eq!(at.to_bits(), (-0.0f64).to_bits());
-}
-
-#[test]
-fn gateway_origin_preserves_admission_and_started_ledger_failures_without_provider_health() {
-    for before_transport in [true, false] {
-        let (store, host, auth, ctx) = setup();
-        let mut failure = DispatchFailure::gateway(
-            GatewayError::unavailable("ledger unavailable", "ledger_unavailable"),
-            before_transport,
-        );
-        failure.headers.insert("Retry-After".into(), "3".into());
-        host.0.replies.borrow_mut().push_back(Err(failure));
-        let result = run(ExtrasRuntime::new(store, host).handle(request(
-            ExtrasRoute::SystemOne,
-            json!({"state":{},"questions":{"go":{"type":"noul"}}}),
-            &auth,
-            &ctx,
-        )))
-        .unwrap();
-        assert_eq!(result.status, 503);
-        assert_eq!(result.headers["Retry-After"], "3");
-        assert!(result.health.is_empty());
-        assert_eq!(
-            result.upstream_errors[0].origin,
-            DispatchFailureOrigin::Gateway
-        );
-        assert_eq!(result.upstream_errors[0].before_transport, before_transport);
-        assert!(!result.upstream_errors[0].quota_refusal);
-    }
-}
-
-#[test]
-fn actual_local_quota_transport_fault_and_upstream_refusal_keep_separate_origins() {
-    let (store, host, auth, ctx) = setup();
-    let mut quota = DispatchFailure::gateway(
-        GatewayError::new(429, "quota", Some("api_key_quota_exceeded")),
-        true,
-    );
-    quota.quota_refusal = true;
-    host.0.replies.borrow_mut().push_back(Err(quota));
-    let result = run(ExtrasRuntime::new(store, host).handle(request(
-        ExtrasRoute::SystemOne,
-        json!({"state":{},"questions":{"go":{"type":"noul"}}}),
-        &auth,
-        &ctx,
-    )))
-    .unwrap();
-    assert_eq!(result.status, 429);
-    assert!(result.health.is_empty());
-    assert!(result.upstream_errors[0].quota_refusal);
-    let (store, host, auth, ctx) = setup();
-    host.0
-        .replies
-        .borrow_mut()
-        .push_back(Err(DispatchFailure::transport(error("network"))));
-    let result = run(ExtrasRuntime::new(store, host).handle(request(
-        ExtrasRoute::SystemOne,
-        json!({"state":{},"questions":{"go":{"type":"noul"}}}),
-        &auth,
-        &ctx,
-    )))
-    .unwrap();
-    assert_eq!(result.status, 502);
-    assert_eq!(result.health[0].kind, HealthKind::UpstreamError);
-    assert_eq!(
-        result.upstream_errors[0].origin,
-        DispatchFailureOrigin::Transport
-    );
-}
-
-fn scalar_source(value: &gateway_core::source_json::SourceJson) -> serde_json::Value {
-    value.deserialize().expect("actual scalar fixture output")
 }

@@ -7,13 +7,9 @@ use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use crate::inference::RequestResources;
 use crate::routing_host;
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
+use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
 use gateway_authority::kernel::KernelTerminal;
-use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
-    source_json::SourceJson,
-};
+use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_extras_contract::errors::rendering as invalid;
 use gateway_extras_contract::family::ExtrasFamily;
 use gateway_extras_contract::types::{
@@ -22,6 +18,7 @@ use gateway_extras_contract::types::{
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime::{session::RoutingSession, types::RoutingInput};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_http_body::body;
 use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
@@ -194,7 +191,7 @@ enum ExtrasBody {
         Option<Vec<gateway_provider_images::extras::MultipartFile>>,
         usize,
     ),
-    Rejected(gateway_auth::types::AuthResponse, Vec<u8>),
+    Rejected(gateway_auth_contracts::types::AuthResponse, Vec<u8>),
 }
 async fn request_body(
     request: &mut Request,
@@ -252,7 +249,7 @@ async fn request_body(
             Ok(raw) => raw,
             Err(error) => {
                 return Ok(ExtrasBody::Rejected(
-                    gateway_auth::types::AuthResponse::source_json(
+                    gateway_auth_contracts::types::AuthResponse::closed_error(
                         error.status,
                         error.body().clone(),
                     ),
@@ -268,7 +265,11 @@ async fn request_body(
 }
 
 fn render_response(
-    result: (SourceJson, u16, gateway_extras_contract::types::Headers),
+    result: (
+        gateway_extras_contract::response_body::ExtrasResponseBody,
+        u16,
+        gateway_extras_contract::types::Headers,
+    ),
     observation: ObservationHandle,
     context: Rc<worker::Context>,
     platform: &PlatformHost,

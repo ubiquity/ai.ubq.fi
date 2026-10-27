@@ -5,10 +5,11 @@ use crate::{
     routing_host,
 };
 use futures_util::task::AtomicWaker;
-use gateway_core::{error::GatewayError, lifecycle::TransportObservation};
+use gateway_core::lifecycle::TransportObservation;
 use gateway_routing_runtime::local_work::completion::response::{
     LocalAccountingProgress, LocalObservationSink, LocalSelectedResponse,
 };
+use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
     future::poll_fn,
@@ -173,15 +174,12 @@ pub(crate) fn response_error(
     Ok(response)
 }
 pub(super) fn wrapper_error() -> gateway_local_refusal::routing_error::RoutingError {
-    gateway_local_refusal::routing_error::RoutingError {
-        error: Box::new(
-            GatewayError::new(500, "Internal Server Error", None).with_type("server_error"),
-        ),
-        source_body: Some(
-            gateway_local_refusal::routing_error::SourceRefusalBody::InternalServerError,
-        ),
-        headers: Default::default(),
-    }
+    let error =
+        Box::new(GatewayError::new(500, "Internal Server Error", None).with_type("server_error"));
+    let source_body =
+        Some(gateway_local_refusal::routing_error::SourceRefusalBody::InternalServerError);
+    let headers = Default::default();
+    gateway_local_refusal::routing_error::RoutingError::new(error, headers, source_body)
 }
 
 #[cfg(test)]
@@ -191,6 +189,7 @@ mod tests {
         let error = super::wrapper_error();
         assert_eq!(error.error.status, 500);
         assert_eq!(error.error.envelope.error.code, None);
+        assert!(!error.is_local_aggregate_context_overflow());
         assert_eq!(
             error.source_body.unwrap().as_bytes(),
             b"Internal Server Error"

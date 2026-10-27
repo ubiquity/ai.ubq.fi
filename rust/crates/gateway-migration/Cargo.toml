@@ -53,6 +53,11 @@ name = "worker-custody-fixture"
 path = "tests/support/worker-custody-fixture.rs"
 
 [dev-dependencies]
+gateway-auth-contracts.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-credentials.workspace = true
+gateway-source.workspace = true
+gateway-local-refusal.workspace = true
 
 [lints]
 workspace = true

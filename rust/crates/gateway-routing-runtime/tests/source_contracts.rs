@@ -1,12 +1,9 @@
 use gateway_core::{
-    js_string::JsString16,
     lifecycle::{
         BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
     },
     model::ModelId,
     provider::UpstreamProvider,
-    source_json::SourceJson,
-    source_serialization as source,
 };
 use gateway_local_refusal::routing_error::SourceRefusalBody;
 use gateway_provider_policy::policy::HopFailure;
@@ -17,6 +14,9 @@ use gateway_routing_runtime::{
     types::TransportState,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::atomic::Ordering};
 
@@ -1177,14 +1177,13 @@ fn source_deepseek_extension_uses_one_captured_route_selection() -> TestResult {
             .err()
             .ok_or("expected source rejection")?;
         assert_eq!(error.error.status, 400);
-        let SourceRefusalBody::Json(body) =
+        let SourceRefusalBody::ClosedError(body) =
             error.source_body.ok_or("missing source refusal body")?
         else {
             panic!("expected the original source request error body")
         };
-        let source_error = source::member(&body, "error").ok_or("missing source error")?;
         assert_eq!(
-            source::member(&source_error, "param").map(|param| source::string(&param)),
+            body.param().map(|param| param.cloned()),
             Some(Some("thinking".into()))
         );
         request.catalog.selection = None;
