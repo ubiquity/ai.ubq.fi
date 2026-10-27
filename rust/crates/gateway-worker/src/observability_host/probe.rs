@@ -270,19 +270,7 @@ impl RequestHost {
                 )
                 .await;
             if accounts.len() == 1 {
-                return probe(
-                    ProbeProvider::ChatgptCodex,
-                    if (200..300).contains(&status) {
-                        200
-                    } else if status == 401 {
-                        401
-                    } else {
-                        503
-                    },
-                    content_type,
-                    (!(200..300).contains(&status))
-                        .then_some("Codex models probe returned an error status."),
-                );
+                return codex_status_probe(status, content_type);
             }
             if (200..300).contains(&status) {
                 let bytes = reply.response.bytes().await.ok();
@@ -290,19 +278,7 @@ impl RequestHost {
                     contributed = true;
                 }
             }
-            last = Some(probe(
-                ProbeProvider::ChatgptCodex,
-                if (200..300).contains(&status) {
-                    200
-                } else if status == 401 {
-                    401
-                } else {
-                    503
-                },
-                content_type,
-                (!(200..300).contains(&status))
-                    .then_some("Codex models probe returned an error status."),
-            ));
+            last = Some(codex_status_probe(status, content_type));
         }
         if timeout(self, deadline) {
             probe(
@@ -575,6 +551,21 @@ impl RequestHost {
         };
         Ok(CapacityProbe::Http { status, json })
     }
+}
+
+fn codex_status_probe(status: u16, content_type: Option<String>) -> ActiveProbe {
+    probe(
+        ProbeProvider::ChatgptCodex,
+        if (200..300).contains(&status) {
+            200
+        } else if status == 401 {
+            401
+        } else {
+            503
+        },
+        content_type,
+        (!(200..300).contains(&status)).then_some("Codex models probe returned an error status."),
+    )
 }
 
 fn has_models_array(bytes: &[u8]) -> bool {
