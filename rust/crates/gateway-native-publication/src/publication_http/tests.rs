@@ -193,10 +193,11 @@ impl Drop for Peer {
 }
 
 #[test]
-fn real_https_transport_verifies_peer_and_signed_publication_receipts() {
+fn real_https_transport_verifies_peer_and_signed_publication_receipts()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for (fixture_trust, tamper) in [(false, false), (true, false), (true, true)] {
         let mut peer = Peer::start(tamper);
-        let mut carrier = HttpsPublicationCarrier::configured(&peer.target).unwrap();
+        let mut carrier = HttpsPublicationCarrier::configured(&peer.target)?;
         assert!(!carrier.agent.config().tls_config().disable_verification());
         if fixture_trust {
             let ca = ureq::tls::Certificate::from_der(include_bytes!(
@@ -213,13 +214,12 @@ fn real_https_transport_verifies_peer_and_signed_publication_receipts() {
             "fixture-owner-r1".into(),
             None,
             "fixture-config-r1".into(),
-        )
-        .unwrap();
+        )?;
         let result = futures_executor::block_on(
             NativePublicationSender::configured(&identity, &carrier).send(
                 &command,
                 [9; 32],
-                gateway_native_http_framing::response::now_ms().unwrap(),
+                gateway_native_http_framing::response::now_ms()?,
             ),
         );
         let reached_http = peer.finish();
@@ -229,18 +229,30 @@ fn real_https_transport_verifies_peer_and_signed_publication_receipts() {
                 "untrusted TLS must fail before the authenticated HTTP request"
             );
             assert_eq!(
-                result.unwrap_err().envelope.error.code.as_deref(),
+                result
+                    .err()
+                    .ok_or_else(|| std::io::Error::other("expected publication refusal"))?
+                    .envelope
+                    .error
+                    .code
+                    .as_deref(),
                 Some("native_publication_outcome_unknown")
             );
         } else if tamper {
             assert!(reached_http);
             assert_eq!(
-                result.unwrap_err().envelope.error.code.as_deref(),
+                result
+                    .err()
+                    .ok_or_else(|| std::io::Error::other("expected publication refusal"))?
+                    .envelope
+                    .error
+                    .code
+                    .as_deref(),
                 Some("native_publication_response_unverified")
             );
         } else {
             assert!(reached_http);
-            let receipt = result.unwrap();
+            let receipt = result?;
             assert_eq!(receipt.disposition, PublicationDisposition::Applied);
             assert_eq!(
                 receipt.configuration_revision.as_deref(),
@@ -251,4 +263,5 @@ fn real_https_transport_verifies_peer_and_signed_publication_receipts() {
     assert!(
         HttpsPublicationCarrier::configured("http://127.0.0.1/uos/native/publication").is_err()
     );
+    Ok(())
 }

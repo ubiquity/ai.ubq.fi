@@ -199,25 +199,25 @@ mod tests {
         }
     }
     #[test]
-    fn actual_fixed_role_sockets_are_distinct_and_cancellation_opens_none() {
-        let authority = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let models = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let oauth = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    fn actual_fixed_role_sockets_are_distinct_and_cancellation_opens_none()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let authority = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let models = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let oauth = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let data = || ImportEndpointData {
-            authority: authority.local_addr().unwrap(),
-            models: models.local_addr().unwrap(),
-            oauth: oauth.local_addr().unwrap(),
+            authority: authority.local_addr()?,
+            models: models.local_addr()?,
+            oauth: oauth.local_addr()?,
         };
         let cancellation = Cancellation(AtomicBool::new(false));
         let connected = connect_endpoints(
             data(),
             &cancellation,
             Instant::now() + Duration::from_secs(2),
-        )
-        .unwrap();
+        )?;
         assert_ne!(
-            connected.authority.local_addr().unwrap(),
-            connected.publication.local_addr().unwrap()
+            connected.authority.local_addr()?,
+            connected.publication.local_addr()?
         );
         for (listener, socket) in [
             (&authority, &connected.authority),
@@ -225,9 +225,9 @@ mod tests {
             (&models, &connected.models),
             (&oauth, &connected.oauth),
         ] {
-            let (accepted, peer) = listener.accept().unwrap();
-            assert_eq!(peer, socket.local_addr().unwrap());
-            assert_eq!(accepted.local_addr().unwrap(), socket.peer_addr().unwrap());
+            let (accepted, peer) = listener.accept()?;
+            assert_eq!(peer, socket.local_addr()?);
+            assert_eq!(accepted.local_addr()?, socket.peer_addr()?);
         }
         drop(connected);
         cancellation.0.store(true, Ordering::SeqCst);
@@ -240,11 +240,12 @@ mod tests {
             .is_err()
         );
         for listener in [&authority, &models, &oauth] {
-            listener.set_nonblocking(true).unwrap();
+            listener.set_nonblocking(true)?;
             assert!(
                 matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
             );
         }
+        Ok(())
     }
     #[test]
     fn closed_endpoint_data_rejects_mixed_fields_zero_ports_and_unfixed_origins() {
