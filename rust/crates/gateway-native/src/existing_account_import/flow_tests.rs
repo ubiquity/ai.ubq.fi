@@ -53,7 +53,7 @@ use std::{
 };
 
 struct FlowTokens;
-impl gateway_authority::store::TokenSource for FlowTokens {
+impl gateway_authority_contracts::TokenSource for FlowTokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         static NEXT: AtomicUsize = AtomicUsize::new(1);
         Ok(format!(

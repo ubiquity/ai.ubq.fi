@@ -7,13 +7,13 @@ use crate::{
         PaidReservation, PaidRollup, PaidUsage, PaidWindow, PendingPaid, ReconciliationGate,
         ReconciliationLease,
     },
-    positive,
-    quota::ApiKeyPolicy,
-    quota_error, retention,
+    positive, quota_error, retention,
     routing::validate_cohort,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text, unavailable,
 };
+use gateway_authority_api_protocol::ApiKeyPolicy;
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,

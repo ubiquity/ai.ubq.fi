@@ -341,7 +341,7 @@ fn systemone_and_retrying_job_poll_use_actual_provider_and_original_quota() -> T
             assert_eq!(
                 store.value(gateway_authority_keys::api_request(
                     "key-a",
-                    &format!("v3:{}", gateway_authority::DAY_MS),
+                    &format!("v3:{}", gateway_authority_contracts::DAY_MS),
                     NOW,
                     id
                 ))["provider"],

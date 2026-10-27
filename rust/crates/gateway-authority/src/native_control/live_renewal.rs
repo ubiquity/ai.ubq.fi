@@ -7,15 +7,12 @@ use super::{
     receiver::NativeRenewalAuthority,
     rows::{self, ActionRow, conflict, fail},
 };
-use crate::{
-    native_live::mapping_key,
-    routing::LiveAccountSelection,
-    store::{TokenSource, Transaction},
-};
+use crate::{native_live::mapping_key, routing::LiveAccountSelection, store::Transaction};
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
@@ -338,7 +335,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let source = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        crate::routing::validate_pool(&normalized)?;
         if normalized.pool_versionstamp.0 != tx.revision(&source_key).ok_or_else(fail)?
             || source.accounts.len() != normalized.accounts.len()
         {

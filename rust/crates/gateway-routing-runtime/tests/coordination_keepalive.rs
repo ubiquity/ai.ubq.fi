@@ -1,10 +1,7 @@
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    REQUEST_LEASE_MS,
-    kernel::KernelPolicy,
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock, TokenSource},
-};
+use gateway_authority::{kernel::KernelPolicy, store::Authority};
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS, TokenSource};
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
@@ -45,7 +42,7 @@ fn local_input(store: &Store, id: &str, kernel: bool) -> LocalAdmissionInput {
                 owner: "owner".into(),
                 repo: Some("repo".into()),
                 usage_limit_requests: 10,
-                window_ms: gateway_authority::DAY_MS,
+                window_ms: gateway_authority_contracts::DAY_MS,
                 expires_at_ms: -1,
             },
         );
@@ -232,6 +229,7 @@ impl TokenSource for RacingTokens {
                         self.store.clone(),
                         self.store.clone(),
                     )
+                    .api_release()
                     .release_api_key(
                         &api,
                         true,

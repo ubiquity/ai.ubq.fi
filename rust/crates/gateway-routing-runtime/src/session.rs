@@ -5,20 +5,14 @@ use crate::{
     types::*,
 };
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    kernel::KernelTerminal,
-    paid_control::PaidRoutingReceipt,
-    paid_types::PaidAuthorization,
-    routing_types::{AdmittedAccount, RouteSelection},
-    store::{Authority, AuthorityClock, TokenSource},
-};
+use gateway_authority::{kernel::KernelTerminal, paid_control::PaidRoutingReceipt};
+use gateway_authority::{paid_types::PaidAuthorization, routing_types::AdmittedAccount};
+use gateway_authority::{routing_types::RouteSelection, store::Authority};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
-use gateway_core::{
-    error::GatewayError, identity::ApiKeyId, model::ModelId, provider::UpstreamProvider,
-    query::QueryStore,
-};
-use gateway_providers::policy::{LithosWindows, WaitBudget};
-use gateway_providers::types::PreparedClaudeOrdinary;
+use gateway_core::{error::GatewayError, identity::ApiKeyId, model::ModelId};
+use gateway_core::{provider::UpstreamProvider, query::QueryStore};
+use gateway_providers::{policy::LithosWindows, policy::WaitBudget, types::PreparedClaudeOrdinary};
 use std::{cell::RefCell, collections::BTreeSet};
 
 pub struct RoutingSession<S, I, C, H> {
@@ -123,7 +117,7 @@ impl<
             } else {
                 crate::local_work::original_source_digest(input.original_source())?
             },
-            now.checked_add(gateway_authority::REQUEST_LEASE_MS)
+            now.checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
                 .ok_or_else(|| unavailable("Lease overflow."))?,
             now,
         );
@@ -142,6 +136,7 @@ impl<
         {
             if let Some(api) = &row.api {
                 authority
+                    .api_release()
                     .release_api_key(api, true, "routing_admission_failed", clock.now_ms()?)
                     .await?;
             }
@@ -486,6 +481,7 @@ pub(crate) async fn reserve_original<
         }
         row.api = Some(
             authority
+                .api_quota()
                 .reserve_api_key_deferred(&id, &context.request_id, &context.route, clock.now_ms()?)
                 .await?,
         );

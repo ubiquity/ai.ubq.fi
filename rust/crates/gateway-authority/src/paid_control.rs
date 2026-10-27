@@ -2,9 +2,10 @@
 use crate::{
     paid_types::PaidRequest,
     positive,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text, unavailable,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidRoutingPolicy;
 use gateway_authority_paid_control_records::{

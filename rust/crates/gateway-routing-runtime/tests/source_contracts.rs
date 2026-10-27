@@ -1,3 +1,4 @@
+use gateway_authority_api_protocol::ApiReservation;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
     PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
@@ -235,7 +236,7 @@ fn paid_receipt_matches_current_host_custody_and_rechecks_before_dispatch() -> T
 
 #[test]
 fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
-    use gateway_authority::{quota::ApiReservation, store::Authority};
+    use gateway_authority::store::Authority;
     use gateway_authority_keys as keys;
     use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
 
@@ -262,11 +263,15 @@ fn paid_original_api_release_prevents_new_paid_exposure() -> TestResult {
         let original_api: ApiReservation =
             serde_json::from_value(store.value(journal_key)["api"].clone())?;
         Authority::with_clock(store.clone(), store.clone(), store.clone())
+            .api_release()
             .release_api_key(&original_api, true, "fixture_original_released", NOW)
             .await?;
         assert!(session.next_attempt().await.is_err());
         assert_eq!(
-            store.value(keys::paid_window("key-a", NOW + gateway_authority::DAY_MS)),
+            store.value(keys::paid_window(
+                "key-a",
+                NOW + gateway_authority_contracts::DAY_MS
+            )),
             Value::Null,
             "A stale original API owner must fail before any paid exposure is created"
         );
@@ -296,7 +301,7 @@ fn paid_dispatch_missing_active_history_cannot_recreate_exposure() -> TestResult
         let paid = attempt.paid.as_ref().ok_or("missing paid reservation")?;
         let key = keys::paid_attempt(&paid.key_id.0, &paid.attempt_id.0);
         let record = store.read(&key).await?.ok_or("missing fixture value")?;
-        let window_key = keys::paid_window("key-a", NOW + gateway_authority::DAY_MS);
+        let window_key = keys::paid_window("key-a", NOW + gateway_authority_contracts::DAY_MS);
         let exposure = store.value(window_key.clone());
         assert_ne!(exposure, Value::Null);
         assert_eq!(
@@ -475,7 +480,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> T
         let handle = session.admission_handle();
         let children = handle.children(1).await?;
         handle.before_dispatch(&children[0]).await?;
-        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+        store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             Host::new(&store),
@@ -1093,7 +1098,7 @@ fn expired_journal_recovery_never_replays_or_refunds_started_work() {
         let attempt = session.next_attempt().await.unwrap().unwrap();
         session.before_dispatch(&attempt).await.unwrap();
         session.transport_started(&attempt).await.unwrap();
-        store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+        store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
         let recovered = recover_pending(
             store.clone(),
             host.clone(),

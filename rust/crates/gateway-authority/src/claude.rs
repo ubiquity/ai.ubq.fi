@@ -1,9 +1,10 @@
 //! Current source Claude roster and quota evidence, never a caller-supplied authorization.
 use crate::{
     invalid, positive,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     unavailable,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;

@@ -1,219 +1,41 @@
-//! API-key dispatch charging and kernel semantic quota are independent source contracts.
-use crate::{
-    QUOTA_RETENTION_MS, REQUEST_LEASE_MS, add, invalid, nonnegative, positive, quota_error,
-    retention,
-    store::{Authority, TokenSource},
-    text, unavailable,
+//! Complete API reserve/defer/dispatch/transport operations over the original borrowed authority.
+mod backend;
+use gateway_authority_api_protocol::{
+    ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState, ApiUsageWindow, api_row_matches,
+    validate_window,
+};
+use gateway_authority_contracts::{
+    QUOTA_RETENTION_MS, REQUEST_LEASE_MS, TokenSource, add, invalid, quota_error, retention, text,
+    unavailable,
 };
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     identity::{ApiKeyId, RequestId},
-    model::ModelId,
     provider::UpstreamProvider,
     state::AuthorityStore,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ApiKeyPolicy {
-    pub v: u32,
-    pub key_id: ApiKeyId,
-    pub expires_at_ms: i64,
-    pub usage_limit_requests: i64,
-    pub window_ms: i64,
-    pub usage_reset_at_ms: i64,
-    pub paid_fallback_enabled: bool,
-    pub paid_fallback_limit_microcredits: i64,
-    pub paid_fallback_quota_per_credit: i64,
-    pub paid_fallback_pricing_checked_at_ms: i64,
-    pub paid_fallback_models: Vec<ModelId>,
-    #[serde(with = "gateway_authority_paid_control_records::model_map")]
-    pub paid_fallback_max_exposure_microcredits: BTreeMap<ModelId, i64>,
+pub struct ApiQuotaService<'a, S, I> {
+    store: &'a S,
+    tokens: &'a I,
 }
-
-impl ApiKeyPolicy {
-    pub(crate) fn validate(&self, key: &ApiKeyId, now: i64) -> Result<(), GatewayError> {
-        if self.v != 3 || &self.key_id != key {
-            return Err(invalid("API key policy identity is malformed."));
-        }
-        text(&key.0)?;
-        positive(self.window_ms)?;
-        nonnegative(self.usage_reset_at_ms)?;
-        if self.usage_limit_requests != -1 {
-            nonnegative(self.usage_limit_requests)?;
-        }
-        if self.expires_at_ms != -1 && self.expires_at_ms <= now {
-            return Err(GatewayError::new(
-                401,
-                "API key has expired.",
-                Some("invalid_api_key"),
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn current_window(&self, now: i64) -> Result<(i64, i64), GatewayError> {
-        positive(self.window_ms)?;
-        nonnegative(now)?;
-        let initial = self
-            .usage_reset_at_ms
-            .checked_sub(self.window_ms)
-            .ok_or_else(|| invalid("Invalid usage window."))?;
-        if initial < 0 {
-            return Err(invalid(
-                "API key usage window starts before the portable epoch.",
-            ));
-        }
-        if now < self.usage_reset_at_ms {
-            return Ok((initial, self.usage_reset_at_ms));
-        }
-        let elapsed = (now - initial) / self.window_ms;
-        let duration = elapsed
-            .checked_mul(self.window_ms)
-            .ok_or_else(|| invalid("API usage window overflow."))?;
-        let start = add(initial, duration)?;
-        Ok((start, add(start, self.window_ms)?))
+impl<S, I> Copy for ApiQuotaService<'_, S, I> {}
+impl<S, I> Clone for ApiQuotaService<'_, S, I> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ApiUsageWindow {
-    pub v: u32,
-    pub key_id: ApiKeyId,
-    pub policy_version: String,
-    pub window_start_ms: i64,
-    pub window_reset_at_ms: i64,
-    pub committed_requests: i64,
-    pub reserved_requests: i64,
-    pub updated_at_ms: i64,
-    /// An index of active reservations permits event-owned reclaim without store scans.
-    pub reservations: BTreeMap<String, i64>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApiUsageState {
-    Reserved,
-    Dispatched,
-    Released,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ApiUsageRequest {
-    pub v: u32,
-    pub key_id: ApiKeyId,
-    pub request_id: RequestId,
-    pub route: String,
-    pub state: ApiUsageState,
-    pub reserved_at_ms: i64,
-    pub lease_expires_at_ms: i64,
-    pub provider: Option<UpstreamProvider>,
-    pub dispatched_at_ms: Option<i64>,
-    pub released_at_ms: Option<i64>,
-    pub release_reason: Option<String>,
-    /// Conservative durable transport intent; only a known pretransport cancellation compensates.
-    pub transport_started: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ApiReservation {
-    pub key_id: ApiKeyId,
-    pub request_id: RequestId,
-    pub route: String,
-    pub policy_version: String,
-    pub window_start_ms: i64,
-    pub window_reset_at_ms: i64,
-    #[serde(default)]
-    pub deferred: bool,
-}
-
-fn api_row_matches(row: &ApiUsageRequest, reservation: &ApiReservation) -> bool {
-    row.validate().is_ok()
-        && row.v == 3
-        && row.key_id == reservation.key_id
-        && row.request_id == reservation.request_id
-        && row.route == reservation.route
-}
-
-impl ApiUsageRequest {
-    pub fn validate(&self) -> Result<(), GatewayError> {
-        if self.v != 3 {
-            return Err(invalid("API request version is invalid."));
-        }
-        text(&self.key_id.0)?;
-        text(&self.request_id.0)?;
-        text(&self.route)?;
-        nonnegative(self.reserved_at_ms)?;
-        nonnegative(self.lease_expires_at_ms)?;
-        if let Some(at) = self.dispatched_at_ms {
-            nonnegative(at)?;
-        }
-        if let Some(at) = self.released_at_ms {
-            nonnegative(at)?;
-        }
-        match self.state {
-            ApiUsageState::Reserved
-                if self.provider.is_some()
-                    || self.dispatched_at_ms.is_some()
-                    || self.released_at_ms.is_some()
-                    || self.release_reason.is_some() =>
-            {
-                Err(invalid("Reserved API request has terminal fields."))
-            }
-            ApiUsageState::Dispatched
-                if self.provider.is_none()
-                    || self.dispatched_at_ms.is_none()
-                    || self.released_at_ms.is_some()
-                    || self.release_reason.is_some() =>
-            {
-                Err(invalid("Dispatched API request is malformed."))
-            }
-            ApiUsageState::Released
-                if self.provider.is_some()
-                    || self.dispatched_at_ms.is_some()
-                    || self.released_at_ms.is_none()
-                    || self.release_reason.is_none() =>
-            {
-                Err(invalid("Released API request is malformed."))
-            }
-            _ => Ok(()),
-        }
+impl<'a, S: AuthorityStore, I: TokenSource> ApiQuotaService<'a, S, I> {
+    pub fn new(store: &'a S, tokens: &'a I) -> Self {
+        Self { store, tokens }
     }
-}
-
-fn validate_window(
-    window: &ApiUsageWindow,
-    reservation: &ApiReservation,
-) -> Result<(), GatewayError> {
-    if window.v != 3
-        || window.key_id != reservation.key_id
-        || window.policy_version != reservation.policy_version
-        || window.window_start_ms != reservation.window_start_ms
-        || window.window_reset_at_ms != reservation.window_reset_at_ms
-    {
-        return Err(invalid("API key quota aggregate identity is malformed."));
+    fn transaction(&self, now: i64) -> Result<backend::Transaction<'_, S, I>, GatewayError> {
+        backend::Transaction::new(self.store, self.tokens, now)
     }
-    nonnegative(window.committed_requests)?;
-    nonnegative(window.reserved_requests)?;
-    nonnegative(window.window_start_ms)?;
-    nonnegative(window.window_reset_at_ms)?;
-    nonnegative(window.updated_at_ms)?;
-    if window.window_reset_at_ms <= window.window_start_ms {
-        return Err(invalid("API window reset must follow its start."));
-    }
-    if window.reserved_requests != window.reservations.len() as i64 {
-        return Err(invalid(
-            "API quota reservation index disagrees with the aggregate.",
-        ));
-    }
-    Ok(())
-}
-
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     pub async fn reserve_api_key(
-        &self,
+        self,
         key_id: &ApiKeyId,
         request_id: &RequestId,
         route: &str,
@@ -353,7 +175,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     /// Matches handler deferWhenFull: local compaction/cache paths may finish without quota.
     /// The runtime must resolve this handle immediately before its first provider dispatch.
     pub async fn reserve_api_key_deferred(
-        &self,
+        self,
         key_id: &ApiKeyId,
         request_id: &RequestId,
         route: &str,
@@ -398,7 +220,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 
     pub async fn resolve_deferred_api(
-        &self,
+        self,
         reservation: &ApiReservation,
         now: i64,
     ) -> Result<ApiReservation, GatewayError> {
@@ -417,7 +239,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
 
     /// Returns true only for this reservation's first charge; all retries share that charge.
     pub async fn dispatch_api_key(
-        &self,
+        self,
         reservation: &ApiReservation,
         provider: UpstreamProvider,
         now: i64,
@@ -493,7 +315,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
     }
 
     pub async fn mark_api_transport_started(
-        &self,
+        self,
         reservation: &ApiReservation,
         now: i64,
     ) -> Result<(), GatewayError> {
@@ -529,130 +351,5 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             "api_key_quota_reservation_unavailable",
             "API dispatch changed concurrently.",
         ))
-    }
-
-    pub async fn release_api_key(
-        &self,
-        reservation: &ApiReservation,
-        known_before_transport: bool,
-        reason: &str,
-        now: i64,
-    ) -> Result<bool, GatewayError> {
-        self.release_api_key_classified(reservation, known_before_transport, reason, now)
-            .await
-            .map_err(crate::local_api_release::ReleaseFailure::into_diagnostic)
-    }
-    pub(crate) async fn release_api_key_classified(
-        &self,
-        reservation: &ApiReservation,
-        known_before_transport: bool,
-        reason: &str,
-        now: i64,
-    ) -> Result<bool, crate::local_api_release::ReleaseFailure> {
-        if reservation.deferred {
-            return Ok(false);
-        }
-        for _ in 0..5 {
-            let mut tx = self
-                .transaction(now)
-                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?;
-            let request_key = keys::api_request(
-                &reservation.key_id.0,
-                &reservation.policy_version,
-                reservation.window_start_ms,
-                &reservation.request_id.0,
-            );
-            let window_key = keys::api_window(
-                &reservation.key_id.0,
-                &reservation.policy_version,
-                reservation.window_start_ms,
-            );
-            let Some(mut row) = tx
-                .read_api_release::<ApiUsageRequest>(&request_key)
-                .await
-                .map_err(classify_release_read)?
-            else {
-                return Ok(false);
-            };
-            if !api_row_matches(&row, reservation) {
-                return Err(crate::local_api_release::ReleaseFailure::malformed(
-                    invalid("API release identity conflicts."),
-                ));
-            }
-            if row.state == ApiUsageState::Released
-                || (row.state == ApiUsageState::Dispatched
-                    && (!known_before_transport || row.transport_started))
-            {
-                return Ok(false);
-            }
-            let mut window: ApiUsageWindow = tx
-                .read_api_release(&window_key)
-                .await
-                .map_err(classify_release_read)?
-                .ok_or_else(|| {
-                    crate::local_api_release::ReleaseFailure::malformed(invalid(
-                        "API quota aggregate is missing.",
-                    ))
-                })?;
-            validate_window(&window, reservation)
-                .map_err(crate::local_api_release::ReleaseFailure::malformed)?;
-            if row.state == ApiUsageState::Reserved {
-                if window.reserved_requests < 1
-                    || window.reservations.remove(&row.request_id.0).is_none()
-                {
-                    return Err(crate::local_api_release::ReleaseFailure::malformed(
-                        invalid("Missing API reservation capacity."),
-                    ));
-                }
-                window.reserved_requests -= 1;
-            } else {
-                if window.committed_requests < 1 {
-                    return Err(crate::local_api_release::ReleaseFailure::malformed(
-                        invalid("Missing API committed capacity."),
-                    ));
-                }
-                window.committed_requests -= 1;
-            }
-            row.state = ApiUsageState::Released;
-            row.provider = None;
-            row.dispatched_at_ms = None;
-            row.released_at_ms = Some(now);
-            row.release_reason = Some(reason.chars().take(120).collect());
-            window.updated_at_ms = now;
-            let expiry = Some(
-                retention(reservation.window_reset_at_ms, QUOTA_RETENTION_MS)
-                    .map_err(crate::local_api_release::ReleaseFailure::unavailable)?,
-            );
-            tx.put(&request_key, &row, expiry)
-                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?;
-            tx.put(&window_key, &window, expiry)
-                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?;
-            if tx
-                .commit()
-                .await
-                .map_err(crate::local_api_release::ReleaseFailure::unavailable)?
-            {
-                return Ok(true);
-            }
-        }
-        Err(crate::local_api_release::ReleaseFailure::changed(
-            unavailable(
-                "api_key_quota_reservation_unavailable",
-                "API quota release changed concurrently.",
-            ),
-        ))
-    }
-}
-
-fn classify_release_read(
-    error: crate::store::ApiReleaseReadError,
-) -> crate::local_api_release::ReleaseFailure {
-    match error {
-        crate::store::ApiReleaseReadError::Backend(error) => {
-            crate::local_api_release::ReleaseFailure::unavailable(error)
-        }
-        crate::store::ApiReleaseReadError::Record(error) => {
-            crate::local_api_release::ReleaseFailure::malformed(error)
-        }
     }
 }

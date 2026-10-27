@@ -1,0 +1,148 @@
+//! Private API record staging; never a public transaction or callback-selected write surface.
+use gateway_authority_contracts::{TokenSource, invalid, text, validate_time};
+use gateway_core::{
+    error::GatewayError,
+    state::{
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
+        StoredRecord,
+    },
+};
+use serde::{Serialize, de::DeserializeOwned};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Only the named local release adapter observes this private read origin.
+pub(crate) enum ApiReleaseReadError {
+    Backend(GatewayError),
+    Record(GatewayError),
+}
+fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {
+    serde_json::from_value(row.json_value()?.clone())
+        .map_err(|_| invalid("Malformed authority record."))
+}
+
+pub(crate) struct Transaction<'a, S, I> {
+    store: &'a S,
+    tokens: &'a I,
+    now: i64,
+    reads: BTreeMap<String, Option<StoredRecord>>,
+    writes: BTreeMap<String, RecordMutation>,
+}
+impl<'a, S: AuthorityStore, I: TokenSource> Transaction<'a, S, I> {
+    pub(crate) fn new(store: &'a S, tokens: &'a I, now: i64) -> Result<Self, GatewayError> {
+        validate_time(now)?;
+        Ok(Self {
+            store,
+            tokens,
+            now,
+            reads: BTreeMap::new(),
+            writes: BTreeMap::new(),
+        })
+    }
+    async fn cached_record_classified(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<&StoredRecord>, ApiReleaseReadError> {
+        if !self.reads.contains_key(&key.0) {
+            let record = self
+                .store
+                .read(key)
+                .await
+                .map_err(ApiReleaseReadError::Backend)?;
+            if let Some(value) = &record {
+                value
+                    .validate_version()
+                    .map_err(ApiReleaseReadError::Record)?;
+                text(&value.revision).map_err(ApiReleaseReadError::Record)?;
+                if let Some(expiry) = value.expires_at_ms {
+                    validate_time(expiry).map_err(ApiReleaseReadError::Record)?;
+                }
+            }
+            self.reads.insert(key.0.clone(), record);
+        }
+        let raw = self.reads.get(&key.0).and_then(Option::as_ref);
+        if raw.is_some_and(|row| row.expires_at_ms.is_some_and(|expiry| expiry <= self.now)) {
+            return Ok(None);
+        }
+        Ok(raw)
+    }
+    /// Same read/cache/revision operation as read; only origin is retained for
+    /// the finite local-release error adapter. It exposes no mutation or I/O grant.
+    pub(crate) async fn read_api_release<T: DeserializeOwned>(
+        &mut self,
+        key: &RecordKey,
+    ) -> Result<Option<T>, ApiReleaseReadError> {
+        self.cached_record_classified(key)
+            .await?
+            .map(|row| decode_json_record(row).map_err(ApiReleaseReadError::Record))
+            .transpose()
+    }
+
+    pub fn checks(&self) -> Vec<RevisionCheck> {
+        self.reads
+            .iter()
+            .map(|(key, record)| RevisionCheck {
+                key: RecordKey(key.clone()),
+                expected_revision: record.as_ref().map(|row| row.revision.clone()),
+            })
+            .collect()
+    }
+
+    pub fn put<T: Serialize>(
+        &mut self,
+        key: &RecordKey,
+        value: &T,
+        expiry: Option<i64>,
+    ) -> Result<(), GatewayError> {
+        if !self.reads.contains_key(&key.0) {
+            return Err(invalid(
+                "A mutation is missing its strong-read precondition.",
+            ));
+        }
+        if let Some(expiry) = expiry {
+            validate_time(expiry)?;
+        }
+        let revision = self.tokens.next_token()?;
+        text(&revision)?;
+        if self
+            .reads
+            .values()
+            .flatten()
+            .any(|row| row.revision == revision)
+        {
+            return Err(invalid("Token source reused an existing revision."));
+        }
+        let record = StoredRecord::json(
+            revision,
+            serde_json::to_value(value).map_err(|_| invalid("Authority serialization failed."))?,
+            expiry,
+        );
+        self.writes.insert(
+            key.0.clone(),
+            RecordMutation::Put {
+                key: key.clone(),
+                record,
+            },
+        );
+        Ok(())
+    }
+
+    pub async fn commit(self) -> Result<bool, GatewayError> {
+        let checks = self.checks();
+        let mut revisions = BTreeSet::new();
+        for mutation in self.writes.values() {
+            if let RecordMutation::Put { record, .. } = mutation
+                && !revisions.insert(record.revision.clone())
+            {
+                return Err(invalid("Token source duplicated a mutation revision."));
+            }
+        }
+        Ok(self
+            .store
+            .commit(AtomicTransition {
+                checks,
+                mutations: self.writes.into_values().collect(),
+            })
+            .await?
+            == CommitOutcome::Committed)
+    }
+}

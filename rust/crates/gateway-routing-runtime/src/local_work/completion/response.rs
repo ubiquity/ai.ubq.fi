@@ -158,6 +158,7 @@ impl<
                     original.tokens.clone(),
                     original.clock.clone(),
                 )
+                .api_release()
                 .release_local_response_api(api, original.now()?)
                 .await
                 .err()

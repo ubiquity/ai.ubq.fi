@@ -5,13 +5,14 @@ use super::super::receiver::NativeRenewalAuthority;
 use super::super::rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication};
 use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
 use super::{action::ImportActionRow, effects, unavailable};
-use crate::store::{TokenSource, Transaction};
+use crate::store::Transaction;
 use gateway_auth::provider_credentials::{
     MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_auth_native_wire::publication_data::{
     ImportCatalogDisposition, ImportPublicationDataV1,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_authority_routing_records::types::SubscriptionPool;
@@ -232,7 +233,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
     let raw: Value = tx.read(&source_key).await?.ok_or_else(unavailable)?;
     let source = parse_codex_source_pool(&raw)?.ok_or_else(unavailable)?;
     let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(unavailable)?;
-    normalized.validate()?;
+    crate::routing::validate_pool(&normalized)?;
     if tx.revision(&source_key).as_deref() != Some(publication.source_revision.as_str())
         || tx.revision(&keys::pool()).as_deref() != Some(publication.normalized_revision.as_str())
         || publication.source_revision != publication.publication_revision

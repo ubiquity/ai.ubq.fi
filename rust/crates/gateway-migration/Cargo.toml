@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
@@ -51,3 +52,6 @@ path = "tests/support/worker-custody-fixture.rs"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }

@@ -6,11 +6,12 @@ use super::{
 };
 use crate::{
     routing::LiveAccountSelection,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
 };
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
 use gateway_auth::types::AuthConfig;
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::error::GatewayError;
@@ -74,7 +75,7 @@ impl RegisteredRenewalOwners {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let source = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        crate::routing::validate_pool(&normalized)?;
         if normalized.pool_versionstamp.0 != tx.revision(&source_key).ok_or_else(fail)?
             || normalized.accounts.len() != source.accounts.len()
         {

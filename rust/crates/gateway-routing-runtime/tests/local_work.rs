@@ -1,10 +1,7 @@
 use gateway_auth::types::AuthMethod;
-use gateway_authority::{
-    REQUEST_LEASE_MS,
-    kernel::KernelPolicy,
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock, TokenSource},
-};
+use gateway_authority::{kernel::KernelPolicy, store::Authority};
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS, TokenSource};
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
@@ -261,12 +258,9 @@ fn changed_owner_or_released_api_cannot_reuse_a_local_handle() {
         } else {
             let api: ApiReservation = serde_json::from_value(row["api"].clone()).unwrap();
             run(
-                Authority::with_clock(store.clone(), store.clone(), store.clone()).release_api_key(
-                    &api,
-                    true,
-                    "fixture-before-dispatch",
-                    NOW,
-                ),
+                Authority::with_clock(store.clone(), store.clone(), store.clone())
+                    .api_release()
+                    .release_api_key(&api, true, "fixture-before-dispatch", NOW),
             )
             .unwrap();
         }
@@ -288,7 +282,7 @@ fn kernel_input(store: &Store, id: &str) -> LocalAdmissionInput {
             owner: "owner".into(),
             repo: Some("repo".into()),
             usage_limit_requests: 10,
-            window_ms: gateway_authority::DAY_MS,
+            window_ms: gateway_authority_contracts::DAY_MS,
             expires_at_ms: -1,
         },
     );

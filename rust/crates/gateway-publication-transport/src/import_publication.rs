@@ -8,10 +8,10 @@ use gateway_auth_native_wire::{
     native_read::{NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER},
     publication_command::{ImportPublicationCommandData, import_publication_max_bytes},
 };
-use gateway_authority::{
-    native_control::{NativeRenewalCancellation, receiver::NativeRenewalAuthority},
-    store::TokenSource,
+use gateway_authority::native_control::{
+    NativeRenewalCancellation, receiver::NativeRenewalAuthority,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_publication_policy::protocol::{
     PublicationRequest, PublicationResponse, error_response,

@@ -1,21 +1,10 @@
-use crate::{
-    audit::{self, RETENTION_MS},
-    keys::{ApiKeyRecord, public_record},
-    source_input as input,
-};
-use gateway_auth::{
-    api_keys,
-    passkeys::{PasskeyUser, user_wire},
-    store,
-    types::{AuthResponse, invalid},
-};
-use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{RecordKey, StoredRecord},
-};
+use crate::source_input as input;
+use crate::{audit, audit::RETENTION_MS, keys::ApiKeyRecord, keys::public_record};
+use gateway_auth::{api_keys, passkeys::PasskeyUser, passkeys::user_wire, store};
+use gateway_auth::{types::AuthResponse, types::invalid};
+use gateway_core::{error::GatewayError, query::QueryRequest, query::QuerySelector};
+use gateway_core::{query::QueryStore, source_json::SourceJson, source_serialization as source};
+use gateway_core::{state::RecordKey, state::StoredRecord};
 use serde_json::json;
 
 /// Each storage call is bounded; source list endpoints exhaust the cursor rather than truncate silently.
@@ -150,7 +139,7 @@ pub async fn effective_key_record_with_usage<S: QueryStore>(
         None => 0,
         Some(row) => {
             row.validate_version()?;
-            let usage: gateway_authority::quota::ApiUsageWindow =
+            let usage: gateway_authority_api_protocol::ApiUsageWindow =
                 serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
                     GatewayError::unavailable(
                         "API key quota ledger is corrupt",

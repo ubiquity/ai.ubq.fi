@@ -2,9 +2,10 @@
 use crate::{
     invalid,
     kernel::{KernelReservation, KernelTerminal, kernel_identity, stage_kernel_terminal_intent},
-    quota::{ApiReservation, ApiUsageRequest, ApiUsageState},
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
 };
+use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,

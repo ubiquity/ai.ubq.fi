@@ -3,9 +3,10 @@ use crate::{
     reset_types::{ResetCandidate, ResetConfig, ResetMode, reset_invocation},
     routing::{read_view, validate_cohort},
     routing_types::CohortProof,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
 };
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};

@@ -1,5 +1,5 @@
 //! Original-request identity, rechecked from fixed source rows. Never a native operation grant.
-use crate::store::{Authority, TokenSource, Transaction};
+use crate::store::{Authority, Transaction};
 use gateway_auth::api_keys;
 use gateway_auth::crypto::{decode_base64url, sha256_hex};
 use gateway_auth::passkeys::{self, PasskeySession, PasskeyUser};
@@ -7,6 +7,7 @@ use gateway_auth::resolve::AuthService;
 use gateway_auth::session_index;
 use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
 use gateway_auth::upstream;
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::RequestContext;
@@ -244,7 +245,8 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
                     Some(expires_at_ms.map_or(source_expiry, |expiry| expiry.min(source_expiry)));
             }
             let policy_key = keys::api_policy(key_id);
-            let _: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
+            let _: Option<gateway_authority_api_protocol::ApiKeyPolicy> =
+                tx.read(&policy_key).await?;
             SourceActor::ApiKey {
                 key_id: key_id.clone(),
                 token_hash: policy.token_hash.clone(),
@@ -514,7 +516,8 @@ pub(crate) async fn read_current<S: AuthorityStore, I: TokenSource>(
             let record: api_keys::ApiKeyHashRecord = tx.read(&key).await?.ok_or_else(fail)?;
             let policy = api_keys::policy_from_record(token_hash.clone(), record, tx.now)?;
             let policy_key = keys::api_policy(key_id);
-            let normalized: Option<crate::quota::ApiKeyPolicy> = tx.read(&policy_key).await?;
+            let normalized: Option<gateway_authority_api_protocol::ApiKeyPolicy> =
+                tx.read(&policy_key).await?;
             if let Some(normalized) = &normalized {
                 normalized.validate(&gateway_core::identity::ApiKeyId(key_id.clone()), tx.now)?;
             }

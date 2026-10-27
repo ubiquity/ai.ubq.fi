@@ -10,7 +10,7 @@ use gateway_auth::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_authority::store::{AuthorityClock, TokenSource};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::error::GatewayError;
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Method, Request, RequestInit, RequestRedirect, Response, Url};

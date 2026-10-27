@@ -5,9 +5,10 @@ use crate::{
     next_generation, nonnegative,
     routing::{read_view, validate_cohort},
     routing_types::{AdmittedAccount, CohortProof, ScopedOverageProbe},
-    store::{Authority, TokenSource},
+    store::Authority,
     text, unavailable,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_records::types::{ProbeLease, QuotaBlock};

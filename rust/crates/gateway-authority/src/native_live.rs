@@ -1,7 +1,7 @@
 //! Same-authority live custody. No admission, quota proof, refresh or paid authorization.
 use crate::{
     native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
 };
 use gateway_auth::{
     native_auth::NativeTransportIdentity,
@@ -11,6 +11,7 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::SubscriptionPool;
@@ -187,7 +188,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> NativeLiveAuthority<'a, S, I> {
         let raw: Value = tx.read(&source_key).await?.ok_or_else(fail)?;
         let pool = parse_codex_source_pool(&raw)?.ok_or_else(fail)?;
         let normalized: SubscriptionPool = tx.read(&keys::pool()).await?.ok_or_else(fail)?;
-        normalized.validate()?;
+        crate::routing::validate_pool(&normalized)?;
         let (slot, account) = pool
             .accounts
             .iter()

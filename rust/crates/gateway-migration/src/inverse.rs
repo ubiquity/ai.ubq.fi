@@ -317,7 +317,7 @@ fn authority_control(
             .ok_or_else(|| invalid("Derived API policy has no source ID"))?;
         let source: gateway_admin::keys::ApiKeyRecord = decode(source.json_value()?)?;
         let mut expected = gateway_admin::keys::authority_policy(&source, now_ms);
-        let actual: gateway_authority::quota::ApiKeyPolicy = decode(record.json_value()?)?;
+        let actual: gateway_authority_api_protocol::ApiKeyPolicy = decode(record.json_value()?)?;
         if source.policy.revoked_at_ms.is_some() && actual.expires_at_ms <= now_ms {
             expected.expires_at_ms = actual.expires_at_ms;
         }

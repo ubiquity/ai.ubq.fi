@@ -77,7 +77,7 @@ impl AuthHost for Host {
         ))
     }
 }
-impl gateway_authority::store::TokenSource for &Host {
+impl gateway_authority_contracts::TokenSource for &Host {
     fn next_token(&self) -> Result<String, GatewayError> {
         gateway_auth::crypto::uuid_from_random(&self.random_bytes(16)?)
     }
@@ -807,7 +807,7 @@ struct PaidRaceStore<'a> {
 }
 
 struct PaidFixtureClock;
-impl gateway_authority::store::AuthorityClock for PaidFixtureClock {
+impl gateway_authority_contracts::AuthorityClock for PaidFixtureClock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(1_000_000)
     }
@@ -1100,6 +1100,7 @@ async fn bind_paid_fixture_original(
         started_at_ms: request.created_at_ms,
     };
     let api = authority
+        .api_quota()
         .reserve_api_key(
             &request.key_id,
             &request.request_id,
@@ -1123,7 +1124,7 @@ async fn bind_paid_fixture_original(
                 "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
                 "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
                 "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,
-                "lease_expires_at_ms":1_000_000+gateway_authority::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
+                "lease_expires_at_ms":1_000_000+gateway_authority_contracts::REQUEST_LEASE_MS,"updated_at_ms":1_000_000,"extras_family":null,
                 "extras_child_count":null,"extras_dispatch":null,"children":[],"kernel_override":null
             }),
             None,

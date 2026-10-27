@@ -402,7 +402,7 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
         support_clock::Tokens(std::sync::atomic::AtomicU64::new(1)),
         support_clock::Clock,
     );
-    let reservation = run(authority.reserve_api_key(
+    let reservation = run(authority.api_quota().reserve_api_key(
         &gateway_core::identity::ApiKeyId("core-key".into()),
         &gateway_core::identity::RequestId("post-restart".into()),
         "responses",
@@ -506,7 +506,7 @@ impl NativeCustody for NoCustody {
 mod support_clock {
     use gateway_core::error::GatewayError;
     pub struct Tokens(pub std::sync::atomic::AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "core-fixture-{}",
@@ -515,7 +515,7 @@ mod support_clock {
         }
     }
     pub struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }

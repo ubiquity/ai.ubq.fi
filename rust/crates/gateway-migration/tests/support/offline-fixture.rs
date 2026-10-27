@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     struct Tokens(AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "offline-fixture-{}",
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Tokens(AtomicU64::new(1)),
         Clock,
     );
-    let reservation = run(authority.reserve_api_key(
+    let reservation = run(authority.api_quota().reserve_api_key(
         &ApiKeyId("offline-key".into()),
         &RequestId("post-restart-write".into()),
         "responses",

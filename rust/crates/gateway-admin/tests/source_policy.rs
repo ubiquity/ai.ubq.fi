@@ -458,7 +458,7 @@ fn paid_model_name_and_ordinary_json_map_keys_roundtrip_named_profile_record() {
                 keys::authority_policy_key(&id),
             ],
         );
-        let policy: gateway_authority::quota::ApiKeyPolicy =
+        let policy: gateway_authority_api_protocol::ApiKeyPolicy =
             decode_source_control_record(&policy_row)
                 .unwrap()
                 .deserialize()

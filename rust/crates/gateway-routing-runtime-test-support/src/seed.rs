@@ -11,13 +11,13 @@ use std::collections::BTreeMap;
 pub fn seed_key(store: &Store) {
     store.seed(
         keys::api_policy("key-a"),
-        gateway_authority::quota::ApiKeyPolicy {
+        gateway_authority_api_protocol::ApiKeyPolicy {
             v: 3,
             key_id: ApiKeyId("key-a".into()),
             expires_at_ms: -1,
             usage_limit_requests: 10,
-            window_ms: gateway_authority::DAY_MS,
-            usage_reset_at_ms: NOW + gateway_authority::DAY_MS,
+            window_ms: gateway_authority_contracts::DAY_MS,
+            usage_reset_at_ms: NOW + gateway_authority_contracts::DAY_MS,
             paid_fallback_enabled: true,
             paid_fallback_limit_microcredits: 10000,
             paid_fallback_quota_per_credit: 1000000,
@@ -81,7 +81,7 @@ pub fn source_key() -> RecordKey {
 pub fn window(store: &Store) -> Value {
     store.value(keys::api_window(
         "key-a",
-        &format!("v3:{}", gateway_authority::DAY_MS),
+        &format!("v3:{}", gateway_authority_contracts::DAY_MS),
         NOW,
     ))
 }

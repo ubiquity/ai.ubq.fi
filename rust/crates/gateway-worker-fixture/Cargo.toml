@@ -13,6 +13,7 @@ default = []
 entrypoint = []
 
 [dependencies]
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
 gateway-worker = { path = "../gateway-worker", default-features = false }

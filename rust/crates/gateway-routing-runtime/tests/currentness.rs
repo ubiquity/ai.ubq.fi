@@ -1,10 +1,10 @@
 use gateway_auth::types::AuthMethod;
 use gateway_authority::{
-    REQUEST_LEASE_MS,
     kernel::{KernelPolicy, KernelReservation},
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock},
+    store::Authority,
 };
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::{AuthorityClock, REQUEST_LEASE_MS};
 use gateway_authority_keys as keys;
 use gateway_core::{
     lifecycle::{DeliveryOutcome, SemanticTerminal, TransportObservation},
@@ -43,7 +43,7 @@ fn kernel_input(store: &Store, id: &str) -> gateway_routing_runtime::types::Rout
             owner: "owner".into(),
             repo: Some("repo".into()),
             usage_limit_requests: 10,
-            window_ms: gateway_authority::DAY_MS,
+            window_ms: gateway_authority_contracts::DAY_MS,
             expires_at_ms: -1,
         },
     );

@@ -1,18 +1,13 @@
 //! Observed ordinary-request leases, never an imported or reusable I/O grant.
-use crate::{
-    journal::{self, AttemptRecord, Journal, Phase},
-    session::RoutingSession,
-    types::{RoutingHost, RoutingResult},
-};
-use gateway_authority::kernel::{KernelReservation, KernelTerminal};
-use gateway_authority::quota::{ApiReservation, ApiUsageRequest, ApiUsageState};
-use gateway_authority::store::{AuthorityClock, TokenSource};
+use crate::{journal, journal::AttemptRecord, journal::Journal, journal::Phase};
+use crate::{session::RoutingSession, types::RoutingHost, types::RoutingResult};
+use gateway_authority::{kernel::KernelReservation, kernel::KernelTerminal};
+use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
-use gateway_core::error::GatewayError;
-use gateway_core::lifecycle::SemanticTerminal;
-use gateway_core::local_work::LocalWorkPhase;
-use gateway_core::query::QueryStore;
-use gateway_core::state::{AtomicTransition, CommitOutcome, RevisionCheck, StoredRecord};
+use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, local_work::LocalWorkPhase};
+use gateway_core::{query::QueryStore, state::AtomicTransition, state::CommitOutcome};
+use gateway_core::{state::RevisionCheck, state::StoredRecord};
 use std::cell::RefCell;
 
 /// Captured only by the two genuine constructors, never loaded from stored rows.
@@ -422,7 +417,7 @@ impl<
             expiry
         } else {
             operation_at
-                .checked_add(gateway_authority::REQUEST_LEASE_MS)
+                .checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
                 .ok_or_else(invalid)?
         };
         let checks: Vec<crate::types::RevisionCheckWire> = checks

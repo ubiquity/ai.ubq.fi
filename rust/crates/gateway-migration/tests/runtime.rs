@@ -123,7 +123,7 @@ fn fixture() -> (PrivateCapture, String) {
     )
 }
 struct Tokens(AtomicU64);
-impl gateway_authority::store::TokenSource for Tokens {
+impl gateway_authority_contracts::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         Ok(format!(
             "fixture-revision-{}",
@@ -132,7 +132,7 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(2300)
     }
@@ -158,7 +158,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         Clock,
     );
     assert!(
-        run(authority.reserve_api_key(
+        run(authority.api_quota().reserve_api_key(
             &ApiKeyId("fixture-key".into()),
             &RequestId("old-dispatched".into()),
             "responses",
@@ -166,7 +166,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         ))
         .is_err()
     );
-    let consumed = gateway_authority::quota::ApiReservation {
+    let consumed = gateway_authority_api_protocol::ApiReservation {
         key_id: ApiKeyId("fixture-key".into()),
         request_id: RequestId("old-dispatched".into()),
         route: "responses".into(),
@@ -175,7 +175,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         window_reset_at_ms: 3000,
         deferred: false,
     };
-    assert!(!run(authority.release_api_key(
+    assert!(!run(authority.api_release().release_api_key(
         &consumed,
         false,
         "unknown source transport",
@@ -192,7 +192,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
         .value["state"],
         "dispatched"
     );
-    let reservation = run(authority.reserve_api_key(
+    let reservation = run(authority.api_quota().reserve_api_key(
         &ApiKeyId("fixture-key".into()),
         &RequestId("new-request".into()),
         "responses",

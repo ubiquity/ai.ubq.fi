@@ -2,10 +2,11 @@
 use crate::{
     invalid,
     routing_types::{AccountCatalog, ModelAvailability, UnsupportedModel},
-    store::{TokenSource, Transaction},
+    store::Transaction,
     unavailable,
 };
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{

@@ -1,8 +1,9 @@
 //! Full source roster and exact capability/ordered-pool fingerprints, without discovery I/O.
 use super::PreparedTarget;
-use crate::store::{Authority, TokenSource, Transaction};
+use crate::store::{Authority, Transaction};
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
+use gateway_authority_contracts::TokenSource;
 use gateway_cache_experiment_records::model::{
     PROFILE, PROVIDER, Reason, TELEMETRY_PROVIDER, TargetBinding, failed, unavailable,
 };

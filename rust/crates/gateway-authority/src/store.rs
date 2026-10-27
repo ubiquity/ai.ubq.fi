@@ -1,4 +1,5 @@
 use crate::{invalid, text, validate_time};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::{
     error::GatewayError,
     source_control::{decode_source_control_record, encode_source_control_record},
@@ -14,17 +15,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
-
-/// Platform-supplied cryptographically unique opaque tokens. Revisions are never parsed.
-/// A reset owner or probe token must remain unpredictable to other callers.
-pub trait TokenSource {
-    fn next_token(&self) -> Result<String, GatewayError>;
-}
-
-/// Time-sensitive authority actions recheck time after awaited reads and before spending.
-pub trait AuthorityClock: Send + Sync {
-    fn now_ms(&self) -> Result<i64, GatewayError>;
-}
 
 pub struct Authority<S, I> {
     pub(crate) store: S,
@@ -98,6 +88,13 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             ));
         }
         Ok(now)
+    }
+
+    pub fn api_quota(&self) -> gateway_authority_api_quota::ApiQuotaService<'_, S, I> {
+        gateway_authority_api_quota::ApiQuotaService::new(&self.store, &self.tokens)
+    }
+    pub fn api_release(&self) -> gateway_authority_api_release::ApiReleaseService<'_, S, I> {
+        gateway_authority_api_release::ApiReleaseService::new(&self.store, &self.tokens)
     }
 
     pub fn store(&self) -> &S {
@@ -176,17 +173,6 @@ impl<S: AuthorityStore, I: TokenSource> Transaction<'_, S, I> {
             return Ok(None);
         }
         Ok(raw)
-    }
-    /// Same read/cache/revision operation as read; only origin is retained for
-    /// the finite local-release error adapter. It exposes no mutation or I/O grant.
-    pub(crate) async fn read_api_release<T: DeserializeOwned>(
-        &mut self,
-        key: &RecordKey,
-    ) -> Result<Option<T>, ApiReleaseReadError> {
-        self.cached_record_classified(key)
-            .await?
-            .map(|row| decode_json_record(row).map_err(ApiReleaseReadError::Record))
-            .transpose()
     }
 
     /// Establish only the existing cached metadata/revision precondition. This

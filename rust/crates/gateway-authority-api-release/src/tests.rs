@@ -1,5 +1,6 @@
 use super::*;
-use crate::quota::{ApiKeyPolicy, ApiUsageRequest, ApiUsageState};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::{ApiKeyPolicy, ApiUsageRequest, ApiUsageState};
 use gateway_authority_keys as keys;
 use gateway_core::{
     identity::{ApiKeyId, RequestId},
@@ -106,7 +107,7 @@ fn fixture(deferred: bool) -> Fixture {
         StoredRecord::json("policy", serde_json::to_value(policy).unwrap(), None),
     );
     let reservation = if deferred {
-        run(authority.reserve_api_key_deferred(
+        run(authority.api_quota().reserve_api_key_deferred(
             &ApiKeyId("key".into()),
             &RequestId("original".into()),
             "responses",
@@ -114,7 +115,7 @@ fn fixture(deferred: bool) -> Fixture {
         ))
         .unwrap()
     } else {
-        run(authority.reserve_api_key(
+        run(authority.api_quota().reserve_api_key(
             &ApiKeyId("key".into()),
             &RequestId("original".into()),
             "responses",
@@ -146,6 +147,7 @@ fn window(f: &Fixture) -> RecordKey {
 fn local_error(f: &Fixture) -> GatewayError {
     match run(f
         .authority
+        .api_release()
         .release_local_response_api(&f.reservation, 2_000))
     {
         Err(error) => error.as_gateway_error(),
@@ -168,7 +170,7 @@ fn local_malformed_preserves_public_diagnostic_without_exposing_generic_400() {
         } else {
             f.store.rows.borrow_mut().remove(&window(&f).0);
         }
-        let old = run(f.authority.release_api_key(
+        let old = run(f.authority.api_release().release_api_key(
             &f.reservation,
             false,
             "route_completed_without_provider_dispatch",
@@ -198,6 +200,7 @@ fn exact_five_conflicts_keep_old_public_error_and_new_source_message() {
     assert_eq!(
         run(f
             .authority
+            .api_release()
             .release_api_key(&f.reservation, false, "same", 2_000))
         .unwrap_err(),
         GatewayError::unavailable(
@@ -223,6 +226,7 @@ fn backend_origin_and_lost_ack_are_unavailable_not_an_invented_quota_400() {
     assert_eq!(
         run(f
             .authority
+            .api_release()
             .release_api_key(&f.reservation, false, "same", 2_000))
         .unwrap_err(),
         diagnostic
@@ -256,19 +260,25 @@ fn dispatched_missing_deferred_and_released_noops_never_compensate() {
                 f.store.rows.borrow_mut().remove(&request(&f).0);
             }
             "released" => {
-                run(f
-                    .authority
-                    .release_api_key(&f.reservation, false, "prior", 1_100))
+                run(f.authority.api_release().release_api_key(
+                    &f.reservation,
+                    false,
+                    "prior",
+                    1_100,
+                ))
                 .unwrap();
             }
             "dispatched" | "started" => {
-                run(f
-                    .authority
-                    .dispatch_api_key(&f.reservation, UpstreamProvider::Surplus, 1_100))
+                run(f.authority.api_quota().dispatch_api_key(
+                    &f.reservation,
+                    UpstreamProvider::Surplus,
+                    1_100,
+                ))
                 .unwrap();
                 if branch == "started" {
                     run(f
                         .authority
+                        .api_quota()
                         .mark_api_transport_started(&f.reservation, 1_101))
                     .unwrap();
                 }
@@ -281,6 +291,7 @@ fn dispatched_missing_deferred_and_released_noops_never_compensate() {
         assert!(
             !run(f
                 .authority
+                .api_release()
                 .release_local_response_api(&f.reservation, 2_000))
             .unwrap()
             .was_released()
@@ -298,6 +309,7 @@ fn classified_release_reuses_the_same_reads_and_old_compensation_caller_is_uncha
     assert!(
         run(f
             .authority
+            .api_release()
             .release_local_response_api(&f.reservation, 2_000))
         .unwrap()
         .was_released()
@@ -307,14 +319,14 @@ fn classified_release_reuses_the_same_reads_and_old_compensation_caller_is_uncha
     assert_eq!(reads.iter().filter(|k| **k == window(&f)).count(), 1);
     assert_eq!(f.store.attempts.get(), 1);
     let compensate = fixture(false);
-    run(compensate.authority.dispatch_api_key(
+    run(compensate.authority.api_quota().dispatch_api_key(
         &compensate.reservation,
         UpstreamProvider::Surplus,
         1_100,
     ))
     .unwrap();
     assert!(
-        run(compensate.authority.release_api_key(
+        run(compensate.authority.api_release().release_api_key(
             &compensate.reservation,
             true,
             "known-before-transport",

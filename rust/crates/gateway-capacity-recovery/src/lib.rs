@@ -4,8 +4,9 @@ use gateway_auth::provider_credentials::{CodexSourceSnapshot, read_codex_source_
 use gateway_authority::{
     capacity::{CodexCapacityAccountRef, CodexCapacitySample},
     routing_types::{CapacityState, CohortProof, RouteSelection},
-    store::{Authority, TokenSource},
+    store::Authority,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, model::ModelId, state::AuthorityStore};
 use gateway_observability::{
     capacity_shapes,

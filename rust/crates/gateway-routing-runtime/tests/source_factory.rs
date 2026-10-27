@@ -1,7 +1,6 @@
-use gateway_authority::{
-    quota::ApiReservation,
-    store::{Authority, AuthorityClock, TokenSource},
-};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiReservation;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::{
     error::GatewayError,
     source_json::SourceJson,
@@ -218,7 +217,7 @@ fn failed_planning_cleans_expired_original_without_provider_terminal_or_new_admi
         "factory-owner",
         r#"{"model":"unavailable-model","input":"source fixture","reasoning":{"effort":"none"}}"#,
     );
-    store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
+    store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
     assert!(run(RoutingSession::from_local_admission(admission)).is_err());
     let row = store.value(session_key("factory-owner"));
     assert_eq!(row["local_work"]["terminal"]["semantic"], "incomplete");
@@ -245,6 +244,7 @@ impl TokenSource for RacingTokens {
         if let Some(api) = self.release.lock().unwrap().take() {
             run(
                 Authority::with_clock(self.store.clone(), self.store.clone(), self.store.clone())
+                    .api_release()
                     .release_api_key(&api, true, "fixture-final-phase-race", self.store.now_ms()?),
             )?;
         }

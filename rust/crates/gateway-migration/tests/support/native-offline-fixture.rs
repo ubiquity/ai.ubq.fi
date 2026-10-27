@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     use sqlite_store::SqliteStore;
     struct Tokens(std::sync::atomic::AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "native-fixture-{}",
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Tokens(std::sync::atomic::AtomicU64::new(1)),
         Clock,
     );
-    run(authority.reserve_api_key(
+    run(authority.api_quota().reserve_api_key(
         &gateway_core::identity::ApiKeyId("offline-key".into()),
         &gateway_core::identity::RequestId("native-post-restart-admission".into()),
         "responses",

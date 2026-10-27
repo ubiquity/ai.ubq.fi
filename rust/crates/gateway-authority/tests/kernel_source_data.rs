@@ -244,7 +244,7 @@ fn live_named_policy_number_and_zero_index_decode_preserve_original_retention() 
         if admitted {
             assert_eq!(
                 after.expires_at_ms,
-                Some(NOW + 60000 + gateway_authority::QUOTA_RETENTION_MS)
+                Some(NOW + 60000 + gateway_authority_contracts::QUOTA_RETENTION_MS)
             );
             let window: KernelWindow = serde_json::from_value(after.value).unwrap();
             assert_eq!(window.reserved_requests, 1);

@@ -50,7 +50,7 @@ impl RefreshPermit {
 /// source revision, while these immutable campaign and account-membership facts remain.
 pub(crate) async fn validate_refresh_context<
     S: gateway_core::state::AuthorityStore,
-    I: crate::store::TokenSource,
+    I: gateway_authority_contracts::TokenSource,
 >(
     tx: &mut crate::store::Transaction<'_, S, I>,
     context: &RefreshContext,

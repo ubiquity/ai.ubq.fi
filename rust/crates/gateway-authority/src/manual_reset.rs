@@ -11,7 +11,7 @@ use crate::{
     routing::{self, RoutingView},
     routing_rules,
     routing_types::{CapacityObservation, CapacityState},
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
 };
 use gateway_auth::{
     provider_credentials::{
@@ -19,6 +19,7 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,

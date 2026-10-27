@@ -1,6 +1,3 @@
-use gateway_authority::DAY_MS;
-use gateway_authority::PAID_RETENTION_MS;
-use gateway_authority::QUOTA_RETENTION_MS;
 use gateway_authority::kernel::KernelPolicy;
 use gateway_authority::kernel::KernelTerminal;
 use gateway_authority::kernel::KernelWindow;
@@ -8,7 +5,6 @@ use gateway_authority::paid_types::PaidAuthorization;
 use gateway_authority::paid_types::PaidCorrelation;
 use gateway_authority::paid_types::PaidUsage;
 use gateway_authority::paid_types::PaidWindow;
-use gateway_authority::quota::ApiUsageWindow;
 use gateway_authority::reset::utc_day;
 use gateway_authority::reset_types::AccountDayBudget;
 use gateway_authority::reset_types::ResetCandidate;
@@ -19,6 +15,10 @@ use gateway_authority::reset_types::ResetMode;
 use gateway_authority::reset_types::ResetState;
 use gateway_authority::reset_types::reset_invocation;
 use gateway_authority::routing_types::RouteSelection;
+use gateway_authority_api_protocol::ApiUsageWindow;
+use gateway_authority_contracts::DAY_MS;
+use gateway_authority_contracts::PAID_RETENTION_MS;
+use gateway_authority_contracts::QUOTA_RETENTION_MS;
 use gateway_authority_keys as keys;
 use gateway_authority_test_support::TestResult;
 use gateway_authority_test_support::fixture_json;
@@ -173,15 +173,34 @@ fn api_dispatch_counts_once_and_client_cancellation_does_not_refund() {
     seed_policy(&store);
     let authority = authority(&store);
     let reservation =
-        run(authority.reserve_api_key(&policy().key_id, &id("one"), "responses", NOW)).unwrap();
+        run(authority
+            .api_quota()
+            .reserve_api_key(&policy().key_id, &id("one"), "responses", NOW))
+        .unwrap();
     assert!(
-        run(authority.dispatch_api_key(&reservation, UpstreamProvider::ChatgptCodex, NOW)).unwrap()
+        run(authority.api_quota().dispatch_api_key(
+            &reservation,
+            UpstreamProvider::ChatgptCodex,
+            NOW
+        ))
+        .unwrap()
     );
     assert!(
-        !run(authority.dispatch_api_key(&reservation, UpstreamProvider::Metered, NOW)).unwrap()
+        !run(authority
+            .api_quota()
+            .dispatch_api_key(&reservation, UpstreamProvider::Metered, NOW))
+        .unwrap()
     );
-    run(authority.mark_api_transport_started(&reservation, NOW)).unwrap();
-    assert!(!run(authority.release_api_key(&reservation, true, "client_cancelled", NOW)).unwrap());
+    run(authority
+        .api_quota()
+        .mark_api_transport_started(&reservation, NOW))
+    .unwrap();
+    assert!(
+        !run(authority
+            .api_release()
+            .release_api_key(&reservation, true, "client_cancelled", NOW))
+        .unwrap()
+    );
     let window: ApiUsageWindow = serde_json::from_value(
         store
             .row(&keys::api_window(
@@ -198,7 +217,10 @@ fn api_dispatch_counts_once_and_client_cancellation_does_not_refund() {
         (1, 0)
     );
     assert!(
-        run(authority.reserve_api_key(&policy().key_id, &id("one"), "responses", NOW)).is_err()
+        run(authority
+            .api_quota()
+            .reserve_api_key(&policy().key_id, &id("one"), "responses", NOW))
+        .is_err()
     );
 }
 
@@ -208,16 +230,40 @@ fn known_pretransport_cancellation_and_reserved_release_are_idempotent() {
     seed_policy(&store);
     let authority = authority(&store);
     let reservation =
-        run(authority.reserve_api_key(&policy().key_id, &id("one"), "responses", NOW)).unwrap();
-    run(authority.dispatch_api_key(&reservation, UpstreamProvider::Surplus, NOW)).unwrap();
+        run(authority
+            .api_quota()
+            .reserve_api_key(&policy().key_id, &id("one"), "responses", NOW))
+        .unwrap();
+    run(authority
+        .api_quota()
+        .dispatch_api_key(&reservation, UpstreamProvider::Surplus, NOW))
+    .unwrap();
     assert!(
-        run(authority.release_api_key(&reservation, true, "transport_cancelled_before_fetch", NOW))
-            .unwrap()
+        run(authority.api_release().release_api_key(
+            &reservation,
+            true,
+            "transport_cancelled_before_fetch",
+            NOW
+        ))
+        .unwrap()
     );
-    assert!(!run(authority.release_api_key(&reservation, true, "again", NOW)).unwrap());
+    assert!(
+        !run(authority
+            .api_release()
+            .release_api_key(&reservation, true, "again", NOW))
+        .unwrap()
+    );
     let other =
-        run(authority.reserve_api_key(&policy().key_id, &id("two"), "responses", NOW)).unwrap();
-    assert!(run(authority.release_api_key(&other, false, "validation", NOW)).unwrap());
+        run(authority
+            .api_quota()
+            .reserve_api_key(&policy().key_id, &id("two"), "responses", NOW))
+        .unwrap();
+    assert!(
+        run(authority
+            .api_release()
+            .release_api_key(&other, false, "validation", NOW))
+        .unwrap()
+    );
 }
 
 #[test]
@@ -227,12 +273,21 @@ fn full_quota_allows_deferred_local_work_but_still_blocks_provider_dispatch() {
     limited.usage_limit_requests = 0;
     store.seed(keys::api_policy("key-a"), &limited);
     let authority = authority(&store);
-    let deferred =
-        run(authority.reserve_api_key_deferred(&limited.key_id, &id("local"), "responses", NOW))
-            .unwrap();
+    let deferred = run(authority.api_quota().reserve_api_key_deferred(
+        &limited.key_id,
+        &id("local"),
+        "responses",
+        NOW,
+    ))
+    .unwrap();
     assert!(deferred.deferred);
-    assert!(!run(authority.release_api_key(&deferred, false, "local_compaction", NOW)).unwrap());
-    assert!(run(authority.resolve_deferred_api(&deferred, NOW)).is_err());
+    assert!(
+        !run(authority
+            .api_release()
+            .release_api_key(&deferred, false, "local_compaction", NOW))
+        .unwrap()
+    );
+    assert!(run(authority.api_quota().resolve_deferred_api(&deferred, NOW)).is_err());
 }
 
 #[test]
@@ -247,7 +302,7 @@ fn concurrent_api_admissions_never_exceed_limit_and_cas_conflicts_retry() -> Tes
             let tokens = tokens.clone();
             std::thread::spawn(move || {
                 let authority = gateway_authority::store::Authority::new(store, tokens);
-                run(authority.reserve_api_key(
+                run(authority.api_quota().reserve_api_key(
                     &policy().key_id,
                     &id(&format!("request-{index}")),
                     "responses",
@@ -628,8 +683,13 @@ fn reset_identity_deduplicates_refresh_and_utc_days_and_expiry_remain_absolute()
     let store = MemoryStore::default();
     seed_policy(&store);
     let authority = authority(&store);
-    let reservation =
-        run(authority.reserve_api_key(&policy().key_id, &id("expiry"), "responses", NOW)).unwrap();
+    let reservation = run(authority.api_quota().reserve_api_key(
+        &policy().key_id,
+        &id("expiry"),
+        "responses",
+        NOW,
+    ))
+    .unwrap();
     let key = keys::api_request(
         "key-a",
         &reservation.policy_version,

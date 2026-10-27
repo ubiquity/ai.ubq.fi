@@ -6,12 +6,13 @@ use crate::{
     routing_types::{
         CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityWindows,
     },
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text, unavailable,
 };
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, codex_source_pool_key, read_codex_source_pool,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::codec::parse_routing_state;

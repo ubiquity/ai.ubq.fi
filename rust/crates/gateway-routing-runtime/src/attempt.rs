@@ -1,23 +1,16 @@
-use crate::{
-    journal::{self, AttemptRecord, Journal, Phase, unavailable},
-    policy::RouteHop,
-    session::RoutingSession,
-    settlement,
-    types::{
-        ClaudeSelection, CodexRecovery, CredentialFence, PreparedAttempt, PublishedCredential,
-        RoutingError, RoutingHost, RoutingResult, SourceRefusalBody,
-    },
-};
-use gateway_authority::paid_types::{
-    PaidAdmission, PaidAuthorization, PaidRequest, PaidReservation,
-};
+use crate::{journal, journal::AttemptRecord, journal::Journal, journal::Phase};
+use crate::{journal::unavailable, policy::RouteHop, session::RoutingSession, settlement};
+use crate::{types::ClaudeSelection, types::CodexRecovery, types::CredentialFence};
+use crate::{types::PreparedAttempt, types::PublishedCredential, types::RoutingError};
+use crate::{types::RoutingHost, types::RoutingResult, types::SourceRefusalBody};
 use gateway_authority::routing_types::RouteSelection;
-use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::provider::UpstreamProvider::{ChatgptCodex, ClaudeCode};
-use gateway_core::provider::{PaidProvider, UpstreamProvider};
-use gateway_core::query::QueryStore;
-use gateway_core::{identity::PaidAttemptId, model::ModelId};
+use gateway_authority::{paid_types::PaidAdmission, paid_types::PaidAuthorization};
+use gateway_authority::{paid_types::PaidRequest, paid_types::PaidReservation};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_core::model::ModelId;
+use gateway_core::{error::GatewayError, provider::UpstreamProvider::ChatgptCodex};
+use gateway_core::{identity::PaidAttemptId, provider::UpstreamProvider, query::QueryStore};
+use gateway_core::{provider::PaidProvider, provider::UpstreamProvider::ClaudeCode};
 use gateway_providers::types::ClientSurface;
 use gateway_schema::source_request::error::SourceRequestError;
 

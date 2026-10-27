@@ -20,7 +20,7 @@ fn graph_key(index: i64) -> RecordKey {
     key(json!(["default", "native-graph", index]))
 }
 struct Tokens(std::sync::atomic::AtomicU64);
-impl gateway_authority::store::TokenSource for Tokens {
+impl gateway_authority_contracts::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, gateway_core::error::GatewayError> {
         Ok(format!(
             "native-fixture-{}",
@@ -29,7 +29,7 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, gateway_core::error::GatewayError> {
         Ok(2300)
     }
@@ -56,7 +56,7 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
         Tokens(std::sync::atomic::AtomicU64::new(1)),
         Clock,
     );
-    let admission = run(authority.reserve_api_key(
+    let admission = run(authority.api_quota().reserve_api_key(
         &gateway_core::identity::ApiKeyId("offline-key".into()),
         &gateway_core::identity::RequestId("native-post-restart-admission".into()),
         "responses",

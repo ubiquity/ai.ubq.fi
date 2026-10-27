@@ -4,9 +4,10 @@ use super::{PaidRoutingReceipt, control_error, source_key};
 use crate::{
     kernel::KernelReservation,
     paid_types::{PaidAttempt, PaidRequest, PaidReservation},
-    quota::{ApiReservation, ApiUsageRequest, ApiUsageState},
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
 };
+use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,

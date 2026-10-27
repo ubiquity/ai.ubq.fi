@@ -18,8 +18,9 @@ use gateway_authority::{
         import::PreparedNativeImport,
         receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
     },
-    store::{Authority, TokenSource},
+    store::Authority,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc};
 

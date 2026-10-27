@@ -19,7 +19,8 @@ use gateway_authority::native_control::{
     import::AuthenticatedNativeImport,
     receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
 };
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,

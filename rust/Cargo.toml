@@ -1,5 +1,9 @@
 [workspace]
 members = [
+  "crates/gateway-authority-api-release",
+  "crates/gateway-authority-api-quota",
+  "crates/gateway-authority-api-protocol",
+  "crates/gateway-authority-contracts",
   "crates/gateway-authority-initial-owner",
   "crates/gateway-authority-paid-control-records",
   "crates/gateway-authority-test-support",
@@ -53,6 +57,10 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-api-release = { path = "crates/gateway-authority-api-release" }
+gateway-authority-api-quota = { path = "crates/gateway-authority-api-quota" }
+gateway-authority-api-protocol = { path = "crates/gateway-authority-api-protocol" }
+gateway-authority-contracts = { path = "crates/gateway-authority-contracts" }
 gateway-authority-initial-owner = { path = "crates/gateway-authority-initial-owner" }
 gateway-authority-paid-control-records = { path = "crates/gateway-authority-paid-control-records" }
 gateway-authority-test-support = { path = "crates/gateway-authority-test-support" }

@@ -2,9 +2,10 @@
 use crate::{
     DAY_MS, PROBE_LEASE_MS, add, invalid, next_generation, nonnegative,
     routing::{read_view, validate_cohort},
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text, unavailable,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_core::{error::GatewayError, state::AuthorityStore};

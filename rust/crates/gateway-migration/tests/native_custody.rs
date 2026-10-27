@@ -493,7 +493,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
         expected.credential_version
     );
     struct Tokens(std::sync::atomic::AtomicU64);
-    impl gateway_authority::store::TokenSource for Tokens {
+    impl gateway_authority_contracts::TokenSource for Tokens {
         fn next_token(&self) -> Result<String, GatewayError> {
             Ok(format!(
                 "operator-route-{}",
@@ -502,7 +502,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
         }
     }
     struct Clock;
-    impl gateway_authority::store::AuthorityClock for Clock {
+    impl gateway_authority_contracts::AuthorityClock for Clock {
         fn now_ms(&self) -> Result<i64, GatewayError> {
             Ok(2300)
         }

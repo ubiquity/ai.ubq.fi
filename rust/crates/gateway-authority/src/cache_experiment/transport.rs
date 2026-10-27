@@ -5,15 +5,16 @@ use super::{
 };
 use crate::{
     routing::{model_quota_class, read_pinned_view},
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
 };
 use gateway_auth::{
     crypto::Secret,
     provider_credentials::{CodexSourcePool, codex_source_pool_key, parse_codex_source_pool},
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_routing_records::types::{ProbeCircuit, ProbeLease};
 use gateway_cache_experiment_records::RefreshContext;
-use gateway_cache_experiment_records::model::{Reason, Sample, TargetBinding, failed, unavailable};
+use gateway_cache_experiment_records::model::{Reason, Sample, TargetBinding, failed};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, PoolVersionstamp};
 use gateway_core::state::AuthorityStore;

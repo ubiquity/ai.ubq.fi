@@ -6,10 +6,7 @@ use super::{
         self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, conflict, fail,
     },
 };
-use crate::{
-    store::{TokenSource, Transaction},
-    text,
-};
+use crate::{store::Transaction, text};
 use gateway_auth::{
     crypto::{Secret, sha256_hex},
     native_auth::{AuthenticatedNativeOwner, NativeCapability},
@@ -21,6 +18,7 @@ use gateway_auth::{
     },
 };
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{

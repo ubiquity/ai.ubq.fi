@@ -1,6 +1,7 @@
 //! Source v3 campaign/evidence CAS, using the one existing authority store.
 use super::target::{key, resolve};
-use crate::store::{Authority, TokenSource, Transaction};
+use crate::store::{Authority, Transaction};
+use gateway_authority_contracts::TokenSource;
 use gateway_cache_experiment_records::model::{
     Cycle, Evidence, LEASE_MS, Outcome, PROVIDER, Reason, SESSION_MS, State, TELEMETRY_PROVIDER,
     TargetBinding, busy, failed, unavailable,

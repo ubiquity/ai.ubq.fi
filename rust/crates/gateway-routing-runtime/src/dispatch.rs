@@ -1,21 +1,15 @@
-use crate::{
-    classify,
-    journal::{self, AttemptRecord, BillingUsage, Journal, Phase, unavailable},
-    session::RoutingSession,
-    settlement,
-    types::{
-        AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin, PreparedAttempt,
-        RecoveredSession, RefreshOutcome, RefusalDecision, RevisionCheckWire, RoutingHost,
-        RoutingResult, TransportState,
-    },
-};
+use crate::{classify, journal, journal::AttemptRecord, journal::BillingUsage, journal::Journal};
+use crate::{journal::Phase, journal::unavailable, session::RoutingSession, settlement};
+use crate::{types::AttemptFailure, types::AttemptUsage, types::CredentialFence};
+use crate::{types::FailureOrigin, types::PreparedAttempt, types::RecoveredSession};
+use crate::{types::RefreshOutcome, types::RefusalDecision, types::RevisionCheckWire};
+use crate::{types::RoutingHost, types::RoutingResult, types::TransportState};
 use gateway_authority::kernel::KernelTerminal;
-use gateway_authority::store::{AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
-use gateway_core::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
-use gateway_core::provider::UpstreamProvider;
-use gateway_core::query::QueryStore;
-use gateway_providers::policy::{HopDecision, HopFailure};
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_core::{error::GatewayError, lifecycle::PaidTerminalState};
+use gateway_core::{lifecycle::SemanticTerminal, lifecycle::TransportObservation};
+use gateway_core::{provider::UpstreamProvider, query::QueryStore};
+use gateway_providers::{policy::HopDecision, policy::HopFailure};
 
 impl<
     S: QueryStore + Clone,
@@ -60,12 +54,14 @@ impl<
         if let Some(reservation) = &api {
             api = Some(
                 self.authority()
+                    .api_quota()
                     .resolve_deferred_api(reservation, self.now()?)
                     .await?,
             );
         }
         if let Some(reservation) = &api {
             self.authority()
+                .api_quota()
                 .dispatch_api_key(reservation, record.provider, self.now()?)
                 .await?;
         }
@@ -201,6 +197,7 @@ impl<
         // a later rotation cannot erase the fact that the old attempt started.
         if let Some(api) = &row.api {
             self.authority()
+                .api_quota()
                 .mark_api_transport_started(api, self.now()?)
                 .await?;
         }

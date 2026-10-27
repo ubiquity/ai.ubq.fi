@@ -7,9 +7,10 @@ use crate::{
     },
     routing::read_view,
     routing_types::AdmittedAccount,
-    store::{Authority, TokenSource},
+    store::Authority,
     text, unavailable,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::ProbeLease;
 use gateway_core::{

@@ -2,8 +2,8 @@ use crate::{Row, Transform, decode, invalid, starts, unavailable};
 use gateway_authority::{
     kernel::{KernelPolicy, KernelReservation, KernelWindow},
     paid_types::{PaidAttempt, PaidWindow, PendingPaid, ReconciliationGate},
-    quota::{ApiUsageRequest, ApiUsageWindow},
 };
+use gateway_authority_api_protocol::{ApiUsageRequest, ApiUsageWindow};
 use gateway_core::error::GatewayError;
 use gateway_core::{lifecycle::BillingState, value::PortableValue};
 use serde_json::Value;

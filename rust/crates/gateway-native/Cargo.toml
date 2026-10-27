@@ -10,6 +10,7 @@ default = []
 native-import-fixture = ["gateway-authority/native-import-fixture"]
 
 [dependencies]
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }

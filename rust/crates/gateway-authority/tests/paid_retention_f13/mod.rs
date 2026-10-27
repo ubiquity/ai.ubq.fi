@@ -1,12 +1,12 @@
 //! Bounded F13 experiment against current public Rust authority primitives only.
 //! Source b6e25555179ad2b195b0bab93e946be834ecda6c native-authority.test.ts1097-1113
 //! is a fixture-only generic service with permanent attempt_lifetime rows, not a live Rust RPC.
-use gateway_authority::DAY_MS;
 use gateway_authority::{
-    PAID_RETENTION_MS,
     paid_control::*,
     paid_types::{PaidAdmission, PaidAuthorization, PaidRequest},
 };
+use gateway_authority_contracts::DAY_MS;
+use gateway_authority_contracts::PAID_RETENTION_MS;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
@@ -231,8 +231,13 @@ fn f13_expired_history_must_not_recreate_a_retained_logical_paid_attempt() {
     let (store, authority, input, receipt) = setup();
     // Retain the original public API reservation and opaque paid routing receipt;
     // never mint a replacement request, admission or provider outcome for replay.
-    let api = run(authority.reserve_api_key(&input.key_id, &input.request_id, &input.route, NOW))
-        .unwrap();
+    let api = run(authority.api_quota().reserve_api_key(
+        &input.key_id,
+        &input.request_id,
+        &input.route,
+        NOW,
+    ))
+    .unwrap();
     let first =
         run(authority.reserve_paid(&input, &PaidAuthorization::DirectPaidModel, &receipt, NOW))
             .unwrap();
@@ -257,7 +262,10 @@ fn f13_expired_history_must_not_recreate_a_retained_logical_paid_attempt() {
             .unwrap()
             .is_some()
     );
-    let api_replay = run(authority.dispatch_api_key(&api, UpstreamProvider::Surplus, future));
+    let api_replay =
+        run(authority
+            .api_quota()
+            .dispatch_api_key(&api, UpstreamProvider::Surplus, future));
     assert!(
         api_replay.is_err(),
         "Original API dispatch fence must not authorize an expired admission"
@@ -318,12 +326,17 @@ fn f13_original_dispatched_api_still_allows_same_request_waterfall() {
     let (store, authority, input, _) = setup();
     let journal = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut row = store.row(&journal).unwrap().value;
-    let api: gateway_authority::quota::ApiReservation =
+    let api: gateway_authority_api_protocol::ApiReservation =
         serde_json::from_value(row["api"].clone()).unwrap();
-    assert!(run(authority.dispatch_api_key(&api, UpstreamProvider::Metered, NOW)).unwrap());
-    let future = NOW + gateway_authority::REQUEST_LEASE_MS + 1;
+    assert!(
+        run(authority
+            .api_quota()
+            .dispatch_api_key(&api, UpstreamProvider::Metered, NOW))
+        .unwrap()
+    );
+    let future = NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1;
     // Existing legitimate owner renewal changes this same journal, not admission.
-    row["lease_expires_at_ms"] = json!(future + gateway_authority::REQUEST_LEASE_MS);
+    row["lease_expires_at_ms"] = json!(future + gateway_authority_contracts::REQUEST_LEASE_MS);
     store.seed(journal, &row);
     store.clock(future);
     let route = run(authority.authorize_paid_route(&input, &context(&input), future)).unwrap();
@@ -389,7 +402,7 @@ fn f13_released_api_and_missing_non_deferred_admission_are_refused() {
             ))
             .unwrap()
             .value;
-        let api: gateway_authority::quota::ApiReservation =
+        let api: gateway_authority_api_protocol::ApiReservation =
             serde_json::from_value(journal["api"].clone()).unwrap();
         let key = keys::api_request(
             &api.key_id.0,
@@ -434,7 +447,10 @@ fn f13_changed_journal_revision_aborts_reservation_cas_without_exposure() {
     );
     assert!(
         store
-            .row(&keys::paid_window("key-a", NOW + gateway_authority::DAY_MS))
+            .row(&keys::paid_window(
+                "key-a",
+                NOW + gateway_authority_contracts::DAY_MS
+            ))
             .is_none()
     );
 }
@@ -444,7 +460,7 @@ fn f13_deferred_original_intent_and_non_api_owner_do_not_require_new_admission()
         let (store, authority, input, _) = setup();
         let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
         let mut journal = store.row(&key).unwrap().value;
-        let api: gateway_authority::quota::ApiReservation =
+        let api: gateway_authority_api_protocol::ApiReservation =
             serde_json::from_value(journal["api"].clone()).unwrap();
         let api_key = keys::api_request(
             &api.key_id.0,
@@ -486,9 +502,9 @@ fn f13_non_api_original_kernel_is_rechecked_without_renewing_it() -> TestResult 
         request_id: input.request_id.clone(),
         route: input.route.clone(),
         window_created_at_ms: NOW,
-        window_reset_at_ms: NOW + gateway_authority::DAY_MS,
+        window_reset_at_ms: NOW + gateway_authority_contracts::DAY_MS,
         reserved_at_ms: NOW,
-        lease_expires_at_ms: NOW + gateway_authority::REQUEST_LEASE_MS,
+        lease_expires_at_ms: NOW + gateway_authority_contracts::REQUEST_LEASE_MS,
         terminal_intent: None,
         state: None,
         terminal_at_ms: None,
@@ -552,15 +568,16 @@ fn f13_exact_active_dispatch_rechecks_existing_only_before_and_after_api_dispatc
         if committed {
             let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
             let mut journal = fixture_row(&store, &key)?.value;
-            let api: gateway_authority::quota::ApiReservation =
+            let api: gateway_authority_api_protocol::ApiReservation =
                 serde_json::from_value(journal["api"].clone())?;
-            assert!(run(authority.dispatch_api_key(
+            assert!(run(authority.api_quota().dispatch_api_key(
                 &api,
                 UpstreamProvider::Metered,
                 NOW
             ))?);
-            now = NOW + gateway_authority::REQUEST_LEASE_MS + 1;
-            journal["lease_expires_at_ms"] = json!(now + gateway_authority::REQUEST_LEASE_MS);
+            now = NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1;
+            journal["lease_expires_at_ms"] =
+                json!(now + gateway_authority_contracts::REQUEST_LEASE_MS);
             store.seed(key, &journal);
             store.clock(now);
         }
@@ -629,13 +646,13 @@ fn f13_wrong_active_attempt_and_expired_dispatch_lease_are_refused() -> TestResu
         &reservation,
         NOW,
     ))?;
-    store.clock(NOW + gateway_authority::REQUEST_LEASE_MS + 1);
+    store.clock(NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1);
     assert!(
         run(authority.reserve_paid(
             &input,
             &PaidAuthorization::DirectPaidModel,
             &dispatch,
-            NOW + gateway_authority::REQUEST_LEASE_MS + 1
+            NOW + gateway_authority_contracts::REQUEST_LEASE_MS + 1
         ))
         .is_err()
     );
@@ -693,9 +710,9 @@ fn f13_local_phase_legacy_and_planned_preserve_both_binding_stages_and_dispatche
                     &gateway_authority_test_support::original::journal_key(&input.request_id.0),
                 )?
                 .value;
-                let api: gateway_authority::quota::ApiReservation =
+                let api: gateway_authority_api_protocol::ApiReservation =
                     serde_json::from_value(journal["api"].clone())?;
-                assert!(run(authority.dispatch_api_key(
+                assert!(run(authority.api_quota().dispatch_api_key(
                     &api,
                     UpstreamProvider::Metered,
                     NOW
@@ -776,7 +793,10 @@ fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() 
         );
         assert!(
             store
-                .row(&keys::paid_window("key-a", NOW + gateway_authority::DAY_MS))
+                .row(&keys::paid_window(
+                    "key-a",
+                    NOW + gateway_authority_contracts::DAY_MS
+                ))
                 .is_none()
         );
     }

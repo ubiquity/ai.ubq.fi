@@ -2,9 +2,10 @@
 use crate::{
     DAY_MS, QUOTA_RETENTION_MS, REQUEST_LEASE_MS, add, invalid, nonnegative, positive, quota_error,
     retention,
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text, unavailable,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError, identity::RequestId, js_string::JsString16, source_json::SourceJson,

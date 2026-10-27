@@ -19,8 +19,9 @@ use gateway_authority::{
         owners::RegisteredRenewalOwners,
         receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
     },
-    store::{Authority, AuthorityClock, TokenSource},
+    store::Authority,
 };
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{

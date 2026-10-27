@@ -5,9 +5,10 @@ use crate::{
     routing_types::{
         AdmittedAccount, CapacityStore, CohortProof, ModelAvailability, RouteSelection,
     },
-    store::{Authority, TokenSource, Transaction},
+    store::{Authority, Transaction},
     text, unavailable,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
 use gateway_authority_routing_records::slot::class_name;

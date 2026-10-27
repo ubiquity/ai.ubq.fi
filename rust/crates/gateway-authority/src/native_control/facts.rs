@@ -3,15 +3,15 @@ use super::{
     actor::StoredNativeActor as Actor,
     rows::{fail, session_key},
 };
-use crate::{
-    quota::{ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState},
-    routing_types::AdmittedAccount,
-    store::{TokenSource, Transaction},
-};
+use crate::{routing_types::AdmittedAccount, store::Transaction};
 use gateway_auth::crypto::sha256_hex;
 use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
+use gateway_authority_api_protocol::{
+    ApiKeyPolicy, ApiReservation, ApiUsageRequest, ApiUsageState,
+};
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,

@@ -1,3 +1,4 @@
+use gateway_authority_api_protocol::ApiKeyPolicy;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProviderObservation,
     PaidRequestContext, PaidRoutingProjection, PaidSourceCheck, PaidSyntheticHop,
@@ -767,7 +768,7 @@ fn custody_metadata_contains_only_the_observed_routing_fields() {
 }
 
 struct Tokens(Cell<u64>);
-impl gateway_authority::store::TokenSource for Tokens {
+impl gateway_authority_contracts::TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         let n = self.0.get() + 1;
         self.0.set(n);
@@ -775,7 +776,7 @@ impl gateway_authority::store::TokenSource for Tokens {
     }
 }
 struct Clock(i64);
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(self.0)
     }
@@ -825,7 +826,6 @@ fn actual_publisher_receipt_and_reservation_share_one_authority_and_reject_stale
 -> TestResult {
     use gateway_authority::{
         paid_types::{PaidAdmission, PaidAuthorization},
-        quota::ApiKeyPolicy,
         store::Authority,
     };
     let store = Store::new();

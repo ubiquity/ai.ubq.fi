@@ -6,10 +6,9 @@ use gateway_auth::native_auth::{
 use gateway_auth::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority::{
-    paid_control::paid_projection_source_keys,
-    paid_types::PaidRequest,
-    store::{Authority, TokenSource},
+    paid_control::paid_projection_source_keys, paid_types::PaidRequest, store::Authority,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
 use gateway_catalog_runtime::host::{
@@ -238,7 +237,7 @@ impl CatalogHost for Host {
     }
 }
 struct Clock;
-impl gateway_authority::store::AuthorityClock for Clock {
+impl gateway_authority_contracts::AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
         Ok(NOW)
     }

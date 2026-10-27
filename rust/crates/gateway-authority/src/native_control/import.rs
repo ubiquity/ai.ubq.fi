@@ -5,11 +5,11 @@ use super::{
     receiver::NativeRenewalAuthority,
     rows,
 };
-use crate::store::TokenSource;
 use gateway_auth::native_import::{
     NativeImportAdmission, NativeImportKind, NativeImportMetadata, NativeImportTarget,
     VerifiedNativeImportBody,
 };
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use serde::{Deserialize, Serialize};
 mod action;

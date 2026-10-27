@@ -22,8 +22,9 @@ use gateway_authority::{
         NativeRenewalCancellation, actor,
         receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
     },
-    store::{Authority, AuthorityClock, TokenSource},
+    store::Authority,
 };
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,

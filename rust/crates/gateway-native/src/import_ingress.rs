@@ -21,7 +21,8 @@ use gateway_authority::native_control::{
     NativeRenewalCancellation,
     receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
 };
-use gateway_authority::store::{Authority, TokenSource};
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
 use std::{
     io::{Read, Write},

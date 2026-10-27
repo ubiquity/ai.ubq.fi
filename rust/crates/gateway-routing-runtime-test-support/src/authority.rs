@@ -1,7 +1,8 @@
 //! Deterministic conformance store, not a Worker/runtime acceptance substitute.
-use gateway_authority::quota::ApiKeyPolicy;
 use gateway_authority::routing_types::{AdmittedAccount, RouteSelection};
-use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiKeyPolicy;
+use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_routing_records::types::{
     PoolAccount, QuotaBlock, QuotaBlockSource, SubscriptionPool,
 };
@@ -310,8 +311,8 @@ pub fn policy() -> ApiKeyPolicy {
         key_id: ApiKeyId("key-a".to_owned()),
         expires_at_ms: -1,
         usage_limit_requests: 2,
-        window_ms: gateway_authority::DAY_MS,
-        usage_reset_at_ms: NOW + gateway_authority::DAY_MS,
+        window_ms: gateway_authority_contracts::DAY_MS,
+        usage_reset_at_ms: NOW + gateway_authority_contracts::DAY_MS,
         paid_fallback_enabled: true,
         paid_fallback_limit_microcredits: 10_000,
         paid_fallback_quota_per_credit: 1_000_000,

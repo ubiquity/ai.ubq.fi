@@ -76,7 +76,8 @@ fn source_policy_keys_and_reasoning_round_trip_without_logical_model_conflation(
     seed_source(&store, keys::api_policy("key-a"), &expected);
     let stored = store.row(&keys::api_policy("key-a")).unwrap();
     assert_eq!(stored.value_encoding, ValueEncoding::ProfileV2);
-    let actual: gateway_authority::quota::ApiKeyPolicy = row(&store, &keys::api_policy("key-a"));
+    let actual: gateway_authority_api_protocol::ApiKeyPolicy =
+        row(&store, &keys::api_policy("key-a"));
     assert_eq!(actual, expected);
     assert_eq!(actual.paid_fallback_max_exposure_microcredits.len(), 5);
     assert_eq!(
@@ -91,7 +92,7 @@ fn source_policy_keys_and_reasoning_round_trip_without_logical_model_conflation(
             .get(&models[2]),
         Some(&3)
     );
-    run(authority(&store).reserve_api_key(
+    run(authority(&store).api_quota().reserve_api_key(
         &ApiKeyId("key-a".into()),
         &RequestId("source-policy".into()),
         "responses",
@@ -147,7 +148,7 @@ fn source_paid_attempt_writes_exact_model_effort_and_not_transient_prompt() {
         }
         assert_eq!(
             store.row(&key).unwrap().expires_at_ms,
-            Some(input.created_at_ms + gateway_authority::PAID_RETENTION_MS)
+            Some(input.created_at_ms + gateway_authority_contracts::PAID_RETENTION_MS)
         );
         let mut changed = input.clone();
         changed.model = logical(&[0xfffd]);

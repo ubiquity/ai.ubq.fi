@@ -77,7 +77,7 @@ impl NativeHttpService {
     ) -> Self
     where
         S: gateway_core::state::AuthorityStore + Send + Sync + 'static,
-        I: gateway_authority::store::TokenSource + Send + Sync + 'static,
+        I: gateway_authority_contracts::TokenSource + Send + Sync + 'static,
         H: crate::native_import::NativeImportHandler + 'static,
     {
         self.imports = Some(crate::import_ingress::configured(
