@@ -239,7 +239,7 @@ pub async fn create_session(
     let mut message = authenticator.clone();
     message.extend(Sha256::digest(&client));
     let signature: Signature = signing.sign(&message);
-    let response=service.login_finish(&AuthRequest{method:"POST".into(),url:"https://ai.ubq.fi/api/auth/login/finish".into(),body:serde_json::to_vec(&serde_json::json!({"response":{"id":"fixture-credential","response":{"clientDataJSON":base64url(&client),"authenticatorData":base64url(&authenticator),"signature":base64url(signature.to_der().as_bytes())}}}))?,..Default::default()}).await?;
+    let response=service.login_finish(&AuthRequest{method:"POST".into(),url:"https://ai.ubq.fi/api/auth/login/finish".into(),body:serde_json::to_vec(&serde_json::json!({"response":{"id":"fixture-credential","rawId":"fixture-credential","type":"public-key","response":{"clientDataJSON":base64url(&client),"authenticatorData":base64url(&authenticator),"signature":base64url(signature.to_der().as_bytes())}}}))?,..Default::default()}).await?;
     let token = response
         .body
         .as_json()
