@@ -88,8 +88,8 @@ const fixtureGateway = async (mode: "healthy" | "blocked" | "identity" | "auth" 
 
 test("steering rejects ACK-only, duplicate, reordered, wrong-turn and wrong-answer receipts", () => {
   const identity = { thread_id: "thread", session_id: "thread", turn_id: "turn" };
-  const first: RequestSample = { started: 0, bytes: 1, markerCount: 0, ordered: false, identity, cancelled: true };
-  const second: RequestSample = { started: 1, bytes: 1, markerCount: 1, ordered: true, identity };
+  const first: RequestSample = { started: 0, headers: 0, bytes: 1, markerCount: 0, ordered: false, identity, cancelled: true };
+  const second: RequestSample = { started: 1, headers: 2, bytes: 1, markerCount: 1, ordered: true, identity };
   assert.equal(validateSteering([first, second], "thread", "turn", "marker", "marker"), null);
   for (const bad of [
     { ...second, markerCount: 0 },
@@ -102,6 +102,18 @@ test("steering rejects ACK-only, duplicate, reordered, wrong-turn and wrong-answ
   assert.ok(validateSteering([first], "thread", "turn", "marker", "marker"));
   assert.ok(validateSteering([first, second], "thread", "turn", "unchanged", "marker"));
   assert.ok(validateSteering([{ ...first, cancelled: false }, second], "thread", "turn", "marker", "marker"));
+});
+
+test("steering requires original and replacement header readiness even when the answer matches", () => {
+  const identity = { thread_id: "thread", session_id: "thread", turn_id: "turn" };
+  const first: RequestSample = { started: 0, headers: 0, bytes: 1, markerCount: 0, ordered: false, identity, cancelled: true };
+  const second: RequestSample = { started: 1, headers: 2, bytes: 1, markerCount: 1, ordered: true, identity };
+  const failure = "Response headers were not observed for both inference requests";
+  assert.equal(validateSteering([first, second], "thread", "turn", "marker", "marker"), null);
+  for (const headers of [undefined, NaN, Infinity, -Infinity]) {
+    assert.equal(validateSteering([{ ...first, headers }, second], "thread", "turn", "marker", "marker"), failure);
+    assert.equal(validateSteering([first, { ...second, headers }], "thread", "turn", "marker", "marker"), failure);
+  }
 });
 
 test("identity refusal spends no inference and cleans up", async () => {

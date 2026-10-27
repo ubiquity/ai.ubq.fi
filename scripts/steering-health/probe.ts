@@ -134,6 +134,7 @@ const preflight = async (options: ProbeOptions, signal: AbortSignal, directory: 
 
 export const validateSteering = (samples: RequestSample[], threadId: string, turnId: string, answer: string, marker: string): string | null => {
   if (samples.length !== LIMITS.requests) return "Expected exactly two forwarded inference requests";
+  if (!samples.every((sample) => Number.isFinite(sample.headers))) return "Response headers were not observed for both inference requests";
   if (samples[1].markerCount !== 1 || !samples[1].ordered) return "Steer missing, duplicated or reordered";
   if (!samples.every((sample) => sample.identity.thread_id === threadId && sample.identity.turn_id === turnId && sample.identity.session_id === threadId))
     return "Native thread/turn identity changed";
