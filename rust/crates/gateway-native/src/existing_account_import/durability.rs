@@ -135,7 +135,7 @@ fn receipt_name(action_ref: &str) -> Result<String, GatewayError> {
 fn credentials(raw: &[u8]) -> Result<NativeCredentials, GatewayError> {
     let document =
         gateway_core::source_json::SourceJson::parse_bytes(raw).map_err(|_| unavailable())?;
-    super::import_documents::credentials(&document).map_err(|_| unavailable())
+    gateway_native_import_source::documents::credentials(&document).map_err(|_| unavailable())
 }
 pub(super) fn reconcile(
     store: &ExistingAccountImportStore,
@@ -372,7 +372,8 @@ pub(super) fn persist_live(
         return Err(unavailable());
     }
     let previous_document = gateway_core::source_json::SourceJson::parse_bytes(&previous_bytes)?;
-    let merged = super::import_documents::merge(&previous_document, &candidate.document)?;
+    let merged =
+        gateway_native_import_source::documents::merge(&previous_document, &candidate.document)?;
     let bytes = merged.as_bytes();
     if bytes.len() as u64 > AUTH_LIMIT {
         return Err(unavailable());
@@ -488,7 +489,7 @@ pub(super) fn retain_rotated(
     let binding = custody.binding();
     store.require_binding(binding)?;
     let current = credentials(&read_fixed(&store.directory, "auth.json", AUTH_LIMIT)?)?;
-    let next = super::import_documents::credentials(rotated)?;
+    let next = gateway_native_import_source::documents::credentials(rotated)?;
     if current.routing_account_hash() != binding.account_id_hash
         || current.generation_hash() != binding.source_native_generation
         || next.account_id != current.account_id

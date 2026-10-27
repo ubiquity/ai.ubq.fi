@@ -143,7 +143,8 @@ fn id() -> NativeTransportIdentity {
     .unwrap()
 }
 fn credentials() -> gateway_auth::native_credentials::NativeCredentials {
-    super::import_documents::credentials(&SourceJson::parse_bytes(OLD).unwrap()).unwrap()
+    gateway_native_import_source::documents::credentials(&SourceJson::parse_bytes(OLD).unwrap())
+        .unwrap()
 }
 fn inputs() -> ConfiguredPaidInputs {
     ConfiguredPaidInputs::new(
@@ -1064,18 +1065,18 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     assert_eq!(cache["content_type"], "application/json; charset=utf-8");
     let bytes = fs::read(root.path().join("home/auth.json")).unwrap();
     let document = SourceJson::parse_bytes(&bytes).unwrap();
-    let next = super::import_documents::credentials(&document).unwrap();
+    let next = gateway_native_import_source::documents::credentials(&document).unwrap();
     assert_eq!(next.access_token.expose(), "SYNTHETIC_NEW_ACCESS");
     assert_eq!(next.refresh_token.expose(), "SYNTHETIC_NEW_REFRESH");
     assert_eq!(
-        super::import_documents::member(&document, "OPENAI_API_KEY")
+        gateway_native_import_source::documents::member(&document, "OPENAI_API_KEY")
             .unwrap()
             .unwrap()
             .as_str(),
         r#""SYNTHETIC_INDEPENDENT""#
     );
     assert_eq!(
-        super::import_documents::member(&document, "unrelated")
+        gateway_native_import_source::documents::member(&document, "unrelated")
             .unwrap()
             .unwrap()
             .as_str(),

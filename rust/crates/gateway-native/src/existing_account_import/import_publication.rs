@@ -3,7 +3,7 @@ use super::{
     ExistingAccountImportStore,
     durability::{self, DurableNativeImport},
     live_custody::LiveImportCustody,
-    validation::{CatalogValidation, ValidatedNativeImport},
+    validation::ValidatedNativeImport,
 };
 use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
 use gateway_auth::{
@@ -18,6 +18,7 @@ use gateway_authority::native_control::import::{
     AuthenticatedNativeImport, remote::AuthenticatedImportTerminal,
 };
 use gateway_core::error::GatewayError;
+use gateway_native_import_source::catalog::CatalogValidation;
 
 /// Native-only producer; no JSON/receipt-DATA/Boolean constructor.
 pub(super) struct PreparedImportPublication<'a> {

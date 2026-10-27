@@ -261,7 +261,7 @@ fn read_body(
     let maximum = head.kind.body_limit_bytes();
     let mut body = NativeDocument(Vec::new());
     if let Some(length) = length {
-        crate::native_import::import_body::check_auth_content_length(Some(length))
+        gateway_native_import_source::body::check_auth_content_length(Some(length))
             .map_err(|_| auth_body_error())?;
         let length = length.parse::<usize>().map_err(|_| auth_body_error())?;
         append(stream, &mut body.0, length, head.framing_deadline, original)?;

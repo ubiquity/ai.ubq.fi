@@ -1115,6 +1115,7 @@ dependencies = [
  "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
+ "gateway-native-import-source",
  "gateway-native-local-transport",
  "gateway-native-supervisor-read",
  "gateway-publication",
@@ -1136,6 +1137,18 @@ dependencies = [
  "ureq",
  "url",
  "webpki-roots",
+]
+
+[[package]]
+name = "gateway-native-import-source"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-auth-native-wire",
+ "gateway-authority",
+ "gateway-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

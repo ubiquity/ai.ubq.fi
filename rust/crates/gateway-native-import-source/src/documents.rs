@@ -1,12 +1,9 @@
 //! Native-private credential parsing/merge. Unrelated UTF16 data never passes through Value.
-use super::super::import_custody_protocol::unavailable;
+use crate::error::unavailable;
 use gateway_auth::native_credentials::{NativeCredentials, parse_native_document};
 use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
-pub(super) fn member(
-    document: &SourceJson,
-    name: &str,
-) -> Result<Option<SourceJson>, GatewayError> {
+pub fn member(document: &SourceJson, name: &str) -> Result<Option<SourceJson>, GatewayError> {
     let key = JsString16::from_utf8(name);
     Ok(document
         .object_entries()?
@@ -15,7 +12,7 @@ pub(super) fn member(
         .find(|(k, _)| *k == key)
         .map(|(_, v)| v))
 }
-pub(super) fn credentials(document: &SourceJson) -> Result<NativeCredentials, GatewayError> {
+pub fn credentials(document: &SourceJson) -> Result<NativeCredentials, GatewayError> {
     let tokens = member(document, "tokens")?.ok_or_else(unavailable)?;
     let mut known_tokens = serde_json::Map::new();
     for name in ["access_token", "refresh_token", "account_id", "id_token"] {
@@ -32,10 +29,7 @@ pub(super) fn credentials(document: &SourceJson) -> Result<NativeCredentials, Ga
     }
     parse_native_document(&serde_json::Value::Object(known))
 }
-pub(super) fn merge(
-    previous: &SourceJson,
-    incoming: &SourceJson,
-) -> Result<SourceJson, GatewayError> {
+pub fn merge(previous: &SourceJson, incoming: &SourceJson) -> Result<SourceJson, GatewayError> {
     let fields = ["tokens", "last_refresh", "auth_mode"];
     let mut entries = previous.object_entries()?;
     entries.retain(|(key, _)| {
@@ -52,7 +46,7 @@ pub(super) fn merge(
     }
     object(entries)
 }
-pub(super) fn object(entries: Vec<(JsString16, SourceJson)>) -> Result<SourceJson, GatewayError> {
+pub fn object(entries: Vec<(JsString16, SourceJson)>) -> Result<SourceJson, GatewayError> {
     let mut output = String::from("{");
     for (at, (key, value)) in entries.into_iter().enumerate() {
         if at != 0 {

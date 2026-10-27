@@ -1,7 +1,5 @@
 //! Fixed native-only receiver and authenticated source-data boundary.
 //! No socket, refresh, provider effect or publication implementation.
-#[doc(hidden)]
-pub mod import_body;
 use crate::owner_control::NativeControlContext;
 use gateway_auth::native_import::{NativeImportKind, NativeImportMetadata};
 use gateway_authority::{
@@ -14,6 +12,7 @@ use gateway_authority::{
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
 };
+use gateway_native_import_source::body as import_body;
 use std::collections::BTreeMap;
 
 /// Read-only native credential DATA, not proof, effect authority or CF completion.

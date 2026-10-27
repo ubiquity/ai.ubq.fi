@@ -56,9 +56,7 @@ fn request_text(raw: &[u8]) -> String {
 }
 
 /// The same source header guard serves guarded ingress and the one decoder.
-pub(crate) fn check_auth_content_length(
-    content_length: Option<&str>,
-) -> Result<(), AuthReadFailure> {
+pub fn check_auth_content_length(content_length: Option<&str>) -> Result<(), AuthReadFailure> {
     if let Some(length) = content_length {
         if length.is_empty()
             || (length.len() > 1 && length.starts_with('0'))

@@ -25,6 +25,7 @@ members = [
   "crates/gateway-publication-transport",
   "crates/gateway-publication-test-support",
   "crates/gateway-native",
+  "crates/gateway-native-import-source",
   "crates/gateway-native-local-transport",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
@@ -76,6 +77,7 @@ gateway-publication-policy = { path = "crates/gateway-publication-policy" }
 gateway-publication-transport = { path = "crates/gateway-publication-transport" }
 gateway-publication-test-support = { path = "crates/gateway-publication-test-support" }
 gateway-native = { path = "crates/gateway-native" }
+gateway-native-import-source = { path = "crates/gateway-native-import-source" }
 gateway-native-local-transport = { path = "crates/gateway-native-local-transport" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }

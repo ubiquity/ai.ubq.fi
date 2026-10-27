@@ -7,7 +7,7 @@ use super::{
         AuthenticatedImportPublicationReply, ImportPublicationHttp, PreparedImportPublication,
     },
     live_custody::LiveImportCustody,
-    validation::{CatalogValidation, ImportValidation, ValidatedNativeImport, ValidationOutcome},
+    validation::{ImportValidation, ValidatedNativeImport, ValidationOutcome},
 };
 use crate::{import_custody_protocol::unavailable, native_import::NativeImportContext};
 use gateway_authority::native_control::{
@@ -18,6 +18,7 @@ use gateway_authority::native_control::{
     },
 };
 use gateway_core::error::GatewayError;
+use gateway_native_import_source::catalog::CatalogValidation;
 
 /// No caller-created document, Started DATA or receipt marker can construct it.
 /// This is still not final publication/completion authority.
