@@ -7,10 +7,9 @@ mod capacity_store;
 pub mod claude_capacity;
 pub mod incidents;
 pub mod remote_capacity;
-mod replay_cleanup;
+mod replay_maintenance;
 pub mod replay_producer;
 pub mod replay_read;
-pub mod replay_retention;
 pub mod replay_trace;
 mod replay_values;
 pub mod settings;
@@ -86,6 +85,13 @@ impl<S, H> ObservabilityRuntime<S, H> {
     }
     pub fn replay_state(&self) -> gateway_observability_replay_state::ReplayMetadata<'_, S, H> {
         gateway_observability_replay_state::ReplayMetadata::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.replay_bootstrap.clone(),
+        )
+    }
+    pub fn retention(&self) -> gateway_observability_replay_retention::ReplayRetention<'_, S, H> {
+        gateway_observability_replay_retention::ReplayRetention::new(
             self.store.as_ref(),
             self.host.as_ref(),
             self.replay_bootstrap.clone(),

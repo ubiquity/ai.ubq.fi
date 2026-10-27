@@ -206,4 +206,32 @@ impl<S: QueryStore, H: ObservabilityHost> ReplayMetadata<'_, S, H> {
         }
         Ok(false)
     }
+    pub async fn replay_skip(
+        &self,
+        limits: RetentionLimits,
+        reason: &str,
+        at: i64,
+    ) -> Result<(), GatewayError> {
+        for _ in 0..schema::ATTEMPTS {
+            let (mut ledger, previous) = schema::read_ledger(self.store, limits).await?;
+            ledger.last_skip_reason = Some(reason.into());
+            if reason == "storage_full" {
+                ledger.last_full_at_ms = Some(at as f64)
+            }
+            if store::commit(
+                self.store,
+                vec![data::check(&model::key("budget"), previous.as_ref())],
+                vec![store::ledger_mutation(
+                    self.host,
+                    previous.as_ref(),
+                    &ledger,
+                )?],
+            )
+            .await?
+            {
+                break;
+            }
+        }
+        Ok(())
+    }
 }

@@ -1,8 +1,5 @@
 //! Source request-owned failure capture. No caller JSON can mint this transport input.
-use crate::{
-    ObservabilityRuntime, incidents::IncidentEvidence, replay_retention::Admission,
-    replay_trace::UpstreamTrace,
-};
+use crate::{ObservabilityRuntime, incidents::IncidentEvidence, replay_trace::UpstreamTrace};
 use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::{query::QueryStore, state::RecordKey};
@@ -16,6 +13,7 @@ use gateway_observability_replay_model::{
 use gateway_observability_replay_records::{
     accounting as schema, accounting::RetentionLimits, incident::IncidentObservation,
 };
+use gateway_observability_replay_retention::replay_retention::Admission;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -704,6 +702,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .try_into()
             .map_err(|_| data::error("Replay IV must be 12 bytes"))?;
         let reservation = match self
+            .retention()
             .reserve_replay(
                 &capture_id,
                 &input.request_id,
@@ -763,13 +762,19 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 expires_at_ms: Some(manifest.expires_at_ms),
             };
             let digest = sha256_hex(&ciphertext);
-            let binding = index.map(|fingerprint| crate::incidents::NewCaptureIndex {
-                fingerprint,
-                git_sha: &input.build.git_sha,
-                ciphertext_sha256: &digest,
+            let binding = index.map(|fingerprint| {
+                gateway_observability_replay_retention::index::NewCaptureIndex {
+                    fingerprint,
+                    git_sha: &input.build.git_sha,
+                    ciphertext_sha256: &digest,
+                }
             });
-            if !self.stage_replay(&reservation, &ciphertext, limits).await?
+            if !self
+                .retention()
+                .stage_replay(&reservation, &ciphertext, limits)
+                .await?
                 || !self
+                    .retention()
                     .publish_replay(&reservation, &manifest, &status, limits, binding.as_ref())
                     .await?
             {
@@ -784,7 +789,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         .await;
         if !matches!(result, Ok(PersistResult::Stored { .. })) {
-            let _ = self.abandon_replay(&reservation, limits).await;
+            let _ = self.retention().abandon_replay(&reservation, limits).await;
         }
         if matches!(result, Ok(PersistResult::Incomplete { .. }))
             && let Some(row) = self.replay_row(&schema::dedupe_key(&fingerprint)).await?

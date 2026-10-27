@@ -1,5 +1,5 @@
 //! Source replay-retention.ts: fenced reservations, staging and exactly-once charge release.
-use crate::{ObservabilityRuntime, store};
+use crate::{ReplayRetention, store};
 use gateway_core::{
     query::QueryStore, state::RecordMutation, state::StoredRecord, value::PortableValue,
 };
@@ -10,44 +10,16 @@ use gateway_observability_replay_model::{replay_crypto, replay_model as model};
 use gateway_observability_replay_records::{accounting as schema, accounting::RetentionLimits};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-pub(crate) struct Reservation {
-    pub row: schema::AccountingData,
-    pub key: gateway_core::state::RecordKey,
+pub struct Reservation {
+    row: schema::AccountingData,
+    key: gateway_core::state::RecordKey,
 }
-pub(crate) enum Admission {
+pub enum Admission {
     Reserved(Reservation),
     Refused(&'static str),
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
-    pub(crate) async fn replay_skip(
-        &self,
-        limits: RetentionLimits,
-        reason: &str,
-        at: i64,
-    ) -> Result<(), GatewayError> {
-        for _ in 0..schema::ATTEMPTS {
-            let (mut ledger, previous) = schema::read_ledger(self.store.as_ref(), limits).await?;
-            ledger.last_skip_reason = Some(reason.into());
-            if reason == "storage_full" {
-                ledger.last_full_at_ms = Some(at as f64)
-            }
-            if store::commit(
-                self.store.as_ref(),
-                vec![data::check(&model::key("budget"), previous.as_ref())],
-                vec![store::ledger_mutation(
-                    self.host.as_ref(),
-                    previous.as_ref(),
-                    &ledger,
-                )?],
-            )
-            .await?
-            {
-                break;
-            }
-        }
-        Ok(())
-    }
-    pub(crate) async fn reserve_replay(
+impl<S: QueryStore, H: ObservabilityHost> ReplayRetention<'_, S, H> {
+    pub async fn reserve_replay(
         &self,
         capture_id: &str,
         request_id: &str,
@@ -59,13 +31,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let (plaintext, metadata) = sizes;
         let charge = schema::reservation_charge(plaintext, metadata);
         for _ in 0..4 {
-            if !self.replay_state().bootstrap_replays(limits, at).await? {
-                self.replay_skip(limits, "storage_accounting_in_progress", at)
+            if !self.metadata().bootstrap_replays(limits, at).await? {
+                self.metadata()
+                    .replay_skip(limits, "storage_accounting_in_progress", at)
                     .await?;
                 return Ok(Admission::Refused("storage_accounting_in_progress"));
             }
             self.reap_replay_reservations(at, limits).await?;
-            let (mut ledger, previous) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, previous) = schema::read_ledger(self.store, limits).await?;
             if ledger.stored_bytes + ledger.reserved_bytes + charge > limits.payload()
                 || ledger.records + 1.0 > schema::MAX_RECORDS
             {
@@ -77,7 +50,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     .await?
                     == 0
                 {
-                    self.replay_skip(limits, "storage_full", at).await?;
+                    self.metadata()
+                        .replay_skip(limits, "storage_full", at)
+                        .await?;
                     return Ok(Admission::Refused("storage_full"));
                 }
                 continue;
@@ -100,14 +75,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ledger.reserved_bytes += charge;
             ledger.last_skip_reason = None;
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![
                     data::check(&model::key("budget"), previous.as_ref()),
                     data::check(&key, None),
                 ],
                 vec![
-                    store::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
-                    store::replay_mutation(self.host.as_ref(), key.clone(), None, &row, None)?,
+                    store::ledger_mutation(self.host, previous.as_ref(), &ledger)?,
+                    store::replay_mutation(self.host, key.clone(), None, &row, None)?,
                 ],
             )
             .await?
@@ -115,10 +90,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(Admission::Reserved(Reservation { row, key }));
             }
         }
-        self.replay_skip(limits, "storage_full", at).await?;
+        self.metadata()
+            .replay_skip(limits, "storage_full", at)
+            .await?;
         Ok(Admission::Refused("storage_full"))
     }
-    pub(crate) async fn stage_replay(
+    pub async fn stage_replay(
         &self,
         reservation: &Reservation,
         ciphertext: &[u8],
@@ -130,7 +107,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         {
             let mut staged = None;
             for _ in 0..schema::ATTEMPTS {
-                let at = data::now(self.host.as_ref())?;
+                let at = data::now(self.host)?;
                 let previous = self.store.read(&reservation.key).await?;
                 let Some(previous) = previous else {
                     return Ok(false);
@@ -142,13 +119,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 {
                     return Ok(false);
                 }
-                let (ledger, ledger_row) = schema::read_ledger(self.store.as_ref(), limits).await?;
+                let (ledger, ledger_row) = schema::read_ledger(self.store, limits).await?;
                 if !ledger.ready() {
                     return Ok(false);
                 }
                 row.stage += 1.0;
                 let mutation = store::replay_mutation(
-                    self.host.as_ref(),
+                    self.host,
                     reservation.key.clone(),
                     Some(&previous),
                     &row,
@@ -159,7 +136,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 };
                 let next = record.clone();
                 if store::commit(
-                    self.store.as_ref(),
+                    self.store,
                     vec![
                         data::check(&reservation.key, Some(&previous)),
                         data::check(&model::key("budget"), ledger_row.as_ref()),
@@ -175,13 +152,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let Some(staged) = staged else {
                 return Ok(false);
             };
-            let expiry = data::now(self.host.as_ref())? + model::PAYLOAD_TTL;
+            let expiry = data::now(self.host)? + model::PAYLOAD_TTL;
             let mut chunks = Vec::new();
             for (index, bytes) in batch.chunks(replay_crypto::CHUNK_BYTES).enumerate() {
                 chunks.push(RecordMutation::Put {
                     key: model::chunk_key(&reservation.row.capture_id, batch_index * 12 + index),
                     record: StoredRecord::profile_v2(
-                        data::uuid(self.host.as_ref())?,
+                        data::uuid(self.host)?,
                         PortableValue::Binary {
                             kind: "Uint8Array".into(),
                             bytes: bytes.to_vec(),
@@ -193,7 +170,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 });
             }
             if !store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&reservation.key, Some(&staged))],
                 chunks,
             )
@@ -204,13 +181,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         Ok(true)
     }
-    pub(crate) async fn publish_replay(
+    pub async fn publish_replay(
         &self,
         reservation: &Reservation,
         manifest: &model::Manifest,
         status: &model::Status,
         limits: RetentionLimits,
-        index: Option<&crate::incidents::NewCaptureIndex<'_>>,
+        index: Option<&crate::index::NewCaptureIndex<'_>>,
     ) -> Result<bool, GatewayError> {
         let actual = manifest
             .stored_bytes
@@ -218,7 +195,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let document = gateway_source::source_json::SourceJson::from_serializable(status)?;
         let bytes = schema::metadata_charge(&document);
         let at = manifest.captured_at_ms as i64;
-        self.replay_state()
+        self.metadata()
             .prune_replay_metadata(limits, at, 1.0, bytes, 16)
             .await?;
         let manifest_key = model::manifest_key(
@@ -229,13 +206,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let dk = schema::dedupe_key(&manifest.fingerprint);
         let status_key = model::request_key(&status.request_id);
         for _ in 0..8 {
-            let now = data::now(self.host.as_ref())?;
+            let now = data::now(self.host)?;
             let previous = self.store.read(&reservation.key).await?;
             let Some(previous) = previous else {
                 return Ok(false);
             };
             let mut row = schema::accounting(&previous, &reservation.key)?;
-            let (mut ledger, ledger_row) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, ledger_row) = schema::read_ledger(self.store, limits).await?;
             let status_row = self.store.read(&status_key).await?;
             let visible = status_row
                 .as_ref()
@@ -279,29 +256,29 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 data::check(&dk, None),
             ];
             let mut mutations = vec![
-                store::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
+                store::ledger_mutation(self.host, ledger_row.as_ref(), &ledger)?,
                 store::replay_mutation(
-                    self.host.as_ref(),
+                    self.host,
                     reservation.key.clone(),
                     Some(&previous),
                     &row,
                     None,
                 )?,
                 store::replay_mutation(
-                    self.host.as_ref(),
+                    self.host,
                     manifest_key.clone(),
                     None,
                     manifest,
                     Some(now + model::PAYLOAD_TTL),
                 )?,
                 store::put(
-                    self.host.as_ref(),
+                    self.host,
                     dk.clone(),
                     json!({"manifest_key":manifest_parts,"captured_at_ms":manifest.captured_at_ms,"expires_at_ms":manifest.expires_at_ms}),
                     Some(now + model::PAYLOAD_TTL),
                 )?,
                 store::replay_mutation(
-                    self.host.as_ref(),
+                    self.host,
                     status_key.clone(),
                     None,
                     status,
@@ -316,7 +293,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 checks.extend(publication.checks);
                 mutations.extend(publication.mutations);
             }
-            if store::commit(self.store.as_ref(), checks, mutations).await? {
+            if store::commit(self.store, checks, mutations).await? {
                 return Ok(true);
             }
         }
@@ -327,9 +304,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         id: &str,
         max: usize,
     ) -> Result<(usize, bool), GatewayError> {
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let rows = query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::ReplayChunks(id),
             false,
             at,
@@ -339,7 +316,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut deleted = 0;
         for entry in rows.into_iter().take(max) {
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&entry.key, Some(&entry.record))],
                 vec![RecordMutation::Delete { key: entry.key }],
             )
@@ -348,18 +325,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 deleted += 1
             }
         }
-        let remaining = !query::scan(
-            self.store.as_ref(),
-            ObservationRead::ReplayChunks(id),
-            false,
-            at,
-            1,
-        )
-        .await?
-        .is_empty();
+        let remaining = !query::scan(self.store, ObservationRead::ReplayChunks(id), false, at, 1)
+            .await?
+            .is_empty();
         Ok((deleted, remaining))
     }
-    pub(crate) async fn abandon_replay(
+    pub async fn abandon_replay(
         &self,
         reservation: &Reservation,
         limits: RetentionLimits,
@@ -382,10 +353,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             row.state = schema::AccountingState::Revoked;
             row.fence += 1.0;
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&reservation.key, Some(&previous))],
                 vec![store::replay_mutation(
-                    self.host.as_ref(),
+                    self.host,
                     reservation.key.clone(),
                     Some(&previous),
                     &row,
@@ -415,19 +386,19 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if row.state != schema::AccountingState::Revoked || row.fence != fence {
                 return Ok(false);
             }
-            let (mut ledger, ledger_row) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, ledger_row) = schema::read_ledger(self.store, limits).await?;
             if !ledger.ready() {
                 return Ok(false);
             }
             ledger.reserved_bytes = (ledger.reserved_bytes - row.bytes).max(0.0);
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![
                     data::check(&reservation.key, Some(&previous)),
                     data::check(&model::key("budget"), ledger_row.as_ref()),
                 ],
                 vec![
-                    store::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
+                    store::ledger_mutation(self.host, ledger_row.as_ref(), &ledger)?,
                     RecordMutation::Delete {
                         key: reservation.key.clone(),
                     },
@@ -440,7 +411,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         Ok(false)
     }
-    pub(crate) async fn reap_replay_reservations(
+    pub async fn reap_replay_reservations(
         &self,
         at: i64,
         limits: RetentionLimits,
@@ -491,14 +462,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             next = page.next_cursor
         }
         let mutation = if let Some(cursor) = next {
-            store::put(self.host.as_ref(), cursor_key.clone(), json!(cursor), None)?
+            store::put(self.host, cursor_key.clone(), json!(cursor), None)?
         } else {
             RecordMutation::Delete {
                 key: cursor_key.clone(),
             }
         };
         let _ = store::commit(
-            self.store.as_ref(),
+            self.store,
             vec![data::check(&cursor_key, previous.as_ref())],
             vec![mutation],
         )
@@ -510,7 +481,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
         }
         let rows = query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::Replay(ReplayRows::Accounting),
             false,
             at,
@@ -533,39 +504,5 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
         }
         Ok(count)
-    }
-    pub async fn replay_retention_status(&self, limits: RetentionLimits) -> Value {
-        match schema::read_ledger(self.store.as_ref(), limits).await {
-            Ok((ledger, _)) => {
-                let used = ledger.stored_bytes + ledger.reserved_bytes;
-                json!({"state":"ok","scope":"capture_owned_kv_payload","budget_bytes":limits.budget(),"stored_bytes":ledger.stored_bytes,"reserved_bytes":ledger.reserved_bytes,"records":ledger.records,"metadata_bytes":ledger.metadata_bytes,"status_records":ledger.status_records,"evicted_records":ledger.evicted_records,"evicted_bytes":ledger.evicted_bytes,"expired_records":ledger.expired_records,"last_eviction_at_ms":ledger.last_eviction_at_ms,"last_warning_at_ms":ledger.last_warning_at_ms,"over_budget":used>limits.payload(),"near_capacity":used>=(limits.payload()*0.9).floor(),"accounting_complete":ledger.ready(),"accounting_error":ledger.accounting_error,"skipped_reason":ledger.last_skip_reason})
-            }
-            Err(error) => {
-                json!({"state":if error.envelope.error.code.as_deref()==Some("observability_state_invalid"){"ok"}else{"unavailable"},"scope":"capture_owned_kv_payload","budget_bytes":limits.budget(),"stored_bytes":null,"reserved_bytes":null,"records":null,"metadata_bytes":null,"status_records":null,"evicted_records":null,"evicted_bytes":null,"expired_records":null,"last_eviction_at_ms":null,"last_warning_at_ms":null,"over_budget":false,"near_capacity":false,"accounting_complete":false,"accounting_error":"ledger_corrupt","skipped_reason":"storage_accounting_in_progress"})
-            }
-        }
-    }
-    pub async fn maintain_replays(&self, limits: RetentionLimits) -> Result<Value, GatewayError> {
-        let at = data::now(self.host.as_ref())?;
-        if !self.replay_state().bootstrap_replays(limits, at).await? {
-            return Ok(self.replay_retention_status(limits).await);
-        }
-        self.reap_replay_reservations(at, limits).await?;
-        self.reclaim_expired_replays(at, limits).await?;
-        let (ledger, _) = schema::read_ledger(self.store.as_ref(), limits).await?;
-        if ledger.stored_bytes + ledger.reserved_bytes > limits.payload() {
-            self.evict_replays(at, limits, (limits.payload() * 0.9).floor(), None)
-                .await?;
-        }
-        let marker = self.store.read(&model::key("metadata_reconciled")).await?;
-        let due = data::value(marker.as_ref(), at)?
-            .and_then(|v| v["reconciled_at_ms"].as_f64())
-            .is_none_or(|t| at as f64 - t >= 900_000.0);
-        if due {
-            self.replay_state()
-                .recount_replay_metadata(limits, at)
-                .await?;
-        }
-        Ok(self.replay_retention_status(limits).await)
     }
 }

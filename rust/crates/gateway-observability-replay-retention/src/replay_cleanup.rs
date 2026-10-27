@@ -1,5 +1,5 @@
 //! Source replay eviction/expiry claims retain their charge until all chunks are gone.
-use crate::{ObservabilityRuntime, store};
+use crate::{ReplayRetention, store};
 use gateway_core::{query::QueryStore, state::RecordKey, state::RecordMutation};
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, query::ReplayRows, source_object::SourceObject,
@@ -9,7 +9,7 @@ use gateway_observability_replay_model::{records::read_json_record, replay_model
 use gateway_observability_replay_records::accounting as schema;
 use gateway_source::error::GatewayError;
 use serde_json::json;
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ReplayRetention<'_, S, H> {
     async fn claim_replay_victim(
         &self,
         key: &RecordKey,
@@ -28,7 +28,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         {
             return Ok(false);
         }
-        let (ledger, ledger_row) = schema::read_ledger(self.store.as_ref(), limits).await?;
+        let (ledger, ledger_row) = schema::read_ledger(self.store, limits).await?;
         if !ledger.ready() {
             return Ok(false);
         }
@@ -36,20 +36,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         row.fence += 1.0;
         row.claim_kind = Some(kind);
         store::commit(
-            self.store.as_ref(),
+            self.store,
             vec![
                 data::check(key, Some(&previous)),
                 data::check(&model::key("budget"), ledger_row.as_ref()),
             ],
             vec![
-                store::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
-                store::replay_mutation(
-                    self.host.as_ref(),
-                    key.clone(),
-                    Some(&previous),
-                    &row,
-                    None,
-                )?,
+                store::ledger_mutation(self.host, ledger_row.as_ref(), &ledger)?,
+                store::replay_mutation(self.host, key.clone(), Some(&previous), &row, None)?,
             ],
         )
         .await
@@ -65,7 +59,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Err(data::error("Claimed replay manifest identity changed"));
             }
             if !store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&key, Some(&previous))],
                 vec![RecordMutation::Delete { key: key.clone() }],
             )
@@ -85,7 +79,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 && model::tuple_from_source(&parts)? == key
             {
                 let _ = store::commit(
-                    self.store.as_ref(),
+                    self.store,
                     vec![data::check(&dedupe, Some(&previous))],
                     vec![RecordMutation::Delete { key: dedupe }],
                 )
@@ -119,40 +113,18 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             return Ok(false);
         }
         self.remove_claimed_replay_payload(&row).await?;
-        let reason = match kind {
-            schema::ClaimKind::Evicted => "storage_budget",
-            schema::ClaimKind::Expired => "payload_expired",
-        };
-        let status = model::Status {
-            version: 1.0,
-            request_id: row.request_id.clone(),
-            status: match kind {
-                schema::ClaimKind::Evicted => model::CaptureState::Evicted,
-                schema::ClaimKind::Expired => model::CaptureState::Expired,
-            },
-            reason: Some(reason.into()),
-            captured_at_ms: row.created_at_ms,
-            manifest_key: None,
-            fingerprint: None,
-            expires_at_ms: None,
-        };
-        let tombstone = json!({"version":1,"fingerprint":row.fingerprint,"request_id":row.request_id,"evicted_at_ms":at,"reason":reason});
-        let has_owner = !row.request_id.is_empty();
-        let count = if has_owner { 2.0 } else { 1.0 };
-        let bytes = schema::metadata_charge(
-            &gateway_source::source_json::SourceJson::from_serializable(&tombstone)?,
-        ) + if has_owner {
-            schema::metadata_charge(&gateway_source::source_json::SourceJson::from_serializable(
-                &status,
-            )?)
-        } else {
-            0.0
-        };
-        self.replay_state()
+        let schema::VictimMetadata {
+            status,
+            tombstone,
+            has_owner,
+            count,
+            bytes,
+        } = schema::victim_metadata(&row, kind, at)?;
+        self.metadata()
             .prune_replay_metadata(limits, at, count, bytes, 16)
             .await?;
         for _ in 0..schema::ATTEMPTS {
-            let (mut ledger, ledger_row) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (mut ledger, ledger_row) = schema::read_ledger(self.store, limits).await?;
             if !ledger.ready() {
                 return Ok(false);
             }
@@ -217,7 +189,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 data::check(&tombstone_key, old_tombstone.as_ref()),
             ];
             let mut mutations = vec![
-                store::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
+                store::ledger_mutation(self.host, ledger_row.as_ref(), &ledger)?,
                 RecordMutation::Delete { key: key.clone() },
             ];
             if has_owner {
@@ -228,14 +200,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             if fits {
                 mutations.push(store::put(
-                    self.host.as_ref(),
+                    self.host,
                     tombstone_key,
                     tombstone.clone(),
                     Some(at + model::STATUS_TTL),
                 )?);
                 if has_owner {
                     mutations.push(store::replay_mutation(
-                        self.host.as_ref(),
+                        self.host,
                         status_key,
                         None,
                         &status,
@@ -243,19 +215,19 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     )?)
                 }
             }
-            if store::commit(self.store.as_ref(), checks, mutations).await? {
+            if store::commit(self.store, checks, mutations).await? {
                 return Ok(true);
             }
         }
         Ok(false)
     }
-    pub(crate) async fn reclaim_expired_replays(
+    pub async fn reclaim_expired_replays(
         &self,
         at: i64,
         limits: schema::RetentionLimits,
     ) -> Result<usize, GatewayError> {
         let rows = query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::Replay(ReplayRows::Accounting),
             false,
             at,
@@ -285,7 +257,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         Ok(count)
     }
-    pub(crate) async fn evict_replays(
+    pub async fn evict_replays(
         &self,
         at: i64,
         limits: schema::RetentionLimits,
@@ -294,7 +266,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     ) -> Result<usize, GatewayError> {
         let mut count = self.reclaim_expired_replays(at, limits).await?;
         let rows = query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::Replay(ReplayRows::Accounting),
             false,
             at,
@@ -311,7 +283,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             })
             .take(16)
         {
-            let (ledger, _) = schema::read_ledger(self.store.as_ref(), limits).await?;
+            let (ledger, _) = schema::read_ledger(self.store, limits).await?;
             if ledger.stored_bytes <= target && target_records.is_none_or(|n| ledger.records <= n) {
                 break;
             }

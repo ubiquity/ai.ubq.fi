@@ -305,3 +305,53 @@ pub fn merged_document<T: Serialize>(
         Ok(fresh)
     }
 }
+
+pub struct VictimMetadata {
+    pub status: model::Status,
+    pub tombstone: serde_json::Value,
+    pub has_owner: bool,
+    pub count: f64,
+    pub bytes: f64,
+}
+pub fn victim_metadata(
+    row: &AccountingData,
+    kind: ClaimKind,
+    at: i64,
+) -> Result<VictimMetadata, GatewayError> {
+    let reason = match kind {
+        ClaimKind::Evicted => "storage_budget",
+        ClaimKind::Expired => "payload_expired",
+    };
+    let status = model::Status {
+        version: 1.0,
+        request_id: row.request_id.clone(),
+        status: match kind {
+            ClaimKind::Evicted => model::CaptureState::Evicted,
+            ClaimKind::Expired => model::CaptureState::Expired,
+        },
+        reason: Some(reason.into()),
+        captured_at_ms: row.created_at_ms,
+        manifest_key: None,
+        fingerprint: None,
+        expires_at_ms: None,
+    };
+    let tombstone = json!({"version":1,"fingerprint":row.fingerprint,"request_id":row.request_id,"evicted_at_ms":at,"reason":reason});
+    let has_owner = !row.request_id.is_empty();
+    let count = if has_owner { 2.0 } else { 1.0 };
+    let bytes = metadata_charge(&gateway_source::source_json::SourceJson::from_serializable(
+        &tombstone,
+    )?) + if has_owner {
+        metadata_charge(&gateway_source::source_json::SourceJson::from_serializable(
+            &status,
+        )?)
+    } else {
+        0.0
+    };
+    Ok(VictimMetadata {
+        status,
+        tombstone,
+        has_owner,
+        count,
+        bytes,
+    })
+}

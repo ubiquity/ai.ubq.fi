@@ -1,5 +1,6 @@
 //! Exact named incident source DATA and predicates; never live capture or authority proof.
 use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_core::state::RecordKey;
 use gateway_observability_contracts::{data, source_object::SourceObject};
 use gateway_observability_replay_model::replay_model as model;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
@@ -268,4 +269,43 @@ impl IncidentIndexData {
             && self.evidence_ref.is_some() == self.evidence_expires_at_ms.is_some()
             && self.latest.as_ref().is_none_or(Latest::valid)
     }
+}
+
+pub fn capture_index_document(
+    source: &SourceJson,
+    manifest: &model::Manifest,
+    git_sha: &str,
+    ciphertext_sha256: &str,
+) -> Result<(SourceJson, String), GatewayError> {
+    let row = IncidentIndexData::parse(&source)?;
+    let mut document = SourceObject::parse(&source)?;
+    document.set("failing_revision", &full_sha(git_sha).then_some(git_sha))?;
+    let mut provenance = SourceObject::parse(
+        document
+            .get("provenance")
+            .ok_or_else(|| data::error("Incident provenance missing"))?,
+    )?;
+    provenance.set("captured_at_ms", &manifest.captured_at_ms)?;
+    document.set("provenance", &provenance.source_json()?)?;
+    document.set(
+        "evidence_ref",
+        &EvidenceRef {
+            r#ref: format!("capture:{}", manifest.capture_id),
+            digest: Some(ciphertext_sha256.into()),
+        },
+    )?;
+    document.set("evidence_expires_at_ms", &manifest.expires_at_ms)?;
+    let document = document.source_json()?;
+    IncidentIndexData::parse(&document)?;
+    Ok((document, row.incident_id))
+}
+
+pub fn index_key(digest: &str) -> RecordKey {
+    data::key(json!([
+        "uos_ai",
+        "sentinel_incident",
+        "v1",
+        "index",
+        digest
+    ]))
 }

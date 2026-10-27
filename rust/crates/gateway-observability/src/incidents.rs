@@ -15,7 +15,7 @@ use gateway_observability_replay_model::{
 use gateway_observability_replay_records::{
     incident::ContextMessage, incident::EvidenceRef, incident::IncidentIndexData,
     incident::IncidentObservation, incident::MESSAGE, incident::Provenance, incident::endpoint,
-    incident::full_sha, incident::valid_incident_id,
+    incident::full_sha, incident::index_key, incident::valid_incident_id,
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
@@ -23,15 +23,7 @@ use serde_json::json;
 fn prefix() -> RecordKey {
     data::key(json!(["uos_ai", "sentinel_incident", "v1", "index"]))
 }
-fn key(digest: &str) -> RecordKey {
-    data::key(json!([
-        "uos_ai",
-        "sentinel_incident",
-        "v1",
-        "index",
-        digest
-    ]))
-}
+
 pub struct IncidentIndexReceipt {
     pub incident_id: String,
     pub fingerprint: String,
@@ -50,79 +42,7 @@ pub struct IncidentEvidence<'a> {
     pub ciphertext_sha256: &'a str,
     pub observed_at_ms: i64,
 }
-pub(crate) struct IndexPublication {
-    pub checks: Vec<gateway_core::state::RevisionCheck>,
-    pub mutations: Vec<gateway_core::state::RecordMutation>,
-}
-pub(crate) struct NewCaptureIndex<'a> {
-    pub fingerprint: &'a str,
-    pub git_sha: &'a str,
-    pub ciphertext_sha256: &'a str,
-}
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
-    pub(crate) async fn new_capture_index_publication(
-        &self,
-        binding: &NewCaptureIndex<'_>,
-        manifest: &replay_model::Manifest,
-        manifest_key: &RecordKey,
-    ) -> Result<Option<IndexPublication>, GatewayError> {
-        if !model::digest(binding.fingerprint) || !model::digest(binding.ciphertext_sha256) {
-            return Err(data::error("New replay index binding is invalid"));
-        }
-        let key = key(binding.fingerprint);
-        let Some(previous) = self.store.read(&key).await? else {
-            return Ok(None);
-        };
-        let source = read_json_record(&previous)?;
-        let row = IncidentIndexData::parse(&source)?;
-        let mut document = SourceObject::parse(&source)?;
-        document.set(
-            "failing_revision",
-            &full_sha(binding.git_sha).then_some(binding.git_sha),
-        )?;
-        let mut provenance = SourceObject::parse(
-            document
-                .get("provenance")
-                .ok_or_else(|| data::error("Incident provenance missing"))?,
-        )?;
-        provenance.set("captured_at_ms", &manifest.captured_at_ms)?;
-        document.set("provenance", &provenance.source_json()?)?;
-        document.set(
-            "evidence_ref",
-            &EvidenceRef {
-                r#ref: format!("capture:{}", manifest.capture_id),
-                digest: Some(binding.ciphertext_sha256.into()),
-            },
-        )?;
-        document.set("evidence_expires_at_ms", &manifest.expires_at_ms)?;
-        let document = document.source_json()?;
-        IncidentIndexData::parse(&document)?;
-        let mut mutations = vec![crate::replay_values::put_json(
-            self.host.as_ref(),
-            key.clone(),
-            &document,
-            None,
-        )?];
-        if manifest.expires_at_ms > data::now(self.host.as_ref())? as f64 {
-            mutations.push(store::put(
-                self.host.as_ref(),
-                data::key(json!([
-                    "uos_ai",
-                    "sentinel_incident",
-                    "v1",
-                    "capture_ref",
-                    row.incident_id,
-                    manifest.fingerprint
-                ])),
-                json!({"version":1,"manifest_key":data::parts(manifest_key)?}),
-                Some(manifest.expires_at_ms as i64),
-            )?)
-        }
-        Ok(Some(IndexPublication {
-            checks: vec![data::check(&key, Some(&previous))],
-            mutations,
-        }))
-    }
     pub async fn record_incident_index(
         &self,
         input: &IncidentObservation,
@@ -133,7 +53,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             return Err(data::error("Sentinel incident timestamp is invalid"));
         }
         let fingerprint = input.fingerprint()?;
-        let key = key(&fingerprint);
+        let key = index_key(&fingerprint);
         let latest = input.latest();
         for _ in 0..8 {
             let previous = self.store.read(&key).await?;
