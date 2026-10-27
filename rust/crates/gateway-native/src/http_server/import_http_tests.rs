@@ -12,6 +12,7 @@ use gateway_auth::{
     session_index,
     types::{AuthConfig, AuthRequest},
 };
+use gateway_auth_native_wire::control::NATIVE_CONTROL_MAX_BYTES;
 use gateway_authority::keys;
 use gateway_authority::native_control::{
     actor,
@@ -27,6 +28,7 @@ use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, Requ
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::Read,
     net::Shutdown,
     path::PathBuf,
     sync::Mutex,
