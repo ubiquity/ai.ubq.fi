@@ -1,36 +1,23 @@
 mod support;
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-};
+use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::{QueryPage, QueryRequest, QueryStore},
-    source_json::SourceJson,
-    source_serialization as source,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
-    tuple_key::{DecodedKeyPart, TupleKey},
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::RecordMutation,
+    state::StoredRecord, tuple_key::DecodedKeyPart, tuple_key::TupleKey,
 };
 use gateway_observability::{
-    ObservabilityRuntime,
-    host_types::BuildIdentity,
-    replay_crypto::{ReplayBody, ReplayKey},
-    replay_producer::{
-        ClientFailureObservation, FailureObservation, PersistResult, ReplayInput, ReplayRequest,
-    },
-    replay_retention_schema::RetentionLimits,
-    replay_trace::UpstreamTrace,
-    types::ObservabilityHost,
+    ObservabilityRuntime, replay_crypto::ReplayBody, replay_crypto::ReplayKey,
+    replay_producer::ClientFailureObservation, replay_producer::FailureObservation,
+    replay_producer::PersistResult, replay_producer::ReplayInput, replay_producer::ReplayRequest,
+    replay_retention_schema::RetentionLimits, replay_trace::UpstreamTrace,
+};
+use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use serde_json::Value;
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    rc::Rc,
-};
+use std::{cell::Cell, cell::RefCell, collections::BTreeMap, rc::Rc};
 use support::{Host, Memory, run};
 #[derive(Clone)]
 struct CaptureHost {

@@ -1,14 +1,16 @@
 //! Bounded resumable source accounting bootstrap. Shared state contains owner ids only.
 use crate::{
     ObservabilityRuntime, replay_model as model, replay_retention_schema as schema,
-    replay_values::read_json_record, store, types::ObservabilityHost,
+    replay_values::read_json_record, store,
 };
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    state::RecordMutation,
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordMutation,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, types::ObservabilityHost,
+};
+use gateway_source::error::GatewayError;
+use std::{collections::BTreeMap, collections::BTreeSet};
 const PREFIXES: [&str; 7] = [
     "accounting",
     "manifest",
@@ -65,7 +67,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             } else {
                 let manifest = model::Manifest::from_source(&read_json_record(&entry.record)?)?;
                 if !manifest.matches_key(&entry.key)? {
-                    return Err(store::error("Replay manifest owner key is invalid"));
+                    return Err(data::error("Replay manifest owner key is invalid"));
                 }
                 manifest.capture_id
             };
@@ -98,7 +100,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(false);
             }
             if ledger.bootstrap_sweep.is_none() {
-                ledger.bootstrap_sweep = Some(store::uuid(self.host.as_ref())?);
+                ledger.bootstrap_sweep = Some(data::uuid(self.host.as_ref())?);
             }
             let sweep = ledger.bootstrap_sweep.clone().expect("created sweep");
             let (mut phase, mut cursor) = match ledger.bootstrap_cursor.as_deref() {
@@ -106,30 +108,30 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 Some(value) => {
                     let (phase, cursor) = value
                         .split_once('|')
-                        .ok_or_else(|| store::error("Replay bootstrap cursor is invalid"))?;
+                        .ok_or_else(|| data::error("Replay bootstrap cursor is invalid"))?;
                     (
                         phase
                             .parse::<usize>()
-                            .map_err(|_| store::error("Replay bootstrap phase is invalid"))?,
+                            .map_err(|_| data::error("Replay bootstrap phase is invalid"))?,
                         (!cursor.is_empty()).then(|| cursor.to_owned()),
                     )
                 }
             };
             if phase > PREFIXES.len() {
-                return Err(store::error("Replay bootstrap phase is out of range"));
+                return Err(data::error("Replay bootstrap phase is out of range"));
             }
             if phase == 5 && !self.advance_replay_owner_index(&sweep, at).await? {
                 if previous.is_none() {
                     store::commit(
                         self.store.as_ref(),
-                        vec![store::check(&model::key("budget"), None)],
+                        vec![data::check(&model::key("budget"), None)],
                         vec![schema::ledger_mutation(self.host.as_ref(), None, &ledger)?],
                     )
                     .await?;
                 }
                 return Ok(false);
             }
-            let mut checks = vec![store::check(&model::key("budget"), previous.as_ref())];
+            let mut checks = vec![data::check(&model::key("budget"), previous.as_ref())];
             let mut mutations = Vec::new();
             let mut scanned = 0;
             let mut pending = BTreeMap::<String, String>::new();
@@ -174,7 +176,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                     &entry.record,
                                 )?)?;
                                 if !manifest.matches_key(&entry.key)? {
-                                    return Err(store::error(
+                                    return Err(data::error(
                                         "Replay bootstrap manifest key mismatch",
                                     ));
                                 }
@@ -187,13 +189,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                     if schema::accounting(&row, &key)?.fingerprint
                                         != manifest.fingerprint
                                     {
-                                        return Err(store::error(
+                                        return Err(data::error(
                                             "Replay bootstrap owner mismatch",
                                         ));
                                     }
                                 } else if let Some(fingerprint) = pending.get(&key.0) {
                                     if *fingerprint != manifest.fingerprint {
-                                        return Err(store::error(
+                                        return Err(data::error(
                                             "Replay bootstrap pending owner mismatch",
                                         ));
                                     }
@@ -217,8 +219,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                         stage: 0.0,
                                         claim_kind: None,
                                     };
-                                    checks.push(store::check(&entry.key, Some(&entry.record)));
-                                    checks.push(store::check(&key, None));
+                                    checks.push(data::check(&entry.key, Some(&entry.record)));
+                                    checks.push(data::check(&key, None));
                                     mutations.push(schema::mutation(
                                         self.host.as_ref(),
                                         key.clone(),
@@ -240,16 +242,16 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                     schema::row_metadata_charge(Some(&entry.record))?
                             }
                             "evicted" => {
-                                let source = crate::replay_values::SourceObject::parse(
+                                let source = gateway_observability_contracts::source_object::SourceObject::parse(
                                     &read_json_record(&entry.record)?,
                                 )?;
                                 if !["fingerprint", "reason"].iter().all(|f| {
                                     source.get(f).is_some_and(|v| {
-                                        v.deserialize::<gateway_core::js_string::JsString16>()
+                                        v.deserialize::<gateway_source::js_string::JsString16>()
                                             .is_ok()
                                     })
                                 }) {
-                                    return Err(store::error("Replay tombstone is invalid"));
+                                    return Err(data::error("Replay tombstone is invalid"));
                                 }
                                 ledger.status_records += 1.0;
                                 ledger.metadata_bytes +=
@@ -265,34 +267,21 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                     )
                                     || !value["bytes"].as_f64().is_some_and(model::counter)
                                 {
-                                    return Err(store::error(
+                                    return Err(data::error(
                                         "Replay legacy reservation is invalid",
                                     ));
                                 }
                                 if value["state"] != "published" {
                                     let id = value["capture_id"].as_str().expect("validated id");
-                                    let prefix = store::key(serde_json::json!([
-                                        "uos_ai",
-                                        "sentinel_replay",
-                                        "v1",
-                                        "chunk",
-                                        id
-                                    ]));
-                                    let chunks = store::scan(
-                                        self.store.as_ref(),
-                                        prefix.clone(),
-                                        false,
-                                        at,
-                                        513,
-                                    )
+                                    let chunks = query::scan(self.store.as_ref(), ObservationRead::ReplayChunks(id), false, at, 513)
                                     .await?;
                                     for chunk in chunks.iter().take(512) {
                                         let deleted = store::commit(
                                             self.store.as_ref(),
                                             vec![
-                                                store::check(&chunk.key, Some(&chunk.record)),
-                                                store::check(&entry.key, Some(&entry.record)),
-                                                store::check(
+                                                data::check(&chunk.key, Some(&chunk.record)),
+                                                data::check(&entry.key, Some(&entry.record)),
+                                                data::check(
                                                     &model::key("budget"),
                                                     previous.as_ref(),
                                                 ),
@@ -303,7 +292,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                         )
                                         .await?;
                                         if !deleted {
-                                            return Err(store::error(
+                                            return Err(data::error(
                                                 "Replay legacy cleanup fence changed",
                                             ));
                                         }
@@ -315,13 +304,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                         ));
                                     }
                                 }
-                                checks.push(store::check(&entry.key, Some(&entry.record)));
+                                checks.push(data::check(&entry.key, Some(&entry.record)));
                                 mutations.push(RecordMutation::Delete {
                                     key: entry.key.clone(),
                                 });
                             }
                             "chunk" => {
-                                let parts = store::parts(&entry.key)?;
+                                let parts = data::parts(&entry.key)?;
                                 let id = parts
                                     .get(4)
                                     .and_then(serde_json::Value::as_str)
@@ -329,23 +318,23 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                         parts.len() == 6
                                             && parts[5].as_f64().is_some_and(model::counter)
                                     })
-                                    .ok_or_else(|| store::error("Replay chunk key is invalid"))?;
+                                    .ok_or_else(|| data::error("Replay chunk key is invalid"))?;
                                 if !self.replay_bootstrap.borrow().owners.contains(id) {
-                                    checks.push(store::check(&entry.key, Some(&entry.record)));
+                                    checks.push(data::check(&entry.key, Some(&entry.record)));
                                     mutations.push(RecordMutation::Delete {
                                         key: entry.key.clone(),
                                     });
                                 }
                             }
                             "dedupe" => {
-                                let source = crate::replay_values::SourceObject::parse(
+                                let source = gateway_observability_contracts::source_object::SourceObject::parse(
                                     &read_json_record(&entry.record)?,
                                 )?;
                                 if !source
                                     .get("manifest_key")
                                     .is_some_and(|v| v.array_items().is_ok_and(|a| a.len() == 7))
                                 {
-                                    return Err(store::error("Replay dedupe record is invalid"));
+                                    return Err(data::error("Replay dedupe record is invalid"));
                                 }
                             }
                             _ => unreachable!(),
@@ -363,7 +352,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 }
                 if let Some(next) = page.next_cursor {
                     if cursor.as_ref() == Some(&next) {
-                        return Err(store::error("Replay bootstrap cursor did not advance"));
+                        return Err(data::error("Replay bootstrap cursor did not advance"));
                     }
                     cursor = Some(next);
                 } else {

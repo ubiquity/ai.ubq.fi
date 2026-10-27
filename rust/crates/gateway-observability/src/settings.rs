@@ -1,16 +1,17 @@
 //! Source admin/kernel.ts and codex/{reset,overage}-settings.ts.
 //! Display diagnostics never authorize a redemption or mutate provider credentials.
-use crate::{
-    ObservabilityRuntime, host_types::CapacityAccountRef, store, types::ObservabilityHost,
+use crate::{ObservabilityRuntime, store};
+use gateway_admin_runtime::{capabilities::CodexRequest, capabilities::Context};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_credentials::{
+    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
 };
-use gateway_admin_runtime::capabilities::{CodexRequest, Context};
-use gateway_auth::{
-    crypto::sha256_hex,
-    provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
-    types::AuthResponse,
-};
-use gateway_capacity_projection::scalars::{is_record, safe_i64, trim};
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_capacity_projection::{scalars::is_record, scalars::safe_i64, scalars::trim};
 use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, host_types::CapacityAccountRef, query, query::ObservationRead, types::ObservabilityHost,
+};
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
@@ -21,14 +22,14 @@ fn reset_key(hash: &str) -> gateway_core::state::RecordKey {
     gateway_authority::keys::reset_usage(hash)
 }
 fn marker_key() -> gateway_core::state::RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "migrations",
         "codex_reset_usage_legacy_global_v1"
     ]))
 }
 fn legacy_key() -> gateway_core::state::RecordKey {
-    store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
+    data::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
 }
 fn legacy_opt_out(value: Option<&Value>) -> bool {
     value.is_some_and(|v| *v == false || (!v.is_null() && !v.is_boolean()))
@@ -91,35 +92,35 @@ pub fn parse_shadow_decision(v: &Value) -> Option<Value> {
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     /// Exact one-way source migration. An empty or malformed pool leaves the marker absent.
     pub async fn migrate_legacy_reset_opt_out(&self) -> Result<bool, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let marker_key = marker_key();
         let marker = self.store.read(&marker_key).await?;
-        if store::value(marker.as_ref(), at)?.is_some_and(|v| !v.is_null()) {
+        if data::value(marker.as_ref(), at)?.is_some_and(|v| !v.is_null()) {
             return Ok(true);
         }
         let legacy_key = legacy_key();
         let legacy = self.store.read(&legacy_key).await?;
         let pool_key = codex_source_pool_key();
         let pool_row = self.store.read(&pool_key).await?;
-        let pool = store::value(pool_row.as_ref(), at)?
+        let pool = data::value(pool_row.as_ref(), at)?
             .and_then(|v| parse_codex_source_pool(v).ok().flatten());
         let Some(pool) = pool else { return Ok(false) };
         if pool.accounts.is_empty() {
             return Ok(false);
         }
-        let preserved = legacy_opt_out(store::value(legacy.as_ref(), at)?);
+        let preserved = legacy_opt_out(data::value(legacy.as_ref(), at)?);
         let mut checks = vec![
-            store::check(&marker_key, marker.as_ref()),
-            store::check(&legacy_key, legacy.as_ref()),
-            store::check(&pool_key, pool_row.as_ref()),
+            data::check(&marker_key, marker.as_ref()),
+            data::check(&legacy_key, legacy.as_ref()),
+            data::check(&pool_key, pool_row.as_ref()),
         ];
         let mut writes = Vec::new();
         if preserved {
             for account in &pool.accounts {
                 let key = reset_key(&sha256_hex(account.account_id.as_bytes()));
                 let row = self.store.read(&key).await?;
-                if store::value(row.as_ref(), at)?.is_none_or(Value::is_null) {
-                    checks.push(store::check(&key, row.as_ref()));
+                if data::value(row.as_ref(), at)?.is_none_or(Value::is_null) {
+                    checks.push(data::check(&key, row.as_ref()));
                     writes.push(store::put(
                         self.host.as_ref(),
                         key,
@@ -138,23 +139,23 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         store::commit(self.store.as_ref(), checks, writes).await
     }
     pub async fn reset_usage_allowed(&self, hash: &str) -> Result<bool, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         if !self.migrate_legacy_reset_opt_out().await? {
             let marker_key = marker_key();
             let legacy_key = legacy_key();
             let marker = self.store.read(&marker_key).await?;
             let legacy = self.store.read(&legacy_key).await?;
-            if store::value(marker.as_ref(), at)?.is_none_or(Value::is_null)
-                && legacy_opt_out(store::value(legacy.as_ref(), at)?)
+            if data::value(marker.as_ref(), at)?.is_none_or(Value::is_null)
+                && legacy_opt_out(data::value(legacy.as_ref(), at)?)
             {
                 let key = reset_key(hash);
                 let row = self.store.read(&key).await?;
-                if store::value(row.as_ref(), at)?.is_none_or(Value::is_null) {
+                if data::value(row.as_ref(), at)?.is_none_or(Value::is_null) {
                     let _ = store::commit(
                         self.store.as_ref(),
                         vec![
-                            store::check(&marker_key, marker.as_ref()),
-                            store::check(&key, row.as_ref()),
+                            data::check(&marker_key, marker.as_ref()),
+                            data::check(&key, row.as_ref()),
                         ],
                         vec![store::put(
                             self.host.as_ref(),
@@ -168,7 +169,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
         }
         let row = self.store.read(&reset_key(hash)).await?;
-        let v = store::value(row.as_ref(), at)?;
+        let v = data::value(row.as_ref(), at)?;
         Ok(v.is_none_or(Value::is_null) || v.is_some_and(|v| v["enabled"] == true))
     }
     async fn settings_accounts(&self) -> Result<Vec<CapacityAccountRef>, GatewayError> {
@@ -181,7 +182,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     || !slots.insert(a.slot)
             })
         {
-            return Err(store::error(
+            return Err(data::error(
                 "Settings owner published an invalid account roster",
             ));
         }
@@ -204,7 +205,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         document: Option<&SourceJson>,
         overage: bool,
     ) -> Result<AuthResponse, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let accounts = self.settings_accounts().await?;
         let field = if overage { "allow" } else { "enabled" };
         if let Some(raw) = document {
@@ -212,12 +213,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 .as_ref()
                 .and_then(source::string)
                 .ok_or_else(|| {
-                    store::invalid(format!("account_id_hash and boolean {field} are required"))
+                    data::invalid(format!("account_id_hash and boolean {field} are required"))
                 })?;
             let flag = source::member(raw, field)
                 .and_then(|value| value.deserialize::<bool>().ok())
                 .ok_or_else(|| {
-                    store::invalid(format!("account_id_hash and boolean {field} are required"))
+                    data::invalid(format!("account_id_hash and boolean {field} are required"))
                 })?;
             // A source string that cannot equal an existing generated ASCII hash
             // is the same subscription mismatch, never a new scalar-type error.
@@ -246,7 +247,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             )
             .await?
             {
-                return Err(store::error("Settings write conflicted"));
+                return Err(data::error("Settings write conflicted"));
             }
             let mut body = json!({"account_id_hash":hash});
             body[field] = json!(flag);
@@ -266,7 +267,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     .read(&gateway_authority::keys::overage(&hash))
                     .await?;
                 v["allow"] =
-                    json!(store::value(row.as_ref(), at)?.is_some_and(|v| v["allow"] == true));
+                    json!(data::value(row.as_ref(), at)?.is_some_and(|v| v["allow"] == true));
                 v["overage"] = self
                     .host
                     .codex_overage_diagnostics(&account, at + 5000)
@@ -289,10 +290,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Ok(AuthResponse::json(200, json!({"data":data})))
     }
     pub async fn shadow_decisions_response(&self) -> Result<AuthResponse, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
-        let mut decisions: Vec<Value> = store::scan(
+        let at = data::now(self.host.as_ref())?;
+        let mut decisions: Vec<Value> = query::scan(
             self.store.as_ref(),
-            store::key(json!(["uos_ai", "codex_reset_shadow_decision", "v1"])),
+            ObservationRead::ResetShadow,
             false,
             at,
             100,
@@ -328,6 +329,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let identity = self.host.build_identity()?;
         identity.validate()?;
         Ok(self
+            .prompt()
             .prompt_telemetry_baseline(&target.provider, &target.model, &identity.git_sha)
             .await)
     }
@@ -396,10 +398,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 r.headers.clear();
                 Ok(r)
             }
-            CodexRequest::ImportCredentials { .. } => {
-                Err(store::missing("native_credential_owner"))
-            }
-            CodexRequest::ConsumeReset { .. } => Err(store::missing("native_manual_reset_owner")),
+            CodexRequest::ImportCredentials { .. } => Err(data::missing("native_credential_owner")),
+            CodexRequest::ConsumeReset { .. } => Err(data::missing("native_manual_reset_owner")),
             CodexRequest::CacheExperimentBaseline => {
                 self.cache_experiment_baseline_response().await
             }

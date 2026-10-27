@@ -1,8 +1,11 @@
 //! Source cache/prompt-analytics-{core,read}.ts v2 hard namespace.
-use crate::{ObservabilityRuntime, counters, store, types::ObservabilityHost};
-use gateway_auth::crypto::sha256_hex;
-use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
+use crate::{PromptAnalytics, counters, store};
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_capacity_projection::{scalars::DAY, scalars::safe_i64, scalars::trim};
 use gateway_core::{query::QueryStore, state::RecordKey, state::RecordMutation};
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, query::PromptNamespace, types::ObservabilityHost,
+};
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -94,9 +97,6 @@ pub(crate) fn model_hash(value: Option<&JsString16>, domain: &str) -> Option<Str
     Some(sha256_hex(&bytes))
 }
 
-pub(crate) fn prefix(name: &str) -> RecordKey {
-    store::key(json!(["uos_ai", "prompt_cache_analytics", "v2", name]))
-}
 fn key(name: &str, bucket: i64, suffix: &[Value]) -> RecordKey {
     let mut parts = vec![
         json!("uos_ai"),
@@ -106,7 +106,7 @@ fn key(name: &str, bucket: i64, suffix: &[Value]) -> RecordKey {
         json!(bucket),
     ];
     parts.extend_from_slice(suffix);
-    store::key(Value::Array(parts))
+    data::key(Value::Array(parts))
 }
 fn usage(event: &PromptEvent) -> (&'static str, BTreeMap<&'static str, u64>) {
     let mut deltas = BTreeMap::from([("sample_count", 1)]);
@@ -274,7 +274,7 @@ pub fn project_bucket(
     }
     Some(out)
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> PromptAnalytics<'_, S, H> {
     pub async fn record_prompt_analytics(&self, event: &PromptEvent, release: &str) -> Value {
         if known_release(release).is_none() {
             return result("ignored", "unknown_release", None);
@@ -292,7 +292,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if !ROUTES.contains(&event.route.as_str()) {
             return result("ignored", "unsupported_route", None);
         }
-        let Ok(at) = store::now(self.host.as_ref()) else {
+        let Ok(at) = data::now(self.host) else {
             return result("unavailable", "kv_unavailable", None);
         };
         let bucket = at / BUCKET_MS * BUCKET_MS;
@@ -306,30 +306,30 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             for _ in 0..=32 {
                 let m = self.store.read(&marker).await?;
                 let card = self.store.read(&cardinality).await?;
-                let admitted = store::value(m.as_ref(), at)? == Some(&Value::Bool(true));
-                let count = match store::value(card.as_ref(), at)? {
+                let admitted = data::value(m.as_ref(), at)? == Some(&Value::Bool(true));
+                let count = match data::value(card.as_ref(), at)? {
                     None => 0,
                     Some(v) => safe_i64(v)
                         .filter(|v| *v <= 32)
-                        .ok_or_else(|| store::error("Invalid prompt cohort cardinality"))?,
+                        .ok_or_else(|| data::error("Invalid prompt cohort cardinality"))?,
                 };
                 let capped = !admitted && count >= 32;
                 let mut checks = Vec::new();
                 let mut writes = Vec::new();
                 if !admitted && !capped {
                     checks.extend([
-                        store::check(&marker, m.as_ref()),
-                        store::check(&cardinality, card.as_ref()),
+                        data::check(&marker, m.as_ref()),
+                        data::check(&cardinality, card.as_ref()),
                     ]);
                     writes.extend([
                         store::put(
-                            self.host.as_ref(),
+                            self.host,
                             marker.clone(),
                             json!(true),
                             Some(at + RETENTION_MS),
                         )?,
                         store::put(
-                            self.host.as_ref(),
+                            self.host,
                             cardinality.clone(),
                             json!(count + 1),
                             Some(at + RETENTION_MS),
@@ -352,16 +352,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     };
                     increments.push((detail, amount));
                 }
-                if counters::add(
-                    self.store.as_ref(),
-                    self.host.as_ref(),
-                    at,
-                    &increments,
-                    checks,
-                    writes,
-                )
-                .await?
-                {
+                if counters::add(self.store, self.host, at, &increments, checks, writes).await? {
                     return Ok(result(
                         "recorded",
                         if capped {
@@ -373,7 +364,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     ));
                 }
             }
-            Err(store::error("Prompt cohort contention"))
+            Err(data::error("Prompt cohort contention"))
         }
         .await;
         outcome
@@ -381,11 +372,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     }
     pub async fn prompt_analytics(&self, group_by: &[String]) -> Result<Value, GatewayError> {
         if !valid_group_by(group_by) {
-            return Err(store::invalid(
+            return Err(data::invalid(
                 "group_by must contain distinct approved dimensions only",
             ));
         }
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let current = at / BUCKET_MS * BUCKET_MS;
         let end = current + BUCKET_MS;
         let start = end - WINDOW_MS;
@@ -393,17 +384,27 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let base = json!({"status":"unavailable","bucket_ms":BUCKET_MS,"window_start_at_ms":start,"window_end_at_ms":end,"group_by":group_by,"max_buckets":max,"cardinality_limited":false,"truncated":false,"buckets":[]});
         let read: Result<Value, GatewayError> = async {
             let names = if group_by.is_empty() {
-                vec!["all"]
+                vec![PromptNamespace::All]
             } else {
-                vec!["dimension", "overflow"]
+                vec![PromptNamespace::Dimension, PromptNamespace::Overflow]
             };
             let mut buckets: BTreeMap<String, StoredPromptBucket> = BTreeMap::new();
             let mut limited = false;
-            for name in names {
-                for entry in
-                    store::scan(self.store.as_ref(), prefix(name), false, at, usize::MAX).await?
+            for namespace in names {
+                let name = namespace.name();
+                for entry in query::scan(
+                    self.store,
+                    ObservationRead::Prompt {
+                        namespace,
+                        before: None,
+                    },
+                    false,
+                    at,
+                    usize::MAX,
+                )
+                .await?
                 {
-                    let p = store::parts(&entry.key)?;
+                    let p = data::parts(&entry.key)?;
                     let Some(bucket) = p.get(4).and_then(safe_i64) else {
                         continue;
                     };
@@ -503,23 +504,22 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Ok(read.unwrap_or(base))
     }
     pub async fn prune_prompt_analytics(&self) -> Result<usize, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let cutoff = (at - RETENTION_MS).max(0) / BUCKET_MS * BUCKET_MS;
         let mut deleted = 0;
-        for name in ["all", "dimension", "overflow", "meta", "legacy"] {
-            let prefix = if name == "legacy" {
-                store::key(json!(["uos_ai", "prompt_cache_analytics", "v1"]))
-            } else {
-                prefix(name)
-            };
-            let mut end_parts = store::parts(&prefix)?;
-            end_parts.push(json!(cutoff + 1));
-            let rows = store::scan_selector(
-                self.store.as_ref(),
-                gateway_core::query::QuerySelector::Prefix {
-                    prefix,
-                    start: None,
-                    end: Some(store::key(json!(end_parts))),
+        for namespace in [
+            PromptNamespace::All,
+            PromptNamespace::Dimension,
+            PromptNamespace::Overflow,
+            PromptNamespace::Meta,
+            PromptNamespace::Legacy,
+        ] {
+            let name = namespace.name();
+            let rows = query::scan(
+                self.store,
+                ObservationRead::Prompt {
+                    namespace,
+                    before: Some(cutoff + 1),
                 },
                 false,
                 at,
@@ -529,7 +529,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             for batch in rows.chunks(64) {
                 let mut writes = Vec::new();
                 for row in batch {
-                    let p = store::parts(&row.key)?;
+                    let p = data::parts(&row.key)?;
                     let offset = if name == "legacy" { 3 } else { 4 };
                     if p.get(offset)
                         .and_then(safe_i64)
@@ -541,7 +541,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     }
                 }
                 let n = writes.len();
-                if n > 0 && store::commit(self.store.as_ref(), Vec::new(), writes).await? {
+                if n > 0 && store::commit(self.store, Vec::new(), writes).await? {
                     deleted += n;
                 }
             }

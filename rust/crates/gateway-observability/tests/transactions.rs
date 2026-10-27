@@ -1,19 +1,15 @@
 mod support;
 use gateway_core::{
-    error::GatewayError,
-    lifecycle::DeliveryOutcome,
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
-    tuple_key::TupleKey,
+    lifecycle::DeliveryOutcome, query::QueryPage, query::QueryRequest, query::QueryStore,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord, tuple_key::TupleKey,
 };
-use gateway_observability::{
-    ObservabilityRuntime,
-    ledger::ErrorObservation,
-    types::{HealthEvent, HealthProvider, HealthTarget, HealthWrite},
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    types::HealthEvent, types::HealthProvider, types::HealthTarget, types::HealthWrite,
 };
+use gateway_observability_ledger::ledger::ErrorObservation;
+use gateway_source::error::GatewayError;
 use std::{cell::Cell, rc::Rc};
 use support::{Host, Memory, run};
 #[derive(Clone, Copy)]
@@ -120,7 +116,7 @@ fn fixture(mode: Race) -> (Store, Host) {
 fn source_unconditional_write_overwrites_a_concurrent_destination_without_an_added_read_guard() {
     let (store, host) = fixture(Race::Destination);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
-    assert!(run(runtime.record_admin_error(&error())).unwrap());
+    assert!(run(runtime.ledger().record_admin_error(&error())).unwrap());
     assert_eq!(store.attempts.get(), 1);
     assert_eq!(store.memory.reads.get(), 0);
     assert!(store.memory.rows.borrow().values().any(|row| {
@@ -154,7 +150,7 @@ fn unknown_commit_receipt_is_not_replayed_or_reported_as_no_effect() {
     let (store, host) = fixture(Race::Unknown);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
     assert_eq!(
-        run(runtime.record_admin_error(&error()))
+        run(runtime.ledger().record_admin_error(&error()))
             .unwrap_err()
             .envelope
             .error

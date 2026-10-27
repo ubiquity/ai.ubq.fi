@@ -1,13 +1,15 @@
 //! Source analytics-only chart observations. These keys never enter routing/reset state.
-use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
+use crate::{ObservabilityRuntime, store};
 use gateway_admin_runtime::capabilities::Context;
-use gateway_auth::types::AuthResponse;
-use gateway_capacity_projection::scalars::safe_i64;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_capacity_projection::{
-    math::bucketed,
-    shapes::{BUCKET_MS, RETENTION_MS, read_history},
+    math::bucketed, scalars::safe_i64, shapes::BUCKET_MS, shapes::RETENTION_MS,
+    shapes::read_history,
 };
 use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, types::ObservabilityHost,
+};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -49,17 +51,17 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ));
         }
         let document: Value = serde_json::from_slice(raw_body)
-            .map_err(|_| store::invalid("Invalid capacity observation envelope"))?;
+            .map_err(|_| data::invalid("Invalid capacity observation envelope"))?;
         if !document.is_object() {
-            return Err(store::invalid("Invalid capacity observation envelope"));
+            return Err(data::invalid("Invalid capacity observation envelope"));
         }
         let host = document["host"]
             .as_str()
             .filter(|s| host_id(s))
-            .ok_or_else(|| store::invalid("Invalid capacity observation host"))?;
+            .ok_or_else(|| data::invalid("Invalid capacity observation host"))?;
         let points = parse_observations(&document["history"])
-            .ok_or_else(|| store::invalid("Invalid capacity observations"))?;
-        let at = store::now(self.host.as_ref())?;
+            .ok_or_else(|| data::invalid("Invalid capacity observations"))?;
+        let at = data::now(self.host.as_ref())?;
         let mut indexes = BTreeMap::new();
         let mut accepted: Vec<Value> = Vec::new();
         for point in points {
@@ -78,9 +80,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let points = accepted;
         for batch in points.chunks(64) {
             let mut writes = Vec::new();
-            let expiry = store::now(self.host.as_ref())? + RETENTION_MS;
+            let expiry = data::now(self.host.as_ref())? + RETENTION_MS;
             for point in batch {
-                let key = store::key(json!([
+                let key = data::key(json!([
                     "uos_ai",
                     "provider_capacity",
                     "analytics",
@@ -115,15 +117,17 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         at: i64,
     ) -> Result<Vec<(String, Value)>, GatewayError> {
-        let prefix = store::key(json!([
-            "uos_ai",
-            "provider_capacity",
-            "analytics",
-            "remote"
-        ]));
         let mut out = Vec::new();
-        for entry in store::scan(self.store.as_ref(), prefix, false, at, usize::MAX).await? {
-            let p = store::parts(&entry.key)?;
+        for entry in query::scan(
+            self.store.as_ref(),
+            ObservationRead::RemoteCapacity,
+            false,
+            at,
+            usize::MAX,
+        )
+        .await?
+        {
+            let p = data::parts(&entry.key)?;
             let Some(host) = p.get(4).and_then(Value::as_str).filter(|s| host_id(s)) else {
                 continue;
             };

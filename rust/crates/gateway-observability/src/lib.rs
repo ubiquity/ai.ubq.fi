@@ -6,17 +6,10 @@ pub mod capacity_events;
 mod capacity_store;
 pub mod claude_capacity;
 mod completion;
-mod counters;
 pub mod health;
-pub mod host_types;
 pub mod incidents;
-pub mod ledger;
-pub mod ledger_stats;
 pub mod metered;
-pub mod prompt;
-pub mod prompt_gate;
 pub mod providers;
-pub mod records;
 pub mod remote_capacity;
 mod replay_bootstrap;
 mod replay_cleanup;
@@ -32,7 +25,6 @@ mod replay_values;
 pub mod settings;
 mod store;
 pub mod telemetry;
-pub mod types;
 
 use std::rc::Rc;
 
@@ -92,5 +84,11 @@ impl<S, H> ObservabilityRuntime<S, H> {
     }
     pub fn host(&self) -> &H {
         &self.host
+    }
+    pub fn ledger(&self) -> gateway_observability_ledger::RequestLedger<'_, S, H> {
+        gateway_observability_ledger::RequestLedger::new(self.store.as_ref(), self.host.as_ref())
+    }
+    pub fn prompt(&self) -> gateway_observability_prompt::PromptAnalytics<'_, S, H> {
+        gateway_observability_prompt::PromptAnalytics::new(self.store.as_ref(), self.host.as_ref())
     }
 }

@@ -1,26 +1,18 @@
 //! Source request-owned failure capture. No caller JSON can mint this transport input.
 use crate::{
-    ObservabilityRuntime,
-    host_types::BuildIdentity,
-    incidents::{IncidentEvidence, IncidentObservation},
-    replay_crypto::{self, FingerprintInput, ReplayBody, ReplayKey},
-    replay_model as model,
-    replay_retention::Admission,
-    replay_retention_schema::{self as schema, RetentionLimits},
-    replay_trace::UpstreamTrace,
-    replay_values::{SourceObject, read_json_record},
-    store,
-    types::ObservabilityHost,
+    ObservabilityRuntime, incidents::IncidentEvidence, incidents::IncidentObservation,
+    replay_crypto, replay_crypto::FingerprintInput, replay_crypto::ReplayBody,
+    replay_crypto::ReplayKey, replay_model as model, replay_retention::Admission,
+    replay_retention_schema as schema, replay_retention_schema::RetentionLimits,
+    replay_trace::UpstreamTrace, replay_values::read_json_record,
 };
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_core::{query::QueryStore, state::RecordKey};
+use gateway_observability_contracts::{
+    data, host_types::BuildIdentity, source_object::SourceObject, types::ObservabilityHost,
 };
-use gateway_auth::crypto::sha256_hex;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, query::QueryStore, source_json::SourceJson,
-    state::RecordKey,
-};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use zeroize::Zeroizing;
@@ -92,7 +84,7 @@ impl ReplayInput {
             || request.body.as_bytes().len() > replay_crypto::MAX_REQUEST_BYTES
             || !model::request_id(&request.request_id)
         {
-            return Err(store::error(
+            return Err(data::error(
                 "Replay input is not an accepted bounded POST body",
             ));
         }
@@ -446,7 +438,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 "body_over_limit" | "body_unavailable" | "non_post" | "rejected_before_capture"
             )
         {
-            return Err(store::error("Replay capture omission is invalid"));
+            return Err(data::error("Replay capture omission is invalid"));
         }
         self.admit_replay_status(
             &model::Status {
@@ -454,7 +446,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 request_id: request_id.into(),
                 status: model::CaptureState::Disabled,
                 reason: Some(reason.into()),
-                captured_at_ms: store::now(self.host.as_ref())? as f64,
+                captured_at_ms: data::now(self.host.as_ref())? as f64,
                 manifest_key: None,
                 fingerprint: None,
                 expires_at_ms: None,
@@ -488,19 +480,19 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         limits: RetentionLimits,
     ) -> Result<PersistResult, GatewayError> {
         if !should_persist(&observation, &client) {
-            return Err(store::error(
+            return Err(data::error(
                 "A successful or cancelled request cannot be persisted as a replay",
             ));
         }
         let build = self.host.build_identity()?;
         if build != input.build {
-            return Err(store::error(
+            return Err(data::error(
                 "Replay capture belongs to a different immutable build",
             ));
         }
         client.error_code = bounded(client.error_code.as_deref(), false);
         client.error_param = bounded_param(client.error_param.as_ref());
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let index = if should_signal(&observation, &client) {
             self.record_incident_index(&IncidentObservation {
                 endpoint: input.endpoint.clone(),
@@ -697,14 +689,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         };
         let metadata = Zeroizing::new(SourceJson::from_serializable(&metadata)?.into_bytes());
         if metadata.len() > replay_crypto::MAX_METADATA_BYTES {
-            return Err(store::error("Replay metadata is too large"));
+            return Err(data::error("Replay metadata is too large"));
         }
-        let capture_id = store::uuid(self.host.as_ref())?;
+        let capture_id = data::uuid(self.host.as_ref())?;
         let iv: [u8; 12] = self
             .host
             .random_bytes(12)?
             .try_into()
-            .map_err(|_| store::error("Replay IV must be 12 bytes"))?;
+            .map_err(|_| data::error("Replay IV must be 12 bytes"))?;
         let reservation = match self
             .reserve_replay(
                 &capture_id,
@@ -746,7 +738,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 request_id: Some(input.request_id.clone()),
             };
             if !manifest.validate() {
-                return Err(store::error("Produced replay manifest is invalid"));
+                return Err(data::error("Produced replay manifest is invalid"));
             }
             let manifest_key = model::manifest_key(at as f64, &fingerprint, &manifest.capture_id)?;
             let status = model::Status {
@@ -756,7 +748,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 reason: None,
                 captured_at_ms: at as f64,
                 manifest_key: Some(
-                    store::parts(&manifest_key)?
+                    data::parts(&manifest_key)?
                         .iter()
                         .map(SourceJson::from_serializable)
                         .collect::<Result<_, _>>()?,
@@ -825,10 +817,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let row = SourceObject::parse(&read_json_record(dedupe)?)?;
         let parts = row
             .get("manifest_key")
-            .ok_or_else(|| store::error("Replay dedupe record is invalid"))?
+            .ok_or_else(|| data::error("Replay dedupe record is invalid"))?
             .array_items()?;
         if parts.len() != 7 {
-            return Err(store::error("Replay dedupe key is invalid"));
+            return Err(data::error("Replay dedupe key is invalid"));
         }
         let manifest_key = model::tuple_from_source(&parts)?;
         let winner = self.replay_row(&manifest_key).await?;
@@ -839,7 +831,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if manifest.as_ref().is_some_and(|m| {
             m.fingerprint != fingerprint || !m.matches_key(&manifest_key).unwrap_or(false)
         }) {
-            return Err(store::error("Replay dedupe winner identity is invalid"));
+            return Err(data::error("Replay dedupe winner identity is invalid"));
         }
         let captured = row
             .get("captured_at_ms")
@@ -856,28 +848,28 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if let Some(index) = index {
             let manifest = manifest
                 .as_ref()
-                .ok_or_else(|| store::error("Incident replay winner is unavailable"))?;
+                .ok_or_else(|| data::error("Incident replay winner is unavailable"))?;
             let exported = self.export_manifest(manifest).await?;
             let mut ciphertext = Zeroizing::new(Vec::new());
             for chunk in exported.chunks {
                 ciphertext.extend(
                     URL_SAFE_NO_PAD
                         .decode(chunk)
-                        .map_err(|_| store::error("Replay ciphertext chunk is invalid"))?,
+                        .map_err(|_| data::error("Replay ciphertext chunk is invalid"))?,
                 )
             }
             let iv: Vec<u8> = model::url_decode(&manifest.iv)?;
             let iv: [u8; 12] = iv
                 .try_into()
-                .map_err(|_| store::error("Replay IV is invalid"))?;
+                .map_err(|_| data::error("Replay IV is invalid"))?;
             let plain = key.decrypt(&iv, fingerprint, &ciphertext)?;
             if plain.len() < 4 {
-                return Err(store::error("Replay winner plaintext is truncated"));
+                return Err(data::error("Replay winner plaintext is truncated"));
             }
             let length = u32::from_be_bytes(plain[..4].try_into().expect("four bytes")) as usize;
             let bytes = plain
                 .get(4..4 + length)
-                .ok_or_else(|| store::error("Replay winner metadata is truncated"))?;
+                .ok_or_else(|| data::error("Replay winner metadata is truncated"))?;
             let metadata = SourceObject::parse(&SourceJson::parse_bytes(bytes)?)?;
             let git_sha = metadata
                 .get("git_sha")

@@ -1,15 +1,15 @@
 //! Only the exact request-bound SourceJson and finite settings-selector adapters.
-use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
-mod support;
-use gateway_admin_runtime::capabilities::{CodexRequest, Context, ProviderRequest};
-use gateway_auth::crypto::sha256_hex;
+use gateway_admin_runtime::{
+    capabilities::CodexRequest, capabilities::Context, capabilities::ProviderRequest,
+};
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_capacity_projection::{shapes::history_point, shapes::unavailable_snapshot};
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
     state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::StoredRecord,
 };
-use gateway_observability::{
-    ObservabilityRuntime, host_types::CapacityAccountRef, types::ObservabilityHost,
-};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{host_types::CapacityAccountRef, types::ObservabilityHost};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc};

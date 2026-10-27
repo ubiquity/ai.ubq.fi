@@ -1,12 +1,12 @@
 //! Source cache/telemetry-gate.ts: release-bound Stage0 actual completion evidence.
 use crate::{
-    ObservabilityRuntime, counters,
-    prompt::{PROVIDERS, PromptEvent, ROUTES, known_release, model_hash, model_text},
-    store,
-    types::ObservabilityHost,
+    PromptAnalytics, counters, prompt::PROVIDERS, prompt::PromptEvent, prompt::ROUTES,
+    prompt::known_release, prompt::model_hash, prompt::model_text,
 };
-use gateway_auth::crypto::sha256_hex;
-use gateway_core::{error::GatewayError, query::QueryStore, state::RecordKey};
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_core::{query::QueryStore, state::RecordKey};
+use gateway_observability_contracts::{data, types::ObservabilityHost};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 fn counter_key(
@@ -16,7 +16,7 @@ fn counter_key(
     route: &str,
     counter: &str,
 ) -> RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "prompt_cache_telemetry_gate",
         "v1",
@@ -46,7 +46,7 @@ fn summary(c: &[u128; 4]) -> Value {
     };
     json!({"completed":c[0].to_string(),"reported":c[1].to_string(),"cache_write_reported":c[2].to_string(),"invalid":c[3].to_string(),"reported_coverage":coverage(c[1]),"reported_coverage_passed":c[0]>0&&c[1]*200>=c[0]*199,"cache_write_reported_coverage":coverage(c[2]),"cache_write_reported_coverage_passed":c[0]>0&&c[2]*200>=c[0]*199})
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> PromptAnalytics<'_, S, H> {
     pub async fn record_prompt_telemetry(&self, event: &PromptEvent, release: &str) -> Value {
         let Some(release) = known_release(release) else {
             return result("ignored", "unknown_release", None, None, None, None);
@@ -123,22 +123,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             ));
         }
         let record = async {
-            let at = store::now(self.host.as_ref())?;
+            let at = data::now(self.host)?;
             for _ in 0..33 {
-                if counters::add(
-                    self.store.as_ref(),
-                    self.host.as_ref(),
-                    at,
-                    &deltas,
-                    Vec::new(),
-                    Vec::new(),
-                )
-                .await?
+                if counters::add(self.store, self.host, at, &deltas, Vec::new(), Vec::new()).await?
                 {
                     return Ok(());
                 }
             }
-            Err(store::error("Stage0 counter contention"))
+            Err(data::error("Stage0 counter contention"))
         }
         .await;
         match record {
@@ -183,7 +175,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         };
         let model = sha256_hex(format!("uos-prompt-cache-telemetry-model-v1\0{model}").as_bytes());
         let read=async{
-            let at=store::now(self.host.as_ref())?;let mut aggregate=[0u128;4];let mut routes=Vec::new();
+            let at=data::now(self.host)?;let mut aggregate=[0u128;4];let mut routes=Vec::new();
             for route in ROUTES{
                 let mut values=[None;4];for(i,counter)in ["completed","reported","cache_write_reported","invalid"].iter().enumerate(){let row=self.store.read(&counter_key(&release,provider,&model,route,counter)).await?;let Ok(value)=counters::read(row.as_ref(),at)else{return Ok(unavailable("invalid_counter",Some(&release),Some(provider),Some(&model)))};values[i]=value;}
                 if values[0].is_none()&&values.iter().any(Option::is_some){return Ok(unavailable("invalid_counter",Some(&release),Some(provider),Some(&model)))}

@@ -1,7 +1,8 @@
 //! Source metered-quota.ts monitoring only; this never authorizes a paid request.
-use crate::{store, types::ObservabilityHost};
+use crate::store;
 use gateway_capacity_projection::scalars::is_record;
 use gateway_core::{state::AuthorityStore, state::RecordKey, state::RecordMutation};
+use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 const HOUR: i64 = 3_600_000;
@@ -9,7 +10,7 @@ const FRESH: i64 = 300_000;
 const RETENTION: i64 = 86_400_000;
 const LEASE: i64 = 15_000;
 pub fn key(kind: &str) -> RecordKey {
-    store::key(json!(["uos_ai", "metered_quota", "v1", kind]))
+    data::key(json!(["uos_ai", "metered_quota", "v1", kind]))
 }
 fn safe(v: &Value) -> bool {
     v.as_f64()
@@ -60,7 +61,7 @@ pub fn token_usage_state(envelope: &Value, at: i64) -> Result<Value, GatewayErro
             .all(|f| safe(&data[f]))
         || !(0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&at)
     {
-        return Err(store::error(
+        return Err(data::error(
             "Metered account API returned invalid token usage data",
         ));
     }
@@ -163,7 +164,7 @@ pub fn diagnostics(configured: bool, snapshot: Option<&Value>) -> Value {
 }
 async fn retained<S: AuthorityStore>(store: &S, at: i64) -> Result<Option<Value>, GatewayError> {
     let row = store.read(&key("state")).await?;
-    Ok(store::value(row.as_ref(), at)?
+    Ok(data::value(row.as_ref(), at)?
         .filter(|v| {
             valid_state(v)
                 && v["observed_at_ms"]
@@ -186,7 +187,7 @@ pub async fn cached_snapshot<S: AuthorityStore>(
         futures_util::future::join(retained(store, at), store.read(&key("invalidation"))).await;
     let Some(state) = state? else { return Ok(None) };
     let invalidation = invalidation?;
-    let fresh = !invalidated(&state, store::value(invalidation.as_ref(), at)?)
+    let fresh = !invalidated(&state, data::value(invalidation.as_ref(), at)?)
         && state["observed_at_ms"]
             .as_f64()
             .is_some_and(|t| at as f64 - t < FRESH as f64);
@@ -202,10 +203,10 @@ async fn release<S: AuthorityStore, H: ObservabilityHost>(
 ) -> Result<(), GatewayError> {
     let key = key("refresh_lease");
     let row = store.read(&key).await?;
-    if store::value(row.as_ref(), store::now(host)?)?.is_some_and(|v| v["owner"] == owner) {
+    if data::value(row.as_ref(), data::now(host)?)?.is_some_and(|v| v["owner"] == owner) {
         let _ = store::commit(
             store,
-            vec![store::check(&key, row.as_ref())],
+            vec![data::check(&key, row.as_ref())],
             vec![RecordMutation::Delete { key }],
         )
         .await?;
@@ -218,13 +219,13 @@ pub async fn quota_snapshot<S: AuthorityStore, H: ObservabilityHost>(
     force: bool,
     deadline: i64,
 ) -> Result<Option<Value>, GatewayError> {
-    let at = store::now(host)?;
+    let at = data::now(host)?;
     let cached = retained(store, at).await.unwrap_or(None);
     let ik = key("invalidation");
     let invalidation = store.read(&ik).await.ok().flatten();
     if !force
         && cached.as_ref().is_some_and(|v| {
-            !invalidated(v, store::value(invalidation.as_ref(), at).ok().flatten())
+            !invalidated(v, data::value(invalidation.as_ref(), at).ok().flatten())
                 && v["observed_at_ms"]
                     .as_f64()
                     .is_some_and(|t| at as f64 - t < FRESH as f64)
@@ -232,10 +233,10 @@ pub async fn quota_snapshot<S: AuthorityStore, H: ObservabilityHost>(
     {
         return Ok(cached.as_ref().map(|s| snapshot_view(s, "fresh")));
     }
-    let owner = store::uuid(host)?;
+    let owner = data::uuid(host)?;
     let lk = key("refresh_lease");
     let lease = store.read(&lk).await.ok().flatten();
-    let occupied = store::value(lease.as_ref(), at)
+    let occupied = data::value(lease.as_ref(), at)
         .ok()
         .flatten()
         .is_some_and(|v| v["lease_until_ms"].as_f64().is_some_and(|t| t > at as f64));
@@ -244,7 +245,7 @@ pub async fn quota_snapshot<S: AuthorityStore, H: ObservabilityHost>(
     } else {
         store::commit(
             store,
-            vec![store::check(&lk, lease.as_ref())],
+            vec![data::check(&lk, lease.as_ref())],
             vec![store::put(
                 host,
                 lk.clone(),
@@ -260,9 +261,9 @@ pub async fn quota_snapshot<S: AuthorityStore, H: ObservabilityHost>(
             return Ok(Some(snapshot_view(cached, "stale")));
         }
         let until = (at + 2000).min(deadline);
-        while store::now(host)? < until {
+        while data::now(host)? < until {
             host.wait_ms(50).await?;
-            if let Some(state) = retained(store, store::now(host)?).await.unwrap_or(None) {
+            if let Some(state) = retained(store, data::now(host)?).await.unwrap_or(None) {
                 return Ok(Some(snapshot_view(&state, "wait")));
             }
         }
@@ -275,10 +276,10 @@ pub async fn quota_snapshot<S: AuthorityStore, H: ObservabilityHost>(
         let state_row = state_row?;
         let invalidation_row = invalidation_row?;
         let envelope = host.fetch_metered_quota(deadline).await?;
-        let observed = store::now(host)?;
+        let observed = data::now(host)?;
         let state = token_usage_state(&envelope, observed)?;
         let lease = store.read(&lk).await?;
-        let valid = store::value(lease.as_ref(), observed)?.is_some_and(|v| {
+        let valid = data::value(lease.as_ref(), observed)?.is_some_and(|v| {
             v["owner"] == owner
                 && v["lease_until_ms"]
                     .as_f64()
@@ -290,9 +291,9 @@ pub async fn quota_snapshot<S: AuthorityStore, H: ObservabilityHost>(
         let committed = store::commit(
             store,
             vec![
-                store::check(&sk, state_row.as_ref()),
-                store::check(&ik, invalidation_row.as_ref()),
-                store::check(&lk, lease.as_ref()),
+                data::check(&sk, state_row.as_ref()),
+                data::check(&ik, invalidation_row.as_ref()),
+                data::check(&lk, lease.as_ref()),
             ],
             vec![
                 store::put(host, sk, state.clone(), Some(observed + RETENTION))?,
@@ -318,7 +319,7 @@ pub async fn quota_snapshot<S: AuthorityStore, H: ObservabilityHost>(
         {
             Err(error)
         }
-        _ => Ok(retained(store, store::now(host)?)
+        _ => Ok(retained(store, data::now(host)?)
             .await
             .unwrap_or(None)
             .or(cached)
@@ -337,7 +338,7 @@ pub async fn balance_sample<S: AuthorityStore, H: ObservabilityHost>(
         return Ok(());
     }
     let bucket = at / HOUR * HOUR;
-    let key = store::key(json!([
+    let key = data::key(json!([
         "uos_ai",
         "metered_quota",
         "v1",
@@ -367,7 +368,7 @@ pub async fn balance_sample<S: AuthorityStore, H: ObservabilityHost>(
     }
     for _ in 0..3 {
         let row = store.read(&key).await?;
-        if store::value(row.as_ref(), at)?
+        if data::value(row.as_ref(), at)?
             .filter(|v| crate::api::valid_balance_sample(v))
             .is_some_and(|v| v["observed_at_ms"].as_f64().is_some_and(|n| n >= at as f64))
         {
@@ -375,7 +376,7 @@ pub async fn balance_sample<S: AuthorityStore, H: ObservabilityHost>(
         }
         if store::commit(
             store,
-            vec![store::check(&key, row.as_ref())],
+            vec![data::check(&key, row.as_ref())],
             vec![store::put(host, key.clone(), point.clone(), None)?],
         )
         .await?
@@ -383,7 +384,7 @@ pub async fn balance_sample<S: AuthorityStore, H: ObservabilityHost>(
             return Ok(());
         }
     }
-    Err(store::error(
+    Err(data::error(
         "Metered quota balance history changed repeatedly",
     ))
 }

@@ -1,27 +1,20 @@
 mod support;
-use gateway_auth::{
-    crypto::Secret,
-    provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
+use gateway_auth_credentials::{
+    provider_credentials::CodexSourceAccount, provider_credentials::CodexSourcePool,
+    provider_credentials::codex_source_pool_key,
 };
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority::{
-    capacity::*,
-    capacity_rules::parse_capacity_store,
-    keys,
-    paid_control::PaidControlOwner,
-    routing_types::{PoolAccount, SubscriptionPool},
-    store::{Authority, AuthorityClock, TokenSource},
+    capacity::*, capacity_rules::parse_capacity_store, keys, paid_control::PaidControlOwner,
+    routing_types::PoolAccount, routing_types::SubscriptionPool, store::Authority,
+    store::AuthorityClock, store::TokenSource,
 };
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, state::StoredRecord};
-use gateway_observability::{ObservabilityRuntime, host_types::*, types::ObservabilityHost};
+use gateway_core::{identity::PoolVersionstamp, state::StoredRecord};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{host_types::*, types::ObservabilityHost};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-use std::{
-    cell::Cell,
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicI64, Ordering},
-    },
-};
+use std::{cell::Cell, rc::Rc, sync::Arc, sync::atomic::AtomicI64, sync::atomic::Ordering};
 use support::{Host, Memory, run};
 #[derive(Clone)]
 struct Clock(Arc<AtomicI64>);
@@ -34,7 +27,7 @@ impl AuthorityClock for Clock {
 struct Tokens(Host);
 impl TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
-        gateway_auth::crypto::uuid_from_random(&self.0.random_bytes(16)?)
+        gateway_auth_primitives::crypto::uuid_from_random(&self.0.random_bytes(16)?)
     }
 }
 struct CapacityHost {

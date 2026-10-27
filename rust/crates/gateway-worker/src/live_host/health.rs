@@ -1,10 +1,8 @@
 //! Optional source health writes never decide live account eligibility or paid continuation.
-use gateway_auth::provider_credentials::codex_access_expiry_ms;
+use gateway_auth_credentials::provider_credentials::codex_access_expiry_ms;
 use gateway_live_runtime::types::{LiveAccount, LiveDispatchFailure, LiveResponse};
-use gateway_observability::{
-    ObservabilityRuntime,
-    types::{HealthEvent, HealthTarget},
-};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{types::HealthEvent, types::HealthTarget};
 use std::rc::Rc;
 use worker::Context;
 

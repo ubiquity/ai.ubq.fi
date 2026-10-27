@@ -1,8 +1,11 @@
 //! KV U64 values retain their explicit portable-value encoding.
-use crate::{store, types::ObservabilityHost};
-use gateway_core::error::GatewayError;
-use gateway_core::state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck, StoredRecord};
-use gateway_core::value::PortableValue;
+use crate::store;
+use gateway_core::{
+    state::AuthorityStore, state::RecordKey, state::RecordMutation, state::RevisionCheck,
+    state::StoredRecord, value::PortableValue,
+};
+use gateway_observability_contracts::{data, types::ObservabilityHost};
+use gateway_source::error::GatewayError;
 
 pub(crate) fn read(row: Option<&StoredRecord>, at: i64) -> Result<Option<u64>, GatewayError> {
     let Some(row) = row.filter(|r| !r.expires_at_ms.is_some_and(|e| e <= at)) else {
@@ -12,8 +15,8 @@ pub(crate) fn read(row: Option<&StoredRecord>, at: i64) -> Result<Option<u64>, G
         PortableValue::KvU64(v) => v
             .parse()
             .map(Some)
-            .map_err(|_| store::error("Counter is invalid")),
-        _ => Err(store::error("Counter must be a source KV U64")),
+            .map_err(|_| data::error("Counter is invalid")),
+        _ => Err(data::error("Counter must be a source KV U64")),
     }
 }
 pub(crate) async fn add<S: AuthorityStore, H: ObservabilityHost>(
@@ -27,11 +30,11 @@ pub(crate) async fn add<S: AuthorityStore, H: ObservabilityHost>(
     for (key, delta) in deltas {
         let row = store.read(key).await?;
         let next = read(row.as_ref(), at)?.unwrap_or(0).wrapping_add(*delta);
-        checks.push(store::check(key, row.as_ref()));
+        checks.push(data::check(key, row.as_ref()));
         mutations.push(RecordMutation::Put {
             key: key.clone(),
             record: StoredRecord::profile(
-                store::uuid(host)?,
+                data::uuid(host)?,
                 PortableValue::KvU64(next.to_string()),
                 row.as_ref()
                     .and_then(|r| r.expires_at_ms)

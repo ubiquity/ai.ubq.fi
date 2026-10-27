@@ -1,22 +1,20 @@
 //! Actual frozen Bun writer cases, plus the named post-acceptance carrier only.
 //! This fixture grants no quota, routing, native credential or live provider authority.
-use gateway_claude_usage_history_records::{
-    types::{ClaudeAcceptedObservation, ClaudeObservationState, CredentialKind},
-    *,
-};
-mod support;
 use gateway_admin_runtime::capabilities::Context;
 use gateway_capacity_projection::{
     shapes::BUCKET_MS, shapes::RETENTION_MS, shapes::unavailable_snapshot,
+};
+use gateway_claude_usage_history_records::{
+    types::ClaudeAcceptedObservation, types::ClaudeObservationState, types::CredentialKind, *,
 };
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
     state::RecordKey, state::RevisionCheck, state::StoredRecord, tuple_key::TupleKey,
     value::ValueEncoding,
 };
-use gateway_observability::{
-    ObservabilityRuntime, host_types::*, types::HealthProvider, types::HealthTarget,
-    types::ObservabilityHost,
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    host_types::*, types::HealthProvider, types::HealthTarget, types::ObservabilityHost,
 };
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -84,7 +82,9 @@ fn replace(value: &SourceJson, name: &str, replacement: SourceJson) -> SourceJso
 fn rows(value: &SourceJson) -> Vec<SourceJson> {
     member(value, "points").array_items().unwrap()
 }
-fn response(value: gateway_auth::types::AuthResponse) -> Result<SourceJson, GatewayError> {
+fn response(
+    value: gateway_auth_contracts::types::AuthResponse,
+) -> Result<SourceJson, GatewayError> {
     assert_eq!(value.status, 200);
     assert_eq!(value.headers["cache-control"], "no-store");
     SourceJson::parse_bytes(&value.body.to_bytes()?)

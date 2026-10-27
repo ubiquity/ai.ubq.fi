@@ -1,8 +1,8 @@
 //! Source ba5ef05e provider/health.ts and paid-fallback/health.ts.
-use crate::{ObservabilityRuntime, completion::Completion, store, types::*};
-use gateway_capacity_projection::scalars::{is_record, trim};
-use gateway_core::query::QueryStore;
-use gateway_core::state::{AuthorityStore, RecordKey};
+use crate::{ObservabilityRuntime, completion::Completion, store};
+use gateway_capacity_projection::{scalars::is_record, scalars::trim};
+use gateway_core::{query::QueryStore, state::AuthorityStore, state::RecordKey};
+use gateway_observability_contracts::{data, types::*};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -79,7 +79,7 @@ pub fn normalize_provider_request_id(value: Option<&str>) -> Option<String> {
         .map(str::to_owned)
 }
 pub fn health_key(target: &HealthTarget, record: &str) -> RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "provider_health",
         "v1",
@@ -246,7 +246,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut observations = Vec::new();
         for record in RECORDS {
             if let Some(row) = self.store.read(&health_key(target, record)).await?
-                && let Some(v) = store::value(Some(&row), at_ms)?.and_then(parse_observation)
+                && let Some(v) = data::value(Some(&row), at_ms)?.and_then(parse_observation)
             {
                 observations.push(v)
             }
@@ -268,7 +268,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         status: Option<u16>,
         provider_request_id: Option<&str>,
     ) -> HealthWrite {
-        let Ok(at) = store::now(self.host.as_ref()) else {
+        let Ok(at) = data::now(self.host.as_ref()) else {
             return HealthWrite::Unavailable;
         };
         let observation = HealthObservation {
@@ -352,7 +352,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(HealthWrite::BindingChanged);
             }
             let value = serde_json::to_value(&observation)
-                .map_err(|_| store::error("Invalid health observation"))?;
+                .map_err(|_| data::error("Invalid health observation"))?;
             let writes = vec![
                 store::put(
                     self.host.as_ref(),

@@ -1,16 +1,11 @@
 mod support;
-use gateway_core::error::GatewayError;
-use gateway_observability::{
-    ObservabilityRuntime, ObservabilityState,
-    host_types::*,
-    types::{HealthEvent as E, HealthTarget, HealthWrite as W, ObservabilityHost},
+use gateway_observability::{ObservabilityRuntime, ObservabilityState};
+use gateway_observability_contracts::{
+    host_types::*, types::HealthEvent as E, types::HealthTarget, types::HealthWrite as W,
+    types::ObservabilityHost,
 };
-use std::{
-    cell::Cell,
-    future::Future,
-    rc::Rc,
-    task::{Context, Poll, Waker},
-};
+use gateway_source::error::GatewayError;
+use std::{cell::Cell, future::Future, rc::Rc, task::Context, task::Poll, task::Waker};
 use support::{Host, Memory, run};
 struct RequestHost {
     base: Host,

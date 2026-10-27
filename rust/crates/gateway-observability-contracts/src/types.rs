@@ -1,5 +1,6 @@
 use gateway_admin_runtime::capabilities::Context;
-use gateway_core::{error::GatewayError, state::RevisionCheck};
+use gateway_core::state::RevisionCheck;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 
@@ -98,12 +99,15 @@ pub enum HealthWrite {
 
 /// The fixed host owns real clock/wait/RNG. Pure storage algorithms never call a provider.
 pub trait ObservabilityHost {
-    fn parse_claude_usage_date(&self, _value: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(
+        &self,
+        _value: &gateway_source::js_string::JsString16,
+    ) -> Option<i64> {
         None
     }
     /// Finite shared collector, invoked only from the existing capacity capture.
     fn collect_claude_usage(&self) -> impl Future<Output = Result<(), GatewayError>> {
-        async { Err(crate::store::missing("claude_usage_collection")) }
+        async { Err(crate::data::missing("claude_usage_collection")) }
     }
 
     /// The same trusted pure runtime capability used by source model controls.
@@ -117,33 +121,33 @@ pub trait ObservabilityHost {
         _left: &str,
         _right: &str,
     ) -> Result<std::cmp::Ordering, GatewayError> {
-        Err(crate::store::missing("source_locale_compare"))
+        Err(crate::data::missing("source_locale_compare"))
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError>;
     fn metered_balance_fingerprint(
         &self,
     ) -> impl Future<Output = Result<Option<String>, GatewayError>> {
-        async { Err(crate::store::missing("metered_balance_account_identity")) }
+        async { Err(crate::data::missing("metered_balance_account_identity")) }
     }
     /// Existing paid authority owns the idempotent backfill and its anchored TTL rewrite.
     fn backfill_paid_usage(
         &self,
         _limit: u32,
     ) -> impl Future<Output = Result<crate::host_types::PaidBackfillReceipt, GatewayError>> {
-        async { Err(crate::store::missing("paid_authority_backfill")) }
+        async { Err(crate::data::missing("paid_authority_backfill")) }
     }
     fn capacity_observation_body(
         &self,
         _context: &Context,
     ) -> impl Future<Output = Result<Vec<u8>, GatewayError>> {
-        async { Err(crate::store::missing("request_bound_capacity_body")) }
+        async { Err(crate::data::missing("request_bound_capacity_body")) }
     }
     fn codex_reset_available_count(
         &self,
         _account: &crate::host_types::CapacityAccountRef,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<Option<i64>, GatewayError>> {
-        async { Err(crate::store::missing("codex_reset_count_diagnostic")) }
+        async { Err(crate::data::missing("codex_reset_count_diagnostic")) }
     }
     fn codex_reset_credits(
         &self,
@@ -151,23 +155,23 @@ pub trait ObservabilityHost {
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<Option<Vec<crate::host_types::ResetCreditDiagnostic>>, GatewayError>>
     {
-        async { Err(crate::store::missing("codex_reset_credit_diagnostic")) }
+        async { Err(crate::data::missing("codex_reset_credit_diagnostic")) }
     }
     fn codex_overage_diagnostics(
         &self,
         _account: &crate::host_types::CapacityAccountRef,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<Option<serde_json::Value>, GatewayError>> {
-        async { Err(crate::store::missing("codex_overage_diagnostic")) }
+        async { Err(crate::data::missing("codex_overage_diagnostic")) }
     }
     /// Delegates only to the existing authority's half-open recheck; never inference.
     fn recheck_codex_slot(&self, _slot: u8) -> impl Future<Output = Result<bool, GatewayError>> {
-        async { Err(crate::store::missing("codex_authority_recheck")) }
+        async { Err(crate::data::missing("codex_authority_recheck")) }
     }
     fn cache_experiment_target(
         &self,
     ) -> impl Future<Output = Result<crate::host_types::CacheExperimentTarget, GatewayError>> {
-        async { Err(crate::store::missing("fixed_cache_experiment_target")) }
+        async { Err(crate::data::missing("fixed_cache_experiment_target")) }
     }
     /// Native ownership/refresh and the source's fixed three-cycle operation remain with the native owner.
     /// Recheck the exact current target/cohort/release and source leases before any experiment I/O.
@@ -175,17 +179,17 @@ pub trait ObservabilityHost {
         &self,
         _baseline: &serde_json::Value,
     ) -> impl Future<Output = Result<serde_json::Value, GatewayError>> {
-        async { Err(crate::store::missing("fixed_cache_experiment")) }
+        async { Err(crate::data::missing("fixed_cache_experiment")) }
     }
     fn wait_ms(&self, milliseconds: u32) -> impl Future<Output = Result<(), GatewayError>>;
     fn build_identity(&self) -> Result<crate::host_types::BuildIdentity, GatewayError> {
-        Err(crate::store::missing("immutable_build_identity"))
+        Err(crate::data::missing("immutable_build_identity"))
     }
     fn provider_inventory(
         &self,
         _context: &Context,
     ) -> impl Future<Output = Result<crate::host_types::ProviderInventory, GatewayError>> {
-        async { Err(crate::store::missing("provider_inventory")) }
+        async { Err(crate::data::missing("provider_inventory")) }
     }
     /// Only the source fixed Codex models, monitoring quota and Claude models GETs.
     /// Implementations enforce this one absolute 3-second deadline and cancel late bodies.
@@ -193,13 +197,13 @@ pub trait ObservabilityHost {
         &self,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<crate::host_types::UpstreamHealthEvidence, GatewayError>> {
-        async { Err(crate::store::missing("active_upstream_health")) }
+        async { Err(crate::data::missing("active_upstream_health")) }
     }
     fn codex_capacity_accounts(
         &self,
     ) -> impl Future<Output = Result<Vec<crate::host_types::CapacityAccountRef>, GatewayError>>
     {
-        async { Err(crate::store::missing("codex_capacity_accounts")) }
+        async { Err(crate::data::missing("codex_capacity_accounts")) }
     }
     fn probe_codex_capacity(
         &self,
@@ -207,7 +211,7 @@ pub trait ObservabilityHost {
         _fence: &gateway_authority::capacity::CodexCapacityObservationFence,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<crate::host_types::CapacityProbe, GatewayError>> {
-        async { Err(crate::store::missing("codex_capacity_probe")) }
+        async { Err(crate::data::missing("codex_capacity_probe")) }
     }
     /// Capture original authority facts before any GET. The returned fence is opaque, not caller JSON.
     fn begin_codex_capacity_observation(
@@ -216,21 +220,21 @@ pub trait ObservabilityHost {
     ) -> impl Future<
         Output = Result<gateway_authority::capacity::CodexCapacityObservationFence, GatewayError>,
     > {
-        async { Err(crate::store::missing("capacity_authority_source_fence")) }
+        async { Err(crate::data::missing("capacity_authority_source_fence")) }
     }
     fn metered_quota_snapshot(
         &self,
         _force_refresh: bool,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<Option<serde_json::Value>, GatewayError>> {
-        async { Err(crate::store::missing("metered_quota_snapshot")) }
+        async { Err(crate::data::missing("metered_quota_snapshot")) }
     }
     /// Fixed non-billable monitoring GET. A provider inference key is never substituted.
     fn fetch_metered_quota(
         &self,
         _deadline_ms: i64,
     ) -> impl Future<Output = Result<serde_json::Value, GatewayError>> {
-        async { Err(crate::store::missing("metered_quota_monitoring_get")) }
+        async { Err(crate::data::missing("metered_quota_monitoring_get")) }
     }
     /// Calls the existing authority's current-binding observation writer; never another ledger.
     fn accept_capacity_observations(
@@ -243,6 +247,6 @@ pub trait ObservabilityHost {
             GatewayError,
         >,
     > {
-        async { Err(crate::store::missing("capacity_authority_observation")) }
+        async { Err(crate::data::missing("capacity_authority_observation")) }
     }
 }

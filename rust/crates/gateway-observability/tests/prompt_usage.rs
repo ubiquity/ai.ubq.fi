@@ -1,5 +1,6 @@
-use gateway_core::{source_json::SourceJson, source_usage::extract_source_usage_tokens};
-use gateway_observability::prompt::PromptEvent;
+use gateway_core::source_usage::extract_source_usage_tokens;
+use gateway_observability_prompt::prompt::PromptEvent;
+use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 
 fn event() -> PromptEvent {

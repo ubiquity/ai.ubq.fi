@@ -1,11 +1,15 @@
 //! Finite admin adapters. Pure projections read the one source-compatible QueryStore.
-use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context, ProviderRequest};
-use gateway_auth::types::AuthResponse;
-use gateway_capacity_projection::scalars::{DAY, safe_i64};
-use gateway_core::query::{QuerySelector, QueryStore};
-use gateway_source::error::GatewayError;
-use gateway_source::source_json::SourceJson;
+use crate::ObservabilityRuntime;
+use gateway_admin_runtime::{
+    capabilities::AnalyticsRequest, capabilities::Context, capabilities::ProviderRequest,
+};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_capacity_projection::{scalars::DAY, scalars::safe_i64};
+use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, types::ObservabilityHost,
+};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 const HOUR: i64 = 3_600_000;
@@ -14,8 +18,9 @@ fn signed_safe(v: &Value) -> bool {
         .is_some_and(|n| n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0)
 }
 pub fn valid_usage_rollup(v: &Value) -> bool {
-    gateway_source::source_json::SourceJson::from_serializable(v)
-        .is_ok_and(|document| crate::records::valid_usage_rollup_source(&document))
+    gateway_source::source_json::SourceJson::from_serializable(v).is_ok_and(|document| {
+        gateway_observability_ledger::records::valid_usage_rollup_source(&document)
+    })
 }
 
 pub fn valid_balance_sample(v: &Value) -> bool {
@@ -97,7 +102,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let bytes = raw.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&raw);
                 let decoded = String::from_utf8_lossy(bytes);
                 if SourceJson::parse(&decoded).ok().as_ref() != Some(&document) {
-                    return Err(store::invalid(
+                    return Err(data::invalid(
                         "Capacity observations do not match the request-bound body",
                     ));
                 }
@@ -118,16 +123,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         since: i64,
         at: i64,
     ) -> Result<Vec<SourceJson>, GatewayError> {
-        let prefix = json!(["uos_ai", "paid_fallback", "v3", "usage_rollup"]);
-        let mut start = prefix.as_array().expect("source tuple").clone();
-        start.push(json!(since.max(0) / HOUR * HOUR));
-        let mut end = prefix.as_array().expect("source tuple").clone();
-        end.push(json!(at + HOUR));
-        let entries = store::scan_selector(
+        let entries = query::scan(
             self.store.as_ref(),
-            QuerySelector::Range {
-                start: store::key(json!(start)),
-                end: store::key(json!(end)),
+            ObservationRead::UsageRollups {
+                start: since.max(0) / HOUR * HOUR,
+                end: at + HOUR,
             },
             false,
             at,
@@ -136,7 +136,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         .await?;
         Ok(entries
             .into_iter()
-            .filter_map(|e| crate::records::usage_rollup_record_source(&e.record).ok())
+            .filter_map(|e| {
+                gateway_observability_ledger::records::usage_rollup_record_source(&e.record).ok()
+            })
             .collect())
     }
     pub async fn balance_history(
@@ -150,22 +152,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         };
         let since = since.max(0);
         let at = at.max(since);
-        let base = json!([
-            "uos_ai",
-            "metered_quota",
-            "v1",
-            "balance_history",
-            fingerprint
-        ]);
-        let mut start = base.as_array().expect("source tuple").clone();
-        let mut end = start.clone();
-        start.push(json!(since / HOUR * HOUR));
-        end.push(json!(at / HOUR * HOUR + HOUR));
-        let entries = store::scan_selector(
+        let entries = query::scan(
             self.store.as_ref(),
-            QuerySelector::Range {
-                start: store::key(json!(start)),
-                end: store::key(json!(end)),
+            ObservationRead::BalanceHistory {
+                fingerprint,
+                start: since / HOUR * HOUR,
+                end: at / HOUR * HOUR + HOUR,
             },
             false,
             at,
@@ -203,7 +195,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         } else {
             7
         };
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let fingerprint = self
             .host
             .metered_balance_fingerprint()
@@ -219,7 +211,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                         at,
                         fingerprint.as_deref(),
                     ),
-                    self.ledger_growth(at),
+                    self.ledger().ledger_growth(at),
                 ),
             ),
         )
@@ -242,10 +234,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let reads =
             4 + rollup_count + sample_count + growth["read_units"].as_u64().unwrap_or(0) as usize;
         let _ = self
+            .ledger()
             .record_projection_stats(days, reads as u64, rollup_count as u64)
             .await;
         let mut fields = gateway_source::source_serialization::entries(&body)
-            .ok_or_else(|| store::error("Invalid source projection response"))?;
+            .ok_or_else(|| data::error("Invalid source projection response"))?;
         fields.extend([
             ("balance_window_days".into(),SourceJson::from_serializable(&balance_days)?),
             ("retention".into(),SourceJson::from_serializable(&json!({"rollup_bucket_ms":HOUR,"rollup_window_ms":i64::from(days)*DAY,"balance_history_source_bucket_ms":HOUR,"balance_history_bucket_ms":bucket,"balance_history_window_ms":i64::from(balance_days)*DAY}))?),
@@ -265,14 +258,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         match request {
             AnalyticsRequest::PromptCache { group_by } => Ok(AuthResponse::json(
                 200,
-                self.prompt_analytics(&group_by).await?,
+                self.prompt().prompt_analytics(&group_by).await?,
             )),
             AnalyticsRequest::PaidHistory { key_id, limit } => {
                 #[derive(serde::Serialize)]
                 struct History {
                     data: Vec<gateway_source::source_json::SourceJson>,
                 }
-                let data = self.request_logs(&key_id, limit).await?;
+                let data = self.ledger().request_logs(&key_id, limit).await?;
                 Ok(AuthResponse::source_json(
                     200,
                     gateway_source::source_json::SourceJson::from_serializable(&History { data })?,

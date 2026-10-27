@@ -1,7 +1,4 @@
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
-};
+use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_observability::replay_crypto::*;
 use serde_json::Value;
 fn fixture() -> Value {

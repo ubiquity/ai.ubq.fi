@@ -4,20 +4,20 @@ use crate::{
     observability_host,
 };
 use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap, CredentialKind};
-use gateway_auth::{
-    types::AuthHost,
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+use gateway_auth_contracts::{
+    types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
+    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
 };
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
 use gateway_claude_usage_quota::observation::AcceptedObservation;
-use gateway_core::{error::GatewayError, state::RevisionCheck};
-use gateway_observability::{
-    ObservabilityRuntime,
-    types::{HealthEvent, HealthProvider, HealthTarget},
+use gateway_core::state::RevisionCheck;
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    types::HealthEvent, types::HealthProvider, types::HealthTarget,
 };
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};
 
@@ -126,8 +126,8 @@ impl AuthHost for Host {
 impl ClaudePoolHost for Host {
     fn compare_principals(
         &self,
-        left: &gateway_core::js_string::JsString16,
-        right: &gateway_core::js_string::JsString16,
+        left: &gateway_source::js_string::JsString16,
+        right: &gateway_source::js_string::JsString16,
     ) -> Result<Ordering, GatewayError> {
         gateway_worker_platform::source_collator::shared().compare(left, right)
     }
@@ -243,7 +243,7 @@ pub(super) fn headers(
 
 pub(super) fn credential_headers(
     credential: &claude::Credential,
-    workspace: Option<&gateway_core::js_string::JsString16>,
+    workspace: Option<&gateway_source::js_string::JsString16>,
     stream: bool,
 ) -> Result<worker::Headers, ConstructionFailure> {
     let headers = worker::Headers::new();
@@ -293,8 +293,8 @@ pub(super) fn credential_headers(
 }
 
 fn trim_workspace(
-    value: &gateway_core::js_string::JsString16,
-) -> Option<gateway_core::js_string::JsString16> {
+    value: &gateway_source::js_string::JsString16,
+) -> Option<gateway_source::js_string::JsString16> {
     let units = value.as_units();
     let whitespace = |unit: &u16| {
         char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
@@ -308,7 +308,7 @@ fn trim_workspace(
         .rposition(|unit| !whitespace(unit))
         .map_or(start, |at| at + 1);
     (start < end)
-        .then(|| gateway_core::js_string::JsString16::from_units(units[start..end].to_vec()))
+        .then(|| gateway_source::js_string::JsString16::from_units(units[start..end].to_vec()))
 }
 
 pub(super) fn physical_request(
@@ -335,7 +335,7 @@ pub(super) fn physical_request(
 }
 
 impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
-    fn parse_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_usage_date(&self, text: &gateway_source::js_string::JsString16) -> Option<i64> {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
     async fn accepted_usage(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
@@ -359,17 +359,17 @@ impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
 
 #[cfg(test)]
 mod physical_tests {
-    use gateway_core::js_string::JsString16;
+    use gateway_source::js_string::JsString16;
     #[test]
     fn actual_prepared_body_kind_rejects_wrong_binding_before_any_host_header()
     -> Result<(), Box<dyn std::error::Error>> {
         use gateway_admin_runtime::claude::{
             AccountBinding, Credential, CredentialKind, source_secret::ClaudeSourceSecret,
         };
-        use gateway_core::source_json::SourceJson;
         use gateway_providers::types::{
             ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, PreparedClaudeBody,
         };
+        use gateway_source::source_json::SourceJson;
         let binding = AccountBinding {
             account_id: "fixture-account".into(),
             account_cohort_id: "fixture-cohort".into(),

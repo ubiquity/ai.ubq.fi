@@ -1,15 +1,20 @@
-use crate::{ObservabilityRuntime, capacity_events::event_key, store, types::ObservabilityHost};
-use gateway_capacity_projection::scalars::safe_i64;
-use gateway_capacity_projection::{events::valid_event, math as capacity_math, shapes as shape};
-use gateway_core::query::{QuerySelector, QueryStore};
-use gateway_core::state::{RecordKey, RecordMutation, StoredRecord};
+use crate::{ObservabilityRuntime, capacity_events::event_key, store};
+use gateway_capacity_projection::{
+    events::valid_event, math as capacity_math, scalars::safe_i64, shapes as shape,
+};
+use gateway_core::{
+    query::QueryStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
+};
+use gateway_observability_contracts::{
+    data, query, query::CapacityRows, query::ObservationRead, types::ObservabilityHost,
+};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 pub(crate) fn key(name: &str) -> RecordKey {
-    store::key(json!(["uos_ai", "provider_capacity", "v1", name]))
+    data::key(json!(["uos_ai", "provider_capacity", "v1", name]))
 }
 fn history_key(point: &Value) -> RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "provider_capacity",
         "v1",
@@ -18,7 +23,7 @@ fn history_key(point: &Value) -> RecordKey {
     ]))
 }
 fn available_key(slot: u8) -> RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "provider_capacity",
         "v1",
@@ -86,15 +91,22 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         at: i64,
     ) -> Result<Option<Value>, GatewayError> {
         let row = self.store.read(&key("snapshot")).await?;
-        Ok(store::value(row.as_ref(), at)?.and_then(shape::read_snapshot))
+        Ok(data::value(row.as_ref(), at)?.and_then(shape::read_snapshot))
     }
     pub async fn capacity_history(&self, at: i64) -> Result<Vec<Value>, GatewayError> {
         let cutoff = (at - shape::RETENTION_MS).max(0);
         let newest = at / shape::BUCKET_MS * shape::BUCKET_MS;
         let mut out = Vec::new();
-        for entry in store::scan(self.store.as_ref(), key("history"), false, at, usize::MAX).await?
+        for entry in query::scan(
+            self.store.as_ref(),
+            ObservationRead::Capacity(CapacityRows::History),
+            false,
+            at,
+            usize::MAX,
+        )
+        .await?
         {
-            let p = store::parts(&entry.key)?;
+            let p = data::parts(&entry.key)?;
             let Some(bucket) = p.get(4).and_then(safe_i64) else {
                 continue;
             };
@@ -122,7 +134,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     ) -> Result<Option<StoredRecord>, GatewayError> {
         let key = key("lease");
         let row = self.store.read(&key).await?;
-        if store::value(row.as_ref(), at)?
+        if data::value(row.as_ref(), at)?
             .is_some_and(|v| v["lease_until_ms"].as_f64().is_some_and(|t| t > at as f64))
         {
             return Ok(None);
@@ -130,7 +142,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let lease = json!({"owner":owner,"lease_until_ms":at+10000});
         if !store::commit(
             self.store.as_ref(),
-            vec![store::check(&key, row.as_ref())],
+            vec![data::check(&key, row.as_ref())],
             vec![store::put(
                 self.host.as_ref(),
                 key.clone(),
@@ -158,7 +170,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             store::commit(
                 self.store.as_ref(),
-                vec![store::check(&key, row.as_ref())],
+                vec![data::check(&key, row.as_ref())],
                 vec![RecordMutation::Delete { key }],
             )
             .await?;
@@ -171,13 +183,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         previous: Option<i64>,
     ) -> Result<Option<Value>, GatewayError> {
-        let deadline = store::now(self.host.as_ref())? + 2000;
-        while store::now(self.host.as_ref())? < deadline {
+        let deadline = data::now(self.host.as_ref())? + 2000;
+        while data::now(self.host.as_ref())? < deadline {
             self.host.wait_ms(50).await?;
             // Deliberately ordered: a released lease must precede the corresponding snapshot read.
             let lease = self.store.read(&key("lease")).await.ok().flatten();
             let snapshot = self
-                .read_capacity_snapshot(store::now(self.host.as_ref())?)
+                .read_capacity_snapshot(data::now(self.host.as_ref())?)
                 .await
                 .ok()
                 .flatten();
@@ -198,7 +210,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         lease: &StoredRecord,
         snapshot: &Value,
     ) -> Result<bool, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let point = shape::history_point(snapshot);
         let history = history_key(&point);
         let snapshot_key = key("snapshot");
@@ -207,12 +219,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut last = Vec::new();
         for slot in [1, 2] {
             let row = self.store.read(&available_key(slot)).await?;
-            if let Some(v) = store::value(row.as_ref(), at)?.and_then(observation) {
+            if let Some(v) = data::value(row.as_ref(), at)?.and_then(observation) {
                 last.push(v)
             }
         }
-        let previous = store::value(old_snapshot.as_ref(), at)?.and_then(shape::read_snapshot);
-        let previous_history = store::value(old_point.as_ref(), at)?.and_then(shape::read_history);
+        let previous = data::value(old_snapshot.as_ref(), at)?.and_then(shape::read_snapshot);
+        let previous_history = data::value(old_point.as_ref(), at)?.and_then(shape::read_history);
         let recover: Vec<u8> = [1, 2]
             .into_iter()
             .filter(|slot| {
@@ -262,7 +274,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let bucket = safe_i64(&point["bucket_start_at_ms"]).expect("validated source bucket")
             / shape::HOUR_MS
             * shape::HOUR_MS;
-        let rollup_key = store::key(json!([
+        let rollup_key = data::key(json!([
             "uos_ai",
             "provider_capacity",
             "v1",
@@ -270,7 +282,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             bucket
         ]));
         let rollup = self.store.read(&rollup_key).await.ok();
-        let mut checks = vec![store::check(&key("lease"), Some(lease))];
+        let mut checks = vec![data::check(&key("lease"), Some(lease))];
         let expiry = Some(at + shape::RETENTION_MS);
         let mut writes = vec![store::put(
             self.host.as_ref(),
@@ -302,11 +314,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
         }
         if let Some(rollup) = rollup {
-            let v = store::value(rollup.as_ref(), at)
+            let v = data::value(rollup.as_ref(), at)
                 .ok()
                 .flatten()
                 .filter(|v| valid_rollup(v));
-            checks.push(store::check(&rollup_key, rollup.as_ref()));
+            checks.push(data::check(&rollup_key, rollup.as_ref()));
             writes.push(store::put(
                 self.host.as_ref(),
                 rollup_key,
@@ -317,7 +329,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if preserve && let Some(old) = previous_history {
             writes.push(store::put(
                 self.host.as_ref(),
-                store::key(json!([
+                data::key(json!([
                     "uos_ai",
                     "provider_capacity",
                     "v1",
@@ -433,24 +445,19 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     ) -> Result<Vec<Value>, GatewayError> {
         let first = since.max(0) / shape::HOUR_MS * shape::HOUR_MS;
         let last = at.max(since) / shape::HOUR_MS * shape::HOUR_MS;
-        let selector = QuerySelector::Range {
-            start: store::key(json!([
-                "uos_ai",
-                "provider_capacity",
-                "v1",
-                "rollup",
-                first
-            ])),
-            end: store::key(json!([
-                "uos_ai",
-                "provider_capacity",
-                "v1",
-                "rollup",
-                last + shape::HOUR_MS
-            ])),
-        };
         let mut rows = Vec::new();
-        for entry in store::scan_selector(self.store.as_ref(), selector, false, at, 20000).await? {
+        for entry in query::scan(
+            self.store.as_ref(),
+            ObservationRead::CapacityRollups {
+                start: first,
+                end: last + shape::HOUR_MS,
+            },
+            false,
+            at,
+            20000,
+        )
+        .await?
+        {
             let v = entry.record.json_value()?;
             if valid_rollup(v)
                 && safe_i64(&v["bucket_start_at_ms"]).is_some_and(|t| t >= first && t <= last)

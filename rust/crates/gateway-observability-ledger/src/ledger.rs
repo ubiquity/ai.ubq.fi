@@ -1,7 +1,10 @@
 //! Source analytics.ts and admin/error-log.ts. This is the existing request ledger.
-use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_capacity_projection::scalars::{DAY, trim};
+use crate::{RequestLedger, store};
+use gateway_capacity_projection::{scalars::DAY, scalars::trim};
 use gateway_core::{lifecycle::DeliveryOutcome, query::QueryStore};
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, types::ObservabilityHost,
+};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -52,7 +55,7 @@ pub struct ErrorObservation {
     pub git_sha: Option<String>,
     pub deno_revision: Option<String>,
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> RequestLedger<'_, S, H> {
     pub async fn record_request_log(
         &self,
         key_id: &str,
@@ -69,12 +72,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if trim(key_id).is_empty() {
             return Ok(());
         }
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let raw_id = source::member(input, "id").and_then(|v| v.deserialize::<JsString16>().ok());
         let id = gateway_observability_request_records::request::bounded_text(
             raw_id.as_ref(),
             120,
-            &gateway_source::js_string::JsString16::from_utf8(&store::uuid(self.host.as_ref())?),
+            &gateway_source::js_string::JsString16::from_utf8(&data::uuid(self.host)?),
         );
         let created = gateway_observability_request_records::request::number(
             source::member(input, "created_at_ms").as_ref(),
@@ -136,7 +139,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         .to_record_key();
         for _ in 0..3 {
             let row = self.store.read(&key).await?;
-            let at = store::now(self.host.as_ref())?;
+            let at = data::now(self.host)?;
             let existing = match row
                 .as_ref()
                 .filter(|r| r.expires_at_ms.is_none_or(|t| t > at))
@@ -164,14 +167,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 )?;
             let expiry = (created + REQUEST_RETENTION_MS as f64).max((at + 1) as f64);
             if !expiry.is_finite() || expiry > gateway_core::identity::MAX_SAFE_INTEGER as f64 {
-                return Err(store::error("Request retention overflow"));
+                return Err(data::error("Request retention overflow"));
             }
             let expiry = expiry as i64;
             if store::commit(
-                self.store.as_ref(),
-                vec![store::check(&key, row.as_ref())],
+                self.store,
+                vec![data::check(&key, row.as_ref())],
                 vec![crate::records::put_record(
-                    self.host.as_ref(),
+                    self.host,
                     key.clone(),
                     &record.source_json()?,
                     expiry,
@@ -182,7 +185,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(());
             }
         }
-        Err(store::error(format!(
+        Err(data::error(format!(
             "paid fallback ledger changed concurrently: {request_id:?}"
         )))
     }
@@ -194,10 +197,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if trim(key_id).is_empty() {
             return Ok(Vec::new());
         }
-        let at = store::now(self.host.as_ref())?;
-        let entries = store::scan(
-            self.store.as_ref(),
-            store::key(json!(["uos_ai", "paid_fallback", "ledger", key_id])),
+        let at = data::now(self.host)?;
+        let entries = query::scan(
+            self.store,
+            ObservationRead::RequestLedger(key_id),
             true,
             at,
             limit.clamp(1, 100) as usize,
@@ -205,7 +208,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         .await?;
         let mut out = Vec::new();
         for entry in entries {
-            let parts = store::parts(&entry.key)?;
+            let parts = data::parts(&entry.key)?;
             let id = parts.last().and_then(Value::as_str).unwrap_or("request");
             let created = integer(parts.get(parts.len().saturating_sub(2)), at as f64);
             if let Some(record) = normalize_request_record(
@@ -235,24 +238,21 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             return Ok(false);
         }
         let document = crate::records::error_document(input)?;
-        let key = store::key(json!([
+        let key = data::key(json!([
             "uos_ai",
             "admin_error_log",
             "v1",
             input.created_at_ms,
             input.request_id
         ]));
-        let expiry = store::now(self.host.as_ref())?
+        let expiry = data::now(self.host)?
             .checked_add(ERROR_RETENTION_MS)
-            .ok_or_else(|| store::error("Error retention overflow"))?;
+            .ok_or_else(|| data::error("Error retention overflow"))?;
         store::commit(
-            self.store.as_ref(),
+            self.store,
             Vec::new(),
             vec![crate::records::put_record(
-                self.host.as_ref(),
-                key,
-                &document,
-                expiry,
+                self.host, key, &document, expiry,
             )?],
         )
         .await

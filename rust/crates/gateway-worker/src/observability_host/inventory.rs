@@ -1,21 +1,15 @@
 //! Passive provider metadata over the same request-owned authority; never refreshes credentials.
 use super::RequestHost;
 use gateway_admin_runtime::{capabilities::Context, claude, claude_access};
-use gateway_auth::{
-    crypto::sha256_hex,
-    provider_credentials::{self as codex, CodexSourceAccount},
+use gateway_auth_credentials::{
+    provider_credentials as codex, provider_credentials::CodexSourceAccount,
 };
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_claude_usage_history_records::types::CredentialKind;
-use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{AuthorityStore, RevisionCheck},
-};
-use gateway_observability::{
-    host_types::*,
-    types::{HealthProvider, HealthTarget},
-};
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_observability_contracts::{host_types::*, types::HealthProvider, types::HealthTarget};
 use gateway_schema::selection::ProviderSelection;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::collections::BTreeSet;
 
@@ -142,7 +136,7 @@ impl RequestHost {
                         source: "env".into(),
                         allowed_key_ids: ids
                             .into_iter()
-                            .map(|id| gateway_core::js_string::JsString16::from_utf8(&id))
+                            .map(|id| gateway_source::js_string::JsString16::from_utf8(&id))
                             .collect(),
                         updated_at_ms: None,
                     })
@@ -189,7 +183,7 @@ impl RequestHost {
         (
             Vec<ClaudeAccountReadback>,
             Option<String>,
-            Option<gateway_core::js_string::JsString16>,
+            Option<gateway_source::js_string::JsString16>,
         ),
         GatewayError,
     > {
@@ -235,7 +229,7 @@ impl RequestHost {
                     .workspace
                     .as_ref()
                     .and_then(|w| w.last_error.as_ref())
-                    .map(gateway_core::js_string::JsString16::to_source_json)
+                    .map(gateway_source::js_string::JsString16::to_source_json)
                     .transpose()?;
                 let workspace = account.workspace.as_ref().map(|w| WorkspaceMetadata {
                     id: w.id.clone(),

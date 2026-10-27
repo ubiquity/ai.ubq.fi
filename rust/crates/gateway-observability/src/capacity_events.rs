@@ -1,16 +1,18 @@
 //! Redacted source capacity markers and verified reset backfill; no reset execution.
-use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_capacity_projection::scalars::safe_i64;
+use crate::{ObservabilityRuntime, store};
 use gateway_capacity_projection::{
-    events::{parse_shadow, valid_event, valid_redemption},
-    shapes::{BUCKET_MS, RETENTION_MS},
+    events::parse_shadow, events::valid_event, events::valid_redemption, scalars::safe_i64,
+    shapes::BUCKET_MS, shapes::RETENTION_MS,
 };
 use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, query, query::CapacityRows, query::ObservationRead, types::ObservabilityHost,
+};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 pub fn event_key(kind: &str, id: &str) -> gateway_core::state::RecordKey {
-    store::key(json!(["uos_ai", "provider_capacity", "v1", kind, id]))
+    data::key(json!(["uos_ai", "provider_capacity", "v1", kind, id]))
 }
 fn public_event(kind: &str, v: &Value) -> Value {
     let mut out = json!({"v":1,"event_id":v["event_id"],"observed_at_ms":v["observed_at_ms"]});
@@ -63,14 +65,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         event: &Value,
         any_existing: bool,
     ) -> Result<bool, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let key = event_key(
             kind,
             event["event_id"].as_str().expect("validated event ID"),
         );
         for _ in 0..4 {
             let row = self.store.read(&key).await?;
-            if let Some(v) = store::value(row.as_ref(), at)? {
+            if let Some(v) = data::value(row.as_ref(), at)? {
                 if any_existing {
                     return Ok(valid_event(kind, v));
                 }
@@ -81,7 +83,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             if store::commit(
                 self.store.as_ref(),
-                vec![store::check(&key, row.as_ref())],
+                vec![data::check(&key, row.as_ref())],
                 vec![store::put(
                     self.host.as_ref(),
                     key.clone(),
@@ -97,14 +99,17 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Ok(false)
     }
     pub async fn capacity_events(&self, kind: &str, at: i64) -> Result<Vec<Value>, GatewayError> {
-        if !["reset_event", "rate_limit_reset_event", "downtime_event"].contains(&kind) {
-            return Err(store::invalid("Invalid capacity event family"));
-        }
+        let family = match kind {
+            "reset_event" => CapacityRows::ResetEvent,
+            "rate_limit_reset_event" => CapacityRows::RateLimitResetEvent,
+            "downtime_event" => CapacityRows::DowntimeEvent,
+            _ => return Err(data::invalid("Invalid capacity event family")),
+        };
         let cutoff = (at - RETENTION_MS).max(0);
         let mut events = BTreeMap::new();
-        for entry in store::scan(
+        for entry in query::scan(
             self.store.as_ref(),
-            store::key(json!(["uos_ai", "provider_capacity", "v1", kind])),
+            ObservationRead::Capacity(family),
             false,
             at,
             usize::MAX,
@@ -124,11 +129,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if kind == "reset_event" {
             let derivation:Result<Vec<Value>,GatewayError>=async {
                 let mut fences=Vec::new();
-                for row in store::scan(self.store.as_ref(),store::key(json!(["uos_ai","codex_reset_shadow_decision","v1"])),false,at,usize::MAX).await? {
+                for row in query::scan(self.store.as_ref(), ObservationRead::ResetShadow, false, at, usize::MAX).await? {
                     if let Some(value)=parse_shadow(row.record.json_value()?){fences.extend(value["fences"].as_array().expect("source fences").iter().cloned());}
                 }
                 let mut derived=Vec::new();
-                for row in store::scan(self.store.as_ref(),store::key(json!(["uos_ai","codex_reset_redemption","v1"])),false,at,usize::MAX).await? {
+                for row in query::scan(self.store.as_ref(), ObservationRead::ResetRedemption, false, at, usize::MAX).await? {
                     let value=row.record.json_value()?;
                     if !valid_redemption(value)||value["state"]!="verified"||!safe_i64(&value["verified_at_ms"]).is_some_and(|t|t>=cutoff&&t<=at){continue;}
                     if let Some(fence)=fences.iter().find(|f|f["account_id_hash"]==value["account_id_hash"]&&f["quota_generation"]==value["quota_generation"])

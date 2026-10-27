@@ -1,17 +1,16 @@
 //! Source incident-outbox.ts: durable safe classifications, never raw request data.
-use crate::{
-    ObservabilityRuntime, replay_model as model,
-    replay_values::{SourceObject, read_json_record},
-    store,
-    types::ObservabilityHost,
+use crate::{ObservabilityRuntime, replay_model as model, replay_values::read_json_record, store};
+use gateway_admin_runtime::{capabilities::CaptureRequest, capabilities::Context};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_core::{
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordKey,
+    state::StoredRecord,
 };
-use gateway_admin_runtime::capabilities::{CaptureRequest, Context};
-use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_core::source_json::SourceJson;
-use gateway_core::state::{RecordKey, StoredRecord};
+use gateway_observability_contracts::{
+    data, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -33,10 +32,10 @@ const FIELDS: &[&str] = &[
     "latest",
 ];
 fn prefix() -> RecordKey {
-    store::key(json!(["uos_ai", "sentinel_incident", "v1", "index"]))
+    data::key(json!(["uos_ai", "sentinel_incident", "v1", "index"]))
 }
 fn key(digest: &str) -> RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "sentinel_incident",
         "v1",
@@ -120,7 +119,7 @@ impl IncidentObservation {
             terminal: Terminal,
         }
         if self.status > 599 {
-            return Err(store::error(
+            return Err(data::error(
                 "Sentinel incident classification status is invalid",
             ));
         }
@@ -243,7 +242,7 @@ impl IndexRow {
     fn parse(source: &SourceJson) -> Result<Self, GatewayError> {
         let row: Self = SourceObject::parse(source)?.select(FIELDS)?.deserialize()?;
         if !row.valid() {
-            return Err(store::error("Sentinel incident index record is invalid"));
+            return Err(data::error("Sentinel incident index record is invalid"));
         }
         Ok(row)
     }
@@ -310,7 +309,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         manifest_key: &RecordKey,
     ) -> Result<Option<IndexPublication>, GatewayError> {
         if !model::digest(binding.fingerprint) || !model::digest(binding.ciphertext_sha256) {
-            return Err(store::error("New replay index binding is invalid"));
+            return Err(data::error("New replay index binding is invalid"));
         }
         let key = key(binding.fingerprint);
         let Some(previous) = self.store.read(&key).await? else {
@@ -326,7 +325,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut provenance = SourceObject::parse(
             document
                 .get("provenance")
-                .ok_or_else(|| store::error("Incident provenance missing"))?,
+                .ok_or_else(|| data::error("Incident provenance missing"))?,
         )?;
         provenance.set("captured_at_ms", &manifest.captured_at_ms)?;
         document.set("provenance", &provenance.source_json()?)?;
@@ -346,10 +345,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             &document,
             None,
         )?];
-        if manifest.expires_at_ms > store::now(self.host.as_ref())? as f64 {
+        if manifest.expires_at_ms > data::now(self.host.as_ref())? as f64 {
             mutations.push(store::put(
                 self.host.as_ref(),
-                store::key(json!([
+                data::key(json!([
                     "uos_ai",
                     "sentinel_incident",
                     "v1",
@@ -357,12 +356,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     row.incident_id,
                     manifest.fingerprint
                 ])),
-                json!({"version":1,"manifest_key":store::parts(manifest_key)?}),
+                json!({"version":1,"manifest_key":data::parts(manifest_key)?}),
                 Some(manifest.expires_at_ms as i64),
             )?)
         }
         Ok(Some(IndexPublication {
-            checks: vec![store::check(&key, Some(&previous))],
+            checks: vec![data::check(&key, Some(&previous))],
             mutations,
         }))
     }
@@ -373,7 +372,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if input.observed_at_ms <= 0
             || input.observed_at_ms > gateway_core::identity::MAX_SAFE_INTEGER
         {
-            return Err(store::error("Sentinel incident timestamp is invalid"));
+            return Err(data::error("Sentinel incident timestamp is invalid"));
         }
         let fingerprint = input.fingerprint()?;
         let key = key(&fingerprint);
@@ -384,7 +383,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let source = read_json_record(row)?;
                 (SourceObject::parse(&source)?, IndexRow::parse(&source)?)
             } else {
-                let incident_id = format!("provider-{}", store::uuid(self.host.as_ref())?);
+                let incident_id = format!("provider-{}", data::uuid(self.host.as_ref())?);
                 let data = IndexRow {
                     version: 1.0,
                     incident_id,
@@ -423,7 +422,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 document.set("latest", &data.latest)?;
             }
             if !data.valid() {
-                return Err(store::error("Sentinel incident index record is invalid"));
+                return Err(data::error("Sentinel incident index record is invalid"));
             }
             for (name, value) in [
                 ("first_seen_at_ms", data.first_seen_at_ms),
@@ -443,7 +442,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             };
             if store::commit(
                 self.store.as_ref(),
-                vec![store::check(&key, previous.as_ref())],
+                vec![data::check(&key, previous.as_ref())],
                 vec![gateway_core::state::RecordMutation::Put {
                     key: key.clone(),
                     record: record.clone(),
@@ -459,7 +458,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 });
             }
         }
-        Err(store::error(
+        Err(data::error(
             "Sentinel incident index update conflicted repeatedly",
         ))
     }
@@ -470,7 +469,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         limit: u32,
     ) -> Result<AuthResponse, GatewayError> {
         if !(1..=100).contains(&limit) || cursor.is_some_and(|s| !model::cursor_shape(s)) {
-            return Err(store::invalid(
+            return Err(data::invalid(
                 "Sentinel incident index pagination is invalid",
             ));
         }
@@ -484,7 +483,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 reverse: false,
                 limit,
                 cursor: cursor.map(model::core_cursor).transpose()?,
-                now_ms: store::now(self.host.as_ref())?,
+                now_ms: data::now(self.host.as_ref())?,
             };
             let page = self.store.query(query).await?;
             let mut rows = Vec::new();
@@ -492,7 +491,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let source = read_json_record(&entry.record)?;
                 let row = IndexRow::parse(&source)?;
                 if key(&row.fingerprint) != entry.key {
-                    return Err(store::error("Sentinel incident index key is invalid"));
+                    return Err(data::error("Sentinel incident index key is invalid"));
                 }
                 if id.is_none_or(|id| row.incident_id == id) {
                     rows.push(source)
@@ -535,7 +534,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             || input.expires_at_ms <= 0
             || !model::capture_id(input.capture_id)
         {
-            return Err(store::error(
+            return Err(data::error(
                 "Sentinel incident index evidence binding is invalid",
             ));
         }
@@ -545,7 +544,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 .store
                 .read(&key)
                 .await?
-                .ok_or_else(|| store::error("Sentinel incident index record is missing"))?;
+                .ok_or_else(|| data::error("Sentinel incident index record is missing"))?;
             let source = read_json_record(&previous)?;
             let row = IndexRow::parse(&source)?;
             let mut document = SourceObject::parse(&source)?;
@@ -553,7 +552,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let mut provenance = SourceObject::parse(
                 document
                     .get("provenance")
-                    .ok_or_else(|| store::error("Incident provenance missing"))?,
+                    .ok_or_else(|| data::error("Incident provenance missing"))?,
             )?;
             provenance.set("captured_at_ms", &input.captured_at_ms)?;
             document.set("provenance", &provenance.source_json()?)?;
@@ -574,10 +573,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 None,
             )?];
             if input.expires_at_ms > input.observed_at_ms {
-                let parts = store::parts(input.manifest_key)?;
+                let parts = data::parts(input.manifest_key)?;
                 mutations.push(store::put(
                     self.host.as_ref(),
-                    store::key(json!([
+                    data::key(json!([
                         "uos_ai",
                         "sentinel_incident",
                         "v1",
@@ -592,8 +591,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if store::commit(
                 self.store.as_ref(),
                 vec![
-                    store::check(&key, Some(&previous)),
-                    store::check(input.manifest_key, Some(input.manifest_record)),
+                    data::check(&key, Some(&previous)),
+                    data::check(input.manifest_key, Some(input.manifest_record)),
                 ],
                 mutations,
             )
@@ -602,7 +601,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(());
             }
         }
-        Err(store::error(
+        Err(data::error(
             "Sentinel incident index evidence binding conflicted repeatedly",
         ))
     }

@@ -1,10 +1,9 @@
 use super::*;
-use gateway_auth::{
-    crypto::{Secret, base64url},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
-    },
+use gateway_auth_credentials::{
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::CodexSourcePool, provider_credentials::codex_source_pool_key,
 };
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority::{
     capacity::*,
     capacity_rules::parse_capacity_store,
@@ -17,7 +16,7 @@ use gateway_authority::{
     store::AuthorityClock,
 };
 use gateway_core::{identity::PoolVersionstamp, provider::CodexQuotaClass, state::StoredRecord};
-use gateway_observability::host_types::*;
+use gateway_observability_contracts::host_types::*;
 use gateway_observability_test_support::runtime::{Host, Memory, run};
 use serde_json::{Value, json};
 use std::cell::Cell;

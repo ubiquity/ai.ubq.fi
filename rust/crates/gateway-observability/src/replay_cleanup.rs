@@ -1,15 +1,14 @@
 //! Source replay eviction/expiry claims retain their charge until all chunks are gone.
 use crate::{
     ObservabilityRuntime, replay_model as model, replay_retention_schema as schema,
-    replay_values::{SourceObject, read_json_record},
-    store,
+    replay_values::read_json_record, store,
+};
+use gateway_core::{query::QueryStore, state::RecordKey, state::RecordMutation};
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, query::ReplayRows, source_object::SourceObject,
     types::ObservabilityHost,
 };
-use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    state::{RecordKey, RecordMutation},
-};
+use gateway_source::error::GatewayError;
 use serde_json::json;
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     async fn claim_replay_victim(
@@ -40,8 +39,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         store::commit(
             self.store.as_ref(),
             vec![
-                store::check(key, Some(&previous)),
-                store::check(&model::key("budget"), ledger_row.as_ref()),
+                data::check(key, Some(&previous)),
+                data::check(&model::key("budget"), ledger_row.as_ref()),
             ],
             vec![
                 schema::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
@@ -58,16 +57,16 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if let Some(previous) = self.store.read(&key).await? {
             let manifest = model::Manifest::from_source(&read_json_record(&previous)?)?;
             if !manifest.matches_key(&key)? || manifest.fingerprint != row.fingerprint {
-                return Err(store::error("Claimed replay manifest identity changed"));
+                return Err(data::error("Claimed replay manifest identity changed"));
             }
             if !store::commit(
                 self.store.as_ref(),
-                vec![store::check(&key, Some(&previous))],
+                vec![data::check(&key, Some(&previous))],
                 vec![RecordMutation::Delete { key: key.clone() }],
             )
             .await?
             {
-                return Err(store::error("Claimed replay manifest changed concurrently"));
+                return Err(data::error("Claimed replay manifest changed concurrently"));
             }
         }
         let dedupe = schema::dedupe_key(&row.fingerprint);
@@ -82,7 +81,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             {
                 let _ = store::commit(
                     self.store.as_ref(),
-                    vec![store::check(&dedupe, Some(&previous))],
+                    vec![data::check(&dedupe, Some(&previous))],
                     vec![RecordMutation::Delete { key: dedupe }],
                 )
                 .await?;
@@ -136,9 +135,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let has_owner = !row.request_id.is_empty();
         let count = if has_owner { 2.0 } else { 1.0 };
         let bytes = schema::metadata_charge(
-            &gateway_core::source_json::SourceJson::from_serializable(&tombstone)?,
+            &gateway_source::source_json::SourceJson::from_serializable(&tombstone)?,
         ) + if has_owner {
-            schema::metadata_charge(&gateway_core::source_json::SourceJson::from_serializable(
+            schema::metadata_charge(&gateway_source::source_json::SourceJson::from_serializable(
                 &status,
             )?)
         } else {
@@ -207,16 +206,16 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             ledger.over_budget = ledger.stored_bytes > limits.payload();
             let mut checks = vec![
-                store::check(&model::key("budget"), ledger_row.as_ref()),
-                store::check(key, Some(&previous)),
-                store::check(&tombstone_key, old_tombstone.as_ref()),
+                data::check(&model::key("budget"), ledger_row.as_ref()),
+                data::check(key, Some(&previous)),
+                data::check(&tombstone_key, old_tombstone.as_ref()),
             ];
             let mut mutations = vec![
                 schema::ledger_mutation(self.host.as_ref(), ledger_row.as_ref(), &ledger)?,
                 RecordMutation::Delete { key: key.clone() },
             ];
             if has_owner {
-                checks.push(store::check(&status_key, old_status.as_ref()));
+                checks.push(data::check(&status_key, old_status.as_ref()));
                 mutations.push(RecordMutation::Delete {
                     key: status_key.clone(),
                 });
@@ -249,9 +248,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         at: i64,
         limits: schema::RetentionLimits,
     ) -> Result<usize, GatewayError> {
-        let rows = store::scan(
+        let rows = query::scan(
             self.store.as_ref(),
-            model::key("accounting"),
+            ObservationRead::Replay(ReplayRows::Accounting),
             false,
             at,
             usize::MAX,
@@ -288,9 +287,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         target_records: Option<f64>,
     ) -> Result<usize, GatewayError> {
         let mut count = self.reclaim_expired_replays(at, limits).await?;
-        let rows = store::scan(
+        let rows = query::scan(
             self.store.as_ref(),
-            model::key("accounting"),
+            ObservationRead::Replay(ReplayRows::Accounting),
             false,
             at,
             usize::MAX,

@@ -1,10 +1,10 @@
 //! Real platform primitives for request-owned observational reads and writes.
 use gateway_admin_runtime::capabilities::Context;
-use gateway_core::{error::GatewayError, identity::RequestId};
-use gateway_observability::{
-    ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity, replay_crypto::ReplayBody,
-    types::ObservabilityHost,
-};
+use gateway_core::identity::RequestId;
+use gateway_observability::{ObservabilityRuntime, ObservabilityState, replay_crypto::ReplayBody};
+use gateway_observability_contracts::host_types;
+use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
+use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -199,7 +199,7 @@ pub async fn error_diagnostics(
 pub struct Host;
 
 impl ObservabilityHost for Host {
-    fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, text: &gateway_source::js_string::JsString16) -> Option<i64> {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
@@ -233,7 +233,7 @@ impl ObservabilityHost for Host {
 }
 
 impl ObservabilityHost for RequestHost {
-    fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+    fn parse_claude_usage_date(&self, text: &gateway_source::js_string::JsString16) -> Option<i64> {
         gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
@@ -263,7 +263,7 @@ impl ObservabilityHost for RequestHost {
     async fn backfill_paid_usage(
         &self,
         limit: u32,
-    ) -> Result<gateway_observability::host_types::PaidBackfillReceipt, GatewayError> {
+    ) -> Result<host_types::PaidBackfillReceipt, GatewayError> {
         self.paid_backfill(limit).await
     }
     async fn recheck_codex_slot(&self, slot: u8) -> Result<bool, GatewayError> {
@@ -271,7 +271,7 @@ impl ObservabilityHost for RequestHost {
     }
     async fn cache_experiment_target(
         &self,
-    ) -> Result<gateway_observability::host_types::CacheExperimentTarget, GatewayError> {
+    ) -> Result<host_types::CacheExperimentTarget, GatewayError> {
         self.prepare_cache_target().await
     }
     async fn run_fixed_cache_experiment(
@@ -282,22 +282,21 @@ impl ObservabilityHost for RequestHost {
     }
     async fn codex_reset_available_count(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         deadline: i64,
     ) -> Result<Option<i64>, GatewayError> {
         self.reset_count(account, deadline).await
     }
     async fn codex_reset_credits(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         deadline: i64,
-    ) -> Result<Option<Vec<gateway_observability::host_types::ResetCreditDiagnostic>>, GatewayError>
-    {
+    ) -> Result<Option<Vec<host_types::ResetCreditDiagnostic>>, GatewayError> {
         self.reset_credits(account, deadline).await
     }
     async fn codex_overage_diagnostics(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         deadline: i64,
     ) -> Result<Option<serde_json::Value>, GatewayError> {
         self.overage(account, deadline).await
@@ -333,7 +332,7 @@ impl ObservabilityHost for RequestHost {
     async fn provider_inventory(
         &self,
         context: &Context,
-    ) -> Result<gateway_observability::host_types::ProviderInventory, GatewayError> {
+    ) -> Result<host_types::ProviderInventory, GatewayError> {
         self.inventory(context).await
     }
     async fn metered_balance_fingerprint(&self) -> Result<Option<String>, GatewayError> {
@@ -356,17 +355,17 @@ impl ObservabilityHost for RequestHost {
     async fn probe_upstream_health(
         &self,
         deadline: i64,
-    ) -> Result<gateway_observability::host_types::UpstreamHealthEvidence, GatewayError> {
+    ) -> Result<host_types::UpstreamHealthEvidence, GatewayError> {
         self.upstream_health(deadline).await
     }
     async fn codex_capacity_accounts(
         &self,
-    ) -> Result<Vec<gateway_observability::host_types::CapacityAccountRef>, GatewayError> {
+    ) -> Result<Vec<host_types::CapacityAccountRef>, GatewayError> {
         self.capacity_accounts().await
     }
     async fn begin_codex_capacity_observation(
         &self,
-        accounts: &[gateway_observability::host_types::CapacityAccountRef],
+        accounts: &[host_types::CapacityAccountRef],
     ) -> Result<gateway_authority::capacity::CodexCapacityObservationFence, GatewayError> {
         let authority = gateway_authority::store::Authority::with_clock(
             self.store.clone(),
@@ -387,10 +386,10 @@ impl ObservabilityHost for RequestHost {
     }
     async fn probe_codex_capacity(
         &self,
-        account: &gateway_observability::host_types::CapacityAccountRef,
+        account: &host_types::CapacityAccountRef,
         fence: &gateway_authority::capacity::CodexCapacityObservationFence,
         deadline: i64,
-    ) -> Result<gateway_observability::host_types::CapacityProbe, GatewayError> {
+    ) -> Result<host_types::CapacityProbe, GatewayError> {
         self.capacity_probe(account, fence, deadline).await
     }
     async fn accept_capacity_observations(

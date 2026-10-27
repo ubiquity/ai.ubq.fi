@@ -1,15 +1,12 @@
 //! Source capture-owned budget/accounting rows. This is unrelated to paid accounting.
-use crate::{
-    replay_model as model,
-    replay_values::{self, SourceObject},
-    store,
-    types::ObservabilityHost,
-};
+use crate::{replay_model as model, replay_values};
 use gateway_core::{
-    error::GatewayError,
-    source_json::SourceJson,
-    state::{AuthorityStore, RecordKey, RecordMutation, StoredRecord},
+    state::AuthorityStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
+use gateway_observability_contracts::{
+    data, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 pub const OVERHEAD: f64 = 8192.0;
@@ -42,7 +39,7 @@ impl RetentionLimits {
     }
 }
 pub(crate) fn accounting_key(at: f64, id: &str) -> RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "sentinel_replay",
         "v1",
@@ -52,7 +49,7 @@ pub(crate) fn accounting_key(at: f64, id: &str) -> RecordKey {
     ]))
 }
 pub(crate) fn dedupe_key(fingerprint: &str) -> RecordKey {
-    store::key(json!([
+    data::key(json!([
         "uos_ai",
         "sentinel_replay",
         "v1",
@@ -270,7 +267,7 @@ pub(crate) fn decode<T: DeserializeOwned>(
 pub(crate) fn accounting(row: &StoredRecord, key: &RecordKey) -> Result<Accounting, GatewayError> {
     let value: Accounting = decode(row, ACCOUNT_FIELDS)?;
     if !value.valid() || !value.matches(key) {
-        return Err(store::error("Sentinel replay accounting row is invalid"));
+        return Err(data::error("Sentinel replay accounting row is invalid"));
     }
     Ok(value)
 }
@@ -285,7 +282,7 @@ pub(crate) async fn read_ledger<S: AuthorityStore>(
         Ledger::empty(limits)
     };
     if !value.valid() {
-        return Err(store::error("Sentinel replay budget ledger is invalid"));
+        return Err(data::error("Sentinel replay budget ledger is invalid"));
     }
     Ok((
         Ledger {
@@ -320,7 +317,7 @@ pub(crate) fn ledger_mutation<H: ObservabilityHost>(
     value: &Ledger,
 ) -> Result<RecordMutation, GatewayError> {
     if !value.valid() {
-        return Err(store::error("Sentinel replay budget counter overflow"));
+        return Err(data::error("Sentinel replay budget counter overflow"));
     }
     mutation(host, model::key("budget"), previous, value, None)
 }

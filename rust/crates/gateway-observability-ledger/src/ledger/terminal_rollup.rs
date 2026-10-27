@@ -1,13 +1,12 @@
 //! Source recordTerminalUsageRollup: one event-owned, bounded write to the existing rollup.
-use crate::{
-    ObservabilityRuntime, records::valid_usage_rollup_source, store, types::ObservabilityHost,
-};
+use crate::{RequestLedger, records::valid_usage_rollup_source, store};
 use gateway_capacity_projection::scalars::trim;
 use gateway_core::{
     identity::MAX_SAFE_INTEGER, query::QueryStore, source_control::decode_source_control_record,
     source_control::encode_source_control_record, source_usage::UsageTokens, state::RecordMutation,
     tuple_key::KeyPart, tuple_key::TupleKey,
 };
+use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -23,7 +22,7 @@ pub struct TerminalUsageRollup<'a> {
 }
 fn number(value: f64) -> Result<Value, GatewayError> {
     if !value.is_finite() {
-        return Err(store::error("Terminal usage rollup number is not finite"));
+        return Err(data::error("Terminal usage rollup number is not finite"));
     }
     Ok(
         if value.fract() == 0.0 && value.abs() <= MAX_SAFE_INTEGER as f64 {
@@ -38,7 +37,7 @@ fn count(value: Option<u64>) -> Option<f64> {
         .filter(|value| *value <= MAX_SAFE_INTEGER as u64)
         .map(|value| value as f64)
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> RequestLedger<'_, S, H> {
     /// Call once from the original terminal owner; this is not a new dedup ledger or billing proof.
     pub async fn record_terminal_usage_rollup(
         &self,
@@ -66,10 +65,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         else {
             return Ok(false);
         };
-        let now = store::now(self.host.as_ref())?;
+        let now = data::now(self.host)?;
         let request = trim(input.request_id);
         let request = if request.is_empty() {
-            store::uuid(self.host.as_ref())?
+            data::uuid(self.host)?
         } else {
             request.to_owned()
         };
@@ -87,7 +86,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             KeyPart::Number(
                 key_bucket
                     .as_f64()
-                    .ok_or_else(|| store::error("Invalid rollup bucket"))?,
+                    .ok_or_else(|| data::error("Invalid rollup bucket"))?,
             ),
             KeyPart::source_string_utf16(model.as_units()),
             KeyPart::String(provider.into()),
@@ -148,15 +147,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 ("updated_at_ms", SourceJson::from_serializable(&now)?),
             ])?;
             if store::commit(
-                self.store.as_ref(),
-                vec![store::check(&key, row.as_ref())],
+                self.store,
+                vec![data::check(&key, row.as_ref())],
                 vec![RecordMutation::Put {
                     key: key.clone(),
-                    record: encode_source_control_record(
-                        store::uuid(self.host.as_ref())?,
-                        &next,
-                        None,
-                    )?,
+                    record: encode_source_control_record(data::uuid(self.host)?, &next, None)?,
                 }],
             )
             .await?

@@ -1,10 +1,8 @@
 //! The existing shared source usage family includes paid AND ordinary providers.
 //! M39 owns its value predicate; this adapter adds only physical-key/metadata custody.
 use crate::*;
-use gateway_core::{
-    identity::MAX_SAFE_INTEGER, js_string::JsString16, model::ModelId,
-    source_serialization as source, tuple_key::DecodedKeyPart,
-};
+use gateway_core::{identity::MAX_SAFE_INTEGER, model::ModelId, tuple_key::DecodedKeyPart};
+use gateway_source::{js_string::JsString16, source_serialization as source};
 
 pub(crate) fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayError> {
     record.validate_version()?;
@@ -15,7 +13,7 @@ pub(crate) fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), Gat
     {
         return Err(invalid("Source usage rollup metadata is invalid"));
     }
-    let document = gateway_observability::records::usage_rollup_record_source(record)?;
+    let document = gateway_observability_ledger::records::usage_rollup_record_source(record)?;
     let field = |name| {
         source::member(&document, name)
             .ok_or_else(|| invalid("Source usage rollup field is missing"))

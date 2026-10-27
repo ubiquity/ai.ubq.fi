@@ -1,22 +1,12 @@
 //! Source replay-model/read/observation schemas. Export manifests have a frozen eleven-field shape.
-use crate::{
-    replay_crypto::{CHUNK_BYTES, MAX_CIPHERTEXT_BYTES},
-    replay_values::SourceObject,
-    store,
-};
+use crate::{replay_crypto::CHUNK_BYTES, replay_crypto::MAX_CIPHERTEXT_BYTES};
 use base64::{
-    Engine, alphabet,
-    engine::{
-        DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::URL_SAFE_NO_PAD,
-    },
+    Engine, alphabet, engine::DecodePaddingMode, engine::GeneralPurpose,
+    engine::GeneralPurposeConfig, engine::general_purpose::URL_SAFE_NO_PAD,
 };
-use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    source_json::SourceJson,
-    state::RecordKey,
-    tuple_key::{KeyPart, TupleKey},
-};
+use gateway_core::{state::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey};
+use gateway_observability_contracts::{data, source_object::SourceObject};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub const PAYLOAD_TTL: i64 = 48 * 60 * 60 * 1000;
@@ -84,13 +74,13 @@ pub(crate) fn url_decode(s: &str) -> Result<Vec<u8>, GatewayError> {
             .with_decode_allow_trailing_bits(true),
     )
     .decode(s)
-    .map_err(|_| store::error("Invalid replay base64url"))
+    .map_err(|_| data::error("Invalid replay base64url"))
 }
 pub fn key(kind: &str) -> RecordKey {
-    store::key(serde_json::json!(["uos_ai", "sentinel_replay", "v1", kind]))
+    data::key(serde_json::json!(["uos_ai", "sentinel_replay", "v1", kind]))
 }
 pub fn request_key(id: &str) -> RecordKey {
-    store::key(serde_json::json!([
+    data::key(serde_json::json!([
         "uos_ai",
         "sentinel_replay",
         "v1",
@@ -99,7 +89,7 @@ pub fn request_key(id: &str) -> RecordKey {
     ]))
 }
 pub fn tombstone_key(fingerprint: &str) -> RecordKey {
-    store::key(serde_json::json!([
+    data::key(serde_json::json!([
         "uos_ai",
         "sentinel_replay",
         "v1",
@@ -108,7 +98,7 @@ pub fn tombstone_key(fingerprint: &str) -> RecordKey {
     ]))
 }
 pub fn chunk_key(id: &str, index: usize) -> RecordKey {
-    store::key(serde_json::json!([
+    data::key(serde_json::json!([
         "uos_ai",
         "sentinel_replay",
         "v1",
@@ -206,11 +196,11 @@ impl Manifest {
         if value.validate() {
             Ok(value)
         } else {
-            Err(store::error("Invalid replay manifest"))
+            Err(data::error("Invalid replay manifest"))
         }
     }
     pub fn matches_key(&self, key: &RecordKey) -> Result<bool, GatewayError> {
-        let p = store::parts(key)?;
+        let p = data::parts(key)?;
         Ok(p.len() == 7
             && p[..4]
                 == serde_json::json!(["uos_ai", "sentinel_replay", "v1", "manifest"])
@@ -303,7 +293,7 @@ impl StatusDocument {
         let original = SourceObject::parse(value)?;
         let data: Status = original.select(STATUS_FIELDS)?.deserialize()?;
         if !data.valid_stored() {
-            return Err(store::error("Invalid replay capture status"));
+            return Err(data::error("Invalid replay capture status"));
         }
         Ok(Self { data, original })
     }
@@ -326,9 +316,9 @@ impl StatusDocument {
 pub(crate) fn wire_cursor(core: &str) -> Result<String, GatewayError> {
     let bytes = core
         .strip_prefix("query-v1:")
-        .ok_or_else(|| store::error("Unsupported replay query cursor version"))?;
+        .ok_or_else(|| data::error("Unsupported replay query cursor version"))?;
     if !bytes.len().is_multiple_of(2) {
-        return Err(store::error("Invalid replay query cursor"));
+        return Err(data::error("Invalid replay query cursor"));
     }
     let decoded = bytes
         .as_bytes()
@@ -336,20 +326,19 @@ pub(crate) fn wire_cursor(core: &str) -> Result<String, GatewayError> {
         .0
         .iter()
         .map(|pair| {
-            let hex =
-                std::str::from_utf8(pair).map_err(|_| store::error("Invalid query cursor"))?;
-            u8::from_str_radix(hex, 16).map_err(|_| store::error("Invalid query cursor"))
+            let hex = std::str::from_utf8(pair).map_err(|_| data::error("Invalid query cursor"))?;
+            u8::from_str_radix(hex, 16).map_err(|_| data::error("Invalid query cursor"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let token = URL_SAFE_NO_PAD.encode(decoded);
     if !cursor_shape(&token) {
-        return Err(store::error("Replay query cursor exceeds its source bound"));
+        return Err(data::error("Replay query cursor exceeds its source bound"));
     }
     Ok(token)
 }
 pub(crate) fn core_cursor(wire: &str) -> Result<String, GatewayError> {
     if !cursor_shape(wire) {
-        return Err(store::invalid("Invalid replay export cursor"));
+        return Err(data::invalid("Invalid replay export cursor"));
     }
     let bytes = url_decode(wire)?;
     let mut core = String::from("query-v1:");

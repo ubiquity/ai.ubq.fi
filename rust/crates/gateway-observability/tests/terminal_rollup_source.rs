@@ -1,9 +1,8 @@
 mod support;
-use gateway_core::{
-    js_string::JsString16, source_usage::extract_usage_tokens, state::StoredRecord,
-    tuple_key::TupleKey,
-};
-use gateway_observability::{ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup};
+use gateway_core::{source_usage::extract_usage_tokens, state::StoredRecord, tuple_key::TupleKey};
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_ledger::ledger::terminal_rollup::TerminalUsageRollup;
+use gateway_source::js_string::JsString16;
 use serde_json::Value;
 use support::{Host, Memory, run};
 const NOW: i64 = 1_792_329_600_000;
@@ -45,17 +44,19 @@ fn actual_source_terminal_writer_cases_match_shared_usage_and_bounded_atomic_sto
         let model = case["model"].as_str().map(JsString16::from_utf8);
         let mut result = Ok(false);
         for _ in 0..case["calls"].as_u64().unwrap() {
-            result = run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-                model: model.as_ref(),
-                provider: case["provider"].as_str(),
-                request_id: case["request_id"].as_str().unwrap(),
-                request_created_at_ms: if case["created_nonfinite"] == true {
-                    Some(f64::INFINITY)
-                } else {
-                    case.get("created").and_then(Value::as_f64)
-                },
-                usage: usage.as_ref(),
-            }));
+            result = run(runtime
+                .ledger()
+                .record_terminal_usage_rollup(TerminalUsageRollup {
+                    model: model.as_ref(),
+                    provider: case["provider"].as_str(),
+                    request_id: case["request_id"].as_str().unwrap(),
+                    request_created_at_ms: if case["created_nonfinite"] == true {
+                        Some(f64::INFINITY)
+                    } else {
+                        case.get("created").and_then(Value::as_f64)
+                    },
+                    usage: usage.as_ref(),
+                }));
             if result.is_err() {
                 break;
             }
@@ -126,13 +127,15 @@ fn source_number_version_does_not_discard_a_valid_existing_aggregate() {
     let usage = extract_usage_tokens(Some(&case["raw"]));
     let model = case["model"].as_str().map(JsString16::from_utf8);
     assert!(
-        run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-            model: model.as_ref(),
-            provider: case["provider"].as_str(),
-            request_id: case["request_id"].as_str().unwrap(),
-            request_created_at_ms: case["created"].as_f64(),
-            usage: usage.as_ref(),
-        }))
+        run(runtime
+            .ledger()
+            .record_terminal_usage_rollup(TerminalUsageRollup {
+                model: model.as_ref(),
+                provider: case["provider"].as_str(),
+                request_id: case["request_id"].as_str().unwrap(),
+                request_created_at_ms: case["created"].as_f64(),
+                usage: usage.as_ref(),
+            }))
         .unwrap()
     );
     assert_eq!(

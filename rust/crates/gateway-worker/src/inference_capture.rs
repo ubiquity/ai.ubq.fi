@@ -5,13 +5,8 @@ use crate::observability_host;
 use crate::observability_host::CaptureInput;
 use futures_util::Stream;
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    lifecycle::{BodyOutcome, ReaderTermination, SemanticTerminal, TransportObservation},
-    model::ModelId,
-    provider::UpstreamProvider,
-    source_json::SourceJson,
-    source_serialization as source,
+    lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
+    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_observability::{
     replay_producer::{ClientFailureObservation, FailureObservation, should_persist},
@@ -19,6 +14,10 @@ use gateway_observability::{
 };
 use gateway_providers::sse::{
     MAX_CHAT_EVENT_BYTES, MAX_RESPONSES_EVENT_BYTES, SseFrame, SseParser,
+};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
@@ -169,7 +168,7 @@ impl Capture {
                 fields.push((JsString16::from_utf8("model"), SourceJson::from_serializable(&model)?));
                 fields.push((JsString16::from_utf8("reasoning"), SourceJson::from_serializable(&reasoning)?));
                 let record = source::object_keys(fields)?;
-                self.runtime.record_request_log_source(&key.0, &record).await
+                self.runtime.ledger().record_request_log_source(&key.0, &record).await
             }.await;
             if let Err(error) = result {
                 worker::console_error!(
@@ -200,7 +199,7 @@ impl Capture {
         };
         let extracted = gateway_core::source_usage::extract_usage_tokens(usage);
         let completed = self.local_completed.get() || source_completed(observation);
-        let mut event = gateway_observability::prompt::PromptEvent {
+        let mut event = gateway_observability_prompt::prompt::PromptEvent {
             provider: Some(provider.clone()),
             model: request.model.clone(),
             route: request.context.route.clone(),
@@ -218,16 +217,19 @@ impl Capture {
         event.set_source_usage(extracted.as_ref());
         let _telemetry = self
             .runtime
+            .prompt()
             .record_prompt_telemetry(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
             .await;
         let _analytics = self
             .runtime
+            .prompt()
             .record_prompt_analytics(&event, env!("UOS_RUST_BUILD_GIT_SHA"))
             .await;
         if let Err(error) = self
             .runtime
+            .ledger()
             .record_terminal_usage_rollup(
-                gateway_observability::ledger::terminal_rollup::TerminalUsageRollup {
+                gateway_observability_ledger::ledger::terminal_rollup::TerminalUsageRollup {
                     model: request.model.as_ref(),
                     provider: Some(&provider),
                     request_id: &self.request_id,
@@ -279,7 +281,7 @@ impl Capture {
                     fields.push((JsString16::from_utf8("native_http_failure"), original.clone()));
                 }
                 let patch = source::object_keys(fields)?;
-                self.runtime.update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
+                self.runtime.ledger().update_request_log_source(&key.0, request.context.started_at_ms, &self.request_id, &patch).await
             }.await;
             if let Err(error) = result {
                 worker::console_error!(
@@ -324,7 +326,8 @@ impl Capture {
             _ => None,
         };
         self.runtime
-            .record_admin_error(&gateway_observability::ledger::ErrorObservation {
+            .ledger()
+            .record_admin_error(&gateway_observability_ledger::ledger::ErrorObservation {
                 request_id: self.request_id.clone(),
                 route: request.context.route.clone(),
                 status,

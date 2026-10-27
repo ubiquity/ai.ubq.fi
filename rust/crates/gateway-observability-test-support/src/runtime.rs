@@ -1,18 +1,13 @@
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryPage, QueryRequest, QueryStore},
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::RecordMutation,
+    state::StoredRecord,
 };
-use gateway_observability::types::ObservabilityHost;
+use gateway_observability_contracts::types::ObservabilityHost;
+use gateway_source::error::GatewayError;
 use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    future::Future,
-    pin::pin,
-    rc::Rc,
-    task::{Context, Poll, Waker},
+    cell::Cell, cell::RefCell, collections::BTreeMap, future::Future, pin::pin, rc::Rc,
+    task::Context, task::Poll, task::Waker,
 };
 
 pub fn run<F: Future>(future: F) -> F::Output {
@@ -164,8 +159,8 @@ struct MissingSourceCollator;
 impl gateway_schema::aliases::SourceStringCollator for MissingSourceCollator {
     fn compare(
         &self,
-        _left: &gateway_core::js_string::JsString16,
-        _right: &gateway_core::js_string::JsString16,
+        _left: &gateway_source::js_string::JsString16,
+        _right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture has no captured source ordering.",

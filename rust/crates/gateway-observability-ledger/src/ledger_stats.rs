@@ -1,7 +1,10 @@
 //! Source paid-fallback/ledger-stats.ts. Measurement cannot move a paid balance.
-use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_capacity_projection::scalars::{DAY, safe_i64};
-use gateway_core::{query::QuerySelector, query::QueryStore};
+use crate::{RequestLedger, store};
+use gateway_capacity_projection::{scalars::DAY, scalars::safe_i64};
+use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, types::ObservabilityHost,
+};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 const BUDGET: i64 = 5 * 1024 * 1024 * 1024;
@@ -19,7 +22,7 @@ fn day(at: i64) -> i64 {
 fn key(at: i64) -> gateway_core::state::RecordKey {
     let mut p = prefix();
     p.push(json!(day(at)));
-    store::key(json!(p))
+    data::key(json!(p))
 }
 pub fn empty_daily(at: i64) -> Value {
     json!({"v":1,"day_start_at_ms":day(at),"settled_rows":0,"settled_row_bytes":0,"rollup_writes":0,"rollup_bytes":0,"projection_7d":{"views":0,"read_units":0,"rollup_rows":0},"projection_30d":{"views":0,"read_units":0,"rollup_rows":0},"projection_90d":{"views":0,"read_units":0,"rollup_rows":0},"updated_at_ms":0})
@@ -49,7 +52,7 @@ fn empty_growth(at: i64) -> Value {
     let projections:Vec<Value>=[7,30,90].into_iter().map(|w|json!({"window_days":w,"views":0,"read_units":0,"rollup_rows":0,"avg_read_units_per_view":null,"avg_rollup_rows_per_view":null})).collect();
     json!({"as_of_ms":at,"scan":"unavailable","read_units":0,"retention_days":365,"leaderboard_days":30,"leaderboard":[],"settled_rows":0,"settled_row_bytes":0,"rollup_writes":0,"rollup_bytes":0,"active_days":0,"avg_row_bytes":null,"avg_settled_rows_per_active_day":null,"estimated_retained_rows":0,"estimated_retained_raw_bytes":0,"budget_bytes":BUDGET,"alert_ratio":0.8,"alert_threshold_bytes":BUDGET as f64*0.8,"alert":false,"projections":projections})
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> RequestLedger<'_, S, H> {
     pub async fn record_settlement_stats(
         &self,
         settled_row_bytes: u64,
@@ -79,11 +82,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         rollup_rows: u64,
         settlement: Option<(u64, Option<u64>)>,
     ) -> Result<bool, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let key = key(at);
         for _ in 0..8 {
             let row = self.store.read(&key).await?;
-            let mut value = store::value(row.as_ref(), at)?
+            let mut value = data::value(row.as_ref(), at)?
                 .filter(|v| valid_daily(v))
                 .cloned()
                 .unwrap_or_else(|| empty_daily(at));
@@ -112,9 +115,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             value["day_start_at_ms"] = json!(day(at));
             value["updated_at_ms"] = json!(at);
             if store::commit(
-                self.store.as_ref(),
-                vec![store::check(&key, row.as_ref())],
-                vec![store::put(self.host.as_ref(), key.clone(), value, None)?],
+                self.store,
+                vec![data::check(&key, row.as_ref())],
+                vec![store::put(self.host, key.clone(), value, None)?],
             )
             .await?
             {
@@ -126,8 +129,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub async fn ledger_growth(&self, at: i64) -> Value {
         let base = empty_growth(at);
         let read:Result<Value,GatewayError>=async{
-            let mut start=prefix();start.push(json!(day(at-365*DAY)));let mut end=prefix();end.push(json!(at+DAY));let selector=QuerySelector::Range{start:store::key(json!(start)),end:store::key(json!(end))};
-            let entries=store::scan_selector(self.store.as_ref(),selector,false,at,usize::MAX).await?;let rows:Vec<Value>=entries.iter().filter_map(|r|r.record.json_value().ok().filter(|v|valid_daily(v)).cloned()).collect();
+            let entries=query::scan(self.store, ObservationRead::LedgerDays { start: day(at - 365 * DAY), end: at + DAY }, false, at, usize::MAX).await?;let rows:Vec<Value>=entries.iter().filter_map(|r|r.record.json_value().ok().filter(|v|valid_daily(v)).cloned()).collect();
             let sum=|name:&str|rows.iter().map(|r|r[name].as_f64().unwrap_or(0.0)).sum::<f64>();let settled=sum("settled_rows");let raw_bytes=sum("settled_row_bytes");let active=rows.iter().filter(|r|r["settled_rows"].as_f64().is_some_and(|n|n>0.0)).count();
             let mut out=base.clone();out["scan"]=json!("ok");out["read_units"]=json!(rows.len()+1);for field in ["settled_rows","settled_row_bytes","rollup_writes","rollup_bytes"]{out[field]=json!(sum(field));}
             out["active_days"]=json!(active);out["avg_row_bytes"]=if settled>0.0{json!((raw_bytes/settled).round())}else{Value::Null};out["avg_settled_rows_per_active_day"]=if active>0{json!((settled/active as f64*10.0).round()/10.0)}else{Value::Null};out["estimated_retained_rows"]=json!(settled);out["estimated_retained_raw_bytes"]=json!(raw_bytes);out["alert"]=json!(raw_bytes>=BUDGET as f64*0.8);

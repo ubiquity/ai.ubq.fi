@@ -1,13 +1,16 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
-use crate::host_types::{CapacityAccountRef, CapacityProbe, ClaudeAccountReadback};
-use crate::{
-    ObservabilityRuntime, health, replay_values::SourceObject, store, types::ObservabilityHost,
-};
+use crate::{ObservabilityRuntime, health};
 use gateway_admin_runtime::capabilities::Context;
-use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
-use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
-use gateway_capacity_projection::shapes as shape;
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_capacity_projection::{
+    scalars::DAY, scalars::safe_i64, scalars::trim, shapes as shape,
+};
 use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, host_types::CapacityAccountRef, host_types::CapacityProbe,
+    host_types::ClaudeAccountReadback, source_object::SourceObject, types::ObservabilityHost,
+};
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
@@ -75,7 +78,7 @@ pub fn claude_source(
     for document in [&windows, &standard] {
         if document.as_str().trim_start().starts_with('{') {
             for (_, value) in source::entries(document)
-                .ok_or_else(|| store::error("Invalid Claude numeric observation metadata"))?
+                .ok_or_else(|| data::error("Invalid Claude numeric observation metadata"))?
             {
                 if value.as_str().trim_start().starts_with('{')
                     && let Some(at) = SourceObject::parse(&value)?
@@ -130,7 +133,7 @@ pub fn claude_source(
     let mut standard_rows = Vec::new();
     if standard.as_str().trim_start().starts_with('{') {
         for (family, value) in source::entries(&standard)
-            .ok_or_else(|| store::error("Invalid Claude standard metadata"))?
+            .ok_or_else(|| data::error("Invalid Claude standard metadata"))?
         {
             let value = SourceObject::parse(&value)?;
             let leaf = |name| value.get(name).cloned().unwrap_or_else(|| null.clone());
@@ -183,11 +186,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 None,
             ));
         };
-        let fence = fence.ok_or_else(|| store::missing("capacity_authority_source_fence"))?;
+        let fence = fence.ok_or_else(|| data::missing("capacity_authority_source_fence"))?;
         if !fence.fetch_bindings().any(|binding| {
             binding.source_slot() == slot && binding.account_id() == account.account_id
         }) {
-            return Err(store::error(
+            return Err(data::error(
                 "Capacity GET does not match the captured source",
             ));
         }
@@ -243,7 +246,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     || !slots.insert(a.slot)
             })
         {
-            return Err(store::error(
+            return Err(data::error(
                 "Capacity owner published an invalid account roster",
             ));
         }
@@ -276,7 +279,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         for account in accounts {
             let source = if account.slot == 1 { &one } else { &two };
             let invalid =
-                || store::error("Capacity source observation does not match authority DTO");
+                || data::error("Capacity source observation does not match authority DTO");
             observations.push(gateway_authority::capacity::CodexCapacitySample {
                 account: gateway_authority::capacity::CodexCapacityAccountRef {
                     source_slot: account.slot,
@@ -303,7 +306,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         )
     }
     pub async fn persisted_capacity_view(&self) -> Result<Value, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let snapshot = self.read_capacity_snapshot(at).await.unwrap_or(None);
         let history = self.capacity_history(at).await.unwrap_or_default();
         let reset = self
@@ -333,7 +336,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         ))
     }
     pub async fn refresh_capacity_view(&self, force_metered: bool) -> Result<Value, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let before = self.persisted_capacity_view().await?;
         let cached = (before["cache_state"] != "unavailable").then(|| {
             let mut v = before.clone();
@@ -350,7 +353,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             }
             v
         });
-        let owner = store::uuid(self.host.as_ref())?;
+        let owner = data::uuid(self.host.as_ref())?;
         let lease = self
             .acquire_capacity_lease(&owner, at)
             .await
@@ -435,8 +438,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         captured
     }
     pub async fn sample_capacity_on_event(&self) -> Result<bool, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
-        let owner = store::uuid(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
+        let owner = data::uuid(self.host.as_ref())?;
         let Some(lease) = self.acquire_capacity_lease(&owner, at).await? else {
             return Ok(false);
         };
@@ -451,7 +454,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         sample
     }
     pub async fn trigger_capacity_sample(&self) -> Result<bool, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let bucket = at / shape::BUCKET_MS * shape::BUCKET_MS;
         if bucket <= self.sampled_bucket.get() {
             return Ok(false);
@@ -464,7 +467,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         live: bool,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let inventory = self.host.provider_inventory(&context).await?;
         let cached = self.persisted_capacity_view().await?;
         let usage_fresh = inventory.claude.accounts.iter().all(|a| {
@@ -493,7 +496,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         };
         // Rebuild after collection; the same response includes the newly accepted evidence.
         let inventory = self.host.provider_inventory(&context).await?;
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let mut source_accounts = Vec::new();
         for account in &inventory.claude.accounts {
             let health = self
@@ -515,8 +518,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .cloned()
             .unwrap_or(SourceJson::from_serializable(&unavailable_claude(at))?);
         let source_history = self.claude_capacity_history(at).await;
-        body["prompt_cache"] = self.prompt_analytics(&[]).await?;
-        body["ledger_growth"] = self.ledger_growth(at).await;
+        body["prompt_cache"] = self.prompt().prompt_analytics(&[]).await?;
+        body["ledger_growth"] = self.ledger().ledger_growth(at).await;
         let remote = self
             .remote_capacity_observations(at)
             .await
@@ -529,7 +532,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 |a, b| self.host.compare_labels(a, b)
             )?);
         }
-        let mut document = crate::replay_values::SourceObject::parse(
+        let mut document = gateway_observability_contracts::source_object::SourceObject::parse(
             &gateway_source::source_json::SourceJson::from_serializable(&body)?,
         )?;
         document.set("claude_accounts", &source_accounts)?;
@@ -546,7 +549,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         } else {
             window_days.min(365)
         };
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let window = i64::from(days) * DAY;
         let points = self
             .capacity_rollup_points((at - window).max(0), at)

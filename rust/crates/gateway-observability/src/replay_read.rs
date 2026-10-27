@@ -1,20 +1,19 @@
 //! Source replay-read.ts. Reads preserve expiry/status truth and export only frozen manifest fields.
 use crate::{
-    ObservabilityRuntime,
-    replay_model::{self as model, CaptureState, Manifest, Status, StatusDocument},
-    replay_values::{SourceObject, read_json_record},
-    store,
-    types::ObservabilityHost,
+    ObservabilityRuntime, replay_model as model, replay_model::CaptureState,
+    replay_model::Manifest, replay_model::Status, replay_model::StatusDocument,
+    replay_values::read_json_record, store,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use gateway_auth::types::AuthResponse;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::{
-    error::GatewayError,
-    query::{QueryRequest, QuerySelector, QueryStore},
-    source_json::SourceJson,
-    state::{RecordKey, RecordMutation, StoredRecord},
-    value::{PortableValue, ValueEncoding},
+    query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordKey,
+    state::RecordMutation, state::StoredRecord, value::PortableValue, value::ValueEncoding,
 };
+use gateway_observability_contracts::{
+    data, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::Serialize;
 const MANIFEST_FIELDS: &[&str] = &[
     "version",
@@ -33,7 +32,7 @@ const MANIFEST_FIELDS: &[&str] = &[
 ];
 const INVALID_EXPORT: &str = "after_ms and before_ms must define a valid interval, limit must be one, cursor must be valid, and at most one of incident_id or request_id may be selected";
 fn invalid() -> GatewayError {
-    store::invalid(INVALID_EXPORT)
+    data::invalid(INVALID_EXPORT)
 }
 fn failed() -> GatewayError {
     GatewayError::unavailable(
@@ -47,7 +46,12 @@ fn manifest_from_row(row: &StoredRecord) -> Result<Option<Manifest>, GatewayErro
         PortableValue::Object(entries) => entries
             .into_iter()
             .filter(|(key, _)| MANIFEST_FIELDS.contains(&key.as_str()))
-            .map(|(key, value)| (gateway_core::js_string::JsString16::from_utf8(&key), value))
+            .map(|(key, value)| {
+                (
+                    gateway_source::js_string::JsString16::from_utf8(&key),
+                    value,
+                )
+            })
             .collect(),
         PortableValue::ObjectUtf16(entries) => entries
             .into_iter()
@@ -114,14 +118,14 @@ fn valid_ledger(value: &SourceJson) -> bool {
     }
     for field in ["last_skip_reason", "bootstrap_cursor", "accounting_error"] {
         if !row.get(field).is_some_and(|v| {
-            v.deserialize::<Option<gateway_core::js_string::JsString16>>()
+            v.deserialize::<Option<gateway_source::js_string::JsString16>>()
                 .is_ok()
         }) {
             return false;
         }
     }
     row.get("bootstrap_sweep").is_none_or(|v| {
-        v.deserialize::<Option<gateway_core::js_string::JsString16>>()
+        v.deserialize::<Option<gateway_source::js_string::JsString16>>()
             .is_ok()
     })
 }
@@ -173,7 +177,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         key: &RecordKey,
     ) -> Result<Option<StoredRecord>, GatewayError> {
         let row = self.store.read(key).await?;
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         Ok(row.filter(|r| r.expires_at_ms.is_none_or(|t| t > at)))
     }
     pub(crate) async fn export_manifest(
@@ -264,7 +268,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if !model::request_id(id) {
             return Err(invalid());
         }
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let result = async {
             let mut status = self.capture_status(id, at).await?;
             let Some(parts) = status.data.manifest_key.as_ref() else {
@@ -325,7 +329,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         let result = async {
             let prefix = model::key("manifest");
-            let start = store::key(serde_json::json!([
+            let start = data::key(serde_json::json!([
                 "uos_ai",
                 "sentinel_replay",
                 "v1",
@@ -341,7 +345,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 reverse: false,
                 limit: 1,
                 cursor: cursor.map(model::core_cursor).transpose()?,
-                now_ms: store::now(self.host.as_ref())?,
+                now_ms: data::now(self.host.as_ref())?,
             };
             let validated = query.validate()?;
             let page = self.store.query(query).await?;
@@ -379,7 +383,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             loop {
                 let query = QueryRequest {
                     selector: QuerySelector::Prefix {
-                        prefix: store::key(serde_json::json!([
+                        prefix: data::key(serde_json::json!([
                             "uos_ai",
                             "sentinel_incident",
                             "v1",
@@ -392,7 +396,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     reverse: false,
                     limit: 1,
                     cursor: cursor.clone(),
-                    now_ms: store::now(self.host.as_ref())?,
+                    now_ms: data::now(self.host.as_ref())?,
                 };
                 let validated = query.validate()?;
                 let page = self.store.query(query).await?;
@@ -400,7 +404,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     return response(Vec::new(), None, None);
                 };
                 let next = validated.cursor_after(&reference.key)?;
-                let parts = store::parts(&reference.key)?;
+                let parts = data::parts(&reference.key)?;
                 let fingerprint = parts
                     .last()
                     .and_then(serde_json::Value::as_str)
@@ -421,7 +425,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let Some(row) = self.replay_row(&key).await? else {
                     let _ = store::commit(
                         self.store.as_ref(),
-                        vec![store::check(&reference.key, Some(&reference.record))],
+                        vec![data::check(&reference.key, Some(&reference.record))],
                         vec![RecordMutation::Delete {
                             key: reference.key.clone(),
                         }],

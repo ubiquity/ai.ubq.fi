@@ -1,6 +1,7 @@
 //! Request-owned passive source upstream recorder. Hooks only consume bytes the transport already read.
 use base64::{Engine, engine::general_purpose::STANDARD};
-use gateway_core::error::GatewayError;
+use gateway_observability_contracts::data;
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 use zeroize::Zeroizing;
@@ -80,7 +81,7 @@ impl UpstreamTrace {
     pub(crate) fn canonical(&self) -> Result<String, GatewayError> {
         self.validate()?;
         let value = serde_json::to_value(self.0.as_ref())
-            .map_err(|_| crate::store::error("Upstream trace serialization failed"))?;
+            .map_err(|_| crate::data::error("Upstream trace serialization failed"))?;
         fn canonical(value: &serde_json::Value) -> String {
             match value {
                 serde_json::Value::Object(fields) => {
@@ -112,7 +113,7 @@ impl UpstreamTrace {
     pub(crate) fn validate(&self) -> Result<(), GatewayError> {
         for attempt in &self.0.attempts {
             if matches!(attempt.provider, TraceProvider::ClaudeCode) {
-                return Err(crate::store::error(
+                return Err(crate::data::error(
                     "The frozen source upstream parser rejects Claude trace providers",
                 ));
             }
@@ -123,10 +124,10 @@ impl UpstreamTrace {
                     .iter()
                     .any(|t| !(0..=604_800_000).contains(t))
             {
-                return Err(crate::store::error("Upstream trace timing is invalid"));
+                return Err(crate::data::error("Upstream trace timing is invalid"));
             }
             if attempt.terminal != TraceTerminal::Pending && attempt.ended_at_ms.is_none() {
-                return Err(crate::store::error(
+                return Err(crate::data::error(
                     "Upstream trace termination time is missing",
                 ));
             }

@@ -9,16 +9,17 @@ use gateway_admin_runtime::{
     capabilities::{ClaudeRequest, ClaudeSubmission, Context},
     claude::{self, AccountBinding, AccountUpdate, Credential},
 };
-use gateway_auth::types::{AuthHost, AuthResponse};
+use gateway_auth_contracts::{types::AuthHost, types::AuthResponse};
 use gateway_claude_usage_admin::{
     check_target_cohort, matching_target, readback::subscription_block, select_source_account,
     submitted_workspace,
 };
-use gateway_core::{
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::types::ObservabilityHost;
+use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
 use gateway_worker_http_body::body::discard_response;
 use gateway_worker_platform::cancellation::Cancellation;
 use serde::Serialize;

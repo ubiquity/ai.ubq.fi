@@ -1,16 +1,12 @@
 mod support;
-use gateway_core::state::{RevisionCheck, StoredRecord};
-use gateway_observability::{
-    ObservabilityRuntime,
-    health::*,
-    types::{HealthEvent as E, HealthProvider as P, HealthTarget, HealthWrite as W},
+use gateway_core::{state::RevisionCheck, state::StoredRecord};
+use gateway_observability::{ObservabilityRuntime, health::*};
+use gateway_observability_contracts::{
+    types::HealthEvent as E, types::HealthProvider as P, types::HealthTarget,
+    types::HealthWrite as W,
 };
 use serde_json::json;
-use std::{
-    future::Future,
-    pin::pin,
-    task::{Context, Poll, Waker},
-};
+use std::{future::Future, pin::pin, task::Context, task::Poll, task::Waker};
 use support::{Host, Memory, run};
 
 #[test]

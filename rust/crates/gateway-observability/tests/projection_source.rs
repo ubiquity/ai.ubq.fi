@@ -1,24 +1,22 @@
 mod support;
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    query::QueryStore,
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
-    source_serialization as source,
-    source_usage::extract_usage_tokens,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{KeyPart, TupleKey},
-    value::{PortableValue, ValueEncoding},
+    query::QueryStore, source_control::encode_source_control_record,
+    source_usage::extract_usage_tokens, state::RecordKey, state::StoredRecord, tuple_key::KeyPart,
+    tuple_key::TupleKey, value::PortableValue, value::ValueEncoding,
 };
-use gateway_observability::{
-    ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup,
-    records::usage_rollup_record_source, types::ObservabilityHost,
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::types::ObservabilityHost;
+use gateway_observability_ledger::{
+    ledger::terminal_rollup::TerminalUsageRollup, records::usage_rollup_record_source,
 };
-use gateway_observability_test_support::source_fixture::{
-    CapturedCollator, assert_source_eq, fixture,
+use gateway_observability_test_support::{
+    source_fixture::CapturedCollator, source_fixture::assert_source_eq, source_fixture::fixture,
 };
 use gateway_schema::aliases::SourceStringCollator;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use support::{Host, Memory, run};
@@ -70,7 +68,7 @@ fn units(row: &SourceJson, name: &str) -> Vec<u16> {
         .into_units()
 }
 fn response_source(
-    response: &gateway_auth::types::AuthResponse,
+    response: &gateway_auth_contracts::types::AuthResponse,
 ) -> Result<SourceJson, GatewayError> {
     SourceJson::parse_bytes(&response.body.to_bytes()?)
 }
@@ -90,13 +88,15 @@ fn write<S: QueryStore, H: ObservabilityHost>(
     ))
     .unwrap();
     assert!(
-        run(runtime.record_terminal_usage_rollup(TerminalUsageRollup {
-            model: Some(model),
-            provider: Some(" chatgpt_codex "),
-            request_id: request,
-            request_created_at_ms: Some(1000.9),
-            usage: Some(&usage)
-        }))
+        run(runtime
+            .ledger()
+            .record_terminal_usage_rollup(TerminalUsageRollup {
+                model: Some(model),
+                provider: Some(" chatgpt_codex "),
+                request_id: request,
+                request_created_at_ms: Some(1000.9),
+                usage: Some(&usage)
+            }))
         .unwrap()
     );
 }

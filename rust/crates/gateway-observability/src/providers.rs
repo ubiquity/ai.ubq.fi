@@ -1,22 +1,22 @@
 use crate::{
-    ObservabilityRuntime,
-    completion::Completion,
-    health::{aggregate_states, binding_current, unknown_health},
-    host_types::{self as host, CredentialSource},
-    replay_values::SourceObject,
-    store,
-    types::{HealthProvider, HealthTarget, ObservabilityHost},
+    ObservabilityRuntime, completion::Completion, health::aggregate_states,
+    health::binding_current, health::unknown_health,
 };
 use gateway_admin_runtime::capabilities::Context;
-use gateway_auth::types::AuthResponse;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_claude_usage_protocol::readback::quota as quota_readback;
-use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};
+use gateway_core::query::QueryStore;
+use gateway_observability_contracts::{
+    data, host_types as host, host_types::CredentialSource, source_object::SourceObject,
+    types::HealthProvider, types::HealthTarget, types::ObservabilityHost,
+};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, rc::Rc};
 #[derive(Clone)]
 struct ActiveResponseData {
     status: u16,
-    body: gateway_core::source_json::SourceJson,
+    body: gateway_source::source_json::SourceJson,
     identity: host::BuildIdentity,
 }
 type ActiveResult = Result<ActiveResponseData, GatewayError>;
@@ -128,12 +128,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         let inventory = self.host.provider_inventory(&context).await?;
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let auth = auth_view(&inventory.codex, at);
         let mut codex_accounts = auth["accounts"]
             .as_array()
             .cloned()
-            .ok_or_else(|| store::error("Source account array is invalid"))?;
+            .ok_or_else(|| data::error("Source account array is invalid"))?;
         let mut states = Vec::new();
         for (index, account) in inventory.codex.accounts.iter().enumerate() {
             let health = self
@@ -225,7 +225,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut active = None;
         for account in &roster.accounts {
             if account.target.provider != HealthProvider::ClaudeCode {
-                return Err(store::error("Claude health target provider mismatch"));
+                return Err(data::error("Claude health target provider mismatch"));
             }
             let current = binding_current(self.store.as_ref(), &account.target)
                 .await
@@ -271,7 +271,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             finished: false,
         };
         let response = async {
-            let at = store::now(self.host.as_ref())?;
+            let at = data::now(self.host.as_ref())?;
             let evidence = self.host.probe_upstream_health(at + 3000).await?;
             if !matches!(evidence.codex.provider, host::ProbeProvider::ChatgptCodex)
                 || evidence
@@ -283,7 +283,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     .as_ref()
                     .is_some_and(|p| !matches!(p.provider, host::ProbeProvider::ClaudeSubscription))
             {
-                return Err(store::error("Active health probe identity mismatch"));
+                return Err(data::error("Active health probe identity mismatch"));
             }
             let failures: Vec<u16> = [
                 Some(evidence.codex.status),
@@ -313,7 +313,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 auth: Option<Value>,
                 probes: Probes<'a>,
             }
-            let body = gateway_core::source_json::SourceJson::from_serializable(&Body {
+            let body = gateway_source::source_json::SourceJson::from_serializable(&Body {
                 status,
                 auth: evidence
                     .auth

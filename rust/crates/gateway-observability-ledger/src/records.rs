@@ -1,9 +1,10 @@
 //! Explicit source records: only these declared text fields may use ProfileV2 strings.
-use crate::{ledger::ErrorObservation, store, types::ObservabilityHost};
+use crate::ledger::ErrorObservation;
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
     source_control::source_json_tree, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
+use gateway_observability_contracts::{data, types::ObservabilityHost};
 use gateway_observability_request_records::request::bounded_text;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
@@ -13,7 +14,7 @@ pub fn record_source_json(row: &StoredRecord) -> Result<SourceJson, GatewayError
     decode_source_control_record(row)
 }
 
-pub fn put_record<H: ObservabilityHost>(
+pub(crate) fn put_record<H: ObservabilityHost>(
     host: &H,
     key: RecordKey,
     document: &SourceJson,
@@ -26,7 +27,7 @@ pub fn put_record<H: ObservabilityHost>(
         .map(|value| SourceJson::from_serializable(&value))
         .transpose()?
         .unwrap_or_else(|| document.clone());
-    let record = encode_source_control_record(store::uuid(host)?, &document, Some(expiry))?;
+    let record = encode_source_control_record(data::uuid(host)?, &document, Some(expiry))?;
     Ok(RecordMutation::Put { key, record })
 }
 
@@ -89,14 +90,14 @@ pub fn error_document(input: &ErrorObservation) -> Result<SourceJson, GatewayErr
 /// This named reader grants neither key custody nor a live operation.
 pub fn admin_error_record_source(row: &StoredRecord) -> Result<SourceJson, GatewayError> {
     let document = record_source_json(row)?;
-    let object = crate::replay_values::SourceObject::parse(&document)?;
+    let object = gateway_observability_contracts::source_object::SourceObject::parse(&document)?;
     let field = |name: &str| {
         object
             .get(name)
-            .ok_or_else(|| store::error("Incomplete admin error record"))
+            .ok_or_else(|| data::error("Incomplete admin error record"))
     };
     if field("version")?.deserialize::<f64>()? != 1.0 {
-        return Err(store::error("Invalid admin error version"));
+        return Err(data::error("Invalid admin error version"));
     }
     for name in [
         "request_id",
@@ -156,7 +157,7 @@ pub fn valid_usage_rollup_source(document: &SourceJson) -> bool {
 pub fn usage_rollup_record_source(row: &StoredRecord) -> Result<SourceJson, GatewayError> {
     let document = decode_source_control_record(row)?;
     if !valid_usage_rollup_source(&document) {
-        return Err(store::error("Invalid source usage rollup"));
+        return Err(data::error("Invalid source usage rollup"));
     }
     Ok(document)
 }

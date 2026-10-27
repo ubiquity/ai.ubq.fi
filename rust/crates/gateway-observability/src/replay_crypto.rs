@@ -1,18 +1,15 @@
 //! Source replay-envelope.ts: HKDF/HMAC domains, gzip and AES256-GCM framing.
 //! The constructor receives the existing configured key; this module never reads environment or credentials.
-use aes_gcm::{
-    Aes256Gcm, KeyInit, Nonce,
-    aead::{Aead, Payload},
-};
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead, aead::Payload};
 use base64::{
-    Engine, alphabet,
-    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
+    Engine, alphabet, engine::DecodePaddingMode, engine::GeneralPurpose,
+    engine::GeneralPurposeConfig,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::io::{Read, Write};
+use std::{io::Read, io::Write};
 use zeroize::Zeroizing;
 
 pub const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;

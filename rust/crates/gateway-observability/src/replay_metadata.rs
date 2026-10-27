@@ -1,35 +1,44 @@
 //! Source capture-status metadata admission/recount/pruning against the same ledger fence.
 use crate::{
     ObservabilityRuntime, replay_model as model, replay_retention_schema as schema,
-    replay_values::{SourceObject, read_json_record},
-    store,
-    types::ObservabilityHost,
+    replay_values::read_json_record, store,
 };
 use gateway_core::{
-    error::GatewayError,
-    query::QueryStore,
-    source_json::SourceJson,
-    state::{RecordKey, RecordMutation, StoredRecord},
+    query::QueryStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
+use gateway_observability_contracts::{
+    data, query, query::ObservationRead, query::ReplayRows, source_object::SourceObject,
+    types::ObservabilityHost,
+};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub(crate) async fn replay_metadata_candidates(
         &self,
         at: i64,
     ) -> Result<Vec<(RecordKey, StoredRecord, f64, f64)>, GatewayError> {
         let mut out = Vec::new();
-        for kind in ["request", "evicted"] {
-            for entry in
-                store::scan(self.store.as_ref(), model::key(kind), false, at, usize::MAX).await?
+        for (kind, family) in [
+            ("request", ReplayRows::Request),
+            ("evicted", ReplayRows::Evicted),
+        ] {
+            for entry in query::scan(
+                self.store.as_ref(),
+                ObservationRead::Replay(family),
+                false,
+                at,
+                usize::MAX,
+            )
+            .await?
             {
                 let value = read_json_record(&entry.record)?;
-                let parts = store::parts(&entry.key)?;
+                let parts = data::parts(&entry.key)?;
                 if parts.len() != 5 {
-                    return Err(store::error("Replay metadata key is invalid"));
+                    return Err(data::error("Replay metadata key is invalid"));
                 }
                 let time = if kind == "request" {
                     let status = model::StatusDocument::parse(&value)?;
                     if parts[4].as_str() != Some(status.data.request_id.as_str()) {
-                        return Err(store::error("Replay request-status key mismatch"));
+                        return Err(data::error("Replay request-status key mismatch"));
                     }
                     status.data.captured_at_ms
                 } else {
@@ -42,9 +51,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                         .and_then(|v| v.deserialize::<f64>().ok())
                         .filter(|n| model::counter(*n));
                     if fingerprint.as_deref() != parts[4].as_str() {
-                        return Err(store::error("Replay tombstone key mismatch"));
+                        return Err(data::error("Replay tombstone key mismatch"));
                     }
-                    time.ok_or_else(|| store::error("Replay tombstone time is invalid"))?
+                    time.ok_or_else(|| data::error("Replay tombstone time is invalid"))?
                 };
                 out.push((
                     entry.key,
@@ -73,7 +82,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let marker = model::key("metadata_reconciled");
             if store::commit(
                 self.store.as_ref(),
-                vec![store::check(&model::key("budget"), previous.as_ref())],
+                vec![data::check(&model::key("budget"), previous.as_ref())],
                 vec![
                     schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
                     store::put(
@@ -127,8 +136,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if store::commit(
                 self.store.as_ref(),
                 vec![
-                    store::check(&model::key("budget"), previous.as_ref()),
-                    store::check(&key, Some(&row)),
+                    data::check(&model::key("budget"), previous.as_ref()),
+                    data::check(&key, Some(&row)),
                 ],
                 vec![
                     schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,
@@ -148,9 +157,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         limits: schema::RetentionLimits,
     ) -> Result<bool, GatewayError> {
         if !status.valid_stored() {
-            return Err(store::error("Replay capture status is invalid"));
+            return Err(data::error("Replay capture status is invalid"));
         }
-        let at = store::now(self.host.as_ref())?;
+        let at = data::now(self.host.as_ref())?;
         let document = SourceJson::from_serializable(status)?;
         let bytes = schema::metadata_charge(&document);
         let key = model::request_key(&status.request_id);
@@ -177,8 +186,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             if store::commit(
                 self.store.as_ref(),
                 vec![
-                    store::check(&model::key("budget"), previous.as_ref()),
-                    store::check(&key, raw.as_ref()),
+                    data::check(&model::key("budget"), previous.as_ref()),
+                    data::check(&key, raw.as_ref()),
                 ],
                 vec![
                     schema::ledger_mutation(self.host.as_ref(), previous.as_ref(), &ledger)?,

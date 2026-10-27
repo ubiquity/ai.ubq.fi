@@ -17,12 +17,13 @@ use gateway_authority::{
     native_control::actor::{NativeActorScope, NativeRenewalActor},
     store::Authority,
 };
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
-use gateway_observability::{
-    ObservabilityRuntime,
-    types::{HealthEvent, HealthTarget, ObservabilityHost},
+use gateway_core::identity::PoolVersionstamp;
+use gateway_observability::ObservabilityRuntime;
+use gateway_observability_contracts::{
+    types::HealthEvent, types::HealthTarget, types::ObservabilityHost,
 };
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
 use gateway_worker_platform::random;

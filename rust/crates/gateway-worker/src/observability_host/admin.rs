@@ -1,13 +1,11 @@
 //! Finite admin delegation; the actor and prepared target belong to this original request only.
 use super::RequestHost;
 use gateway_authority::native_control::actor::{NativeActorScope, NativeRenewalActor};
-use gateway_core::error::GatewayError;
-use gateway_observability::{
-    host_types::{
-        CacheExperimentTarget, PaidBackfillReceipt, PaidRequestBackfill, PaidWindowBackfill,
-    },
-    types::ObservabilityHost,
+use gateway_observability_contracts::{
+    host_types::CacheExperimentTarget, host_types::PaidBackfillReceipt,
+    host_types::PaidRequestBackfill, host_types::PaidWindowBackfill, types::ObservabilityHost,
 };
+use gateway_source::error::GatewayError;
 
 pub(super) fn auth_required() -> GatewayError {
     GatewayError::unavailable(
