@@ -75,7 +75,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     pub async fn prepare_cache_experiment_renewal(
         &self,
         actor: &NativeRenewalActor,
-        permit: &crate::cache_experiment::RefreshPermit,
+        permit: &gateway_cache_experiment_dispatch::RefreshPermit,
     ) -> Result<NativeRenewalAction, GatewayError> {
         self.prepare_live_context(
             actor,

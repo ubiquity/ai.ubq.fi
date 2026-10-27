@@ -1,15 +1,14 @@
 //! Controlled finite host callbacks validate durable orchestration, not live provider acceptance.
 use gateway_auth::crypto::Secret;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_authority::cache_experiment::{
-    RefreshPermit,
-    model::{STEPS, Sample, TargetBinding, Usage},
-    run::{ExperimentIo, ReadSample},
-    transport::CacheDispatch,
-};
+use gateway_authority::{cache_experiment::run::ExperimentIo, cache_experiment::run::ReadSample};
 use gateway_authority_routing_records::types::{
     PoolAccount, QuotaBlock, QuotaBlockSource, RoutingSlot, RoutingState, SubscriptionPool,
 };
+use gateway_cache_experiment_dispatch::CacheDispatchOperations;
+use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
+use gateway_cache_experiment_records::model::Usage;
+use gateway_cache_experiment_records::{model::STEPS, model::Sample, model::TargetBinding};
 
 use gateway_core::error::GatewayError;
 use gateway_core::identity::PoolVersionstamp;

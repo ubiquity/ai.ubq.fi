@@ -3,7 +3,6 @@
 pub mod run;
 mod state;
 mod target;
-pub mod transport;
 use gateway_cache_experiment_records::{
     RefreshContext, model::TargetBinding, source::release_valid,
 };
@@ -25,24 +24,6 @@ impl PreparedTarget {
     }
     pub fn release_git_sha(&self) -> &str {
         &self.release_git_sha
-    }
-}
-
-/// Deserializing a stored context cannot manufacture an operation permit.
-/// ```compile_fail
-/// use gateway_authority::cache_experiment::RefreshPermit;
-/// let forged: RefreshPermit = serde_json::from_str("{}").unwrap();
-/// ```
-pub struct RefreshPermit {
-    context: RefreshContext,
-    binding: gateway_core::identity::AccountBinding,
-}
-impl RefreshPermit {
-    pub fn context(&self) -> &RefreshContext {
-        &self.context
-    }
-    pub fn binding(&self) -> &gateway_core::identity::AccountBinding {
-        &self.binding
     }
 }
 

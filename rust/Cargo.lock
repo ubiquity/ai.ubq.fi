@@ -984,6 +984,7 @@ dependencies = [
  "gateway-authority-routing-signal",
  "gateway-authority-test-support",
  "gateway-cache-experiment-campaign",
+ "gateway-cache-experiment-dispatch",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
  "gateway-core",
@@ -1480,6 +1481,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-cache-experiment-dispatch"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-authority-routing-signal",
+ "gateway-cache-experiment-campaign",
+ "gateway-cache-experiment-evidence",
+ "gateway-cache-experiment-records",
+ "gateway-core",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-cache-experiment-evidence"
 version = "0.1.0"
 dependencies = [
@@ -1701,6 +1722,7 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
  "gateway-authority-routing-records",
+ "gateway-cache-experiment-records",
  "gateway-core",
  "gateway-native-supervisor-read",
  "gateway-publication",
@@ -1969,6 +1991,7 @@ dependencies = [
  "gateway-authority-routing-records",
  "gateway-authority-routing-selection",
  "gateway-authority-routing-signal",
+ "gateway-cache-experiment-dispatch",
  "gateway-cache-experiment-records",
  "gateway-capacity-recovery",
  "gateway-catalog-runtime",

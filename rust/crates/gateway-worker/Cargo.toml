@@ -13,6 +13,7 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
 gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
 gateway-authority-reset-recovery = { path = "../gateway-authority-reset-recovery" }
 gateway-authority-reset-spend = { path = "../gateway-authority-reset-spend" }

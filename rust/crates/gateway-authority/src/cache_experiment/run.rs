@@ -1,9 +1,12 @@
 //! One awaited source cycle per invocation; actual network/native I/O is a finite host capability.
-use super::{PreparedTarget, RefreshPermit, transport::CacheDispatch};
+use super::PreparedTarget;
 use crate::store::Authority;
 use gateway_authority_contracts::TokenSource;
 use gateway_cache_experiment_campaign::promotion::CachePromotionOperations;
 use gateway_cache_experiment_campaign::{CacheCampaignOperations, CyclePermit};
+use gateway_cache_experiment_dispatch::{
+    CacheDispatch, CacheDispatchOperations, RefreshPermit, Session,
+};
 use gateway_cache_experiment_records::model::{
     CYCLE_MS, Cycle, Outcome, Reason, SAMPLE_MS, SLOTS, Sample, TargetBinding, classify, failed,
     sample_signal, unavailable,
@@ -71,7 +74,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let target=self.current_cache_target(&prepared.target,self.fresh_time(now)?).await?.map_err(|_|unavailable("Prompt-cache scope experiment target changed after its Stage 0 telemetry baseline."))?;
         let session = self.cache_session(self.fresh_time(now)?).await?;
         let permit = self
-            .acquire_cache_cycle(&target, &session.revision, self.fresh_time(now)?)
+            .acquire_cache_cycle(&target, session.revision(), self.fresh_time(now)?)
             .await?;
         let mut promoted = false;
         let result = self
@@ -117,7 +120,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         &self,
         permit: &CyclePermit,
         mut target: TargetBinding,
-        mut session: super::transport::Session,
+        mut session: Session,
         io: &H,
         promoted: &mut bool,
         now: i64,
@@ -125,7 +128,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let state = permit.state();
         let guard = if state.expires_at_ms <= self.fresh_time(now)? {
             Some(Reason::SessionExpired)
-        } else if state.auth_pool_versionstamp != session.revision {
+        } else if state.auth_pool_versionstamp.as_str() != session.revision() {
             Some(Reason::AuthPoolDrift)
         } else if !state.target.same_core(&target) {
             Some(Reason::TargetCatalogDrift)
@@ -208,7 +211,9 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 {
                     Ok(next) => {
                         session = next;
-                        target.auth_pool_versionstamp.clone_from(&session.revision);
+                        session
+                            .revision()
+                            .clone_into(&mut target.auth_pool_versionstamp);
                     }
                     Err(reason) => {
                         cycle.inconclusive_reason = Some(reason);
@@ -311,7 +316,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         };
         let mut next = state.clone();
         next.target = target;
-        next.auth_pool_versionstamp = session.revision;
+        next.auth_pool_versionstamp = session.revision().to_owned();
         next.next_cycle += 1;
         next.classifications.push(scope.clone());
         if next.next_cycle == 4 {

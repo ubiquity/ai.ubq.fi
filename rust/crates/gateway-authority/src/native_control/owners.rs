@@ -177,7 +177,7 @@ impl RegisteredRenewalOwners {
     pub async fn for_cache_experiment<'a, S: AuthorityStore, I: TokenSource>(
         &'a self,
         authority: &Authority<S, I>,
-        permit: &crate::cache_experiment::RefreshPermit,
+        permit: &gateway_cache_experiment_dispatch::RefreshPermit,
     ) -> Result<&'a RegisteredRenewalOwner, GatewayError> {
         for _ in 0..3 {
             let mut tx = authority.transaction(authority.fresh_time(0)?)?;

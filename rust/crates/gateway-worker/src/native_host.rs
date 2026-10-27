@@ -236,7 +236,7 @@ impl NativeBindings {
     pub(crate) async fn renew_cache_experiment(
         &self,
         actor: &gateway_authority::native_control::actor::NativeRenewalActor,
-        permit: &gateway_authority::cache_experiment::RefreshPermit,
+        permit: &gateway_cache_experiment_dispatch::RefreshPermit,
         platform: &PlatformHost,
         config: &gateway_auth::types::AuthConfig,
     ) -> Result<gateway_core::identity::PoolVersionstamp, GatewayError> {

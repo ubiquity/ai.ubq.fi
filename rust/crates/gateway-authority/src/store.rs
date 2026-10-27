@@ -577,3 +577,15 @@ impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_campaign::Cache
         )
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> gateway_cache_experiment_dispatch::CacheDispatchFactory
+    for Authority<S, I>
+{
+    fn cache_transport(&self) -> gateway_cache_experiment_dispatch::CacheDispatchService<'_, S, I> {
+        gateway_cache_experiment_dispatch::CacheDispatchService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}

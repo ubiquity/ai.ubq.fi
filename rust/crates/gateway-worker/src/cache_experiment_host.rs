@@ -1,4 +1,5 @@
 //! Request-owned fixed Codex control experiment. No generic inference or paid fallback.
+use gateway_cache_experiment_dispatch::CacheDispatchOperations;
 mod sample;
 use crate::{
     authority::RemoteAuthorityStore,
@@ -10,16 +11,12 @@ use crate::{
     },
 };
 use futures_util::StreamExt;
-use gateway_authority::{
-    cache_experiment::{
-        PreparedTarget, RefreshPermit,
-        model::{failed, unavailable},
-        run::{ExperimentIo, ReadSample},
-        transport::CacheDispatch,
-    },
-    native_control::actor::{NativeActorScope, NativeRenewalActor},
-    store::Authority,
-};
+use gateway_authority::cache_experiment::run::ReadSample;
+use gateway_authority::native_control::actor::NativeActorScope;
+use gateway_authority::{cache_experiment::PreparedTarget, cache_experiment::run::ExperimentIo};
+use gateway_authority::{native_control::actor::NativeRenewalActor, store::Authority};
+use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
+use gateway_cache_experiment_records::{model::failed, model::unavailable};
 use gateway_core::{error::GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
 use gateway_observability::{
     ObservabilityRuntime,
