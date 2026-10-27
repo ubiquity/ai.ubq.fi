@@ -1,5 +1,5 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use gateway_auth::provider_credentials::*;
+use gateway_auth_credentials::provider_credentials::*;
 use serde_json::{Value, json};
 
 fn golden() -> Value {

@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source.workspace = true
 gateway-authority-capacity-policy = { path = "../gateway-authority-capacity-policy" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
@@ -14,3 +15,6 @@ gateway-core = { path = "../gateway-core" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gateway-source.workspace = true

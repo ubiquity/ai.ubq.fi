@@ -7,10 +7,13 @@ use gateway_authority_paid_records::{PaidAttempt, source_usage::surplus_usage_fr
 use gateway_authority_paid_records::{PaidCorrelation, PaidRollup};
 use gateway_authority_paid_test_support::{NOW, Store, TestResult, key, request, rollup_key, run};
 use gateway_authority_paid_test_support::{backfill, live_usage, window};
-use gateway_core::{js_string::JsString16, provider::PaidProvider, state::RecordKey};
+use gateway_core::source_control::encode_source_control_record;
+use gateway_core::value::ValueEncoding;
 use gateway_core::{model::ModelId, source_control::decode_source_control_record};
-use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
-use gateway_core::{source_serialization as source, value::ValueEncoding};
+use gateway_core::{provider::PaidProvider, state::RecordKey};
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde_json::json;
 
 fn model(units: &[u16]) -> ModelId {

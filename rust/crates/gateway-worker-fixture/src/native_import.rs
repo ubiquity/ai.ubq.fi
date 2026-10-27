@@ -13,13 +13,10 @@ use gateway_auth::{
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation,
-        actor::authenticate_admin_actor,
-        owners::RegisteredRenewalOwners,
-        receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
-    },
-    store::Authority,
+    native_control::NativeRenewalCancellation, native_control::actor::authenticate_admin_actor,
+    native_control::owners::RegisteredRenewalOwners,
+    native_control::receiver::NativeRenewalAuthority,
+    native_control::receiver::RegisteredRenewalOwner, store::Authority,
 };
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
@@ -41,13 +38,13 @@ const SESSION: &str = "uos_ai_session_SYNTHETIC_WORKER_IMPORT_TOKEN";
 struct Clock;
 impl AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        gateway_worker::storage::now_ms()
+        gateway_worker_storage::store::now_ms()
     }
 }
 struct Tokens;
 impl TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
-        gateway_worker::transport::random::random_uuid()
+        gateway_worker_platform::random::random_uuid()
     }
 }
 struct Host;
@@ -64,7 +61,7 @@ impl AuthHost for Host {
         now()
     }
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>, GatewayError> {
-        gateway_worker::transport::random::random_bytes(len)
+        gateway_worker_platform::random::random_bytes(len)
     }
     async fn fetch_auth(
         &self,
@@ -316,7 +313,7 @@ pub(super) async fn fetch(
     request: Request,
     env: Env,
     context: Context,
-) -> worker::Result<gateway_worker::response::GatewayResponse> {
+) -> worker::Result<gateway_worker_web::response::GatewayResponse> {
     let id = identity()
         .map_err(|e| worker::Error::RustError(e.envelope.error.code.unwrap_or_default()))?;
     let inputs = inputs()

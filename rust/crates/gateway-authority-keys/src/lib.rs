@@ -1,10 +1,10 @@
 //! Source key families encoded by the single shared tuple codec; no JSON identity fallback.
-use gateway_core::error::GatewayError;
 use gateway_core::state::RecordKey;
 use gateway_core::tuple_key::{
     ScalarKeyPart::{self, Number, String as Text},
     TupleKey,
 };
+use gateway_source::error::GatewayError;
 
 fn key(parts: &[ScalarKeyPart<'_>]) -> RecordKey {
     TupleKey::from_scalar_parts(parts).to_record_key()
@@ -122,8 +122,8 @@ pub fn kernel_policy(owner: &str, repo: Option<&str>) -> RecordKey {
 /// Physical source policy identity only. Callers retain the exact logical labels;
 /// a collided tuple key does not grant ownership of an existing policy/window.
 pub fn kernel_policy_source(
-    owner: &gateway_core::js_string::JsString16,
-    repo: Option<&gateway_core::js_string::JsString16>,
+    owner: &gateway_source::js_string::JsString16,
+    repo: Option<&gateway_source::js_string::JsString16>,
 ) -> Result<RecordKey, GatewayError> {
     kernel_source_key(
         if repo.is_some() {
@@ -138,8 +138,8 @@ pub fn kernel_policy_source(
 
 fn kernel_source_key(
     family: &str,
-    owner: &gateway_core::js_string::JsString16,
-    repo: Option<&gateway_core::js_string::JsString16>,
+    owner: &gateway_source::js_string::JsString16,
+    repo: Option<&gateway_source::js_string::JsString16>,
 ) -> Result<RecordKey, GatewayError> {
     use gateway_core::tuple_key::KeyPart;
     let mut parts = vec![
@@ -192,8 +192,8 @@ pub fn kernel_window(owner: &str, repo: Option<&str>) -> RecordKey {
 /// Same pinned source tuple conversion as the policy overload, with no label
 /// normalization or inference about logical policy/window ownership.
 pub fn kernel_window_source(
-    owner: &gateway_core::js_string::JsString16,
-    repo: Option<&gateway_core::js_string::JsString16>,
+    owner: &gateway_source::js_string::JsString16,
+    repo: Option<&gateway_source::js_string::JsString16>,
 ) -> Result<RecordKey, GatewayError> {
     kernel_source_key(
         if repo.is_some() {
@@ -344,7 +344,7 @@ pub fn paid_rollup_model(
     paid_rollup_source(
         bucket as f64,
         model,
-        &gateway_core::js_string::JsString16::from_utf8(provider),
+        &gateway_source::js_string::JsString16::from_utf8(provider),
         f64::from(shard),
     )
     .expect("Integer bucket/shard and source string parts are finite tuple inputs")
@@ -355,7 +355,7 @@ pub fn paid_rollup_model(
 pub fn paid_rollup_source(
     bucket: f64,
     model: &gateway_core::model::ModelId,
-    provider: &gateway_core::js_string::JsString16,
+    provider: &gateway_source::js_string::JsString16,
     shard: f64,
 ) -> Result<RecordKey, GatewayError> {
     use gateway_core::tuple_key::KeyPart;

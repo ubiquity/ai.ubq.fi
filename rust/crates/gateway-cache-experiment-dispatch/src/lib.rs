@@ -19,11 +19,8 @@ use gateway_cache_experiment_records::{
     model::{Evidence, Reason, Sample, State, TargetBinding, failed},
     source::record_key,
 };
-use gateway_core::{
-    error::GatewayError,
-    identity::{AccountBinding, PoolVersionstamp},
-    state::AuthorityStore,
-};
+use gateway_core::{identity::AccountBinding, identity::PoolVersionstamp, state::AuthorityStore};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use view::read_pinned_view;
 pub struct Session {
@@ -119,7 +116,7 @@ pub(crate) async fn validate_refresh_context<
     tx: &mut crate::backend::Transaction<'_, S, I>,
     context: &RefreshContext,
     now: i64,
-) -> Result<(), gateway_core::error::GatewayError> {
+) -> Result<(), gateway_source::error::GatewayError> {
     let observed_at_ms = tx.now;
     let evidence = {
         let reader = tx.routing_read_store();

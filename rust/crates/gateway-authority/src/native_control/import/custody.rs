@@ -1,6 +1,6 @@
 //! Exact data schemas only. Legacy proof-only rows never become effect capabilities.
 use super::*;
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -68,7 +68,7 @@ pub(in crate::native_control) fn validate_custody(
     value: &SourceJson,
     id: &str,
 ) -> Result<(), GatewayError> {
-    let version = gateway_core::source_serialization::member(value, "v")
+    let version = gateway_source::source_serialization::member(value, "v")
         .and_then(|v| v.deserialize::<u8>().ok())
         .ok_or_else(unavailable)?;
     if version == 1 {

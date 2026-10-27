@@ -5,13 +5,12 @@ use gateway_core::{
 #[cfg(feature = "entrypoint")]
 use worker::event;
 use worker::{Context, Env, Method, Request, Response, Result};
-use {native_host::NativeBindings, response::GatewayResponse, std::rc::Rc};
+use {gateway_worker_web::response::GatewayResponse, native_host::NativeBindings, std::rc::Rc};
 
 mod admin_host;
 mod admin_support_host;
 mod admission;
 mod agent_messages;
-mod assets;
 pub mod authority;
 mod cache_experiment_host;
 mod candidate_bindings;
@@ -28,6 +27,7 @@ mod image_host;
 mod inference;
 mod inference_capture;
 mod inference_currentness;
+mod inference_head;
 mod inference_lifecycle;
 mod inference_local;
 mod inference_local_lifecycle;
@@ -37,7 +37,6 @@ mod live_host;
 mod live_http;
 /// Rust-only fixture composition; no native capture HTTP route is exposed.
 pub mod migration_host;
-mod multipart;
 mod native_authority;
 pub mod native_host;
 mod native_transport;
@@ -45,11 +44,8 @@ mod observability_host;
 mod paid_lookup;
 pub mod private_installer;
 mod publication;
-pub mod response;
 mod routing_host;
 mod runtime;
-mod source_collator;
-pub mod storage;
 pub mod transport;
 
 fn error_response(error: GatewayError) -> Result<Response> {
@@ -108,7 +104,7 @@ pub async fn fetch_with_bindings(
         Ok(identity) => identity,
         Err(error) => return error_response(error).map(Into::into),
     };
-    let request_id = match transport::random::random_uuid() {
+    let request_id = match gateway_worker_platform::random::random_uuid() {
         Ok(id) => id,
         Err(error) => return error_response(error).map(Into::into),
     };
@@ -139,7 +135,7 @@ pub async fn fetch_with_bindings(
     let cors = cors::Cors::from_request(&request, &env)?;
     let mut response = if request.method() == Method::Options {
         Response::empty()?.with_status(204).into()
-    } else if normalized_path(&request.path()) == "/health"
+    } else if gateway_worker_web::path::normalized_path(&request.path()) == "/health"
         && matches!(request.method(), Method::Get | Method::Head)
     {
         if request.method() == Method::Head {
@@ -186,28 +182,36 @@ pub async fn fetch_with_bindings(
     Ok(response)
 }
 
-/// The source public router removes every trailing slash except the root slash.
-pub(crate) fn normalized_path(path: &str) -> &str {
-    if path == "/" {
-        path
-    } else {
-        path.trim_end_matches('/')
-    }
-}
-
-#[cfg(test)]
-mod route_tests {
-    #[test]
-    fn normalization_matches_source_without_decoding_segments() {
-        for (source, expected) in [
-            ("/", "/"),
-            ("/health///", "/health"),
-            ("/v1/responses/", "/v1/responses"),
-            ("/api/auth/login/start//", "/api/auth/login/start"),
-            ("/v1/live/rtc_%2F/", "/v1/live/rtc_%2F"),
-            ("///", ""),
-        ] {
-            assert_eq!(super::normalized_path(source), expected);
+/// Read-only phase data for the explicit fixture build; never a production control API.
+#[cfg(feature = "fixture-stream-drop")]
+pub mod stream_fixture {
+    use std::{
+        cell::RefCell,
+        rc::{Rc, Weak},
+    };
+    std::thread_local! { static OBSERVERS: RefCell<Vec<Weak<RefCell<Option<String>>>>> = const { RefCell::new(Vec::new()) }; }
+    pub struct PreparationObservation(Rc<RefCell<Option<String>>>);
+    impl PreparationObservation {
+        pub fn request_id(&self) -> Option<String> {
+            self.0.borrow().clone()
         }
+    }
+    pub fn observe_preparation() -> PreparationObservation {
+        let value = Rc::new(RefCell::new(None));
+        OBSERVERS.with(|observers| observers.borrow_mut().push(Rc::downgrade(&value)));
+        PreparationObservation(value)
+    }
+    pub(crate) fn note_preparation(request_id: &str) {
+        OBSERVERS.with(|observers| {
+            observers.borrow_mut().retain(|entry| {
+                let Some(value) = entry.upgrade() else {
+                    return false;
+                };
+                if value.borrow().is_none() {
+                    *value.borrow_mut() = Some(request_id.to_owned());
+                }
+                true
+            })
+        });
     }
 }

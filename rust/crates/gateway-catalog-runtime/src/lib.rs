@@ -1,18 +1,18 @@
 //! Request-owned catalog runtime. Network and credential ownership are typed host capabilities.
+use gateway_catalog_provider::providers;
 pub mod admin;
 pub mod control;
-pub mod host;
-pub mod providers;
+mod inference;
 pub mod state;
 mod versioned;
 
+use gateway_catalog_provider::host::{
+    CatalogFetch, CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable,
+};
 use gateway_core::{
     error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
 };
 use gateway_schema::{catalog::ProviderCatalog, catalog_cache::CatalogResponse};
-use host::{
-    CatalogFetch, CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable,
-};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -21,8 +21,9 @@ use std::{
 
 const PROVIDER_FRESH_MS: i64 = 300_000;
 const PROVIDER_RETRY_MS: i64 = 30_000;
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 enum MemoIdentity {
+    #[default]
     Anonymous,
     Credential(ProviderBinding),
 }
@@ -33,7 +34,7 @@ struct Discovery {
     force: bool,
     coalesce: bool,
 }
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct MemoEntry {
     identity: MemoIdentity,
     snapshot: Option<ProviderCatalog>,
@@ -41,6 +42,10 @@ struct MemoEntry {
     retry_ms: i64,
     published_generation: u64,
     shared_request: Option<u64>,
+}
+enum RefreshChoice {
+    Snapshot(Option<ProviderCatalog>),
+    Request(u64),
 }
 #[derive(Default)]
 struct Memo {
@@ -86,12 +91,6 @@ impl CatalogRuntime {
         self.source_string_collator
             .clone()
             .unwrap_or_else(|| host.source_string_collator())
-    }
-    fn snapshots(
-        &self,
-        publication: &CredentialPublication,
-    ) -> BTreeMap<CatalogProvider, ProviderCatalog> {
-        self.snapshots_for_view(publication, false)
     }
     fn snapshots_for_view(
         &self,
@@ -245,7 +244,8 @@ impl CatalogRuntime {
         publication: &CredentialPublication,
         provider: CatalogProvider,
     ) -> Option<ProviderCatalog> {
-        self.snapshots(publication).remove(&provider)
+        self.snapshots_for_view(publication, false)
+            .remove(&provider)
     }
     /// Ordinary requests coalesce; forced independent refreshes retain generation ordering.
     /// Claude always coalesces and keys its capability proof by owner publication identity.
@@ -303,43 +303,31 @@ impl CatalogRuntime {
         )
         .await
     }
-    async fn refresh_discovery<S: QueryStore, H: CatalogHost>(
+    async fn select_discovery<H: CatalogHost>(
         &self,
-        store: &S,
         host: &H,
-        discovery: Discovery,
-    ) -> Result<Option<ProviderCatalog>, GatewayError> {
+        discovery: &Discovery,
+    ) -> Result<RefreshChoice, GatewayError> {
         let Discovery {
             provider,
-            identity,
-            publication,
+            ref identity,
             force,
             coalesce,
-        } = discovery;
+            ..
+        } = *discovery;
         let now = host.now_ms();
         for _ in 0..401 {
             let pending = {
                 let mut memo = self.memo.borrow_mut();
-                let entry = memo.entries.entry(provider).or_insert_with(|| MemoEntry {
-                    identity: identity.clone(),
-                    snapshot: None,
-                    expires_ms: 0,
-                    retry_ms: 0,
-                    published_generation: 0,
-                    shared_request: None,
-                });
-                if entry.identity != identity {
+                let entry = memo.entries.entry(provider).or_default();
+                if entry.identity != *identity {
                     *entry = MemoEntry {
                         identity: identity.clone(),
-                        snapshot: None,
-                        expires_ms: 0,
-                        retry_ms: 0,
-                        published_generation: 0,
-                        shared_request: None,
+                        ..Default::default()
                     };
                 }
                 if !force && (entry.expires_ms > now || entry.retry_ms > now) {
-                    return Ok(entry.snapshot.clone());
+                    return Ok(RefreshChoice::Snapshot(entry.snapshot.clone()));
                 }
                 if coalesce { entry.shared_request } else { None }
             };
@@ -347,36 +335,25 @@ impl CatalogRuntime {
                 break;
             }
             host.wait(25).await?;
-            if let MemoIdentity::Credential(binding) = &identity
+            if let MemoIdentity::Credential(binding) = identity
                 && host.publication().await?.binding(provider).as_ref() != Some(binding)
             {
-                return Ok(None);
+                return Ok(RefreshChoice::Snapshot(None));
             }
-            if self
-                .memo
-                .borrow()
-                .entries
-                .get(&provider)
-                .is_some_and(|entry| entry.shared_request.is_none())
+            if let Some(entry) = self.memo.borrow().entries.get(&provider)
+                && entry.shared_request.is_none()
             {
-                return Ok(self
-                    .memo
-                    .borrow()
-                    .entries
-                    .get(&provider)
-                    .and_then(|entry| entry.snapshot.clone()));
+                return Ok(RefreshChoice::Snapshot(entry.snapshot.clone()));
             }
         }
         let request = {
             let mut memo = self.memo.borrow_mut();
             // A nonadvancing host clock cannot turn an outstanding refresh into duplicate work.
-            if coalesce
-                && memo
-                    .entries
-                    .get(&provider)
-                    .is_some_and(|e| e.shared_request.is_some())
+            if let Some(entry) = memo.entries.get(&provider)
+                && coalesce
+                && entry.shared_request.is_some()
             {
-                return Ok(memo.entries.get(&provider).and_then(|e| e.snapshot.clone()));
+                return Ok(RefreshChoice::Snapshot(entry.snapshot.clone()));
             }
             memo.next_request = memo
                 .next_request
@@ -388,6 +365,24 @@ impl CatalogRuntime {
             }
             request
         };
+        Ok(RefreshChoice::Request(request))
+    }
+    async fn refresh_discovery<S: QueryStore, H: CatalogHost>(
+        &self,
+        store: &S,
+        host: &H,
+        discovery: Discovery,
+    ) -> Result<Option<ProviderCatalog>, GatewayError> {
+        let request = match self.select_discovery(host, &discovery).await? {
+            RefreshChoice::Snapshot(snapshot) => return Ok(snapshot),
+            RefreshChoice::Request(request) => request,
+        };
+        let Discovery {
+            provider,
+            identity,
+            publication,
+            ..
+        } = discovery;
         let _guard = PendingGuard {
             memo: self.memo.clone(),
             provider,
@@ -447,11 +442,13 @@ impl CatalogRuntime {
                         return Err(error);
                     }
                     entry.retry_ms = host.now_ms().saturating_add(PROVIDER_RETRY_MS);
+                    if provider == CatalogProvider::ClaudeCode
+                        && let Some(snapshot) = &mut entry.snapshot
+                    {
+                        providers::withdraw_stale_reasoning(&mut snapshot.models)?;
+                        snapshot.stale = true;
+                    }
                     if provider == CatalogProvider::ClaudeCode {
-                        if let Some(snapshot) = &mut entry.snapshot {
-                            providers::withdraw_stale_reasoning(&mut snapshot.models);
-                            snapshot.stale = true;
-                        }
                         entry.expires_ms = entry.retry_ms;
                     }
                 }
@@ -472,7 +469,7 @@ impl CatalogRuntime {
                 provider,
                 binding,
                 snapshot,
-                &host.unique_id(),
+                &host.unique_id()?,
                 host.now_ms(),
             )
             .await?;
@@ -613,7 +610,7 @@ impl CatalogRuntime {
                 CatalogProvider::ClaudeCode,
                 Some(binding),
                 &snapshot,
-                &host.unique_id(),
+                &host.unique_id()?,
                 host.now_ms(),
             )
             .await?;

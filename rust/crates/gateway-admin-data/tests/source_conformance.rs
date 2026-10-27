@@ -1,4 +1,6 @@
-use gateway_admin_data::{profile, projection};
+use gateway_profile_source::line as profile;
+use gateway_profile_values::codec::{from_profile, to_profile};
+use gateway_quota_projection::quota as projection;
 use serde_json::Value;
 
 // Both wire formats use JavaScript numbers. Integer/f64 JSON representations
@@ -28,15 +30,16 @@ fn assert_source(actual: &Value, expected: &Value, context: &str) {
 }
 
 #[test]
-fn kernel_policy_normalization_matches_frozen_bun_source() {
+fn kernel_policy_normalization_matches_frozen_bun_source() -> Result<(), Box<dyn std::error::Error>>
+{
     let cases: Vec<Value> =
-        serde_json::from_str(include_str!("fixtures/kernel-policy-golden.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/kernel-policy-golden.json"))?;
     assert_eq!(cases.len(), 30);
     for case in cases {
-        let result = gateway_admin_data::migration::kernel::normalize_policy(
+        let result = gateway_migration_ledger::kernel::normalize_policy(
             &case["value"],
-            case["scope"].as_str().unwrap(),
-            case["owner"].as_str().unwrap(),
+            case["scope"].as_str().ok_or("Expected fixture scope")?,
+            case["owner"].as_str().ok_or("Expected fixture owner")?,
             case["repo"].as_str(),
         );
         assert_source(
@@ -45,15 +48,15 @@ fn kernel_policy_normalization_matches_frozen_bun_source() {
             &case.to_string(),
         );
     }
+    Ok(())
 }
 
 #[test]
-fn profile_types_match_frozen_bun_source() {
-    let cases: Vec<Value> =
-        serde_json::from_str(include_str!("fixtures/profile-golden.json")).unwrap();
+fn profile_types_match_frozen_bun_source() -> Result<(), Box<dyn std::error::Error>> {
+    let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/profile-golden.json"))?;
     assert_eq!(cases.len(), 53);
     for (index, case) in cases.iter().enumerate() {
-        let decoded = profile::from_profile(&case["input"]);
+        let decoded = from_profile(&case["input"]);
         assert_eq!(
             decoded.is_ok(),
             case["ok"] == true,
@@ -67,13 +70,14 @@ fn profile_types_match_frozen_bun_source() {
                 "storage {index}"
             );
             assert_eq!(
-                profile::to_profile(&decoded).unwrap(),
+                to_profile(&decoded)?,
                 case["expected"],
                 "profile round trip {index}: {}",
                 case["input"]
             );
         }
     }
+    Ok(())
 }
 
 #[test]

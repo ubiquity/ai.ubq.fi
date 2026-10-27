@@ -2,14 +2,11 @@
 use gateway_authority_contracts::{invalid, text, validate_time};
 use gateway_authority_keys as keys;
 use gateway_core::{
-    error::GatewayError,
-    source_control::decode_source_control_record,
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
-    },
+    source_control::decode_source_control_record, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RecordKey, state::RevisionCheck, state::StoredRecord,
     value::ValueEncoding,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
 

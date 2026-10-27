@@ -9,9 +9,10 @@ use gateway_authority_paid_records::{PaidAttempt, PaidCorrelation, PaidReservati
 use gateway_authority_paid_records::{PaidUsage, PaidWindow, PendingPaid, ReconciliationGate};
 use gateway_authority_paid_records::{ReconciliationLease, provider_label, rollup_shard};
 use gateway_authority_paid_records::{pending_id, validate_attempt, validate_paid_window};
-use gateway_core::{error::GatewayError, identity::ApiKeyId, state::AuthorityStore};
+use gateway_core::{identity::ApiKeyId, state::AuthorityStore};
 use gateway_core::{identity::PaidAttemptId, lifecycle::BillingState, lifecycle::DispatchState};
 use gateway_core::{lifecycle::PaidTerminalState, provider::PaidProvider};
+use gateway_source::error::GatewayError;
 async fn read_gate<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<ReconciliationGate, GatewayError> {

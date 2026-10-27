@@ -10,8 +10,8 @@ use crate::{
     nonce_sqlite::SqliteNonceStore,
 };
 use gateway_auth::native_auth::NativeTransportIdentity;
-use gateway_authority::native_control::{
-    NativeRenewalCancellation, receiver::RegisteredRenewalOwner,
+use gateway_authority::{
+    native_control::NativeRenewalCancellation, native_control::receiver::RegisteredRenewalOwner,
 };
 use gateway_core::error::GatewayError;
 use std::{

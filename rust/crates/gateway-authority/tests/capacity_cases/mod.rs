@@ -21,14 +21,15 @@ use gateway_authority_routing_records::{
 use gateway_authority_routing_selection::types::*;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_core::{
-    error::GatewayError, identity::PoolVersionstamp, provider::CodexQuotaClass,
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
-    state::RecordMutation, state::StoredRecord,
+    identity::PoolVersionstamp, provider::CodexQuotaClass, state::AtomicTransition,
+    state::AuthorityStore, state::CommitOutcome, state::RecordKey, state::RecordMutation,
+    state::StoredRecord,
 };
 use gateway_routing_runtime_test_support::{
     authority::MemoryStore, authority::NOW, authority::Tokens, authority::pool,
     authority::routing_hash, authority::run, authority::seed_pool, authority::source_account,
 };
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{sync::Arc, sync::Mutex, sync::atomic::AtomicBool, sync::atomic::Ordering};
 

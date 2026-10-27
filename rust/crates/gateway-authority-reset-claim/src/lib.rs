@@ -8,7 +8,8 @@ use gateway_authority_reset_records::{ResetClaim, ResetConfig, ResetCredit, rese
 use gateway_authority_reset_records::{ResetInvocation, ResetMode, ResetRecord, ResetShadow};
 use gateway_authority_reset_records::{ResetState, hash};
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 mod backend;
 use gateway_authority_keys as keys;
 struct RoutingView {
@@ -582,7 +583,7 @@ pub(crate) async fn validate_cohort<S: AuthorityStore, I: TokenSource>(
 ) -> Result<bool, GatewayError> {
     for check in proof.revision_fences() {
         if check.key == keys::models() {
-            let _: Option<gateway_core::source_json::SourceJson> =
+            let _: Option<gateway_source::source_json::SourceJson> =
                 tx.read_source_control(&check.key).await?;
         } else {
             let _: Option<serde_json::Value> = tx.read(&check.key).await?;

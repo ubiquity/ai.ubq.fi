@@ -1,22 +1,36 @@
 //! One source full-pool evaluation. Only shared opaque permits reach a consume.
-use super::{manual, source_inventory, source_inventory::SourceRuntime};
-use crate::{authority::RemoteAuthorityStore, transport::outbound::PinnedDestination};
-use crate::{host::PlatformClock, host::PlatformHost, transport::outbound::send_http};
-use crate::{host::PlatformTokens, storage::now_ms};
-use gateway_auth::provider_credentials::CodexSourceAccount;
-use gateway_auth::{provider_credentials::read_codex_source_pool, resolve::AuthService};
-use gateway_auth::{types::AuthConfig, types::AuthMethod, types::AuthRequest};
+use super::{
+    manual,
+    source_inventory::{self, SourceRuntime},
+};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
+use gateway_auth::provider_credentials::{CodexSourceAccount, read_codex_source_pool};
+use gateway_auth::resolve::AuthService;
+use gateway_auth::types::{AuthConfig, AuthMethod, AuthRequest};
 use gateway_authority::store::Authority;
 use gateway_authority_reset_claim::ResetClaimOperations;
 use gateway_authority_reset_evidence::types::FullPoolResetReconciliation;
+use gateway_authority_reset_evidence::types::FullPoolResetReconciliation;
 use gateway_authority_reset_permit::{ResetPermitOperations, types::AutomaticResetPermit};
+use gateway_authority_reset_permit::{
+    types::AutomaticResetPermit, types::FullPoolEvaluation, types::FullPoolPreparation,
+};
 use gateway_authority_reset_permit::{types::FullPoolEvaluation, types::FullPoolPreparation};
+use gateway_authority_reset_records::full_pool::SourceResetInventory;
+use gateway_authority_reset_records::{ResetClaim, ResetState};
 use gateway_authority_reset_records::{ResetClaim, ResetState, full_pool::SourceResetInventory};
 use gateway_authority_reset_recovery::ResetRecoveryOperations;
 use gateway_authority_reset_spend::ResetSpendOperations;
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
+use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
 use gateway_core::{error::GatewayError, identity::AccountBinding, identity::RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;
+use gateway_worker_storage::store::now_ms;
 use std::cell::RefCell;
 use worker::Method;
 type RuntimeAuthority = Authority<RemoteAuthorityStore, PlatformTokens>;
@@ -29,7 +43,11 @@ fn unavailable() -> GatewayError {
 }
 fn original_route_matches(method: &str, path: &str, route: &str) -> bool {
     matches!(
-        (method, crate::normalized_path(path), route),
+        (
+            method,
+            gateway_worker_web::path::normalized_path(path),
+            route
+        ),
         ("POST", "/v1/responses", "responses")
             | ("POST", "/v1/chat/completions", "chat.completions")
     )
@@ -212,7 +230,7 @@ async fn submit(
                     .ok()
                     .and_then(|body| manual::consume_code(&body)),
                 Ok(mut response) => {
-                    crate::transport::body::discard_response(&mut response);
+                    gateway_worker_http_body::body::discard_response(&mut response);
                     None
                 }
                 Err(failure) if matches!(failure.error.status, 401 | 403) => {

@@ -10,13 +10,10 @@ use gateway_authority_routing_selection::{
     types::{LiveRouteSelection, RouteSelection},
 };
 use gateway_core::{
-    identity::{ActiveTransitionReason, CredentialVersion},
-    js_string::JsString16,
-    model::ModelId,
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
-    state::RecordMutation,
+    identity::ActiveTransitionReason, identity::CredentialVersion, model::ModelId,
+    source_control::encode_source_control_record, state::RecordMutation,
 };
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde_json::json;
 use std::sync::atomic::Ordering;
 use support::{CLASS, Fixture, NOW, TestResult, block, lease, ready};

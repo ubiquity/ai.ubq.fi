@@ -1,9 +1,6 @@
 use super::NativeRenewalFence;
-use gateway_core::{
-    error::GatewayError,
-    state::RecordKey,
-    tuple_key::{ScalarKeyPart, TupleKey},
-};
+use gateway_core::{state::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 pub(super) fn key(kind: &str, id: &str) -> RecordKey {

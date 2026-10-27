@@ -1,10 +1,21 @@
-use crate::source_input as input;
-use crate::{audit, audit::RETENTION_MS, keys::ApiKeyRecord, keys::public_record};
-use gateway_auth::{api_keys, passkeys::PasskeyUser, passkeys::user_wire, store};
-use gateway_auth::{types::AuthResponse, types::invalid};
-use gateway_core::{error::GatewayError, query::QueryRequest, query::QuerySelector};
-use gateway_core::{query::QueryStore, source_json::SourceJson, source_serialization as source};
-use gateway_core::{state::RecordKey, state::StoredRecord};
+use gateway_admin_contracts::{
+    audit::{self, RETENTION_MS},
+    source_input as input,
+};
+use gateway_admin_keys::keys::{ApiKeyRecord, public_record};
+use gateway_auth::{
+    api_keys,
+    passkeys::{PasskeyUser, user_wire},
+    store,
+    types::{AuthResponse, invalid},
+};
+use gateway_core::{
+    error::GatewayError,
+    query::{QueryRequest, QuerySelector, QueryStore},
+    source_json::SourceJson,
+    source_serialization as source,
+    state::{RecordKey, StoredRecord},
+};
 use serde_json::json;
 
 /// Each storage call is bounded; source list endpoints exhaust the cursor rather than truncate silently.
@@ -256,7 +267,7 @@ pub async fn api_keys_with_usage<S: QueryStore>(
     let rows = prefix_rows(store, store::key(json!(["ubq_ai", "api_keys", "id"])), now).await?;
     let mut records = Vec::new();
     for (key, row) in rows {
-        let record = crate::keys::decode_id_record(&key, &row)?;
+        let record = gateway_admin_keys::keys::decode_id_record(&key, &row)?;
         records.push(record);
     }
     records.sort_by_key(|record| std::cmp::Reverse(record.created_at_ms));

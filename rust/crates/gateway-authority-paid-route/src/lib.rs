@@ -7,8 +7,9 @@ use gateway_authority_contracts::{AuthorityClock, unavailable, validate_time};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
 use gateway_authority_paid_records::{PaidAttempt, PaidRequest, PaidReservation};
-use gateway_core::{error::GatewayError, state::AuthorityStore, state::RevisionCheck};
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
 use gateway_schema::aliases::SourceStringCollator;
+use gateway_source::error::GatewayError;
 fn control_error(message: &str) -> GatewayError {
     unavailable("paid_control_unavailable", message)
 }

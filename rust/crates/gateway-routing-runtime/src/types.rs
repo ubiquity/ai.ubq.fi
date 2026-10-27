@@ -9,7 +9,8 @@ use gateway_providers::{types::AuthMaterial, types::ClaudeBodyOptions, types::Cl
 use gateway_providers::{types::DecodePlan, types::Headers, types::PrepareOptions};
 use gateway_providers::{types::PreparedClaudeBody, types::PreparedRequest};
 use gateway_schema::catalog::CatalogInput;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::Error as _};
+use gateway_wait_observation::outcome::WaitOutcome;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
@@ -422,11 +423,6 @@ pub enum FailureOrigin {
     Gateway,
     Transport,
     GatewayDeadline,
-}
-#[derive(Clone, Debug)]
-pub struct WaitOutcome {
-    pub elapsed_ms: i64,
-    pub result: Result<(), GatewayError>,
 }
 #[derive(Clone, Debug)]
 pub struct AttemptFailure {

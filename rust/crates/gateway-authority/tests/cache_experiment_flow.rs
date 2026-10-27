@@ -1,7 +1,7 @@
 //! Controlled finite host callbacks validate durable orchestration, not live provider acceptance.
 use gateway_auth::crypto::Secret;
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_authority::{cache_experiment::run::ExperimentIo, cache_experiment::run::ReadSample};
+use gateway_authority_paid_test_support::{run::ExperimentIo, run::ReadSample};
 use gateway_authority_routing_records::types::{
     PoolAccount, QuotaBlock, QuotaBlockSource, RoutingSlot, RoutingState, SubscriptionPool,
 };
@@ -10,10 +10,10 @@ use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
 use gateway_cache_experiment_records::model::Usage;
 use gateway_cache_experiment_records::{model::STEPS, model::Sample, model::TargetBinding};
 
-use gateway_core::error::GatewayError;
 use gateway_core::identity::PoolVersionstamp;
 use gateway_core::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
 use gateway_routing_runtime_test_support::authority::{MemoryStore, TestAuthority, authority, run};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -317,9 +317,9 @@ fn source_inventory_fingerprints_and_nondefault_target_match_actual_typescript()
 
 #[test]
 fn scalar_campaign_preserves_opaque_unrelated_catalog_metadata_through_promotion() {
-    use gateway_core::{
-        js_string::JsString16, source_control, source_json::SourceJson,
-        source_serialization as source, value::ValueEncoding,
+    use gateway_core::{source_control, value::ValueEncoding};
+    use gateway_source::{
+        js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
     let (store, authority, now) = setup();
     let fixture = source_fixture();
@@ -394,7 +394,8 @@ fn scalar_campaign_preserves_opaque_unrelated_catalog_metadata_through_promotion
 
 #[test]
 fn lone_model_refuses_only_at_source_uri_target_phase_before_any_campaign_effect() {
-    use gateway_core::{source_control, source_json::SourceJson};
+    use gateway_core::source_control;
+    use gateway_source::source_json::SourceJson;
     // Actual pinned Bun target-id function bef7ecfb throws URIError for both lone units.
     // src/admin/codex.ts:139-152 maps that unknown failure to this sanitized 503.
     for replacement in [r#""\ud800""#, r#""\udc00""#] {

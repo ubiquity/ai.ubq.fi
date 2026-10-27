@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source.workspace = true
 gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission" }
 gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }

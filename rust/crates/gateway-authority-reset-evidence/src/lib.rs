@@ -11,8 +11,9 @@ use gateway_authority_reset_records::full_pool::policy;
 use gateway_authority_reset_records::reset_invocation;
 use gateway_authority_routing_records::slot::class_name;
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, identity::RequestContext};
+use gateway_core::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
 use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use types::{Facts, Member, ResetCandidate};
 fn invalid() -> GatewayError {
@@ -38,7 +39,7 @@ async fn validate_cohort<S: AuthorityStore>(
 ) -> Result<bool, GatewayError> {
     for check in proof.revision_fences() {
         if check.key == keys::models() {
-            let _: Option<gateway_core::source_json::SourceJson> =
+            let _: Option<gateway_source::source_json::SourceJson> =
                 tx.read_source_control(&check.key).await?;
         } else {
             let _: Option<serde_json::Value> = tx.read(&check.key).await?;

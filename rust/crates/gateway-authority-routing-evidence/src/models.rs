@@ -1,5 +1,6 @@
 //! Ordinary account model observations, preserving source UTF16 model identities.
-use gateway_core::{js_string::JsString16, model::ModelId, provider::CodexQuotaClass};
+use gateway_core::{model::ModelId, provider::CodexQuotaClass};
+use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,7 +47,7 @@ pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
     }
 }
 fn lower_control_units(units: &[u16]) -> Vec<u16> {
-    gateway_core::js_string_case::lowercase_source(&JsString16::from_units(units.to_vec()))
+    gateway_source::js_string_case::lowercase_source(&JsString16::from_units(units.to_vec()))
         .as_units()
         .to_vec()
 }

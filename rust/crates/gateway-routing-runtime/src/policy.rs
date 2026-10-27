@@ -82,7 +82,7 @@ pub fn provider_ids(input: &RoutingInput, provider: UpstreamProvider) -> Vec<Mod
             })
             .unwrap_or_default();
     }
-    ids(input.catalog.rows(match provider {
+    let rows = input.catalog.rows(match provider {
         UpstreamProvider::Metered => "openlux",
         UpstreamProvider::Surplus => "surplus",
         UpstreamProvider::Openrouter => "openrouter",
@@ -91,7 +91,15 @@ pub fn provider_ids(input: &RoutingInput, provider: UpstreamProvider) -> Vec<Mod
         UpstreamProvider::Lithos => "lithos",
         UpstreamProvider::Cerebras => "cerebras",
         _ => "",
-    }))
+    });
+    if provider == UpstreamProvider::Openrouter {
+        return ids(&rows
+            .iter()
+            .filter(|row| gateway_decision_protocol::catalog::text_model(row))
+            .cloned()
+            .collect::<Vec<_>>());
+    }
+    ids(rows)
 }
 pub(crate) fn validate_model(input: &RoutingInput, model: &ModelId, now: i64) -> RoutingResult<()> {
     let mut catalog = input.catalog.clone();

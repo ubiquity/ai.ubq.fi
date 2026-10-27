@@ -7,7 +7,7 @@ pub(crate) async fn validate_refresh_context<S: gateway_core::state::AuthoritySt
     tx: &mut crate::cache::ReadCache<'_, S>,
     context: &RefreshContext,
     now: i64,
-) -> Result<(), gateway_core::error::GatewayError> {
+) -> Result<(), gateway_source::error::GatewayError> {
     use gateway_cache_experiment_records::model::{failed, sample_signal};
     context.target.validate()?;
     if context.v != 1

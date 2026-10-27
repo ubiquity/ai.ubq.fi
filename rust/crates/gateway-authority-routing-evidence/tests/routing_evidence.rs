@@ -7,17 +7,12 @@ use gateway_authority_routing_evidence::{
 };
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
-    error::GatewayError,
-    identity::{AccountBinding, ActiveSelection, MAX_SAFE_INTEGER, PoolVersionstamp},
-    js_string::JsString16,
-    model::ModelId,
-    source_control::encode_source_control_record,
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
-    },
-    value::{PortableValue, ValueEncoding},
+    identity::AccountBinding, identity::ActiveSelection, identity::MAX_SAFE_INTEGER,
+    identity::PoolVersionstamp, model::ModelId, source_control::encode_source_control_record,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RevisionCheck, state::StoredRecord, value::PortableValue, value::ValueEncoding,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::RefCell,

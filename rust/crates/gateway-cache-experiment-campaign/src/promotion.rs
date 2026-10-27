@@ -6,13 +6,14 @@ use gateway_cache_experiment_records::{
     model::{LEASE_MS, Outcome, PROVIDER, Reason, Scope, TargetBinding, failed},
     source::{catalog_key, json as source_json, owns, record_key, runtime_key, set_member},
 };
-use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
+use gateway_core::model::ModelId;
 use gateway_schema::{
     runtime_config::{
         build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
     },
     snapshot::ModelSnapshot,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 pub trait CachePromotionOperations: CacheCampaignFactory {
     fn promote_cache_scope(

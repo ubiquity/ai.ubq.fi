@@ -20,12 +20,10 @@ use gateway_authority_routing_records::{
     types::{ProbeCircuit, RoutingState, SubscriptionPool},
 };
 use gateway_core::{
-    error::GatewayError,
-    identity::{ActiveSelection, ActiveTransitionReason},
-    model::ModelId,
-    provider::CodexQuotaClass,
-    state::AuthorityStore,
+    identity::ActiveSelection, identity::ActiveTransitionReason, model::ModelId,
+    provider::CodexQuotaClass, state::AuthorityStore,
 };
+use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 use types::{
     AdmittedAccount, CohortProof, LiveAccountSelection, LiveRouteSelection, RouteSelection,
@@ -311,7 +309,7 @@ pub trait SelectionOperations: SelectionFactory {
     }
     fn select_live_account(
         &self,
-        model: Option<&gateway_core::js_string::JsString16>,
+        model: Option<&gateway_source::js_string::JsString16>,
         now: i64,
     ) -> impl std::future::Future<Output = Result<LiveRouteSelection, GatewayError>> {
         async move {

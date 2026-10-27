@@ -18,11 +18,9 @@ use gateway_auth::{
 };
 use gateway_auth_native_wire::native_read::*;
 use gateway_authority::{
-    native_control::{
-        NativeRenewalCancellation, actor,
-        receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
-    },
-    store::Authority,
+    native_control::NativeRenewalCancellation, native_control::actor,
+    native_control::receiver::NativeRenewalAuthority,
+    native_control::receiver::RegisteredRenewalOwner, store::Authority,
 };
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;

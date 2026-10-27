@@ -101,7 +101,7 @@ pub(crate) fn inverse(
     let current = decode_source_control_record(record)?;
     let mut fields = match original {
         Some(original) => {
-            let tree = gateway_admin_data::profile::source::from_source_profile(&original.value)?;
+            let tree = gateway_profile_source::codec::from_source_profile(&original.value)?;
             source::entries(&tree.to_source_json()?)
                 .ok_or_else(|| invalid("Paid source sidecar is not an object"))?
         }

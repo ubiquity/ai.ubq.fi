@@ -1,10 +1,11 @@
-use gateway_admin::{
-    kernel_keys, keys,
+use gateway_admin::service::AdminService;
+use gateway_admin_contracts::{
     operations::{AdminHost, AdminInput, PaidKeyFields, missing_capability},
     routes::AdminOperation,
-    service::AdminService,
     source_input as input,
 };
+use gateway_admin_kernel::kernel_keys;
+use gateway_admin_keys::keys;
 use gateway_auth::{
     crypto::Secret,
     resolve::AuthService,

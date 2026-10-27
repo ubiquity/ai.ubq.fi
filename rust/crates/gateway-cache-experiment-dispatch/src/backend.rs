@@ -1,12 +1,10 @@
 //! Private complete dispatch staging; strong reads and mutations share the original final CAS.
 use gateway_authority_contracts::{TokenSource, invalid, text, validate_time};
 use gateway_core::{
-    error::GatewayError,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet};
 fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {

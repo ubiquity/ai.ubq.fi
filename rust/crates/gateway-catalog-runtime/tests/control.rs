@@ -27,7 +27,41 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 type MemoryStore = Store;
 type TestAuthority = gateway_authority::store::Authority<Store, Tokens>;
+use gateway_authority::store::Authority;
+use gateway_authority_api_protocol::ApiKeyPolicy;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProviderObservation,
+    PaidRequestContext, PaidRoutingProjection, PaidSourceCheck, PaidSyntheticHop,
+};
+use gateway_authority_paid_records::PaidAdmission;
+use gateway_authority_paid_route::authorization::PaidAuthorization;
+use gateway_catalog_provider::host::{
+    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
+    ProviderBinding,
+};
+use gateway_catalog_runtime::CatalogRuntime;
+use gateway_catalog_runtime::state;
+use gateway_core::error::GatewayError;
+use gateway_core::provider::PaidProvider;
+use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::source_json::SourceJson;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+};
+use gateway_schema::{
+    catalog_store, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
+};
+use serde_json::{Value, json};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, VecDeque},
+    future::{Future, poll_fn},
+    rc::Rc,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
 fn run<T>(future: impl Future<Output = T>) -> T {
     let mut future = std::pin::pin!(future);
     let mut cx = Context::from_waker(Waker::noop());
@@ -238,10 +272,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let sequence = self.sequence.get() + 1;
         self.sequence.set(sequence);
-        format!("observation-{sequence}")
+        Ok(format!("observation-{sequence}"))
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         self.store

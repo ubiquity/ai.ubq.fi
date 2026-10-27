@@ -40,12 +40,13 @@ fn view(
     out
 }
 pub fn unavailable_claude(at: i64) -> Value {
-    json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
+    json!({"source":"claude_code","label":"Claude subscription","state":"unavailable","source_observed_at_ms":null,"snapshot_at_ms":at,"failure_kind":"not_configured","failure_status":null,"credential_kind":null,"workspace_id":null,"windows":{"five_hour":null,"seven_day":null},"standard":[],"usage":null,"blocked_until_ms":null,"cooldown_until_ms":null,"last_error":null})
 }
 pub fn claude_source(
     account: &ClaudeAccountReadback,
     health: &Value,
     at: i64,
+    dates: &impl Fn(&gateway_core::js_string::JsString16) -> Option<i64>,
 ) -> Result<SourceJson, GatewayError> {
     let empty = SourceJson::parse("{}")?;
     let quota = SourceObject::parse(account.quota.as_ref().unwrap_or(&empty))?;
@@ -82,10 +83,27 @@ pub fn claude_source(
             }
         }
     }
-    let observed = observed.into_iter().reduce(f64::max);
+    let projected = quota
+        .get("usage_snapshot")
+        .and_then(|s| gateway_claude_usage_protocol::snapshot::read(s, dates))
+        .map(|s| gateway_claude_usage_protocol::snapshot::serialize(&s))
+        .transpose()?;
+    let snapshot = projected.as_ref();
+    let usage = quota
+        .get("usage")
+        .and_then(gateway_claude_usage_protocol::state::read);
+    let usage_stale = snapshot.is_some_and(|s| {
+        usage.as_ref().is_none_or(|u| u.state != "ok")
+            || gateway_claude_usage_protocol::snapshot::provenance(s)
+                .is_some_and(|(_, t)| at - t >= 30_000)
+    });
+    let observed = snapshot
+        .and_then(gateway_claude_usage_protocol::snapshot::provenance)
+        .map(|(_, t)| t as f64)
+        .or_else(|| observed.into_iter().reduce(f64::max));
     let state = if failing {
         "unavailable"
-    } else if observed.is_some_and(|t| at as f64 - t > shape::STALE_MS as f64) {
+    } else if usage_stale || observed.is_some_and(|t| at as f64 - t > shape::STALE_MS as f64) {
         "stale"
     } else {
         "available"
@@ -104,31 +122,7 @@ pub fn claude_source(
                 None
             }
         });
-    let window = |name: &str| -> Result<Option<SourceJson>, GatewayError> {
-        if !windows.as_str().trim_start().starts_with('{') {
-            return Ok(None);
-        }
-        let input = SourceObject::parse(&windows)?;
-        let Some(input) = input
-            .get(name)
-            .filter(|v| v.as_str().trim_start().starts_with('{'))
-        else {
-            return Ok(None);
-        };
-        let input = SourceObject::parse(input)?;
-        let leaf = |name| input.get(name).cloned().unwrap_or_else(|| null.clone());
-        Ok(Some(source::object(vec![
-            ("status", leaf("status")),
-            (
-                "used_percent",
-                SourceJson::from_serializable(&crate::claude_capacity::used_percent(number(
-                    &leaf("utilization"),
-                )))?,
-            ),
-            ("reset_at_ms", leaf("reset_at_ms")),
-            ("observed_at_ms", leaf("observed_at_ms")),
-        ])?))
-    };
+    let window = |name| gateway_claude_usage_history_records::window_source(&windows, name);
     let mut standard_rows = Vec::new();
     if standard.as_str().trim_start().starts_with('{') {
         for (family, value) in source::entries(&standard)
@@ -156,6 +150,11 @@ pub fn claude_source(
         ])?,
     )?;
     document.set("standard", &standard_rows)?;
+    document.set("usage", &usage)?;
+    if let Some(snapshot) = snapshot {
+        document.set("usage_snapshot", snapshot)?;
+        document.set("usage_stale", &usage_stale)?;
+    }
     document.set("blocked_until_ms", &field("blocked_until_ms"))?;
     document.set("cooldown_until_ms", &field("cooldown_until_ms"))?;
     document.set("last_error", &error)?;
@@ -258,9 +257,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             self.slot_capacity(accounts.iter().find(|a| a.slot == 1), 1, fence.as_ref(), at),
             self.slot_capacity(accounts.iter().find(|a| a.slot == 2), 2, fence.as_ref(), at),
         );
-        let ((one, two), metered) = futures_util::future::join(
-            codex,
-            self.host.metered_quota_snapshot(force_metered, at + 8000),
+        let (((one, two), metered), _usage) = futures_util::future::join(
+            futures_util::future::join(
+                codex,
+                self.host.metered_quota_snapshot(force_metered, at + 8000),
+            ),
+            self.host.collect_claude_usage(),
         )
         .await;
         let one = one?;
@@ -463,9 +465,17 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let at = store::now(self.host.as_ref())?;
         let inventory = self.host.provider_inventory(&context).await?;
         let cached = self.persisted_capacity_view().await?;
+        let usage_fresh = inventory.claude.accounts.iter().all(|a| {
+            a.quota
+                .as_ref()
+                .and_then(|q| source::member(q, "usage"))
+                .as_ref()
+                .and_then(gateway_claude_usage_protocol::state::read)
+                .is_some_and(|u| u.fresh(at))
+        });
         let fresh = cached["cache_state"] != "unavailable"
             && store::safe_i64(&cached["snapshot_at_ms"]).is_some_and(|t| at - t < 30000);
-        let mut body = if !live && fresh {
+        let mut body = if !live && fresh && usage_fresh {
             cached
         } else {
             match self.refresh_capacity_view(live).await {
@@ -478,13 +488,18 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 Err(_) => cached,
             }
         };
+        // Rebuild after collection; the same response includes the newly accepted evidence.
+        let inventory = self.host.provider_inventory(&context).await?;
+        let at = store::now(self.host.as_ref())?;
         let mut source_accounts = Vec::new();
         for account in &inventory.claude.accounts {
             let health = self
                 .provider_health(&account.target, at)
                 .await
                 .unwrap_or_else(|_| health::unknown_health());
-            source_accounts.push(claude_source(account, &health, at)?);
+            source_accounts.push(claude_source(account, &health, at, &|s| {
+                self.host.parse_claude_usage_date(s)
+            })?);
         }
         let source_active = inventory
             .claude
@@ -536,9 +551,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .ok();
         let claude = self.claude_capacity_rollups((at - window).max(0), at).await;
         let claude = SourceObject::parse(&claude)?;
+        let usage = self.claude_usage_rollups((at - window).max(0), at).await;
         let mut document = SourceObject::parse(&SourceJson::from_serializable(
             &json!({"snapshot_at_ms":at,"window_days":days,"retention":{"rollup_bucket_ms":shape::HOUR_MS,"rollup_window_ms":window},"rollup_scan":if points.is_some(){"ok"}else{"unavailable"},"rollups":points.unwrap_or_default()}),
         )?)?;
+        document.set("claude_usage_rollups", &usage)?;
         for (output, input) in [
             ("claude_rollup_scan", "scan"),
             ("claude_rollup_truncated", "truncated"),

@@ -1,14 +1,11 @@
 //! Private complete campaign staging; strong reads and mutations share the original final CAS.
 use gateway_authority_contracts::{TokenSource, invalid, text, validate_time};
 use gateway_core::{
-    error::GatewayError,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet};
 fn decode_json_record<T: DeserializeOwned>(row: &StoredRecord) -> Result<T, GatewayError> {

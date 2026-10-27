@@ -4,9 +4,12 @@ use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_records::{PaidAttempt, PaidReservation};
 use gateway_authority_paid_route::PaidRouteOperations;
 use gateway_authority_test_support::TestResult;
-use gateway_core::{error::GatewayError, js_string::JsString16, model::ModelId};
-use gateway_core::{source_control::decode_source_control_record, source_json::SourceJson};
-use gateway_core::{source_serialization as source, value::ValueEncoding};
+use gateway_core::model::ModelId;
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::value::ValueEncoding;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 
 fn logical(units: &[u16]) -> ModelId {
     ModelId::from_source(JsString16::from_units(units.to_vec()))

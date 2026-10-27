@@ -10,11 +10,9 @@ use gateway_authority_contracts::{
 };
 use gateway_authority_keys as keys;
 use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, RequestId},
-    provider::UpstreamProvider,
-    state::AuthorityStore,
+    identity::ApiKeyId, identity::RequestId, provider::UpstreamProvider, state::AuthorityStore,
 };
+use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 
 pub struct ApiQuotaService<'a, S, I> {

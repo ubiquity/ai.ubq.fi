@@ -1,8 +1,9 @@
 //! Private fixed operation cache; no transaction or raw store accessor is public.
 use gateway_authority_contracts::{invalid, text, validate_time};
-use gateway_core::{error::GatewayError, state::StoredRecord};
+use gateway_core::state::StoredRecord;
 use gateway_core::{source_control::decode_source_control_record, state::AuthorityStore};
 use gateway_core::{state::RecordKey, state::RevisionCheck};
+use gateway_source::error::GatewayError;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
 pub(crate) struct ReadTransaction<'a, S> {

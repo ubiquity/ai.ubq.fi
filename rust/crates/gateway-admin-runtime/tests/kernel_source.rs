@@ -1,6 +1,6 @@
 //! Real Rust administrative operations over a deterministic atomic test store;
 //! these records are not live-runtime, signed-issuer or backend acceptance.
-use gateway_admin::{
+use gateway_admin_contracts::{
     operations::{AdminHost, AdminInput},
     routes::AdminOperation,
     source_input as body,

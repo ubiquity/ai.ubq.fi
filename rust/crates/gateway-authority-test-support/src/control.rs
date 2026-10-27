@@ -20,42 +20,42 @@ pub fn seed_source<T: serde::Serialize + ?Sized>(store: &MemoryStore, key: Recor
         "source-fixture-{}",
         SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     );
-    let raw = gateway_core::source_json::SourceJson::from_serializable(value).unwrap();
+    let raw = gateway_source::source_json::SourceJson::from_serializable(value).unwrap();
     store.seed_record(
         key,
         gateway_core::source_control::encode_source_control_record(revision, &raw, None).unwrap(),
     );
 }
-pub fn set_body(body: &mut gateway_core::source_json::SourceJson, name: &str, value: Value) {
-    let mut fields = gateway_core::source_serialization::entries(body).unwrap();
-    let name = gateway_core::js_string::JsString16::from_utf8(name);
-    let value = gateway_core::source_json::SourceJson::from_serializable(&value).unwrap();
+pub fn set_body(body: &mut gateway_source::source_json::SourceJson, name: &str, value: Value) {
+    let mut fields = gateway_source::source_serialization::entries(body).unwrap();
+    let name = gateway_source::js_string::JsString16::from_utf8(name);
+    let value = gateway_source::source_json::SourceJson::from_serializable(&value).unwrap();
     if let Some((_, old)) = fields.iter_mut().find(|(key, _)| key == &name) {
         *old = value;
     } else {
         fields.push((name, value));
     }
-    *body = gateway_core::source_serialization::object_keys(fields).unwrap();
+    *body = gateway_source::source_serialization::object_keys(fields).unwrap();
 }
 pub fn context(input: &PaidRequest) -> PaidRequestContext {
     let mut fields = vec![
         ("model", input.model.to_source_json().unwrap()),
         (
             "stream",
-            gateway_core::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
+            gateway_source::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
         ),
     ];
     if let Some(effort) = &input.reasoning {
         fields.push((
             "reasoning",
-            gateway_core::source_serialization::object(vec![(
+            gateway_source::source_serialization::object(vec![(
                 "effort",
                 effort.to_source_json().unwrap(),
             )])
             .unwrap(),
         ));
     }
-    let body = gateway_core::source_serialization::object(fields).unwrap();
+    let body = gateway_source::source_serialization::object(fields).unwrap();
     PaidRequestContext {
         original_model: input.model.clone(),
         body,
@@ -124,7 +124,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     );
-    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_core::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
+    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_source::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         store.seed(
             keys::paid_control_observation(provider),

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use gateway_auth::types::AuthConfig;
+use gateway_auth_contracts::types::AuthConfig;
 
 #[test]
 fn source_bootstrap_keeps_token_roles_and_nullish_hosting_precedence() {

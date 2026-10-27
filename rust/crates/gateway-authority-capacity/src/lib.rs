@@ -19,11 +19,10 @@ use gateway_authority_routing_evidence::{
 };
 use gateway_authority_routing_records::{codec::parse_routing_state, types::SubscriptionPool};
 use gateway_core::{
-    error::GatewayError,
-    identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
-    model::ModelId,
-    state::AuthorityStore,
+    identity::CredentialVersion, identity::RoutingAccountHash, identity::SubscriptionSelectionHash,
+    model::ModelId, state::AuthorityStore,
 };
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;

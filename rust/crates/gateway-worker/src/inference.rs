@@ -1,20 +1,19 @@
 //! Actual schema -> admission -> provider -> terminal transport path.
-use crate::{
-    authority::RemoteAuthorityStore,
-    catalog::CatalogState,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    inference_lifecycle::{Lifecycle, Session, finish_hook},
-    routing_host,
-    storage::now_ms,
-    transport::{
-        body,
-        outbound::{
-            Cancellation, DispatchAttempt, DispatchFailure, DispatchOrigin, PinnedDestination,
-            send_constructed, send_http,
-        },
-        stream::ObservationHandle,
-    },
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::catalog::CatalogState;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::inference_lifecycle::Lifecycle;
+use crate::inference_lifecycle::Session;
+use crate::inference_lifecycle::finish_hook;
+use crate::routing_host;
+use crate::transport::outbound::DispatchAttempt;
+use crate::transport::outbound::DispatchFailure;
+use crate::transport::outbound::DispatchOrigin;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_constructed;
+use crate::transport::outbound::send_http;
 use crate::{
     inference_capture::Capture, inference_currentness::CurrentnessGuard, inference_local::Start,
 };
@@ -26,7 +25,7 @@ use gateway_core::{
     provider::UpstreamProvider,
 };
 use gateway_observability::replay_trace::{AttemptTrace, TraceTerminal};
-use gateway_providers::types::{Headers, ProviderEvent};
+use gateway_providers::types::Headers;
 use gateway_routing_runtime::{
     local_work::LocalRequestMetadata,
     session::RoutingSession,
@@ -40,18 +39,40 @@ use gateway_schema::{
     request::RequestSurface,
     source_request::{SourceRequestDocument, parse_http_body},
 };
-use serde_json::json;
+use gateway_worker_http_body::body;
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_storage::store::now_ms;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Context, Method, Request, Response};
 
-mod stream;
+use gateway_worker_http_body::protocol::correlation;
 
-const ATTEMPT_DEADLINE_MS: i32 = 1_800_000;
+mod late_failure;
+mod stream;
+mod task;
+
+use gateway_worker_stream::control::ATTEMPT_DEADLINE_MS;
 type ResponseResult = Result<Response, GatewayError>;
 
 pub struct RequestResources {
     pub context: Rc<Context>,
     pub permit: Option<gateway_admission::Permit>,
+}
+
+/// Constructed only by the actual authenticated request entry operation.
+struct OwnedRequest {
+    bytes: Vec<u8>,
+    principal: AuthPrincipal,
+    store: RemoteAuthorityStore,
+    catalog: CatalogState,
+    host: PlatformHost,
+    context: Rc<Context>,
+    capture: Rc<Capture>,
+    responses: bool,
+    client_version: String,
+    request_id: RequestId,
+    local_compaction: bool,
+    permit: Option<gateway_admission::Permit>,
 }
 
 struct Dispatch<'a> {
@@ -230,7 +251,7 @@ impl Dispatch<'_> {
         }
         let (capture, evidence) = if attempt.request.provider() == UpstreamProvider::ClaudeCode {
             let captured =
-                crate::transport::claude_body::capture(response, self.cancellation).await;
+                gateway_worker_http_body::claude_body::capture(response, self.cancellation).await;
             (
                 body::ResponseCapture::default(),
                 ClaudeErrorEvidence::from_prefix(captured.prefix, captured.complete)?,
@@ -277,13 +298,13 @@ impl Dispatch<'_> {
 }
 async fn dispatch_attempts(
     session: Rc<Session>,
-    routing: routing_host::Host,
+    routing: &routing_host::Host,
     cancellation: Rc<Cancellation>,
     capture: Rc<Capture>,
 ) -> Result<(Response, PreparedAttempt), RoutingError> {
     let dispatch = Dispatch {
         session: &session,
-        routing: &routing,
+        routing,
         cancellation: &cancellation,
         capture: &capture,
     };
@@ -342,7 +363,7 @@ pub async fn run(
     request_id: RequestId,
 ) -> Result<Response, GatewayError> {
     let RequestResources { context, permit } = resources;
-    let responses = crate::normalized_path(&request.path()) == "/v1/responses";
+    let responses = gateway_worker_web::path::normalized_path(&request.path()) == "/v1/responses";
     let bytes = body::inference_bytes(&mut request).await?;
     let client_version = request
         .headers()
@@ -359,40 +380,23 @@ pub async fn run(
             })
         })
         .unwrap_or_else(|| "0.100.0".into());
-    let local_compaction = responses
-        && crate::host::setting(&host.env, "JEV_COMPACTION_DISABLED").as_deref() != Some("1")
-        && gateway_compaction::is_responses_compaction(
-            request
-                .headers()
-                .get("x-codex-turn-metadata")
-                .ok()
-                .flatten()
-                .as_deref(),
-        );
     let capture = Capture::new(request, &bytes, store.clone(), host, context.clone());
-    let result = Inference {
-        principal,
-        store: &store,
-        host,
-        context,
-        capture: &capture,
-        responses,
-    }
-    .execute(
-        &bytes,
+    task::drive(task::RequestTask::start(OwnedRequest {
+        bytes,
+        principal: principal.clone(),
+        store,
         catalog,
+        host: host.clone(),
+        context,
+        capture,
+        responses,
         client_version,
         request_id,
-        local_compaction,
+        // Compaction requests use the selected provider, like ordinary inference.
+        local_compaction: false,
         permit,
-    )
-    .await;
-    if let Err(error) = &result {
-        capture
-            .failure(error, host.cancellation.client_aborted())
-            .await;
-    }
-    result
+    }))
+    .await
 }
 
 struct Inference<'a> {
@@ -402,6 +406,7 @@ struct Inference<'a> {
     context: Rc<Context>,
     capture: &'a Rc<Capture>,
     responses: bool,
+    head: Rc<crate::inference_head::HeadState>,
 }
 impl Inference<'_> {
     async fn execute(
@@ -418,6 +423,11 @@ impl Inference<'_> {
             Err(error) => {
                 return crate::inference_source::error_response(error.into(), self.capture).await;
             }
+        };
+        let catalog = if local_compaction {
+            catalog
+        } else {
+            catalog.resolve_inference(&document).await?
         };
         let original = RequestContext {
             request_id,
@@ -532,6 +542,25 @@ impl Inference<'_> {
             Ok(Start::Ordinary(Rc::new(session)))
         }
     }
+    async fn cleanup_pending(
+        &self,
+        owner: &mut gateway_admission::handoff::Pending<stream::PendingLifetime>,
+        error: RoutingError,
+    ) -> ResponseResult {
+        let Some(lifetime) = owner.take() else {
+            return crate::inference_source::error_response(
+                crate::inference_local_lifecycle::wrapper_error(),
+                self.capture,
+            )
+            .await;
+        };
+        gateway_admission::handoff::enqueue(
+            lifetime.cleanup(error, self.capture.clone(), self.host.cancellation.clone()),
+            |task| self.context.wait_until(task),
+        )
+        .await
+    }
+
     async fn deliver(
         self,
         permit: Option<gateway_admission::Permit>,
@@ -541,34 +570,89 @@ impl Inference<'_> {
         client_stream: bool,
     ) -> ResponseResult {
         let deadline = self.host.cancellation.set_timeout_ms(ATTEMPT_DEADLINE_MS)?;
-        let (upstream, attempt) = match dispatch_attempts(
-            session.clone(),
-            routing,
-            self.host.cancellation.clone(),
-            self.capture.clone(),
-        )
-        .await
-        {
-            Ok(dispatched) => dispatched,
+        let mut owner = gateway_admission::handoff::Pending::new(stream::PendingLifetime {
+            session,
+            currentness,
+            permit,
+            deadline: Some(deadline),
+        });
+        let selected = match self.select(&mut owner, &routing).await {
+            Ok(value) => value,
             Err(error) => {
-                session
+                if owner.armed() {
+                    return self.cleanup_pending(&mut owner, error).await;
+                }
+                let Some(lifetime) = owner.get() else {
+                    return crate::inference_source::error_response(
+                        crate::inference_local_lifecycle::wrapper_error(),
+                        self.capture,
+                    )
+                    .await;
+                };
+                lifetime
+                    .session
                     .finish(Default::default())
                     .await
                     .map_err(|error| *error.error)?;
                 return crate::inference_source::error_response(error, self.capture).await;
             }
         };
+        self.respond_selected(owner, selected, client_stream).await
+    }
 
+    async fn respond_selected(
+        self,
+        mut owner: gateway_admission::handoff::Pending<stream::PendingLifetime>,
+        selected: stream::Selected,
+        client_stream: bool,
+    ) -> ResponseResult {
+        let stream::Selected {
+            upstream,
+            attempt,
+            headers,
+            plan: decode_plan,
+            prepared: ready,
+            observation,
+            usage,
+        } = selected;
         let status = upstream.status_code();
         let provider = attempt.request.decode().provider;
         let prepared = attempt.request.clone();
-        let headers = upstream.headers().entries().collect::<Headers>();
-        let decode_plan = gateway_providers::response::response_plan(prepared.decode(), &headers);
         self.capture.correlate(correlation(provider, &headers));
-        let pricing = crate::inference_source::pricing_metadata(
-            session.surplus_billing(),
+        let Some(lifetime) = owner.get() else {
+            return crate::inference_source::error_response(
+                crate::inference_local_lifecycle::wrapper_error(),
+                self.capture,
+            )
+            .await;
+        };
+        let pricing = match crate::inference_source::pricing_metadata(
+            lifetime.session.surplus_billing(),
             prepared.url().ends_with("/messages"),
-        )?;
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                if owner.armed() {
+                    return self.cleanup_pending(&mut owner, error.into()).await;
+                }
+                return Err(error);
+            }
+        };
+        let event_stream = gateway_providers::response::is_event_stream(provider, status, &headers);
+        // Everything fallible has finished before this synchronous owner transfer.
+        let Some(stream::PendingLifetime {
+            session,
+            currentness,
+            permit,
+            deadline,
+        }) = owner.take()
+        else {
+            return crate::inference_source::error_response(
+                crate::inference_local_lifecycle::wrapper_error(),
+                self.capture,
+            )
+            .await;
+        };
         let lifecycle = Rc::new(Lifecycle {
             session,
             currentness,
@@ -579,17 +663,29 @@ impl Inference<'_> {
             store: self.store.clone(),
             pricing,
         });
-        let event_stream = gateway_providers::response::is_event_stream(provider, status, &headers);
-        let observation = ObservationHandle::default();
-        let usage = Rc::new(RefCell::new(None));
-        let finish = finish_hook(
-            lifecycle.clone(),
-            usage.clone(),
-            permit,
-            self.capture.clone(),
-        );
-
-        stream::Reply {
+        let mut deadline = deadline;
+        let finish = if owner.armed() {
+            stream::ReplyFinish::selected(
+                stream::SelectedLifetime {
+                    lifecycle: lifecycle.clone(),
+                    permit,
+                    observation: observation.clone(),
+                    usage: usage.clone(),
+                    deadline: deadline.take(),
+                },
+                self.context.clone(),
+                self.capture.clone(),
+                self.host.cancellation.clone(),
+            )
+        } else {
+            stream::ReplyFinish::Ordinary(Some(finish_hook(
+                lifecycle.clone(),
+                usage.clone(),
+                permit,
+                self.capture.clone(),
+            )))
+        };
+        let reply = stream::Reply {
             finish,
             usage,
             observation,
@@ -608,249 +704,16 @@ impl Inference<'_> {
             event_stream,
             status,
             provider,
-        }
-        .send()
-        .await
-    }
-}
-
-const CEREBRAS_RATE_LIMIT_HEADERS: &[&str] = &[
-    "x-ratelimit-limit-requests-minute",
-    "x-ratelimit-remaining-requests-minute",
-    "x-ratelimit-reset-requests-minute",
-    "x-ratelimit-limit-tokens-minute",
-    "x-ratelimit-remaining-tokens-minute",
-    "x-ratelimit-reset-tokens-minute",
-    "x-ratelimit-limit-requests-day",
-    "x-ratelimit-remaining-requests-day",
-    "x-ratelimit-reset-requests-day",
-    "x-ratelimit-limit-tokens-day",
-    "x-ratelimit-remaining-tokens-day",
-    "x-ratelimit-reset-tokens-day",
-];
-
-/// Source Cerebras errors forward only message/code from a bounded body.
-fn cerebras_error_detail(bytes: &[u8]) -> (String, String) {
-    let fallback_message = "Cerebras upstream returned an error.".to_owned();
-    let fallback_code = "cerebras_upstream_error".to_owned();
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
-        return (fallback_message, fallback_code);
-    };
-    let error = value.get("error").filter(|value| value.is_object());
-    let text = |name: &str, limit: usize| {
-        error
-            .and_then(|error| error.get(name))
-            .or_else(|| value.get(name))
-            .and_then(serde_json::Value::as_str)
-            .map(|value| {
-                value
-                    .chars()
-                    .take(limit)
-                    .collect::<String>()
-                    .trim()
-                    .to_owned()
-            })
-            .filter(|value| !value.is_empty())
-    };
-    (
-        text("message", 1_000).unwrap_or(fallback_message),
-        text("code", 200).unwrap_or(fallback_code),
-    )
-}
-
-fn cerebras_error_type(status: u16) -> &'static str {
-    if status >= 500 {
-        "server_error"
-    } else if status == 429 {
-        "rate_limit_error"
-    } else {
-        "invalid_request_error"
-    }
-}
-
-fn cerebras_error_body(status: u16, bytes: &[u8]) -> Vec<u8> {
-    let (message, code) = cerebras_error_detail(bytes);
-    serde_json::to_vec(&json!({
-        "error": {
-            "message": message,
-            "type": cerebras_error_type(status),
-            "code": code,
-        }
-    }))
-    .unwrap_or_else(|_| {
-        br#"{"error":{"message":"Cerebras upstream returned an error.","type":"invalid_request_error","code":"cerebras_upstream_error"}}"#.to_vec()
-    })
-}
-
-fn set_header(response: &mut Response, name: &str, value: &str) -> Result<(), GatewayError> {
-    response
-        .headers_mut()
-        .set(name, value)
-        .map_err(|_| invalid("Invalid response header."))
-}
-
-fn apply_warnings(response: &mut Response, warnings: &[String]) -> Result<(), GatewayError> {
-    if warnings.is_empty() {
-        return Ok(());
-    }
-    let mut values = response
-        .headers()
-        .get("x-uos-warning")
-        .map_err(|_| invalid("Invalid provider warning header."))?
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    for warning in warnings {
-        if !values.contains(warning) {
-            values.push(warning.clone());
+        };
+        match ready {
+            Some(ready) => match reply.streaming_from(ready) {
+                Ok(response) => Ok(response),
+                Err(error) => crate::inference_source::error_response(error, self.capture).await,
+            },
+            None => reply.send().await,
         }
     }
-    response
-        .headers_mut()
-        .set("x-uos-warning", &values.join(", "))
-        .map_err(|_| invalid("Invalid provider warning header."))
-}
-
-fn observe_event(observation: &ObservationHandle, event: &ProviderEvent) {
-    if let Some(terminal) = event.terminal() {
-        observation.semantic_terminal(terminal);
-    }
-}
-
-fn copy_headers(
-    response: &mut Response,
-    headers: &gateway_providers::types::Headers,
-) -> Result<(), GatewayError> {
-    for (name, value) in headers {
-        let lower = name.to_ascii_lowercase();
-        if lower == "retry-after"
-            || lower.starts_with("x-ratelimit-")
-            || [
-                "x-request-id",
-                "request-id",
-                "x-uos-warning",
-                "x-should-retry",
-            ]
-            .contains(&lower.as_str())
-        {
-            set_header(response, name, value)?;
-        }
-    }
-    Ok(())
-}
-
-fn correlation(
-    provider: UpstreamProvider,
-    headers: &gateway_providers::types::Headers,
-) -> Option<&str> {
-    let names: &[&str] = if provider == UpstreamProvider::Deepseek {
-        &["x-request-id", "x-ds-request-id", "x-deepseek-request-id"]
-    } else if provider == UpstreamProvider::Cerebras {
-        &[
-            "x-request-id",
-            "x-api-request-id",
-            "x-oneapi-request-id",
-            "x-cerebras-request-id",
-        ]
-    } else {
-        &["x-request-id", "request-id"]
-    };
-    names
-        .iter()
-        .find_map(|wanted| {
-            headers
-                .iter()
-                .find(|(name, _)| name.eq_ignore_ascii_case(wanted))
-                .map(|(_, value)| value.trim())
-        })
-        .filter(|id| {
-            !id.is_empty() && id.len() <= 256 && !id.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
-        })
-}
-
-fn provider_correlation(
-    response: &mut Response,
-    provider: UpstreamProvider,
-    headers: &gateway_providers::types::Headers,
-) -> Result<(), GatewayError> {
-    let id = correlation(provider, headers);
-    for name in [
-        "x-request-id",
-        "x-api-request-id",
-        "x-oneapi-request-id",
-        "x-cerebras-request-id",
-        "x-ds-request-id",
-        "x-deepseek-request-id",
-        "x-uos-provider-request-id",
-        "request-id",
-    ] {
-        response
-            .headers_mut()
-            .delete(name)
-            .map_err(|_| invalid("Invalid response header."))?;
-    }
-    if let Some(id) = id {
-        set_header(response, "x-uos-provider-request-id", id)?;
-    }
-    Ok(())
-}
-
-fn invalid(message: &str) -> GatewayError {
-    GatewayError::new(502, message, Some("upstream_transport_error"))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cerebras_payment_required_body_forwards_only_source_detail_fields() {
-        let input = br#"{"error":{"message":"Payment required","code":"payment_required","param":"secret","type":"vendor"},"secret":"never"}"#;
-        let body = cerebras_error_body(402, input);
-        let text = String::from_utf8(body.clone()).unwrap();
-        assert_eq!(
-            text,
-            r#"{"error":{"message":"Payment required","type":"invalid_request_error","code":"payment_required"}}"#
-        );
-        assert!(!text.contains("vendor"));
-        assert!(!text.contains("secret"));
-        assert!(!text.contains("param"));
-    }
-
-    #[test]
-    fn cerebras_payment_required_146_byte_source_shape() {
-        let message = "x".repeat(65);
-        let input = serde_json::to_vec(&json!({
-            "error": {"message": message, "code": "payment_required"}
-        }))
-        .unwrap();
-        let body = cerebras_error_body(402, &input);
-        assert_eq!(body.len(), 146);
-        assert_eq!(
-            body,
-            br#"{"error":{"message":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","type":"invalid_request_error","code":"payment_required"}}"#
-        );
-    }
-
-    #[test]
-    fn cerebras_status_types_and_bounds_follow_the_source() {
-        let body = cerebras_error_body(429, br#"{"error":{"message":"slow down","code":"rate"}}"#);
-        assert!(
-            String::from_utf8(body)
-                .unwrap()
-                .contains("rate_limit_error")
-        );
-        let body = cerebras_error_body(503, br#"{"message":"down","code":"unavailable"}"#);
-        assert!(String::from_utf8(body).unwrap().contains("server_error"));
-        let oversized = serde_json::to_vec(&json!({
-            "error": {"message": "m".repeat(2_000), "code": "c".repeat(400)}
-        }))
-        .unwrap();
-        let body = String::from_utf8(cerebras_error_body(402, &oversized)).unwrap();
-        assert!(!body.contains(&"m".repeat(1_001)));
-        assert!(!body.contains(&"c".repeat(201)));
-    }
-}
+mod pending_tests;

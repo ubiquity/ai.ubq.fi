@@ -98,6 +98,14 @@ pub enum HealthWrite {
 
 /// The fixed host owns real clock/wait/RNG. Pure storage algorithms never call a provider.
 pub trait ObservabilityHost {
+    fn parse_claude_usage_date(&self, _value: &gateway_core::js_string::JsString16) -> Option<i64> {
+        None
+    }
+    /// Finite shared collector, invoked only from the existing capacity capture.
+    fn collect_claude_usage(&self) -> impl Future<Output = Result<(), GatewayError>> {
+        async { Err(crate::store::missing("claude_usage_collection")) }
+    }
+
     /// The same trusted pure runtime capability used by source model controls.
     /// It is never supplied by a request/body and has no scalar fallback.
     fn source_string_collator(

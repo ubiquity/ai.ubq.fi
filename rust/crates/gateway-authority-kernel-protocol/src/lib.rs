@@ -2,8 +2,9 @@
 use gateway_authority_contracts::{
     DAY_MS, REQUEST_LEASE_MS, add, invalid, nonnegative, positive, text,
 };
-use gateway_core::{
-    error::GatewayError, identity::RequestId, js_string::JsString16, source_json::SourceJson,
+use gateway_core::identity::RequestId;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
 use serde::{Deserialize, Serialize};

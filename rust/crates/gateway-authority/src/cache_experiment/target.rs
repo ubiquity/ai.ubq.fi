@@ -4,7 +4,8 @@ use crate::store::{Authority, Transaction};
 use gateway_authority_contracts::TokenSource;
 use gateway_cache_experiment_evidence::{CacheEvidenceReader, InventoryData};
 use gateway_cache_experiment_records::model::{Reason, TargetBinding, unavailable};
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 pub(super) async fn inventory<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<InventoryData, GatewayError> {

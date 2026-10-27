@@ -111,7 +111,7 @@ pub struct Journal {
     pub recovering: bool,
     pub lease_expires_at_ms: i64,
     pub updated_at_ms: i64,
-    pub extras_family: Option<crate::extras::ExtrasFamily>,
+    pub extras_family: Option<gateway_extras_contract::family::ExtrasFamily>,
     pub extras_child_count: Option<u32>,
     pub extras_dispatch: Option<crate::extras::ExtraDispatch>,
     pub children: Vec<crate::extras::ChildRecord>,

@@ -13,9 +13,10 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
     NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_authority::native_control::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode,
-    wire::{NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response},
+use gateway_authority::{
+    native_control::NATIVE_RENEWAL_FENCE_VERSION, native_control::NativeRenewalMode,
+    native_control::wire::NativeRenewalAuthorityRequest as Request,
+    native_control::wire::NativeRenewalAuthorityResponse as Response,
 };
 use gateway_core::error::GatewayError;
 use std::{net::TcpStream, time::Instant};

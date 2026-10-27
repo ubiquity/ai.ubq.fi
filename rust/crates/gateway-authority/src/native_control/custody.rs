@@ -4,12 +4,10 @@ use super::{
     rows::{self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, fail},
 };
 use gateway_core::{
-    error::GatewayError,
-    source_control::decode_source_control_record,
-    source_serialization as source,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{DecodedKeyPart, TupleKey},
+    source_control::decode_source_control_record, state::RecordKey, state::StoredRecord,
+    tuple_key::DecodedKeyPart, tuple_key::TupleKey,
 };
+use gateway_source::{error::GatewayError, source_serialization as source};
 use serde_json::Value;
 
 pub(super) fn hash(value: &str) -> Result<(), GatewayError> {

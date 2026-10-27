@@ -9,9 +9,9 @@ use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthR
 use gateway_auth::upstream;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_core::error::GatewayError;
 use gateway_core::identity::RequestContext;
 use gateway_core::state::{AuthorityStore, RecordKey, RevisionCheck};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

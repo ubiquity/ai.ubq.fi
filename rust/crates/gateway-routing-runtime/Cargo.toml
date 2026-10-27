@@ -24,6 +24,9 @@ gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-wait-observation.workspace = true
+gateway-decision-protocol.workspace = true
+gateway-extras-contract.workspace = true
 gateway-core.workspace = true
 gateway-authority = { path = "../gateway-authority" }
 gateway-auth = { path = "../gateway-auth" }

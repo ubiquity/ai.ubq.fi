@@ -5,10 +5,11 @@ use gateway_authority_keys as keys;
 use gateway_authority_paid_backfill::{PaidBackfillOperations, PaidBackfillReceipt};
 use gateway_authority_paid_records::{PaidAttempt, PaidCorrelation, PaidUsage};
 use gateway_core::state::RecordMutation;
-use gateway_core::{error::GatewayError, state::AtomicTransition, tuple_key::TupleKey};
 use gateway_core::{query::QueryPage, query::QueryRequest, state::AuthorityStore};
 use gateway_core::{query::QueryStore, state::StoredRecord};
+use gateway_core::{state::AtomicTransition, tuple_key::TupleKey};
 use gateway_core::{state::CommitOutcome, state::RecordKey, tuple_key::ScalarKeyPart};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{cell::Cell, cell::RefCell, collections::BTreeMap, future::Future, rc::Rc};
 use std::{task::Context, task::Poll, task::Waker};
@@ -141,7 +142,7 @@ pub fn run<F: Future>(future: F) -> F::Output {
     }
 }
 pub fn decode_json<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, GatewayError> {
-    gateway_core::source_json::SourceJson::from_serializable(&value)?.deserialize()
+    gateway_source::source_json::SourceJson::from_serializable(&value)?.deserialize()
 }
 pub fn request(id: &str, settled: bool) -> Value {
     json!({"v":3,"reservation":{"key_id":"key","request_id":format!("original-{id}"),"attempt_id":id,"provider":"metered","window_reset_at_ms":NOW,"created_at_ms":NOW-1000,"reserved_microcredits":10},

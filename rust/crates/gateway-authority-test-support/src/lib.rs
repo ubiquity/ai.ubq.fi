@@ -48,7 +48,7 @@ pub async fn reserve_paid(
     input: &PaidRequest,
     authorization: &PaidAuthorization,
     now: i64,
-) -> Result<PaidAdmission, gateway_core::error::GatewayError> {
+) -> Result<PaidAdmission, gateway_source::error::GatewayError> {
     authority.store().clock(now);
     let context = paid_control_cases::context(input);
     let receipt = paid_original::authorize(authority, input, &context, now).await?;

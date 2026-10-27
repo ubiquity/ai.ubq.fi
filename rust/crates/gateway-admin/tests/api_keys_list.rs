@@ -1,10 +1,9 @@
-use gateway_admin::{
-    keys::*,
+use gateway_admin::{reads, service::AdminService};
+use gateway_admin_contracts::{
     operations::{AdminHost, AdminInput, PaidKeyFields, missing_capability},
-    reads,
     routes::AdminOperation,
-    service::AdminService,
 };
+use gateway_admin_keys::keys::*;
 use gateway_auth::{
     crypto::Secret,
     types::{AuthConfig, AuthHost, AuthRequest, AuthResponse},

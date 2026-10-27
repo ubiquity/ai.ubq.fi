@@ -1,6 +1,7 @@
 use super::SourceResetInventory;
 use super::{CreditCandidateData, SourceCreditCollation, SourceResetCredit, declined};
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, js_string::JsString16};
+use gateway_core::identity::MAX_SAFE_INTEGER;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::{cmp::Ordering, collections::BTreeSet};
 
 pub struct Selected {

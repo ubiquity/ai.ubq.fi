@@ -8,12 +8,10 @@ use gateway_cache_experiment_records::{
     model::{PROFILE, PROVIDER, Reason, TELEMETRY_PROVIDER, TargetBinding, failed, unavailable},
     source::{catalog_key, json, runtime_key},
 };
-use gateway_core::source_serialization as source;
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId, source_json::SourceJson,
-    state::AuthorityStore,
-};
+use gateway_core::{model::ModelId, state::AuthorityStore};
 use gateway_schema::{runtime_config::normalize_runtime_config, snapshot::ModelSnapshot};
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 // The existing application fingerprint recipe sorts every object key by UTF16 units,

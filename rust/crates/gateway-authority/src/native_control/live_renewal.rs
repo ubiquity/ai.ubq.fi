@@ -20,10 +20,10 @@ use gateway_authority_paid_control_records::{
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
-use gateway_core::error::GatewayError;
 use gateway_core::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
 use gateway_schema::catalog_store::runtime_config_key;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 struct Control {

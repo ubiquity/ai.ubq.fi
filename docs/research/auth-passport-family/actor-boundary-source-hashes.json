@@ -1,0 +1,57 @@
+[
+  {
+    "path": "src/auth/passport.ts",
+    "source_sha256": "52b4a3343dad42363c51c1ef49d06789b7a8390ccc0084247e4b0f43622ee024",
+    "bytes": 15970
+  },
+  {
+    "path": "src/auth/passport-sessions.ts",
+    "source_sha256": "d02759ce916ea4f6fed8aa89ca9e79094228b841d01ea2a672ffefbcb63ebe36",
+    "bytes": 7648
+  },
+  {
+    "path": "src/auth/index.ts",
+    "source_sha256": "939458e646ba9e984bf23fa214b86a3e2c25d0fc3d1d6ae95f82ab4bae90fada",
+    "bytes": 31732
+  },
+  {
+    "path": "src/handler/http.ts",
+    "source_sha256": "d35a89d4e2f538773b8bdcd47511d4d61536c5b30751610c918c695284579beb",
+    "bytes": 7535
+  },
+  {
+    "path": "src/authority/native-api-key-audit.ts",
+    "source_sha256": "8b18abe7f1f6ce29dd34ff85fcc6fc98296c5f8d8440a3c76491d8b1c820c6fa",
+    "bytes": 6283
+  },
+  {
+    "path": "src/live/upstream.ts",
+    "source_sha256": "8ec7b2df6ab2be4d59780dce58abed1a594db214ebe5325770a604b0e72789ed",
+    "bytes": 9245
+  },
+  {
+    "path": "src/utils.ts",
+    "source_sha256": "600174311bb74dda4729a26ee2fb34811d118db4ce882ed3d99ab10868317b7f",
+    "bytes": 2583
+  },
+  {
+    "path": "rust/crates/gateway-authority/src/native_control/actor.rs",
+    "source_sha256": "a58d3a9e42b200e44e2fbac3e0f9fbf6c0e893df2a74e38ce1ea6c0c1188a795",
+    "bytes": 28884
+  },
+  {
+    "path": "rust/crates/gateway-core/src/identity.rs",
+    "source_sha256": "27e3f5d766deac8cb815ce4d039d6698d9f6f762e7aeac3262e3074b8272906e",
+    "bytes": 4000
+  },
+  {
+    "path": "rust/crates/gateway-live-runtime/src/mapping.rs",
+    "source_sha256": "fdd6e5cd5d60dc7a5c2117a3ba6dccce5f096fc7bd20a23b1d4b04382ae2264a",
+    "bytes": 10071
+  },
+  {
+    "path": "rust/crates/gateway-authority/src/native_live/wire.rs",
+    "source_sha256": "094afdd89ef1da1ab343d723520aa4dabf9e367b171d6016e437e62ac5f3781a",
+    "bytes": 4358
+  }
+]

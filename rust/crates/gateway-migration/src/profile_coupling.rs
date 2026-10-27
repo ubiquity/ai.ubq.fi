@@ -8,6 +8,7 @@ use gateway_core::{
         AtomicTransition, CommitOutcome, RecordKey, RecordMutation, RevisionCheck, StoredRecord,
     },
 };
+use gateway_migration_ledger::{kernel, rows::ObservedRow};
 use serde_json::Value;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -113,7 +114,7 @@ async fn bind_api_rows<S: QueryStore>(
     };
     if let Some(mut current) = current
         && let Ok(value) = current.json_value()
-        && gateway_admin_data::migration::audit::valid_api_window(value)
+        && gateway_migration_ledger::counter::valid_api_window(value)
         && value["key_id"] == p[4]
         && value["policy_version"] == p[5]
         && value["window_start_ms"] == p[6]
@@ -137,7 +138,7 @@ async fn bind_api_rows<S: QueryStore>(
                 continue;
             };
             if rp.len() == 8
-                && gateway_admin_data::migration::audit::valid_api_request(v)
+                && gateway_admin_data::validate::valid_api_request(v)
                 && v["state"] == "reserved"
                 && v["key_id"] == p[4]
                 && rp[7] == v["request_id"]
@@ -206,8 +207,7 @@ async fn bind_kernel_rows<S: QueryStore>(
             p[4].as_str(),
             if scope == "repo" { p[5].as_str() } else { None },
         )
-        && let Some(source) =
-            gateway_admin_data::migration::kernel::normalize_window(&source, scope, owner, repo)
+        && let Some(source) = kernel::normalize_window(&source, scope, owner, repo)
     {
         let mut prefix = vec![
             json!("uos_ai"),
@@ -239,8 +239,7 @@ async fn bind_kernel_rows<S: QueryStore>(
             let Some(v) = source.to_json_lossless() else {
                 continue;
             };
-            if let Some(v) =
-                gateway_admin_data::migration::kernel::normalize_reservation(&v, scope, owner, repo)
+            if let Some(v) = kernel::normalize_reservation(&v, scope, owner, repo)
                 && v["state"] == "reserved"
                 && v["window_created_at_ms"] == source_value_created(&current)?
                 && rp.last() == v.get("request_id")
@@ -350,7 +349,6 @@ pub(crate) async fn finish_kernel<S: QueryStore, H: crate::profile_runtime::Prof
     windows: &BTreeSet<String>,
     now: i64,
 ) -> Result<(), GatewayError> {
-    use gateway_admin_data::migration::{ObservedRow, kernel};
     for key in windows {
         let key = RecordKey(key.clone());
         let Some(record) = store.read(&key).await? else {

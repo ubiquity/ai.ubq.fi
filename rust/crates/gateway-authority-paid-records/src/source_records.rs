@@ -4,11 +4,10 @@ use super::{PaidAttempt, PaidRollup, provider_label, validate_attempt};
 use gateway_authority_contracts::{invalid, text, validate_time};
 use gateway_authority_keys as keys;
 use gateway_core::{
-    error::GatewayError,
-    source_control::decode_source_control_record,
-    state::{RecordKey, StoredRecord},
-    tuple_key::{DecodedKeyPart, TupleKey},
+    source_control::decode_source_control_record, state::RecordKey, state::StoredRecord,
+    tuple_key::DecodedKeyPart, tuple_key::TupleKey,
 };
+use gateway_source::error::GatewayError;
 
 fn metadata(record: &StoredRecord) -> Result<(), GatewayError> {
     record.validate_version()?;

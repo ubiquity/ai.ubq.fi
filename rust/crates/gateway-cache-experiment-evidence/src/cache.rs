@@ -1,10 +1,10 @@
 //! Private snapshot cache. Closed family readers keep actual revisions, including expired rows.
 use gateway_authority_contracts::{invalid, text, validate_time};
 use gateway_core::{
-    error::GatewayError,
-    source_control::decode_source_control_record,
-    state::{AuthorityStore, RecordKey, RevisionCheck, StoredRecord},
+    source_control::decode_source_control_record, state::AuthorityStore, state::RecordKey,
+    state::RevisionCheck, state::StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
 pub(crate) struct ReadCache<'a, S> {

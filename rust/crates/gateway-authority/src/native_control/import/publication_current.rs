@@ -16,15 +16,16 @@ use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_authority_routing_records::types::SubscriptionPool;
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 /// Response DATA only. No serializer, permission constructor or stored schema.
 #[derive(Debug, PartialEq)]
 pub(crate) struct NativeImportModelsProjection {
     pub(crate) count: usize,
-    pub(crate) source: gateway_core::js_string::JsString16,
+    pub(crate) source: gateway_source::js_string::JsString16,
     pub(crate) updated_at_ms: i64,
     pub(crate) client_version: Option<String>,
 }
@@ -281,7 +282,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
     let catalog: Option<ModelSnapshot> = tx
         .read_source_control(&catalog_store::codex_snapshot_key())
         .await?;
-    let _: Option<gateway_core::source_json::SourceJson> = tx
+    let _: Option<gateway_source::source_json::SourceJson> = tx
         .read_source_control(&catalog_store::runtime_config_key())
         .await?;
     let generation_value: Option<String> = tx.read(&catalog_store::auth_generation_key()).await?;

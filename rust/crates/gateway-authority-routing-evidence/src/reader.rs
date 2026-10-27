@@ -12,14 +12,12 @@ use gateway_authority_routing_records::{
     types::{RoutingState, SubscriptionPool},
 };
 use gateway_core::{
-    error::GatewayError,
-    identity::ActiveSelection,
-    provider::OveragePermission,
-    source_control::decode_source_control_record,
-    source_json::SourceJson,
-    state::{AuthorityStore, RecordKey, RevisionCheck, StoredRecord},
+    identity::ActiveSelection, provider::OveragePermission,
+    source_control::decode_source_control_record, state::AuthorityStore, state::RecordKey,
+    state::RevisionCheck, state::StoredRecord,
 };
 use gateway_schema::selection::{AccountModelsStore, ProviderSelection};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::BTreeMap;

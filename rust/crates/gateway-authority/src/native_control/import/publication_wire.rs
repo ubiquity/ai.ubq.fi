@@ -12,7 +12,7 @@ use gateway_auth_native_wire::{
     publication_command::{ImportCatalogData, SNAPSHOT_MAX_BYTES},
     publication_data::ImportCatalogDisposition,
 };
-use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 
 pub fn prepare_import_catalog(
     snapshot: &SourceJson,
@@ -36,8 +36,9 @@ pub fn prepare_import_catalog(
         observed_at_ms,
     )
     .ok_or_else(unavailable)?;
-    let snapshot =
-        gateway_core::source_serialization::canonical(&SourceJson::from_serializable(&snapshot)?)?;
+    let snapshot = gateway_source::source_serialization::canonical(
+        &SourceJson::from_serializable(&snapshot)?,
+    )?;
     if snapshot.as_str().len() > SNAPSHOT_MAX_BYTES {
         return Err(GatewayError::new(
             413,

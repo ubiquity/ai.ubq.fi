@@ -7,10 +7,10 @@ use crate::{
     },
 };
 use gateway_core::{
-    error::GatewayError,
-    identity::{CredentialVersion, MAX_SAFE_INTEGER, RoutingAccountHash},
+    identity::CredentialVersion, identity::MAX_SAFE_INTEGER, identity::RoutingAccountHash,
     provider::CodexQuotaClass,
 };
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 

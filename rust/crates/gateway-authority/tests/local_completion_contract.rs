@@ -12,10 +12,8 @@ use gateway_core::source_control::{decode_source_control_record, encode_source_c
 use gateway_core::state::{
     AtomicTransition, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
-use gateway_core::{
-    error::GatewayError, local_completion::LocalCompletedJournalPlan, source_json::SourceJson,
-    state::AuthorityStore,
-};
+use gateway_core::{local_completion::LocalCompletedJournalPlan, state::AuthorityStore};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,

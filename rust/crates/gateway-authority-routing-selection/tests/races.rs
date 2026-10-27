@@ -14,7 +14,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use support::{CLASS, Fixture, NOW, TestResult, block, lease, ready};
 
-fn fixed_keys(fixture: &Fixture) -> Result<BTreeSet<String>, gateway_core::error::GatewayError> {
+fn fixed_keys(fixture: &Fixture) -> Result<BTreeSet<String>, gateway_source::error::GatewayError> {
     let mut keys: BTreeSet<_> = [
         keys::pool(),
         keys::routing(),

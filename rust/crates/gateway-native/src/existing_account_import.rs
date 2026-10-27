@@ -1,13 +1,11 @@
 //! Native-private import custody. Independent native writer exclusion is not yet available.
 //! The production mutation boundary fails closed; a recovered durability receipt is not publication.
 use gateway_auth::crypto::sha256_hex;
-use gateway_authority::native_control::{
-    NativeRenewalCancellation,
-    import::{
-        AuthenticatedNativeImport,
-        effects::{NativeImportBinding, NativeImportClaim},
-    },
-    receiver::NativeRenewalAuthority,
+use gateway_authority::{
+    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
+    native_control::import::effects::NativeImportBinding,
+    native_control::import::effects::NativeImportClaim,
+    native_control::receiver::NativeRenewalAuthority,
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_core::{error::GatewayError, state::AuthorityStore};

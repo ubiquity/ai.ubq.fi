@@ -1,7 +1,8 @@
 //! Source-compatible FoundationDB tuple bytes, shared by every portable storage operation.
 //! Matches patched @deno/kv 0.14.0 and src/storage/key-compatibility.ts.
 
-use crate::{error::GatewayError, state::RecordKey};
+use crate::state::RecordKey;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 const KEY_PREFIX: &str = "tuple-v1:";

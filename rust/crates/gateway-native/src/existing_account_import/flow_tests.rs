@@ -15,11 +15,11 @@ use gateway_auth::{
     types::AuthRequest,
 };
 use gateway_auth_native_wire::native_read::*;
-use gateway_authority::native_control::{
-    actor,
-    receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
-};
 use gateway_authority::store::Authority;
+use gateway_authority::{
+    native_control::actor, native_control::receiver::NativeRenewalAuthority,
+    native_control::receiver::RegisteredRenewalOwner,
+};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};

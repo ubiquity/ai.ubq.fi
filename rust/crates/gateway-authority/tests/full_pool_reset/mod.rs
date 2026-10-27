@@ -10,13 +10,16 @@ use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelec
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_row};
 use gateway_core::state::StoredRecord;
-use gateway_core::{error::GatewayError, identity::PrincipalId, value::PortableValue};
-use gateway_core::{identity::RequestContext, identity::RequestId, js_string::JsString16};
-use gateway_core::{provider::CodexQuotaClass, source_json::SourceJson, state::RecordKey};
+use gateway_core::{identity::PrincipalId, value::PortableValue};
+use gateway_core::{identity::RequestContext, identity::RequestId};
+use gateway_core::{provider::CodexQuotaClass, state::RecordKey};
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::admitted};
 use gateway_routing_runtime_test_support::{authority::authority, authority::block};
 use gateway_routing_runtime_test_support::{authority::pool, authority::run, authority::seed_pool};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 

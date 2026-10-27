@@ -1,16 +1,14 @@
 //! Fixed M15 HTTP/AEAD capabilities over the original M14 dispatch reservation.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    routing_host,
-    storage::now_ms,
-    transport::{
-        aead, body,
-        outbound::{self, DispatchAttempt, PinnedDestination},
-    },
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::routing_host;
+use crate::transport::outbound;
+use crate::transport::outbound::DispatchAttempt;
+use crate::transport::outbound::PinnedDestination;
 use gateway_core::{error::GatewayError, state::AuthorityStore, tuple_key::TupleKey};
-use gateway_extras_runtime::types::{
+use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider, ImageKind,
     PreparedCall, UpstreamResponse,
 };
@@ -19,6 +17,9 @@ use gateway_routing_runtime::{
     extras::{AdmissionHandle, ChildScope, DispatchTicket},
     types::TransportState,
 };
+use gateway_worker_http_body::body;
+use gateway_worker_platform::aead;
+use gateway_worker_storage::store::now_ms;
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},
@@ -31,6 +32,7 @@ pub type Handle =
 
 pub struct Host {
     pub platform: PlatformHost,
+    catalog: crate::catalog::CatalogState,
     pub admission: Handle,
     pub child: Option<ChildScope>,
     transport: Cell<TransportState>,
@@ -40,6 +42,7 @@ pub struct Host {
 impl Host {
     pub async fn new(
         platform: PlatformHost,
+        catalog: crate::catalog::CatalogState,
         admission: Handle,
         images: bool,
         default_model: Option<gateway_core::model::ModelId>,
@@ -61,6 +64,7 @@ impl Host {
         });
         Ok(Self {
             platform,
+            catalog,
             admission,
             child,
             transport: Cell::new(TransportState::NotStarted),
@@ -208,7 +212,7 @@ impl ExtrasHost for Host {
         now_ms().unwrap_or(i64::MAX)
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
-        crate::transport::random::random_bytes(length)
+        gateway_worker_platform::random::random_bytes(length)
     }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
@@ -238,7 +242,9 @@ impl ExtrasHost for Host {
     ) -> Result<Option<PrepareOptions>, GatewayError> {
         let secret = match provider {
             ExtrasProvider::Voyage => self.voyage_key().await?,
-            ExtrasProvider::SystemOne => configured(&self.platform, "OPENROUTER_API_KEY"),
+            ExtrasProvider::SystemOne | ExtrasProvider::Decisions => {
+                configured(&self.platform, "OPENROUTER_API_KEY")
+            }
         };
         Ok(secret.map(|secret| PrepareOptions {
             auth: AuthMaterial {
@@ -247,6 +253,9 @@ impl ExtrasHost for Host {
             },
             ..Default::default()
         }))
+    }
+    async fn decision_models(&self) -> Result<Vec<gateway_core::model::ModelId>, GatewayError> {
+        self.catalog.decision_models(&self.platform.store).await
     }
     async fn image_base_model(&self) -> Result<Option<gateway_core::model::ModelId>, GatewayError> {
         self.images
@@ -259,7 +268,9 @@ impl ExtrasHost for Host {
         operation: ExtrasDispatch,
     ) -> Result<UpstreamResponse, DispatchFailure> {
         match operation {
-            ExtrasDispatch::Voyage(call) | ExtrasDispatch::SystemOne(call) => self.http(call).await,
+            ExtrasDispatch::Voyage(call)
+            | ExtrasDispatch::SystemOne(call)
+            | ExtrasDispatch::Decisions(call) => self.http(call).await,
             ExtrasDispatch::ImageChild {
                 index,
                 kind,

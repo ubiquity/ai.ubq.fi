@@ -6,9 +6,12 @@ use gateway_authority_api_protocol::{ApiReservation, ApiUsageRequest, ApiUsageSt
 use gateway_authority_kernel_protocol::KernelReservation;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidRequest, PaidReservation};
-use gateway_core::{error::GatewayError, identity::RequestContext, local_work::LocalWorkPhase};
-use gateway_core::{local_work::journal_local_work, source_json::SourceJson};
-use gateway_core::{source_serialization as source, state::AuthorityStore};
+use gateway_core::local_work::journal_local_work;
+use gateway_core::state::AuthorityStore;
+use gateway_core::{identity::RequestContext, local_work::LocalWorkPhase};
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde::de::DeserializeOwned;
 
 fn field<T: DeserializeOwned>(value: &SourceJson, name: &str) -> Option<T> {

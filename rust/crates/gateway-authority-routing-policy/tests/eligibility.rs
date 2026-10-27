@@ -16,15 +16,11 @@ use gateway_authority_routing_records::{
     },
 };
 use gateway_core::{
-    error::GatewayError,
-    identity::{
-        ActiveSelection, ActiveTransitionReason, CredentialVersion, PoolVersionstamp,
-        RoutingAccountHash, SubscriptionSelectionHash,
-    },
-    js_string::JsString16,
-    model::ModelId,
-    provider::CodexQuotaClass,
+    identity::ActiveSelection, identity::ActiveTransitionReason, identity::CredentialVersion,
+    identity::PoolVersionstamp, identity::RoutingAccountHash, identity::SubscriptionSelectionHash,
+    model::ModelId, provider::CodexQuotaClass,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::collections::BTreeMap;
 
 const NOW: i64 = 1_000_000_000;

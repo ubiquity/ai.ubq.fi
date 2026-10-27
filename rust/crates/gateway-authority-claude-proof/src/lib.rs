@@ -3,13 +3,11 @@ mod backend;
 use gateway_authority_contracts::{AuthorityClock, invalid, positive, unavailable, validate_time};
 use gateway_authority_keys as keys;
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
-    model::ModelId,
-    source_json::SourceJson,
+    model::ModelId, state::AuthorityStore, state::RevisionCheck, value::PortableValue,
+};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-    state::{AuthorityStore, RevisionCheck},
-    value::PortableValue,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;

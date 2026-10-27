@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-catalog-provider.workspace = true
 gateway-core.workspace = true
 gateway-authority.workspace = true
 gateway-providers.workspace = true
@@ -16,6 +17,9 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-auth.workspace = true
+gateway-publication-policy.workspace = true
+gateway-routing-runtime-test-support.workspace = true
 gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission" }
 gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }

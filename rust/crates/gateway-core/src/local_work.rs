@@ -1,9 +1,8 @@
 //! Data-only local-origin custody. No row or imported nonce mints a live handle.
-use crate::{
-    error::GatewayError,
-    lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination},
-};
-use crate::{source_json::SourceJson, source_serialization as source};
+use crate::lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination};
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde::{Deserialize, Serialize};
 
 pub const SOURCE_REQUEST_BINDING_VERSION: u8 = 2;

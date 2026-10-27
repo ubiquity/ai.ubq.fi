@@ -1,9 +1,8 @@
 //! Trusted native bindings. No request-selected destination, default public
 //! target, provider token, arbitrary path, generic control or caller-selected owner.
 use crate::{
-    host::PlatformHost, host::response_bytes, native_transport::NativeTransport,
-    native_transport::unavailable, transport::stream::ObservationHandle,
-    transport::stream::ObservedStream,
+    host::{PlatformHost, response_bytes},
+    native_transport::{NativeTransport, unavailable},
 };
 use gateway_auth::{
     crypto::base64url, crypto::decode_base64url, native_auth::NativeCapability,
@@ -20,6 +19,7 @@ use gateway_auth_native_wire::{
 };
 use gateway_authority::{native_control::receiver::NativeRenewalAuthority, store::Authority};
 use gateway_core::error::GatewayError;
+use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use serde::Deserialize;
 use std::{collections::BTreeSet, rc::Rc};
 use worker::{Context, Env, Fetcher, Response};
@@ -111,7 +111,7 @@ impl NativeBindings {
         &self,
         action: &gateway_authority::native_live::NativeLiveAction,
         platform: &PlatformHost,
-    ) -> Result<crate::response::GatewayResponse, GatewayError> {
+    ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
         self.transport()?
             .live_upgrade(action.action_ref(), platform)
             .await
@@ -280,7 +280,7 @@ impl NativeBindings {
     ) -> Result<gateway_authority::native_control::NativeRenewalFence, GatewayError> {
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
-            operation_id: crate::transport::random::opaque_token()?,
+            operation_id: gateway_worker_platform::random::opaque_token()?,
             request: NativeControlRequest::CodexRenewAccess {
                 action_ref: action.action_ref().to_owned(),
             },

@@ -11,9 +11,8 @@ use gateway_authority_kernel_protocol::{
     validate_kernel_window,
 };
 use gateway_authority_keys as keys;
-use gateway_core::{
-    error::GatewayError, identity::RequestId, source_json::SourceJson, state::AuthorityStore,
-};
+use gateway_core::{identity::RequestId, state::AuthorityStore};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use std::collections::BTreeMap;
 
 pub struct KernelService<'a, S, I> {

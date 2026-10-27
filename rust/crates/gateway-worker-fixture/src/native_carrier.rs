@@ -11,7 +11,7 @@ pub(super) async fn fetch(
     request: Request,
     env: Env,
     context: Context,
-) -> worker::Result<gateway_worker::response::GatewayResponse> {
+) -> worker::Result<gateway_worker_web::response::GatewayResponse> {
     let result = async {
         let identity = NativeTransportIdentity::new(
             "fixture-matrix-key".into(),

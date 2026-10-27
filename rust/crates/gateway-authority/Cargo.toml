@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source.workspace = true
 gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
 gateway-cache-experiment-campaign = { path = "../gateway-cache-experiment-campaign" }
 gateway-cache-experiment-evidence = { path = "../gateway-cache-experiment-evidence" }
@@ -49,6 +50,8 @@ serde_json.workspace = true
 sha2 = "=0.11.0"
 
 [dev-dependencies]
+gateway-authority-paid-test-support.workspace = true
+gateway-source.workspace = true
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-authority-test-support = { path = "../gateway-authority-test-support" }
 gateway-routing-runtime-test-support.workspace = true

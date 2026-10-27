@@ -1,6 +1,6 @@
 //! Exact source redemption/day validation; no redemption or promotion capability is minted.
-use gateway_admin_data::{migration::ObservedRow, migration::starts};
 use gateway_authority_reset_records::{ResetRecord, ResetState};
+use gateway_migration_ledger::rows::{ObservedRow, starts};
 use serde_json::Value;
 
 fn safe(value: Option<&Value>) -> bool {

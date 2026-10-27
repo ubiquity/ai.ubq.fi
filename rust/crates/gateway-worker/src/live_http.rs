@@ -1,11 +1,11 @@
 //! Source live-call multipart boundary. No account selection or inference admission.
-use crate::transport::outbound::Cancellation;
 use futures_util::StreamExt;
 use gateway_core::error::GatewayError;
 use gateway_live_runtime::{
     protocol::{validate_body_read, validate_declared_length},
     types::{LIVE_CALL_BODY_TIMEOUT_MS, LIVE_CALL_MAX_BODY_BYTES, LiveCreateInput},
 };
+use gateway_worker_platform::cancellation::Cancellation;
 use std::collections::BTreeMap;
 use worker::{
     Method, Request, RequestInit,

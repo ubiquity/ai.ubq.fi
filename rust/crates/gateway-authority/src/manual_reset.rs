@@ -14,8 +14,9 @@ use gateway_authority_reset_records::{ResetMode, ResetRecord, ResetState};
 use gateway_authority_reset_records::{manual::ManualIntent, manual::ManualResetPromotion};
 use gateway_authority_reset_records::{manual::intent_key, manual::parse_manual_intent};
 use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
-use gateway_core::{error::GatewayError, identity::AccountBinding, identity::ActiveSelection};
+use gateway_core::{identity::AccountBinding, identity::ActiveSelection};
 use gateway_core::{identity::ActiveTransitionReason, state::AuthorityStore};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 /// Minted only from a real admin actor. No serde/public constructor.

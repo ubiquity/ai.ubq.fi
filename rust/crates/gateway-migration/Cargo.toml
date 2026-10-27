@@ -15,6 +15,12 @@ gateway-authority-paid-control-records = { path = "../gateway-authority-paid-con
 gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-source-audit.workspace = true
+gateway-profile-source.workspace = true
+gateway-migration-ledger.workspace = true
+gateway-claude-usage-quota.workspace = true
+gateway-admin-contracts.workspace = true
+gateway-admin-keys.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-observability.workspace = true
@@ -22,6 +28,7 @@ gateway-claude-runtime = { path = "../gateway-claude-runtime" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-admin = { path = "../gateway-admin" }
 gateway-admin-data = { path = "../gateway-admin-data" }
+gateway-profile-values.workspace = true
 gateway-admin-runtime = { path = "../gateway-admin-runtime" }
 gateway-authority = { path = "../gateway-authority" }
 gateway-schema = { path = "../gateway-schema" }
@@ -54,13 +61,14 @@ path = "tests/support/offline-fixture.rs"
 name = "worker-custody-fixture"
 path = "tests/support/worker-custody-fixture.rs"
 
-[lints]
-workspace = true
-
 [dev-dependencies]
+gateway-migration-test-support.workspace = true
+
 gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
 gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
 gateway-authority-kernel = { path = "../gateway-authority-kernel" }
 gateway-authority-api-release = { path = "../gateway-authority-api-release" }
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+[lints]
+workspace = true

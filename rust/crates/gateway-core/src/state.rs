@@ -5,7 +5,7 @@ use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 pub const PORTABLE_STATE_VERSION: u32 = 1;
 
@@ -93,7 +93,9 @@ impl StoredRecord {
         value.validate_for_storage_v2()?;
         Ok(value)
     }
-    pub fn profile_v2_source_json(&self) -> Result<crate::source_json::SourceJson, GatewayError> {
+    pub fn profile_v2_source_json(
+        &self,
+    ) -> Result<gateway_source::source_json::SourceJson, GatewayError> {
         self.profile_v2_value()?.to_source_json()
     }
     pub fn source_graph(

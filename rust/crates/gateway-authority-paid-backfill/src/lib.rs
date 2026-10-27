@@ -4,9 +4,10 @@ use backend::Transaction;
 use gateway_authority_contracts::{TokenSource, invalid, validate_time};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidAttempt, backfill as values};
-use gateway_core::{error::GatewayError, query::QueryPage, query::QueryRequest};
+use gateway_core::{query::QueryPage, query::QueryRequest};
 use gateway_core::{query::QuerySelector, query::QueryStore, state::RecordKey};
 use gateway_core::{tuple_key::DecodedKeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::{Value, json};
 const PAGE_SIZE: u32 = 128;
@@ -176,7 +177,7 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
         now: i64,
     ) -> Result<RequestStep, GatewayError> {
         let mut tx = self.transaction(now)?;
-        let Some(mut raw): Option<gateway_core::source_json::SourceJson> =
+        let Some(mut raw): Option<gateway_source::source_json::SourceJson> =
             tx.read_source_control(key).await?
         else {
             return Ok(RequestStep::Missing);
@@ -190,9 +191,9 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
             return Err(crate::invalid("Paid backfill request identity conflicts."));
         }
         let expiry = values::expiry(row.reservation.created_at_ms, now)?;
-        if gateway_core::source_serialization::member(&raw, "usage_rollup_at_ms")
+        if gateway_source::source_serialization::member(&raw, "usage_rollup_at_ms")
             .as_ref()
-            .and_then(gateway_core::source_serialization::number)
+            .and_then(gateway_source::source_serialization::number)
             .is_some()
         {
             tx.put_source_control(key, &raw, Some(expiry))?;
@@ -212,10 +213,10 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
             && row.provider_quota.is_some()
             && row.spend_microcredits.is_some()
             && !model.as_js_string().as_units().is_empty();
-        let mut fields = gateway_core::source_serialization::entries(&raw)
+        let mut fields = gateway_source::source_serialization::entries(&raw)
             .ok_or_else(|| crate::invalid("Malformed paid backfill request."))?;
         for name in ["usage_rollup_at_ms", "updated_at_ms"] {
-            let next = gateway_core::source_json::SourceJson::from_serializable(&now)?;
+            let next = gateway_source::source_json::SourceJson::from_serializable(&now)?;
             if let Some((_, value)) = fields
                 .iter_mut()
                 .find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16()))
@@ -225,7 +226,7 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
                 fields.push((name.into(), next));
             }
         }
-        raw = gateway_core::source_serialization::object_keys(fields)?;
+        raw = gateway_source::source_serialization::object_keys(fields)?;
         tx.put_source_control(key, &raw, Some(expiry))?;
         if eligible {
             let bucket = row.reservation.created_at_ms / 3_600_000 * 3_600_000;
@@ -239,7 +240,7 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
                 provider,
                 gateway_authority_paid_records::rollup_shard(&row.reservation.attempt_id.0),
             );
-            let old: Option<gateway_core::source_json::SourceJson> =
+            let old: Option<gateway_source::source_json::SourceJson> =
                 tx.read_source_control(&rollup_key).await?;
             let rollup =
                 values::merge_source_rollup(old.as_ref(), &row, &model, provider, bucket, now)?;

@@ -1,11 +1,9 @@
 //! Exact API policy/window/request data and pure identity guards; no reservation is minted here.
 use gateway_authority_contracts::{add, invalid, nonnegative, positive, text};
 use gateway_core::{
-    error::GatewayError,
-    identity::{ApiKeyId, RequestId},
-    model::ModelId,
-    provider::UpstreamProvider,
+    identity::ApiKeyId, identity::RequestId, model::ModelId, provider::UpstreamProvider,
 };
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

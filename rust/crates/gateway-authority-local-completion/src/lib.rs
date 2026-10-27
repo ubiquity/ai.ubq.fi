@@ -9,11 +9,11 @@ use gateway_authority_kernel_protocol::{
 };
 use gateway_authority_keys as keys;
 use gateway_core::{
-    error::GatewayError,
-    local_completion::{LocalCompletedJournalPlan, LocalCompletedJournalState},
-    source_json::SourceJson,
-    source_serialization as source,
+    local_completion::LocalCompletedJournalPlan, local_completion::LocalCompletedJournalState,
     state::AuthorityStore,
+};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 
 #[derive(Debug)]

@@ -97,12 +97,12 @@ fn derive_basics<'a>(
     let mut explicit_defaults = false;
     if let Some(row) = get(&key(json!(["default", "kernel_policy_limit_requests"])).0)? {
         defaults.usage_limit_requests =
-            gateway_admin_runtime::parse::limit(row.json_value()?).unwrap_or(-1);
+            gateway_admin_contracts::fields::limit(row.json_value()?).unwrap_or(-1);
         explicit_defaults = true;
     }
     if let Some(row) = get(&key(json!(["default", "kernel_policy_window_ms"])).0)? {
         defaults.window_ms =
-            gateway_admin_runtime::parse::positive(row.json_value()?).unwrap_or(604800000);
+            gateway_admin_contracts::fields::positive(row.json_value()?).unwrap_or(604800000);
         explicit_defaults = true;
     }
     if explicit_defaults {
@@ -154,14 +154,14 @@ fn bind_identity<'a>(
     derived: &mut Vec<(RecordKey, StoredRecord)>,
 ) -> Result<(), GatewayError> {
     if starts(&row.parts, &["ubq_ai", "api_keys", "id"]) {
-        let id: gateway_admin::keys::ApiKeyRecord = decode(row.record.json_value()?)?;
+        let id: gateway_admin_keys::keys::ApiKeyRecord = decode(row.record.json_value()?)?;
         let hash_key = gateway_auth::api_keys::hash_key(&id.hash);
         let hash = get(&hash_key.0)?.ok_or_else(|| invalid("API key hash index is missing"))?;
         let hash: gateway_auth::api_keys::ApiKeyHashRecord = decode(hash.json_value()?)?;
         if hash != id.policy {
             return Err(invalid("API ID/hash policy pair conflicts"));
         }
-        let policy = gateway_admin::keys::authority_policy(&id, now);
+        let policy = gateway_admin_keys::keys::authority_policy(&id, now);
         derived.push((
             keys::api_policy(&id.policy.id),
             StoredRecord::json(revision, json(&policy)?, None),
@@ -482,7 +482,7 @@ pub(crate) fn bind(
     let mut paid_limits = BTreeMap::new();
     for row in rows.iter().filter(|row| live(row)) {
         if starts(&row.parts, &["ubq_ai", "api_keys", "id"]) {
-            let record: gateway_admin::keys::ApiKeyRecord = decode(row.record.json_value()?)?;
+            let record: gateway_admin_keys::keys::ApiKeyRecord = decode(row.record.json_value()?)?;
             paid_limits.insert(
                 record.policy.id,
                 record.policy.paid_fallback_limit_microcredits,

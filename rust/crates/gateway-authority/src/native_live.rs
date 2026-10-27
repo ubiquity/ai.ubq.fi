@@ -16,10 +16,11 @@ use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{
-    error::GatewayError,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation},
-    tuple_key::{ScalarKeyPart, ScalarKeyPart::String as Text, TupleKey},
+    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordKey,
+    state::RecordMutation, tuple_key::ScalarKeyPart, tuple_key::ScalarKeyPart::String as Text,
+    tuple_key::TupleKey,
 };
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub mod wire;

@@ -11,7 +11,8 @@ use gateway_cache_experiment_records::model::{
     CYCLE_MS, Cycle, Outcome, Reason, SAMPLE_MS, SLOTS, Sample, TargetBinding, classify, failed,
     sample_signal, unavailable,
 };
-use gateway_core::{error::GatewayError, identity::PoolVersionstamp, state::AuthorityStore};
+use gateway_core::{identity::PoolVersionstamp, state::AuthorityStore};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::future::Future;
 

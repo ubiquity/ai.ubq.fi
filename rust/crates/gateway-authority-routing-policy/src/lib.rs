@@ -6,11 +6,10 @@ use gateway_authority_routing_evidence::{
 };
 use gateway_authority_routing_records::types::{ProbeCircuit, RoutingState, SubscriptionPool};
 use gateway_core::{
-    identity::{AccountBinding, ActiveSelection, ActiveTransitionReason, RoutingAccountHash},
-    js_string::JsString16,
-    model::ModelId,
-    provider::CodexQuotaClass,
+    identity::AccountBinding, identity::ActiveSelection, identity::ActiveTransitionReason,
+    identity::RoutingAccountHash, model::ModelId, provider::CodexQuotaClass,
 };
+use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;
 
 /// Borrowed observation inputs, freely constructible and never a currentness grant.

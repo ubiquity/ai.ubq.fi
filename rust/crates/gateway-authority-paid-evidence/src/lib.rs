@@ -8,12 +8,14 @@ use gateway_authority_paid_control_records::{PaidControlConfig, PaidRoutingPolic
 use gateway_authority_paid_control_records::{PaidControlOwner, PaidProviderObservation};
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
 use gateway_authority_paid_records::PaidRequest;
-use gateway_core::{error::GatewayError, provider::PaidProvider, source_json::SourceJson};
-use gateway_core::{source_serialization as source, state::AuthorityStore, state::RecordKey};
+use gateway_core::provider::PaidProvider;
+use gateway_core::{state::AuthorityStore, state::RecordKey};
 use gateway_core::{state::RevisionCheck, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_providers::policy::PaidRoutingInput;
 use gateway_providers::{policy, policy::DeepseekHop, types::ClientSurface};
 use gateway_schema::{catalog_store, selection::ProviderSelection};
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 use std::collections::BTreeSet;
 mod backend;

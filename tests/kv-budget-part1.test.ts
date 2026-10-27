@@ -7,6 +7,8 @@ afterEach(cleanupHarness);
 // kv-budget suite part: tests moved out of tests/kv-budget.test.ts.
 
 import assert from "node:assert/strict";
+import { codexResetUsageKey } from "../src/codex/reset-settings.ts";
+import { sha256Hex } from "../src/utils.ts";
 import {
   API_KEY_USAGE_V3_REQUEST_PREFIX,
   DEFAULT_KERNEL_POLICY_LIMIT_KEY,
@@ -1357,7 +1359,12 @@ test("first bounded paid fallback response exposes settled spend and consumes on
   resetRuntimeConfigCacheForTest();
   resetCodexAuthCacheForTest();
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), runtime);
-  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), codexAuthPool(2));
+  const authPool = codexAuthPool(2);
+  kv.values.set(encodeKey(["ubq_ai", "codex_auth"]), authPool);
+  // This fixture measures straight paid fallback, without automatic reset inventory calls.
+  for (const account of authPool.accounts) {
+    kv.values.set(encodeKey(codexResetUsageKey(await sha256Hex(account.account_id))), { enabled: false });
+  }
   const token = `u_${"8".repeat(64)}`;
   const keyId = "first-fallback-quota";
   const { hash, record } = await seedPaidFallbackKey(token, keyId);

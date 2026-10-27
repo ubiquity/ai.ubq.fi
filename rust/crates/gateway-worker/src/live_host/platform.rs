@@ -1,17 +1,25 @@
 //! Fixed live operations over the original actor and the common account authority.
-use super::{WorkerLiveHost, account, account::CurrentLiveAccount, body, body::Body, health};
-use crate::{authority::RemoteAuthorityStore, host::PlatformClock, host::PlatformTokens};
-use crate::{storage::now_ms, transport::outbound::Cancellation};
-use gateway_auth::provider_credentials::codex_access_expiry_ms;
-use gateway_auth::provider_credentials::read_codex_source_pool;
+use super::{
+    WorkerLiveHost,
+    account::{self, CurrentLiveAccount},
+    body::{self, Body},
+    health,
+};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformTokens;
+use gateway_auth::provider_credentials::{codex_access_expiry_ms, read_codex_source_pool};
 use gateway_authority::store::Authority;
-use gateway_authority_routing_selection::types::LiveRouteSelection;
-use gateway_authority_routing_selection::{SelectionOperations, types::LiveAccountSelection};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::{types::LiveAccountSelection, types::LiveRouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_core::{error::GatewayError, js_string::JsString16};
-use gateway_live_runtime::types::LiveResponse;
-use gateway_live_runtime::{runtime::PreparedSideband, types::LiveAccount};
-use gateway_live_runtime::{types::LiveCreateRequest, types::LiveDispatchFailure, types::LiveHost};
+use gateway_live_runtime::{
+    runtime::PreparedSideband,
+    types::{LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse},
+};
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_storage::store::now_ms;
 use std::collections::BTreeMap;
 
 impl WorkerLiveHost {
@@ -112,7 +120,7 @@ impl WorkerLiveHost {
     pub async fn upgrade(
         &self,
         prepared: PreparedSideband<RemoteAuthorityStore, CurrentLiveAccount>,
-    ) -> Result<crate::response::GatewayResponse, GatewayError> {
+    ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
         let parts = prepared.into_parts();
         parts.account.ensure_current().await?;
         let transport = self.platform.native.transport()?;

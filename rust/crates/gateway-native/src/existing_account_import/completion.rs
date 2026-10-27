@@ -85,8 +85,9 @@ mod tests {
 use super::{prepare_flow::VerifiedImportPublication, validation::CatalogValidation};
 use crate::native_import::{NativeImportCompletion, NativeImportContext, NativeImportResult};
 use gateway_auth::native_import::authority::completion::ImportCompletionModelsData;
-use gateway_authority::native_control::{
-    NativeRenewalCancellation, import::remote::RemoteImportAuthority,
+use gateway_authority::{
+    native_control::NativeRenewalCancellation,
+    native_control::import::remote::RemoteImportAuthority,
 };
 use gateway_core::error::GatewayError;
 use serde::Serialize;

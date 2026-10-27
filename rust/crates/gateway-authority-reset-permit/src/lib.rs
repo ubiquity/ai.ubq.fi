@@ -12,8 +12,9 @@ use gateway_authority_reset_records::full_pool::SourceResetInventory;
 use gateway_authority_reset_records::{ResetConfig, ResetMode, full_pool::CreditCandidateData};
 use gateway_authority_reset_records::{full_pool::SourceCreditCollation, full_pool::selection};
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::{error::GatewayError, identity::RequestContext, source_json::SourceJson};
+use gateway_core::identity::RequestContext;
 use gateway_core::{state::AuthorityStore, value::ValueEncoding};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use types::{AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, FullPoolResetPlan};
 fn invalid() -> GatewayError {

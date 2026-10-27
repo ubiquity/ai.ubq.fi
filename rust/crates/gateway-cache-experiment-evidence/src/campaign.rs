@@ -4,7 +4,8 @@ use gateway_cache_experiment_records::{
     model::{Evidence, Outcome, State, TargetBinding, unavailable},
     source::record_key,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 fn parse<T: serde::de::DeserializeOwned>(
     raw: Option<Value>,

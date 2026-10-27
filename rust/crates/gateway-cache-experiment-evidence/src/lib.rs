@@ -7,10 +7,8 @@ use gateway_cache_experiment_records::{
     RefreshContext,
     model::{Evidence, Reason, State, TargetBinding},
 };
-use gateway_core::{
-    error::GatewayError,
-    state::{AuthorityStore, RevisionCheck},
-};
+use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_source::error::GatewayError;
 pub struct InventoryData {
     targets: Vec<TargetBinding>,
     checks: Vec<RevisionCheck>,

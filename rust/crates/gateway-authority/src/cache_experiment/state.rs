@@ -3,7 +3,8 @@ use crate::store::Transaction;
 use gateway_authority_contracts::TokenSource;
 use gateway_cache_experiment_evidence::CacheEvidenceReader;
 use gateway_cache_experiment_records::model::{Evidence, State, TargetBinding};
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 pub(super) async fn records<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     target: &TargetBinding,

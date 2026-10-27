@@ -1,20 +1,18 @@
 //! Request-owned fixed Codex control experiment. No generic inference or paid fallback.
 use gateway_cache_experiment_dispatch::CacheDispatchOperations;
 mod sample;
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    storage::now_ms,
-    transport::{
-        outbound::{Cancellation, Deadline, PinnedDestination, send_http},
-        random,
-    },
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
 use futures_util::StreamExt;
-use gateway_authority::cache_experiment::run::ReadSample;
+use gateway_authority::cache_experiment::PreparedTarget;
 use gateway_authority::native_control::actor::NativeActorScope;
-use gateway_authority::{cache_experiment::PreparedTarget, cache_experiment::run::ExperimentIo};
 use gateway_authority::{native_control::actor::NativeRenewalActor, store::Authority};
+use gateway_authority_paid_test_support::run::ExperimentIo;
+use gateway_authority_paid_test_support::run::ReadSample;
 use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
 use gateway_cache_experiment_records::{model::failed, model::unavailable};
 use gateway_core::{error::GatewayError, identity::PoolVersionstamp, source_json::SourceJson};
@@ -23,6 +21,10 @@ use gateway_observability::{
     types::{HealthEvent, HealthTarget, ObservabilityHost},
 };
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_platform::random;
+use gateway_worker_storage::store::now_ms;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, time::Duration};
 use worker::{Method, Response};
 
@@ -109,7 +111,7 @@ impl ObservabilityHost for ClockHost {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
 
     fn now_ms(&self) -> i64 {
@@ -194,13 +196,12 @@ impl ExperimentIo for Host<'_> {
         client: Option<&str>,
         deadline: i64,
     ) -> Result<SampleResponse, GatewayError> {
-        let started = crate::admission::monotonic()?;
+        let started = gateway_worker_platform::clock::monotonic()?;
         let cancellation = Rc::new(self.cancellation()?.child()?);
         let timeout = i32::try_from(deadline.saturating_sub(now_ms()?))
             .map_err(|_| failed("Prompt-cache scope experiment deadline is invalid."))?;
         let timer = cancellation.set_timeout_ms(timeout)?;
-        let base = crate::host::setting(&self.platform.env, "CODEX_BASE_URL")
-            .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
+        let base = "https://chatgpt.com/backend-api/codex";
         let target =
             PinnedDestination::new(&format!("{}/responses", base.trim().trim_end_matches('/')))?;
         let headers = BTreeMap::from([
@@ -287,7 +288,8 @@ impl ExperimentIo for Host<'_> {
         }
         if status == 429 {
             let body =
-                crate::transport::body::refusal_probe(raw, &response.cancellation, 1_000).await;
+                gateway_worker_http_body::body::refusal_probe(raw, &response.cancellation, 1_000)
+                    .await;
             let headers = raw.headers().entries().collect();
             if let Some(block) = gateway_routing_runtime::classify::codex_quota(
                 Some(status),
@@ -319,7 +321,7 @@ impl ExperimentIo for Host<'_> {
             .take()
             .ok_or_else(|| failed("Prompt-cache scope experiment response is missing."))?;
         if !(200..300).contains(&response.status_code()) {
-            crate::transport::body::discard_response(&mut response);
+            gateway_worker_http_body::body::discard_response(&mut response);
             return Err(failed(
                 "Prompt-cache scope experiment did not receive a readable upstream response.",
             ));
@@ -366,7 +368,7 @@ impl ExperimentIo for Host<'_> {
                 let kind = sample::event_type(&event)?;
                 if kind.as_deref() == Some("response.completed") {
                     let result=sample::member(&event,"response")?.filter(|r|r.as_str().starts_with('{')).ok_or_else(||failed("Prompt-cache scope experiment stream failed: Upstream emitted a Responses terminal event with an invalid payload."))?;
-                    let elapsed = (crate::admission::monotonic()?
+                    let elapsed = (gateway_worker_platform::clock::monotonic()?
                         .saturating_sub(head.started)
                         .as_secs_f64()
                         * 1_000.0)

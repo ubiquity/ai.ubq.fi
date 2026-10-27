@@ -9,10 +9,9 @@ use gateway_auth::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_catalog_runtime::host::ProviderBinding;
-use gateway_claude_runtime::host::{
-    AcceptedObservation, ClaudePoolHost, HealthObservation, WorkspaceResponse,
-};
+use gateway_catalog_provider::host::ProviderBinding;
+use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
+use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::{error::GatewayError, state::RevisionCheck};
 use gateway_observability::{
     ObservabilityRuntime,
@@ -23,7 +22,7 @@ use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};
 
 #[derive(Clone)]
-pub(super) struct Host {
+pub(crate) struct Host {
     pub platform: PlatformHost,
     pub store: RemoteAuthorityStore,
 }
@@ -68,7 +67,7 @@ pub(super) fn bootstrap(platform: &PlatformHost) -> Result<Bootstrap, GatewayErr
         workspace,
     })
 }
-pub(super) async fn bootstrap_for_source(
+pub(crate) async fn bootstrap_for_source(
     store: &RemoteAuthorityStore,
     platform: &PlatformHost,
 ) -> Result<Bootstrap, GatewayError> {
@@ -130,7 +129,7 @@ impl ClaudePoolHost for Host {
         left: &gateway_core::js_string::JsString16,
         right: &gateway_core::js_string::JsString16,
     ) -> Result<Ordering, GatewayError> {
-        crate::source_collator::shared().compare(left, right)
+        gateway_worker_platform::source_collator::shared().compare(left, right)
     }
     fn parse_retry_after_date(&self, raw: &str) -> Option<i64> {
         let value = worker::js_sys::Date::parse(raw);
@@ -171,10 +170,11 @@ impl ClaudePoolHost for Host {
         })
     }
     async fn accepted_observation(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
-        let event = gateway_observability::host_types::ClaudeAcceptedObservation::from_source(
-            &event.source_value(),
-        )
-        .map_err(|_| super::invalid("Accepted Claude history DTO is invalid."))?;
+        let event =
+            gateway_claude_usage_history_records::types::ClaudeAcceptedObservation::from_source(
+                &event.source_value()?,
+            )
+            .map_err(|_| super::invalid("Accepted Claude history DTO is invalid."))?;
         let runtime = ObservabilityRuntime::with_state(
             self.store.clone(),
             observability_host::Host,
@@ -332,6 +332,29 @@ pub(super) fn physical_request(
         body.body().as_bytes(),
     )
     .map_err(|_| ConstructionFailure)
+}
+
+impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
+    fn parse_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
+        gateway_claude_usage_runtime::platform::parse_date(text)
+    }
+    async fn accepted_usage(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
+        self.accepted_observation(event).await
+    }
+    async fn usage_get(
+        &self,
+        account: &AccountBinding,
+    ) -> Result<
+        gateway_claude_usage_runtime::fetch::Response,
+        gateway_claude_usage_runtime::fetch::GetFailure,
+    > {
+        gateway_claude_usage_runtime::platform::get(
+            account,
+            &self.platform.cancellation.source_signal(),
+            &|| self.now_ms(),
+        )
+        .await
+    }
 }
 
 #[cfg(test)]

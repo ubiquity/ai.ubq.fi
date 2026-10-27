@@ -8,9 +8,10 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER,
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_authority::native_live::wire::{
-    NativeLiveAccess, NativeLiveAuthorityRequest as Request,
-    NativeLiveAuthorityResponse as Response, NativeLiveFence, NativeLiveRetirement,
+use gateway_authority::{
+    native_live::wire::NativeLiveAccess, native_live::wire::NativeLiveAuthorityRequest as Request,
+    native_live::wire::NativeLiveAuthorityResponse as Response, native_live::wire::NativeLiveFence,
+    native_live::wire::NativeLiveRetirement,
 };
 use gateway_core::error::GatewayError;
 use std::{net::TcpStream, time::Instant};

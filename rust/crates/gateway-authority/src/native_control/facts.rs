@@ -18,15 +18,15 @@ use gateway_authority_paid_control_records::{
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::AdmittedAccount;
-use gateway_core::error::GatewayError;
 use gateway_core::identity::RequestContext;
 use gateway_core::local_work::journal_local_work;
 use gateway_core::model::ModelId;
 use gateway_core::provider::UpstreamProvider;
-use gateway_core::source_json::SourceJson;
-use gateway_core::source_serialization as source;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_schema::catalog_store::runtime_config_key;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde::Deserialize;
 use serde_json::Value;
 

@@ -1,10 +1,9 @@
 //! Ordinary source keys, source JSON projection and serialized lease records; none grants a campaign permit.
 use crate::model::{State, TargetBinding, failed};
-use gateway_core::source_serialization as source;
+use gateway_core::state::RecordKey;
 use gateway_core::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::RecordKey,
-};
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub fn key(parts: &[&str]) -> RecordKey {

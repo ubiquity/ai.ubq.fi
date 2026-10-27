@@ -8,7 +8,8 @@ use gateway_authority_contracts::{
     QUOTA_RETENTION_MS, TokenSource, invalid, retention, unavailable,
 };
 use gateway_authority_keys as keys;
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 
 #[derive(Clone, Copy)]
 pub(crate) enum ReleaseFailureOrigin {

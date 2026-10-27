@@ -229,7 +229,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let history = history.ok();
         let snapshot = snapshot.ok().flatten();
         let collator = self.host.source_string_collator();
-        let body = gateway_admin_data::projection::source::project_quota_source(
+        let body = gateway_quota_projection::source::project_quota_source(
             rollups.as_deref(),
             snapshot.as_ref(),
             history.as_deref(),

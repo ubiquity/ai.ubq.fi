@@ -46,7 +46,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         input: TerminalUsageRollup<'_>,
     ) -> Result<bool, GatewayError> {
-        let model = input.model.map(crate::records::trim).unwrap_or_default();
+        let model = input
+            .model
+            .map(gateway_observability_request_records::request::trim)
+            .unwrap_or_default();
         let provider = input.provider.map(store::trim).unwrap_or_default();
         if model.as_units().is_empty()
             || provider.is_empty()

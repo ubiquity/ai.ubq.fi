@@ -14,8 +14,9 @@ use gateway_authority_paid_records::{ReconciliationGate, pending_id, validate_at
 use gateway_authority_paid_route::PaidRoutingReceipt;
 use gateway_authority_paid_route::{PaidRouteService, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::{error::GatewayError, identity::MicrocreditLimit, lifecycle::PaidTerminalState};
+use gateway_core::{identity::MicrocreditLimit, lifecycle::PaidTerminalState};
 use gateway_core::{lifecycle::BillingState, lifecycle::DispatchState, state::AuthorityStore};
+use gateway_source::error::GatewayError;
 async fn read_gate<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
 ) -> Result<ReconciliationGate, GatewayError> {
@@ -28,7 +29,7 @@ pub(crate) async fn validate_cohort<S: AuthorityStore, I: TokenSource>(
 ) -> Result<bool, GatewayError> {
     for check in proof.revision_fences() {
         if check.key == keys::models() {
-            let _: Option<gateway_core::source_json::SourceJson> =
+            let _: Option<gateway_source::source_json::SourceJson> =
                 tx.read_source_control(&check.key).await?;
         } else {
             let _: Option<serde_json::Value> = tx.read(&check.key).await?;

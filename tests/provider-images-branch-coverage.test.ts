@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
-import { extractImagesFromResponses, handleImages, resolveImageBaseModel } from "../src/images.ts";
+import { extractImagesFromResponses, handleImages, resolveImageBaseModel, setImageBaseModelForTest } from "../src/images.ts";
 
 /* ------------------------------------------------------------- fixtures */
 
@@ -33,30 +33,22 @@ const failureBody = async (response: Response): Promise<{ error: { message: stri
 
 /* ---------------------------------------------------------------- tests */
 
-/** Runs one test with a configured image base model and restores the environment. */
+/** Runs one test with the existing image-model injection seam. */
 const withImageBaseModel = async (run: () => Promise<void>): Promise<void> => {
-  const previous = process.env.IMAGE_BASE_MODEL;
-  process.env.IMAGE_BASE_MODEL = "gpt-5.6-sol";
+  setImageBaseModelForTest("gpt-5.6-sol");
   try {
     await run();
   } finally {
-    if (previous === undefined) delete process.env.IMAGE_BASE_MODEL;
-    else process.env.IMAGE_BASE_MODEL = previous;
+    setImageBaseModelForTest(null);
   }
 };
 
-test("the base model resolves from the environment and never invents one", async () => {
+test("the base model uses the selected default and never invents one", async () => {
   await withImageBaseModel(async () => {
     assert.equal(await resolveImageBaseModel(), "gpt-5.6-sol", "a configured base model is used verbatim");
   });
-  const previous = process.env.IMAGE_BASE_MODEL;
-  delete process.env.IMAGE_BASE_MODEL;
-  try {
-    const fallback = await resolveImageBaseModel();
-    assert.ok(fallback === null || fallback.length > 0, "an unconfigured base model either falls back to a default or reports absence");
-  } finally {
-    if (previous !== undefined) process.env.IMAGE_BASE_MODEL = previous;
-  }
+  const fallback = await resolveImageBaseModel();
+  assert.ok(fallback === null || fallback.length > 0, "an unconfigured base model either falls back to a default or reports absence");
 });
 
 test("image requests reject unusable bodies before any dispatch", async () => {

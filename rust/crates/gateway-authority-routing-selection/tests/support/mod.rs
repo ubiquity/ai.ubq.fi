@@ -16,14 +16,11 @@ use gateway_authority_routing_selection::{
     types::{AdmittedAccount, CohortProof, RouteSelection},
 };
 use gateway_core::{
-    error::GatewayError,
-    identity::{ActiveSelection, PoolVersionstamp},
-    model::ModelId,
-    provider::CodexQuotaClass,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
-    },
+    identity::ActiveSelection, identity::PoolVersionstamp, model::ModelId,
+    provider::CodexQuotaClass, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{

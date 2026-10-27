@@ -1,8 +1,9 @@
 use gateway_authority_reset_evidence::{types::Facts, types::ResetCandidate};
 use gateway_authority_reset_records::full_pool::FullPoolShadowDecision;
 use gateway_authority_reset_records::full_pool::SourceResetCredit;
-use gateway_core::js_string::JsString16;
-use gateway_core::{error::GatewayError, identity::AccountBinding, identity::RequestContext};
+use gateway_core::{identity::AccountBinding, identity::RequestContext};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
 use serde::Serialize;
 pub enum FullPoolPreparation {
     Declined { reason: String },
@@ -89,14 +90,14 @@ impl AutomaticResetPermit {
         }
         Ok(())
     }
-    pub fn consume_body(&self) -> Result<gateway_core::source_json::SourceJson, GatewayError> {
+    pub fn consume_body(&self) -> Result<gateway_source::source_json::SourceJson, GatewayError> {
         #[derive(Serialize)]
         struct Body<'a> {
             redeem_request_id: &'a str,
             credit_id: &'a JsString16,
         }
         let invocation = self.invocation()?;
-        gateway_core::source_json::SourceJson::from_serializable(&Body {
+        gateway_source::source_json::SourceJson::from_serializable(&Body {
             redeem_request_id: &invocation.idempotency_key,
             credit_id: &self.credit.credit_id,
         })

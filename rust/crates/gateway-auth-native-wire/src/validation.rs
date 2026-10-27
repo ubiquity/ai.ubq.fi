@@ -1,5 +1,5 @@
 //! Exact source scalar/nullable/error domain shared by closed native wire DATA.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::Deserialize;
 
 pub(crate) fn unavailable() -> GatewayError {

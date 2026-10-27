@@ -1,9 +1,10 @@
 //! Source selection DTOs and the opaque cohort capability minted only by checked selection.
 use gateway_authority_routing_records::types::ProbeLease;
 use gateway_core::identity::AccountBinding;
+use gateway_core::model::ModelId;
 use gateway_core::provider::CodexQuotaClass;
 use gateway_core::state::RevisionCheck;
-use gateway_core::{js_string::JsString16, model::ModelId};
+use gateway_source::js_string::JsString16;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -115,7 +116,7 @@ pub struct LiveAccountSelection {
     pub active_generation: u64,
     pub quota_class: CodexQuotaClass,
     pub probe_required: bool,
-    pub model: Option<gateway_core::js_string::JsString16>,
+    pub model: Option<gateway_source::js_string::JsString16>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum LiveRouteSelection {

@@ -6,15 +6,18 @@ use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_row, paid_request, paid_setup};
-use gateway_core::{js_string::JsString16, model::ModelId, provider::CodexQuotaClass};
-use gateway_core::{provider::PaidProvider, source_control, source_json::SourceJson};
-use gateway_core::{source_serialization as source, value::ValueEncoding};
+use gateway_core::value::ValueEncoding;
+use gateway_core::{model::ModelId, provider::CodexQuotaClass};
+use gateway_core::{provider::PaidProvider, source_control};
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::admin_hash, authority::admitted};
 use gateway_routing_runtime_test_support::{authority::authority, authority::block};
 use gateway_routing_runtime_test_support::{authority::pool, authority::routing_hash};
 use gateway_routing_runtime_test_support::{authority::run, authority::seed_pool};
 use gateway_schema::selection::AccountModelsStore;
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization as source;
 use serde_json::json;
 
 #[test]
@@ -38,7 +41,7 @@ fn source_model_learning_preserves_raw_catalogs_and_unknown_metadata() {
     assert!(result["unsupported"].get(&routing_hash("a").0).is_none());
     assert_eq!(
         AccountModelsStore::parse(
-            &gateway_core::source_json::SourceJson::from_serializable(&result).unwrap()
+            &gateway_source::source_json::SourceJson::from_serializable(&result).unwrap()
         )
         .unwrap()
         .unsupported["a"][&gateway_core::model::ModelId::from_scalar("gpt-test")],

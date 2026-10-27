@@ -9,8 +9,9 @@ use gateway_authority_reset_records::reset_invocation;
 use gateway_authority_reset_records::{ResetInvocation, ResetRecord, ResetState, check_record};
 use gateway_authority_routing_records::types::ProbeLease;
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
-use gateway_core::{error::GatewayError, identity::RequestContext, state::AuthorityStore};
 use gateway_core::{identity::ActiveSelection, identity::ActiveTransitionReason};
+use gateway_core::{identity::RequestContext, state::AuthorityStore};
+use gateway_source::error::GatewayError;
 mod backend;
 use gateway_authority_keys as keys;
 struct RoutingView {

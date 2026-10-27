@@ -1,0 +1,18 @@
+[package]
+name = "gateway-auth-passport-sessions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-source = { path = "../gateway-source" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-core = { path = "../gateway-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

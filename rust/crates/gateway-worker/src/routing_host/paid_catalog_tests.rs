@@ -10,22 +10,26 @@ use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProj
 use gateway_authority_paid_evidence::paid_projection_source_keys;
 use gateway_authority_paid_records::PaidRequest;
 use gateway_authority_paid_route::PaidRouteOperations;
-use gateway_catalog_runtime::{host::CatalogFetch, host::ProviderBinding};
-use gateway_catalog_runtime::{host::CatalogFetchResponse, host::CatalogHost};
-use gateway_catalog_runtime::{host::CatalogProvider, host::CredentialPublication};
-use gateway_core::{error::GatewayError, source_json::SourceJson, state::RecordMutation};
-use gateway_core::{identity::ApiKeyId, identity::PaidAttemptId, state::StoredRecord};
-use gateway_core::{identity::RequestId, provider::PaidProvider, provider::UpstreamProvider};
-use gateway_core::{query::QueryPage, query::QueryRequest, query::QueryStore};
-use gateway_core::{source_control::decode_source_control_record, state::AtomicTransition};
-use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RecordKey};
-use gateway_publication_policy::control_publication::ConfiguredPaidInputs;
-use gateway_publication_policy::control_publication::PreparedConfigurationPublication;
-use gateway_publication_policy::control_publication::bootstrap_fixture_owner;
-use gateway_publication_policy::control_publication::fixture_owner_statement;
-use gateway_publication_policy::control_publication::runtime_config_key;
-use gateway_publication_policy::protocol::PublicationRequest;
-use gateway_publication_policy::{protocol::PublicationCarrier, protocol::PublicationResponse};
+use gateway_catalog_provider::host::{
+    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
+    ProviderBinding,
+};
+use gateway_core::error::GatewayError;
+use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
+use gateway_core::provider::{PaidProvider, UpstreamProvider};
+use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
+use gateway_core::source_control::decode_source_control_record;
+use gateway_core::source_json::SourceJson;
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+};
+use gateway_publication_policy::control_publication::{
+    ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
+    fixture_owner_statement, runtime_config_key,
+};
+use gateway_publication_policy::protocol::{
+    PublicationCarrier, PublicationRequest, PublicationResponse,
+};
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_routing_runtime_test_support::source_catalog;
 use serde_json::json;
@@ -202,10 +206,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         NOW
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let n = self.sequence.get() + 1;
         self.sequence.set(n);
-        format!("real-publisher-{n}")
+        Ok(format!("real-publisher-{n}"))
     }
     async fn wait(&self, _: u32) -> Result<(), GatewayError> {
         panic!("unexpected catalog wait")

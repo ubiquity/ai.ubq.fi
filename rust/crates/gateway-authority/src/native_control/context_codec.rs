@@ -170,7 +170,7 @@ impl<'de> Deserialize<'de> for NativeRenewalContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gateway_core::{
+    use gateway_source::{
         js_string::JsString16, source_json::SourceJson, source_serialization as source,
     };
     #[test]

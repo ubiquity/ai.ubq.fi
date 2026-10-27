@@ -6,9 +6,12 @@ use crate::{
         expiry, identity_fields, limit, new_window, part, physical_labels, positive, source_truth,
         summary, summary_document, target, validate_window, window_document,
     },
-    parse, store,
+    store,
 };
-use gateway_admin::{operations::AdminInput, routes::AdminOperation, source_input as body};
+use gateway_admin_contracts::fields;
+use gateway_admin_contracts::{
+    operations::AdminInput, routes::AdminOperation, source_input as body,
+};
 use gateway_auth::store::{check, commit, put};
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
 use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, KernelTerminal};
@@ -41,10 +44,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             .transpose()?
             .unwrap_or_default();
         if let Some(value) = store::read(self.store, &default_limit_key(), now).await? {
-            defaults.usage_limit_requests = parse::limit(&value).unwrap_or(-1)
+            defaults.usage_limit_requests = fields::limit(&value).unwrap_or(-1)
         }
         if let Some(value) = store::read(self.store, &default_window_key(), now).await? {
-            defaults.window_ms = parse::positive(&value).unwrap_or(WEEK)
+            defaults.window_ms = fields::positive(&value).unwrap_or(WEEK)
         }
         if defaults.usage_limit_requests < -1 || defaults.window_ms <= 0 {
             return Err(store::corrupt("Kernel defaults are malformed"));
@@ -552,131 +555,32 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         Err(conflict("Concurrent modification; retry"))
     }
     async fn kernel_get(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
-        let org = parse::first(&input.query, "scope").is_some_and(|s| {
+        let org = fields::first(&input.query, "scope").is_some_and(|s| {
             s.trim_matches(gateway_schema::util::js_whitespace)
                 .eq_ignore_ascii_case("org")
         });
-        let include = parse::truth(parse::first(&input.query, "include_usage"));
-        let inventory = parse::truth(parse::first(&input.query, "inventory"));
-        let list = parse::truth(parse::first(&input.query, "list"));
+        let include = fields::truth(fields::first(&input.query, "include_usage"));
+        let inventory = fields::truth(fields::first(&input.query, "inventory"));
+        let list = fields::truth(fields::first(&input.query, "list"));
         if inventory {
-            let family = if org { "org_usage" } else { "usage" };
-            let prefix = store::key(json!(["ubq_ai", "kernel_auth", family]));
-            let mut records = Vec::new();
-            for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
-                let raw = entry.record.json_value()?;
-                let owner = raw
-                    .get("owner")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| store::corrupt("Kernel inventory owner is malformed"))?;
-                let repo = if org {
-                    None
-                } else {
-                    Some(
-                        raw.get("repo")
-                            .and_then(Value::as_str)
-                            .ok_or_else(|| store::corrupt("Kernel inventory repo is malformed"))?,
-                    )
-                };
-                records.push(self.usage_record(owner, repo, input.now_ms, true).await?);
-            }
-            let records =
-                gateway_schema::aliases::sort_source(records, &|a: &Value, b: &Value| {
-                    for field in ["owner", "repo"] {
-                        let order = self.capabilities.compare_admin_labels(
-                            &JsString16::from_utf8(a[field].as_str().unwrap_or("")),
-                            &JsString16::from_utf8(b[field].as_str().unwrap_or("")),
-                        )?;
-                        if order != std::cmp::Ordering::Equal {
-                            return Ok(order);
-                        }
-                    }
-                    Ok(std::cmp::Ordering::Equal)
-                })?;
-            return Ok(AuthResponse::json(
-                200,
-                json!({"ok":true,"scope":if org{"org"}else{"repo"},"usage":records}),
-            ));
+            return self.kernel_inventory(org, input).await;
         }
         if list {
-            let prefix = store::key(json!([
-                "uos_ai",
-                "kernel_quota",
-                "v2",
-                if org { "org_policy" } else { "repo_policy" }
-            ]));
-            let mut records = Vec::new();
-            for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
-                let Some((owner, repo)) = physical_labels(&entry.key, org)? else {
-                    continue;
-                };
-                let raw = decode_source_control_record(&entry.record)?;
-                let Some(normalized) =
-                    SourcePolicy::normalize_source_document(&raw, &owner, repo.as_ref())
-                else {
-                    continue;
-                };
-                let policy: SourcePolicy = normalized.deserialize()?;
-                let mut row = self.summary_for_policy(&policy, "kv", input.now_ms).await?;
-                let fields = source::entries(&row)
-                    .expect("constructed source summary")
-                    .into_iter()
-                    .filter(|(k, _)| *k != JsString16::from_utf8("source"))
-                    .collect();
-                row = source::object_keys(fields)?;
-                if include {
-                    let scalar_owner = owner.try_utf8()?;
-                    let scalar_repo = repo.as_ref().map(JsString16::try_utf8).transpose()?;
-                    let usage = self
-                        .usage_record(&scalar_owner, scalar_repo.as_deref(), input.now_ms, true)
-                        .await?;
-                    body::set(&mut row, "usage", body::json(&usage));
-                }
-                records.push((owner, repo, row));
-            }
-            let records = gateway_schema::aliases::sort_source(records, &|a: &(
-                JsString16,
-                Option<JsString16>,
-                SourceJson,
-            ),
-                                                                          b: &(
-                JsString16,
-                Option<JsString16>,
-                SourceJson,
-            )| {
-                let owner = self.capabilities.compare_admin_labels(&a.0, &b.0)?;
-                if owner != std::cmp::Ordering::Equal {
-                    return Ok(owner);
-                }
-                match (&a.1, &b.1) {
-                    (Some(a), Some(b)) => self.capabilities.compare_admin_labels(a, b),
-                    _ => Ok(std::cmp::Ordering::Equal),
-                }
-            })?;
-            let rows = source::json_array(
-                &records
-                    .into_iter()
-                    .map(|(_, _, row)| row)
-                    .collect::<Vec<_>>(),
-            )?;
-            return Ok(AuthResponse::source_json(
-                200,
-                canonical(body::object(vec![
-                    ("ok", body::json(&true)),
-                    ("scope", body::json(if org { "org" } else { "repo" })),
-                    ("limits", rows),
-                ])),
-            ));
+            return self.kernel_policies(org, include, input).await;
         }
         // Query strings already have the source URL/USVString boundary; raw JSON
         // selectors alone may carry lone units. Never repair stored logical labels.
-        let owner = part(parse::first(&input.query, "owner").map(body::json).as_ref())
-            .ok_or_else(|| invalid("owner query parameter is required"))?;
+        let owner = part(
+            fields::first(&input.query, "owner")
+                .map(body::json)
+                .as_ref(),
+        )
+        .ok_or_else(|| invalid("owner query parameter is required"))?;
         let repo = if org {
             None
         } else {
             Some(
-                part(parse::first(&input.query, "repo").map(body::json).as_ref())
+                part(fields::first(&input.query, "repo").map(body::json).as_ref())
                     .ok_or_else(|| invalid("repo query parameter is required"))?,
             )
         };
@@ -709,6 +613,123 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 ),
                 ("limit", limit),
                 ("usage", body::json(&usage)),
+            ])),
+        ))
+    }
+    async fn kernel_inventory(
+        &self,
+        org: bool,
+        input: &AdminInput,
+    ) -> Result<AuthResponse, GatewayError> {
+        let family = if org { "org_usage" } else { "usage" };
+        let prefix = store::key(json!(["ubq_ai", "kernel_auth", family]));
+        let mut records = Vec::new();
+        for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
+            let raw = entry.record.json_value()?;
+            let owner = raw
+                .get("owner")
+                .and_then(Value::as_str)
+                .ok_or_else(|| store::corrupt("Kernel inventory owner is malformed"))?;
+            let repo = if org {
+                None
+            } else {
+                Some(
+                    raw.get("repo")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| store::corrupt("Kernel inventory repo is malformed"))?,
+                )
+            };
+            records.push(self.usage_record(owner, repo, input.now_ms, true).await?);
+        }
+        let records = gateway_schema::aliases::sort_source(records, &|a: &Value, b: &Value| {
+            for field in ["owner", "repo"] {
+                let order = self.capabilities.compare_admin_labels(
+                    &JsString16::from_utf8(a[field].as_str().unwrap_or("")),
+                    &JsString16::from_utf8(b[field].as_str().unwrap_or("")),
+                )?;
+                if order != std::cmp::Ordering::Equal {
+                    return Ok(order);
+                }
+            }
+            Ok(std::cmp::Ordering::Equal)
+        })?;
+        Ok(AuthResponse::json(
+            200,
+            json!({"ok":true,"scope":if org{"org"}else{"repo"},"usage":records}),
+        ))
+    }
+    async fn kernel_policies(
+        &self,
+        org: bool,
+        include: bool,
+        input: &AdminInput,
+    ) -> Result<AuthResponse, GatewayError> {
+        let prefix = store::key(json!([
+            "uos_ai",
+            "kernel_quota",
+            "v2",
+            if org { "org_policy" } else { "repo_policy" }
+        ]));
+        let mut records = Vec::new();
+        for entry in store::scan(self.store, prefix, false, input.now_ms).await? {
+            let Some((owner, repo)) = physical_labels(&entry.key, org)? else {
+                continue;
+            };
+            let raw = decode_source_control_record(&entry.record)?;
+            let Some(normalized) =
+                SourcePolicy::normalize_source_document(&raw, &owner, repo.as_ref())
+            else {
+                continue;
+            };
+            let policy: SourcePolicy = normalized.deserialize()?;
+            let mut row = self.summary_for_policy(&policy, "kv", input.now_ms).await?;
+            let fields = source::entries(&row)
+                .ok_or_else(|| store::corrupt("Kernel policy summary is not an object"))?
+                .into_iter()
+                .filter(|(k, _)| *k != JsString16::from_utf8("source"))
+                .collect();
+            row = source::object_keys(fields)?;
+            if include {
+                let scalar_owner = owner.try_utf8()?;
+                let scalar_repo = repo.as_ref().map(JsString16::try_utf8).transpose()?;
+                let usage = self
+                    .usage_record(&scalar_owner, scalar_repo.as_deref(), input.now_ms, true)
+                    .await?;
+                body::set(&mut row, "usage", body::json(&usage));
+            }
+            records.push((owner, repo, row));
+        }
+        let records = gateway_schema::aliases::sort_source(records, &|a: &(
+            JsString16,
+            Option<JsString16>,
+            SourceJson,
+        ),
+                                                                      b: &(
+            JsString16,
+            Option<JsString16>,
+            SourceJson,
+        )| {
+            let owner = self.capabilities.compare_admin_labels(&a.0, &b.0)?;
+            if owner != std::cmp::Ordering::Equal {
+                return Ok(owner);
+            }
+            match (&a.1, &b.1) {
+                (Some(a), Some(b)) => self.capabilities.compare_admin_labels(a, b),
+                _ => Ok(std::cmp::Ordering::Equal),
+            }
+        })?;
+        let rows = source::json_array(
+            &records
+                .into_iter()
+                .map(|(_, _, row)| row)
+                .collect::<Vec<_>>(),
+        )?;
+        Ok(AuthResponse::source_json(
+            200,
+            canonical(body::object(vec![
+                ("ok", body::json(&true)),
+                ("scope", body::json(if org { "org" } else { "repo" })),
+                ("limits", rows),
             ])),
         ))
     }
@@ -762,8 +783,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             );
         }
         for field in ["last_model", "last_reasoning", "last_route"] {
-            row[field] =
-                json!(parse::text(raw.get(field)).map(|s| s.chars().take(120).collect::<String>()));
+            row[field] = json!(
+                fields::text(raw.get(field)).map(|s| s.chars().take(120).collect::<String>())
+            );
         }
         if daily {
             let key = if let Some(repo) = repo {
@@ -773,24 +795,25 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             };
             let raw = store::read(self.store, &key, now).await?;
             let mut counts = BTreeMap::new();
-            if let Some(days) = raw
+            let days = raw
                 .as_ref()
                 .and_then(|v| v.get("days"))
                 .and_then(Value::as_array)
-            {
-                for day in days {
-                    if let Some(label) = day.get("day").and_then(Value::as_str) {
-                        counts.insert(
-                            label
-                                .trim_matches(gateway_schema::util::js_whitespace)
-                                .to_owned(),
-                            day.get("request_count")
-                                .and_then(Value::as_f64)
-                                .map(|n| (n.trunc() as i64).max(0))
-                                .unwrap_or(0),
-                        );
-                    }
-                }
+                .into_iter()
+                .flatten();
+            for day in days {
+                let Some(label) = day.get("day").and_then(Value::as_str) else {
+                    continue;
+                };
+                counts.insert(
+                    label
+                        .trim_matches(gateway_schema::util::js_whitespace)
+                        .to_owned(),
+                    day.get("request_count")
+                        .and_then(Value::as_f64)
+                        .map(|n| (n.trunc() as i64).max(0))
+                        .unwrap_or(0),
+                );
             }
             let today = now.div_euclid(86400000);
             let series: Vec<i64> = (0..30)

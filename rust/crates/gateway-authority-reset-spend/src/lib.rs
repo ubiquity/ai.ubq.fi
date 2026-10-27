@@ -8,7 +8,8 @@ use gateway_authority_reset_authorization::{ResetAuthorization, live_clock};
 use gateway_authority_reset_evidence::types::ResetCandidate;
 use gateway_authority_reset_records::{AccountDayBudget, ResetConfig, ResetInvocation};
 use gateway_authority_reset_records::{ResetRecord, ResetState, check_record, utc_day};
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 
 async fn authorization_fences<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,

@@ -1,15 +1,12 @@
 //! Fixed paid control publications, derived in the same store as admission/accounting.
 //! These records are provenance and a coarse index; only authority issues a request receipt.
-use crate::{
-    CatalogRuntime,
-    host::{CatalogHost, CatalogProvider, CredentialPublication},
-    state,
-};
+use crate::{CatalogRuntime, state};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
     PaidProviderObservation, PaidRoutingPolicy, PaidRoutingProjection, PaidSourceCheck,
 };
+use gateway_catalog_provider::host::{CatalogHost, CatalogProvider, CredentialPublication};
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,
@@ -364,7 +361,7 @@ impl Controls {
     }
 }
 fn revision<H: CatalogHost>(host: &H, checks: &Checks) -> Result<String, GatewayError> {
-    let revision = host.unique_id();
+    let revision = host.unique_id()?;
     text(&revision)?;
     if checks.0.values().flatten().any(|old| old == &revision) {
         return Err(missing("Paid publisher reused a source revision"));

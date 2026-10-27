@@ -25,10 +25,11 @@ use gateway_authority_paid_control_records::{
 };
 use gateway_core::provider::PaidProvider;
 use gateway_core::source_control::encode_source_control_record;
-use gateway_core::source_json::SourceJson;
+use gateway_core::state::AuthorityStore;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, StoredRecord};
-use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_schema::catalog_store;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 pub struct PreparedNativeImportPublication<'c, 'a, S, I, C> {
     control: &'c NativeRenewalAuthority<'a, S, I, C>,
     peer: &'c AuthenticatedNativeOwner,

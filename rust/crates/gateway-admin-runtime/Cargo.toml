@@ -9,11 +9,14 @@ publish.workspace = true
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-claude-usage-protocol.workspace = true
+gateway-admin-contracts.workspace = true
+gateway-admin-keys.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-core = { path = "../gateway-core" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-admin = { path = "../gateway-admin" }
-gateway-admin-data = { path = "../gateway-admin-data" }
+gateway-profile-values.workspace = true
 gateway-authority = { path = "../gateway-authority" }
 gateway-schema = { path = "../gateway-schema" }
 serde.workspace = true

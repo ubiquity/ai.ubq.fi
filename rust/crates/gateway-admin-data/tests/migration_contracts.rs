@@ -1,14 +1,18 @@
-use gateway_admin_data::{
-    migration::{
-        self, ImportOptions, ObservedRow, Profile, audit, counter, kernel,
-        retention::{self, DAY, Expiry},
-    },
-    profile,
-};
+use gateway_admin_data::policy as migration;
+use gateway_admin_data::policy::ImportOptions;
+use gateway_admin_data::policy::Profile;
+use gateway_admin_data::policy::retention;
+use gateway_admin_data::policy::retention::Expiry;
 use gateway_core::{
     state::{AtomicTransition, RecordMutation, StoredRecord},
     value::{PortableValue, ValueEncoding},
 };
+use gateway_migration_ledger::counter;
+use gateway_migration_ledger::kernel;
+use gateway_migration_ledger::rows::DAY;
+use gateway_migration_ledger::rows::ObservedRow;
+use gateway_profile_source::line as profile;
+use gateway_source_audit::driver as audit;
 use serde_json::{Value, json};
 
 fn row(parts: Value, value: Value) -> ObservedRow {
@@ -414,7 +418,7 @@ fn kernel_audit_rejects_reset_mismatch_and_bad_terminal_intervals()
         ]),
         r,
     );
-    let findings = audit::usage::inspect_kernel(&[observed, reservation_row])?;
+    let findings = gateway_ledger_audit::usage::inspect_kernel(&[observed, reservation_row])?;
     assert!(findings.errors.iter().any(|error| {
         error
             .try_utf8()

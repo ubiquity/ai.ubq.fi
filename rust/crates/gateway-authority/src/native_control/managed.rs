@@ -22,10 +22,10 @@ use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
-    error::GatewayError,
-    identity::PoolVersionstamp,
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
+    identity::PoolVersionstamp, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use serde::Deserialize;
 use serde_json::Value;
 

@@ -10,16 +10,18 @@ use gateway_authority_routing_records::{slot::class_name, types::ProbeCircuit, t
 use gateway_authority_routing_records::{types::QuotaBlock, types::RoutingState};
 use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
 use gateway_authority_routing_selection::{types::LiveAccountSelection, types::ScopedOverageProbe};
-use gateway_core::{error::GatewayError, identity::AccountBinding, identity::ActiveSelection};
-use gateway_core::{identity::RoutingAccountHash, js_string::JsString16};
+use gateway_core::identity::RoutingAccountHash;
+use gateway_core::{identity::AccountBinding, identity::ActiveSelection};
 use gateway_core::{provider::CodexQuotaClass, state::AuthorityStore};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;
 pub(crate) struct RoutingView {
     pub pool: SubscriptionPool,
     pub state: RoutingState,
     pub active: Option<ActiveSelection>,
     models: ModelAvailability,
-    models_source: gateway_core::source_json::SourceJson,
+    models_source: gateway_source::source_json::SourceJson,
     source_ids: BTreeMap<String, String>,
     pub(crate) capacity: CapacityStore,
     pub(crate) overage: BTreeMap<String, bool>,
@@ -91,7 +93,7 @@ pub(crate) async fn validate_cohort<S: AuthorityStore, I: TokenSource>(
 ) -> Result<bool, GatewayError> {
     for check in proof.revision_fences() {
         if check.key == keys::models() {
-            let _: Option<gateway_core::source_json::SourceJson> =
+            let _: Option<gateway_source::source_json::SourceJson> =
                 tx.read_source_control(&check.key).await?;
         } else {
             let _: Option<serde_json::Value> = tx.read(&check.key).await?;

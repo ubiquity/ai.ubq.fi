@@ -1,9 +1,10 @@
 //! Private finite-operation staging; actual metadata, expiry, strong reads and final CAS remain co-owned.
 use gateway_authority_contracts::{TokenSource, invalid, text, validate_time};
+use gateway_core::source_control::decode_source_control_record;
 use gateway_core::state::StoredRecord;
-use gateway_core::{error::GatewayError, source_control::decode_source_control_record};
 use gateway_core::{state::AtomicTransition, state::AuthorityStore, state::CommitOutcome};
 use gateway_core::{state::RecordKey, state::RecordMutation, state::RevisionCheck};
+use gateway_source::error::GatewayError;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet};
 /// Only the named local release adapter observes this private read origin.

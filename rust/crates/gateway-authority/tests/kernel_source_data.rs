@@ -2,12 +2,12 @@ use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelWindow};
 use gateway_authority_keys as keys;
 use gateway_core::{
-    js_string::JsString16,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
 };
 use gateway_routing_runtime_test_support::authority as support;
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

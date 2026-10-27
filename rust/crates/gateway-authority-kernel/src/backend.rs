@@ -1,13 +1,11 @@
 //! Private kernel record staging; never a public transaction or callback-selected write surface.
 use gateway_authority_contracts::{TokenSource, invalid, text, validate_time};
 use gateway_core::{
-    error::GatewayError,
-    source_control::decode_source_control_record,
-    state::{
-        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, RevisionCheck,
-        StoredRecord,
-    },
+    source_control::decode_source_control_record, state::AtomicTransition, state::AuthorityStore,
+    state::CommitOutcome, state::RecordKey, state::RecordMutation, state::RevisionCheck,
+    state::StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::{BTreeMap, BTreeSet};
 

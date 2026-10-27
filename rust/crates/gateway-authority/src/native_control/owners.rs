@@ -13,10 +13,10 @@ use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
-use gateway_core::error::GatewayError;
 use gateway_core::identity::AccountBinding;
 use gateway_core::state::{AuthorityStore, RecordKey};
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 /// One or two explicitly configured independent native owners. No environment/default lookup.

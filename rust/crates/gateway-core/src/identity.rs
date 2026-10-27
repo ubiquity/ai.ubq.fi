@@ -10,7 +10,48 @@ macro_rules! opaque_id {
 
 opaque_id!(RequestId);
 opaque_id!(PaidAttemptId);
-opaque_id!(PrincipalId);
+/// Logical principal identity. Other opaque IDs keep their historical domains.
+/// Legacy serde remains scalar; source DATA must use the explicit source codec.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PrincipalId(gateway_source::js_string::JsString16);
+impl PrincipalId {
+    /// The old tuple constructor was infallible; caller-owned guards still apply.
+    pub fn from_scalar(value: String) -> Self {
+        Self(gateway_source::js_string::JsString16::from_utf8(&value))
+    }
+    pub fn from_source(value: gateway_source::js_string::JsString16) -> Self {
+        Self(value)
+    }
+    pub fn as_source(&self) -> &gateway_source::js_string::JsString16 {
+        &self.0
+    }
+    /// Only a boundary whose scalar domain was established may use this result.
+    pub fn try_scalar(&self) -> Result<String, gateway_source::error::GatewayError> {
+        self.0.try_utf8()
+    }
+    pub fn to_source_json(
+        &self,
+    ) -> Result<gateway_source::source_json::SourceJson, gateway_source::error::GatewayError> {
+        self.0.to_source_json()
+    }
+    pub fn from_source_json(
+        value: &gateway_source::source_json::SourceJson,
+    ) -> Result<Self, gateway_source::error::GatewayError> {
+        value.deserialize().map(Self::from_source)
+    }
+}
+impl Serialize for PrincipalId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.try_scalar()
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for PrincipalId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from_scalar)
+    }
+}
 opaque_id!(ApiKeyId);
 opaque_id!(PoolVersionstamp);
 

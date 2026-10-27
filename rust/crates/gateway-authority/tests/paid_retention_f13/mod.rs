@@ -29,20 +29,20 @@ pub fn context(input: &PaidRequest) -> PaidRequestContext {
         ("model", input.model.to_source_json().unwrap()),
         (
             "stream",
-            gateway_core::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
+            gateway_source::source_json::SourceJson::from_serializable(&input.stream).unwrap(),
         ),
     ];
     if let Some(effort) = &input.reasoning {
         fields.push((
             "reasoning",
-            gateway_core::source_serialization::object(vec![(
+            gateway_source::source_serialization::object(vec![(
                 "effort",
                 effort.to_source_json().unwrap(),
             )])
             .unwrap(),
         ));
     }
-    let body = gateway_core::source_serialization::object(fields).unwrap();
+    let body = gateway_source::source_serialization::object(fields).unwrap();
     PaidRequestContext {
         original_model: input.model.clone(),
         body,
@@ -111,7 +111,7 @@ pub fn seed_controls(store: &MemoryStore) {
             source_checks: vec![],
         },
     );
-    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_core::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
+    let models:Vec<_>=["paid-model","gpt-test","gpt-5.6-sol","deepseek-v4.1-flash"].into_iter().map(|id|gateway_source::source_json::SourceJson::from_serializable(&json!({"id":id,"supported_endpoint_types":["openai-response","openai"],"supports_tools":true,"input_price_per_token":0.001,"output_price_per_token":0.002})).unwrap()).collect();
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         store.seed(
             keys::paid_control_observation(provider),
@@ -756,7 +756,7 @@ fn f13_local_phase_other_valid_local_phases_never_authorize_provider_exposure() 
             .value;
         assert_eq!(
             journal_local_work(
-                &gateway_core::source_json::SourceJson::from_serializable(&row).unwrap()
+                &gateway_source::source_json::SourceJson::from_serializable(&row).unwrap()
             )
             .unwrap()
             .unwrap()

@@ -1,7 +1,7 @@
 use crate::{
     Row, Transform, capture::PrivateCapture, digest, error::MigrationError, invalid, json, key,
 };
-use gateway_admin_data::profile::SourceDateHost;
+use gateway_admin_data::inventory::SliceInventory;
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::source_json::SourceJson;
@@ -9,6 +9,7 @@ use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;
 use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
 use gateway_core::tuple_key::TupleKey;
+use gateway_profile_values::date::SourceDateHost;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -89,8 +90,8 @@ pub(crate) fn mapping_checksum(
 fn validate_source_inventories(
     rows: Vec<Row>,
     now: i64,
-) -> Result<(Vec<Row>, gateway_admin_data::migration::audit::Audit), GatewayError> {
-    use gateway_admin_data::migration::{ObservedRow, audit};
+) -> Result<(Vec<Row>, gateway_admin_data::report::Audit), GatewayError> {
+    use {gateway_migration_ledger::rows::ObservedRow, gateway_source_audit::driver as audit};
     // The SAME complete live cohort is owned by the existing global audit.
     // Move payloads instead of deep-cloning every expanded typed record.
     let mut observed = Vec::new();
@@ -111,7 +112,7 @@ fn validate_source_inventories(
             expired.push(row);
         }
     }
-    let findings = audit::inspect_inventory(&audit::SliceInventory(&observed), now)?;
+    let findings = audit::inspect_inventory(&SliceInventory(&observed), now)?;
     let mut live = observed
         .into_iter()
         .zip(mappings)
@@ -130,9 +131,9 @@ fn validate_source_inventories(
             } else {
                 expired.next()
             }
-            .expect("exact retained audit order")
+            .ok_or_else(|| invalid("Source audit order is incomplete."))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     Ok((rows, findings))
 }
 

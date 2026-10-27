@@ -2,7 +2,8 @@ use crate::backend::Transaction;
 use gateway_authority_contracts::{TokenSource, invalid};
 use gateway_authority_reset_evidence::types::Facts;
 use gateway_authority_routing_selection::types::CohortProof;
-use gateway_core::{error::GatewayError, identity::RequestContext, state::AuthorityStore};
+use gateway_core::{identity::RequestContext, state::AuthorityStore};
+use gateway_source::error::GatewayError;
 pub(super) async fn capture<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     proof: &CohortProof,

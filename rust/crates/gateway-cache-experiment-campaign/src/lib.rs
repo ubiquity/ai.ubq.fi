@@ -11,7 +11,8 @@ use gateway_cache_experiment_records::{
     },
     source::{CampaignLease, CycleLease, active, campaign_owned, owns, record_key},
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 async fn records<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,

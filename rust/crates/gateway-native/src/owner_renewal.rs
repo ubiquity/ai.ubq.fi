@@ -18,12 +18,12 @@ use gateway_auth_native_wire::control::{
     NativeControlDisposition as Disposition, NativeControlEnvelope, NativeControlRequest,
     NativeControlResponse, unverified,
 };
-use gateway_authority::native_control::{
-    NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence, NativeRenewalMode,
-    wire::{
-        NativeRenewalAuthorityRequest as Request, NativeRenewalAuthorityResponse as Response,
-        OriginalControlHeaders,
-    },
+use gateway_authority::{
+    native_control::NATIVE_RENEWAL_FENCE_VERSION, native_control::NativeRenewalFence,
+    native_control::NativeRenewalMode,
+    native_control::wire::NativeRenewalAuthorityRequest as Request,
+    native_control::wire::NativeRenewalAuthorityResponse as Response,
+    native_control::wire::OriginalControlHeaders,
 };
 use gateway_core::error::GatewayError;
 use std::cell::RefCell;

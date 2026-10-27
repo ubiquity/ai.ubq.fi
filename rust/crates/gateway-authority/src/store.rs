@@ -1,11 +1,13 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_core::source_control::decode_source_control_record;
-use gateway_core::{error::GatewayError, state::StoredRecord};
+use gateway_core::state::StoredRecord;
 use gateway_core::{source_control::encode_source_control_record, state::RecordKey};
-use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::RecordMutation};
+use gateway_core::{state::AtomicTransition, state::RecordMutation};
 use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RevisionCheck};
 use gateway_schema::aliases::SourceStringCollator;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
 
@@ -21,8 +23,8 @@ static MISSING_SOURCE_STRING_COLLATOR: MissingSourceStringCollator = MissingSour
 impl SourceStringCollator for MissingSourceStringCollator {
     fn compare(
         &self,
-        _left: &gateway_core::js_string::JsString16,
-        _right: &gateway_core::js_string::JsString16,
+        _left: &gateway_source::js_string::JsString16,
+        _right: &gateway_source::js_string::JsString16,
     ) -> Result<std::cmp::Ordering, GatewayError> {
         Err(GatewayError::unavailable(
             "Source string comparison requires the trusted runtime capability.",

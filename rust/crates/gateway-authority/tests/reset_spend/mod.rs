@@ -14,13 +14,14 @@ use gateway_authority_routing_selection::types::CohortProof;
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_authority_test_support::{TestResult, fixture_json, fixture_row};
+use gateway_core::identity::PrincipalId;
 use gateway_core::state::RecordKey;
-use gateway_core::{error::GatewayError, identity::PrincipalId, js_string::JsString16};
 use gateway_core::{identity::RequestContext, identity::RequestId, provider::CodexQuotaClass};
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::NOW};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::admitted};
 use gateway_routing_runtime_test_support::{authority::authority, authority::block};
 use gateway_routing_runtime_test_support::{authority::pool, authority::run, authority::seed_pool};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde_json::json;
 use std::cmp::Ordering;
 

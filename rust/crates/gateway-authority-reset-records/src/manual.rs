@@ -1,6 +1,7 @@
 //! Ordinary manual intent and response data only; actor/currentness and promotion remain checked operations.
-use gateway_core::{error::GatewayError, identity::MAX_SAFE_INTEGER, state::RecordKey};
+use gateway_core::{identity::MAX_SAFE_INTEGER, state::RecordKey};
 use gateway_core::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub fn intent_key(hash: &str) -> RecordKey {

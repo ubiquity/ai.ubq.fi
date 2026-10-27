@@ -10,7 +10,8 @@ use gateway_auth::native_import::{
     VerifiedNativeImportBody,
 };
 use gateway_authority_contracts::TokenSource;
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 mod action;
 use action::ImportActionRow;

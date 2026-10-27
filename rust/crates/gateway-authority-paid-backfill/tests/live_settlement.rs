@@ -110,7 +110,7 @@ fn shared_surplus_usage_adapter_matches_all_actual_source_pricing_cases() -> Tes
         let pricing = case
             .get("pricing")
             .filter(|value| !value.is_null())
-            .map(gateway_core::source_json::SourceJson::from_serializable)
+            .map(gateway_source::source_json::SourceJson::from_serializable)
             .transpose()?;
         let actual = surplus_usage_from_source(&row, usage.as_ref(), pricing.as_ref());
         let expected = &case["expected"];
