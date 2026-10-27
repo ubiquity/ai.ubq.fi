@@ -1,12 +1,12 @@
 //! Source banked-reset-pool.ts. Shadow audits are data; live selection is direct and fail-closed.
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_reset_records::{ResetConfig, ResetMode};
 mod audit;
 mod facts;
 mod selection;
 pub mod types;
 
 use crate::{
-    reset_types::{ResetConfig, ResetMode},
     routing_types::CohortProof,
     store::{Authority, Transaction},
 };

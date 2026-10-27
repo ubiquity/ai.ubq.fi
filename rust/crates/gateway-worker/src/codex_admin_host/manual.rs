@@ -5,9 +5,10 @@ use crate::{host::PlatformTokens, storage::now_ms, transport::outbound::PinnedDe
 use gateway_auth::provider_credentials::CodexSourceAccount;
 use gateway_auth::types::AuthResponse;
 use gateway_auth::{provider_credentials::read_codex_source_pool, types::AuthConfig};
+use gateway_authority::native_control::actor::NativeRenewalActor;
+use gateway_authority::store::Authority;
 use gateway_authority::{manual_reset::ManualResetPreparation, manual_reset::ManualResetTarget};
-use gateway_authority::{native_control::actor::NativeRenewalActor, reset_types::ResetClaim};
-use gateway_authority::{reset_types::ResetState, store::Authority};
+use gateway_authority_reset_records::{ResetClaim, ResetState};
 use gateway_authority_routing_evidence::capacity::CapacityObservation;
 use gateway_authority_routing_evidence::capacity::parse_capacity_observation;
 use gateway_core::state::AuthorityStore;

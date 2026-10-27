@@ -2,9 +2,7 @@
 use crate::{
     PROBE_LEASE_MS, add, invalid, next_generation,
     reset::{ResetAuthorization, authorization_fences, check_record},
-    reset_types::{
-        FullPoolResetReconciliation, ResetCandidate, ResetRecord, ResetState, reset_invocation,
-    },
+    reset_types::{FullPoolResetReconciliation, ResetCandidate},
     routing::read_view,
     routing_types::AdmittedAccount,
     store::Authority,
@@ -12,6 +10,7 @@ use crate::{
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_reset_records::{ResetRecord, ResetState, reset_invocation};
 use gateway_authority_routing_records::types::ProbeLease;
 use gateway_core::{
     error::GatewayError,

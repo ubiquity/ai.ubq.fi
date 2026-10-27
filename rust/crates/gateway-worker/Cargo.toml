@@ -13,6 +13,7 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-capacity = { path = "../gateway-authority-capacity" }
 gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }

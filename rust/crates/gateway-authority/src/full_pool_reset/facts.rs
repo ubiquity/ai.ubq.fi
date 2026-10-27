@@ -1,6 +1,6 @@
 use super::{Facts, FullPoolFence, Member, declined, invalid};
 use crate::{
-    reset_types::{ResetCandidate, ResetConfig, ResetMode, reset_invocation},
+    reset_types::ResetCandidate,
     routing::{read_view, validate_cohort},
     routing_types::CohortProof,
     store::{Authority, Transaction},
@@ -8,6 +8,7 @@ use crate::{
 use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_reset_records::{ResetConfig, ResetMode, reset_invocation};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{MAX_SAFE_INTEGER, RequestContext};
 use gateway_core::state::AuthorityStore;

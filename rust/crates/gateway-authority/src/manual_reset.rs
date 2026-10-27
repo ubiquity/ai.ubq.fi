@@ -4,10 +4,7 @@ use crate::{
     capacity_rules,
     native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
     reset,
-    reset_types::{
-        self, AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation, ResetMode, ResetRecord,
-        ResetState,
-    },
+    reset_types::{self},
     routing::{self, RoutingView},
     routing_rules,
     store::{Authority, Transaction},
@@ -20,6 +17,9 @@ use gateway_auth::{
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_reset_records::{
+    AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation, ResetMode, ResetRecord, ResetState,
+};
 use gateway_authority_routing_evidence::capacity::{CapacityObservation, CapacityState};
 use gateway_core::{
     error::GatewayError,
@@ -115,7 +115,7 @@ impl ManualResetAction {
         &self.target
     }
     pub fn invocation(&self) -> Result<ResetInvocation, GatewayError> {
-        reset_types::reset_invocation(
+        gateway_authority_reset_records::reset_invocation(
             &self.intent.account_id_hash,
             &self.intent.credential_version,
             self.intent.quota_reset_at_ms,
@@ -292,7 +292,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             } else {
                 let existing = read_intent(&mut tx, hash).await?;
                 if existing.is_some_and(|r| {
-                    reset::utc_day(r.created_at_ms).ok() == reset::utc_day(tx.now).ok()
+                    gateway_authority_reset_records::utc_day(r.created_at_ms).ok()
+                        == gateway_authority_reset_records::utc_day(tx.now).ok()
                 }) {
                     return Err(error(409, "codex_reset_already_completed"));
                 }
@@ -325,7 +326,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         let quota = deadline(usage, tx.now)?;
         if prior.as_ref().is_some_and(|r| {
             r.quota_reset_at_ms == quota
-                || reset::utc_day(r.created_at_ms).ok() == reset::utc_day(tx.now).ok()
+                || gateway_authority_reset_records::utc_day(r.created_at_ms).ok()
+                    == gateway_authority_reset_records::utc_day(tx.now).ok()
         }) {
             return Err(error(409, "codex_reset_already_completed"));
         }
@@ -487,7 +489,8 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                         ResetState::Claimed
                     }
                 || row.lease_expires_at_ms <= tx.now
-                || reset::utc_day(row.created_at_ms)? != reset::utc_day(tx.now)?
+                || gateway_authority_reset_records::utc_day(row.created_at_ms)?
+                    != gateway_authority_reset_records::utc_day(tx.now)?
             {
                 return Err(error(409, "stale_owner"));
             }
@@ -632,7 +635,7 @@ async fn manual_budget<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
     hash: &str,
 ) -> Result<AccountDayBudget, GatewayError> {
-    let day = reset::utc_day(tx.now)?;
+    let day = gateway_authority_reset_records::utc_day(tx.now)?;
     let budget: AccountDayBudget =
         tx.read(&keys::reset_day(hash, &day))
             .await?

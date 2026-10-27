@@ -10,6 +10,9 @@ use gateway_auth::{
     native_live::NativeLiveAuthenticator,
     provider_credentials::{CodexSourceAccount, CodexSourcePool, codex_source_pool_key},
 };
+use gateway_authority_reset_records::{
+    AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetState,
+};
 use gateway_authority_routing_evidence::capacity::{
     CapacityObservation, CapacityState, CapacityWindow, CapacityWindows,
 };

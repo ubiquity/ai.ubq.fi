@@ -948,6 +948,7 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-reset-records",
  "gateway-authority-paid-records",
  "gateway-authority-claude-proof",
  "gateway-authority-capacity-policy",
@@ -1141,6 +1142,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-authority-reset-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-core",
+ "serde",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "gateway-authority-routing-evidence"
 version = "0.1.0"
 dependencies = [
@@ -1328,6 +1339,7 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-reset-records",
  "gateway-authority-paid-records",
  "gateway-authority-routing-evidence",
  "gateway-authority-kernel",
@@ -1611,6 +1623,7 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-reset-records",
  "gateway-authority-paid-records",
  "gateway-authority-capacity",
  "gateway-authority-routing-evidence",

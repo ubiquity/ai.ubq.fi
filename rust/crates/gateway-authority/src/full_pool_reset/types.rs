@@ -1,7 +1,5 @@
-use crate::{
-    reset_types::{ResetCandidate, ResetConfig},
-    routing_types::CohortProof,
-};
+use crate::{reset_types::ResetCandidate, routing_types::CohortProof};
+use gateway_authority_reset_records::ResetConfig;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, RequestContext};
 use gateway_core::js_string::JsString16;
@@ -128,8 +126,10 @@ impl AutomaticResetPermit {
     pub fn original(&self) -> &RequestContext {
         &self.facts.original
     }
-    pub fn invocation(&self) -> Result<crate::reset_types::ResetInvocation, GatewayError> {
-        crate::reset_types::reset_invocation(
+    pub fn invocation(
+        &self,
+    ) -> Result<gateway_authority_reset_records::ResetInvocation, GatewayError> {
+        gateway_authority_reset_records::reset_invocation(
             self.decision
                 .selected_account_id_hash
                 .as_deref()

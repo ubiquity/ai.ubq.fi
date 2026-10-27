@@ -338,7 +338,7 @@ async fn route_current<S: AuthorityStore, I: TokenSource>(
         openlux: openlux_catalog,
     } = current_projection(tx).await?;
     if let Some(hop) = context.synthetic_hop {
-        let day = crate::reset::utc_day(tx.now)?;
+        let day = gateway_authority_reset_records::utc_day(tx.now)?;
         let year = day
             .split('-')
             .next()

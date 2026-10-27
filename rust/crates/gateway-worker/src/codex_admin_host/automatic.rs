@@ -15,9 +15,10 @@ use gateway_auth::types::{AuthConfig, AuthMethod, AuthRequest};
 use gateway_authority::full_pool_reset::types::{
     AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, SourceResetInventory,
 };
-use gateway_authority::reset_types::{FullPoolResetReconciliation, ResetClaim, ResetState};
+use gateway_authority::reset_types::FullPoolResetReconciliation;
 use gateway_authority::routing_types::{AdmittedAccount, CohortProof};
 use gateway_authority::store::Authority;
+use gateway_authority_reset_records::{ResetClaim, ResetState};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;

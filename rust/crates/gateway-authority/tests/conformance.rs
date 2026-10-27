@@ -1,13 +1,5 @@
 use gateway_authority::paid_types::PaidAuthorization;
-use gateway_authority::reset::utc_day;
-use gateway_authority::reset_types::AccountDayBudget;
 use gateway_authority::reset_types::ResetCandidate;
-use gateway_authority::reset_types::ResetClaim;
-use gateway_authority::reset_types::ResetConfig;
-use gateway_authority::reset_types::ResetCredit;
-use gateway_authority::reset_types::ResetMode;
-use gateway_authority::reset_types::ResetState;
-use gateway_authority::reset_types::reset_invocation;
 use gateway_authority::routing_types::RouteSelection;
 use gateway_authority_api_protocol::ApiUsageWindow;
 use gateway_authority_api_quota::ApiQuotaOperations;
@@ -19,6 +11,10 @@ use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelTerminal, KernelWindow};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidCorrelation, PaidUsage, PaidWindow};
+use gateway_authority_reset_records::utc_day;
+use gateway_authority_reset_records::{
+    AccountDayBudget, ResetClaim, ResetConfig, ResetCredit, ResetMode, ResetState, reset_invocation,
+};
 use gateway_authority_test_support::TestResult;
 use gateway_authority_test_support::fixture_json;
 use gateway_authority_test_support::fixture_row;
@@ -460,7 +456,7 @@ fn reset_candidate(store: &MemoryStore, authority: &TestAuthority) -> ResetCandi
 fn armed_reset(
     store: &MemoryStore,
     authority: &TestAuthority,
-) -> TestResult<(ResetCandidate, gateway_authority::reset_types::ResetRecord)> {
+) -> TestResult<(ResetCandidate, gateway_authority_reset_records::ResetRecord)> {
     let candidate = reset_candidate(store, authority);
     let credit = ResetCredit {
         credit_id: "synthetic-credit".to_owned(),

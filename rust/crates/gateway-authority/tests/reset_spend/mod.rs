@@ -1,13 +1,14 @@
 //! Source banked-reset claim/submission and native-codex-mutations probe boundaries.
 
-use gateway_authority::reset_types::reset_invocation;
 use gateway_authority::{
     full_pool_reset::types::*,
     reset::utc_day,
-    reset_types::{AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetRecord, ResetState},
     routing_types::{CohortProof, RouteSelection},
 };
 use gateway_authority_keys as keys;
+use gateway_authority_reset_records::{
+    AccountDayBudget, ResetClaim, ResetConfig, ResetMode, ResetRecord, ResetState, reset_invocation,
+};
 use gateway_authority_test_support::{TestResult, fixture_json, fixture_row};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{PrincipalId, RequestContext, RequestId};
@@ -142,7 +143,7 @@ fn preexisting_reset_scan_never_claims_an_absent_ledger_or_budget() -> TestResul
         gateway_authority::reset_types::FullPoolResetReconciliation::NoExisting
     ));
     for account in pool().accounts {
-        let invocation = gateway_authority::reset_types::reset_invocation(
+        let invocation = gateway_authority_reset_records::reset_invocation(
             &account.admin_account_hash.0,
             &account.credential_version.0,
             NOW + 60_000,

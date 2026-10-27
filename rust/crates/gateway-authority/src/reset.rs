@@ -1,47 +1,20 @@
 //! Banked-reset owner fencing and spend-once boundaries. No provider call occurs here.
 use crate::{
-    DAY_MS, PROBE_LEASE_MS, add, invalid, next_generation, nonnegative,
+    PROBE_LEASE_MS, add, invalid, next_generation, nonnegative,
     routing::{read_view, validate_cohort},
     store::{Authority, Transaction},
     text, unavailable,
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_reset_records::{
+    AccountDayBudget, ResetClaim, ResetConfig, ResetCredit, ResetInvocation, ResetMode,
+    ResetRecord, ResetShadow, ResetState, hash, reset_invocation, utc_day,
+};
 use gateway_authority_routing_records::slot::class_name;
 use gateway_core::{error::GatewayError, state::AuthorityStore};
-use sha2::{Digest, Sha256};
 
-pub(crate) fn hash(value: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(64);
-    for byte in Sha256::digest(value.as_bytes()).iter().copied() {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 15) as usize] as char);
-    }
-    encoded
-}
-
-use crate::reset_types::{
-    AccountDayBudget, ResetCandidate, ResetClaim, ResetConfig, ResetCredit, ResetInvocation,
-    ResetMode, ResetRecord, ResetShadow, ResetState, reset_invocation,
-};
-
-pub fn utc_day(now: i64) -> Result<String, GatewayError> {
-    nonnegative(now)?;
-    // Gregorian civil date from days since Unix epoch, with no locale/time-zone dependency.
-    let shifted = now / DAY_MS + 719_468;
-    let era = shifted / 146_097;
-    let day_of_era = shifted - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_prime = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
-    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
-    year += i64::from(month <= 2);
-    Ok(format!("{year:04}-{month:02}-{day:02}"))
-}
+use crate::reset_types::ResetCandidate;
 
 pub(crate) async fn reset_fences<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,

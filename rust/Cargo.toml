@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/gateway-authority-reset-records",
   "crates/gateway-authority-paid-records",
   "crates/gateway-authority-claude-proof",
   "crates/gateway-authority-capacity",
@@ -65,6 +66,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-reset-records = { path = "crates/gateway-authority-reset-records" }
 gateway-authority-paid-records = { path = "crates/gateway-authority-paid-records" }
 gateway-authority-claude-proof = { path = "crates/gateway-authority-claude-proof" }
 gateway-authority-capacity = { path = "crates/gateway-authority-capacity" }

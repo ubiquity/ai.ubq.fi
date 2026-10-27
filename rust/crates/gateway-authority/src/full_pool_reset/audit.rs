@@ -133,7 +133,7 @@ pub(super) fn episode_hash(settings: &str, fences: &[FullPoolFence]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\u{1}");
-    crate::reset::hash(&format!(
+    gateway_authority_reset_records::hash(&format!(
         "uos_ai\0codex_reset_shadow_episode\0{settings}\0{rows}"
     ))
 }
@@ -144,5 +144,5 @@ pub(super) fn credit_hash(credit: &JsString16) -> String {
     for scalar in char::decode_utf16(credit.as_units().iter().copied()) {
         text.push(scalar.unwrap_or(char::REPLACEMENT_CHARACTER));
     }
-    crate::reset::hash(&text)
+    gateway_authority_reset_records::hash(&text)
 }
