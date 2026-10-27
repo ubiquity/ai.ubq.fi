@@ -1359,9 +1359,61 @@ name = "gateway-compaction"
 version = "0.1.0"
 dependencies = [
  "futures-util",
+ "gateway-compaction-history",
+ "gateway-compaction-render",
+ "gateway-compaction-source",
+ "gateway-compaction-test-support",
  "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-compaction-history"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-source",
+ "gateway-compaction-test-support",
+ "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-source",
+ "serde",
+]
+
+[[package]]
+name = "gateway-compaction-render"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-history",
+ "gateway-compaction-source",
+ "gateway-compaction-test-support",
+ "gateway-core",
+ "gateway-prompt-policy",
+ "gateway-source",
  "regress",
+ "serde",
+]
+
+[[package]]
+name = "gateway-compaction-source"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-test-support",
+ "gateway-core",
+ "gateway-source",
  "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-compaction-test-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-compaction-source",
+ "gateway-core",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1626,6 +1678,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-prompt-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-providers"
 version = "0.1.0"
 dependencies = [
@@ -1822,6 +1884,7 @@ dependencies = [
  "gateway-claude-usage-quota",
  "gateway-claude-usage-runtime",
  "gateway-compaction",
+ "gateway-compaction-source",
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",

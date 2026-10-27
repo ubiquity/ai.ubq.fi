@@ -1,10 +1,10 @@
 //! Source library data model; text shares immutable UTF16 buffers like JS strings.
 use crate::{text::Text, types::CompactionStats};
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::rc::Rc;
 pub type Json = Rc<SourceJson>;
-pub(crate) fn serialize_json<S: Serializer>(v: &Json, s: S) -> Result<S::Ok, S::Error> {
+pub fn serialize_json<S: Serializer>(v: &Json, s: S) -> Result<S::Ok, S::Error> {
     v.as_ref().serialize(s)
 }
 fn deserialize_json<'de, D: Deserializer<'de>>(d: D) -> Result<Json, D::Error> {

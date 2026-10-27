@@ -34,6 +34,7 @@ gateway-worker-stream.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-capacity-projection.workspace = true
 gateway-compaction.workspace = true
+gateway-compaction-source.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true
