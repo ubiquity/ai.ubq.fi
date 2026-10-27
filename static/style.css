@@ -566,6 +566,45 @@ a[data-button][data-variant="primary"] {
   color: var(--danger);
 }
 
+/* Branded Ubiquity Passport sign-in from the Passport sign-in-button study. */
+button[data-passport-signin] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  width: 100%;
+  max-width: 320px;
+  min-height: var(--control-height);
+  padding: 0 14px;
+  border: 1px solid var(--text);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.875rem;
+  font-weight: 550;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+button[data-passport-signin] svg {
+  display: block;
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button[data-passport-signin]:not(:disabled):hover {
+    border-color: var(--text);
+    background: var(--surface);
+    color: var(--text);
+    opacity: 0.88;
+  }
+}
+
 button:active,
 a[data-button]:active {
   transform: scale(0.97);

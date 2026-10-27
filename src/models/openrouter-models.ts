@@ -7,7 +7,7 @@ import { isRecord } from "../utils.ts";
  * tables used to guess: the context window, the maximum context window, and the
  * reasoning efforts a model actually accepts.
  *
- * Two rules keep this source honest:
+ * Three rules keep this source honest:
  *
  * - It never outranks a first-party statement. The uploaded Codex catalog stays
  *   authoritative for every id Codex serves, and a serving provider's own
@@ -15,9 +15,13 @@ import { isRecord } from "../utils.ts";
  * - The request path never waits on it. Reads are cached-only, so a slow or
  *   unavailable third party degrades a model to "unknown" instead of stalling
  *   `/uos/models/catalog`.
+ * - OpenRouter's model list defaults to text output. The request explicitly
+ *   includes decisions so decision models are discoverable without also pulling
+ *   image-only or embedding rows this gateway does not serve.
  */
 export const OPENROUTER_BASE_URL = "https://openrouter.ai";
-const OPENROUTER_MODELS_URL = `${OPENROUTER_BASE_URL}/api/v1/models`;
+const OPENROUTER_MODELS_QUERY = "output_modalities=text%2Cdecisions";
+const OPENROUTER_MODELS_URL = `${OPENROUTER_BASE_URL}/api/v1/models?${OPENROUTER_MODELS_QUERY}`;
 export const OPENROUTER_FETCH_TIMEOUT_MS = 10_000;
 export const OPENROUTER_MODELS_CACHE_TTL_MS = 5 * 60_000;
 const OPENROUTER_MODELS_FAILURE_BACKOFF_MS = 30_000;
@@ -39,6 +43,12 @@ export type OpenRouterModelMetadata = Readonly<{
   context_window_tokens: number | null;
   max_context_window_tokens: number | null;
   reasoning: OpenRouterReasoning | null;
+  /**
+   * The upstream's declared output modalities. The public model API defaults to
+   * text rows, so the discovery request asks for text and decisions together.
+   * A fixture without an architecture block keeps the text default.
+   */
+  output_modalities?: readonly string[];
 }>;
 
 export type OpenRouterModelsSnapshot = Readonly<{
@@ -92,6 +102,12 @@ const parseReasoning = (value: unknown): OpenRouterReasoning | null => {
   return { supported_efforts: [...new Set(efforts)], default_effort: defaultEffort, mandatory: value.mandatory === true };
 };
 
+const outputModalitiesFrom = (value: unknown): readonly string[] | null => {
+  if (!isRecord(value) || !Array.isArray(value.output_modalities)) return null;
+  const modalities = value.output_modalities.map((entry) => nonEmptyString(entry)).filter((entry): entry is string => entry !== null);
+  return modalities.length ? [...new Set(modalities)] : null;
+};
+
 const openRouterModelFromUpstream = (value: unknown): OpenRouterModelMetadata | null => {
   if (!isRecord(value)) return null;
   const id = nonEmptyString(value.id);
@@ -99,13 +115,27 @@ const openRouterModelFromUpstream = (value: unknown): OpenRouterModelMetadata | 
   const context = positiveTokenCount(value.context_length);
   const topProvider = isRecord(value.top_provider) ? value.top_provider : null;
   const providerContext = positiveTokenCount(topProvider?.context_length);
+  const outputModalities = outputModalitiesFrom(value.architecture);
   return {
     id,
     context_window_tokens: context,
     max_context_window_tokens: widerWindow(context, providerContext),
     reasoning: parseReasoning(value.reasoning),
+    ...(outputModalities === null ? {} : { output_modalities: outputModalities }),
   };
 };
+
+/** A row with no architecture statement keeps the historical text default. */
+export const openRouterModelSupportsText = (model: OpenRouterModelMetadata): boolean =>
+  model.output_modalities === undefined || model.output_modalities.includes("text");
+
+export const openRouterModelSupportsDecisions = (model: OpenRouterModelMetadata): boolean => model.output_modalities?.includes("decisions") === true;
+
+/** The gateway routes this row actually serves, in stable wire order. */
+export const openRouterModelEndpointPaths = (model: OpenRouterModelMetadata): readonly string[] => [
+  ...(openRouterModelSupportsText(model) ? ["/v1/responses", "/v1/chat/completions"] : []),
+  ...(openRouterModelSupportsDecisions(model) ? ["/v1/decisions"] : []),
+];
 
 export const openRouterModelsFromPayload = (payload: unknown): OpenRouterModelMetadata[] => {
   if (!isRecord(payload)) return [];

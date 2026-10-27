@@ -314,7 +314,13 @@ export default tsEslint.config(
     // save-pending cases (#669), which run the shipped whitelist save handler
     // and checkbox listener the same way, pass; code-eval alone flags their
     // VM call. Keep the exception to these named tests.
-    files: ["tests/admin-capacity-status.test.ts", "tests/admin-models-save-pending.test.ts"],
+    // Measured 2026-10-25: two shipped meter/chart VM calls in the focused usage fixture hit this rule.
+    files: [
+      "tests/admin-auth-ui.test.ts",
+      "tests/admin-capacity-status.test.ts",
+      "tests/admin-models-save-pending.test.ts",
+      "tests/claude-usage-meters.test.ts",
+    ],
     rules: { "sonarjs/code-eval": "off" },
   },
   {

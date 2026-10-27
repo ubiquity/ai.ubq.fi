@@ -1,4 +1,5 @@
-import type { Kv, KvEntry, KvKey } from "#kv";
+import type { AtomicOperation, Kv, KvEntry, KvEntryMaybe, KvKey } from "#kv";
+import { readClaudeCodeUsageSnapshot, type ClaudeCodeUsageMeter } from "./claude-code-usage-schema.ts";
 import { isRecord, sha256Hex } from "../utils.ts";
 import type { ClaudeCodeAcceptedObservation } from "./claude-code-quota.ts";
 import type { ClaudeCapacityHistoryPoint, ClaudeCapacityHistoryView, ProviderCapacityClaudeWindow } from "./capacity-contract.ts";
@@ -12,13 +13,16 @@ import {
   claudeCapacityRollupKey,
   mergeClaudeCapacityRollup,
   readClaudeCapacityRollup,
+  claudeUsageRollupKey,
+  mergeClaudeUsageRollup,
+  readClaudeUsageRollup,
   type ClaudeCapacityWindowId,
 } from "./claude-capacity-rollups.ts";
 
 export const CLAUDE_CAPACITY_HISTORY_PREFIX = ["uos_ai", "provider_capacity", "claude", "v1", "history"] as const;
 const CLAUDE_CAPACITY_MAX_BUCKET_POINTS = 6;
 const WINDOWS = ["five_hour", "seven_day"] as const;
-type SamplingFlags = { normal: number; unavailable: boolean; recovery: boolean; five_hour: boolean; seven_day: boolean };
+type SamplingFlags = { normal: number; unavailable: boolean; recovery: boolean; five_hour: boolean; seven_day: boolean; usage?: boolean };
 type StoredBucket = {
   v: 1;
   bucket_start_at_ms: number;
@@ -80,12 +84,16 @@ const validPointWindows = (value: Record<string, unknown>): boolean => {
 
 export const readClaudeCapacityHistoryPoint = (value: unknown): ClaudeCapacityHistoryPoint | null => {
   if (!isRecord(value) || value.v !== 1 || !validPointIdentity(value) || !validPointTimes(value) || !validPointWindows(value)) return null;
+  if (value.usage_snapshot !== undefined) {
+    const snapshot = readClaudeCodeUsageSnapshot(value.usage_snapshot);
+    if (!snapshot || snapshot.observed_at_ms > Number(value.sampled_at_ms)) return null;
+  }
   if (
     value.response_status !== null &&
     (typeof value.response_status !== "number" || !Number.isInteger(value.response_status) || value.response_status < 100 || value.response_status > 599)
   )
     return null;
-  return value as ClaudeCapacityHistoryPoint;
+  return { ...value, ...(value.usage_snapshot ? { usage_snapshot: readClaudeCodeUsageSnapshot(value.usage_snapshot) } : {}) } as ClaudeCapacityHistoryPoint;
 };
 
 const historyKey = (point: Pick<ClaudeCapacityHistoryPoint, "bucket_start_at_ms" | "account_id" | "account_cohort_id">): KvKey => [
@@ -117,7 +125,7 @@ const readBucket = (value: unknown): StoredBucket | null => {
 };
 
 const pointForObservation = async (event: ClaudeCodeAcceptedObservation): Promise<ClaudeCapacityHistoryPoint | null> => {
-  if (!Object.keys(event.observation.windows).length && !Object.keys(event.observation.standard).length) return null;
+  if (!event.observation.usage_snapshot && !Object.keys(event.observation.windows).length && !Object.keys(event.observation.standard).length) return null;
   const window = (name: "5h" | "7d"): ProviderCapacityClaudeWindow | null => {
     const input = event.observation.windows[name];
     return input
@@ -154,9 +162,19 @@ const pointForObservation = async (event: ClaudeCodeAcceptedObservation): Promis
     state: event.state,
     response_status: event.response_status,
     windows: { five_hour: window("5h"), seven_day: window("7d") },
+    ...(event.observation.usage_snapshot ? { usage_snapshot: event.observation.usage_snapshot } : {}),
     standard: Object.entries(event.observation.standard).map(([family, item]) => ({ family, ...item })),
   };
   return readClaudeCapacityHistoryPoint(point);
+};
+
+const retainUsageTransition = (previous: StoredBucket | null, point: ClaudeCapacityHistoryPoint, flags: SamplingFlags): boolean => {
+  if (!point.usage_snapshot || flags.usage) return false;
+  const prior = previous?.points.findLast((entry) => entry.usage_snapshot)?.usage_snapshot;
+  const anchors = (snapshot: typeof prior) => snapshot?.meters.map((meter) => [meter.id, meter.resets_at]);
+  if (JSON.stringify(anchors(prior)) === JSON.stringify(anchors(point.usage_snapshot))) return false;
+  flags.usage = true;
+  return true;
 };
 
 const retainPoint = (previous: StoredBucket | null, point: ClaudeCapacityHistoryPoint): StoredBucket | null => {
@@ -180,11 +198,32 @@ const retainPoint = (previous: StoredBucket | null, point: ClaudeCapacityHistory
       retain = true;
     }
   }
+  if (!retain) retain = retainUsageTransition(previous, point, flags);
   if (!retain) return null;
   const points = [...(previous?.points ?? []), point].sort(
     (a, b) => (a.source_observed_at_ms ?? a.sampled_at_ms) - (b.source_observed_at_ms ?? b.sampled_at_ms) || a.sampled_at_ms - b.sampled_at_ms
   );
   return { v: 1, bucket_start_at_ms: point.bucket_start_at_ms, account_id: point.account_id, account_cohort_id: point.account_cohort_id, points, flags };
+};
+
+const attachRollups = (
+  operation: AtomicOperation,
+  point: ClaudeCapacityHistoryPoint,
+  rollups: readonly { window: ClaudeCapacityWindowId; entry: KvEntryMaybe<unknown> }[],
+  usageRollups: readonly { meter: ClaudeCodeUsageMeter; entry: KvEntryMaybe<unknown> }[]
+): AtomicOperation => {
+  let next = operation;
+  for (const rollup of rollups) {
+    const stored = readClaudeCapacityRollup(rollup.entry.value);
+    if (rollup.entry.value !== null && stored === null) throw new Error("Claude rollup is invalid");
+    next = next.check(rollup.entry).set(rollup.entry.key, mergeClaudeCapacityRollup(stored, point, rollup.window));
+  }
+  for (const rollup of usageRollups) {
+    const stored = readClaudeUsageRollup(rollup.entry.value);
+    if (rollup.entry.value !== null && !stored) throw new Error("Claude usage rollup is invalid");
+    next = next.check(rollup.entry).set(rollup.entry.key, mergeClaudeUsageRollup(stored, point, rollup.meter));
+  }
+  return next;
 };
 
 /** Post-acceptance telemetry only. Never writes quota, credentials or routing state. */
@@ -207,17 +246,19 @@ export const recordClaudeCapacityObservation = async (kv: Kv, event: ClaudeCodeA
         entry: await kv.get(claudeCapacityRollupKey(point, window), { consistency: "strong" }),
       }))
     );
+    const usageRollups = await Promise.all(
+      (point.usage_snapshot?.meters ?? []).map(async (meter) => {
+        const key = await claudeUsageRollupKey(point, meter);
+        return { meter, entry: await kv.get(key, { consistency: "strong" }) };
+      })
+    );
     let operation = kv
       .atomic()
       .check(entry)
       .set(key, next, {
         expireIn: Math.max(1, point.bucket_start_at_ms + PROVIDER_CAPACITY_HISTORY_BUCKET_MS + PROVIDER_CAPACITY_HISTORY_RETENTION_MS - Date.now()),
       });
-    for (const rollup of rollups) {
-      const stored = readClaudeCapacityRollup(rollup.entry.value);
-      if (rollup.entry.value !== null && stored === null) throw new Error("Claude rollup is invalid");
-      operation = operation.check(rollup.entry).set(rollup.entry.key, mergeClaudeCapacityRollup(stored, point, rollup.window));
-    }
+    operation = attachRollups(operation, point, rollups, usageRollups);
     if ((await operation.commit()).ok) return;
   }
   throw new Error("Claude history contention exceeded four attempts");

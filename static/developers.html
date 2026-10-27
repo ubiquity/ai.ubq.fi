@@ -19,7 +19,7 @@
     <meta property="og:description" content="OpenAI-compatible API documentation and agent integration guidance." />
     <meta property="og:url" content="https://ai.ubq.fi/developers" />
     <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
-    <link rel="stylesheet" href="/style.css?v=passport-design-20260922" />
+    <link rel="stylesheet" href="/style.css?v=ubiquity-signin-20261025" />
     <link rel="stylesheet" href="/docs.css?v=passport-design-20260922" />
   </head>
   <body data-page="docs" data-role="public">
@@ -110,11 +110,13 @@ curl -sS https://ai.ubq.fi/v1/models \
             <details data-disclosure>
               <summary>API behavior</summary>
               <p>
-                Use <code>POST /v1/chat/completions</code> for the Chat Completions API or
-                <code>POST /v1/responses</code> for the Responses API. Both support streaming and documented function
-                tools. The <a href="/openapi.json">OpenAPI 3.1 contract</a> contains typed request fields, unique
-                operation identifiers, response envelopes, authentication, and rate-limit headers for tool-aware
-                clients.
+                Use <code>POST /v1/chat/completions</code> for the Chat Completions API,
+                <code>POST /v1/responses</code> for the Responses API, and <code>POST /v1/decisions</code> for typed
+                OpenRouter decision models. Chat and Responses support streaming and documented function tools;
+                Decisions returns calibrated answers instead of text. The
+                <a href="/openapi.json">OpenAPI 3.1 contract</a>
+                contains typed request fields, unique operation identifiers, response envelopes, authentication, and
+                rate-limit headers for tool-aware clients.
               </p>
               <p>
                 Parse JSON error responses as an <code>error</code> object with a message, type, and code. A matching

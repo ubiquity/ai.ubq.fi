@@ -27,10 +27,11 @@ use gateway_core::error::GatewayError;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
 use gateway_core::source_json::SourceJson;
 use gateway_core::state::AuthorityStore;
-use gateway_publication::{
-    control_publication::{ConfiguredPaidInputs, PreparedConfigurationPublication},
-    transport::{OwnedNativeAuthHeaders, PublicationReceiver, PublicationRequest},
+use gateway_publication_policy::control_publication::{
+    ConfiguredPaidInputs, PreparedConfigurationPublication,
 };
+use gateway_publication_policy::protocol::{OwnedNativeAuthHeaders, PublicationRequest};
+use gateway_publication_transport::transport::PublicationReceiver;
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{
     collections::{BTreeMap, BTreeSet},

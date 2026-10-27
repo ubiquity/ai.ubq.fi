@@ -1,227 +1,26 @@
-use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native::NATIVE_RPC_PATH;
-use gateway_auth::native_auth::{
-    AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-    NativeNonceAuthority, NativeTransportIdentity,
-};
-use gateway_auth::native_credentials::{NativeCredentials, NativeOwnerId};
-use gateway_auth::provider_credentials::{
-    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
-    read_codex_source_pool,
-};
+use gateway_auth::crypto::Secret;
+use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
 use gateway_auth::store;
 use gateway_authority::keys;
 use gateway_authority::paid_control::{PaidControlConfig, PaidControlOwner};
-use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
-use gateway_core::error::GatewayError;
-use gateway_core::identity::PoolVersionstamp;
 use gateway_core::provider::PaidProvider;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+use gateway_core::state::AuthorityStore;
+use gateway_publication::sender::NativePublicationSender;
+use gateway_publication::wire::{PreparedPublicationCommand, PublicationDisposition};
+use gateway_publication_policy::control_publication::{
+    ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
+    configured_paid_binding, fixture_owner_statement, runtime_config_key,
 };
-use gateway_publication::{
-    access_publication::{
-        AccessCredentialSource, PreparedAccessPublication, RegisteredAccessOwner,
-    },
-    control_publication::*,
-    transport::{
-        NativePublicationSender, PublicationCarrier, PublicationReceiver, PublicationRequest,
-        PublicationResponse,
-    },
-    wire::{PreparedPublicationCommand, PublicationDisposition},
+use gateway_publication_test_support::fixture::{
+    FixtureCarrier as LocalCarrier, FixtureMemory as Memory, fixture_bootstrap as bootstrap,
+    fixture_expect_error, fixture_identity as make_identity, fixture_inputs as inputs,
+    fixture_now as now, fixture_proof as proof,
+    fixture_publication_identity as publication_identity, fixture_run as run, fixture_set as set,
 };
-use serde_json::{Value, json};
-
-struct AccessRead(NativeCredentials);
-impl AccessCredentialSource for AccessRead {
-    async fn read_current_access(
-        &self,
-        owner: &NativeOwnerId,
-    ) -> Result<NativeCredentials, GatewayError> {
-        assert_eq!(owner.0, "registered-owner");
-        Ok(self.0.clone())
-    }
-}
-
-fn access(expiry: i64, user: &str) -> NativeCredentials {
-    let token=format!("e30.{}.fixture",base64url(json!({"exp":expiry,"https://api.openai.com/auth":{"chatgpt_user_id":user,"chatgpt_account_id":"workspace"}}).to_string().as_bytes()));
-    NativeCredentials {
-        account_id: "workspace".into(),
-        access_token: Secret::new(token),
-        refresh_token: Secret::new(String::new()),
-        email: None,
-        native_refreshed_at: Some(
-            if expiry == 1_792_341_000 {
-                "2026-10-18T17:00:00Z"
-            } else {
-                "2026-10-18T17:01:00Z"
-            }
-            .into(),
-        ),
-        external_user_id: Some(user.into()),
-    }
-}
-fn seed_access(store: &Memory, old: &NativeCredentials) {
-    let account = CodexSourceAccount {
-        account_id: old.account_id.clone(),
-        access_token: old.access_token.clone(),
-        refresh_token: old.refresh_token.clone(),
-        updated_at_ms: 1.0,
-        native_owner: Some(CodexNativeOwner {
-            managed_source: None,
-            codex_home: "/tmp/uos-native-fixture".into(),
-            generation_hash: old.generation_hash(),
-            native_refreshed_at: old.native_refreshed_at.clone(),
-            external_user_id: old.external_user_id.clone(),
-        }),
-    };
-    let other = CodexSourceAccount {
-        account_id: "other-workspace".into(),
-        access_token: Secret::new("fixture-other-access".into()),
-        refresh_token: Secret::new("fixture-other-refresh".into()),
-        updated_at_ms: 1.0,
-        native_owner: None,
-    };
-    let raw = CodexSourcePool {
-        accounts: vec![account, other],
-        updated_at_ms: 1.0,
-    };
-    let accounts = raw
-        .accounts
-        .iter()
-        .map(|a| {
-            let id = a.identity();
-            PoolAccount {
-                account_id_hash: id.routing_account_hash,
-                admin_account_hash: id.administrative_account_hash,
-                credential_version: id.credential_version,
-                enabled: true,
-            }
-        })
-        .collect();
-    let normalized = SubscriptionPool {
-        v: 1,
-        pool_versionstamp: PoolVersionstamp("raw-r1".into()),
-        accounts,
-    };
-    set(
-        store,
-        codex_source_pool_key(),
-        "raw-r1",
-        raw.private_source_value(),
-    );
-    set(
-        store,
-        keys::pool(),
-        "normalized-r1",
-        serde_json::to_value(normalized).unwrap(),
-    );
-}
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    future::Future,
-    sync::Mutex,
-    task::{Context, Poll, Waker},
-};
-
-fn run<F: Future>(future: F) -> F::Output {
-    let mut context = Context::from_waker(Waker::noop());
-    let mut future = std::pin::pin!(future);
-    loop {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
-            return value;
-        }
-        std::thread::yield_now();
-    }
-}
-#[derive(Default)]
-struct Memory(Mutex<BTreeMap<String, StoredRecord>>);
-impl AuthorityStore for Memory {
-    async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
-        Ok(self.0.lock().unwrap().get(&key.0).cloned())
-    }
-    async fn commit(&self, transition: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
-        let mut rows = self.0.lock().unwrap();
-        if transition.checks.iter().any(|check| {
-            rows.get(&check.key.0).map(|r| &r.revision) != check.expected_revision.as_ref()
-        }) {
-            return Ok(CommitOutcome::Conflict);
-        }
-        for mutation in transition.mutations {
-            match mutation {
-                RecordMutation::Put { key, record } => {
-                    rows.insert(key.0, record);
-                }
-                RecordMutation::Delete { key } => {
-                    rows.remove(&key.0);
-                }
-            }
-        }
-        Ok(CommitOutcome::Committed)
-    }
-}
-struct Nonces;
-impl NativeNonceAuthority for Nonces {
-    async fn consume_nonce(&self, _: &str, _: &str, _: i64, _: i64) -> Result<(), GatewayError> {
-        Ok(())
-    }
-}
-fn make_identity(capability: NativeCapability) -> NativeTransportIdentity {
-    NativeTransportIdentity::new(
-        "fixture-key".into(),
-        "fixture-owner".into(),
-        "fixture-epoch".into(),
-        [11; 32],
-        BTreeSet::from([capability]),
-    )
-    .unwrap()
-}
-async fn proof(
-    identity: &NativeTransportIdentity,
-    body: &[u8],
-    now: i64,
-) -> AuthenticatedNativeOwner {
-    let nonce = base64url(&[7; 32]);
-    let mac = identity.sign(NATIVE_RPC_PATH, now, &nonce, body).unwrap();
-    NativeAuthenticator::new(identity, &Nonces)
-        .authenticate(
-            NATIVE_RPC_PATH,
-            NativeAuthHeaders {
-                version: "1",
-                key_id: identity.key_id(),
-                time_ms: &now.to_string(),
-                nonce: &nonce,
-                mac: &mac,
-            },
-            body,
-            now,
-        )
-        .await
-        .unwrap()
-}
-fn inputs(secret: &str) -> ConfiguredPaidInputs {
-    ConfiguredPaidInputs::new(
-        Some(Secret::new(secret.into())),
-        Some(Secret::new("fixture-openlux-key".into())),
-        Some(Secret::new("fixture-openlux-key".into())),
-        json!({"overage_enabled":true}),
-    )
-    .unwrap()
-}
-async fn bootstrap(store: &Memory, identity: &NativeTransportIdentity, now: i64) {
-    let body = fixture_owner_statement(identity).unwrap();
-    let proof = proof(identity, &body, now).await;
-    bootstrap_fixture_owner(store, identity, &proof, now, "owner-r1")
-        .await
-        .unwrap();
-}
-fn set(store: &Memory, key: RecordKey, revision: &str, value: Value) {
-    store
-        .0
-        .lock()
-        .unwrap()
-        .insert(key.0, StoredRecord::json(revision, value, None));
-}
+use gateway_publication_transport::transport::PublicationReceiver;
+use serde_json::json;
+use std::collections::BTreeSet;
+use std::error::Error;
 
 #[test]
 fn real_authenticated_constructor_publishes_only_derived_fixed_control_facts() {
@@ -400,7 +199,8 @@ fn explicit_discovery_and_spend_roles_have_independent_configuration_fingerprint
 }
 
 #[test]
-fn discovery_only_change_invalidates_observations_and_old_authenticated_commands() {
+fn discovery_only_change_invalidates_observations_and_old_authenticated_commands()
+-> Result<(), Box<dyn Error>> {
     run(async {
         let store = Memory::default();
         let identity = publication_identity();
@@ -408,14 +208,10 @@ fn discovery_only_change_invalidates_observations_and_old_authenticated_commands
         let initial = inputs("fixture-surplus-key");
         let prepared =
             PreparedConfigurationPublication::capture(&store, &identity, &initial, "g1", now())
-                .await
-                .unwrap();
+                .await?;
         let original = prepared.configuration().clone();
         let signed = proof(&identity, prepared.statement(), now()).await;
-        prepared
-            .publish(&store, &signed, now(), "cfg1")
-            .await
-            .unwrap();
+        prepared.publish(&store, &signed, now(), "cfg1").await?;
         set(
             &store,
             keys::paid_control_observation(PaidProvider::Metered),
@@ -427,18 +223,14 @@ fn discovery_only_change_invalidates_observations_and_old_authenticated_commands
             Some(Secret::new("fixture-next-discovery".into())),
             Some(Secret::new("fixture-openlux-key".into())),
             json!({"overage_enabled":true}),
-        )
-        .unwrap();
-        let old_command =
+        )?;
+        let old_prepared =
             PreparedConfigurationPublication::capture(&store, &identity, &initial, "g2", now())
-                .await
-                .unwrap()
-                .command("cfg2")
-                .unwrap();
+                .await?;
+        let old_command = gateway_publication::wire::configuration_command(&old_prepared, "cfg2")?;
         let prepared =
             PreparedConfigurationPublication::capture(&store, &identity, &next, "g2", now())
-                .await
-                .unwrap();
+                .await?;
         assert_eq!(
             prepared.configuration().openlux_binding,
             original.openlux_binding
@@ -447,8 +239,7 @@ fn discovery_only_change_invalidates_observations_and_old_authenticated_commands
             prepared.configuration().openlux_discovery_binding,
             original.openlux_discovery_binding
         );
-        let receiver =
-            PublicationReceiver::configured(identity.clone(), next, vec![], now).unwrap();
+        let receiver = PublicationReceiver::configured(identity.clone(), next, vec![], now)?;
         let carrier = LocalCarrier {
             receiver: &receiver,
             store: &store,
@@ -456,39 +247,25 @@ fn discovery_only_change_invalidates_observations_and_old_authenticated_commands
             tamper_response: false,
         };
         let sender = NativePublicationSender::configured(&identity, &carrier);
-        assert_eq!(
-            sender
-                .send(&old_command, [21; 32], now())
-                .await
-                .unwrap_err()
-                .status,
-            409
-        );
-        assert!(
-            store
-                .read(&keys::paid_control_observation(PaidProvider::Metered))
-                .await
-                .unwrap()
-                .is_some()
-        );
-        sender
-            .send(&prepared.command("cfg2").unwrap(), [22; 32], now())
-            .await
-            .unwrap();
-        assert!(
-            store
-                .read(&keys::paid_control_observation(PaidProvider::Metered))
-                .await
-                .unwrap()
-                .is_none()
-        );
+        let error = fixture_expect_error(sender.send(&old_command, [21; 32], now()).await);
+        assert_eq!(error.status, 409);
+        let observation = store
+            .read(&keys::paid_control_observation(PaidProvider::Metered))
+            .await?;
+        assert!(observation.is_some());
+        let command = gateway_publication::wire::configuration_command(&prepared, "cfg2")?;
+        sender.send(&command, [22; 32], now()).await?;
+        let observation = store
+            .read(&keys::paid_control_observation(PaidProvider::Metered))
+            .await?;
+        assert!(observation.is_none());
         let current = store
             .read(&keys::paid_control_config())
-            .await
-            .unwrap()
-            .unwrap();
+            .await?
+            .ok_or_else(|| std::io::Error::other("fixture configuration row missing"))?;
         assert_eq!(current.revision, "cfg2");
-    });
+        Ok::<(), Box<dyn Error>>(())
+    })
 }
 
 #[test]
@@ -726,228 +503,8 @@ fn missing_live_owner_never_bootstraps_as_a_side_effect() {
 }
 
 #[test]
-fn access_only_read_publishes_raw_and_normalized_identity_atomically() {
-    run(async {
-        let store = Memory::default();
-        let now = 1_792_339_000_000;
-        bootstrap(
-            &store,
-            &make_identity(NativeCapability::ConfigurationPublish),
-            now,
-        )
-        .await;
-        let identity = make_identity(NativeCapability::AccessPublish);
-        let old = access(1_792_341_000, "user");
-        seed_access(&store, &old);
-        let original = read_codex_source_pool(&store, now).await.unwrap().unwrap();
-        let next = access(1_792_342_000, "user");
-        let registered = RegisteredAccessOwner::configured(
-            NativeOwnerId("registered-owner".into()),
-            "/tmp/uos-native-fixture".into(),
-        )
-        .unwrap();
-        let prepared = PreparedAccessPublication::capture(
-            &store,
-            &AccessRead(next.clone()),
-            &identity,
-            &registered,
-            now,
-            "raw-r2",
-        )
-        .await
-        .unwrap();
-        assert!(
-            !String::from_utf8_lossy(prepared.statement()).contains(next.access_token.expose())
-        );
-        let signed = proof(&identity, prepared.statement(), now).await;
-        let normalized = prepared.publish(&store, &signed, now).await.unwrap();
-        let source = read_codex_source_pool(&store, now).await.unwrap().unwrap();
-        assert_eq!(source.revision, "raw-r2");
-        assert_eq!(normalized.pool_versionstamp.0, source.revision);
-        assert_eq!(source.pool.accounts[0].access_token, next.access_token);
-        assert_eq!(source.pool.accounts[1], original.pool.accounts[1]);
-        assert_eq!(
-            normalized.accounts[0].credential_version,
-            source.pool.accounts[0].identity().credential_version
-        );
-        assert_eq!(
-            normalized.accounts[1].admin_account_hash,
-            source.pool.accounts[1]
-                .identity()
-                .administrative_account_hash
-        );
-    });
-}
-
-#[test]
-fn same_identity_access_read_preserves_existing_pool_revision() {
-    run(async {
-        let store = Memory::default();
-        let now = 1_792_339_000_000;
-        bootstrap(
-            &store,
-            &make_identity(NativeCapability::ConfigurationPublish),
-            now,
-        )
-        .await;
-        let identity = make_identity(NativeCapability::AccessPublish);
-        let old = access(1_792_341_000, "user");
-        seed_access(&store, &old);
-        let registered = RegisteredAccessOwner::configured(
-            NativeOwnerId("registered-owner".into()),
-            "/tmp/uos-native-fixture".into(),
-        )
-        .unwrap();
-        let prepared = PreparedAccessPublication::capture(
-            &store,
-            &AccessRead(old),
-            &identity,
-            &registered,
-            now,
-            "unused",
-        )
-        .await
-        .unwrap();
-        let signed = proof(&identity, prepared.statement(), now).await;
-        let pool = prepared.publish(&store, &signed, now).await.unwrap();
-        assert_eq!(pool.pool_versionstamp.0, "raw-r1");
-        assert_eq!(
-            store
-                .read(&codex_source_pool_key())
-                .await
-                .unwrap()
-                .unwrap()
-                .revision,
-            "raw-r1"
-        );
-        assert_eq!(
-            store.read(&keys::pool()).await.unwrap().unwrap().revision,
-            "normalized-r1"
-        );
-    });
-}
-
-#[test]
-fn access_publication_refuses_stale_source_wrong_home_and_workspace_identity() {
-    run(async {
-        let store = Memory::default();
-        let now = 1_792_339_000_000;
-        bootstrap(
-            &store,
-            &make_identity(NativeCapability::ConfigurationPublish),
-            now,
-        )
-        .await;
-        let identity = make_identity(NativeCapability::AccessPublish);
-        let old = access(1_792_341_000, "user");
-        seed_access(&store, &old);
-        let registered = RegisteredAccessOwner::configured(
-            NativeOwnerId("registered-owner".into()),
-            "/tmp/uos-native-fixture".into(),
-        )
-        .unwrap();
-        let next = AccessRead(access(1_792_342_000, "user"));
-        let prepared = PreparedAccessPublication::capture(
-            &store,
-            &next,
-            &identity,
-            &registered,
-            now,
-            "raw-r2",
-        )
-        .await
-        .unwrap();
-        let signed = proof(&identity, prepared.statement(), now).await;
-        let mut changed = store.read(&codex_source_pool_key()).await.unwrap().unwrap();
-        changed.revision = "raced-source".into();
-        set(
-            &store,
-            codex_source_pool_key(),
-            "raced-source",
-            changed.value,
-        );
-        assert_eq!(
-            prepared
-                .publish(&store, &signed, now)
-                .await
-                .unwrap_err()
-                .status,
-            409
-        );
-        seed_access(&store, &old);
-        let wrong = RegisteredAccessOwner::configured(
-            NativeOwnerId("registered-owner".into()),
-            "/tmp/wrong-owner".into(),
-        )
-        .unwrap();
-        assert!(
-            PreparedAccessPublication::capture(&store, &next, &identity, &wrong, now, "unused")
-                .await
-                .is_err()
-        );
-        assert!(
-            PreparedAccessPublication::capture(
-                &store,
-                &AccessRead(access(1_792_342_000, "other-user")),
-                &identity,
-                &registered,
-                now,
-                "unused"
-            )
-            .await
-            .is_err()
-        );
-        assert_eq!(
-            store
-                .read(&codex_source_pool_key())
-                .await
-                .unwrap()
-                .unwrap()
-                .revision,
-            "raw-r1"
-        );
-    });
-}
-
-fn now() -> i64 {
-    1_792_339_000_000
-}
-fn publication_identity() -> NativeTransportIdentity {
-    NativeTransportIdentity::new(
-        "fixture-key".into(),
-        "fixture-owner".into(),
-        "fixture-epoch".into(),
-        [11; 32],
-        BTreeSet::from([
-            NativeCapability::ConfigurationPublish,
-            NativeCapability::AccessPublish,
-        ]),
-    )
-    .unwrap()
-}
-struct LocalCarrier<'a> {
-    receiver: &'a PublicationReceiver,
-    store: &'a Memory,
-    lose_response: std::cell::Cell<bool>,
-    tamper_response: bool,
-}
-impl PublicationCarrier for LocalCarrier<'_> {
-    async fn send(&self, request: PublicationRequest) -> Result<PublicationResponse, GatewayError> {
-        let mut response = self.receiver.handle(self.store, request).await;
-        if self.lose_response.replace(false) {
-            return Err(GatewayError::unavailable(
-                "Fixture lost committed response",
-                "native_publication_outcome_unknown",
-            ));
-        }
-        if self.tamper_response {
-            response.raw_body.push(b' ');
-        }
-        Ok(response)
-    }
-}
-#[test]
-fn signed_sender_receiver_configuration_receipt_and_lost_response_retry() {
+fn signed_sender_receiver_configuration_receipt_and_lost_response_retry()
+-> Result<(), Box<dyn Error>> {
     run(async {
         let store = Memory::default();
         let identity = publication_identity();
@@ -955,11 +512,9 @@ fn signed_sender_receiver_configuration_receipt_and_lost_response_retry() {
         let inputs = inputs("fixture-paid-key");
         let prepared =
             PreparedConfigurationPublication::capture(&store, &identity, &inputs, "g1", now())
-                .await
-                .unwrap();
-        let command = prepared.command("config-r1").unwrap();
-        let receiver =
-            PublicationReceiver::configured(identity.clone(), inputs, vec![], now).unwrap();
+                .await?;
+        let command = gateway_publication::wire::configuration_command(&prepared, "config-r1")?;
+        let receiver = PublicationReceiver::configured(identity.clone(), inputs, vec![], now)?;
         let carrier = LocalCarrier {
             receiver: &receiver,
             store: &store,
@@ -967,39 +522,25 @@ fn signed_sender_receiver_configuration_receipt_and_lost_response_retry() {
             tamper_response: false,
         };
         let sender = NativePublicationSender::configured(&identity, &carrier);
+        let lost = fixture_expect_error(sender.send(&command, [1; 32], now()).await);
         assert_eq!(
-            sender
-                .send(&command, [1; 32], now())
-                .await
-                .unwrap_err()
-                .envelope
-                .error
-                .code
-                .as_deref(),
+            lost.envelope.error.code.as_deref(),
             Some("native_publication_outcome_unknown")
         );
-        assert_eq!(
-            store
-                .read(&keys::paid_control_config())
-                .await
-                .unwrap()
-                .unwrap()
-                .revision,
-            "config-r1"
-        );
-        let receipt = sender.send(&command, [2; 32], now()).await.unwrap();
+        let current = store
+            .read(&keys::paid_control_config())
+            .await?
+            .ok_or_else(|| std::io::Error::other("fixture configuration row missing"))?;
+        assert_eq!(current.revision, "config-r1");
+        let receipt = sender.send(&command, [2; 32], now()).await?;
         assert_eq!(receipt.disposition, PublicationDisposition::AlreadyCurrent);
         assert_eq!(receipt.configuration_revision.as_deref(), Some("config-r1"));
-        assert_eq!(
-            store
-                .read(&keys::paid_control_config())
-                .await
-                .unwrap()
-                .unwrap()
-                .revision,
-            "config-r1"
-        );
-        let replay = sender.send(&command, [2; 32], now()).await.unwrap_err();
+        let current = store
+            .read(&keys::paid_control_config())
+            .await?
+            .ok_or_else(|| std::io::Error::other("fixture configuration row missing"))?;
+        assert_eq!(current.revision, "config-r1");
+        let replay = fixture_expect_error(sender.send(&command, [2; 32], now()).await);
         assert_eq!(
             replay.envelope.error.code.as_deref(),
             Some("native_publication_response_unverified")
@@ -1011,92 +552,13 @@ fn signed_sender_receiver_configuration_receipt_and_lost_response_retry() {
             tamper_response: true,
         };
         let sender = NativePublicationSender::configured(&identity, &bad_carrier);
+        let tampered = fixture_expect_error(sender.send(&command, [3; 32], now()).await);
         assert_eq!(
-            sender
-                .send(&command, [3; 32], now())
-                .await
-                .unwrap_err()
-                .envelope
-                .error
-                .code
-                .as_deref(),
+            tampered.envelope.error.code.as_deref(),
             Some("native_publication_response_unverified")
         );
-    });
-}
-
-#[test]
-fn signed_access_transport_retry_preserves_source_pool_and_other_account() {
-    run(async {
-        let store = Memory::default();
-        let identity = publication_identity();
-        bootstrap(&store, &identity, now()).await;
-        let old = access(1_792_341_000, "user");
-        seed_access(&store, &old);
-        let original = read_codex_source_pool(&store, now())
-            .await
-            .unwrap()
-            .unwrap();
-        let next = AccessRead(access(1_792_342_000, "user"));
-        let registered = RegisteredAccessOwner::configured(
-            NativeOwnerId("registered-owner".into()),
-            "/tmp/uos-native-fixture".into(),
-        )
-        .unwrap();
-        let prepared = PreparedAccessPublication::capture(
-            &store,
-            &next,
-            &identity,
-            &registered,
-            now(),
-            "raw-r2",
-        )
-        .await
-        .unwrap();
-        let command = prepared.command().unwrap();
-        let receiver = PublicationReceiver::configured(
-            identity.clone(),
-            inputs("fixture-paid-key"),
-            vec![registered],
-            now,
-        )
-        .unwrap();
-        let carrier = LocalCarrier {
-            receiver: &receiver,
-            store: &store,
-            lose_response: std::cell::Cell::new(true),
-            tamper_response: false,
-        };
-        let sender = NativePublicationSender::configured(&identity, &carrier);
-        assert!(sender.send(&command, [4; 32], now()).await.is_err());
-        let receipt = sender.send(&command, [5; 32], now()).await.unwrap();
-        assert_eq!(receipt.disposition, PublicationDisposition::AlreadyCurrent);
-        assert_eq!(receipt.source_revision.as_deref(), Some("raw-r2"));
-        assert_eq!(receipt.pool_versionstamp, receipt.source_revision);
-        let current = read_codex_source_pool(&store, now())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(current.pool.accounts[1], original.pool.accounts[1]);
-        assert_eq!(current.revision, "raw-r2");
-    });
-}
-
-#[test]
-fn native_publication_headers_preserve_duplicate_and_missing_auth_rejection() {
-    use gateway_publication::transport::OwnedNativeAuthHeaders;
-    assert!(OwnedNativeAuthHeaders::from_pairs(Vec::new()).is_err());
-    let values = vec![
-        ("x-uos-native-version".into(), "1".into()),
-        ("x-uos-native-key-id".into(), "fixture-key".into()),
-        ("x-uos-native-time-ms".into(), now().to_string()),
-        ("x-uos-native-nonce".into(), base64url(&[1; 32])),
-        ("x-uos-native-mac".into(), base64url(&[2; 32])),
-    ];
-    assert!(OwnedNativeAuthHeaders::from_pairs(values.clone()).is_ok());
-    let mut duplicated = values;
-    duplicated.push(("X-UOS-NATIVE-MAC".into(), base64url(&[3; 32])));
-    assert!(OwnedNativeAuthHeaders::from_pairs(duplicated).is_err());
+        Ok::<(), Box<dyn Error>>(())
+    })
 }
 
 #[test]
@@ -1179,7 +641,8 @@ fn configuration_capture_retains_frozen_constructor_bytes_without_writes() {
 }
 
 #[test]
-fn source_utf16_runtime_capture_and_signed_receiver_keep_the_actual_codec() {
+fn source_utf16_runtime_capture_and_signed_receiver_keep_the_actual_codec()
+-> Result<(), Box<dyn Error>> {
     use gateway_core::{source_control::encode_source_control_record, source_json::SourceJson};
     run(async {
         let store = Memory::default();
@@ -1187,28 +650,28 @@ fn source_utf16_runtime_capture_and_signed_receiver_keep_the_actual_codec() {
         bootstrap(&store, &identity, now()).await;
         let runtime = encode_source_control_record(
             "runtime-profile-r1",
-            &SourceJson::parse(r#"{"model":"\ud800","reasoning":"none"}"#).unwrap(),
+            &SourceJson::parse(r#"{"model":"\ud800","reasoning":"none"}"#)?,
             None,
-        )
-        .unwrap();
-        store
-            .0
-            .lock()
-            .unwrap()
-            .insert(runtime_config_key().0.clone(), runtime.clone());
+        )?;
+        {
+            let mut rows = store
+                .0
+                .lock()
+                .map_err(|_| std::io::Error::other("fixture memory lock poisoned"))?;
+            rows.insert(runtime_config_key().0.clone(), runtime.clone());
+        }
         let configured = inputs("fixture-paid-key");
         let prepared =
             PreparedConfigurationPublication::capture(&store, &identity, &configured, "g1", now())
-                .await
-                .unwrap();
+                .await?;
         let expected = prepared.configuration().clone();
         assert_eq!(
             expected.source_checks[0].expected_revision.as_deref(),
             Some("runtime-profile-r1")
         );
-        let command = prepared.command("profile-config-r1").unwrap();
-        let receiver =
-            PublicationReceiver::configured(identity.clone(), configured, vec![], now).unwrap();
+        let command =
+            gateway_publication::wire::configuration_command(&prepared, "profile-config-r1")?;
+        let receiver = PublicationReceiver::configured(identity.clone(), configured, vec![], now)?;
         let carrier = LocalCarrier {
             receiver: &receiver,
             store: &store,
@@ -1216,22 +679,22 @@ fn source_utf16_runtime_capture_and_signed_receiver_keep_the_actual_codec() {
             tamper_response: false,
         };
         let sender = NativePublicationSender::configured(&identity, &carrier);
-        let receipt = sender.send(&command, [71; 32], now()).await.unwrap();
+        let receipt = sender.send(&command, [71; 32], now()).await?;
         assert_eq!(receipt.disposition, PublicationDisposition::Applied);
         assert_eq!(
             receipt.configuration_fingerprint.as_deref(),
             Some(expected.configuration_fingerprint.as_str())
         );
-        let replay = sender.send(&command, [72; 32], now()).await.unwrap();
+        let replay = sender.send(&command, [72; 32], now()).await?;
         assert_eq!(replay.disposition, PublicationDisposition::AlreadyCurrent);
-        assert_eq!(
-            store
-                .0
-                .lock()
-                .unwrap()
-                .get(&runtime_config_key().0)
-                .unwrap(),
-            &runtime
-        );
-    });
+        let rows = store
+            .0
+            .lock()
+            .map_err(|_| std::io::Error::other("fixture memory lock poisoned"))?;
+        let current = rows
+            .get(&runtime_config_key().0)
+            .ok_or_else(|| std::io::Error::other("fixture runtime row missing"))?;
+        assert_eq!(current, &runtime);
+        Ok::<(), Box<dyn Error>>(())
+    })
 }

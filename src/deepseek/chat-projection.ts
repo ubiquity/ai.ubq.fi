@@ -7,6 +7,7 @@ import {
   type DeepSeekResponsesResult,
   type OriginalToolName,
   failure,
+  aggregateContextOverflow,
   originalToolName,
 } from "./responses.ts";
 import { deepSeekThinkingModeActive } from "./index.ts";
@@ -26,7 +27,6 @@ import {
 import { getString, isRecord } from "../utils.ts";
 
 type ChatContentPart = Record<string, unknown>;
-
 /** One Responses content part mapped onto the Chat content union for one message role. */
 const chatContentPart = (
   part: unknown,
@@ -974,7 +974,7 @@ export const toDeepSeekResponsesChatBody = (
   if (window === null)
     return failure("model", `${profile.label} has no verified prompt window; aggregate admission refused the request.`, "context_length_exceeded");
   const promptAdmission = estimatePromptAdmission(body, window, promptAdmissionProjection);
-  if (!promptAdmission.admitted) return failure("input", promptAdmissionFailureMessage(promptAdmission, profile.label), "context_length_exceeded");
+  if (!promptAdmission.admitted) return aggregateContextOverflow(promptAdmissionFailureMessage(promptAdmission, profile.label));
   return {
     ok: true,
     value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames, elisions, exemptions, promptAdmission, warnings },

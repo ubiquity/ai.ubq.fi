@@ -36,6 +36,7 @@ import { attemptClaudeCodeSubscription } from "../src/paid-fallback/claude-code-
 import { claudeCodePoolProofForModel } from "../src/provider/claude-code-quota.ts";
 import { resetProviderSelectionCacheForTest } from "../src/provider/selection.ts";
 import { resetClaudeCodeModelsCacheForTest } from "../src/provider/claude-code-models.ts";
+import { CountingKv } from "./helpers/counting-kv.ts";
 import { rememberAnthropicReplay } from "../src/provider/anthropic-replay.ts";
 
 let kv: Kv;
@@ -619,4 +620,42 @@ test("native reasoning replay cannot cross account credential/workspace cohorts"
   assert.equal(changed?.response.status, 400);
   assert.equal((await changed.response.json()).error.code, "claude_code_request_invalid");
   assert.equal(transports, 1, "no signature is replayed under the replacement credential");
+});
+
+test("account discovery reads only the state needed for pristine, configured and tombstoned rosters", async () => {
+  const counting = new CountingKv();
+  const store = counting as unknown as Kv;
+  assert.deepEqual((await loadClaudeCodeAccountStore(store, () => null)).accounts, []);
+  assert.deepEqual(
+    counting.commands.map(({ command, keys }) => ({ command, keys })),
+    [
+      { command: "get", keys: [CLAUDE_CODE_ACCOUNTS_KEY] },
+      { command: "get", keys: [CLAUDE_CODE_AUTH_KV_KEY] },
+    ]
+  );
+  counting.clearMeasurements();
+  const imported = await loadClaudeCodeAccountStore(store, env);
+  assert.equal(imported.accounts.length, 1);
+  assert.deepEqual(
+    counting.commands.map(({ command, keys }) => ({ command, keys })),
+    [
+      { command: "get", keys: [CLAUDE_CODE_ACCOUNTS_KEY] },
+      { command: "get", keys: [CLAUDE_CODE_AUTH_KV_KEY] },
+      { command: "get", keys: [CLAUDE_CODE_WORKSPACE_KV_KEY] },
+      { command: "atomic.commit", keys: [CLAUDE_CODE_ACCOUNTS_KEY, CLAUDE_CODE_ACCOUNTS_KEY] },
+    ]
+  );
+  counting.clearMeasurements();
+  assert.equal((await loadClaudeCodeAccountStore(store, env)).accounts.length, 1);
+  assert.deepEqual(
+    counting.commands.map(({ command, keys }) => ({ command, keys })),
+    [{ command: "get", keys: [CLAUDE_CODE_ACCOUNTS_KEY] }]
+  );
+  assert(await removeClaudeCodeAccount(store, imported.accounts[0]?.account_id));
+  counting.clearMeasurements();
+  assert.deepEqual((await loadClaudeCodeAccountStore(store, env)).accounts, []);
+  assert.deepEqual(
+    counting.commands.map(({ command, keys }) => ({ command, keys })),
+    [{ command: "get", keys: [CLAUDE_CODE_ACCOUNTS_KEY] }]
+  );
 });

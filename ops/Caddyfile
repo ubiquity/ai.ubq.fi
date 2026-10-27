@@ -2,5 +2,9 @@ ai.ubq.fi {
     tls /etc/caddy/ai-ubq-fi-tls/ai.ubq.fi.pem /etc/caddy/ai-ubq-fi-tls/ai.ubq.fi.key
     reverse_proxy 127.0.0.1:7999 {
         flush_interval -1
+        # The gateway verifies its immutable release before listening again.
+        # Hold new requests through that restart instead of failing the steer.
+        lb_try_duration 25s
+        lb_try_interval 250ms
     }
 }

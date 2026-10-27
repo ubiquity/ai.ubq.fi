@@ -108,7 +108,7 @@ impl ConfiguredPaidInputs {
     /// Derive only configuration DATA from trusted current/planned records. The
     /// caller still owns current-row reads and their atomic revision fences.
     /// No store, mutation, nonce or publication capability is accepted here.
-    pub(crate) fn candidate_configuration(
+    pub fn candidate_configuration(
         &self,
         identity: &NativeTransportIdentity,
         current_owner: &PaidControlOwner,
@@ -349,6 +349,15 @@ impl PreparedConfigurationPublication {
     pub fn configuration(&self) -> &PaidControlConfig {
         &self.config
     }
+    pub fn owner_revision(&self) -> Option<&str> {
+        self.checks[0].expected_revision.as_deref()
+    }
+    pub fn previous_configuration_revision(&self) -> Option<&str> {
+        self.checks[1].expected_revision.as_deref()
+    }
+    pub fn changed(&self) -> bool {
+        self.changed
+    }
     pub async fn publish<S: AuthorityStore>(
         self,
         store: &S,
@@ -360,7 +369,7 @@ impl PreparedConfigurationPublication {
         self.publish_received(store, proof, now_ms, revision, &body)
             .await
     }
-    pub(crate) async fn publish_received<S: AuthorityStore>(
+    pub async fn publish_received<S: AuthorityStore>(
         self,
         store: &S,
         proof: &AuthenticatedNativeOwner,
@@ -368,10 +377,10 @@ impl PreparedConfigurationPublication {
         revision: &str,
         authenticated_body: &[u8],
     ) -> Result<PaidControlConfig, GatewayError> {
-        if !crate::wire::valid_revision(revision)
+        if !crate::protocol::valid_revision(revision)
             || self.changed && self.checks[1].expected_revision.as_deref() == Some(revision)
         {
-            return Err(crate::wire::invalid());
+            return Err(crate::protocol::invalid());
         }
         verify_owner(
             proof,
@@ -407,14 +416,14 @@ impl PreparedConfigurationPublication {
     }
 }
 
-pub(crate) fn conflict() -> GatewayError {
+pub fn conflict() -> GatewayError {
     GatewayError::new(
         409,
         "Configuration or credential publication changed concurrently",
         Some("native_publication_conflict"),
     )
 }
-pub(crate) fn unavailable(message: &str, code: &str) -> GatewayError {
+pub fn unavailable(message: &str, code: &str) -> GatewayError {
     GatewayError::unavailable(message, code)
 }
 

@@ -16,7 +16,7 @@ url = "=2.5.8"
 
 [dev-dependencies]
 gateway-admin-test-support.workspace = true
-gateway-publication = { path = "../gateway-publication" }
+gateway-publication-policy.workspace = true
 gateway-providers = { path = "../gateway-providers" }
 
 [lints]

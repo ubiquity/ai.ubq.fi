@@ -1,7 +1,7 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
 use crate::{
     authority::RemoteAuthorityStore,
-    host::{PlatformHost, provider_secret, response_bytes, setting},
+    host::{PlatformHost, provider_secret, response_bytes},
     storage::now_ms,
     transport::{
         outbound::{PinnedDestination, send_http},
@@ -62,7 +62,7 @@ fn binding(provider: &str, secret: &str) -> ProviderBinding {
         _ => None,
     } {
         return ProviderBinding {
-            identity: gateway_publication::control_publication::configured_paid_binding(
+            identity: gateway_publication_policy::control_publication::configured_paid_binding(
                 provider,
                 &gateway_auth::crypto::Secret::new(secret.to_owned()),
             ),
@@ -319,8 +319,7 @@ impl Host {
                 if let Some(etag) = if_none_match {
                     headers.insert("If-None-Match".into(), etag);
                 }
-                let base = setting(&self.env, "CODEX_BASE_URL")
-                    .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
+                let base = "https://chatgpt.com/backend-api/codex";
                 let base = base.trim().trim_end_matches('/');
                 let mut target = Url::parse(&format!("{base}/models"))
                     .map_err(|_| unavailable("Codex model URL is invalid."))?;

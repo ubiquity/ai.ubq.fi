@@ -7,11 +7,11 @@
     <meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
     <title>UbiquityOS — AI Admin Console</title>
-    <meta name="description" content="Admin console for ai.ubq.fi. Manage gateway API keys with an admin token." />
+    <meta name="description" content="Admin console for ai.ubq.fi. Sign in with Passport to manage the gateway." />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
-    <link rel="stylesheet" href="/style.css?v=passport-design-20260922" />
-    <link rel="stylesheet" href="/admin.css?v=passport-design-20260922" />
+    <link rel="stylesheet" href="/style.css?v=ubiquity-signin-20261025" />
+    <link rel="stylesheet" href="/admin.css?v=claude-usage-refresh-20261025" />
     <link rel="stylesheet" href="/admin-supervisor.css?v=admin-permissions-20261005" />
   </head>
   <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
@@ -112,25 +112,16 @@
             </header>
             <div data-card-body>
               <div id="admin-auth-gate" data-auth-gate>
-                <button id="admin-passport-login" type="button" data-variant="primary">
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <circle cx="12" cy="8" r="4" />
-                    <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                <button id="admin-passport-login" type="button" data-passport-signin>
+                  <svg viewBox="0 0 96 96" aria-hidden="true" focusable="false">
+                    <path
+                      fill="currentColor"
+                      d="M90.245 26.095c0-1.471-.832-2.878-2.111-3.646L50.201.576A4.03 4.03 0 0 0 48.091 0c-.704 0-1.472.192-2.111.576L8.11 22.449C6.833 23.216 6 24.559 6 26.095v43.81c0 1.471.832 2.879 2.11 3.646l37.934 21.873a4.04 4.04 0 0 0 4.157 0l37.933-21.873c1.28-.767 2.11-2.11 2.11-3.646zm-7.612 39.973c0 1.727-.896 3.326-2.367 4.157L50.457 87.814c-.703.447-1.535.639-2.367.639-.831 0-1.599-.192-2.366-.64l-29.81-17.588c-1.47-.831-2.366-2.43-2.366-4.157V34.409c0-.767.384-1.535 1.088-1.919a2.2 2.2 0 0 1 2.175 0l5.117 3.006c1.215.704 1.919 2.11 2.814 3.71.192.32.32.64.512.895 2.239 4.03 3.326 8.315 4.35 12.472 1.919 7.61 3.838 15.478 13.625 18.036 3.198.831 6.653.831 9.85 0 9.724-2.558 11.707-10.425 13.626-18.036 1.023-4.157 2.11-8.442 4.35-12.472.192-.32.32-.64.511-.895.832-1.6 1.6-2.942 2.815-3.71l5.117-3.006c.64-.383 1.472-.383 2.175 0 .704.384 1.088 1.088 1.088 1.92v31.658zM45.852 8.57a4.45 4.45 0 0 1 4.541 0l25.78 15.286c.639.384 1.023.64 1.023 1.407 0 .768-.384 1.215-1.024 1.6l-4.925 2.941c-2.175 1.28-3.263 3.326-4.222 5.18l-.064.129c-.128.255-.256.447-.384.703-2.43 4.35-4.222 8.954-5.245 13.047-2.047 7.931-2.815 13.176-9.468 14.903-1.215.32-2.494.447-3.71.447-1.279 0-2.494-.192-3.71-.447-6.652-1.727-7.484-6.972-9.467-14.966-1.023-4.094-2.814-8.699-5.245-13.048-.128-.192-.256-.448-.384-.64l-.064-.191c-.96-1.791-2.11-3.902-4.222-5.18l-4.925-2.943c-.64-.384-1.024-.831-1.024-1.599 0-.767.384-1.023 1.024-1.407z"
+                    />
                   </svg>
-                  <span>Sign in with Passport</span>
+                  <span>Sign in with Ubiquity</span>
                 </button>
-                <button id="admin-auth-gate-open" type="button">
-                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <circle cx="15.5" cy="8.5" r="4.5" />
-                    <path d="M12.4 11.8 5 19.2" />
-                    <path d="m7.2 17 1.6 1.6M9.8 14.4l1.6 1.6" />
-                  </svg>
-                  <span>Sign in</span>
-                </button>
-                <p
-                  >Passport sign-in requires an administrator account. Passkey and admin-token fallbacks remain
-                  available.</p
-                >
+                <p>Sign in with your Ubiquity Passport administrator account.</p>
               </div>
               <div id="admin-loading-grid" data-loading-grid hidden>
                 <div data-loading-item>
@@ -185,7 +176,7 @@
           <article data-card aria-labelledby="card-users">
             <header>
               <h2 id="card-users">Passkey users</h2>
-              <p>Use the fallback admin token to manage account roles.</p>
+              <p>Sign in with Passport to manage account roles.</p>
             </header>
             <div data-card-body>
               <span id="passkey-users-badge" data-badge data-state="unknown">Not loaded</span>
@@ -1077,14 +1068,16 @@
               <button
                 id="admin-passport-login-widget"
                 type="button"
-                data-variant="primary"
+                data-passport-signin
                 data-tooltip="Sign in with your Ubiquity Passport administrator account"
               >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="12" cy="8" r="4" />
-                  <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                <svg viewBox="0 0 96 96" aria-hidden="true" focusable="false">
+                  <path
+                    fill="currentColor"
+                    d="M90.245 26.095c0-1.471-.832-2.878-2.111-3.646L50.201.576A4.03 4.03 0 0 0 48.091 0c-.704 0-1.472.192-2.111.576L8.11 22.449C6.833 23.216 6 24.559 6 26.095v43.81c0 1.471.832 2.879 2.11 3.646l37.934 21.873a4.04 4.04 0 0 0 4.157 0l37.933-21.873c1.28-.767 2.11-2.11 2.11-3.646zm-7.612 39.973c0 1.727-.896 3.326-2.367 4.157L50.457 87.814c-.703.447-1.535.639-2.367.639-.831 0-1.599-.192-2.366-.64l-29.81-17.588c-1.47-.831-2.366-2.43-2.366-4.157V34.409c0-.767.384-1.535 1.088-1.919a2.2 2.2 0 0 1 2.175 0l5.117 3.006c1.215.704 1.919 2.11 2.814 3.71.192.32.32.64.512.895 2.239 4.03 3.326 8.315 4.35 12.472 1.919 7.61 3.838 15.478 13.625 18.036 3.198.831 6.653.831 9.85 0 9.724-2.558 11.707-10.425 13.626-18.036 1.023-4.157 2.11-8.442 4.35-12.472.192-.32.32-.64.511-.895.832-1.6 1.6-2.942 2.815-3.71l5.117-3.006c.64-.383 1.472-.383 2.175 0 .704.384 1.088 1.088 1.088 1.92v31.658zM45.852 8.57a4.45 4.45 0 0 1 4.541 0l25.78 15.286c.639.384 1.023.64 1.023 1.407 0 .768-.384 1.215-1.024 1.6l-4.925 2.941c-2.175 1.28-3.263 3.326-4.222 5.18l-.064.129c-.128.255-.256.447-.384.703-2.43 4.35-4.222 8.954-5.245 13.047-2.047 7.931-2.815 13.176-9.468 14.903-1.215.32-2.494.447-3.71.447-1.279 0-2.494-.192-3.71-.447-6.652-1.727-7.484-6.972-9.467-14.966-1.023-4.094-2.814-8.699-5.245-13.048-.128-.192-.256-.448-.384-.64l-.064-.191c-.96-1.791-2.11-3.902-4.222-5.18l-4.925-2.943c-.64-.384-1.024-.831-1.024-1.599 0-.767.384-1.023 1.024-1.407z"
+                  />
                 </svg>
-                <span>Sign in with Passport</span>
+                <span>Sign in with Ubiquity</span>
               </button>
               <button id="admin-sign-out" type="button" data-tooltip="Clear this browser session" hidden>
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1096,63 +1089,15 @@
               </button>
             </div>
             <span id="admin-passkey-status" data-badge data-state="unknown">Signed out</span>
-            <details data-passkey-advanced>
-              <summary>Advanced: passkey or account name</summary>
-              <div data-passkey-advanced-body>
-                <div data-layout="row">
-                  <button
-                    id="admin-passkey-login"
-                    type="button"
-                    data-tooltip="Use iCloud Keychain or another passkey provider to sign in"
-                  >
-                    <span>Sign in with passkey</span>
-                  </button>
-                  <button
-                    id="admin-passkey-register"
-                    type="button"
-                    data-tooltip="Create a passkey for this account on the current domain"
-                  >
-                    <span>Add passkey</span>
-                  </button>
-                </div>
-                <label data-field>
-                  <span data-label>Username</span>
-                  <input
-                    id="admin-passkey-handle"
-                    type="text"
-                    inputmode="text"
-                    autocomplete="off"
-                    placeholder="Optional account name"
-                  />
-                </label>
-              </div>
-            </details>
-            <details data-token-fallback>
-              <summary>Use an admin token</summary>
-              <div data-token-fallback-body>
-                <label data-field>
-                  <span data-label>Admin token</span>
-                  <input
-                    id="admin-token"
-                    type="password"
-                    inputmode="text"
-                    autocomplete="off"
-                    placeholder="Paste admin token"
-                  />
-                </label>
-                <div data-layout="row">
-                  <label data-check>
-                    <input id="remember-admin-token" type="checkbox" />
-                    <span>Remember</span>
-                  </label>
-                  <label data-check>
-                    <input id="show-admin-token" type="checkbox" />
-                    <span>Show</span>
-                  </label>
-                </div>
-                <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
-              </div>
-            </details>
+            <div id="admin-auth-compat" hidden aria-hidden="true">
+              <button id="admin-passkey-login" type="button">Sign in with passkey</button>
+              <button id="admin-passkey-register" type="button">Add passkey</button>
+              <input id="admin-passkey-handle" type="text" autocomplete="off" />
+              <input id="admin-token" type="password" autocomplete="off" />
+              <input id="remember-admin-token" type="checkbox" />
+              <input id="show-admin-token" type="checkbox" />
+              <span id="admin-auth-badge" data-badge data-state="unknown">Not checked</span>
+            </div>
           </div>
         </article>
         <button
@@ -1172,6 +1117,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=admin-supervisor-v4-20261009"></script>
+    <script type="module" src="/admin.js?v=claude-usage-direct-20261025"></script>
   </body>
 </html>

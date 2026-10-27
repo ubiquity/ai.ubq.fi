@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createIncomingBody, type IncomingBody } from "./http-body.ts";
+import { earlySseHeadersCommitted, registerEarlySseHeaders } from "./http-early-sse.ts";
 import { createRequestTaskDrain } from "./http-tasks.ts";
 import { createWebSocketUpgrades, type ServeUpgradeHandler } from "./http-upgrade.ts";
 
+export { earlySseHeadersCommitted, tryCommitEarlySseHeaders } from "./http-early-sse.ts";
 export { trackRequestTask } from "./http-tasks.ts";
 export { loadWebSocketModule } from "./websocket.ts";
 export type { ServeUpgradeHandler, WebSocketUpgrade } from "./http-upgrade.ts";
@@ -84,6 +86,49 @@ const responseHeaders = (response: Response, outgoing: ServerResponse): void => 
   if (cookies.length) outgoing.setHeader("set-cookie", cookies);
 };
 
+const prepareResponseHeaders = (request: Request, response: Response, outgoing: ServerResponse): void => {
+  const earlyHeaders = earlySseHeadersCommitted(request);
+  if (!earlyHeaders) responseHeaders(response, outgoing);
+  const inputBody = requestBodies.get(request);
+  if (inputBody && (inputBody.cancelled || !inputBody.consumed)) {
+    // Refusals can return without reading input, including after asynchronous
+    // authentication/admission. Discard it before handoff and close only after
+    // the response is written; an unread paused input otherwise holds shutdown.
+    inputBody.dispose();
+    outgoing.shouldKeepAlive = false;
+    if (!earlyHeaders) outgoing.setHeader("connection", "close");
+  }
+};
+
+const registerResponseReadiness = (request: Request, outgoing: ServerResponse, signal: AbortSignal): Readonly<{ stop: () => void; remove: () => void }> => {
+  let pending = true;
+  const stop = (): void => {
+    pending = false;
+    signal.removeEventListener("abort", stop);
+    outgoing.removeListener("close", stop);
+    outgoing.removeListener("error", stop);
+  };
+  const unregister = registerEarlySseHeaders(request, ({ headers }) => {
+    const input = requestBodies.get(request);
+    if (!pending || responseInterrupted(outgoing, signal) || outgoing.headersSent || !input?.consumed) return false;
+    if (!/^text\/event-stream(?:\s*;|$)/i.test(headers.get("content-type") ?? "")) return false;
+    if (["content-length", "content-encoding", "transfer-encoding"].some((name) => headers.has(name))) return false;
+    responseHeaders(new Response(null, { headers }), outgoing);
+    outgoing.flushHeaders();
+    return true;
+  });
+  signal.addEventListener("abort", stop, { once: true });
+  outgoing.once("close", stop);
+  outgoing.once("error", stop);
+  return {
+    stop,
+    remove: () => {
+      stop();
+      unregister();
+    },
+  };
+};
+
 const waitForDrain = (outgoing: ServerResponse, signal: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
     const cleanup = (): void => {
@@ -116,16 +161,7 @@ const sendResponse = async (request: Request, response: Response, outgoing: Serv
     void response.body?.cancel(signal.reason).catch(() => {});
     return;
   }
-  responseHeaders(response, outgoing);
-  const inputBody = requestBodies.get(request);
-  if (inputBody && (inputBody.cancelled || !inputBody.consumed)) {
-    // Refusals can return without reading input, including after asynchronous
-    // authentication/admission. Discard it before handoff and close only after
-    // the response is written; an unread paused input otherwise holds shutdown.
-    inputBody.dispose();
-    outgoing.shouldKeepAlive = false;
-    outgoing.setHeader("connection", "close");
-  }
+  prepareResponseHeaders(request, response, outgoing);
   if (!response.body || request.method === "HEAD" || response.status === 204 || response.status === 205 || response.status === 304) {
     void response.body?.cancel().catch(() => {});
     outgoing.end();
@@ -138,6 +174,8 @@ const sendResponse = async (request: Request, response: Response, outgoing: Serv
   };
   signal.addEventListener("abort", cancel, { once: true });
   try {
+    // SSE clients need the headers even while the producer is quiet.
+    if (!outgoing.headersSent && /^text\/event-stream(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) outgoing.flushHeaders();
     while (!responseInterrupted(outgoing, signal)) {
       const chunk = await reader.read();
       if (responseInterrupted(outgoing, signal)) break;
@@ -212,14 +250,18 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
     });
     const task = (async (): Promise<void> => {
       let request: Request | null = null;
+      let headerReadiness: ReturnType<typeof registerResponseReadiness> | null = null;
       try {
         request = incomingRequest(incoming, controller.signal);
+        headerReadiness = registerResponseReadiness(request, outgoing, controller.signal);
         const response = await handler(request, {
           remoteAddr: { transport: "tcp", hostname: incoming.socket.remoteAddress ?? "", port: incoming.socket.remotePort ?? 0 },
           completed,
         });
+        headerReadiness.stop();
         await sendResponse(request, response, outgoing, controller.signal);
       } catch (error) {
+        headerReadiness?.stop();
         if (outgoing.headersSent || outgoing.destroyed || controller.signal.aborted) {
           fail(error instanceof Error ? error : new Error("HTTP response failed"));
           outgoing.destroy();
@@ -235,6 +277,7 @@ export function serveHttp(optionsOrHandler: ServeHttpOptions | ServeHandler, sup
         requestBodies.get(request)?.dispose();
         requestBodies.delete(request);
       }
+      headerReadiness?.remove();
       await drainTasks();
       incoming.removeListener("aborted", aborted);
       incoming.removeListener("error", fail);

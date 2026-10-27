@@ -64,10 +64,6 @@ pub mod supervisor_brief;
 #[cfg(unix)]
 pub mod supervisor_data;
 #[cfg(unix)]
-pub mod supervisor_inventory;
-#[cfg(unix)]
-pub mod supervisor_metadata;
-#[cfg(unix)]
 pub mod supervisor_rollout;
 pub mod transport;
 #[cfg(unix)]

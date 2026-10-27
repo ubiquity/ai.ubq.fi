@@ -222,6 +222,7 @@ test("an active durable block or cooldown removes eligibility until it expires",
   const blocked = {
     windows: {},
     standard: {},
+    usage: null,
     representative_claim: null,
     blocked_until_ms: nowMs + 60_000,
     block_window: "5h" as const,

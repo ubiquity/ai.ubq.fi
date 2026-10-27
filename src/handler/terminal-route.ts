@@ -21,7 +21,6 @@ import { type ApiKeyPolicy, ApiKeyQuotaDispatchError, type ApiKeyUsageReservatio
 import { runtimeDeploymentId, runtimeGitSha } from "../config.ts";
 import { openaiError, withCors as withCorsHeaders, withoutBody } from "../http.ts";
 import { type InferenceAdmissionResult } from "../inference-admission.ts";
-import { handleJevResponsesCompaction, isJevCompactionRequest } from "../jev_compaction/compaction.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "../kernel/usage.ts";
 import { handleResponses } from "../responses-handler.ts";
 import { handleChatCompletions } from "../chat/envelope.ts";
@@ -30,6 +29,7 @@ import { handleEmbeddingsJobCreate, handleEmbeddingsJobGet } from "../embeddings
 import { getResponseTelemetry } from "../openai-telemetry.ts";
 import { handleImages } from "../images.ts";
 import { handleModels } from "../models/catalog.ts";
+import { handleDecisions } from "../decisions/handlers.ts";
 import { handleSystemOne } from "../systemone/handlers.ts";
 import {
   type AcceptedSentinelReplayInput,
@@ -421,6 +421,7 @@ const handleTerminalRoute = async (
     try {
       return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
         route,
+        request: req,
         telemetryResponse: response,
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestStartedAtMs,
@@ -526,25 +527,17 @@ const handleTerminalRoute = async (
     return await finishTerminalResponse(response, "chat.completions", true, true);
   };
   const runResponsesRoute = async (): Promise<Response> => {
-    // Header-marked Codex compaction is answered locally by Jev; the body is
-    // read only for a recognized request. When Jev cannot serve the session
-    // (for example a decision state that stays over its cap after every
-    // reduction stage, or a decision failure), fall through to the ordinary
-    // provider route so the client still receives a compaction instead of a
-    // 502. Both attempts share one inference lifetime: settling a failed local
-    // compaction first would release the reservation needed by every fallback
-    // provider before any of them can dispatch.
-    const response = await executeInference(async () => {
-      if (isJevCompactionRequest(req)) {
-        const compactionSignal = usageContext.downstreamSignal ?? callerSignal;
-        const compaction = await handleJevResponsesCompaction(req.clone(), { signal: compactionSignal });
-        if (compaction.ok || compactionSignal.aborted) return compaction;
-        await compaction.body?.cancel();
-        console.warn("[ai.ubq.fi] jev_compaction_fallback", JSON.stringify({ status: compaction.status }));
-      }
-      return await handleResponses(req, usageContext);
-    });
+    const response = await executeInference(() => handleResponses(req, usageContext));
     return await finishTerminalResponse(response, "responses", true, true);
+  };
+  const runDecisionsRoute = async (): Promise<Response> => {
+    const response = await executeInference(() => handleDecisions(req, usageContext));
+    if (response.ok) {
+      await bestEffortSettleKernelQuota("completed");
+    } else {
+      await bestEffortSettleKernelQuota("incomplete", "decisions_failed");
+    }
+    return await finishTerminalResponse(response, "decisions", true, true);
   };
   const runSystemOneRoute = async (): Promise<Response> => {
     const response = await executeInference(() => handleSystemOne(req, usageContext));
@@ -568,6 +561,7 @@ const handleTerminalRoute = async (
       [req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits"), runImagesRoute],
       [req.method === "POST" && path === "/v1/chat/completions", runChatCompletionsRoute],
       [req.method === "POST" && path === "/v1/responses", runResponsesRoute],
+      [req.method === "POST" && path === "/v1/decisions", runDecisionsRoute],
       [req.method === "POST" && path === "/v1/systemone", runSystemOneRoute],
     ];
     for (const [matches, run] of terminalRoutes) {

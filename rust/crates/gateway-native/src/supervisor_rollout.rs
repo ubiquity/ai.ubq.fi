@@ -1,6 +1,6 @@
 //! Bounded visible rollout reads for an already selected thread only.
 use crate::supervisor::{KnownThread, resolve_rollout_path};
-use crate::supervisor_inventory::text;
+use gateway_native_supervisor_read::inventory::text;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{

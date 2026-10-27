@@ -357,6 +357,8 @@ const claudeCodeQuotaView = (quota: ClaudeCodeQuotaState | null): Record<string,
   if (!quota) return null;
   return {
     windows: quota.windows,
+    usage: quota.usage,
+    ...(quota.usage_snapshot ? { usage_snapshot: quota.usage_snapshot } : {}),
     standard: quota.standard,
     representative_claim: quota.representative_claim,
     blocked_until_ms: quota.blocked_until_ms,

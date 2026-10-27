@@ -5,9 +5,8 @@ use crate::{
 };
 use gateway_auth::native::NATIVE_MAX_BODY_BYTES;
 use gateway_core::error::GatewayError;
-use gateway_publication::transport::{
-    OwnedNativeAuthHeaders, PublicationReceiver, PublicationRequest,
-};
+use gateway_publication_policy::protocol::{OwnedNativeAuthHeaders, PublicationRequest};
+use gateway_publication_transport::transport::PublicationReceiver;
 use worker::{Env, Request, Response};
 
 pub async fn handle(

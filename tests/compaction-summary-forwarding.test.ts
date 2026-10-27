@@ -254,6 +254,47 @@ test("compaction summary: truncation disabled accepts an exempt summary only ins
   assert.equal(refused.message.includes("no payload was dispatched"), true);
 });
 
+test("aggregate admission: a steer preserves original users before an adopted summary", () => {
+  const old = Array.from({ length: 2 }, (_, index) => ({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: `original message ${index} ${"x".repeat(60 * 1024)}` }],
+  }));
+  const summary = summaryText(720 * 1024);
+  const steer = { type: "message", role: "user", content: [{ type: "input_text", text: "steer now" }] };
+  const input = [...old, summaryMessage(summary), steer];
+  const original = structuredClone(input);
+  const accepted = toDeepSeekResponsesChatBody(request(input, { instructions: "keep these instructions" }), "deepseek-flash", true, DEEPSEEK_RESPONSES_PROFILE);
+  if (!accepted.ok) throw new Error(accepted.message);
+  const messages = accepted.value.body.messages as Record<string, unknown>[];
+  assert.deepEqual(messages, [
+    { role: "system", content: "keep these instructions" },
+    ...old.map((message) => ({ role: "user", content: message.content[0].text })),
+    { role: "user", content: summary },
+    { role: "user", content: "steer now" },
+  ]);
+  assert.deepEqual(input, original);
+  assert.deepEqual(accepted.value.elisions, []);
+  assert.equal(accepted.value.promptAdmission.policy, "chat-prompt-admission/v3");
+});
+
+test("aggregate admission: an overflowing steer refuses every truncation mode without deleting history", () => {
+  const old = Array.from({ length: 100 }, (_, index) => ({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: `original message ${index} ${"x".repeat(60 * 1024)}` }],
+  }));
+  const input = [...old, summaryMessage(summaryText(720 * 1024)), summaryMessage("steer now")];
+  const original = structuredClone(input);
+  for (const truncation of [undefined, "auto", "disabled"]) {
+    const refused = expectedFailure(toDeepSeekResponsesChatBody(request(input, { truncation }), "deepseek-flash", true, DEEPSEEK_RESPONSES_PROFILE));
+    assert.equal(refused.code, "context_length_exceeded");
+    assert.equal(refused.param, "input");
+    assert.match(refused.message, /no payload was dispatched/);
+    assert.deepEqual(input, original);
+  }
+});
+
 test("aggregate admission: instructions, tools, and images count beyond the summary envelope", () => {
   const image = `data:image/png;base64,${"A".repeat(55 * 1024)}`;
   const cases: readonly Record<string, unknown>[] = [

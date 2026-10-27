@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "UbiquityOS AI Gateway API",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "The OpenAI-compatible inference API for AI.UBQ.FI. Authenticate with an approved UbiquityOS gateway token, query /v1/models before choosing a model, and use the published JSON error envelope and rate-limit fields for autonomous clients."
   },
   "servers": [
@@ -128,6 +128,46 @@
           "400": { "$ref": "#/components/responses/InvalidRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "429": { "$ref": "#/components/responses/RateLimited" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/v1/decisions": {
+      "post": {
+        "tags": ["UbiquityOS extensions"],
+        "operationId": "createDecisions",
+        "summary": "Evaluate typed decisions",
+        "description": "Submits a typed decision request to an OpenRouter decision model served by this gateway. The request carries state plus one or more noul, choice, score, or box questions; the response carries calibrated probability answers and usage. This is not an OpenAI Chat Completions or Responses endpoint. Select a decision model from GET /uos/models/capabilities with /v1/decisions in supported_endpoints.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DecisionsRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One typed answer per question with the upstream model snapshot, provider, request id, and usage.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DecisionsResponse" }
+              }
+            },
+            "headers": {
+              "RateLimit-Policy": { "$ref": "#/components/headers/RateLimitPolicy" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "413": {
+            "description": "The decision request exceeds the gateway's accepted JSON body size.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "502": { "$ref": "#/components/responses/UpstreamFailure" },
           "503": { "$ref": "#/components/responses/ServiceUnavailable" }
         }
       }
@@ -737,6 +777,183 @@
             "additionalProperties": false
           }
         ]
+      },
+      "DecisionsGuidance": {
+        "anyOf": [
+          { "type": "string" },
+          { "type": "object", "additionalProperties": true },
+          { "type": "array", "items": {} }
+        ],
+        "description": "A string or structured JSON guidance value accepted by the upstream Decisions API."
+      },
+      "DecisionsNoulQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "instructions"],
+        "properties": {
+          "type": { "const": "noul" },
+          "instructions": { "$ref": "#/components/schemas/DecisionsGuidance" },
+          "criteria": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["true", "false"],
+            "properties": {
+              "true": { "$ref": "#/components/schemas/DecisionsGuidance" },
+              "false": { "$ref": "#/components/schemas/DecisionsGuidance" }
+            }
+          }
+        }
+      },
+      "DecisionsChoiceQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "instructions", "criteria"],
+        "properties": {
+          "type": { "const": "choice" },
+          "instructions": { "$ref": "#/components/schemas/DecisionsGuidance" },
+          "criteria": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "anyOf": [{ "$ref": "#/components/schemas/DecisionsGuidance" }, { "type": "null" }]
+            }
+          }
+        }
+      },
+      "DecisionsScoreQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "instructions", "criteria"],
+        "properties": {
+          "type": { "const": "score" },
+          "instructions": { "$ref": "#/components/schemas/DecisionsGuidance" },
+          "criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/DecisionsGuidance" }
+          }
+        }
+      },
+      "DecisionsBoxQuestion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "instructions"],
+        "properties": {
+          "type": { "const": "box" },
+          "instructions": { "$ref": "#/components/schemas/DecisionsGuidance" }
+        }
+      },
+      "DecisionsQuestion": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/DecisionsNoulQuestion" },
+          { "$ref": "#/components/schemas/DecisionsChoiceQuestion" },
+          { "$ref": "#/components/schemas/DecisionsScoreQuestion" },
+          { "$ref": "#/components/schemas/DecisionsBoxQuestion" }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "noul": "#/components/schemas/DecisionsNoulQuestion",
+            "choice": "#/components/schemas/DecisionsChoiceQuestion",
+            "score": "#/components/schemas/DecisionsScoreQuestion",
+            "box": "#/components/schemas/DecisionsBoxQuestion"
+          }
+        }
+      },
+      "DecisionsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "state", "questions"],
+        "properties": {
+          "model": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "An OpenRouter decision model id with /v1/decisions in its advertised supported_endpoints. The gateway also keeps typesafe/jev-latest as a stable alias for ~typesafe/jev-latest."
+          },
+          "state": {
+            "anyOf": [
+              { "type": "string" },
+              { "type": "object", "additionalProperties": true },
+              { "type": "array", "items": {} }
+            ],
+            "description": "The content to evaluate, including text or OpenRouter image/audio/video parts in an array."
+          },
+          "questions": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 24,
+            "additionalProperties": { "$ref": "#/components/schemas/DecisionsQuestion" }
+          },
+          "provider": {
+            "type": ["object", "null"],
+            "additionalProperties": true,
+            "description": "Optional OpenRouter provider-routing preferences forwarded unchanged."
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Optional observability grouping id forwarded to OpenRouter."
+          },
+          "trace": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Optional OpenRouter trace metadata forwarded unchanged."
+          },
+          "user": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Optional end-user identifier forwarded to OpenRouter."
+          }
+        }
+      },
+      "DecisionsAnswer": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": true,
+        "properties": {
+          "type": { "enum": ["noul", "choice", "score", "box"] },
+          "noul": { "type": "number", "minimum": 0, "maximum": 1 },
+          "choice": { "type": "string" },
+          "score": { "type": "number" },
+          "confidence": { "type": "number" },
+          "probabilities": { "type": "object", "additionalProperties": { "type": "number" } },
+          "legend": { "type": "object", "additionalProperties": true },
+          "box": {
+            "type": "object",
+            "required": ["top", "bottom", "left", "right"],
+            "additionalProperties": false,
+            "properties": {
+              "top": { "type": "number" },
+              "bottom": { "type": "number" },
+              "left": { "type": "number" },
+              "right": { "type": "number" }
+            }
+          }
+        }
+      },
+      "DecisionsResponse": {
+        "type": "object",
+        "required": ["model", "answers", "usage"],
+        "properties": {
+          "id": { "type": "string" },
+          "model": { "type": "string", "description": "The upstream dated model snapshot that served the request." },
+          "provider": { "type": "string" },
+          "answers": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/components/schemas/DecisionsAnswer" }
+          },
+          "usage": {
+            "type": "object",
+            "required": ["input_tokens", "output_tokens"],
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "cost": { "type": "number" }
+            }
+          }
+        }
       },
       "ChatCompletionRequest": {
         "type": "object",

@@ -77,6 +77,11 @@ test("static assets register frontend module dependencies", () => {
   assert.match(chatScript, /from "\.\/toast\.js\?v=passport-design-20260922";/);
 });
 
+test("chat uses the branded Ubiquity Passport sign-in button", () => {
+  assert.match(chatHtml, /id="passport-login"[\s\S]*?data-passport-signin[\s\S]*?Sign in with Ubiquity/);
+  assert.match(chatHtml, /viewBox="0 0 96 96"/);
+});
+
 test("chat response stats use one conversation bar below the composer", () => {
   assert.equal((chatHtml.match(/\bdata-chat-stats\b/g) ?? []).length, 1);
   assert.match(chatHtml, /<\/form>\s*<div data-chat-stats role="status" aria-live="polite" aria-atomic="true" hidden><\/div>/);
@@ -103,11 +108,12 @@ test("chat falls back to the loopback development principal without a token", ()
 test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
-  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=passport-design-20260922"><\/script>/);
+  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=decision-models-20261025"><\/script>/);
+  assert.match(modelsScript, /Decisions · POST \/v1\/decisions/);
 });
 
 test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const sharedAssetVersion = "passport-design-20260922";
+  const sharedAssetVersion = "ubiquity-signin-20261025";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -373,8 +379,9 @@ test("admin analytics view places capacity history before current providers", ()
   assert.match(adminHtml, /id="card-provider-capacity">Provider analytics/);
   assert.match(adminHtml, /id="view-tab-analytics"[\s\S]*?>\s*Analytics\s*</);
   assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=passport-design-20260922/);
-  assert.match(adminHtml, /admin\.js\?v=admin-supervisor-v4-20261009/);
+  assert.match(adminHtml, /admin\.css\?v=claude-usage-refresh-20261025/);
+  assert.match(adminHtml, /admin\.js\?v=claude-usage-direct-20261025/);
+  assert.match(adminScript, /endpoints\.has\("\/v1\/decisions"\)/);
   assert.match(adminScript, /toLocaleString\(undefined,/);
   assert.match(adminScript, /timeZoneName: "short"/);
   assert.match(adminScript, /creditExpiries/);
@@ -524,6 +531,7 @@ test("OpenAPI discovery contract describes the public inference API", () => {
     ["/v1/models", "get"],
     ["/v1/chat/completions", "post"],
     ["/v1/responses", "post"],
+    ["/v1/decisions", "post"],
     ["/v1/images/generations", "post"],
     ["/v1/images/edits", "post"],
     ["/uos/models/capabilities", "get"],
@@ -762,6 +770,7 @@ test("admin routes and page aliases are never cacheable before authentication", 
     ["POST", "/admin/providers/claude-code/auth"],
     ["DELETE", "/admin/providers/claude-code/auth"],
     ["POST", "/admin/providers/claude-code/quota/clear"],
+    ["POST", "/admin/providers/claude-code/quota/refresh"],
     ["GET", "/admin/providers/quota-projection"],
     ["POST", "/admin/providers/quota-projection/backfill"],
     ["GET", "/admin/prompt-cache-analytics"],

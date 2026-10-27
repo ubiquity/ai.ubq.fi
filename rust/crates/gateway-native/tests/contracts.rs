@@ -8,11 +8,12 @@ use gateway_auth::{
 use gateway_core::error::GatewayError;
 use gateway_native::{
     supervisor::{
-        InventoryScope, KnownThread, SourceId, SupervisorState, classify_state, extract_follow,
-        follow_update, resolve_rollout_path, select_follow_updates,
+        InventoryScope, KnownThread, SourceId, extract_follow, follow_update, resolve_rollout_path,
+        select_follow_updates,
     },
     transport::{RenewalStep, SupervisorMethod, SupervisorTransport},
 };
+use gateway_native_supervisor_read::state::{SupervisorState, classify_state};
 use serde_json::json;
 use std::collections::BTreeSet;
 

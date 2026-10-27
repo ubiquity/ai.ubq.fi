@@ -31,10 +31,13 @@ pub struct KeyChange {
 }
 
 pub fn actor(principal: &AuthPrincipal) -> ChangeActor {
+    let identity =
+        |id: &String, label: &String| ("passkey_user", Some(id.clone()), Some(label.clone()));
     let (kind, id, label) = match &principal.method {
         AuthMethod::PasskeySession {
             user_id, handle, ..
-        } => ("passkey_user", Some(user_id.clone()), Some(handle.clone())),
+        } => identity(user_id, handle),
+        AuthMethod::PassportSession { claims } => identity(&claims.sub, &claims.handle),
         AuthMethod::Disabled => ("local_admin", None, None),
         _ => ("shared_admin_credential", None, None),
     };

@@ -18,7 +18,8 @@ gateway-worker-fixture-setup.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true
 gateway-authority.workspace = true
-gateway-publication.workspace = true
+gateway-publication-policy.workspace = true
+gateway-publication-transport.workspace = true
 serde_json.workspace = true
 worker.workspace = true
 

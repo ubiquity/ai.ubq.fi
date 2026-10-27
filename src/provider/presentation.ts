@@ -94,8 +94,8 @@ export const PROVIDER_PRESENTATION: Readonly<Record<SelectableProviderId, Provid
   openrouter: {
     label: "OpenRouter",
     tier: "direct",
-    detail: "OpenRouter's full served catalogue on both OpenAI wires, plus System One decisions (Typesafe Jev) for the selector-repair design step.",
-    endpoints: ["/v1/chat/completions", "/v1/responses", "/v1/systemone"],
+    detail: "OpenRouter's served text catalogue on both OpenAI wires, plus typed decisions (noul, choice, score, and box) on the Decisions API.",
+    endpoints: ["/v1/chat/completions", "/v1/responses", "/v1/decisions", "/v1/systemone"],
     health_key: "openrouter",
   },
   lithos: {

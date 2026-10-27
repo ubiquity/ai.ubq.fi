@@ -1,0 +1,18 @@
+[package]
+name = "gateway-publication-test-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth = { path = "../gateway-auth" }
+gateway-authority = { path = "../gateway-authority" }
+gateway-core = { path = "../gateway-core" }
+gateway-publication = { path = "../gateway-publication" }
+gateway-publication-policy = { path = "../gateway-publication-policy" }
+gateway-publication-transport = { path = "../gateway-publication-transport" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,7 +1,7 @@
 # LLMs and Agents
 
-UbiquityOS AI Gateway provides OpenAI-compatible endpoints for chat and responses, plus agent message storage for
-kernel-driven workflows. This page focuses on LLM usage and agent messages.
+UbiquityOS AI Gateway provides OpenAI-compatible endpoints for chat and responses, typed OpenRouter decision endpoints,
+plus agent message storage for kernel-driven workflows. This page focuses on LLM usage and agent messages.
 
 ## Base URL
 
@@ -110,6 +110,10 @@ OpenAI-compatible endpoints:
 - `POST /v1/chat/completions`
 - `POST /v1/responses`
 
+Decision endpoint:
+
+- `POST /v1/decisions` (typed OpenRouter decision models)
+
 Codex compatibility endpoints:
 
 - `GET /v1/models?client_version=X.Y.Z`
@@ -130,6 +134,14 @@ Health endpoints:
 - `GET /health`
 - `GET /health/providers`
 - `GET /health/upstream`
+
+## Decisions
+
+Decision models return typed calibrated answers instead of generated text. Use `POST /v1/decisions` with a model whose
+`supported_endpoints` in `GET /uos/models/capabilities` includes `/v1/decisions`. The request contains `state` and one
+or more `questions` of type `noul` (yes/no), `choice`, `score`, or `box`; optional `provider`, `trace`, `session_id`, and
+`user` fields follow OpenRouter's Decisions API. `/v1/systemone` remains a compatibility alias for Jev. Do not send
+decision models to Chat Completions or Responses, and do not send text models to `/v1/decisions`.
 
 ## Models
 

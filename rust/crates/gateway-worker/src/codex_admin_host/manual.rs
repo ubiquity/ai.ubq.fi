@@ -238,10 +238,9 @@ pub(super) fn headers(account: &CodexSourceAccount, content: bool) -> BTreeMap<S
     }
     headers
 }
-pub(super) fn endpoints(platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
-    let base = crate::host::setting(&platform.env, "CODEX_BASE_URL")
-        .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
-    let mut url = Url::parse(gateway_schema::util::js_trim(&base))
+pub(super) fn endpoints(_platform: &PlatformHost) -> Result<(Url, Url), GatewayError> {
+    let base = "https://chatgpt.com/backend-api/codex";
+    let mut url = Url::parse(gateway_schema::util::js_trim(base))
         .map_err(|_| unavailable("Reset base URL is invalid."))?;
     if url.scheme() != "https"
         || !url.username().is_empty()

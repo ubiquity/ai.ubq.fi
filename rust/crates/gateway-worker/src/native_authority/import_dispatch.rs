@@ -11,7 +11,7 @@ use gateway_auth::{
     },
     types::AuthConfig,
 };
-use gateway_publication::transport::PublicationReceiver;
+use gateway_publication_transport::transport::PublicationReceiver;
 
 #[derive(serde::Deserialize)]
 struct Marker {

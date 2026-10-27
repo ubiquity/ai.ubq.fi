@@ -1,7 +1,6 @@
 //! Bounded redacted context only. No provider/network inference capability.
 use crate::{
     supervisor::KnownThread,
-    supervisor_inventory::{epoch_ms, text},
     supervisor_rollout::{SupervisorLogEvent, read_rollout_tail},
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
@@ -10,6 +9,7 @@ use gateway_core::{
     error::GatewayError,
     redaction::{redact, redact_parts},
 };
+use gateway_native_supervisor_read::inventory::{epoch_ms, text};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{

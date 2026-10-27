@@ -4,9 +4,9 @@ use gateway_auth::{
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
 use gateway_authority::paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
-use gateway_publication::{
-    transport::NativePublicationSender,
-    wire::{PreparedPublicationCommand, PublicationDisposition, PublicationReceipt},
+use gateway_publication::sender::NativePublicationSender;
+use gateway_publication::wire::{
+    PreparedPublicationCommand, PublicationDisposition, PublicationReceipt,
 };
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{

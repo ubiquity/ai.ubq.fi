@@ -371,35 +371,28 @@ test("only the Mac companion service pushes; a development server with the same 
   }
 });
 
-test("the push sends the configured host id and stops on an invalid one", async () => {
-  const previous = process.env.UOS_CAPACITY_OBSERVATION_HOST_ID;
-  try {
-    for (const [configured, expected] of [
-      [undefined, "mac"],
-      ["", "mac"],
-      ["mac-studio", "mac-studio"],
-      [" mac-mini ", "mac-mini"],
-      ["Mac Mini", null],
-    ] as const) {
-      if (configured === undefined) delete process.env.UOS_CAPACITY_OBSERVATION_HOST_ID;
-      else process.env.UOS_CAPACITY_OBSERVATION_HOST_ID = configured;
-      const state = freshPushState();
-      const calls: RecordedCall[] = [];
-      await proxyAdminChartSource(
-        new Request(CAPACITY_URL),
-        jsonResponse(localWithHistory([sample(1)])),
-        deps({ isMacCompanionService: () => true, pushState: state, fetch: recordingFetch(calls) })
-      );
-      await state.inFlight;
-      assert.deepEqual(
-        calls.filter((call) => call.method === "POST").map((call) => (call.body as { host: string }).host),
-        expected === null ? [] : [expected],
-        `configured ${JSON.stringify(configured)}`
-      );
-    }
-  } finally {
-    if (previous === undefined) delete process.env.UOS_CAPACITY_OBSERVATION_HOST_ID;
-    else process.env.UOS_CAPACITY_OBSERVATION_HOST_ID = previous;
+test("the push defaults to the Mac identity and validates an explicitly injected host", async () => {
+  for (const [hostId, expected] of [
+    [undefined, "mac"],
+    ["mac-studio", "mac-studio"],
+    ["mac-mini", "mac-mini"],
+    ["", null],
+    ["Mac Mini", null],
+    [null, null],
+  ] as const) {
+    const state = freshPushState();
+    const calls: RecordedCall[] = [];
+    await proxyAdminChartSource(
+      new Request(CAPACITY_URL),
+      jsonResponse(localWithHistory([sample(1)])),
+      deps({ isMacCompanionService: () => true, hostId, pushState: state, fetch: recordingFetch(calls) })
+    );
+    await state.inFlight;
+    assert.deepEqual(
+      calls.filter((call) => call.method === "POST").map((call) => (call.body as { host: string }).host),
+      expected === null ? [] : [expected],
+      `injected ${JSON.stringify(hostId)}`
+    );
   }
 });
 
