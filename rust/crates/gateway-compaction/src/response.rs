@@ -11,6 +11,7 @@ use crate::{
     },
 };
 use gateway_core::source_json::SourceJson;
+use gateway_prompt_policy::tokens::estimate_tokens;
 use std::collections::{BTreeMap, BTreeSet};
 fn failed(kind: FailureKind, detail: &'static str) -> CompactionFailure {
     CompactionFailure::new(kind, detail)
@@ -43,8 +44,9 @@ fn fit(
     result: &CompactResult,
     input: usize,
 ) -> Result<Fit, CompactionFailure> {
-    let accepts =
-        |summary: &Text| input > 0 && state::estimate_tokens(summary) <= max_floor_tokens(input);
+    let accepts = |summary: &Text| {
+        input > 0 && estimate_tokens(summary.as_units()) <= max_floor_tokens(input)
+    };
     let summary = render(transcript, calls, result, &result.decisions)?;
     if summary.len() <= SUMMARY_CHAR_CAP {
         return Ok(Fit {
@@ -224,7 +226,7 @@ pub async fn build<H: CompactionHost>(
     if calls.iter().any(|c| !c.pinned && !decided.contains(&c.id)) {
         return Err(failed(FailureKind::JevFailed, "missing-decision"));
     }
-    let input_tokens = state::estimate_tokens(&Text::from(text::canonical(&input)?.as_str()));
+    let input_tokens = estimate_tokens(Text::from(text::canonical(&input)?.as_str()).as_units());
     let fitted = fit(&transcript, &calls, &result, input_tokens)?;
     let mut summary = fitted.summary;
     let mut hybrid_applied = false;

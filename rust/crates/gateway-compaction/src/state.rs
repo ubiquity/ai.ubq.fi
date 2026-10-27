@@ -5,49 +5,13 @@ use crate::{
     types::{CompactionFailure, FailureKind},
 };
 use gateway_core::source_json::SourceJson;
+use gateway_prompt_policy::tokens::estimate_tokens;
 use serde::Serialize;
 use std::collections::BTreeMap;
 const CONTEXT: &str = "A coding assistant conversation is being compacted to free context. `history` is the whole conversation so far, oldest first; tool outputs are replaced by a short `result` note and long texts may be abridged. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted permanently, but the assistant can always re-run a tool or re-read a file.";
 pub fn json<T: Serialize + ?Sized>(value: &T) -> Result<SourceJson, CompactionFailure> {
     SourceJson::from_serializable(value)
         .map_err(|_| CompactionFailure::new(FailureKind::JevFailed, "state serialization failed"))
-}
-pub fn estimate_tokens(text: &Text) -> usize {
-    let units = text.as_units();
-    let mut at = 0;
-    let mut tokens = 0.0_f64;
-    while at < units.len() {
-        let u = units[at];
-        if text::whitespace(u) {
-            at += 1;
-            continue;
-        }
-        let letter = |v: u16| (65..=90).contains(&v) || (97..=122).contains(&v);
-        let digit = |v: u16| (48..=57).contains(&v);
-        if letter(u) || digit(u) {
-            let begin = at;
-            at += 1;
-            while at < units.len()
-                && if letter(u) {
-                    letter(units[at])
-                } else {
-                    digit(units[at])
-                }
-            {
-                at += 1;
-            }
-            let len = at - begin;
-            tokens += if digit(u) {
-                len as f64 / 2.0
-            } else {
-                (1 + (len - 1) / 6) as f64
-            };
-        } else {
-            tokens += 0.9;
-            at += 1;
-        }
-    }
-    tokens.ceil() as usize
 }
 pub fn truncate(text: &Text, limit: usize) -> Text {
     if text.len() <= limit {
@@ -183,7 +147,7 @@ fn goal(messages: &[Message]) -> Text {
     text::join(&values[values.len().saturating_sub(3)..], "\n")
 }
 fn entry_tokens(entry: &HistoryEntry) -> Result<usize, CompactionFailure> {
-    Ok(estimate_tokens(&Text::from(json(entry)?.as_str())) + 1)
+    Ok(estimate_tokens(Text::from(json(entry)?.as_str()).as_units()) + 1)
 }
 fn state(history: Vec<HistoryEntry>, goal: Text) -> State {
     State {
@@ -231,9 +195,8 @@ pub fn fit_state(
     } else {
         options.goal.clone()
     };
-    let base = estimate_tokens(&Text::from(
-        json(&state(Vec::new(), goal.clone()))?.as_str(),
-    ));
+    let base =
+        estimate_tokens(Text::from(json(&state(Vec::new(), goal.clone()))?.as_str()).as_units());
     let mut entries = Vec::new();
     let mut per = Vec::new();
     let mut tokens = 0;

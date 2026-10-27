@@ -1,12 +1,13 @@
 //! Source call decisions, request batching, local windows and projected transcript.
 use crate::{
     model::{Action, CompactResult, Decision, Message, Options, Reason, Resolved, ToolCall},
-    state::{self, estimate_tokens, fit_state},
+    state::{self, fit_state},
     text::{self, Text},
     types::{CompactionFailure, CompactionHost, CompactionStats, FailureKind, JEV_TIMEOUT_MS},
 };
 use futures_util::{StreamExt, TryStreamExt, future::try_join_all, stream};
 use gateway_core::source_json::SourceJson;
+use gateway_prompt_policy::tokens::estimate_tokens;
 use std::collections::{BTreeMap, BTreeSet};
 fn failed(detail: &'static str) -> CompactionFailure {
     CompactionFailure::new(FailureKind::JevFailed, detail)
@@ -59,7 +60,7 @@ fn batches(
     let mut current = Vec::new();
     let mut used = 0;
     for call in candidates {
-        let size = estimate_tokens(&Text::from(questions(call)?.as_str()));
+        let size = estimate_tokens(Text::from(questions(call)?.as_str()).as_units());
         if !current.is_empty() && (used + size) as f64 > budget {
             out.push(std::mem::take(&mut current));
             used = 0;
