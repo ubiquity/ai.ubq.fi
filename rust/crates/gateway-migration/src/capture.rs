@@ -1,5 +1,6 @@
 use crate::*;
-use gateway_admin_data::profile::{SourceDateHost, source::normalize_source_import_line_with_host};
+use gateway_admin_data::profile::source::normalize_source_import_line_with_host;
+use gateway_profile_values::date::SourceDateHost;
 use std::collections::BTreeSet;
 
 /// Private logical capture, distinct from ordinary NDJSON which omits KV expiry.

@@ -3,7 +3,10 @@ use crate::{
     capabilities::{Context, RuntimeCapabilities},
     store,
 };
-use gateway_admin::{operations::AdminInput, routes::AdminOperation, source_input as source_body};
+use gateway_admin_contracts::fields;
+use gateway_admin_contracts::{
+    operations::AdminInput, routes::AdminOperation, source_input as source_body,
+};
 use gateway_auth::{
     store::{check, commit, put},
     types::{AuthHost, AuthResponse, conflict, invalid},
@@ -125,12 +128,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             (JsString16::from_utf8("normal"), 0)
         } else {
             let scenario =
-                crate::parse::source_text(source_body::member(&input.body, "scenario").as_ref())
+                fields::source_text(source_body::member(&input.body, "scenario").as_ref())
                     .ok_or_else(|| invalid("scenario is required"))?;
             let duration = match source_body::member(&input.body, "duration_ms") {
                 None => 900000,
                 Some(value) => {
-                    let n = crate::parse::source_coerced_number(&value);
+                    let n = fields::source_coerced_number(&value);
                     if !n.is_finite() || n.fract() != 0.0 || !(0.0..=3600000.0).contains(&n) {
                         return Err(invalid("duration_ms must be between 0 and 3600000"));
                     }

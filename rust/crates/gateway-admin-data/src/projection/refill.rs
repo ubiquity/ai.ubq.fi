@@ -1,5 +1,5 @@
 use super::HOUR_MS;
-use crate::{json_number, number, positive, text};
+use gateway_profile_values::scalar::{json_number, number, positive, text};
 use serde_json::{Value, json};
 
 pub(super) fn empty() -> Value {

@@ -1,7 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_admin_data::profile::{
-    CanonicalDates, SourceDateHost,
-    source::{from_source_profile as from_profile, to_source_profile as to_profile},
+use gateway_admin_contracts::operations::{AdminHost as _, AdminInput};
+use gateway_admin_data::profile::source::{
+    from_source_profile as from_profile, to_source_profile as to_profile,
 };
 use gateway_auth::{crypto::sha256_base64url, store::key};
 use gateway_core::{
@@ -18,6 +18,7 @@ use gateway_migration::inverse::{ArtifactContext, export_latest, export_rollback
 use gateway_migration::projection::known_source_family;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
+use gateway_profile_values::date::{CanonicalDates, SourceDateHost};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -628,8 +629,8 @@ impl gateway_auth::types::AuthHost for AdminHost {
 }
 struct Capabilities;
 impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
-fn admin_input(body: Value) -> Result<gateway_admin::operations::AdminInput, GatewayError> {
-    Ok(gateway_admin::operations::AdminInput {
+fn admin_input(body: Value) -> Result<AdminInput, GatewayError> {
+    Ok(AdminInput {
         parameter: None,
         query: Default::default(),
         body: gateway_core::source_json::SourceJson::from_serializable(&body)?,
@@ -646,7 +647,6 @@ fn admin_input(body: Value) -> Result<gateway_admin::operations::AdminInput, Gat
 #[test]
 fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
 -> Result<(), Box<dyn std::error::Error>> {
-    use gateway_admin::operations::AdminHost;
     let directory = Directory::new();
     let path = directory.file("admin.sqlite3");
     let (input, _) = fixture();
@@ -664,7 +664,7 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
         config: &config,
     };
     let response = run(runtime.execute(
-        gateway_admin::routes::AdminOperation::DebugGet,
+        gateway_admin_contracts::routes::AdminOperation::DebugGet,
         admin_input(Value::Null)?,
     ))?;
     assert_eq!(
@@ -675,7 +675,7 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
         "codex_429"
     );
     run(runtime.execute(
-        gateway_admin::routes::AdminOperation::DebugSet,
+        gateway_admin_contracts::routes::AdminOperation::DebugSet,
         admin_input(json!({"scenario":"normal","duration_ms":0}))?,
     ))?;
     let inverse = run(export_latest(&store, 2300))?;
@@ -695,7 +695,8 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
 }
 
 #[test]
-fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm() {
+fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm()
+-> Result<(), Box<dyn std::error::Error>> {
     struct RecordedRealm(Value);
     impl SourceDateHost for RecordedRealm {
         fn date_value(&self, input: Option<&Value>) -> Result<Option<i64>, GatewayError> {
@@ -707,9 +708,7 @@ fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm() {
             })?;
             let row = self.0["dates"]
                 .as_array()
-                .unwrap()
-                .iter()
-                .find(|r| r["input"] == text)
+                .and_then(|dates| dates.iter().find(|r| r["input"] == text))
                 .ok_or_else(|| {
                     GatewayError::unavailable(
                         "Date source realm unavailable",
@@ -719,18 +718,16 @@ fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm() {
             Ok(row["epochMs"].as_i64())
         }
     }
-    let utc: Value = serde_json::from_str(include_str!("fixtures/normalization-utc.json")).unwrap();
-    let ny: Value =
-        serde_json::from_str(include_str!("fixtures/normalization-new-york.json")).unwrap();
+    let utc: Value = serde_json::from_str(include_str!("fixtures/normalization-utc.json"))?;
+    let ny: Value = serde_json::from_str(include_str!("fixtures/normalization-new-york.json"))?;
     let input = json!({"type":"object","value":{"when":{"type":"Array","value":[{"type":"Date","value":"2024-01-02T03:04:05"}]}}});
-    assert!(gateway_admin_data::profile::from_profile(&input).is_err());
-    let first =
-        gateway_admin_data::profile::from_profile_with_host(&input, &RecordedRealm(utc)).unwrap();
-    let second =
-        gateway_admin_data::profile::from_profile_with_host(&input, &RecordedRealm(ny)).unwrap();
+    assert!(gateway_profile_values::codec::from_profile(&input).is_err());
+    let first = gateway_profile_values::codec::from_profile_with_host(&input, &RecordedRealm(utc))?;
+    let second = gateway_profile_values::codec::from_profile_with_host(&input, &RecordedRealm(ny))?;
     assert_ne!(first, second);
-    let original = from_profile(&to_profile(&first).unwrap()).unwrap();
+    let original = from_profile(&to_profile(&first)?)?;
     assert_eq!(first, original);
+    Ok(())
 }
 
 #[test]

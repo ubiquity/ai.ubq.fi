@@ -173,7 +173,7 @@ impl AuthHost for PlatformHost {
         _state_id: &str,
         path: &str,
     ) -> Result<String, GatewayError> {
-        Ok(gateway_admin::kernel_auth::KernelAuthService {
+        Ok(gateway_admin_kernel::kernel_auth::KernelAuthService {
             store: &self.store,
             host: self,
         }

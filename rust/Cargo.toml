@@ -7,6 +7,7 @@ members = [
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
   "crates/gateway-compaction",
+  "crates/gateway-prompt-policy",
   "crates/gateway-schema",
   "crates/gateway-providers",
   "crates/gateway-authority",
@@ -15,7 +16,11 @@ members = [
   "crates/gateway-catalog-runtime",
   "crates/gateway-auth",
   "crates/gateway-admin",
+  "crates/gateway-admin-contracts",
+  "crates/gateway-admin-keys",
+  "crates/gateway-admin-kernel",
   "crates/gateway-admin-data",
+  "crates/gateway-profile-values",
   "crates/gateway-admin-runtime",
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
@@ -60,6 +65,7 @@ worker = "=0.8.7"
 wasm-bindgen = "=0.2.129"
 gateway-core = { path = "crates/gateway-core" }
 gateway-compaction = { path = "crates/gateway-compaction" }
+gateway-prompt-policy = { path = "crates/gateway-prompt-policy" }
 gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
@@ -69,7 +75,11 @@ gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
 gateway-admin = { path = "crates/gateway-admin" }
+gateway-admin-contracts = { path = "crates/gateway-admin-contracts" }
+gateway-admin-keys = { path = "crates/gateway-admin-keys" }
+gateway-admin-kernel = { path = "crates/gateway-admin-kernel" }
 gateway-admin-data = { path = "crates/gateway-admin-data" }
+gateway-profile-values = { path = "crates/gateway-profile-values" }
 gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }

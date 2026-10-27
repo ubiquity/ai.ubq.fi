@@ -16,7 +16,7 @@ pub async fn execute_profile<S: QueryStore>(
 }
 
 struct ProfileHost;
-impl gateway_admin_data::profile::SourceDateHost for ProfileHost {
+impl gateway_profile_values::date::SourceDateHost for ProfileHost {
     fn date_value(&self, input: Option<&serde_json::Value>) -> Result<Option<i64>, GatewayError> {
         let raw = input
             .map(gateway_core::source_json::SourceJson::from_serializable)

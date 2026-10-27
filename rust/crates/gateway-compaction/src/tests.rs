@@ -322,7 +322,7 @@ fn source_utf16_estimator_and_bounded_heads_match_including_split_surrogates() {
     for case in cases("tokens") {
         let text: Text = decode(&field(&case, "text"));
         assert_eq!(
-            state::estimate_tokens(&text),
+            gateway_prompt_policy::tokens::estimate_tokens(text.as_units()),
             decode::<usize>(&field(&case, "expected"))
         );
     }

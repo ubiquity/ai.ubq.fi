@@ -1,5 +1,5 @@
 //! Source kernel public-key administration; these are verification keys, never private credentials.
-use crate::source_input as input;
+use gateway_admin_contracts::source_input as input;
 use gateway_auth::crypto::uuid_from_random;
 use gateway_auth::store;
 use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};

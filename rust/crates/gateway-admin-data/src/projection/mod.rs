@@ -2,7 +2,7 @@
 mod refill;
 pub mod source;
 
-use crate::{json_number, number, positive, present, text};
+use gateway_profile_values::scalar::{json_number, number, positive, present, text};
 use serde_json::{Value, json};
 use std::{
     cmp::Ordering,
