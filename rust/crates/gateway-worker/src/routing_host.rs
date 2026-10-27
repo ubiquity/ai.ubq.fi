@@ -476,7 +476,7 @@ fn unavailable(message: &str) -> GatewayError {
 // Never call this from paid_credential: receipt/currentness rechecks are read-only.
 async fn prepare_credential_catalog<
     S: gateway_core::query::QueryStore,
-    H: gateway_catalog_runtime::host::CatalogHost,
+    H: gateway_catalog_provider::host::CatalogHost,
 >(
     provider: UpstreamProvider,
     store: &S,

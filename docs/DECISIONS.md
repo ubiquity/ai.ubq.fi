@@ -2568,3 +2568,18 @@ Administrative operation types, source field parsers and audit records are defin
 Reason: the original 2,471-line admin crate exceeded the owner's 1,000-line limit. The partition keeps the existing authorization-before-parsing order, atomic key/policy/audit transaction, paid-deletion fences, source UTF16 encodings and exact route responses. The admin integration tests remain independent targets with common fixtures in the bounded dev-only support crate.
 
 Reversal risk: moving these owners back into the dispatcher restores oversized-crate debt; forwarding their public names would violate the defining-module rule. The split does not transfer credential, state-conversion, service-activation or deployment authority.
+## Worker stream preparation retains the original request lifetime - 2026-10-25
+
+Direct synthetic SSE hops hold metadata until semantic output and use the same Session and admission for presemantic fallback. The first semantic terminal releases only its upstream reader. An already-armed lifetime owner survives asynchronous response preparation until the existing registered body finisher takes ownership; generic admission handoff retains caller-owned values without expanding authority. A feature-only fixture observes a pending preparation phase and drops the genuine Rust handler future while its caller signal remains un-aborted; those features stay off in shipping builds. Cerebras remains buffered and the existing subscription and authoritative 402/429 paid-tier policy stays unchanged. Source checks and fixture design do not establish runtime acceptance.
+
+## Rust inference completes cold OpenRouter discovery - 2026-10-25
+
+A named OpenRouter or synthetic DeepSeek request with no accepted OpenRouter snapshot joins the existing credential-bound catalog refresh and uses its current publication before constructing routing input. Warm snapshots, including empty ones, remain authoritative; unavailable discovery never grants a model that was not observed. Provider selection, credential currentness, cancellation, one original admission and the existing paid-tier guard remain unchanged.
+
+Reason: the Worker previously captured an empty catalog before starting background discovery, then rejected the fallback alias against that stale request snapshot even after discovery advertised it. Source and component checks are separate from the required 16 real runtime cases.
+
+## Rust Decisions retains the existing original-admission path - 2026-10-25
+
+The Rust Decisions route uses a separate typed request and response protocol with the same validation order, UTF-16 string values, fixed OpenRouter alpha URL and 60-second deadline as the Bun handler. Provider selection and observed output modalities gate dispatch. Decisions shares the existing extras request admission, quota and terminal settlement; it never enters the paid inference waterfall. The versioned Codex catalog includes only text-capable OpenRouter rows, while the official model list and public/admin capability listings retain the Decisions endpoint. The legacy Jev SystemOne envelope remains distinct.
+
+Reason: catalog discovery without a matching Rust wire advertised decision models the Rust candidate could not serve. Component checks do not establish Worker runtime, deployment or live-client acceptance.

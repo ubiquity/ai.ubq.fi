@@ -84,6 +84,24 @@ pub async fn fetch(
                 .unwrap_or_else(|| "matrix_fixture_failed".into()),
         )
     })?;
+    #[cfg(feature = "stream-drop-fixture")]
+    let request = {
+        if request.method() == worker::Method::Post && request.path() == "/v1/responses" {
+            let marker = match request.clone() {
+                Ok(mut cloned) => cloned.json::<serde_json::Value>().await.ok(),
+                Err(_) => None,
+            };
+            if marker
+                .as_ref()
+                .and_then(|body| body.get("input"))
+                .and_then(serde_json::Value::as_str)
+                == Some("fixture:matrix:precommit:rust-drop")
+            {
+                return drop_preparing(request, env, context, &receiver).await;
+            }
+        }
+        request
+    };
     gateway_worker::fetch_with_bindings(
         request,
         env,
@@ -108,4 +126,38 @@ mod tests {
             .is_ok()
         );
     }
+}
+
+#[cfg(feature = "stream-drop-fixture")]
+async fn drop_preparing(
+    request: Request,
+    env: Env,
+    context: Context,
+    receiver: &PublicationReceiver,
+) -> worker::Result<gateway_worker::response::GatewayResponse> {
+    let signal = request.inner().signal();
+    let phase = gateway_worker::stream_fixture::observe_preparation();
+    let mut actual = Box::pin(gateway_worker::fetch_with_bindings(
+        request,
+        env,
+        context,
+        Some(receiver),
+        gateway_worker::native_host::NativeBindings::default(),
+    ));
+    let request_id =
+        std::future::poll_fn(
+            |context| match std::future::Future::poll(actual.as_mut(), context) {
+                std::task::Poll::Ready(_) => std::task::Poll::Ready(Err(worker::Error::RustError(
+                    "The actual handler completed before the preparation barrier".into(),
+                ))),
+                std::task::Poll::Pending => match phase.request_id() {
+                    Some(id) => std::task::Poll::Ready(Ok(id)),
+                    None => std::task::Poll::Pending,
+                },
+            },
+        )
+        .await?;
+    let before = signal.aborted();
+    drop(actual);
+    worker::Response::from_json(&serde_json::json!({"request_id":request_id,"phase":"presemantic-prefix-pending","rust_future_dropped":true,"caller_aborted_before":before,"caller_aborted_after":signal.aborted()})).map(Into::into)
 }

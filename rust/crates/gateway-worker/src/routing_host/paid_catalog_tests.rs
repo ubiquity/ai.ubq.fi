@@ -11,7 +11,7 @@ use gateway_authority::{
     paid_types::PaidRequest,
     store::{Authority, TokenSource},
 };
-use gateway_catalog_runtime::host::{
+use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };

@@ -1,13 +1,11 @@
 use gateway_admin_test_support::ranked_collator::FixtureCollator;
-use gateway_catalog_runtime::{
-    CatalogRuntime,
-    admin::{AdminCatalogHost, AdminCatalogOperation, AdminCatalogResponse},
-    host::{
-        CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
-        CredentialPublication, ProviderBinding,
-    },
-    state,
+use gateway_catalog_provider::host::{
+    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
+    CredentialPublication, ProviderBinding,
 };
+use gateway_catalog_provider::response::AdminCatalogResponse;
+use gateway_catalog_runtime::admin::{AdminCatalogHost, AdminCatalogOperation};
+use gateway_catalog_runtime::{CatalogRuntime, state};
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryEntry, QueryPage, QueryRequest, QueryStore};
 use gateway_core::source_json::SourceJson;

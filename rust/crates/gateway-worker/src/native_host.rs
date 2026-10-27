@@ -3,7 +3,6 @@
 use crate::{
     host::{PlatformHost, response_bytes},
     native_transport::{NativeTransport, unavailable},
-    transport::stream::{ObservationHandle, ObservedStream},
 };
 use gateway_auth::{
     crypto::{base64url, decode_base64url},
@@ -20,6 +19,7 @@ use gateway_auth::{
     types::AuthResponse,
 };
 use gateway_core::error::GatewayError;
+use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use serde::Deserialize;
 use std::{collections::BTreeSet, rc::Rc};
 use worker::{Context, Env, Fetcher, Response};

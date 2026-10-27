@@ -18,38 +18,7 @@ use gateway_core::{
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum ExtrasFamily {
-    ImageGenerations,
-    ImageEdits,
-    Embeddings,
-    EmbeddingJobCreate,
-    EmbeddingJobPoll,
-    SystemOne,
-}
-impl ExtrasFamily {
-    fn provider(self) -> UpstreamProvider {
-        match self {
-            Self::ImageGenerations | Self::ImageEdits => UpstreamProvider::ChatgptCodex,
-            Self::SystemOne => UpstreamProvider::Openrouter,
-            _ => UpstreamProvider::Voyage,
-        }
-    }
-    fn child_id(self, parent: &str, index: u32) -> String {
-        match self {
-            Self::ImageGenerations | Self::ImageEdits if index > 0 => format!(
-                "{parent}:image:{}:{}",
-                if self == Self::ImageGenerations {
-                    "generations"
-                } else {
-                    "edits"
-                },
-                index + 1
-            ),
-            _ => parent.into(),
-        }
-    }
-}
+use gateway_extras_contract::family::ExtrasFamily;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ChildRecord {
     pub nonce: String,
@@ -484,7 +453,7 @@ impl<
             )
             .into());
         }
-        if family == ExtrasFamily::SystemOne && count != 1 {
+        if matches!(family, ExtrasFamily::SystemOne | ExtrasFamily::Decisions) && count != 1 {
             return Err(journal::unavailable("SystemOne has one logical dispatch child.").into());
         }
         let (_, prior) = journal::load(&self.store, &self.parent).await?;

@@ -1,10 +1,6 @@
 //! Fixed paid control publications, derived in the same store as admission/accounting.
 //! These records are provenance and a coarse index; only authority issues a request receipt.
-use crate::{
-    CatalogRuntime,
-    host::{CatalogHost, CatalogProvider, CredentialPublication},
-    state,
-};
+use crate::{CatalogRuntime, state};
 use gateway_authority::{
     keys,
     paid_control::{
@@ -13,6 +9,7 @@ use gateway_authority::{
     },
     paid_types::PaidRoutingPolicy,
 };
+use gateway_catalog_provider::host::{CatalogHost, CatalogProvider, CredentialPublication};
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,

@@ -1,5 +1,8 @@
 [workspace]
 members = [
+  "crates/gateway-decision-runtime",
+  "crates/gateway-extras-contract",
+  "crates/gateway-decision-protocol",
   "crates/gateway-quality",
   "crates/gateway-quality-syntax",
   "crates/gateway-core",
@@ -8,6 +11,7 @@ members = [
   "crates/gateway-providers",
   "crates/gateway-authority",
   "crates/gateway-admission",
+  "crates/gateway-catalog-provider",
   "crates/gateway-catalog-runtime",
   "crates/gateway-auth",
   "crates/gateway-admin",
@@ -31,6 +35,7 @@ members = [
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
   "crates/gateway-worker",
+  "crates/gateway-worker-stream",
   "crates/gateway-capacity-recovery",
   "crates/gateway-worker-fixture",
   "crates/gateway-worker-fixture-setup",
@@ -50,6 +55,9 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-decision-runtime = { path = "crates/gateway-decision-runtime" }
+gateway-extras-contract = { path = "crates/gateway-extras-contract" }
+gateway-decision-protocol = { path = "crates/gateway-decision-protocol" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
 worker = "=0.8.7"
@@ -60,6 +68,7 @@ gateway-schema = { path = "crates/gateway-schema" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }
 gateway-admission = { path = "crates/gateway-admission" }
+gateway-catalog-provider = { path = "crates/gateway-catalog-provider" }
 gateway-catalog-runtime = { path = "crates/gateway-catalog-runtime" }
 gateway-capacity-recovery = { path = "crates/gateway-capacity-recovery" }
 gateway-auth = { path = "crates/gateway-auth" }
@@ -83,6 +92,7 @@ gateway-publication-test-support = { path = "crates/gateway-publication-test-sup
 gateway-native = { path = "crates/gateway-native" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
+gateway-worker-stream = { path = "crates/gateway-worker-stream" }
 gateway-worker-fixture-setup = { path = "crates/gateway-worker-fixture-setup" }
 gateway-observability-test-support = { path = "crates/gateway-observability-test-support" }
 gateway-admin-test-support = { path = "crates/gateway-admin-test-support" }

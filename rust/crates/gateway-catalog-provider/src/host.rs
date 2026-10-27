@@ -35,7 +35,7 @@ impl CatalogProvider {
             Self::Openlux => Some("https://api.openlux.ai/v1/models"),
             Self::Surplus => Some("https://api.surplusintelligence.ai/v1/models"),
             Self::Lithos => Some("https://api.lithosai.cloud/v1/models"),
-            Self::Openrouter => Some("https://openrouter.ai/api/v1/models"),
+            Self::Openrouter => Some(gateway_decision_protocol::catalog::MODELS_URL),
             Self::ClaudeCode => Some("https://api.anthropic.com/v1/models"),
             Self::Deepseek | Self::Cerebras => None,
         }
@@ -261,6 +261,6 @@ pub trait CatalogHost {
         }
     }
 }
-pub(crate) fn unavailable(message: &str) -> GatewayError {
+pub fn unavailable(message: &str) -> GatewayError {
     GatewayError::new(502, message, Some("codex_catalog_unavailable"))
 }
