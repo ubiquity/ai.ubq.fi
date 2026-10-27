@@ -154,7 +154,9 @@ pub(super) fn project(
     )
 }
 
-pub(super) async fn subscriptions(store: &crate::authority::RemoteAuthorityStore) -> Vec<Value> {
+pub(super) async fn subscriptions(
+    store: &gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+) -> Vec<Value> {
     let Ok(at) = gateway_worker_storage::store::now_ms() else {
         return Vec::new();
     };

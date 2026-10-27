@@ -3,7 +3,6 @@ use super::{
     manual,
     source_inventory::{self, SourceRuntime},
 };
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
@@ -21,6 +20,7 @@ use gateway_authority::store::Authority;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{AccountBinding, RequestContext};
 use gateway_routing_runtime::types::CodexRecovery;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use std::cell::RefCell;
 use worker::Method;

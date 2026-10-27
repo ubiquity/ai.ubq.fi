@@ -1,6 +1,5 @@
 //! Fixed reverse native protocols, authenticated against the common durable nonce authority.
 pub(crate) mod import_dispatch;
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
 use crate::native_host::NativeBindings;
@@ -25,6 +24,7 @@ use gateway_authority::{
     store::Authority,
 };
 use gateway_core::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::request_bytes;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::headers::HeaderLimits;

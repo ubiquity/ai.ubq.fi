@@ -1,5 +1,4 @@
 //! Actual schema -> admission -> provider -> terminal transport path.
-use crate::authority::RemoteAuthorityStore;
 use crate::catalog::CatalogState;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
@@ -39,6 +38,7 @@ use gateway_schema::{
     request::RequestSurface,
     source_request::{SourceRequestDocument, parse_http_body},
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
@@ -393,7 +393,7 @@ pub async fn run(
         client_version,
         request_id,
         // Compaction requests use the selected provider, like ordinary inference.
-        false,
+        local_compaction: false,
         permit,
     }))
     .await

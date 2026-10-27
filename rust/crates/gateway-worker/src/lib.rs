@@ -11,7 +11,6 @@ mod admin_host;
 mod admin_support_host;
 mod admission;
 mod agent_messages;
-pub mod authority;
 mod cache_experiment_host;
 mod candidate_bindings;
 mod catalog;
@@ -36,7 +35,6 @@ mod lifecycle;
 mod live_host;
 mod live_http;
 /// Rust-only fixture composition; no native capture HTTP route is exposed.
-pub mod migration_host;
 mod native_authority;
 pub mod native_host;
 mod native_transport;

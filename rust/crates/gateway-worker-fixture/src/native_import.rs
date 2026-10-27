@@ -30,7 +30,7 @@ use gateway_core::{
         StoredRecord,
     },
 };
-use gateway_worker::authority::RemoteAuthorityStore;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_fixture_setup::invalid;
 use std::collections::BTreeMap;
 const HOME: &str = "/tmp/worker-import-synthetic-owner";

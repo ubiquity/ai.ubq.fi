@@ -3,7 +3,7 @@ pub(crate) mod admin;
 pub(crate) mod catalog;
 pub(crate) mod platform;
 
-use crate::{authority::RemoteAuthorityStore, host::PlatformHost};
+use crate::host::PlatformHost;
 use gateway_admin_runtime::claude_generation::StateGeneration;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_claude_runtime::{
@@ -19,6 +19,7 @@ use gateway_routing_runtime::types::{
     PublishedCredential, ResponseHead,
 };
 use gateway_schema::selection::ProviderSelection;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
 

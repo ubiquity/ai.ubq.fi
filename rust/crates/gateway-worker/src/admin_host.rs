@@ -48,7 +48,7 @@ impl Capabilities {
         request_id: &RequestId,
         original_body: &[u8],
         original_request: &gateway_auth::types::AuthRequest,
-        store: crate::authority::RemoteAuthorityStore,
+        store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
         actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,

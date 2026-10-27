@@ -1,5 +1,4 @@
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformHost, provider_secret},
     observability_host,
 };
@@ -18,6 +17,7 @@ use gateway_observability::{
     types::{HealthEvent, HealthProvider, HealthTarget},
 };
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};
 

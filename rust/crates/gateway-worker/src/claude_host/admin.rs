@@ -1,5 +1,4 @@
 //! Already-authorized finite admin operations; account/quota policy stays in m12/m21.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
 use crate::host::response_bytes;
 use crate::transport::outbound::PinnedDestination;
@@ -19,6 +18,7 @@ use gateway_core::{
     source_serialization as source,
 };
 use gateway_observability::{ObservabilityRuntime, types::ObservabilityHost};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::discard_response;
 use gateway_worker_platform::cancellation::Cancellation;
 use serde::Serialize;

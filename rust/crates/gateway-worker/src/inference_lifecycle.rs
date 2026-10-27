@@ -1,6 +1,5 @@
 //! One durable request lifetime and source-derived terminal billing; telemetry never mints authority.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     routing_host,
 };
@@ -9,6 +8,7 @@ use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptUsage, PreparedAttempt},
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_stream::observed::FinishHook;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};

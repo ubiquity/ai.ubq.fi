@@ -1,6 +1,5 @@
 //! Request-owned fixed Codex control experiment. No generic inference or paid fallback.
 mod sample;
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
@@ -23,6 +22,7 @@ use gateway_observability::{
     types::{HealthEvent, HealthTarget, ObservabilityHost},
 };
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
 use gateway_worker_platform::random;

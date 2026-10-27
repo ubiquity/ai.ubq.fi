@@ -1,6 +1,5 @@
 //! One real local selected owner; wire availability is independent of accounting.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     routing_host,
 };
@@ -9,6 +8,7 @@ use gateway_core::{error::GatewayError, lifecycle::TransportObservation};
 use gateway_routing_runtime::local_work::completion::response::{
     LocalAccountingProgress, LocalObservationSink, LocalSelectedResponse,
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use std::{
     cell::{Cell, RefCell},
     future::poll_fn,

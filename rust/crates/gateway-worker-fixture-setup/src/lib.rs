@@ -33,7 +33,7 @@ use gateway_publication_policy::protocol::{
     PublicationCarrier, PublicationRequest, PublicationResponse,
 };
 use gateway_publication_transport::transport::PublicationReceiver;
-use gateway_worker::authority::RemoteAuthorityStore;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 
 fn nonce() -> Result<[u8; 32], GatewayError> {
     gateway_worker_platform::random::random_bytes(32)?

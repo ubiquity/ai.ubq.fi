@@ -1,6 +1,5 @@
 //! Actual local builder, earlier response selection and original-admission fallback.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformHost, PlatformTokens},
     inference_capture::Capture,
     inference_lifecycle::Session,
@@ -19,6 +18,7 @@ use gateway_routing_runtime::{
     types::RoutingError,
 };
 use gateway_schema::source_request::SourceRequestDocument;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{
     cell::{Cell, RefCell},

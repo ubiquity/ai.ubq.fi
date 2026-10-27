@@ -65,7 +65,8 @@ impl RustInitialControlInstaller {
             )
             .map_err(|_| rejected())?;
             let store =
-                crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| rejected())?;
+                gateway_worker_authority_binding::authority::RemoteAuthorityStore::from_env(&env)
+                    .map_err(|_| rejected())?;
             let receipt = gateway_migration::engine::adopt_empty_with_initial_control_owner(
                 &store,
                 &prepared.adoption,

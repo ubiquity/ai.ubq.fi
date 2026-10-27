@@ -1,5 +1,4 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
 use crate::host::provider_secret;
 use crate::host::response_bytes;
@@ -14,6 +13,7 @@ use gateway_core::{
     error::GatewayError,
     state::{AuthorityStore, RevisionCheck},
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::random;
 use gateway_worker_storage::store::now_ms;
 use std::{collections::BTreeMap, rc::Rc};
