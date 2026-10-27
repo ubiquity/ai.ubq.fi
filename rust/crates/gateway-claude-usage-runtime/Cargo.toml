@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+worker.workspace = true
 gateway-profile-values.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true

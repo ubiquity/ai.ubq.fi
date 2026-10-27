@@ -100,7 +100,34 @@ pub async fn refresh<S: AuthorityStore, H: UsageHost>(
     {
         return Ok(Refresh::Busy);
     }
-    let result = async {
+    let result = collect_claimed(store, host, account).await;
+    let cleanup = async {
+        let row = store.read(&key).await?;
+        if gateway_auth::store::decode::<Lease>(row.as_ref(), host.now_ms())?
+            .is_some_and(|l| l.owner == owner)
+        {
+            let _ = commit(
+                store,
+                vec![check(&key, row.as_ref())],
+                vec![RecordMutation::Delete { key }],
+            )
+            .await?;
+        }
+        Ok::<(), GatewayError>(())
+    }
+    .await;
+    cleanup?;
+    result
+}
+fn unavailable() -> GatewayError {
+    GatewayError::unavailable(
+        "Claude usage lease is unavailable",
+        "claude_usage_unavailable",
+    )
+}
+
+async fn collect_claimed<S: AuthorityStore,H:UsageHost>(store:&S,host:&H,account:&AccountBinding)->Result<Refresh,GatewayError>{
+
         if let Some(usage) = load(store, account, host.now_ms())
             .await?
             .and_then(|q| q.usage)
@@ -114,7 +141,7 @@ pub async fn refresh<S: AuthorityStore, H: UsageHost>(
         {
             return Ok(Refresh::Changed);
         }
-        let result = fetch::fetch(host, account).await;
+        let result = fetch::fetch(host, account).await?;
         let usage = result.usage();
         let Some(state) = gateway_claude_runtime::quota::record_usage(
             store,
@@ -160,29 +187,5 @@ pub async fn refresh<S: AuthorityStore, H: UsageHost>(
             let _ = host.accepted_usage(&event).await;
         }
         Ok(Refresh::Completed { result, usage })
-    }
-    .await;
-    let cleanup = async {
-        let row = store.read(&key).await?;
-        if gateway_auth::store::decode::<Lease>(row.as_ref(), host.now_ms())?
-            .is_some_and(|l| l.owner == owner)
-        {
-            let _ = commit(
-                store,
-                vec![check(&key, row.as_ref())],
-                vec![RecordMutation::Delete { key }],
-            )
-            .await?;
-        }
-        Ok::<(), GatewayError>(())
-    }
-    .await;
-    cleanup?;
-    result
-}
-fn unavailable() -> GatewayError {
-    GatewayError::unavailable(
-        "Claude usage lease is unavailable",
-        "claude_usage_unavailable",
-    )
+
 }

@@ -1126,16 +1126,17 @@ dependencies = [
 name = "gateway-claude-usage-runtime"
 version = "0.1.0"
 dependencies = [
- "gateway-claude-runtime-test-support",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-claude-runtime",
+ "gateway-claude-runtime-test-support",
  "gateway-claude-usage-protocol",
  "gateway-claude-usage-quota",
  "gateway-core",
  "gateway-profile-values",
  "serde",
  "serde_json",
+ "worker",
 ]
 
 [[package]]
@@ -1311,21 +1312,22 @@ dependencies = [
 name = "gateway-observability"
 version = "0.1.0"
 dependencies = [
- "gateway-claude-runtime",
- "gateway-claude-usage-runtime",
- "gateway-claude-usage-quota",
- "gateway-claude-runtime-test-support",
  "aes-gcm",
  "base64 0.22.1",
  "flate2",
  "futures-util",
+ "gateway-admin",
  "gateway-admin-data",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
+ "gateway-claude-runtime",
+ "gateway-claude-runtime-test-support",
  "gateway-claude-usage-history",
  "gateway-claude-usage-history-records",
  "gateway-claude-usage-protocol",
+ "gateway-claude-usage-quota",
+ "gateway-claude-usage-runtime",
  "gateway-core",
  "gateway-observability-test-support",
  "gateway-schema",

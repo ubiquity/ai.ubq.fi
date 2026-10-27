@@ -110,7 +110,7 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
         Err(error("Claude history contention exceeded four attempts"))
     }
     pub async fn claude_capacity_history(&self, at: i64) -> SourceJson {
-        let base=source::canonical(&SourceJson::from_serializable(&json!({"v":1,"scan":"unavailable","truncated":false,"bucket_ms":BUCKET_MS,"retention_ms":RETENTION_MS,"stale_after_ms":STALE_MS,"points":[]})).expect("finite history base")).expect("finite history base");
+        let base=source::canonical(&SourceJson::from_serializable(&json!({"v":1,"bucket_ms":BUCKET_MS,"retention_ms":RETENTION_MS,"stale_after_ms":STALE_MS,"scan":"unavailable","truncated":false,"points":[]})).expect("finite history base")).expect("finite history base");
         let read: Result<SourceJson, GatewayError> = async {
             let cutoff = (at - RETENTION_MS).max(0);
             let first = cutoff / BUCKET_MS * BUCKET_MS;

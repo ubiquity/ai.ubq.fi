@@ -62,6 +62,9 @@ pub async fn admin<H: ObservabilityHost>(
             };
             let result =
                 gateway_claude_usage_runtime::collect::refresh(store, &host, &account).await?;
+            if matches!(result,gateway_claude_usage_runtime::collect::Refresh::Changed) {
+                return gateway_claude_usage_runtime::admin::response(result,SourceJson::parse("null")?);
+            }
             gateway_claude_usage_runtime::admin::response(
                 result,
                 block(observations, context).await?,

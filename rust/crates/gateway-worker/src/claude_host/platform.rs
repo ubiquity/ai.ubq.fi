@@ -400,7 +400,7 @@ mod physical_tests {
 
 impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
     fn parse_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
-        parse_usage_date(text)
+        gateway_claude_usage_runtime::platform::parse_date(text)
     }
     async fn accepted_usage(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
         self.accepted_observation(event).await
@@ -410,55 +410,9 @@ impl gateway_claude_usage_runtime::fetch::UsageHost for Host {
         account: &AccountBinding,
     ) -> Result<
         gateway_claude_usage_runtime::fetch::Response,
-        Option<gateway_core::js_string::JsString16>,
+        gateway_claude_usage_runtime::fetch::GetFailure,
     > {
-        use crate::transport::outbound::{PinnedDestination, construct_request, send_usage};
-        use gateway_claude_usage_runtime::fetch;
-        let secret = account
-            .credential
-            .secret
-            .try_scalar_secret()
-            .map_err(|_| None)?;
-        let headers = worker::Headers::new();
-        for (name, value) in fetch::headers(secret.expose()) {
-            headers.set(&name, &value).map_err(|e| {
-                Some(gateway_core::js_string::JsString16::from_utf8(
-                    &e.to_string(),
-                ))
-            })?;
-        }
-        let destination = PinnedDestination::new(fetch::URL).map_err(|_| None)?;
-        let request =
-            construct_request(&destination, worker::Method::Get, headers, &[]).map_err(|e| {
-                Some(gateway_core::js_string::JsString16::from_utf8(
-                    &e.to_string(),
-                ))
-            })?;
-        let signal = crate::transport::outbound::usage_signal(
-            &self.platform.cancellation, fetch::TIMEOUT_MS,
-        ).map_err(|_| None)?;
-        let mut response = send_usage(request, &signal).await?;
-        let observed_at_ms = self.now_ms();
-        let status = response.status_code();
-        let retry_after = response.headers().get("retry-after").ok().flatten();
-        let body = response
-            .text()
-            .await
-            .map(|text| gateway_core::js_string::JsString16::from_utf8(&text))
-            .map_err(|_| super::invalid("Claude usage response text could not be read."));
-        Ok(fetch::Response {
-            status,
-            body,
-            retry_after,
-            observed_at_ms,
-        })
+        gateway_claude_usage_runtime::platform::get(account,
+            &self.platform.cancellation.source_signal(), &||self.now_ms()).await
     }
-}
-pub(crate) fn parse_usage_date(text: &gateway_core::js_string::JsString16) -> Option<i64> {
-    use worker::{js_sys::{Reflect,Function,JSON},wasm_bindgen::{JsCast,JsValue}};
-    let text=JSON::parse(text.to_source_json().ok()?.as_str()).ok()?;
-    let date=Reflect::get(&worker::js_sys::global(),&JsValue::from_str("Date")).ok()?;
-    let parse=Reflect::get(&date,&JsValue::from_str("parse")).ok()?.dyn_into::<Function>().ok()?;
-    let at=parse.call1(&date,&text).ok()?.as_f64()?;
-    at.is_finite().then_some(at as i64)
 }

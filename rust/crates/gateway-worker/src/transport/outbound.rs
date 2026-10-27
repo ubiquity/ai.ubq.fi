@@ -74,6 +74,9 @@ impl Cancellation {
         Self::from_signal(self.controller.signal())
     }
 
+    /// Direct usage retains the actual caller abort reason.
+    pub(crate) fn source_signal(&self) -> worker::web_sys::AbortSignal { self.incoming.clone() }
+
     /// Event-owned billing is independent of a caller's delivery cancellation.
     pub fn background() -> Result<Self, GatewayError> {
         let incoming =
@@ -261,51 +264,4 @@ fn interrupted() -> GatewayError {
         "The upstream request was interrupted.",
         "upstream_request_interrupted",
     )
-}
-
-/// Direct usage alone preserves the source fetch Error.message diagnostic.
-/// This performs the same constructed manual-redirect request without inference hooks.
-pub(crate) async fn send_usage(
-    request: ConstructedRequest,
-    signal: &AbortSignal,
-) -> Result<Response, Option<gateway_core::js_string::JsString16>> {
-    let ConstructedRequest(request) = request;
-    Fetch::Request(request)
-        .send_with_signal(signal)
-        .await
-        .map_err(|error| {
-            let value = error.into_js_value();
-            let message = Reflect::get(&value, &JsValue::from_str("message")).ok()?;
-            if !message.is_string() {
-                return None;
-            }
-            let json = worker::js_sys::JSON::stringify(&message)
-                .ok()?
-                .as_string()?;
-            gateway_core::source_json::SourceJson::parse(&json)
-                .ok()?
-                .deserialize()
-                .ok()
-        })
-}
-
-/// Use the platform's real timeout/any semantics, including the original caller
-/// abort reason. No listener/timer substitute changes direct-usage diagnostics.
-pub(crate) fn usage_signal(caller: &Cancellation, milliseconds: i32) -> Result<AbortSignal, GatewayError> {
-    use worker::js_sys::{Array,Function};
-    let constructor = Reflect::get(&worker::js_sys::global(), &JsValue::from_str("AbortSignal"))
-        .map_err(|_| configuration_error())?;
-    let timeout = Reflect::get(&constructor, &JsValue::from_str("timeout"))
-        .map_err(|_| configuration_error())?.dyn_into::<Function>()
-        .map_err(|_| configuration_error())?;
-    let timeout = timeout.call1(&constructor, &JsValue::from(milliseconds))
-        .map_err(|_| configuration_error())?;
-    let signals = Array::new();
-    signals.push(caller.incoming.as_ref());
-    signals.push(&timeout);
-    let any = Reflect::get(&constructor, &JsValue::from_str("any"))
-        .map_err(|_| configuration_error())?.dyn_into::<Function>()
-        .map_err(|_| configuration_error())?;
-    let signal = any.call1(&constructor, &signals).map_err(|_| configuration_error())?;
-    Ok(signal.dyn_into::<worker::web_sys::AbortSignal>().map_err(|_| configuration_error())?.into())
 }

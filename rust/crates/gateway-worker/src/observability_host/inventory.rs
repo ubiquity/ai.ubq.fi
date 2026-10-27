@@ -218,7 +218,7 @@ impl RequestHost {
                             .and_then(|s| {
                                 gateway_claude_usage_protocol::snapshot::read(
                                     s,
-                                    &crate::claude_host::platform::parse_usage_date,
+                                    &gateway_claude_usage_runtime::platform::parse_date,
                                 )
                             })
                             .map(|s| gateway_claude_usage_protocol::snapshot::serialize(&s))

@@ -30,6 +30,7 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
+gateway-admin.workspace = true
 gateway-claude-runtime.workspace = true
 gateway-claude-usage-runtime.workspace = true
 gateway-claude-usage-quota.workspace = true

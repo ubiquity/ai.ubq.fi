@@ -2,3 +2,4 @@
 pub mod admin;
 pub mod collect;
 pub mod fetch;
+pub mod platform;

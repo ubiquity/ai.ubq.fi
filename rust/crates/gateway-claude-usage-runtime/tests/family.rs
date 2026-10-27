@@ -92,7 +92,7 @@ impl UsageHost for Fixture {
     async fn accepted_usage(&self, event: &AcceptedObservation) -> Result<(), GatewayError> {
         self.base.accepted_observation(event).await
     }
-    async fn usage_get(&self, _: &AccountBinding) -> Result<Response, Option<JsString16>> {
+    async fn usage_get(&self, _: &AccountBinding) -> Result<Response, gateway_claude_usage_runtime::fetch::GetFailure> {
         self.calls.set(self.calls.get() + 1);
         std::future::poll_fn(|_| {
             if self.held.get() {
@@ -103,7 +103,7 @@ impl UsageHost for Fixture {
         })
         .await;
         if self.unreachable.get() {
-            return Err(Some(" disconnected\n diagnostic ".into()));
+            return Err(fetch::GetFailure::Unreachable(Some(" disconnected\n diagnostic ".into())));
         }
         let (status, body, retry_after) = self.response.borrow().clone();
         Ok(Response {
@@ -274,7 +274,7 @@ fn all_frozen_source_status_errors_and_utf16_diagnostics_match() -> TestResult {
     let host = Fixture::new(&store)?;
     for c in oracle.errors {
         *host.response.borrow_mut() = (c.status, c.body, c.retry);
-        let ResultData::Failure(f) = run(fetch::fetch(&host, &a)) else {
+        let ResultData::Failure(f) = run(fetch::fetch(&host, &a))? else {
             return Err("failure expected".into());
         };
         let actual = source::canonical(&SourceJson::from_serializable(
@@ -294,7 +294,7 @@ fn all_frozen_source_status_errors_and_utf16_diagnostics_match() -> TestResult {
         );
     }
     host.unreachable.set(true);
-    let ResultData::Failure(f) = run(fetch::fetch(&host, &a)) else {
+    let ResultData::Failure(f) = run(fetch::fetch(&host, &a))? else {
         return Err("failure expected".into());
     };
     assert_eq!(f.kind, "unreachable");

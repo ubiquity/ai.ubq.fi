@@ -18,6 +18,10 @@ pub struct Response {
     pub retry_after: Option<String>,
     pub observed_at_ms: i64,
 }
+pub enum GetFailure {
+    Setup(GatewayError),
+    Unreachable(Option<JsString16>),
+}
 pub trait UsageHost: AuthHost {
     fn parse_usage_date(&self, value: &JsString16) -> Option<i64>;
     /// Only the fixed GET, source OAuth headers, manual redirect and 8s/caller cancellation.
@@ -25,7 +29,7 @@ pub trait UsageHost: AuthHost {
     fn usage_get(
         &self,
         account: &AccountBinding,
-    ) -> impl Future<Output = Result<Response, Option<JsString16>>>;
+    ) -> impl Future<Output = Result<Response, GetFailure>>;
     fn accepted_usage(
         &self,
         event: &gateway_claude_runtime::host::AcceptedObservation,
@@ -206,20 +210,21 @@ fn retry_after(
         .filter(|at| *at > 0)
         .map(|date| ((date as f64) - (at as f64)).max(0.0))
 }
-pub async fn fetch<H: UsageHost>(host: &H, account: &AccountBinding) -> ResultData {
+pub async fn fetch<H: UsageHost>(host: &H, account: &AccountBinding) -> Result<ResultData,GatewayError> {
     if account.credential.kind != CredentialKind::Oauth {
-        return fail("unsupported_credential",None,host.now_ms(),Some("Claude Console API keys do not expose the OAuth usage endpoint; gateway traffic continues to update the meter.".into()),None);
+        return Ok(fail("unsupported_credential",None,host.now_ms(),Some("Claude Console API keys do not expose the OAuth usage endpoint; gateway traffic continues to update the meter.".into()),None));
     }
     let response = match host.usage_get(account).await {
         Ok(v) => v,
-        Err(message) => {
-            return fail(
+        Err(GetFailure::Setup(error)) => return Err(error),
+        Err(GetFailure::Unreachable(message)) => {
+            return Ok(fail(
                 "unreachable",
                 None,
                 host.now_ms(),
                 message.and_then(|m| m.sanitize_js_whitespace_prefix(240)),
                 None,
-            );
+            ));
         }
     };
     let at = response.observed_at_ms;
@@ -234,7 +239,7 @@ pub async fn fetch<H: UsageHost>(host: &H, account: &AccountBinding) -> ResultDa
         } else {
             None
         };
-        return fail(kind, Some(response.status), at, message, retry);
+        return Ok(fail(kind, Some(response.status), at, message, retry));
     }
     let payload = response
         .body
@@ -242,26 +247,26 @@ pub async fn fetch<H: UsageHost>(host: &H, account: &AccountBinding) -> ResultDa
         .and_then(|v| v.try_utf8().ok())
         .and_then(|v| SourceJson::parse(&v).ok());
     let Some(payload) = payload else {
-        return fail(
+        return Ok(fail(
             "invalid_response",
             Some(response.status),
             at,
             Some("Claude usage returned an unreadable JSON payload.".into()),
             None,
-        );
+        ));
     };
     let Some(observation) = observation(&payload, at, &|v| host.parse_usage_date(v)) else {
-        return fail(
+        return Ok(fail(
             "invalid_response",
             Some(response.status),
             at,
             Some("Claude usage returned an invalid or unrecognized meter payload.".into()),
             None,
-        );
+        ));
     };
-    ResultData::Success {
+    Ok(ResultData::Success {
         status: response.status,
         observed_at_ms: at,
         observation,
-    }
+    })
 }

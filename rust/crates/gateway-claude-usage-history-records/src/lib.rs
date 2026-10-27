@@ -601,8 +601,7 @@ pub fn retain_source(
             let rows = source::member(value, "meters")
                 .as_ref()
                 .and_then(source::array)?;
-            Some(
-                rows.iter()
+            rows.iter()
                     .map(|m| {
                         Some((
                             source::member(m, "id").as_ref().and_then(source::string)?,
@@ -611,8 +610,7 @@ pub fn retain_source(
                                 .and_then(source::string),
                         ))
                     })
-                    .collect::<Option<Vec<_>>>()?,
-            )
+                    .collect::<Option<Vec<_>>>()
         };
         let before = parsed
             .iter()

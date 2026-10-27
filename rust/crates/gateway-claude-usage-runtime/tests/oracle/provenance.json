@@ -1,10 +1,14 @@
 {
   "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
   "files": {
+    "generate-history.ts": "7979a60f5e72c730f7236c6afc7bf2b8d15fcb44879109c2b3e6794e300f024d",
     "generate.ts": "ee7825deb80571ed04f4c11d01dc8935406944323f009451c5630edd9630e109",
     "source-constants.ts": "8f3a1d1e613efcacd2099507de36f58a6e3c257560d226061f96272e04c8409a",
     "source-sanitize.ts": "3d24079e3650dab08a7e722b59bc7432561bcadb921f6bf761745a784ca0d18a",
-    "src/utils.ts": "e3434f2f360cfbefb25b85061ed69d8b8230e8a07b3d52a5667a401b18f5252a",
+    "src/utils.ts": "ae4f8df8ea106e116f8788a7d122e9a0df1355fb247980073c2a1d5a4949b1cf",
+    "src/provider/capacity-contract.ts": "a362473bfbfe005606132e828eada97ef3d3e9b415291af1eec2488edeb7c47e",
+    "src/provider/claude-capacity-rollups.ts": "d32df93b707d78c5c63b768b3ea25882f58fd469cceb72b3ebe15f0f9c1187ab",
+    "src/provider/claude-capacity-history.ts": "89778fc309138719ff2d5ae23a9465a1a95929f818a4693fd5f34c8dfb39b3bb",
     "src/provider/claude-code-usage.ts": "37e697805ff94765dab60ff48a9c2859ed12a25d77fe0c24293f52c9a6b00358",
     "src/provider/claude-code-usage-schema.ts": "9884485bc12ebb9e02ac079a20018fa95dcd5b6e89315eee4ab6d4bf58dcd9e0"
   },

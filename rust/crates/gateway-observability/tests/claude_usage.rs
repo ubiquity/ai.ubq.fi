@@ -107,15 +107,13 @@ impl HistoryHost for Fixture {
     fn random_bytes(&self, n: usize) -> Result<Vec<u8>, GatewayError> {
         self.base.random_bytes(n)
     }
-    fn parse_date(&self, _: &JsString16) -> Option<i64> {
-        None
+    fn parse_date(&self, value: &JsString16) -> Option<i64> {
+        (value == &JsString16::from_utf8("1970-01-01T03:00:00Z")).then_some(10_800_000)
     }
 }
 impl UsageHost for Fixture {
-    fn parse_usage_date(&self, _: &JsString16) -> Option<i64> {
-        None
-    }
-    async fn usage_get(&self, _: &AccountBinding) -> Result<Response, Option<JsString16>> {
+    fn parse_usage_date(&self, value: &JsString16) -> Option<i64> { self.parse_date(value) }
+    async fn usage_get(&self, _: &AccountBinding) -> Result<Response, gateway_claude_usage_runtime::fetch::GetFailure> {
         self.calls.set(self.calls.get() + 1);
         Ok(Response {
             status: 200,
@@ -408,5 +406,80 @@ fn corrupt_usage_rollup_refuses_entire_bucket_transaction_and_read_scan_reports_
     let read = run(history.usage_rollups(0, NOW + 1));
     assert_eq!(member(&read, "scan")?.as_str(), "\"unavailable\"");
     assert!(member(&read, "points")?.array_items()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn frozen_b592_usage_history_atomic_rows_retention_keys_and_rollup_readbacks_match()->TestResult {
+    #[derive(serde::Deserialize)]
+    struct Row {key:serde_json::Value,value:SourceJson,expires_at_ms:Option<i64>}
+    #[derive(serde::Deserialize)]
+    struct Case {event:SourceJson,rows:Vec<Row>,history:SourceJson,usage_rollups:SourceJson,rollups:SourceJson}
+    #[derive(serde::Deserialize)]
+    struct Oracle {source_sha:String,cases:Vec<Case>}
+    let oracle:Oracle=serde_json::from_str(include_str!("fixtures/claude-usage-history-oracle.json"))?;
+    assert_eq!(oracle.source_sha,"b59243d674567d418d1410f8390fc7fe47a08c92");assert_eq!(oracle.cases.len(),6);
+    let host=Fixture::new();let history=History{store:&host.store,host:&host};
+    for case in oracle.cases {
+        let event=ClaudeAcceptedObservation::from_source(&case.event)?;host.base.at.set(event.sampled_at_ms);
+        run(history.record_claude_capacity_observation(&event))?;
+        assert_eq!(host.store.rows.borrow().len(),case.rows.len());
+        for row in case.rows {
+            let key=gateway_core::tuple_key::TupleKey::from_json_parts(row.key.as_array().ok_or("tuple absent")?)?.to_record_key();
+            let actual=host.store.read(&key);let actual=run(actual)?.ok_or("source row missing")?;
+            assert_eq!(actual.expires_at_ms,row.expires_at_ms);
+            let actual=gateway_core::source_control::decode_source_control_record(&actual)?;
+            assert_eq!(source::canonical(&actual)?,source::canonical(&row.value)?,"source stored row {:?}",row.key);
+        }
+        // Compare the complete source documents, including full raw payload and UTF16 labels.
+        let actual=run(history.claude_capacity_history(event.sampled_at_ms));
+        for name in ["v","bucket_ms","retention_ms","stale_after_ms","scan","truncated","points"]{assert_eq!(source::canonical(&member(&actual,name)?)?,source::canonical(&member(&case.history,name)?)?,"history {name}");}
+        assert_eq!(run(history.usage_rollups(0,event.sampled_at_ms)),source::canonical(&case.usage_rollups)?);
+        assert_eq!(run(history.claude_capacity_rollups(0,event.sampled_at_ms)),source::canonical(&case.rollups)?);
+    }
+    Ok(())
+}
+
+struct AdminComposition<'a>(&'a Fixture);
+impl gateway_admin_runtime::capabilities::RuntimeCapabilities for AdminComposition<'_> {
+    async fn claude(&self, request: gateway_admin_runtime::capabilities::ClaudeRequest, context: Context)
+        -> Result<gateway_auth::types::AuthResponse,GatewayError> {
+        let gateway_admin_runtime::capabilities::ClaudeRequest::RefreshUsage{document}=request else {return Err(missing());};
+        let target=gateway_claude_usage_runtime::admin::parse(&document)?;
+        let account=gateway_claude_usage_runtime::admin::resolve(&self.0.store,self.0,&claude::Bootstrap::default(),&target).await?;
+        let result=collect::refresh(&self.0.store,self.0,&account).await?;
+        let runtime=ObservabilityRuntime::new(self.0.store.clone(),self.0.clone());
+        let block=runtime.passive_provider_response(true,context).await?;
+        let data=member(&SourceJson::parse_bytes(&block.body.to_bytes()?)?,"claude_code")?;
+        gateway_claude_usage_runtime::admin::response(result,data)
+    }
+}
+#[test]
+fn authenticated_admin_service_dispatch_executes_real_account_fenced_collector_and_updated_block()->TestResult {
+    use gateway_auth::{crypto::Secret,types::{AuthConfig,AuthRequest}};
+    let host=Fixture::new();let a=account(1);host.seed(vec![a.clone()])?;
+    let capabilities=AdminComposition(&host);let runtime=gateway_admin_runtime::AdminRuntime{
+        store:&host.store,host:&host,capabilities:&capabilities,config:&gateway_admin_runtime::RuntimeConfig::default(),
+    };
+    let config=AuthConfig{admin_tokens:vec![Secret::new("public-fixture-admin".into())],..Default::default()};
+    let service=gateway_admin::service::AdminService{store:&host.store,host:&host,capabilities:&runtime,config:&config,release:"public-source-fixture"};
+    let mut request=AuthRequest{method:"POST".into(),url:"https://ai.ubq.fi/admin/providers/claude-code/quota/refresh".into(),body:b"bad json".to_vec(),..Default::default()};
+    let error=run(service.handle_route(&request,"denied")).err().ok_or("must authenticate before body")?;
+    assert_eq!(error.status,401);assert_eq!(host.calls.get(),0);assert_eq!(host.store.commits.get(),0);
+    request.headers.insert("authorization".into(),"Bearer public-fixture-admin".into());
+    assert_eq!(run(service.handle_route(&request,"body")).err().ok_or("invalid body accepted")?.status,400);
+    for (body,status) in [(json!({}),400),(json!({"account_id":"missing"}),404),(json!({"account_id":a.account_id,"account_cohort_id":"old"}),409)] {
+        request.body=serde_json::to_vec(&body)?;
+        assert_eq!(run(service.handle_route(&request,"invalid")).err().ok_or("invalid target accepted")?.status,status);
+    }
+    assert_eq!(host.calls.get(),0);
+    request.body=serde_json::to_vec(&json!({"account_id":a.account_id,"account_cohort_id":a.account_cohort_id}))?;
+    let response=run(service.handle_route(&request,"accepted"))?.ok_or("route absent")?;
+    assert_eq!(response.status,200);let response=document(response)?;assert_eq!(member(&response,"refreshed")?.as_str(),"true");
+    let quota=member(&member(&response,"data")?,"quota")?;
+    assert_eq!(member(&member(&quota,"usage")?,"state")?.as_str(),"\"ok\"");
+    assert_eq!(member(&member(&quota,"usage_snapshot")?,"meters")?.array_items()?.len(),2);
+    let fresh=document(run(service.handle_route(&request,"fresh"))?.ok_or("route absent")?)?;
+    assert_eq!(member(&fresh,"reason")?.as_str(),"\"fresh\"");assert_eq!(host.calls.get(),1);
     Ok(())
 }

@@ -200,7 +200,7 @@ pub struct Host;
 
 impl ObservabilityHost for Host {
     fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
-        crate::claude_host::platform::parse_usage_date(text)
+        gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
     fn source_string_collator(
@@ -234,7 +234,7 @@ impl ObservabilityHost for Host {
 
 impl ObservabilityHost for RequestHost {
     fn parse_claude_usage_date(&self, text: &gateway_core::js_string::JsString16) -> Option<i64> {
-        crate::claude_host::platform::parse_usage_date(text)
+        gateway_claude_usage_runtime::platform::parse_date(text)
     }
 
     async fn collect_claude_usage(&self) -> Result<(), GatewayError> {
