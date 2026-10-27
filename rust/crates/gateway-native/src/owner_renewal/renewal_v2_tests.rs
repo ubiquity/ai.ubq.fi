@@ -4,7 +4,10 @@ use gateway_auth::{
     crypto::Secret,
     native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
 };
-use gateway_auth_native_wire::native_read::*;
+use gateway_auth_native_wire::native_read::{
+    NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
+    NATIVE_RESPONSE_MAC_HEADER,
+};
 use gateway_authority::{
     cache_experiment::{
         RefreshContext,

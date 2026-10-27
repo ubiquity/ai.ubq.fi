@@ -77,42 +77,7 @@ pub fn read_import_head(
 pub fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, GatewayError> {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut bytes = Vec::new();
-    let mut first_line_complete = false;
-    let mut import_header_only = false;
-    let header_end = loop {
-        if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-            if end + 4 > 16_384 {
-                return Err(invalid());
-            }
-            break end + 4;
-        }
-        if bytes.len() > 16_384 {
-            return Err(invalid());
-        }
-        if !first_line_complete || import_header_only {
-            let remaining = deadline
-                .checked_duration_since(Instant::now())
-                .filter(|value| !value.is_zero())
-                .ok_or_else(invalid)?;
-            stream
-                .set_read_timeout(Some(remaining))
-                .map_err(|_| invalid())?;
-            let mut byte = [0u8; 1];
-            if stream.read(&mut byte).map_err(|_| invalid())? == 0 {
-                return Err(invalid());
-            }
-            bytes.push(byte[0]);
-            if !first_line_complete && bytes.ends_with(b"\r\n") {
-                let mut slots = [httparse::EMPTY_HEADER; 64];
-                let mut line = httparse::Request::new(&mut slots);
-                line.parse(&bytes).map_err(|_| invalid())?;
-                import_header_only = line.path.and_then(crate::import_head::kind).is_some();
-                first_line_complete = true;
-            }
-        } else {
-            read_more(stream, &mut bytes, deadline)?;
-        }
-    };
+    let header_end = read_headers(stream, &mut bytes, deadline)?;
     let mut slots = [httparse::EMPTY_HEADER; 64];
     let mut parsed = httparse::Request::new(&mut slots);
     if !parsed
@@ -198,45 +163,7 @@ pub fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, GatewayEr
         .first()
         .is_some_and(|header| header.1.eq_ignore_ascii_case("chunked"))
     {
-        let mut offset = header_end;
-        let mut output = Vec::new();
-        loop {
-            let (header, length) = loop {
-                match httparse::parse_chunk_size(&bytes[offset..]).map_err(|_| invalid())? {
-                    httparse::Status::Complete(value) => break value,
-                    httparse::Status::Partial => {
-                        if bytes.len() - offset > 1024 {
-                            return Err(invalid());
-                        }
-                        read_more(stream, &mut bytes, deadline)?;
-                    }
-                }
-            };
-            let length = usize::try_from(length).map_err(|_| too_large())?;
-            if length > max_body - output.len() {
-                return Err(too_large());
-            }
-            offset += header;
-            while bytes.len() - offset < length + 2 {
-                read_more(stream, &mut bytes, deadline)?;
-            }
-            if &bytes[offset + length..offset + length + 2] != b"\r\n" {
-                return Err(invalid());
-            }
-            output.extend_from_slice(&bytes[offset..offset + length]);
-            offset += length + 2;
-            if length == 0 {
-                if bytes.len() != offset {
-                    return Err(invalid());
-                }
-                break;
-            }
-            if offset > 8192 {
-                bytes.drain(..offset);
-                offset = 0;
-            }
-        }
-        output
+        read_chunks(stream, &mut bytes, header_end, deadline, max_body)?
     } else {
         return Err(invalid());
     };
@@ -247,4 +174,96 @@ pub fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, GatewayEr
         body,
         buffered: Vec::new(),
     }))
+}
+
+fn read_headers(
+    stream: &mut TcpStream,
+    bytes: &mut Vec<u8>,
+    deadline: Instant,
+) -> Result<usize, GatewayError> {
+    let mut first_line_complete = false;
+    let mut import_header_only = false;
+    let header_end = loop {
+        if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+            if end + 4 > 16_384 {
+                return Err(invalid());
+            }
+            break end + 4;
+        }
+        if bytes.len() > 16_384 {
+            return Err(invalid());
+        }
+        if !first_line_complete || import_header_only {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|value| !value.is_zero())
+                .ok_or_else(invalid)?;
+            stream
+                .set_read_timeout(Some(remaining))
+                .map_err(|_| invalid())?;
+            let mut byte = [0u8; 1];
+            if stream.read(&mut byte).map_err(|_| invalid())? == 0 {
+                return Err(invalid());
+            }
+            bytes.push(byte[0]);
+            if !first_line_complete && bytes.ends_with(b"\r\n") {
+                let mut slots = [httparse::EMPTY_HEADER; 64];
+                let mut line = httparse::Request::new(&mut slots);
+                line.parse(bytes).map_err(|_| invalid())?;
+                import_header_only = line.path.and_then(crate::import_head::kind).is_some();
+                first_line_complete = true;
+            }
+        } else {
+            read_more(stream, bytes, deadline)?;
+        }
+    };
+    Ok(header_end)
+}
+
+fn read_chunks(
+    stream: &mut TcpStream,
+    bytes: &mut Vec<u8>,
+    header_end: usize,
+    deadline: Instant,
+    max_body: usize,
+) -> Result<Vec<u8>, GatewayError> {
+    let mut offset = header_end;
+    let mut output = Vec::new();
+    loop {
+        let (header, length) = loop {
+            match httparse::parse_chunk_size(&bytes[offset..]).map_err(|_| invalid())? {
+                httparse::Status::Complete(value) => break value,
+                httparse::Status::Partial => {
+                    if bytes.len() - offset > 1024 {
+                        return Err(invalid());
+                    }
+                    read_more(stream, bytes, deadline)?;
+                }
+            }
+        };
+        let length = usize::try_from(length).map_err(|_| too_large())?;
+        if length > max_body - output.len() {
+            return Err(too_large());
+        }
+        offset += header;
+        while bytes.len() - offset < length + 2 {
+            read_more(stream, bytes, deadline)?;
+        }
+        if &bytes[offset + length..offset + length + 2] != b"\r\n" {
+            return Err(invalid());
+        }
+        output.extend_from_slice(&bytes[offset..offset + length]);
+        offset += length + 2;
+        if length == 0 {
+            if bytes.len() != offset {
+                return Err(invalid());
+            }
+            break;
+        }
+        if offset > 8192 {
+            bytes.drain(..offset);
+            offset = 0;
+        }
+    }
+    Ok(output)
 }

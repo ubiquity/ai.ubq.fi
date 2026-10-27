@@ -5,7 +5,10 @@ use gateway_auth::{
     native_auth::{NativeAuthHeaders, NativeNonceAuthority, NativeTransportIdentity},
     native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_AUTHORITY_PATH, NativeLiveAuthenticator},
 };
-use gateway_auth_native_wire::native_read::*;
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER,
+    NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
+};
 use gateway_authority::native_live::wire::{
     NativeLiveAccess, NativeLiveAuthorityRequest, NativeLiveAuthorityResponse, NativeLiveFence,
 };

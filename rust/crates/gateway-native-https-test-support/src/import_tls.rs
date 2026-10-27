@@ -6,7 +6,7 @@ use rustls::{
 };
 use std::{
     collections::BTreeMap,
-    io::{Read, Write},
+    io::{self, Read, Write},
     net::{TcpListener, TcpStream},
     sync::Arc,
     thread,
@@ -25,9 +25,9 @@ pub fn roots(import: bool) -> ureq::tls::RootCerts {
     ureq::tls::RootCerts::new_with_certs(&[ureq::tls::Certificate::from_der(bytes).to_owned()])
 }
 impl Peer {
-    pub fn start(import: bool, redirect: bool) -> Self {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let socket = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    pub fn start(import: bool, redirect: bool) -> io::Result<Self> {
+        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let socket = TcpStream::connect(listener.local_addr()?)?;
         let task = thread::spawn(move || {
             let (socket, _) = listener.accept().ok()?;
             drop(listener);
@@ -54,34 +54,7 @@ impl Peer {
                 )
                 .ok()?;
             let mut tls = StreamOwned::new(ServerConnection::new(Arc::new(config)).ok()?, socket);
-            let mut bytes = Vec::new();
-            let (line, headers, request_body) = loop {
-                if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
-                    let header = std::str::from_utf8(&bytes[..end]).ok()?;
-                    let mut lines = header.split("\r\n");
-                    let line = lines.next()?.to_owned();
-                    let headers: BTreeMap<String, String> = lines
-                        .filter_map(|l| l.split_once(':'))
-                        .map(|(k, v)| (k.to_ascii_lowercase(), v.trim().to_owned()))
-                        .collect();
-                    let length: usize = headers
-                        .get("content-length")
-                        .map(|v| v.parse().ok())
-                        .unwrap_or(Some(0))?;
-                    if bytes.len() >= end + 4 + length {
-                        break (line, headers, bytes[end + 4..end + 4 + length].to_vec());
-                    }
-                }
-                if bytes.len() >= 65_536 {
-                    return None;
-                }
-                let mut part = [0; 4096];
-                let n = tls.read(&mut part).ok()?;
-                if n == 0 {
-                    return None;
-                }
-                bytes.extend_from_slice(&part[..n]);
-            };
+            let (line, headers, request_body) = read_request(&mut tls)?;
             let sni = tls.conn.server_name()?.to_owned();
             let body = br#"{"models":[{"slug":"synthetic_model","display_name":"Synthetic"}]}"#;
             let head = if redirect {
@@ -105,12 +78,51 @@ impl Peer {
                 body: request_body,
             })
         });
-        Self {
+        Ok(Self {
             socket: Some(socket),
             task,
+        })
+    }
+    pub fn socket(&mut self) -> io::Result<TcpStream> {
+        self.socket.take().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotConnected,
+                "Synthetic TLS fixture socket was already taken",
+            )
+        })
+    }
+}
+
+fn read_request(
+    tls: &mut StreamOwned<ServerConnection, TcpStream>,
+) -> Option<(String, BTreeMap<String, String>, Vec<u8>)> {
+    let mut bytes = Vec::new();
+    let (line, headers, request_body) = loop {
+        if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+            let header = std::str::from_utf8(&bytes[..end]).ok()?;
+            let mut lines = header.split("\r\n");
+            let line = lines.next()?.to_owned();
+            let headers: BTreeMap<String, String> = lines
+                .filter_map(|l| l.split_once(':'))
+                .map(|(k, v)| (k.to_ascii_lowercase(), v.trim().to_owned()))
+                .collect();
+            let length: usize = headers
+                .get("content-length")
+                .map(|v| v.parse().ok())
+                .unwrap_or(Some(0))?;
+            if bytes.len() >= end + 4 + length {
+                break (line, headers, bytes[end + 4..end + 4 + length].to_vec());
+            }
         }
-    }
-    pub fn socket(&mut self) -> TcpStream {
-        self.socket.take().unwrap()
-    }
+        if bytes.len() >= 65_536 {
+            return None;
+        }
+        let mut part = [0; 4096];
+        let n = tls.read(&mut part).ok()?;
+        if n == 0 {
+            return None;
+        }
+        bytes.extend_from_slice(&part[..n]);
+    };
+    Some((line, headers, request_body))
 }

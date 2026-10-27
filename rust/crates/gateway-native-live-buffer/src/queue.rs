@@ -159,6 +159,7 @@ pub fn blocked(error: &Error) -> bool {
 mod tests {
     use super::*;
     use std::io;
+    type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
     #[derive(Default)]
     struct Blocked;
     impl Read for Blocked {
@@ -175,10 +176,10 @@ mod tests {
         }
     }
     #[test]
-    fn source_preopen_limits_preserve_order_and_exact_payload_budget() {
+    fn source_preopen_limits_preserve_order_and_exact_payload_budget() -> TestResult<()> {
         let mut queue = PreopenQueue::default();
         for index in 0..32 {
-            queue.push(index.to_string()).unwrap();
+            queue.push(index.to_string())?;
         }
         assert!(queue.push("overflow".into()).is_err());
         assert_eq!(
@@ -186,33 +187,35 @@ mod tests {
             (0..32).map(|i| i.to_string()).collect::<Vec<_>>()
         );
         let mut queue = PreopenQueue::default();
-        queue.push("a".repeat(MAX_PAYLOAD_BYTES)).unwrap();
-        queue.push("b".repeat(MAX_PAYLOAD_BYTES)).unwrap();
+        queue.push("a".repeat(MAX_PAYLOAD_BYTES))?;
+        queue.push("b".repeat(MAX_PAYLOAD_BYTES))?;
         assert!(queue.push("x".into()).is_err());
+        Ok(())
     }
     #[test]
-    fn blocked_writer_matches_pinned_ws_framed_plaintext_and_before_send_threshold() {
+    fn blocked_writer_matches_pinned_ws_framed_plaintext_and_before_send_threshold()
+    -> TestResult<()> {
         let socket = WebSocket::from_raw_socket(Blocked, Role::Client, Some(websocket_config()));
         let mut peer = PendingSocket::new(socket, Role::Client);
-        peer.enqueue("a".repeat(MAX_PAYLOAD_BYTES)).unwrap();
-        peer.pump().unwrap();
+        peer.enqueue("a".repeat(MAX_PAYLOAD_BYTES))?;
+        peer.pump()?;
         assert_eq!(peer.pending, MAX_PAYLOAD_BYTES + 14);
         assert_eq!(peer.in_flight, Some(MAX_PAYLOAD_BYTES + 14));
         assert!(peer.enqueue("b".repeat(MAX_PAYLOAD_BYTES)).is_err());
-        peer.enqueue("b".repeat(MAX_PAYLOAD_BYTES - 14)).unwrap();
-        peer.pump().unwrap();
+        peer.enqueue("b".repeat(MAX_PAYLOAD_BYTES - 14))?;
+        peer.pump()?;
         assert_eq!(peer.pending, MAX_BUFFERED_BYTES + 14);
         assert!(peer.enqueue("x".into()).is_err());
+        Ok(())
     }
     #[test]
-    fn actual_non_draining_socket_cannot_hide_pending_frames_from_the_native_bound() {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let stream = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (_non_draining_peer, _) = listener.accept().unwrap();
-        socket2::SockRef::from(&stream)
-            .set_send_buffer_size(1024)
-            .unwrap();
-        stream.set_nonblocking(true).unwrap();
+    fn actual_non_draining_socket_cannot_hide_pending_frames_from_the_native_bound()
+    -> TestResult<()> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let stream = std::net::TcpStream::connect(listener.local_addr()?)?;
+        let (_non_draining_peer, _) = listener.accept()?;
+        socket2::SockRef::from(&stream).set_send_buffer_size(1024)?;
+        stream.set_nonblocking(true)?;
         let mut peer = PendingSocket::new(
             WebSocket::from_raw_socket(stream, Role::Client, Some(websocket_config())),
             Role::Client,
@@ -223,7 +226,7 @@ mod tests {
                 refused = true;
                 break;
             }
-            peer.pump().unwrap();
+            peer.pump()?;
             if index == 0 {
                 assert_eq!(peer.pending, MAX_PAYLOAD_BYTES + 14);
             }
@@ -232,63 +235,56 @@ mod tests {
         assert!(refused);
         assert!(peer.in_flight.is_some());
         assert!(peer.pending <= MAX_BUFFERED_BYTES + 14);
+        Ok(())
     }
 
     #[test]
-    fn actual_tls_non_draining_writer_retains_framed_plaintext_until_flush() {
-        let (server_config, client_config) = gateway_native_https_test_support::live_tls::configs();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
+    fn actual_tls_non_draining_writer_retains_framed_plaintext_until_flush() -> TestResult<()> {
+        let (server_config, client_config) =
+            gateway_native_https_test_support::live_tls::configs()?;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
         let (release, paused) = std::sync::mpsc::sync_channel(1);
         let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let server_received = received.clone();
-        let server = std::thread::spawn(move || {
-            let (mut socket, _) = listener.accept().unwrap();
-            socket
-                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                .unwrap();
-            let mut connection = rustls::ServerConnection::new(server_config).unwrap();
+        let server = std::thread::spawn(move || -> TestResult<usize> {
+            let (mut socket, _) = listener.accept()?;
+            socket.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+            let mut connection = rustls::ServerConnection::new(server_config)?;
             while connection.is_handshaking() {
-                connection.complete_io(&mut socket).unwrap();
+                connection.complete_io(&mut socket)?;
             }
-            paused
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
+            paused.recv_timeout(std::time::Duration::from_secs(5))?;
             let mut tls = rustls::StreamOwned::new(connection, socket);
             let mut total = 0;
             let mut bytes = [0; 65_536];
             while total < MAX_PAYLOAD_BYTES + 14 {
-                let count = tls.read(&mut bytes).unwrap();
+                let count = tls.read(&mut bytes)?;
                 assert!(count > 0);
                 total += count;
                 server_received.store(total, std::sync::atomic::Ordering::Relaxed);
             }
-            total
+            Ok(total)
         });
-        let mut socket = std::net::TcpStream::connect(address).unwrap();
-        let original_send_buffer = socket2::SockRef::from(&socket).send_buffer_size().unwrap();
-        socket2::SockRef::from(&socket)
-            .set_send_buffer_size(1024)
-            .unwrap();
-        let forced_send_buffer = socket2::SockRef::from(&socket).send_buffer_size().unwrap();
-        socket
-            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-            .unwrap();
+        let mut socket = std::net::TcpStream::connect(address)?;
+        let original_send_buffer = socket2::SockRef::from(&socket).send_buffer_size()?;
+        socket2::SockRef::from(&socket).set_send_buffer_size(1024)?;
+        let forced_send_buffer = socket2::SockRef::from(&socket).send_buffer_size()?;
+        socket.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
         let mut connection = rustls::ClientConnection::new(
             client_config,
-            rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap(),
-        )
-        .unwrap();
+            rustls::pki_types::ServerName::try_from("127.0.0.1")?,
+        )?;
         while connection.is_handshaking() {
-            connection.complete_io(&mut socket).unwrap();
+            connection.complete_io(&mut socket)?;
         }
-        socket.set_nonblocking(true).unwrap();
+        socket.set_nonblocking(true)?;
         let tls = rustls::StreamOwned::new(connection, socket);
         let mut peer = PendingSocket::new(
             WebSocket::from_raw_socket(tls, Role::Client, Some(websocket_config())),
             Role::Client,
         );
-        peer.send("x".repeat(MAX_PAYLOAD_BYTES)).unwrap();
+        peer.send("x".repeat(MAX_PAYLOAD_BYTES))?;
         assert_eq!(peer.pending, MAX_PAYLOAD_BYTES + 14);
         assert_eq!(peer.in_flight, Some(MAX_PAYLOAD_BYTES + 14));
         assert!(peer.send("x".repeat(MAX_PAYLOAD_BYTES)).is_err());
@@ -301,9 +297,9 @@ mod tests {
         eprintln!(
             "SYNTHETIC_TLS_DRAIN_BUFFER original={original_send_buffer} forced={forced_send_buffer} restore={restore_result:?} restored={restored_send_buffer:?}"
         );
-        restore_result.unwrap();
-        restored_send_buffer.unwrap();
-        release.send(()).unwrap();
+        restore_result?;
+        restored_send_buffer?;
+        release.send(())?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while peer.pending != 0 {
             assert!(
@@ -312,10 +308,16 @@ mod tests {
                 peer.pending,
                 received.load(std::sync::atomic::Ordering::Relaxed)
             );
-            peer.pump().unwrap();
+            peer.pump()?;
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        assert_eq!(server.join().unwrap(), MAX_PAYLOAD_BYTES + 14);
+        assert_eq!(
+            server
+                .join()
+                .map_err(|_| io::Error::other("fixture thread panicked"))??,
+            MAX_PAYLOAD_BYTES + 14
+        );
         assert_eq!(peer.in_flight, None);
+        Ok(())
     }
 }

@@ -16,7 +16,10 @@ use gateway_auth::{
     types::{AuthConfig, AuthHost, AuthRequest},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
 };
-use gateway_auth_native_wire::native_read::*;
+use gateway_auth_native_wire::native_read::{
+    NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
+    NATIVE_VERSION_HEADER,
+};
 use gateway_authority::{
     keys,
     native_control::{
