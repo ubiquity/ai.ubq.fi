@@ -18,10 +18,13 @@ use std::{
     task::{Context, Waker},
 };
 #[test]
-fn source_upload_and_whitelist_vectors_match_handler_responses_and_state() {
+fn source_upload_and_whitelist_vectors_match_handler_responses_and_state() -> super::TestResult {
     let golden: Value =
-        serde_json::from_str(include_str!("../fixtures/admin-catalog-golden.json")).unwrap();
-    for case in golden["operations"].as_array().unwrap() {
+        serde_json::from_str(include_str!("../fixtures/admin-catalog-golden.json"))?;
+    for case in golden["operations"]
+        .as_array()
+        .ok_or("fixture operations must be an array")?
+    {
         let runtime = CatalogRuntime::new();
         let store = Store::default();
         let host = Host::new();
@@ -39,7 +42,11 @@ fn source_upload_and_whitelist_vectors_match_handler_responses_and_state() {
             Err(error) => json!({"status":error.status,"body":scalar(error.body())}),
         };
         assert_eq!(actual, case["expected"], "{}", case["name"]);
-        if actual["status"].as_u64().unwrap() >= 400 {
+        if actual["status"]
+            .as_u64()
+            .ok_or("fixture status must be an integer")?
+            >= 400
+        {
             assert!(store.rows.borrow().is_empty(), "{}", case["name"]);
         }
         if let Some(snapshot) = case.get("snapshot") {
@@ -59,6 +66,7 @@ fn source_upload_and_whitelist_vectors_match_handler_responses_and_state() {
             );
         }
     }
+    Ok(())
 }
 
 #[test]

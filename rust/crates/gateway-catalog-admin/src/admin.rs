@@ -345,17 +345,18 @@ async fn admin_discover<S: QueryStore, H: CatalogHost, const N: usize>(
     let mut surplus = None;
     poll_fn(|context| {
         for (index, future) in futures.iter_mut().enumerate() {
-            if !done[index] {
-                match future.as_mut().poll(context) {
-                    Poll::Ready(Ok(snapshot)) => {
-                        if providers[index] == CatalogProvider::Surplus {
-                            surplus = snapshot;
-                        }
-                        done[index] = true;
+            if done[index] {
+                continue;
+            }
+            match future.as_mut().poll(context) {
+                Poll::Ready(Ok(snapshot)) => {
+                    if providers[index] == CatalogProvider::Surplus {
+                        surplus = snapshot;
                     }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Pending => {}
+                    done[index] = true;
                 }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Pending => {}
             }
         }
         if done.iter().all(|done| *done) {

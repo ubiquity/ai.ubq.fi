@@ -1,3 +1,4 @@
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_admin_test_support::ranked_collator::FixtureCollator;
 use gateway_catalog_admin::admin::CatalogAdmin;
 use gateway_catalog_admin::admin::{AdminCatalogHost, AdminCatalogOperation};
@@ -32,10 +33,16 @@ use std::{
 
 // Explicit scalar observations of these unchanged frozen scalar fixtures, not a runtime fallback.
 fn lift(value: &Value) -> SourceJson {
-    SourceJson::from_serializable(value).unwrap()
+    match SourceJson::from_serializable(value) {
+        Ok(document) => document,
+        Err(error) => panic!("frozen scalar fixture did not serialize: {error:?}"),
+    }
 }
 fn scalar(value: &SourceJson) -> Value {
-    value.deserialize().expect("frozen scalar fixture")
+    match value.deserialize() {
+        Ok(value) => value,
+        Err(error) => panic!("frozen fixture is not scalar JSON: {error:?}"),
+    }
 }
 fn normalize_snapshot(
     value: &Value,
@@ -149,13 +156,17 @@ impl QueryStore for Store {
         for (key, record) in self.rows.borrow().iter() {
             let key = RecordKey(key.clone());
             if validated.accepts_record(&key, record)? {
-                rows.push(QueryEntry {
-                    key,
-                    record: record.clone(),
-                });
+                rows.push((
+                    TupleKey::from_record_key(&key)?,
+                    QueryEntry {
+                        key,
+                        record: record.clone(),
+                    },
+                ));
             }
         }
-        rows.sort_by_key(|row| TupleKey::from_record_key(&row.key).unwrap());
+        rows.sort_by_key(|(key, _)| key.clone());
+        let mut rows = rows.into_iter().map(|(_, row)| row).collect::<Vec<_>>();
         if request.reverse {
             rows.reverse();
         }
@@ -193,8 +204,19 @@ struct Host {
 }
 impl Host {
     fn new() -> Self {
-        let golden: Value =
-            serde_json::from_str(include_str!("../fixtures/admin-catalog-golden.json")).unwrap();
+        let Ok(golden) =
+            serde_json::from_str::<Value>(include_str!("../fixtures/admin-catalog-golden.json"))
+        else {
+            panic!("frozen admin catalog fixture is invalid JSON");
+        };
+        let Some(order) = golden["locale_order"].as_array().and_then(|values| {
+            values
+                .iter()
+                .map(|value| value.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+        }) else {
+            panic!("frozen locale order is not an array of strings");
+        };
         Self {
             now: Cell::new(1_800_000_000_000),
             sequence: Cell::new(0),
@@ -202,12 +224,7 @@ impl Host {
             responses: RefCell::default(),
             codex: RefCell::default(),
             requests: RefCell::default(),
-            order: golden["locale_order"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.as_str().unwrap().to_owned())
-                .collect(),
+            order,
             fail_compare: Cell::new(false),
             fail_publication: Cell::new(false),
             warmed: Cell::new(0),
@@ -285,8 +302,10 @@ impl CatalogHost for Host {
                 .borrow_mut()
                 .get_mut(&CatalogProvider::Surplus)
                 .and_then(VecDeque::pop_front),
-        }
-        .expect("unexpected metadata fetch");
+        };
+        let Some(outcome) = outcome else {
+            panic!("unexpected metadata fetch");
+        };
         self.requests.borrow_mut().push(request);
         if let Some(hook) = outcome.hook {
             hook();
@@ -316,7 +335,11 @@ fn invoke(
     host: &Host,
     operation: AdminCatalogOperation,
 ) -> ScalarResponse {
-    scalar_response(run(runtime.admin_catalog(store, host, operation)).unwrap())
+    let response = match run(runtime.admin_catalog(store, host, operation)) {
+        Ok(response) => response,
+        Err(error) => panic!("catalog admin fixture operation failed: {error:?}"),
+    };
+    scalar_response(response)
 }
 
 /// Test-private failure injection through the real finite CatalogHost interface.

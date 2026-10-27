@@ -21,13 +21,15 @@ use std::{
     task::{Context, Waker},
 };
 #[test]
-fn missing_authenticated_control_owner_refuses_without_fetch_or_policy_write() {
+fn missing_authenticated_control_owner_refuses_without_fetch_or_policy_write() -> super::TestResult
+{
     let store = Store::new();
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     assert_eq!(
         run(publish_paid_routing(&runtime, &store, &host))
-            .unwrap_err()
+            .err()
+            .ok_or("expected paid routing refusal")?
             .envelope
             .error
             .code
@@ -36,9 +38,10 @@ fn missing_authenticated_control_owner_refuses_without_fetch_or_policy_write() {
     );
     assert!(host.requests.borrow().is_empty());
     assert!(store.get(&keys::paid_routing()).is_none());
+    Ok(())
 }
 #[test]
-fn openlux_spend_identity_cannot_substitute_for_discovery_identity() {
+fn openlux_spend_identity_cannot_substitute_for_discovery_identity() -> super::TestResult {
     let store = Store::new();
     store.install(false, true);
     let host = Host::new(&store, false, true);
@@ -46,37 +49,41 @@ fn openlux_spend_identity_cannot_substitute_for_discovery_identity() {
         .borrow_mut()
         .providers
         .get_mut(&CatalogProvider::Openlux)
-        .unwrap()
+        .ok_or("expected Openlux fixture binding")?
         .identity = "openlux-credential".into();
     assert!(run(publish_paid_routing(&CatalogRuntime::new(), &store, &host)).is_err());
     assert!(host.requests.borrow().is_empty());
     assert!(store.get(&keys::paid_routing()).is_none());
+    Ok(())
 }
 #[test]
-fn one_fact_legacy_configuration_is_rejected_before_discovery() {
+fn one_fact_legacy_configuration_is_rejected_before_discovery() -> super::TestResult {
     let store = Store::new();
     store.install(false, true);
-    let mut record = store.get(&keys::paid_control_config()).unwrap();
+    let mut record = store
+        .get(&keys::paid_control_config())
+        .ok_or("expected paid control configuration")?;
     record.value["v"] = json!(1);
     record
         .value
         .as_object_mut()
-        .unwrap()
+        .ok_or("fixture configuration must be an object")?
         .remove("openlux_discovery_binding");
     store.put(keys::paid_control_config(), "legacy-config", record.value);
     let host = Host::new(&store, false, true);
     assert!(run(publish_paid_routing(&CatalogRuntime::new(), &store, &host)).is_err());
     assert!(host.requests.borrow().is_empty());
+    Ok(())
 }
 #[test]
-fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
+fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() -> super::TestResult {
     let store = Store::new();
     store.install(true, true);
     let host = Host::new(&store, true, true);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("gpt-known"));
     host.queue(openlux("gpt-known"));
-    let receipt = run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    let receipt = run(publish_paid_routing(&runtime, &store, &host))?;
     let policy = store.projection();
     assert_eq!(policy.policy.v, 2);
     assert_eq!(
@@ -85,55 +92,55 @@ fn real_fixed_publisher_captures_provider_facts_and_all_six_source_fences() {
     );
     assert_eq!(
         receipt.revision(),
-        store.get(&keys::paid_routing()).unwrap().revision
+        store
+            .get(&keys::paid_routing())
+            .ok_or("expected paid routing row")?
+            .revision
     );
     assert_eq!(policy.provenance.source_checks.len(), 6);
     assert!(policy.provenance.source_valid_until_ms.is_none());
     assert!(
         store
             .get(&keys::paid_routing())
-            .unwrap()
+            .ok_or("expected paid routing row")?
             .expires_at_ms
             .is_none()
     );
     let observation: PaidProviderObservation = decode_source_control_record(
         &store
             .get(&keys::paid_control_observation(PaidProvider::Surplus))
-            .unwrap(),
-    )
-    .unwrap()
-    .deserialize()
-    .unwrap();
+            .ok_or("expected paid provider observation")?,
+    )?
+    .deserialize()?;
     assert_eq!(
-        observation.models[0].deserialize::<Value>().unwrap()["input_price_per_token"],
+        observation.models[0].deserialize::<Value>()?["input_price_per_token"],
         0.001
     );
     assert_eq!(
-        observation.models[0].deserialize::<Value>().unwrap()["supports_tools"],
+        observation.models[0].deserialize::<Value>()?["supports_tools"],
         true
     );
     assert!(observation.source_checks.is_empty());
     let openlux: PaidProviderObservation = decode_source_control_record(
         &store
             .get(&keys::paid_control_observation(PaidProvider::Metered))
-            .unwrap(),
-    )
-    .unwrap()
-    .deserialize()
-    .unwrap();
+            .ok_or("expected paid provider observation")?,
+    )?
+    .deserialize()?;
     assert_eq!(openlux.credential_binding, "openlux-discovery-credential");
+    Ok(())
 }
 #[test]
-fn retained_stale_catalog_is_usable_without_invented_refresh_expiry() {
+fn retained_stale_catalog_is_usable_without_invented_refresh_expiry() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("paid-only"));
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     store.now.set(store.now.get() + 10 * 86_400_000);
     let count = host.requests.borrow().len();
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert_eq!(host.requests.borrow().len(), count);
     assert_eq!(
         store.projection().policy.models[&"paid-only".into()],
@@ -146,9 +153,11 @@ fn retained_stale_catalog_is_usable_without_invented_refresh_expiry() {
             .source_valid_until_ms
             .is_none()
     );
+    Ok(())
 }
 #[test]
-fn failed_openlux_discovery_preserves_explicit_known_codex_missing_catalog_fallback() {
+fn failed_openlux_discovery_preserves_explicit_known_codex_missing_catalog_fallback()
+-> super::TestResult {
     let store = Store::new();
     store.install(false, true);
     let host = Host::new(&store, false, true);
@@ -159,7 +168,7 @@ fn failed_openlux_discovery_preserves_explicit_known_codex_missing_catalog_fallb
         ticks: 0,
         after: None,
     });
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     let projection = store.projection();
     assert_eq!(
         projection.policy.models[&"gpt-known".into()],
@@ -171,9 +180,10 @@ fn failed_openlux_discovery_preserves_explicit_known_codex_missing_catalog_fallb
             .get(&keys::paid_control_observation(PaidProvider::Metered))
             .is_none()
     );
+    Ok(())
 }
 #[test]
-fn failed_surplus_discovery_cannot_manufacture_a_priced_route() {
+fn failed_surplus_discovery_cannot_manufacture_a_priced_route() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
@@ -184,17 +194,18 @@ fn failed_surplus_discovery_cannot_manufacture_a_priced_route() {
         ticks: 0,
         after: None,
     });
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert!(store.projection().policy.models.is_empty());
+    Ok(())
 }
 #[test]
-fn empty_openlux_catalog_is_distinct_from_missing_and_disables_fallback() {
+fn empty_openlux_catalog_is_distinct_from_missing_and_disables_fallback() -> super::TestResult {
     let store = Store::new();
     store.install(false, true);
     let host = Host::new(&store, false, true);
     let runtime = CatalogRuntime::new();
     host.queue(json!({"data":[]}));
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert!(store.projection().policy.models.is_empty());
     assert!(
         store
@@ -203,6 +214,7 @@ fn empty_openlux_catalog_is_distinct_from_missing_and_disables_fallback() {
             .openlux_observation_revision
             .is_some()
     );
+    Ok(())
 }
 #[test]
 fn superseded_configuration_during_fetch_cannot_publish_an_observation() {
@@ -280,7 +292,7 @@ fn control_change_immediately_before_policy_commit_refuses_atomically() {
     assert!(store.get(&keys::paid_routing()).is_none());
 }
 #[test]
-fn newer_observation_wins_and_older_awaited_producer_cannot_roll_it_back() {
+fn newer_observation_wins_and_older_awaited_producer_cannot_roll_it_back() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
@@ -307,23 +319,24 @@ fn newer_observation_wins_and_older_awaited_producer_cannot_roll_it_back() {
         &host,
         PaidProvider::Surplus,
         true,
-    ))
-    .unwrap();
+    ))?;
     assert!(run(first).is_err());
     let row = store
         .get(&keys::paid_control_observation(PaidProvider::Surplus))
-        .unwrap();
+        .ok_or("expected paid provider observation")?;
     assert_eq!(Some(row.revision.as_str()), second.revision());
     assert_eq!(row.value["models"][0]["id"], "newer");
+    Ok(())
 }
 #[test]
-fn publication_replaces_full_model_map_and_never_retains_removed_permissions() {
+fn publication_replaces_full_model_map_and_never_retains_removed_permissions() -> super::TestResult
+{
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("old-paid-model"));
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     host.queue(surplus("new-paid-model"));
     run(publish_paid_observation(
         &runtime,
@@ -331,9 +344,8 @@ fn publication_replaces_full_model_map_and_never_retains_removed_permissions() {
         &host,
         PaidProvider::Surplus,
         true,
-    ))
-    .unwrap();
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    ))?;
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert!(
         !store
             .projection()
@@ -348,23 +360,25 @@ fn publication_replaces_full_model_map_and_never_retains_removed_permissions() {
             .models
             .contains_key(&"new-paid-model".into())
     );
+    Ok(())
 }
 #[test]
-fn selection_update_does_not_expire_unrelated_provider_observation() {
+fn selection_update_does_not_expire_unrelated_provider_observation() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("paid-only"));
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     store.put(
         state::selection_key(),
         "selection2",
         json!({"provider_ids":["codex"],"updated_at_ms":store.now.get()}),
     );
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert!(store.projection().policy.models.is_empty());
     assert_eq!(host.requests.borrow().len(), 1);
+    Ok(())
 }
 #[test]
 fn current_binding_mismatch_refuses_instead_of_trusting_a_caller_fingerprint() {
@@ -382,7 +396,7 @@ fn current_binding_mismatch_refuses_instead_of_trusting_a_caller_fingerprint() {
     assert!(host.requests.borrow().is_empty());
 }
 #[test]
-fn advertised_whitelist_does_not_become_an_extra_paid_runtime_allowlist() {
+fn advertised_whitelist_does_not_become_an_extra_paid_runtime_allowlist() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     store.put(
@@ -393,7 +407,7 @@ fn advertised_whitelist_does_not_become_an_extra_paid_runtime_allowlist() {
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("paid-only"));
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert!(
         store
             .projection()
@@ -401,9 +415,10 @@ fn advertised_whitelist_does_not_become_an_extra_paid_runtime_allowlist() {
             .models
             .contains_key(&"paid-only".into())
     );
+    Ok(())
 }
 #[test]
-fn synthetic_possible_index_does_not_change_ordinary_provider_selection() {
+fn synthetic_possible_index_does_not_change_ordinary_provider_selection() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     store.put(
@@ -414,18 +429,21 @@ fn synthetic_possible_index_does_not_change_ordinary_provider_selection() {
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     host.queue(surplus("deepseek-v4.1-flash"));
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert_eq!(
         store.projection().policy.models[&"deepseek-v4.1-flash".into()],
         vec![PaidProvider::Surplus]
     );
     assert!(!store.projection().policy.codex_enabled);
-    let selection = store.get(&state::selection_key()).unwrap();
+    let selection = store
+        .get(&state::selection_key())
+        .ok_or("expected provider selection")?;
     assert_eq!(selection.value["provider_ids"], json!(["ubiquity"]));
+    Ok(())
 }
 
 #[test]
-fn only_actual_source_deadlines_constrain_a_projection() {
+fn only_actual_source_deadlines_constrain_a_projection() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
@@ -440,8 +458,12 @@ fn only_actual_source_deadlines_constrain_a_projection() {
             Some(until),
         ),
     );
-    let mut config: PaidControlConfig =
-        serde_json::from_value(store.get(&keys::paid_control_config()).unwrap().value).unwrap();
+    let mut config: PaidControlConfig = serde_json::from_value(
+        store
+            .get(&keys::paid_control_config())
+            .ok_or("expected paid control configuration")?
+            .value,
+    )?;
     config.source_checks = vec![PaidSourceCheck {
         key: source_key.0,
         expected_revision: Some("credential-rev".into()),
@@ -452,7 +474,7 @@ fn only_actual_source_deadlines_constrain_a_projection() {
         json!(config),
     );
     host.queue(surplus("paid-only"));
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    run(publish_paid_routing(&runtime, &store, &host))?;
     assert_eq!(
         store.projection().provenance.source_valid_until_ms,
         Some(until)
@@ -460,18 +482,17 @@ fn only_actual_source_deadlines_constrain_a_projection() {
     let observation: PaidProviderObservation = decode_source_control_record(
         &store
             .get(&keys::paid_control_observation(PaidProvider::Surplus))
-            .unwrap(),
-    )
-    .unwrap()
-    .deserialize()
-    .unwrap();
+            .ok_or("expected paid provider observation")?,
+    )?
+    .deserialize()?;
     assert_eq!(observation.source_valid_until_ms, Some(until));
     store.now.set(until + 1);
     assert!(run(publish_paid_routing(&runtime, &store, &host)).is_err());
+    Ok(())
 }
 
 #[test]
-fn malformed_absolute_source_expiry_fails_closed() {
+fn malformed_absolute_source_expiry_fails_closed() -> super::TestResult {
     let store = Store::new();
     store.install(false, false);
     let host = Host::new(&store, false, false);
@@ -480,14 +501,15 @@ fn malformed_absolute_source_expiry_fails_closed() {
         .rows
         .borrow_mut()
         .get_mut(&keys::paid_control_owner().0)
-        .unwrap()
+        .ok_or("expected paid control owner")?
         .expires_at_ms = Some(i64::MAX);
     assert!(run(publish_paid_routing(&runtime, &store, &host)).is_err());
     assert!(store.get(&keys::paid_routing()).is_none());
+    Ok(())
 }
 
 #[test]
-fn custody_metadata_contains_only_the_observed_routing_fields() {
+fn custody_metadata_contains_only_the_observed_routing_fields() -> super::TestResult {
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
@@ -502,36 +524,37 @@ fn custody_metadata_contains_only_the_observed_routing_fields() {
         &host,
         PaidProvider::Surplus,
         true,
-    ))
-    .unwrap();
+    ))?;
     let observation = store
         .get(&keys::paid_control_observation(PaidProvider::Surplus))
-        .unwrap()
+        .ok_or("expected paid provider observation")?
         .value;
     assert!(observation["models"][0].get("description").is_none());
     assert_eq!(observation["models"][0]["created"], 12345);
     assert_eq!(observation["models"][0]["input_price_per_token"], 0.001);
     let cached = runtime
         .cached_provider(&host.publication.borrow(), CatalogProvider::Surplus)
-        .unwrap();
+        .ok_or("expected cached Surplus catalog")?;
     assert_eq!(
-        cached.models[0].deserialize::<Value>().unwrap()["description"],
+        cached.models[0].deserialize::<Value>()?["description"],
         "unrelated provider prose"
     );
+    Ok(())
 }
 #[test]
-fn source_paid_observation_and_projection_preserve_opaque_models_without_new_authority() {
+fn source_paid_observation_and_projection_preserve_opaque_models_without_new_authority()
+-> super::TestResult {
     use gateway_core::{js_string::JsString16, model::ModelId, value::ValueEncoding};
     let store = Store::new();
     store.install(true, false);
     let host = Host::new(&store, true, false);
     let runtime = CatalogRuntime::new();
     let model = ModelId::from_source(JsString16::from_units(vec![0xd800]));
-    host.queue_source(SourceJson::parse(r#"{"data":[{"id":"\ud800","supported_parameters":["tools","tool_choice"],"supported_features":["tools"],"pricing":{"prompt":"0.001","completion":"0.002"}}]}"#).unwrap());
-    run(publish_paid_routing(&runtime, &store, &host)).unwrap();
+    host.queue_source(SourceJson::parse(r#"{"data":[{"id":"\ud800","supported_parameters":["tools","tool_choice"],"supported_features":["tools"],"pricing":{"prompt":"0.001","completion":"0.002"}}]}"#)?);
+    run(publish_paid_routing(&runtime, &store, &host))?;
     let observation = store
         .get(&keys::paid_control_observation(PaidProvider::Surplus))
-        .unwrap();
+        .ok_or("expected paid provider observation")?;
     assert_eq!(observation.value_encoding, ValueEncoding::ProfileV2);
     assert_eq!(
         store.projection().policy.models.get(&model),
@@ -544,12 +567,15 @@ fn source_paid_observation_and_projection_preserve_opaque_models_without_new_aut
             .models
             .contains_key(&ModelId::from_scalar(r"\ud800"))
     );
-    let row = store.get(&keys::paid_routing()).unwrap();
+    let row = store
+        .get(&keys::paid_routing())
+        .ok_or("expected paid routing row")?;
     assert_eq!(row.value_encoding, ValueEncoding::ProfileV2);
     println!(
         "M42_PAID_PROJECTION_WRITER_FIXTURE={}",
-        serde_json::to_string(&(keys::paid_routing().0, row)).unwrap()
+        serde_json::to_string(&(keys::paid_routing().0, row))?
     );
+    Ok(())
 }
 
 #[test]

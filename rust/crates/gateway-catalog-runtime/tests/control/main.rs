@@ -1,3 +1,4 @@
+type TestResult = Result<(), Box<dyn std::error::Error>>;
 use gateway_authority::{keys, paid_control::*};
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
@@ -98,14 +99,15 @@ impl Store {
             updated_at_ms: self.now.get(),
             client_version: Some("0.163.0".into()),
         };
-        self.put(
-            catalog_store::runtime_config_key(),
-            "runtime-rev",
-            build_runtime_config(&snapshot, None, None, self.now.get())
-                .unwrap()
-                .deserialize::<Value>()
-                .unwrap(),
-        );
+        let config = match build_runtime_config(&snapshot, None, None, self.now.get()) {
+            Ok(config) => config,
+            Err(error) => panic!("fixed runtime fixture configuration failed: {error:?}"),
+        };
+        let config = match config.deserialize::<Value>() {
+            Ok(config) => config,
+            Err(error) => panic!("fixed runtime fixture is not scalar JSON: {error:?}"),
+        };
+        self.put(catalog_store::runtime_config_key(), "runtime-rev", config);
         self.put(
             catalog_store::codex_snapshot_key(),
             "full-rev",
@@ -118,10 +120,13 @@ impl Store {
         );
     }
     fn projection(&self) -> PaidRoutingProjection {
-        decode_source_control_record(&self.get(&keys::paid_routing()).unwrap())
-            .unwrap()
-            .deserialize()
-            .unwrap()
+        let Some(row) = self.get(&keys::paid_routing()) else {
+            panic!("expected paid routing fixture projection");
+        };
+        match decode_source_control_record(&row).and_then(|document| document.deserialize()) {
+            Ok(projection) => projection,
+            Err(error) => panic!("invalid paid routing fixture projection: {error:?}"),
+        }
     }
 }
 impl AuthorityStore for Store {
@@ -243,11 +248,9 @@ impl CatalogHost for Host {
     }
     async fn fetch(&self, request: CatalogFetch) -> Result<CatalogFetchResponse, GatewayError> {
         self.requests.borrow_mut().push(request);
-        let response = self
-            .responses
-            .borrow_mut()
-            .pop_front()
-            .expect("unexpected provider discovery");
+        let Some(response) = self.responses.borrow_mut().pop_front() else {
+            panic!("unexpected provider discovery");
+        };
         let mut ticks = response.ticks;
         poll_fn(|cx| {
             if ticks == 0 {

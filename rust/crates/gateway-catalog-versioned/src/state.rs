@@ -268,7 +268,7 @@ pub(crate) async fn publish_snapshot<S: AuthorityStore>(
             runtime
                 .as_ref()
                 .map(|r| &r.document)
-                .unwrap_or(&SourceJson::parse("null").expect("fixed null")),
+                .unwrap_or(&SourceJson::parse("null")?),
             *now,
         ) else {
             return Ok(());

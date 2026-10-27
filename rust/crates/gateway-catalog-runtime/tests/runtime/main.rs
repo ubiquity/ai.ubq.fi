@@ -81,6 +81,16 @@ impl Store {
         Ok(())
     }
 }
+fn is_catalog_chunk(key: &RecordKey) -> Result<bool, GatewayError> {
+    let tuple = TupleKey::from_record_key(key)?;
+    for name in ["codex_catalog_chunk", "codex_catalog_source_chunk"] {
+        let prefix = TupleKey::from_record_key(&source_key(&["ubq_ai", name]))?;
+        if tuple.is_strict_descendant_of(&prefix) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 impl AuthorityStore for Store {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         Ok(self.live(key))
@@ -91,19 +101,15 @@ impl AuthorityStore for Store {
         }) {
             return Ok(CommitOutcome::Conflict);
         }
-        let chunks = transition.mutations.iter().any(|mutation| {
-            let RecordMutation::Put { key, .. } = mutation else {
-                return false;
-            };
-            let tuple = TupleKey::from_record_key(key).unwrap();
-            ["codex_catalog_chunk", "codex_catalog_source_chunk"]
-                .iter()
-                .any(|prefix| {
-                    tuple.is_strict_descendant_of(
-                        &TupleKey::from_record_key(&source_key(&["ubq_ai", prefix])).unwrap(),
-                    )
-                })
-        });
+        let mut chunks = false;
+        for mutation in &transition.mutations {
+            if let RecordMutation::Put { key, .. } = mutation
+                && is_catalog_chunk(key)?
+            {
+                chunks = true;
+                break;
+            }
+        }
         for mutation in transition.mutations {
             match mutation {
                 RecordMutation::Put { key, record } => {
@@ -136,13 +142,17 @@ impl QueryStore for Store {
         for (key, record) in self.rows.borrow().iter() {
             let key = RecordKey(key.clone());
             if validated.accepts_record(&key, record)? {
-                rows.push(QueryEntry {
-                    key,
-                    record: record.clone(),
-                });
+                rows.push((
+                    TupleKey::from_record_key(&key)?,
+                    QueryEntry {
+                        key,
+                        record: record.clone(),
+                    },
+                ));
             }
         }
-        rows.sort_by_key(|row| TupleKey::from_record_key(&row.key).unwrap());
+        rows.sort_by_key(|(key, _)| key.clone());
+        let mut rows = rows.into_iter().map(|(_, row)| row).collect::<Vec<_>>();
         if request.reverse {
             rows.reverse();
         }
@@ -259,11 +269,9 @@ impl CatalogHost for Host {
     }
     async fn fetch(&self, request: CatalogFetch) -> Result<CatalogFetchResponse, GatewayError> {
         self.requests.borrow_mut().push(request);
-        let outcome = self
-            .responses
-            .borrow_mut()
-            .pop_front()
-            .expect("unexpected catalog fetch");
+        let Some(outcome) = self.responses.borrow_mut().pop_front() else {
+            panic!("unexpected catalog fetch");
+        };
         let mut ticks = outcome.ticks;
         poll_fn(|cx| {
             if ticks == 0 {
@@ -313,14 +321,22 @@ impl CatalogHost for Host {
     }
 }
 fn body(response: &CatalogResponse) -> Value {
-    serde_json::from_str(response.body.as_ref().unwrap()).unwrap()
+    let Some(body) = response.body.as_ref() else {
+        panic!("catalog fixture response has no body");
+    };
+    match serde_json::from_str(body) {
+        Ok(value) => value,
+        Err(error) => panic!("catalog fixture body is not JSON: {error:?}"),
+    }
 }
 fn ids(response: &CatalogResponse) -> Vec<String> {
-    body(response)["models"]
-        .as_array()
-        .unwrap()
+    let value = body(response);
+    let Some(models) = value["models"].as_array() else {
+        panic!("catalog fixture models is not an array");
+    };
+    models
         .iter()
-        .filter_map(|r| r["slug"].as_str())
+        .filter_map(|row| row["slug"].as_str())
         .map(str::to_owned)
         .collect()
 }

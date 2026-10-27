@@ -483,21 +483,14 @@ async fn publish_observation<S: QueryStore, H: CatalogHost>(
         published_at_ms: now,
     })
 }
-/// Capture durable source values before any awaited provider fetch. There is one
-/// full replacement projection; missing models cannot survive from an older row.
-pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
+async fn refresh_missing_paid_observations<S: QueryStore, H: CatalogHost>(
     runtime: &CatalogRuntime,
     store: &S,
     host: &H,
-) -> Result<PaidRoutingPublication, GatewayError> {
-    let started = host.now_ms();
-    let control = Controls::capture(store, started).await?;
-    let captured = CapturedSource::read(store, started).await?;
-    let publication = host.publication().await?;
-    control.publication(&publication)?;
-    let mut source = captured.checks.clone();
-    source.source(&control.config.source_checks)?;
-    source.native(&publication.source_checks)?;
+    control: &Controls,
+    source: &Checks,
+    started: i64,
+) -> Result<(), GatewayError> {
     let mut prior_observations = Vec::new();
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         let key = keys::paid_control_observation(provider);
@@ -509,24 +502,25 @@ pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
     }
     for (provider, row) in &prior_observations {
         if row.is_none() && configured(&control.config, *provider).is_some() {
-            publish_observation(runtime, store, host, *provider, false, &source).await?;
+            publish_observation(runtime, store, host, *provider, false, source).await?;
         }
     }
-    let now = host.now_ms();
-    time(now)?;
-    if now < started {
-        return Err(stale());
-    }
-    let mut input = captured.input;
+    Ok(())
+}
+
+struct RoutingObservations {
+    revisions: BTreeMap<&'static str, Option<String>>,
+    valid_until: Option<i64>,
+}
+async fn read_paid_observations<S: QueryStore>(
+    store: &S,
+    control: &Controls,
+    now: i64,
+    input: &mut CatalogInput,
+    source: &mut Checks,
+    mut source_valid_until: Option<i64>,
+) -> Result<RoutingObservations, GatewayError> {
     let mut observation_revisions = BTreeMap::new();
-    let mut source_valid_until = expiry(
-        [
-            control.owner_record.expires_at_ms,
-            control.config_record.expires_at_ms,
-            captured.valid_until,
-        ]
-        .into_iter(),
-    );
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         let key = keys::paid_control_observation(provider);
         let row = read_record(store, &key).await?;
@@ -566,9 +560,53 @@ pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
             row.as_ref().map(|r| r.revision.clone()),
         );
     }
-    source_valid_until = expiry(
+    Ok(RoutingObservations {
+        revisions: observation_revisions,
+        valid_until: source_valid_until,
+    })
+}
+
+/// Capture durable source values before any awaited provider fetch. There is one
+/// full replacement projection; missing models cannot survive from an older row.
+pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
+    runtime: &CatalogRuntime,
+    store: &S,
+    host: &H,
+) -> Result<PaidRoutingPublication, GatewayError> {
+    let started = host.now_ms();
+    let control = Controls::capture(store, started).await?;
+    let captured = CapturedSource::read(store, started).await?;
+    let publication = host.publication().await?;
+    control.publication(&publication)?;
+    let mut source = captured.checks.clone();
+    source.source(&control.config.source_checks)?;
+    source.native(&publication.source_checks)?;
+    refresh_missing_paid_observations(runtime, store, host, &control, &source, started).await?;
+    let now = host.now_ms();
+    time(now)?;
+    if now < started {
+        return Err(stale());
+    }
+    let mut input = captured.input;
+    let observations = read_paid_observations(
+        store,
+        &control,
+        now,
+        &mut input,
+        &mut source,
+        expiry(
+            [
+                control.owner_record.expires_at_ms,
+                control.config_record.expires_at_ms,
+                captured.valid_until,
+            ]
+            .into_iter(),
+        ),
+    )
+    .await?;
+    let source_valid_until = expiry(
         [
-            source_valid_until,
+            observations.valid_until,
             source_deadline(store, &source, now).await?,
         ]
         .into_iter(),
@@ -583,8 +621,8 @@ pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
             v: 1,
             owner_revision: control.owner_record.revision.clone(),
             config_revision: control.config_record.revision.clone(),
-            surplus_observation_revision: observation_revisions.get("surplus").cloned().flatten(),
-            openlux_observation_revision: observation_revisions.get("openlux").cloned().flatten(),
+            surplus_observation_revision: observations.revisions.get("surplus").cloned().flatten(),
+            openlux_observation_revision: observations.revisions.get("openlux").cloned().flatten(),
             observed_at_ms: now,
             source_valid_until_ms: source_valid_until,
             source_checks: source.persisted(),
@@ -596,7 +634,8 @@ pub async fn publish_paid_routing<S: QueryStore, H: CatalogHost>(
     for provider in [PaidProvider::Surplus, PaidProvider::Metered] {
         checks.add(RevisionCheck {
             key: keys::paid_control_observation(provider),
-            expected_revision: observation_revisions
+            expected_revision: observations
+                .revisions
                 .get(catalog_provider(provider).id())
                 .cloned()
                 .flatten(),

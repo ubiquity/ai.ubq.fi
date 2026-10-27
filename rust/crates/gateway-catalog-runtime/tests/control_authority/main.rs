@@ -106,14 +106,15 @@ impl Store {
             updated_at_ms: self.now.get(),
             client_version: Some("0.163.0".into()),
         };
-        self.put(
-            catalog_store::runtime_config_key(),
-            "runtime-rev",
-            build_runtime_config(&snapshot, None, None, self.now.get())
-                .unwrap()
-                .deserialize::<Value>()
-                .unwrap(),
-        );
+        let config = match build_runtime_config(&snapshot, None, None, self.now.get()) {
+            Ok(config) => config,
+            Err(error) => panic!("fixed runtime fixture configuration failed: {error:?}"),
+        };
+        let config = match config.deserialize::<Value>() {
+            Ok(config) => config,
+            Err(error) => panic!("fixed runtime fixture is not scalar JSON: {error:?}"),
+        };
+        self.put(catalog_store::runtime_config_key(), "runtime-rev", config);
         self.put(
             catalog_store::codex_snapshot_key(),
             "full-rev",
@@ -134,10 +135,13 @@ impl Store {
         self.put(key, "original-fixture", value.clone());
     }
     fn projection(&self) -> PaidRoutingProjection {
-        decode_source_control_record(&self.get(&keys::paid_routing()).unwrap())
-            .unwrap()
-            .deserialize()
-            .unwrap()
+        let Some(row) = self.get(&keys::paid_routing()) else {
+            panic!("expected paid routing fixture projection");
+        };
+        match decode_source_control_record(&row).and_then(|document| document.deserialize()) {
+            Ok(projection) => projection,
+            Err(error) => panic!("invalid paid routing fixture projection: {error:?}"),
+        }
     }
 }
 impl AuthorityStore for Store {
@@ -259,11 +263,9 @@ impl CatalogHost for Host {
     }
     async fn fetch(&self, request: CatalogFetch) -> Result<CatalogFetchResponse, GatewayError> {
         self.requests.borrow_mut().push(request);
-        let response = self
-            .responses
-            .borrow_mut()
-            .pop_front()
-            .expect("unexpected provider discovery");
+        let Some(response) = self.responses.borrow_mut().pop_front() else {
+            panic!("unexpected provider discovery");
+        };
         let mut ticks = response.ticks;
         poll_fn(|cx| {
             if ticks == 0 {
@@ -428,8 +430,17 @@ mod native_configuration {
             .await
             .unwrap()
     }
+    fn configured_inputs(secret: &str) -> Result<ConfiguredPaidInputs, GatewayError> {
+        ConfiguredPaidInputs::new(
+            Some(Secret::new(secret.to_owned())),
+            None,
+            None,
+            json!({"candidate":"controlled-fixture"}),
+        )
+    }
     #[test]
-    fn actual_authenticated_owner_configuration_publisher_drives_the_catalog_bridge() {
+    fn actual_authenticated_owner_configuration_publisher_drives_the_catalog_bridge() -> TestResult
+    {
         run(async {
             let store = Store::new();
             let template = Store::new();
@@ -439,7 +450,7 @@ mod native_configuration {
                 catalog_store::codex_snapshot_key(),
                 catalog_store::auth_generation_key(),
             ] {
-                let row = template.get(&key).unwrap();
+                let row = template.get(&key).ok_or("missing template catalog row")?;
                 store.put(key, &row.revision, row.value);
             }
             let identity = NativeTransportIdentity::new(
@@ -448,9 +459,8 @@ mod native_configuration {
                 "fixture-m11-epoch".into(),
                 [19; 32],
                 BTreeSet::from([NativeCapability::ConfigurationPublish]),
-            )
-            .unwrap();
-            let statement = fixture_owner_statement(&identity).unwrap();
+            )?;
+            let statement = fixture_owner_statement(&identity)?;
             let verified = proof(&store, &identity, &statement, 1).await;
             bootstrap_fixture_owner(
                 &store,
@@ -459,15 +469,8 @@ mod native_configuration {
                 store.now.get(),
                 "actual-owner",
             )
-            .await
-            .unwrap();
-            let inputs = ConfiguredPaidInputs::new(
-                Some(Secret::new("fixture-actual-surplus-secret".into())),
-                None,
-                None,
-                json!({"candidate":"controlled-fixture"}),
-            )
-            .unwrap();
+            .await?;
+            let inputs = configured_inputs("fixture-actual-surplus-secret")?;
             let prepared = PreparedConfigurationPublication::capture(
                 &store,
                 &identity,
@@ -475,18 +478,18 @@ mod native_configuration {
                 "configuration-1",
                 store.now.get(),
             )
-            .await
-            .unwrap();
+            .await?;
             let verified = proof(&store, &identity, prepared.statement(), 2).await;
             let config = prepared
                 .publish(&store, &verified, store.now.get(), "actual-config")
-                .await
-                .unwrap();
+                .await?;
             let host = Host::new(&store, false, false);
             host.publication.borrow_mut().providers.insert(
                 CatalogProvider::Surplus,
                 ProviderBinding {
-                    identity: inputs.binding(PaidProvider::Surplus).unwrap(),
+                    identity: inputs
+                        .binding(PaidProvider::Surplus)
+                        .ok_or("missing fixture Surplus binding")?,
                 },
             );
             assert_eq!(
@@ -495,20 +498,14 @@ mod native_configuration {
             );
             let runtime = CatalogRuntime::new();
             host.queue(surplus("actual-owned-model"));
-            publish_paid_routing(&runtime, &store, &host).await.unwrap();
+            publish_paid_routing(&runtime, &store, &host).await?;
             assert_eq!(
                 store.projection().policy.models[&"actual-owned-model".into()],
                 vec![PaidProvider::Surplus]
             );
-            let retained = serde_json::to_string(&*store.rows.borrow()).unwrap();
+            let retained = serde_json::to_string(&*store.rows.borrow())?;
             assert!(!retained.contains("fixture-actual-surplus-secret"));
-            let next = ConfiguredPaidInputs::new(
-                Some(Secret::new("fixture-rotated-surplus-secret".into())),
-                None,
-                None,
-                json!({"candidate":"controlled-fixture"}),
-            )
-            .unwrap();
+            let next = configured_inputs("fixture-rotated-surplus-secret")?;
             let prepared = PreparedConfigurationPublication::capture(
                 &store,
                 &identity,
@@ -516,13 +513,11 @@ mod native_configuration {
                 "configuration-2",
                 store.now.get(),
             )
-            .await
-            .unwrap();
+            .await?;
             let verified = proof(&store, &identity, prepared.statement(), 3).await;
             prepared
                 .publish(&store, &verified, store.now.get(), "actual-config-2")
-                .await
-                .unwrap();
+                .await?;
             assert!(
                 store
                     .get(&keys::paid_control_observation(PaidProvider::Surplus))
@@ -532,17 +527,17 @@ mod native_configuration {
             host.publication.borrow_mut().providers.insert(
                 CatalogProvider::Surplus,
                 ProviderBinding {
-                    identity: next.binding(PaidProvider::Surplus).unwrap(),
+                    identity: next
+                        .binding(PaidProvider::Surplus)
+                        .ok_or("missing rotated Surplus binding")?,
                 },
             );
             host.queue(surplus("new-owned-model"));
             // Surplus discovery is public and shares its TTL cache across key changes.
             // A configuration rotation changes spend custody; an explicit metadata refresh
             // is the source operation that replaces a still-fresh public model snapshot.
-            publish_paid_observation(&runtime, &store, &host, PaidProvider::Surplus, true)
-                .await
-                .unwrap();
-            publish_paid_routing(&runtime, &store, &host).await.unwrap();
+            publish_paid_observation(&runtime, &store, &host, PaidProvider::Surplus, true).await?;
+            publish_paid_routing(&runtime, &store, &host).await?;
             assert!(
                 !store
                     .projection()
@@ -557,7 +552,8 @@ mod native_configuration {
                     .models
                     .contains_key(&"new-owned-model".into())
             );
-        });
+            Ok(())
+        })
     }
 }
 
