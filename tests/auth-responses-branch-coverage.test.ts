@@ -859,10 +859,7 @@ test("identified completed parts reuse the item-id alias when output_index is om
   const positionedEvent = { item_id: "item-1", output_index: 0 };
   const unpositionedEvent = { item_id: "item-1" };
   const outputTextPart = { type: "output_text", text: "hello" };
-  assert.deepEqual(
-    reconcileChatContentPart(textParts, new Map(), positionedEvent, outputTextPart),
-    { outputText: "hello", refusal: "" }
-  );
+  assert.deepEqual(reconcileChatContentPart(textParts, new Map(), positionedEvent, outputTextPart), { outputText: "hello", refusal: "" });
   assert.equal(textParts.get("output:0:0"), "hello");
   assert.equal(textParts.get("item:item-1:0"), "hello");
   assert.deepEqual(
@@ -873,10 +870,7 @@ test("identified completed parts reuse the item-id alias when output_index is om
 
   const refusalParts = new Map<string, string>();
   const refusalPart = { type: "refusal", refusal: "no" };
-  assert.deepEqual(
-    reconcileChatContentPart(new Map(), refusalParts, positionedEvent, refusalPart),
-    { outputText: "", refusal: "no" }
-  );
+  assert.deepEqual(reconcileChatContentPart(new Map(), refusalParts, positionedEvent, refusalPart), { outputText: "", refusal: "no" });
   assert.deepEqual(
     reconcileChatContentPart(new Map(), refusalParts, unpositionedEvent, refusalPart),
     { outputText: "", refusal: "" },
