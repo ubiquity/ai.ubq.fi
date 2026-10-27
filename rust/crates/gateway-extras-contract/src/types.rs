@@ -32,6 +32,7 @@ pub enum ExtrasRoute {
     JobGet(String),
     Images(ImageKind),
     SystemOne,
+    Decisions,
 }
 impl ExtrasRoute {
     pub fn label(&self) -> &'static str {
@@ -42,6 +43,7 @@ impl ExtrasRoute {
             Self::Images(ImageKind::Generations) => "images.generations",
             Self::Images(ImageKind::Edits) => "images.edits",
             Self::SystemOne => "systemone",
+            Self::Decisions => "decisions",
         }
     }
 }
@@ -60,14 +62,38 @@ pub struct ExtrasRequest<'a> {
 pub enum ExtrasProvider {
     Voyage,
     SystemOne,
+    Decisions,
 }
 /// Factory-only prepared wire request: only the fixed source Voyage/SystemOne
 /// factories construct this type; transport cannot receive an arbitrary URL.
 pub struct PreparedCall {
-    pub(crate) prepared: PreparedRequest,
-    pub(crate) deadline_ms: i64,
+    prepared: PreparedRequest,
+    deadline_ms: i64,
 }
 impl PreparedCall {
+    pub fn prepare(
+        provider: ExtrasProvider,
+        body: &SourceJson,
+        options: &PrepareOptions,
+        deadline_ms: i64,
+    ) -> Result<Self, SourceRequestError> {
+        let prepared = match provider {
+            ExtrasProvider::Voyage => {
+                gateway_providers::extras::prepare_source_embeddings(body, options)?
+            }
+            ExtrasProvider::SystemOne => {
+                gateway_providers::extras::prepare_source_systemone(body, options)?
+            }
+            ExtrasProvider::Decisions => {
+                gateway_providers::extras::prepare_source_decisions(body, options)?
+            }
+        };
+        Ok(Self {
+            prepared,
+            deadline_ms,
+        })
+    }
+
     pub fn prepared(&self) -> &PreparedRequest {
         &self.prepared
     }
@@ -78,6 +104,7 @@ impl PreparedCall {
 pub enum ExtrasDispatch {
     Voyage(PreparedCall),
     SystemOne(PreparedCall),
+    Decisions(PreparedCall),
     /// This typed variant always uses the m14 Codex-only original child scope.
     ImageChild {
         index: usize,
@@ -222,6 +249,9 @@ pub trait ExtrasHost {
         &self,
         provider: ExtrasProvider,
     ) -> impl Future<Output = Result<Option<PrepareOptions>, GatewayError>>;
+    fn decision_models(&self) -> impl Future<Output = Result<Vec<ModelId>, GatewayError>> {
+        async { Ok(Vec::new()) }
+    }
     fn image_base_model(&self) -> impl Future<Output = Result<Option<ModelId>, GatewayError>>;
     fn dispatch(
         &self,

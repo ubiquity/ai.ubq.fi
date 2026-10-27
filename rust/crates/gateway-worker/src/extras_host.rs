@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use gateway_core::{error::GatewayError, state::AuthorityStore, tuple_key::TupleKey};
-use gateway_extras_runtime::types::{
+use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider, ImageKind,
     PreparedCall, UpstreamResponse,
 };
@@ -31,6 +31,7 @@ pub type Handle =
 
 pub struct Host {
     pub platform: PlatformHost,
+    catalog: crate::catalog::CatalogState,
     pub admission: Handle,
     pub child: Option<ChildScope>,
     transport: Cell<TransportState>,
@@ -40,6 +41,7 @@ pub struct Host {
 impl Host {
     pub async fn new(
         platform: PlatformHost,
+        catalog: crate::catalog::CatalogState,
         admission: Handle,
         images: bool,
         default_model: Option<gateway_core::model::ModelId>,
@@ -61,6 +63,7 @@ impl Host {
         });
         Ok(Self {
             platform,
+            catalog,
             admission,
             child,
             transport: Cell::new(TransportState::NotStarted),
@@ -238,7 +241,9 @@ impl ExtrasHost for Host {
     ) -> Result<Option<PrepareOptions>, GatewayError> {
         let secret = match provider {
             ExtrasProvider::Voyage => self.voyage_key().await?,
-            ExtrasProvider::SystemOne => configured(&self.platform, "OPENROUTER_API_KEY"),
+            ExtrasProvider::SystemOne | ExtrasProvider::Decisions => {
+                configured(&self.platform, "OPENROUTER_API_KEY")
+            }
         };
         Ok(secret.map(|secret| PrepareOptions {
             auth: AuthMaterial {
@@ -247,6 +252,9 @@ impl ExtrasHost for Host {
             },
             ..Default::default()
         }))
+    }
+    async fn decision_models(&self) -> Result<Vec<gateway_core::model::ModelId>, GatewayError> {
+        self.catalog.decision_models(&self.platform.store).await
     }
     async fn image_base_model(&self) -> Result<Option<gateway_core::model::ModelId>, GatewayError> {
         self.images
@@ -259,7 +267,9 @@ impl ExtrasHost for Host {
         operation: ExtrasDispatch,
     ) -> Result<UpstreamResponse, DispatchFailure> {
         match operation {
-            ExtrasDispatch::Voyage(call) | ExtrasDispatch::SystemOne(call) => self.http(call).await,
+            ExtrasDispatch::Voyage(call)
+            | ExtrasDispatch::SystemOne(call)
+            | ExtrasDispatch::Decisions(call) => self.http(call).await,
             ExtrasDispatch::ImageChild {
                 index,
                 kind,

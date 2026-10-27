@@ -1,9 +1,7 @@
 //! Finite, already-authorized administrator catalog operations; no HTTP or credential ownership.
-use crate::{
-    CatalogRuntime,
-    host::{CatalogHost, CatalogProvider},
-    state,
-};
+use crate::{CatalogRuntime, state};
+use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
+use gateway_catalog_provider::response::AdminCatalogResponse;
 use gateway_core::{
     error::GatewayError,
     query::QueryStore,
@@ -27,7 +25,6 @@ use gateway_schema::{
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
     future::{Future, poll_fn},
     task::Poll,
 };
@@ -46,25 +43,6 @@ pub enum AdminCatalogOperation {
     WhitelistSet { document: SourceJson },
     Catalog,
     Refresh,
-}
-#[derive(Clone, Debug, PartialEq)]
-pub struct AdminCatalogResponse {
-    pub status: u16,
-    pub body: SourceJson,
-    pub headers: BTreeMap<String, String>,
-}
-impl AdminCatalogResponse {
-    fn json(body: SourceJson, no_store: bool) -> Self {
-        let mut headers = BTreeMap::from([("content-type".into(), "application/json".into())]);
-        if no_store {
-            headers.insert("cache-control".into(), "no-store".into());
-        }
-        Self {
-            status: 200,
-            body,
-            headers,
-        }
-    }
 }
 fn persist_error(message: &str) -> GatewayError {
     GatewayError::new(500, message, Some("server_error")).with_type("server_error")

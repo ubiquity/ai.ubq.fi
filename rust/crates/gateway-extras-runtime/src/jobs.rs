@@ -1,8 +1,9 @@
+use crate::store::{
+    check, commit, decoded, hash, hash_source, key, now, put, retry_seconds, source_utf8, uuid,
+};
 use crate::{
-    cache::*,
+    cache::{TIMEOUT_MS, cache_best_effort, cached, chunks, estimate, reserve},
     embeddings::{configured_error, fetch_chunk, result_body, retryable, usage},
-    store::*,
-    types::*,
 };
 use base64::{
     Engine, alphabet,
@@ -16,6 +17,8 @@ use gateway_core::{
     query::QueryStore,
     state::{RecordKey, RecordMutation, StoredRecord},
 };
+use gateway_extras_contract::errors::server;
+use gateway_extras_contract::types::{ExtrasHost, ExtrasProvider, ExtrasRequest, ExtrasResponse};
 use gateway_providers::extras::{self, EmbeddingsProfile};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

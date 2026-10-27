@@ -8,14 +8,25 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liveCases } from "./fixtures/live-conformance.ts";
 import { isObject } from "./runtime-conformance-support.ts";
+import { precommitCases, precommitPaidCases, PRECOMMIT_CASE_NAMES } from "./runtime-matrix/precommit.ts";
+import { emitConformanceReceipt } from "./runtime-matrix/conformance-receipt.ts";
+import { fixtureConfig } from "./runtime-matrix/workerd-config.ts";
 import { failureCaptureCase, captureSuppressionCase } from "./fixtures/capture-conformance.ts";
 import { cerebrasPaymentCases, passportCases } from "./runtime-auth-conformance.ts";
-import { runProviderMatrixCases, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
+import { runProviderMatrixCases, runStreamRuntimeCases, STREAM_RUNTIME_CASE_NAMES, type MatrixContext, type MatrixScenario } from "./runtime-matrix/index.ts";
 import { compactionFallbackCases, replayProviderCases, unicodeForwardingCases } from "./runtime-matrix/context-replay.ts";
 import { testNetworkArgv } from "../../scripts/test-network.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const expectedSha = process.argv[2] === "--fixture-child" ? process.argv[3] : process.argv[2];
+const childMode = process.argv[2] === "--fixture-child";
+const expectedSha = childMode ? process.argv[3] : process.argv[2];
+const extraArgs = process.argv.slice(childMode ? 7 : 3);
+assert(
+  extraArgs.length === 0 || (extraArgs.length === 1 && ["--precommit-only", "--stream-runtime-only"].includes(extraArgs[0])),
+  "Only the mutually exclusive test-only --precommit-only or --stream-runtime-only selector is supported."
+);
+const precommitOnly = extraArgs[0] === "--precommit-only";
+const streamRuntimeOnly = extraArgs[0] === "--stream-runtime-only";
 assert(expectedSha && /^[a-f0-9]{40}$/.test(expectedSha), "Pass the exact compiled application's full source SHA.");
 assert.equal(Bun.version, "1.4.0");
 const require = createRequire(import.meta.url);
@@ -41,6 +52,7 @@ async function outer(): Promise<void> {
     workspace,
     control.address,
     "443",
+    ...extraArgs,
   ]);
   const env: Record<string, string> = { PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: workspace, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" };
   if (process.env.HOME) env.HOME = process.env.HOME;
@@ -57,7 +69,10 @@ async function outer(): Promise<void> {
     assert.equal(code, 0, `Actual workerd conformance failed; evidence: ${workspace}`);
     await reachableControl(control.address, 443);
     const receipt: unknown = JSON.parse(stdout.trim());
-    assert(isObject(receipt) && Array.isArray(receipt.cases) && receipt.cases.length >= 16, "A nonzero complete case floor is required.");
+    assert(isObject(receipt) && Array.isArray(receipt.cases), "The actual selected conformance receipt is required.");
+    if (precommitOnly) assert.deepEqual(receipt.cases, ["os_external_tcp_denied", "exact_rust_source_identity", ...PRECOMMIT_CASE_NAMES]);
+    else if (streamRuntimeOnly) assert.deepEqual(receipt.cases, ["os_external_tcp_denied", "exact_rust_source_identity", ...STREAM_RUNTIME_CASE_NAMES]);
+    else assert(receipt.cases.length >= 16, "A nonzero complete case floor is required.");
     await writeFile(join(workspace, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
     console.log(JSON.stringify({ evidence: workspace, ...receipt }));
   } finally {
@@ -109,44 +124,6 @@ async function deniedEgress(host: string, port: number): Promise<void> {
       else rejectProbe(error);
     });
   });
-}
-
-async function fixtureConfig(workspace: string, scenario?: MatrixScenario): Promise<string> {
-  const application = join(root, "rust/crates", scenario ? "gateway-worker-fixture" : "gateway-worker", "build");
-  const scenarioBinding = scenario ? `, (name = "UOS_MATRIX_SCENARIO", text = ${JSON.stringify(scenario)})` : "";
-  const paidBindings =
-    scenario === "paid"
-      ? ', (name = "SURPLUS_API_KEY", text = "fixture-matrix-surplus"), (name = "OPENLUX_API_KEY", text = "fixture-matrix-openlux-discovery"), (name = "METERED_API_KEY", text = "fixture-matrix-openlux-spend")'
-      : "";
-  const path = join(workspace, "runtime.capnp");
-  const quoted = (value: string): string => JSON.stringify(value);
-  await mkdir(join(workspace, "state"), { recursive: true });
-  const config = `using Workerd = import ${quoted(join(root, "node_modules/workerd/workerd.capnp"))};
-const config :Workerd.Config = (
-  services = [
-    (name = "internet", network = (allow = [])),
-    (name = "state", disk = (path = ${quoted(join(workspace, "state"))}, writable = true)),
-    (name = "assets", disk = (path = ${quoted(join(root, "static"))})),
-    (name = "gateway", worker = (
-      modules = [(name = "index.js", esModule = embed ${quoted(join(application, "index.js"))}), (name = "index_bg.wasm", wasm = embed ${quoted(join(application, "index_bg.wasm"))})],
-      compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
-      globalOutbound = "driver",
-      bindings = [(name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority")), (name = "ASSETS", service = "assets"), (name = "UOS_AI_TOKEN", text = "fixture-access"), (name = "DENO_DEPLOY_TOKEN", text = "fixture-admin"), (name = "LITHOSAI_API_KEY", text = "fixture-provider-secret"), (name = "DEEPSEEK_API_KEY", text = "fixture-provider-secret"), (name = "CEREBRAS_API_KEY", text = "fixture-provider-secret"), (name = "OPENROUTER_API_KEY", text = "fixture-provider-secret"), (name = "VOYAGEAI_API_KEY", text = "fixture-provider-secret"), (name = "SENTINEL_REPLAY_KEY", text = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), (name = "IMAGE_BASE_MODEL", text = "gpt-matrix-test"), (name = "UOS_AI_PASSPORT_CLIENT_ID", text = "ai"), (name = "UOS_AI_PASSPORT_AUDIENCE", text = "ai"), (name = "UOS_AI_PASSPORT_ORIGIN", text = "https://ai.ubq.fi"), (name = "UOS_AI_PASSPORT_REDIRECT_URI", text = "https://ai.ubq.fi/auth/callback")${scenarioBinding}${paidBindings}],
-      durableObjectNamespaces = [(className = "GatewayAuthority", uniqueKey = "uos-rust-runtime-conformance-v1", enableSql = true)],
-      durableObjectStorage = (localDisk = "state")
-    )),
-    (name = "driver", worker = (
-      modules = [(name = "driver.mjs", esModule = embed ${quoted(join(root, "tools/cloudflare/fixtures/runtime-driver.mjs"))}), (name = "provider-matrix.mjs", esModule = embed ${quoted(join(root, "tools/cloudflare/fixtures/provider-matrix.mjs"))})],
-      compatibilityDate = "2026-10-18", compatibilityFlags = ["enable_request_signal", "request_signal_passthrough"],
-      bindings = [(name = "GATEWAY", service = "gateway"), (name = "AUTHORITY", durableObjectNamespace = (className = "GatewayAuthority", serviceName = "gateway")), (name = "CONTROL", durableObjectNamespace = (className = "FixtureControl"))],
-      durableObjectNamespaces = [(className = "FixtureControl", uniqueKey = "uos-rust-runtime-control-v1", enableSql = true)],
-      durableObjectStorage = (localDisk = "state")
-    ))
-  ],
-  sockets = [(name = "main", http = (), service = "driver"), (name = "public", http = (), service = "gateway")]
-);`;
-  await writeFile(path, config);
-  return path;
 }
 
 type Running = { origin: string; publicOrigin: string; stop: () => Promise<void> };
@@ -702,15 +679,20 @@ async function imageCases(input: {
   cases.push("invalid_image_plan_releases_original_without_claim_or_provider_call");
 }
 
-async function inner(): Promise<void> {
+function fixtureArguments(): { workspace: string; controlHost: string; controlPort: number } {
   const workspace = process.argv[4];
   assert(workspace && resolve(workspace).startsWith(join(root, ".data/rust-runtime-conformance/")));
   const controlHost = process.argv[5];
   const controlPort = Number(process.argv[6]);
   assert(controlHost && Number.isInteger(controlPort) && controlPort > 0 && controlPort < 65536);
+  return { workspace, controlHost, controlPort };
+}
+
+async function inner(): Promise<void> {
+  const { workspace, controlHost, controlPort } = fixtureArguments();
   await deniedEgress(controlHost, controlPort);
   const cases = ["os_external_tcp_denied"];
-  let config = await fixtureConfig(workspace);
+  let config = await fixtureConfig(root, workspace);
   let running = await start(config, workspace);
   const url = (path: string): string => `${running.publicOrigin}${path}`;
   const post = (path: string, body: unknown, token = "fixture-access", signal?: AbortSignal): Promise<Response> =>
@@ -755,13 +737,13 @@ async function inner(): Promise<void> {
     await running.stop();
     const scope = join(workspace, `scenario-${kind}-${++scenarioNumber}`);
     await mkdir(scope, { recursive: true });
-    config = await fixtureConfig(scope, kind);
+    config = await fixtureConfig(root, scope, kind);
     running = await start(config, scope);
     const harness: ScenarioHarness = {
       scope,
       restart: async () => {
         await running.stop();
-        config = await fixtureConfig(scope, kind);
+        config = await fixtureConfig(root, scope, kind);
         running = await start(config, scope);
       },
     };
@@ -782,6 +764,23 @@ async function inner(): Promise<void> {
     assert.equal(identity.release.git_sha, expectedSha);
     assert.equal(health.headers.get("x-uos-git-sha"), expectedSha);
     cases.push("exact_rust_source_identity");
+    if (precommitOnly) {
+      await withScenario("precommit", precommitCases);
+      await withScenario("precommit-paid", precommitPaidCases);
+      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
+        name: "synthetic-precommit",
+        expectedCases: PRECOMMIT_CASE_NAMES,
+      });
+      return;
+    }
+    if (streamRuntimeOnly) {
+      await runStreamRuntimeCases({ ...matrixContext, withScenario });
+      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
+        name: "stream-runtime",
+        expectedCases: STREAM_RUNTIME_CASE_NAMES,
+      });
+      return;
+    }
     const preflight = await fetch(url("/v1/responses"), { method: "OPTIONS", headers: { origin: "https://ai.ubq.fi" } });
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get("access-control-allow-origin"), "https://ai.ubq.fi");
@@ -949,6 +948,7 @@ async function inner(): Promise<void> {
       await catalogRestartCases({ ...fixture, ...harness }, cases);
     });
     await runProviderMatrixCases({ ...matrixContext, withScenario });
+    assert.equal(cases.filter((name) => name === "matrix_actual_rust_future_drop_at_presemantic_phase_retains_cleanup_without_caller_abort").length, 1);
     await withScenario("codex", replayProviderCases);
     await withScenario("codex", unicodeForwardingCases);
     await withScenario("direct", compactionFallbackCases);
@@ -962,33 +962,7 @@ async function inner(): Promise<void> {
     await assertUpstreamCancelled(events, "fixture:abort-tcp");
     cases.push("actual_caller_abort_retains_non_successful_transport_state");
     await captureSuppressionCase(url, cancelId, cases);
-    console.log(
-      JSON.stringify({
-        sourceSha: expectedSha,
-        wasmSha256: createHash("sha256")
-          .update(await readFile(join(root, "rust/crates/gateway-worker/build/index_bg.wasm")))
-          .digest("hex"),
-        fixtureWasmSha256: createHash("sha256")
-          .update(await readFile(join(root, "rust/crates/gateway-worker-fixture/build/index_bg.wasm")))
-          .digest("hex"),
-        providerMatrixSha256: createHash("sha256")
-          .update(await readFile(join(root, "tools/cloudflare/fixtures/provider-matrix.mjs")))
-          .digest("hex"),
-        workerd: "1.20261012.1",
-        platform: process.platform,
-        publicEntry: "direct-workerd-http-socket",
-        harnessSha256: createHash("sha256")
-          .update(await readFile(fileURLToPath(import.meta.url)))
-          .digest("hex"),
-        fixtureSha256: createHash("sha256")
-          .update(await readFile(join(root, "tools/cloudflare/fixtures/runtime-driver.mjs")))
-          .digest("hex"),
-        workerdSha256: createHash("sha256")
-          .update(await readFile(workerdBinary))
-          .digest("hex"),
-        cases,
-      })
-    );
+    await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, null);
   } finally {
     await writeFile(join(workspace, "progress.json"), JSON.stringify({ cases }, null, 2) + "\n");
     await running.stop();

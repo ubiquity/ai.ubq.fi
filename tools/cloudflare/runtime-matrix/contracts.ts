@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { normalizeSelectedProviderIds } from "../../../src/provider/selection.ts";
 import { captureUnexpectedStatus, registerFixtureResponse } from "./failure-capture.ts";
 
-export type MatrixScenario = "direct" | "codex" | "claude" | "paid";
+export type MatrixScenario = "direct" | "codex" | "claude" | "paid" | "precommit" | "precommit-paid";
 export type MatrixProvider = "codex" | "claude" | "surplus" | "openlux" | "lithos" | "openrouter" | "deepseek";
 export type MatrixContext = {
   url(path: string): string;

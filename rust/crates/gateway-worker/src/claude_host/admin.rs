@@ -342,8 +342,8 @@ async fn validate(
             Ok(value) => value,
             Err(_) => return Ok(Validation::unavailable(Some(status))),
         };
-        let (page, next) = match gateway_catalog_runtime::providers::parse_page(
-            gateway_catalog_runtime::host::CatalogProvider::ClaudeCode,
+        let (page, next) = match gateway_catalog_provider::providers::parse_page(
+            gateway_catalog_provider::host::CatalogProvider::ClaudeCode,
             &parsed,
         ) {
             Ok(page) => page,

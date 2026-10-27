@@ -211,3 +211,37 @@ mod route_tests {
         }
     }
 }
+
+/// Read-only phase data for the explicit fixture build; never a production control API.
+#[cfg(feature = "fixture-stream-drop")]
+pub mod stream_fixture {
+    use std::{
+        cell::RefCell,
+        rc::{Rc, Weak},
+    };
+    std::thread_local! { static OBSERVERS: RefCell<Vec<Weak<RefCell<Option<String>>>>> = const { RefCell::new(Vec::new()) }; }
+    pub struct PreparationObservation(Rc<RefCell<Option<String>>>);
+    impl PreparationObservation {
+        pub fn request_id(&self) -> Option<String> {
+            self.0.borrow().clone()
+        }
+    }
+    pub fn observe_preparation() -> PreparationObservation {
+        let value = Rc::new(RefCell::new(None));
+        OBSERVERS.with(|observers| observers.borrow_mut().push(Rc::downgrade(&value)));
+        PreparationObservation(value)
+    }
+    pub(crate) fn note_preparation(request_id: &str) {
+        OBSERVERS.with(|observers| {
+            observers.borrow_mut().retain(|entry| {
+                let Some(value) = entry.upgrade() else {
+                    return false;
+                };
+                if value.borrow().is_none() {
+                    *value.borrow_mut() = Some(request_id.to_owned());
+                }
+                true
+            })
+        });
+    }
+}

@@ -11,8 +11,13 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["entrypoint"]
 entrypoint = []
+fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-decision-protocol.workspace = true
+gateway-extras-contract.workspace = true
+gateway-catalog-provider.workspace = true
+gateway-worker-stream.workspace = true
 gateway-compaction.workspace = true
 gateway-core.workspace = true
 gateway-auth.workspace = true

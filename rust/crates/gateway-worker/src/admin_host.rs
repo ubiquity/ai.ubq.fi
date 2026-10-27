@@ -239,7 +239,7 @@ impl RuntimeCapabilities for Capabilities {
             CatalogRequest::Catalog => Operation::Catalog,
             CatalogRequest::Refresh => Operation::Refresh,
         };
-        Ok(crate::catalog::into_auth_response(
+        Ok(gateway_catalog_provider::response::into_auth_response(
             self.catalog_service
                 .admin_catalog(&self.catalog_host.store, &self.catalog_host, operation)
                 .await,
