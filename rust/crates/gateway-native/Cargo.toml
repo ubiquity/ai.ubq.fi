@@ -22,6 +22,7 @@ gateway-native-custody-wire.workspace = true
 gateway-native-http-framing.workspace = true
 gateway-native-import-client.workspace = true
 gateway-native-import-source.workspace = true
+gateway-native-live-buffer.workspace = true
 gateway-native-local-transport.workspace = true
 gateway-native-replay.workspace = true
 gateway-native-supervisor.workspace = true

@@ -1124,6 +1124,7 @@ dependencies = [
  "gateway-native-import-client",
  "gateway-native-import-source",
  "gateway-native-import-test-support",
+ "gateway-native-live-buffer",
  "gateway-native-local-transport",
  "gateway-native-replay",
  "gateway-native-supervisor",
@@ -1247,6 +1248,17 @@ dependencies = [
  "gateway-native-replay",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-native-live-buffer"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-native-https-test-support",
+ "rustls",
+ "socket2",
+ "tungstenite",
 ]
 
 [[package]]

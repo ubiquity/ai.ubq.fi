@@ -1,4 +1,7 @@
-use super::{MAX_BUFFERED_BYTES, MAX_PAYLOAD_BYTES, PREOPEN_MAX_FRAMES, failure};
+use crate::{
+    error::failure,
+    limits::{MAX_BUFFERED_BYTES, MAX_PAYLOAD_BYTES, PREOPEN_MAX_FRAMES},
+};
 use gateway_core::error::GatewayError;
 use std::{
     collections::VecDeque,
@@ -6,10 +9,13 @@ use std::{
 };
 use tungstenite::{
     Error, Message, WebSocket,
-    protocol::{Role, WebSocketConfig},
+    protocol::{
+        Role, WebSocketConfig,
+        frame::{CloseFrame, coding::CloseCode},
+    },
 };
 
-pub(super) fn websocket_config() -> WebSocketConfig {
+pub fn websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .write_buffer_size(0)
         .max_write_buffer_size(MAX_BUFFERED_BYTES)
@@ -18,7 +24,7 @@ pub(super) fn websocket_config() -> WebSocketConfig {
 }
 
 #[derive(Default)]
-pub(super) struct PreopenQueue {
+pub struct PreopenQueue {
     frames: VecDeque<String>,
     bytes: usize,
 }
@@ -45,8 +51,8 @@ impl PreopenQueue {
 /// native bound; subsequent frames stay in this owned, counted queue. Like
 /// ws8.18.3, the pre-send guard adds only the incoming UTF8 payload; accepted
 /// frames then charge their actual plaintext framing, not TLS ciphertext.
-pub(super) struct PendingSocket<S> {
-    pub socket: WebSocket<S>,
+pub struct PendingSocket<S> {
+    socket: WebSocket<S>,
     queue: VecDeque<(String, usize)>,
     pending: usize,
     in_flight: Option<usize>,
@@ -124,12 +130,32 @@ impl<S: Read + Write> PendingSocket<S> {
             }
         }
     }
+    pub fn close(&mut self, code: u16, reason: &str, upstream: bool) {
+        let allowed = if upstream {
+            code == 1000 || (3000..=4999).contains(&code)
+        } else {
+            (1000..=4999).contains(&code) && ![1005, 1006, 1015].contains(&code)
+        };
+        let reason = String::from_utf16_lossy(&reason.encode_utf16().take(100).collect::<Vec<_>>());
+        let frame = if allowed && reason.len() <= 123 {
+            Some(CloseFrame {
+                code: CloseCode::from(code),
+                reason: reason.into(),
+            })
+        } else {
+            None
+        };
+        if self.socket.close(frame).is_err() {
+            let _ = self.socket.close(None);
+        }
+        let _ = self.socket.flush();
+    }
 }
-pub(super) fn blocked(error: &Error) -> bool {
+pub fn blocked(error: &Error) -> bool {
     matches!(error,Error::Io(error) if error.kind()==std::io::ErrorKind::WouldBlock)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io;
@@ -210,7 +236,7 @@ mod tests {
 
     #[test]
     fn actual_tls_non_draining_writer_retains_framed_plaintext_until_flush() {
-        let (server_config, client_config) = super::super::tests::configs();
+        let (server_config, client_config) = gateway_native_https_test_support::live_tls::configs();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let (release, paused) = std::sync::mpsc::sync_channel(1);

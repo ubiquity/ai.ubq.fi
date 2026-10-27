@@ -7,16 +7,15 @@ use gateway_auth::{
 };
 use gateway_auth_native_wire::native_read::*;
 use gateway_authority::native_live::wire::{NativeLiveAccess, NativeLiveFence};
-use rustls::{
-    ServerConfig, ServerConnection, StreamOwned,
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
-};
+use gateway_native_https_test_support::live_tls::configs;
+use rustls::{ServerConnection, StreamOwned, pki_types::ServerName};
 use std::{
     collections::BTreeSet,
     io::Read,
     net::{SocketAddr, TcpListener},
     sync::atomic::AtomicUsize,
 };
+use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::{
     client::IntoClientRequest,
     handshake::server::{Callback, ErrorResponse, Request, Response},
@@ -105,31 +104,6 @@ impl NativeLiveConnector for Connector {
         self.calls.fetch_add(1, Ordering::SeqCst);
         TcpStream::connect_timeout(&self.address, context.remaining()?).map_err(|_| unavailable())
     }
-}
-pub(super) fn configs() -> (Arc<ServerConfig>, Arc<rustls::ClientConfig>) {
-    let cert =
-        CertificateDer::from(include_bytes!("../../tests/fixtures/native-tls/leaf.der").to_vec());
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-        include_bytes!("../../tests/fixtures/native-tls/leaf.pk8.der").to_vec(),
-    ));
-    let server = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert], key)
-        .unwrap();
-    let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(
-            include_bytes!("../../tests/fixtures/native-tls/ca.der").to_vec(),
-        ))
-        .unwrap();
-    (
-        Arc::new(server),
-        Arc::new(
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        ),
-    )
 }
 fn read_head(stream: &mut TcpStream) -> (Vec<(String, String)>, Vec<u8>) {
     stream
@@ -259,7 +233,7 @@ fn actual_tls_upgrade_preserves_fixed_headers_immediate_binary_text_and_close_wi
         let mut socket = tungstenite::accept_hdr_with_config(
             tls,
             FixedUpstreamHeaders,
-            Some(queue::websocket_config()),
+            Some(gateway_native_live_buffer::queue::websocket_config()),
         )
         .unwrap();
         socket

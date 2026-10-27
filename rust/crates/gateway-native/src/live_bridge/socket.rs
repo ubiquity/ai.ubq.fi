@@ -137,7 +137,9 @@ pub(super) fn dial(
         let mut conn = ClientConnection::new(tls, server_name).map_err(|_| unavailable())?;
         // Only one charged WebSocket frame enters TLS at a time. Its complete
         // charge remains until StreamOwned::flush drains ciphertext as well.
-        conn.set_buffer_limit(Some(super::MAX_PAYLOAD_BYTES + 64));
+        conn.set_buffer_limit(Some(
+            gateway_native_live_buffer::limits::MAX_PAYLOAD_BYTES + 64,
+        ));
         let mut socket = DeadlineSocket {
             stream,
             deadline: Some(context.deadline()),
@@ -173,7 +175,7 @@ pub(super) fn dial(
         let mut socket = match tungstenite::client::client_with_config(
             request,
             stream,
-            Some(super::queue::websocket_config()),
+            Some(gateway_native_live_buffer::queue::websocket_config()),
         ) {
             Ok((socket, _)) => socket,
             Err(HandshakeError::Failure(tungstenite::Error::Http(response))) => {

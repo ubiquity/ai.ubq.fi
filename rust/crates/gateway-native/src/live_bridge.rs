@@ -1,13 +1,16 @@
 //! One finite native sideband connection. The trusted connector is fixed to the
 //! approved destination; no URL or credential is accepted from the upgrade.
 pub mod authority;
-mod queue;
 pub mod socket;
 use authority::NativeLiveAuthority;
 use gateway_auth::{crypto::base64url, native_live::AuthenticatedNativeLive};
 use gateway_authority::native_live::wire::NativeLiveRetirement;
 use gateway_core::error::GatewayError;
-use queue::{PendingSocket, PreopenQueue, blocked, websocket_config};
+use gateway_native_live_buffer::{
+    error::failure,
+    limits::MAX_PAYLOAD_BYTES,
+    queue::{PendingSocket, PreopenQueue, blocked, websocket_config},
+};
 use socket::{LiveDialContext, NativeLiveConnector};
 use std::{
     io::Write,
@@ -23,15 +26,9 @@ use std::{
 use tungstenite::{
     Message, WebSocket,
     handshake::server::{create_response, write_response},
-    protocol::{
-        Role,
-        frame::{CloseFrame, coding::CloseCode},
-    },
+    protocol::{Role, frame::CloseFrame},
 };
 
-pub const MAX_PAYLOAD_BYTES: usize = 4 * 1_048_576;
-pub const MAX_BUFFERED_BYTES: usize = 8 * 1_048_576;
-pub const PREOPEN_MAX_FRAMES: usize = 32;
 pub const HANDSHAKE_TIMEOUT_MS: u64 = 10_000;
 
 pub struct NativeLiveUpgradeRequest {
@@ -161,11 +158,11 @@ impl NativeLiveHandler for NativeLiveService {
             // dial. The same reader stays active while the dial thread awaits TLS.
             match read_downstream::<socket::UpstreamSocket>(&mut downstream, None, &mut preopen) {
                 Ok(Some((code, reason))) => {
-                    close_peer(&mut downstream, code, &reason, false);
+                    downstream.close(code, &reason, false);
                     return Ok(NativeLiveOutcome::CloseRequested { code });
                 }
                 Err(error) => {
-                    close_peer(&mut downstream, 1011, &error.envelope.error.message, false);
+                    downstream.close(1011, &error.envelope.error.message, false);
                     return Ok(NativeLiveOutcome::CloseRequested { code: 1011 });
                 }
                 Ok(None) => {}
@@ -261,8 +258,8 @@ impl NativeLiveHandler for NativeLiveService {
                             Ok(Message::Close(frame)) => {
                                 let (code, reason) = close_value(frame);
                                 alive.store(false, Ordering::Release);
-                                close_peer(peer, code, &reason, true);
-                                close_peer(&mut downstream, code, &reason, false);
+                                peer.close(code, &reason, true);
+                                downstream.close(code, &reason, false);
                                 let _ = dial.join();
                                 return Ok(NativeLiveOutcome::CloseRequested { code });
                             }
@@ -270,8 +267,8 @@ impl NativeLiveHandler for NativeLiveService {
                             Err(error) if blocked(&error) => break,
                             Err(_) => {
                                 alive.store(false, Ordering::Release);
-                                close_peer(peer, 1011, "realtime upstream error", true);
-                                close_peer(&mut downstream, 1011, "realtime upstream error", false);
+                                peer.close(1011, "realtime upstream error", true);
+                                downstream.close(1011, "realtime upstream error", false);
                                 let _ = dial.join();
                                 return Ok(NativeLiveOutcome::CloseRequested { code: 1011 });
                             }
@@ -288,9 +285,9 @@ impl NativeLiveHandler for NativeLiveService {
             };
             alive.store(false, Ordering::Release);
             if let Some(peer) = upstream.as_mut() {
-                close_peer(peer, finish.0, &finish.1, true);
+                peer.close(finish.0, &finish.1, true);
             }
-            close_peer(&mut downstream, finish.0, &finish.1, false);
+            downstream.close(finish.0, &finish.1, false);
             let _ = dial.join();
             Ok(NativeLiveOutcome::CloseRequested { code: finish.0 })
         });
@@ -344,34 +341,6 @@ fn close_value(frame: Option<CloseFrame>) -> (u16, String) {
     frame.map_or((1005, String::new()), |frame| {
         (u16::from(frame.code), frame.reason.to_string())
     })
-}
-fn close_peer<S: std::io::Read + Write>(
-    peer: &mut PendingSocket<S>,
-    code: u16,
-    reason: &str,
-    upstream: bool,
-) {
-    let allowed = if upstream {
-        code == 1000 || (3000..=4999).contains(&code)
-    } else {
-        (1000..=4999).contains(&code) && ![1005, 1006, 1015].contains(&code)
-    };
-    let reason = String::from_utf16_lossy(&reason.encode_utf16().take(100).collect::<Vec<_>>());
-    let frame = if allowed && reason.len() <= 123 {
-        Some(CloseFrame {
-            code: CloseCode::from(code),
-            reason: reason.into(),
-        })
-    } else {
-        None
-    };
-    if peer.socket.close(frame).is_err() {
-        let _ = peer.socket.close(None);
-    }
-    let _ = peer.socket.flush();
-}
-pub(super) fn failure(reason: &str) -> GatewayError {
-    GatewayError::unavailable(reason, "native_live_transport_failed")
 }
 pub(super) fn unavailable() -> GatewayError {
     failure("Native live transport is unavailable")
