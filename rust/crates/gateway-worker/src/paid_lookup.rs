@@ -103,7 +103,7 @@ pub async fn lookup(
             let text = String::from_utf8_lossy(&bytes);
             serde_json::from_str::<Value>(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()
         } else {
-            crate::transport::body::discard_response(&mut response);
+            gateway_worker_http_body::body::discard_response(&mut response);
             None
         };
         match plan.accept_page(&page, status, body.as_ref())? {

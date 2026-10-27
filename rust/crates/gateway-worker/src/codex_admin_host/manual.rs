@@ -149,7 +149,7 @@ async fn run(
                     .ok()
                     .and_then(|bytes| consume_code(&bytes)),
                 Ok(mut response) => {
-                    crate::transport::body::discard_response(&mut response);
+                    gateway_worker_http_body::body::discard_response(&mut response);
                     None
                 }
                 Err(_) => None,
@@ -299,7 +299,7 @@ where
     .await
     .map_err(|failure| failure.error)?;
     if !(200..300).contains(&response.status_code()) {
-        crate::transport::body::discard_response(&mut response);
+        gateway_worker_http_body::body::discard_response(&mut response);
         return Err(unavailable("Reset observation is unavailable."));
     }
     let bytes = response

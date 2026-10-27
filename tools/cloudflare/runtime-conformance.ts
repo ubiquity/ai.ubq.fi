@@ -1,3 +1,4 @@
+import { EARLY_HEAD_CASE_NAMES, runEarlyHeadWireCases } from "./runtime-matrix/early-head.ts";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { createRequire } from "node:module";
@@ -8,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liveCases } from "./fixtures/live-conformance.ts";
 import { isObject } from "./runtime-conformance-support.ts";
-import { precommitCases, precommitPaidCases, PRECOMMIT_CASE_NAMES } from "./runtime-matrix/precommit.ts";
+import { abortBeforeOutput, precommitCases, precommitPaidCases, PRECOMMIT_CASE_NAMES } from "./runtime-matrix/precommit.ts";
 import { emitConformanceReceipt } from "./runtime-matrix/conformance-receipt.ts";
 import { fixtureConfig } from "./runtime-matrix/workerd-config.ts";
 import { failureCaptureCase, captureSuppressionCase } from "./fixtures/capture-conformance.ts";
@@ -22,9 +23,12 @@ const childMode = process.argv[2] === "--fixture-child";
 const expectedSha = childMode ? process.argv[3] : process.argv[2];
 const extraArgs = process.argv.slice(childMode ? 7 : 3);
 assert(
-  extraArgs.length === 0 || (extraArgs.length === 1 && ["--precommit-only", "--stream-runtime-only"].includes(extraArgs[0])),
-  "Only the mutually exclusive test-only --precommit-only or --stream-runtime-only selector is supported."
+  extraArgs.length === 0 ||
+    (extraArgs.length === 1 && ["--precommit-only", "--stream-runtime-only", "--presemantic-abort-only", "--early-head-wire-only"].includes(extraArgs[0])),
+  "Only one supported test-only runtime selector is permitted."
 );
+const earlyHeadWireOnly = extraArgs[0] === "--early-head-wire-only";
+const presemanticAbortOnly = extraArgs[0] === "--presemantic-abort-only";
 const precommitOnly = extraArgs[0] === "--precommit-only";
 const streamRuntimeOnly = extraArgs[0] === "--stream-runtime-only";
 assert(expectedSha && /^[a-f0-9]{40}$/.test(expectedSha), "Pass the exact compiled application's full source SHA.");
@@ -70,7 +74,10 @@ async function outer(): Promise<void> {
     await reachableControl(control.address, 443);
     const receipt: unknown = JSON.parse(stdout.trim());
     assert(isObject(receipt) && Array.isArray(receipt.cases), "The actual selected conformance receipt is required.");
-    if (precommitOnly) assert.deepEqual(receipt.cases, ["os_external_tcp_denied", "exact_rust_source_identity", ...PRECOMMIT_CASE_NAMES]);
+    if (earlyHeadWireOnly) assert.deepEqual(receipt.cases, ["os_external_tcp_denied", "exact_rust_source_identity", ...EARLY_HEAD_CASE_NAMES]);
+    else if (presemanticAbortOnly)
+      assert.deepEqual(receipt.cases, ["os_external_tcp_denied", "exact_rust_source_identity", "matrix_synthetic_presemantic_caller_abort_never_advances"]);
+    else if (precommitOnly) assert.deepEqual(receipt.cases, ["os_external_tcp_denied", "exact_rust_source_identity", ...PRECOMMIT_CASE_NAMES]);
     else if (streamRuntimeOnly) assert.deepEqual(receipt.cases, ["os_external_tcp_denied", "exact_rust_source_identity", ...STREAM_RUNTIME_CASE_NAMES]);
     else assert(receipt.cases.length >= 16, "A nonzero complete case floor is required.");
     await writeFile(join(workspace, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
@@ -764,6 +771,22 @@ async function inner(): Promise<void> {
     assert.equal(identity.release.git_sha, expectedSha);
     assert.equal(health.headers.get("x-uos-git-sha"), expectedSha);
     cases.push("exact_rust_source_identity");
+    if (earlyHeadWireOnly) {
+      await runEarlyHeadWireCases({ ...matrixContext, withScenario });
+      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
+        name: "early-head-wire",
+        expectedCases: EARLY_HEAD_CASE_NAMES,
+      });
+      return;
+    }
+    if (presemanticAbortOnly) {
+      await withScenario("precommit", abortBeforeOutput);
+      await emitConformanceReceipt(root, expectedSha, workerdBinary, fileURLToPath(import.meta.url), cases, {
+        name: "presemantic-abort",
+        expectedCases: ["matrix_synthetic_presemantic_caller_abort_never_advances"],
+      });
+      return;
+    }
     if (precommitOnly) {
       await withScenario("precommit", precommitCases);
       await withScenario("precommit-paid", precommitPaidCases);

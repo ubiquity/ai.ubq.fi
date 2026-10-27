@@ -198,7 +198,7 @@ impl ExperimentIo for Host<'_> {
         client: Option<&str>,
         deadline: i64,
     ) -> Result<SampleResponse, GatewayError> {
-        let started = crate::admission::monotonic()?;
+        let started = gateway_worker_platform::clock::monotonic()?;
         let cancellation = Rc::new(self.cancellation()?.child()?);
         let timeout = i32::try_from(deadline.saturating_sub(now_ms()?))
             .map_err(|_| failed("Prompt-cache scope experiment deadline is invalid."))?;
@@ -291,7 +291,8 @@ impl ExperimentIo for Host<'_> {
         }
         if status == 429 {
             let body =
-                crate::transport::body::refusal_probe(raw, &response.cancellation, 1_000).await;
+                gateway_worker_http_body::body::refusal_probe(raw, &response.cancellation, 1_000)
+                    .await;
             let headers = raw.headers().entries().collect();
             if let Some(block) = gateway_routing_runtime::classify::codex_quota(
                 Some(status),
@@ -323,7 +324,7 @@ impl ExperimentIo for Host<'_> {
             .take()
             .ok_or_else(|| failed("Prompt-cache scope experiment response is missing."))?;
         if !(200..300).contains(&response.status_code()) {
-            crate::transport::body::discard_response(&mut response);
+            gateway_worker_http_body::body::discard_response(&mut response);
             return Err(failed(
                 "Prompt-cache scope experiment did not receive a readable upstream response.",
             ));
@@ -370,7 +371,7 @@ impl ExperimentIo for Host<'_> {
                 let kind = sample::event_type(&event)?;
                 if kind.as_deref() == Some("response.completed") {
                     let result=sample::member(&event,"response")?.filter(|r|r.as_str().starts_with('{')).ok_or_else(||failed("Prompt-cache scope experiment stream failed: Upstream emitted a Responses terminal event with an invalid payload."))?;
-                    let elapsed = (crate::admission::monotonic()?
+                    let elapsed = (gateway_worker_platform::clock::monotonic()?
                         .saturating_sub(head.started)
                         .as_secs_f64()
                         * 1_000.0)

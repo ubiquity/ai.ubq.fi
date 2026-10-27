@@ -120,7 +120,7 @@ impl WorkerLiveHost {
     pub async fn upgrade(
         &self,
         prepared: PreparedSideband<RemoteAuthorityStore, CurrentLiveAccount>,
-    ) -> Result<crate::response::GatewayResponse, GatewayError> {
+    ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
         let parts = prepared.into_parts();
         parts.account.ensure_current().await?;
         let transport = self.platform.native.transport()?;

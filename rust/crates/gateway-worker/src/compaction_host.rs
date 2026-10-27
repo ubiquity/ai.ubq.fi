@@ -3,11 +3,11 @@ mod protocol;
 
 use crate::host::PlatformHost;
 use crate::host::provider_secret;
-use crate::transport::body;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
 use gateway_compaction::types::{CompactionFailure, CompactionHost, FailureKind};
 use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::random;
 use protocol::{Call, RequestPlan};

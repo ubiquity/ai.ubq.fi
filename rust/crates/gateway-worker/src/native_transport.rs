@@ -120,7 +120,7 @@ impl NativeTransport {
         &self,
         action_ref: &str,
         platform: &PlatformHost,
-    ) -> Result<crate::response::GatewayResponse, GatewayError> {
+    ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
         use gateway_auth::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
         let now = gateway_worker_storage::store::now_ms()?;
         let nonce = base64url(&random::random_bytes(32)?);
@@ -157,7 +157,7 @@ impl NativeTransport {
         if raw.status() != 101 || raw.websocket().is_none() {
             return Err(unavailable());
         }
-        Ok(crate::response::GatewayResponse::Raw(raw))
+        Ok(gateway_worker_web::response::GatewayResponse::Raw(raw))
     }
 
     pub async fn send(

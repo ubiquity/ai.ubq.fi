@@ -154,7 +154,7 @@ impl Binding {
         .await
         .map_err(|failure| failure.error)?;
         if !(200..300).contains(&response.status_code()) {
-            crate::transport::body::discard_response(&mut response);
+            gateway_worker_http_body::body::discard_response(&mut response);
             return Err(unavailable(
                 "Administrator metadata or summarizer request failed.",
             ));

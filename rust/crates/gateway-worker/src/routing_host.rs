@@ -60,10 +60,10 @@ impl RoutingHost for Host {
         }
     }
     async fn wait(&self, milliseconds: i64) -> gateway_routing_runtime::types::WaitOutcome {
-        let started = crate::admission::monotonic()
+        let started = gateway_worker_platform::clock::monotonic()
             .expect("Routing requires the validated platform monotonic clock");
         let result = self.wait_result(milliseconds).await;
-        let ended = crate::admission::monotonic()
+        let ended = gateway_worker_platform::clock::monotonic()
             .expect("Routing requires the validated platform monotonic clock");
         let elapsed_ms = (ended.saturating_sub(started).as_secs_f64() * 1000.0)
             .round()

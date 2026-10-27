@@ -179,7 +179,7 @@ pub(super) async fn capture(
 pub fn into_response(
     response: LiveResponse<Body>,
     context: Rc<Context>,
-) -> Result<crate::response::GatewayResponse, GatewayError> {
+) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
     let headers = Headers::new();
     for (name, value) in response.headers {
         headers.set(&name, &value).map_err(|_| unreachable())?;
@@ -219,5 +219,5 @@ pub fn into_response(
         &init,
     )
     .map_err(|_| unreachable())?;
-    Ok(crate::response::GatewayResponse::Raw(raw))
+    Ok(gateway_worker_web::response::GatewayResponse::Raw(raw))
 }

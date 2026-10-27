@@ -11,7 +11,6 @@ mod admin_host;
 mod admin_support_host;
 mod admission;
 mod agent_messages;
-mod assets;
 pub mod authority;
 mod cache_experiment_host;
 mod candidate_bindings;
@@ -28,6 +27,7 @@ mod image_host;
 mod inference;
 mod inference_capture;
 mod inference_currentness;
+mod inference_head;
 mod inference_lifecycle;
 mod inference_local;
 mod inference_local_lifecycle;
@@ -37,7 +37,6 @@ mod live_host;
 mod live_http;
 /// Rust-only fixture composition; no native capture HTTP route is exposed.
 pub mod migration_host;
-mod multipart;
 mod native_authority;
 pub mod native_host;
 mod native_transport;
@@ -45,7 +44,6 @@ mod observability_host;
 mod paid_lookup;
 pub mod private_installer;
 mod publication;
-pub mod response;
 mod routing_host;
 mod runtime;
 mod source_collator;
@@ -138,7 +136,7 @@ pub async fn fetch_with_bindings(
     let cors = cors::Cors::from_request(&request, &env)?;
     let mut response = if request.method() == Method::Options {
         Response::empty()?.with_status(204).into()
-    } else if normalized_path(&request.path()) == "/health"
+    } else if gateway_worker_web::path::normalized_path(&request.path()) == "/health"
         && matches!(request.method(), Method::Get | Method::Head)
     {
         if request.method() == Method::Head {
@@ -183,32 +181,6 @@ pub async fn fetch_with_bindings(
         .headers_mut()
         .set(DEPLOYMENT_ID_HEADER, identity.deployment_id())?;
     Ok(response)
-}
-
-/// The source public router removes every trailing slash except the root slash.
-pub(crate) fn normalized_path(path: &str) -> &str {
-    if path == "/" {
-        path
-    } else {
-        path.trim_end_matches('/')
-    }
-}
-
-#[cfg(test)]
-mod route_tests {
-    #[test]
-    fn normalization_matches_source_without_decoding_segments() {
-        for (source, expected) in [
-            ("/", "/"),
-            ("/health///", "/health"),
-            ("/v1/responses/", "/v1/responses"),
-            ("/api/auth/login/start//", "/api/auth/login/start"),
-            ("/v1/live/rtc_%2F/", "/v1/live/rtc_%2F"),
-            ("///", ""),
-        ] {
-            assert_eq!(super::normalized_path(source), expected);
-        }
-    }
 }
 
 /// Read-only phase data for the explicit fixture build; never a production control API.

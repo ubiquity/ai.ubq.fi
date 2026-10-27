@@ -80,7 +80,9 @@ async function failedBeforeOutput(context: MatrixContext, kind: "eof" | "failed"
   );
   assert(text.includes("matrix answer") && text.includes("response.completed"));
   assert(!text.includes("chatcmpl_precommit_lithos") && !text.includes("response.failed"), "The abandoned hop must not leak its precommit prefix");
-  assert.equal(response.headers.get("x-uos-provider-request-id"), `matrix-openrouter-${kind}`);
+  assert.equal(response.headers.get("x-uos-provider-request-id"), null, "Owner v6 provisional headers cannot name a later selected provider");
+  assert.equal(response.headers.get("x-uos-upstream"), null);
+  assert.equal(response.headers.get("x-uos-attempted-providers"), null);
   await oneOriginal(client, response, key.id, ["lithos", "openrouter"]);
   context.cases.push(`matrix_synthetic_presemantic_${kind}_advances_one_original_admission`);
 }
@@ -106,7 +108,7 @@ async function committedOrDirect(context: MatrixContext, synthetic: boolean): Pr
   context.cases.push(synthetic ? "matrix_synthetic_semantic_output_prevents_next_hop" : "matrix_direct_presemantic_eof_does_not_enter_synthetic_chain");
 }
 
-async function abortBeforeOutput(context: MatrixContext): Promise<void> {
+export async function abortBeforeOutput(context: MatrixContext): Promise<void> {
   const key = await createClient(context);
   const client = { ...context, clientToken: key.token };
   const marker = "fixture:matrix:precommit:abort";

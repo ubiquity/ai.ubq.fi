@@ -315,7 +315,7 @@ pub(super) async fn fetch(
     request: Request,
     env: Env,
     context: Context,
-) -> worker::Result<gateway_worker::response::GatewayResponse> {
+) -> worker::Result<gateway_worker_web::response::GatewayResponse> {
     let id = identity()
         .map_err(|e| worker::Error::RustError(e.envelope.error.code.unwrap_or_default()))?;
     let inputs = inputs()

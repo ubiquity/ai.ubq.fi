@@ -34,7 +34,11 @@ fn unavailable() -> GatewayError {
 }
 fn original_route_matches(method: &str, path: &str, route: &str) -> bool {
     matches!(
-        (method, crate::normalized_path(path), route),
+        (
+            method,
+            gateway_worker_web::path::normalized_path(path),
+            route
+        ),
         ("POST", "/v1/responses", "responses")
             | ("POST", "/v1/chat/completions", "chat.completions")
     )
@@ -217,7 +221,7 @@ async fn submit(
                     .ok()
                     .and_then(|body| manual::consume_code(&body)),
                 Ok(mut response) => {
-                    crate::transport::body::discard_response(&mut response);
+                    gateway_worker_http_body::body::discard_response(&mut response);
                     None
                 }
                 Err(failure) if matches!(failure.error.status, 401 | 403) => {

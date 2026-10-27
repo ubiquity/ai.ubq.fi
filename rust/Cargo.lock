@@ -1440,9 +1440,11 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-worker-http-body",
  "gateway-worker-platform",
  "gateway-worker-storage",
  "gateway-worker-stream",
+ "gateway-worker-web",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -1462,6 +1464,7 @@ dependencies = [
  "gateway-worker-fixture-setup",
  "gateway-worker-platform",
  "gateway-worker-storage",
+ "gateway-worker-web",
  "serde_json",
  "worker",
 ]
@@ -1480,6 +1483,18 @@ dependencies = [
  "gateway-worker-platform",
  "gateway-worker-storage",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-worker-http-body"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-worker-platform",
+ "serde_json",
+ "worker",
 ]
 
 [[package]]
@@ -1510,6 +1525,16 @@ dependencies = [
  "futures-util",
  "gateway-core",
  "gateway-providers",
+ "serde_json",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-web"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-schema",
  "serde_json",
  "worker",
 ]

@@ -1,14 +1,7 @@
 //! Bind decoded streams to the original Worker request lifetime.
-use super::{
-    CEREBRAS_RATE_LIMIT_HEADERS, ResponseResult, apply_warnings, cerebras_error_body, copy_headers,
-    invalid, provider_correlation, set_header,
-};
-use super::{dispatch_attempts, interrupted, stream_failure};
-use crate::inference_lifecycle::Lifecycle;
-use crate::inference_lifecycle::Usage;
+use super::{ResponseResult, dispatch_attempts};
 use crate::inference_lifecycle::finish_hook;
 use crate::routing_host;
-use crate::transport::body;
 use gateway_admission::handoff::{Pending, enqueue};
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use gateway_providers::response::decode_response;
@@ -17,6 +10,11 @@ use gateway_providers::types::{DecodePlan, ProviderEvent};
 use gateway_routing_runtime::types::PreparedWireRequest;
 use gateway_routing_runtime::types::{
     AttemptFailure, FailureOrigin, RefusalDecision, RoutingError, TransportState,
+};
+use gateway_worker_http_body::body;
+use gateway_worker_http_body::protocol::{
+    CEREBRAS_RATE_LIMIT_HEADERS, apply_warnings, cerebras_error_body, copy_headers, interrupted,
+    invalid, provider_correlation, set_header, stream_failure,
 };
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
@@ -600,6 +598,12 @@ impl super::Inference<'_> {
                 .upstream
                 .stream()
                 .map_err(|_| invalid("Upstream stream is unavailable."))?;
+            // The existing predicate above checked the genuine synthetic/free-hop
+            // session and actual SSE head. No translated refusal or request flag
+            // can publish readiness; the real dispatch/admission already ran.
+            if selected.upstream.status_code() == 200 {
+                self.head.accepted_head();
+            }
             let deadline = owner
                 .get_mut()
                 .ok_or_else(crate::inference_local_lifecycle::wrapper_error)?

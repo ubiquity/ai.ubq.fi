@@ -14,6 +14,8 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-worker-http-body.workspace = true
+gateway-worker-web.workspace = true
 gateway-worker-platform.workspace = true
 gateway-worker-storage.workspace = true
 gateway-decision-protocol.workspace = true
