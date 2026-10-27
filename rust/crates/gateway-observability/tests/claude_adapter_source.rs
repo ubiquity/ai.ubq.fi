@@ -153,7 +153,7 @@ fn settings_source_selector_types_and_boolean_validation_precede_identity_mismat
         for (raw, status) in cases {
             let memory = Memory::default();
             let runtime = ObservabilityRuntime::new(memory.clone(), host(vec![]));
-            let error = run(runtime.codex(
+            let error = run(runtime.control().codex(
                 settings(overage, document(&raw.replace("FLAG", field))),
                 context(),
             ))
@@ -213,8 +213,10 @@ fn only_matched_existing_ascii_hash_enters_unchanged_boolean_keys_no_checks_and_
             let raw =
                 format!(r#"{{"account_id_hash":{escaped},"{field}":{flag},"ignored":"\ud800"}}"#);
             assert_ne!(escaped, quoted);
-            let response =
-                run(runtime.codex(settings(overage, document(&raw)), context())).unwrap();
+            let response = run(runtime
+                .control()
+                .codex(settings(overage, document(&raw)), context()))
+            .unwrap();
             assert_eq!(response.status, 200);
             assert_eq!(
                 response.body.as_json().unwrap(),
@@ -231,9 +233,9 @@ fn only_matched_existing_ascii_hash_enters_unchanged_boolean_keys_no_checks_and_
             assert_eq!(transition.mutations.len(), 1);
         }
         let body = if overage {
-            run(runtime.overage_settings_response(None))
+            run(runtime.control().overage_settings_response(None))
         } else {
-            run(runtime.reset_settings_response(None))
+            run(runtime.control().reset_settings_response(None))
         }
         .unwrap();
         assert_eq!(body.status, 200);

@@ -55,6 +55,9 @@ members = [
   "crates/gateway-migration",
   "crates/gateway-claude-runtime",
   "crates/gateway-observability",
+  "crates/gateway-observability-control",
+  "crates/gateway-observability-capacity",
+  "crates/gateway-observability-capacity-events",
   "crates/gateway-observability-replay-capture",
   "crates/gateway-observability-incidents",
   "crates/gateway-observability-replay-read",
@@ -163,6 +166,9 @@ gateway-admin-runtime = { path = "crates/gateway-admin-runtime" }
 gateway-migration = { path = "crates/gateway-migration" }
 gateway-claude-runtime = { path = "crates/gateway-claude-runtime" }
 gateway-observability = { path = "crates/gateway-observability" }
+gateway-observability-control = { path = "crates/gateway-observability-control" }
+gateway-observability-capacity = { path = "crates/gateway-observability-capacity" }
+gateway-observability-capacity-events = { path = "crates/gateway-observability-capacity-events" }
 gateway-observability-replay-capture = { path = "crates/gateway-observability-replay-capture" }
 gateway-observability-incidents = { path = "crates/gateway-observability-incidents" }
 gateway-observability-replay-read = { path = "crates/gateway-observability-replay-read" }

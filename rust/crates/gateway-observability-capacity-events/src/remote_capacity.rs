@@ -1,5 +1,5 @@
 //! Source analytics-only chart observations. These keys never enter routing/reset state.
-use crate::{ObservabilityRuntime, store};
+use crate::{CapacityEvents, store};
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_capacity_projection::{
@@ -36,7 +36,7 @@ pub fn parse_observations(value: &Value) -> Option<Vec<Value>> {
     }
     Some(points)
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> CapacityEvents<'_, S, H> {
     /// Consume actual original request bytes; a caller-supplied count cannot prove the limit.
     pub async fn capacity_observation_response(
         &self,
@@ -61,7 +61,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .ok_or_else(|| data::invalid("Invalid capacity observation host"))?;
         let points = parse_observations(&document["history"])
             .ok_or_else(|| data::invalid("Invalid capacity observations"))?;
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let mut indexes = BTreeMap::new();
         let mut accepted: Vec<Value> = Vec::new();
         for point in points {
@@ -80,7 +80,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let points = accepted;
         for batch in points.chunks(64) {
             let mut writes = Vec::new();
-            let expiry = data::now(self.host.as_ref())? + RETENTION_MS;
+            let expiry = data::now(self.host)? + RETENTION_MS;
             for point in batch {
                 let key = data::key(json!([
                     "uos_ai",
@@ -91,14 +91,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     point["bucket_start_at_ms"],
                     point["sampled_at_ms"]
                 ]));
-                writes.push(store::put(
-                    self.host.as_ref(),
-                    key,
-                    point.clone(),
-                    Some(expiry),
-                )?);
+                writes.push(store::put(self.host, key, point.clone(), Some(expiry))?);
             }
-            match store::commit(self.store.as_ref(), Vec::new(), writes).await {
+            match store::commit(self.store, Vec::new(), writes).await {
                 Ok(true) => {}
                 _ => {
                     return Err(GatewayError::unavailable(
@@ -119,7 +114,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     ) -> Result<Vec<(String, Value)>, GatewayError> {
         let mut out = Vec::new();
         for entry in query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::RemoteCapacity,
             false,
             at,

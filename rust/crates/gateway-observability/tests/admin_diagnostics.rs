@@ -151,7 +151,7 @@ fn observational_codex_runtime_never_redeems_a_manual_reset() {
     let host = Host::default();
     host.at.set(1000);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
-    let error = run(runtime.codex(
+    let error = run(runtime.control().codex(
         gateway_admin_runtime::capabilities::CodexRequest::ConsumeReset {
             account_id_hash: "a".repeat(64),
         },

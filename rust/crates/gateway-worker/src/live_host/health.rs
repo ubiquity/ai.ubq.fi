@@ -37,7 +37,7 @@ pub(super) async fn response(
                     .record_capacity_downtime("upstream_error", Some(status), now)
                     .await;
             }
-            let _ = background.trigger_capacity_sample().await;
+            let _ = background.capacity().trigger_capacity_sample().await;
         });
     }
     let request_id = ["x-request-id", "x-api-request-id", "x-oneapi-request-id"]
@@ -101,7 +101,7 @@ pub(super) async fn failure(
                     .record_capacity_downtime("unreachable", status, now)
                     .await;
             }
-            let _ = runtime.trigger_capacity_sample().await;
+            let _ = runtime.capacity().trigger_capacity_sample().await;
         });
     }
 }

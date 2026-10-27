@@ -1,5 +1,5 @@
 //! Redacted source capacity markers and verified reset backfill; no reset execution.
-use crate::{ObservabilityRuntime, store};
+use crate::{CapacityEvents, store};
 use gateway_capacity_projection::{
     events::parse_shadow, events::valid_event, events::valid_redemption, scalars::safe_i64,
     shapes::BUCKET_MS, shapes::RETENTION_MS,
@@ -36,7 +36,7 @@ fn public_event(kind: &str, v: &Value) -> Value {
     }
     out
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> CapacityEvents<'_, S, H> {
     pub async fn record_capacity_reset_event(&self, event: &Value) -> bool {
         if !valid_event("reset_event", event) {
             return false;
@@ -65,7 +65,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         event: &Value,
         any_existing: bool,
     ) -> Result<bool, GatewayError> {
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let key = event_key(
             kind,
             event["event_id"].as_str().expect("validated event ID"),
@@ -82,10 +82,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 }
             }
             if store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&key, row.as_ref())],
                 vec![store::put(
-                    self.host.as_ref(),
+                    self.host,
                     key.clone(),
                     event.clone(),
                     Some(at + RETENTION_MS),
@@ -108,7 +108,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let cutoff = (at - RETENTION_MS).max(0);
         let mut events = BTreeMap::new();
         for entry in query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::Capacity(family),
             false,
             at,
@@ -129,11 +129,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if kind == "reset_event" {
             let derivation:Result<Vec<Value>,GatewayError>=async {
                 let mut fences=Vec::new();
-                for row in query::scan(self.store.as_ref(), ObservationRead::ResetShadow, false, at, usize::MAX).await? {
+                for row in query::scan(self.store, ObservationRead::ResetShadow, false, at, usize::MAX).await? {
                     if let Some(value)=parse_shadow(row.record.json_value()?){fences.extend(value["fences"].as_array().expect("source fences").iter().cloned());}
                 }
                 let mut derived=Vec::new();
-                for row in query::scan(self.store.as_ref(), ObservationRead::ResetRedemption, false, at, usize::MAX).await? {
+                for row in query::scan(self.store, ObservationRead::ResetRedemption, false, at, usize::MAX).await? {
                     let value=row.record.json_value()?;
                     if !valid_redemption(value)||value["state"]!="verified"||!safe_i64(&value["verified_at_ms"]).is_some_and(|t|t>=cutoff&&t<=at){continue;}
                     if let Some(fence)=fences.iter().find(|f|f["account_id_hash"]==value["account_id_hash"]&&f["quota_generation"]==value["quota_generation"])

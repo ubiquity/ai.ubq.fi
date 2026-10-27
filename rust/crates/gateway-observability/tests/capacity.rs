@@ -200,7 +200,7 @@ fn setup(change_owner: bool) -> (Memory, ObservabilityRuntime<Memory, CapacityHo
 #[test]
 fn actual_authority_fence_precedes_get_and_original_time_reaches_c_and_history() {
     let (memory, runtime) = setup(false);
-    assert!(run(runtime.sample_capacity_on_event()).unwrap());
+    assert!(run(runtime.capacity().sample_capacity_on_event()).unwrap());
     assert_eq!(runtime.host().stage.get(), 3);
     let value = memory.rows.borrow()[&keys::capacity().0]
         .json_value()
@@ -219,7 +219,7 @@ fn actual_authority_fence_precedes_get_and_original_time_reaches_c_and_history()
             .used_percent,
         Some(25.0)
     );
-    let history = run(runtime.capacity_history(1123)).unwrap();
+    let history = run(runtime.capacity().capacity_history(1123)).unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history[0]["sampled_at_ms"], 1000);
     assert!(!memory.rows.borrow().contains_key(&keys::routing().0));
@@ -227,13 +227,17 @@ fn actual_authority_fence_precedes_get_and_original_time_reaches_c_and_history()
 #[test]
 fn source_rotation_during_get_cannot_publish_a_successor_capacity_or_history() {
     let (memory, runtime) = setup(true);
-    let error = run(runtime.sample_capacity_on_event()).unwrap_err();
+    let error = run(runtime.capacity().sample_capacity_on_event()).unwrap_err();
     assert_eq!(
         error.envelope.error.code.as_deref(),
         Some("codex_capacity_source_changed")
     );
     assert_eq!(runtime.host().stage.get(), 3);
     assert!(!memory.rows.borrow().contains_key(&keys::capacity().0));
-    assert!(run(runtime.capacity_history(1123)).unwrap().is_empty());
+    assert!(
+        run(runtime.capacity().capacity_history(1123))
+            .unwrap()
+            .is_empty()
+    );
     assert!(!memory.rows.borrow().contains_key(&keys::routing().0));
 }

@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-observability-control.workspace = true
+gateway-observability-capacity.workspace = true
+gateway-observability-capacity-events.workspace = true
 gateway-observability-replay-capture.workspace = true
 gateway-observability-incidents.workspace = true
 gateway-observability-replay-read.workspace = true

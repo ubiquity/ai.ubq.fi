@@ -1,15 +1,10 @@
 //! Event-owned source observability over the existing atomic authority.
 //! No provider inference, credential mutation, scheduler, or second paid ledger.
 pub mod api;
-pub mod capacity;
-pub mod capacity_events;
-mod capacity_store;
+mod capacity_views;
 mod capture_dispatch;
 pub mod claude_capacity;
-pub mod remote_capacity;
 mod replay_maintenance;
-pub mod settings;
-mod store;
 pub mod telemetry;
 
 use std::rc::Rc;
@@ -18,7 +13,7 @@ use std::rc::Rc;
 #[derive(Clone, Default)]
 pub struct ObservabilityState {
     health: gateway_observability_health::HealthState,
-    sampled_bucket: Rc<std::cell::Cell<i64>>,
+    sampled_bucket: gateway_observability_capacity::CapacityState,
     replay_bootstrap: gateway_observability_replay_state::ReplayBootstrapState,
 }
 
@@ -26,7 +21,7 @@ pub struct ObservabilityRuntime<S, H> {
     pub(crate) store: Rc<S>,
     pub(crate) host: Rc<H>,
     pub(crate) health: gateway_observability_health::HealthState,
-    pub(crate) sampled_bucket: Rc<std::cell::Cell<i64>>,
+    pub(crate) sampled_bucket: gateway_observability_capacity::CapacityState,
     pub(crate) replay_bootstrap: gateway_observability_replay_state::ReplayBootstrapState,
 }
 impl<S, H> Clone for ObservabilityRuntime<S, H> {
@@ -108,5 +103,24 @@ impl<S, H> ObservabilityRuntime<S, H> {
     }
     pub fn incidents(&self) -> gateway_observability_incidents::IncidentIndex<'_, S, H> {
         gateway_observability_incidents::IncidentIndex::new(self.store.as_ref(), self.host.as_ref())
+    }
+    pub fn capacity(&self) -> gateway_observability_capacity::CapacitySampler<'_, S, H> {
+        gateway_observability_capacity::CapacitySampler::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+            self.sampled_bucket.clone(),
+        )
+    }
+    pub fn events(&self) -> gateway_observability_capacity_events::CapacityEvents<'_, S, H> {
+        gateway_observability_capacity_events::CapacityEvents::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+        )
+    }
+    pub fn control(&self) -> gateway_observability_control::ControlDiagnostics<'_, S, H> {
+        gateway_observability_control::ControlDiagnostics::new(
+            self.store.as_ref(),
+            self.host.as_ref(),
+        )
     }
 }

@@ -114,7 +114,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                         "Capacity observations do not match the request-bound body",
                     ));
                 }
-                self.capacity_observation_response(&raw, context).await
+                self.events()
+                    .capacity_observation_response(&raw, context)
+                    .await
             }
             ProviderRequest::Rollups { query } => {
                 let days = query

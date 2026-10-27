@@ -1,0 +1,24 @@
+[package]
+name = "gateway-observability-capacity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-claude-usage-history-records.workspace = true
+gateway-core.workspace = true
+gateway-source.workspace = true
+gateway-admin-runtime.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-authority.workspace = true
+gateway-capacity-projection.workspace = true
+gateway-claude-usage-protocol.workspace = true
+gateway-observability-contracts.workspace = true
+gateway-observability-capacity-events.workspace = true
+serde_json.workspace = true
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

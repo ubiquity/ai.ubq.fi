@@ -1,10 +1,9 @@
-use crate::{ObservabilityRuntime, capacity_events::event_key, store};
-use gateway_capacity_projection::{
-    events::valid_event, math as capacity_math, scalars::safe_i64, shapes as shape,
-};
+use crate::{CapacitySampler, store};
+use gateway_capacity_projection::{math as capacity_math, scalars::safe_i64, shapes as shape};
 use gateway_core::{
     query::QueryStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
+use gateway_observability_capacity_events::capacity_events::event_key;
 use gateway_observability_contracts::{
     data, query, query::CapacityRows, query::ObservationRead, types::ObservabilityHost,
 };
@@ -85,7 +84,7 @@ pub(crate) fn valid_rollup(v: &Value) -> bool {
     }
     true
 }
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> CapacitySampler<'_, S, H> {
     pub(crate) async fn read_capacity_snapshot(
         &self,
         at: i64,
@@ -98,7 +97,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let newest = at / shape::BUCKET_MS * shape::BUCKET_MS;
         let mut out = Vec::new();
         for entry in query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::Capacity(CapacityRows::History),
             false,
             at,
@@ -141,14 +140,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         let lease = json!({"owner":owner,"lease_until_ms":at+10000});
         if !store::commit(
-            self.store.as_ref(),
+            self.store,
             vec![data::check(&key, row.as_ref())],
-            vec![store::put(
-                self.host.as_ref(),
-                key.clone(),
-                lease,
-                Some(at + 20000),
-            )?],
+            vec![store::put(self.host, key.clone(), lease, Some(at + 20000))?],
         )
         .await?
         {
@@ -169,7 +163,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 return Ok(());
             }
             store::commit(
-                self.store.as_ref(),
+                self.store,
                 vec![data::check(&key, row.as_ref())],
                 vec![RecordMutation::Delete { key }],
             )
@@ -183,13 +177,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         previous: Option<i64>,
     ) -> Result<Option<Value>, GatewayError> {
-        let deadline = data::now(self.host.as_ref())? + 2000;
-        while data::now(self.host.as_ref())? < deadline {
+        let deadline = data::now(self.host)? + 2000;
+        while data::now(self.host)? < deadline {
             self.host.wait_ms(50).await?;
             // Deliberately ordered: a released lease must precede the corresponding snapshot read.
             let lease = self.store.read(&key("lease")).await.ok().flatten();
             let snapshot = self
-                .read_capacity_snapshot(data::now(self.host.as_ref())?)
+                .read_capacity_snapshot(data::now(self.host)?)
                 .await
                 .ok()
                 .flatten();
@@ -210,7 +204,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         lease: &StoredRecord,
         snapshot: &Value,
     ) -> Result<bool, GatewayError> {
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let point = shape::history_point(snapshot);
         let history = history_key(&point);
         let snapshot_key = key("snapshot");
@@ -285,14 +279,14 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut checks = vec![data::check(&key("lease"), Some(lease))];
         let expiry = Some(at + shape::RETENTION_MS);
         let mut writes = vec![store::put(
-            self.host.as_ref(),
+            self.host,
             snapshot_key,
             snapshot.clone(),
             expiry,
         )?];
         for event in events {
             writes.push(store::put(
-                self.host.as_ref(),
+                self.host,
                 event_key(
                     "rate_limit_reset_event",
                     event["event_id"].as_str().expect("source event ID"),
@@ -306,7 +300,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 shape::source(snapshot, slot).filter(|s| s["state"] == "available")
             {
                 writes.push(store::put(
-                    self.host.as_ref(),
+                    self.host,
                     available_key(slot),
                     json!({"sampled_at_ms":snapshot["snapshot_at_ms"],"source":source}),
                     expiry,
@@ -320,7 +314,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 .filter(|v| valid_rollup(v));
             checks.push(data::check(&rollup_key, rollup.as_ref()));
             writes.push(store::put(
-                self.host.as_ref(),
+                self.host,
                 rollup_key,
                 capacity_math::merge_rollup(v, &point),
                 None,
@@ -328,7 +322,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         if preserve && let Some(old) = previous_history {
             writes.push(store::put(
-                self.host.as_ref(),
+                self.host,
                 data::key(json!([
                     "uos_ai",
                     "provider_capacity",
@@ -342,102 +336,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 expiry,
             )?);
         }
-        writes.push(store::put(self.host.as_ref(), history, point, expiry)?);
+        writes.push(store::put(self.host, history, point, expiry)?);
         writes.push(RecordMutation::Delete { key: key("lease") });
-        store::commit(self.store.as_ref(), checks, writes).await
+        store::commit(self.store, checks, writes).await
     }
-    pub(crate) async fn historical_rate_limit_events(
-        &self,
-        history: &[Value],
-        events: Vec<Value>,
-        at: i64,
-    ) -> Result<Vec<Value>, GatewayError> {
-        let mut merged: std::collections::BTreeMap<String, Value> = events
-            .into_iter()
-            .filter_map(|v| Some((v["event_id"].as_str()?.to_owned(), v.clone())))
-            .collect();
-        let mut ordered = history.to_vec();
-        ordered.sort_by_key(|p| safe_i64(&p["sampled_at_ms"]));
-        for slot in [1, 2] {
-            let mut previous: Option<Value> = None;
-            let mut outage = false;
-            for point in &ordered {
-                let source = shape::source(point, slot);
-                if source.is_none_or(|s| s["state"] == "unavailable") {
-                    if previous
-                        .as_ref()
-                        .zip(source)
-                        .is_some_and(|(p, s)| capacity_math::same_cohort(&p["source"], s))
-                    {
-                        outage = true
-                    } else {
-                        previous = None;
-                        outage = false
-                    }
-                    continue;
-                }
-                let source = source.expect("present source");
-                if let Some(ref p) = previous
-                    && outage
-                    && capacity_math::same_cohort(&p["source"], source)
-                {
-                    let current =
-                        json!({"snapshot_at_ms":point["sampled_at_ms"],"sources":[source]});
-                    for event in
-                        capacity_math::rate_limit_events(None, &current, std::slice::from_ref(p))
-                    {
-                        let id = event["event_id"].as_str().unwrap_or("").to_owned();
-                        if let std::collections::btree_map::Entry::Vacant(entry) =
-                            merged.entry(id.clone())
-                        {
-                            let _ = store::commit(
-                                self.store.as_ref(),
-                                Vec::new(),
-                                vec![store::put(
-                                    self.host.as_ref(),
-                                    event_key("rate_limit_reset_event", &id),
-                                    event.clone(),
-                                    Some(at + shape::RETENTION_MS),
-                                )?],
-                            )
-                            .await;
-                            entry.insert(event);
-                        }
-                    }
-                }
-                if source["state"] == "available" {
-                    previous =
-                        Some(json!({"sampled_at_ms":point["sampled_at_ms"],"source":source}));
-                }
-                outage = false;
-            }
-        }
-        let mut out: Vec<Value> = merged
-            .into_values()
-            .filter(|v| valid_event("rate_limit_reset_event", v))
-            .collect();
-        let mut error = None;
-        out.sort_by(|a, b| {
-            safe_i64(&a["observed_at_ms"])
-                .cmp(&safe_i64(&b["observed_at_ms"]))
-                .then_with(|| {
-                    match self.host.compare_labels(
-                        a["event_id"].as_str().unwrap_or(""),
-                        b["event_id"].as_str().unwrap_or(""),
-                    ) {
-                        Ok(order) => order,
-                        Err(e) => {
-                            error = Some(e);
-                            std::cmp::Ordering::Equal
-                        }
-                    }
-                })
-        });
-        if let Some(error) = error {
-            return Err(error);
-        }
-        Ok(out)
-    }
+
     pub async fn capacity_rollup_points(
         &self,
         since: i64,
@@ -447,7 +350,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let last = at.max(since) / shape::HOUR_MS * shape::HOUR_MS;
         let mut rows = Vec::new();
         for entry in query::scan(
-            self.store.as_ref(),
+            self.store,
             ObservationRead::CapacityRollups {
                 start: first,
                 end: last + shape::HOUR_MS,

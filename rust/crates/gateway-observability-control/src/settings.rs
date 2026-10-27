@@ -1,6 +1,6 @@
 //! Source admin/kernel.ts and codex/{reset,overage}-settings.ts.
 //! Display diagnostics never authorize a redemption or mutate provider credentials.
-use crate::{ObservabilityRuntime, store};
+use crate::{ControlDiagnostics, store};
 use gateway_admin_runtime::{capabilities::CodexRequest, capabilities::Context};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_credentials::{
@@ -89,10 +89,10 @@ pub fn parse_shadow_decision(v: &Value) -> Option<Value> {
     Some(out)
 }
 
-impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
+impl<S: QueryStore, H: ObservabilityHost> ControlDiagnostics<'_, S, H> {
     /// Exact one-way source migration. An empty or malformed pool leaves the marker absent.
     pub async fn migrate_legacy_reset_opt_out(&self) -> Result<bool, GatewayError> {
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let marker_key = marker_key();
         let marker = self.store.read(&marker_key).await?;
         if data::value(marker.as_ref(), at)?.is_some_and(|v| !v.is_null()) {
@@ -121,25 +121,20 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let row = self.store.read(&key).await?;
                 if data::value(row.as_ref(), at)?.is_none_or(Value::is_null) {
                     checks.push(data::check(&key, row.as_ref()));
-                    writes.push(store::put(
-                        self.host.as_ref(),
-                        key,
-                        json!({"enabled":false}),
-                        None,
-                    )?);
+                    writes.push(store::put(self.host, key, json!({"enabled":false}), None)?);
                 }
             }
         }
         writes.push(store::put(
-            self.host.as_ref(),
+            self.host,
             marker_key,
             json!({"completed_at_ms":at,"preserved_opt_out":preserved}),
             None,
         )?);
-        store::commit(self.store.as_ref(), checks, writes).await
+        store::commit(self.store, checks, writes).await
     }
     pub async fn reset_usage_allowed(&self, hash: &str) -> Result<bool, GatewayError> {
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         if !self.migrate_legacy_reset_opt_out().await? {
             let marker_key = marker_key();
             let legacy_key = legacy_key();
@@ -152,17 +147,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let row = self.store.read(&key).await?;
                 if data::value(row.as_ref(), at)?.is_none_or(Value::is_null) {
                     let _ = store::commit(
-                        self.store.as_ref(),
+                        self.store,
                         vec![
                             data::check(&marker_key, marker.as_ref()),
                             data::check(&key, row.as_ref()),
                         ],
-                        vec![store::put(
-                            self.host.as_ref(),
-                            key,
-                            json!({"enabled":false}),
-                            None,
-                        )?],
+                        vec![store::put(self.host, key, json!({"enabled":false}), None)?],
                     )
                     .await?;
                 }
@@ -205,7 +195,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         document: Option<&SourceJson>,
         overage: bool,
     ) -> Result<AuthResponse, GatewayError> {
-        let at = data::now(self.host.as_ref())?;
+        let at = data::now(self.host)?;
         let accounts = self.settings_accounts().await?;
         let field = if overage { "allow" } else { "enabled" };
         if let Some(raw) = document {
@@ -241,9 +231,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let mut value = json!({});
             value[field] = json!(flag);
             if !store::commit(
-                self.store.as_ref(),
+                self.store,
                 Vec::new(),
-                vec![store::put(self.host.as_ref(), key, value, None)?],
+                vec![store::put(self.host, key, value, None)?],
             )
             .await?
             {
@@ -290,18 +280,13 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         Ok(AuthResponse::json(200, json!({"data":data})))
     }
     pub async fn shadow_decisions_response(&self) -> Result<AuthResponse, GatewayError> {
-        let at = data::now(self.host.as_ref())?;
-        let mut decisions: Vec<Value> = query::scan(
-            self.store.as_ref(),
-            ObservationRead::ResetShadow,
-            false,
-            at,
-            100,
-        )
-        .await?
-        .into_iter()
-        .filter_map(|r| r.record.json_value().ok().and_then(parse_shadow_decision))
-        .collect();
+        let at = data::now(self.host)?;
+        let mut decisions: Vec<Value> =
+            query::scan(self.store, ObservationRead::ResetShadow, false, at, 100)
+                .await?
+                .into_iter()
+                .filter_map(|r| r.record.json_value().ok().and_then(parse_shadow_decision))
+                .collect();
         let mut error = None;
         decisions.sort_by(|a, b| {
             safe_i64(&b["created_at_ms"])

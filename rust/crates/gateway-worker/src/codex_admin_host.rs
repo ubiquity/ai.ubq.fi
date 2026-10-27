@@ -1,11 +1,9 @@
 //! Named administrative Codex operations, always authenticated from the original request.
 use gateway_admin_runtime::capabilities::{CodexRequest, Context};
-use gateway_auth::{
-    resolve::AuthService,
-    types::{AuthConfig, AuthRequest, AuthResponse},
-};
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::types::{AuthConfig, AuthRequest, AuthResponse};
 use gateway_authority::native_control::actor::NativeRenewalActor;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 
 pub(crate) mod automatic;
 mod manual;
@@ -60,7 +58,7 @@ pub async fn execute(
             Ok(response)
         }
         request => {
-            let mut response = observations.codex(request, context).await?;
+            let mut response = observations.control().codex(request, context).await?;
             response
                 .headers
                 .insert("Cache-Control".into(), "no-store".into());
