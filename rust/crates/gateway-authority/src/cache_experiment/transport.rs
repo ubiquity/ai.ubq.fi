@@ -4,7 +4,7 @@ use super::{
     state::{CyclePermit, record_key},
 };
 use crate::{
-    routing::{model_quota_class, read_pinned_view},
+    routing::read_pinned_view,
     store::{Authority, Transaction},
 };
 use gateway_auth::{
@@ -12,6 +12,7 @@ use gateway_auth::{
     provider_credentials::{CodexSourcePool, codex_source_pool_key, parse_codex_source_pool},
 };
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_records::types::{ProbeCircuit, ProbeLease};
 use gateway_cache_experiment_records::RefreshContext;
 use gateway_cache_experiment_records::model::{Reason, Sample, TargetBinding, failed};

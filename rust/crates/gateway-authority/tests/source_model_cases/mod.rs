@@ -2,6 +2,7 @@ use gateway_auth::provider_credentials::codex_source_pool_key;
 use gateway_authority::paid_types::PaidAuthorization;
 use gateway_authority::routing_types::RouteSelection;
 use gateway_authority_keys as keys;
+use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_test_support::paid_request;
 use gateway_authority_test_support::paid_setup;
 use gateway_authority_test_support::{TestResult, fixture_row};
@@ -295,7 +296,6 @@ fn opaque_model_full_pool_proof_retains_exact_model_and_current_credential_fence
 
 #[test]
 fn model_quota_class_uses_source_comparison_projection_without_changing_identity() {
-    use gateway_authority::routing::model_quota_class;
     use gateway_core::{js_string::JsString16, model::ModelId};
     // Pinned Bun1.4.0 oracle af9107c1: Kelvin-sign lower-case is significant to the spark class.
     for (model, expected) in [

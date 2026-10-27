@@ -5,9 +5,10 @@ use gateway_auth::{
         CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
     },
 };
-use gateway_authority::{
-    capacity::*,
-    routing_types::{CohortProof, RouteSelection},
+use gateway_authority::routing_types::{CohortProof, RouteSelection};
+use gateway_authority_capacity::{
+    AcceptedCodexCapacityObservations, CapacityOperations, CodexCapacityAccountRef,
+    CodexCapacityObservationFence, CodexCapacitySample,
 };
 use gateway_authority_contracts::AuthorityClock;
 use gateway_authority_keys as keys;

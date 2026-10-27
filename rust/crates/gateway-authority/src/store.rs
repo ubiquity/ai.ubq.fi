@@ -458,3 +458,17 @@ impl<S: AuthorityStore> AuthorityStore for RoutingReadStore<'_, S> {
         ))
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_capacity::CapacityFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn capacity(&self) -> gateway_authority_capacity::CapacityService<'_, S, I> {
+        gateway_authority_capacity::CapacityService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}

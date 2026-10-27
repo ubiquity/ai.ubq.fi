@@ -1,15 +1,17 @@
 //! Global serial subscription selection; source routing-serial.ts and routing-evaluation.ts.
 use crate::{
-    capacity_rules::capacity_for,
     invalid, next_generation, nonnegative,
     routing_types::{AdmittedAccount, CohortProof, RouteSelection},
     store::{Authority, Transaction},
     text, unavailable,
 };
+use gateway_authority_capacity::CapacityOperations;
+use gateway_authority_capacity_policy::capacity_for;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_evidence::capacity::CapacityStore;
 use gateway_authority_routing_evidence::models::ModelAvailability;
+use gateway_authority_routing_evidence::models::model_quota_class;
 use gateway_authority_routing_evidence::validation::validate_binding;
 use gateway_authority_routing_records::codec::parse_routing_state;
 use gateway_authority_routing_records::slot::class_name;
@@ -26,39 +28,7 @@ use gateway_core::{
 };
 use std::collections::BTreeMap;
 
-pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
-    let trimmed = gateway_schema::reasoning::js_trim_source(model.as_js_string());
-    let lower = lower_control_units(trimmed.as_units());
-    let same = |s: &str| lower.iter().copied().eq(s.encode_utf16());
-    if same("gpt-5.3-codex-spark") {
-        CodexQuotaClass::Spark
-    } else if same("gpt-oss-120b") {
-        CodexQuotaClass::GptOss120b
-    } else if model_quota_label(model) == "gptreserve" {
-        CodexQuotaClass::Reserve
-    } else if lower.is_empty() {
-        CodexQuotaClass::Unknown
-    } else {
-        CodexQuotaClass::Standard
-    }
-}
 // Only finite ASCII class comparisons consume this projection; original model data is untouched.
-fn lower_control_units(units: &[u16]) -> Vec<u16> {
-    gateway_core::js_string_case::lowercase_source(&JsString16::from_units(units.to_vec()))
-        .as_units()
-        .to_vec()
-}
-pub(crate) fn model_quota_label(model: &ModelId) -> String {
-    lower_control_units(model.as_js_string().as_units())
-        .into_iter()
-        .filter_map(|u| {
-            u8::try_from(u)
-                .ok()
-                .filter(u8::is_ascii_alphanumeric)
-                .map(char::from)
-        })
-        .collect()
-}
 
 /// Non-inference account identity. The source model remains optional UTF16 and is never replaced.
 #[derive(Clone, Debug, PartialEq)]

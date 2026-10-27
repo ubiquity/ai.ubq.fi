@@ -1,6 +1,9 @@
 use gateway_auth::provider_credentials::{CodexSourcePool, codex_source_pool_key};
 use gateway_authority::routing_types::RouteSelection;
-use gateway_authority::{capacity::*, capacity_rules::*, routing_types::*, store::Authority};
+use gateway_authority::{routing_types::*, store::Authority};
+use gateway_authority_capacity::{
+    CapacityOperations, CapacityReconciliation, CodexCapacityAccountRef, CodexCapacitySample,
+};
 use gateway_authority_contracts::AuthorityClock;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;

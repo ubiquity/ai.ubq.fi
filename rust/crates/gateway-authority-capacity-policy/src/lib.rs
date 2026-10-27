@@ -1,9 +1,14 @@
-//! Source capacity row codecs and named-window applicability; no producer trust is inferred here.
+//! Source capacity applicability and finite routing data reconciliation; never producer/write authority.
+use gateway_authority_contracts::next_generation;
 use gateway_authority_routing_evidence::capacity::{
     CapacityObservation, CapacityState, CapacityStore, CapacityWindows,
 };
-use gateway_core::{identity::RoutingAccountHash, model::ModelId};
-pub const CAPACITY_MAX_AGE_MS: i64 = 30 * crate::MINUTE_MS;
+use gateway_authority_routing_records::types::RoutingState;
+use gateway_core::{
+    error::GatewayError, identity::RoutingAccountHash, model::ModelId, provider::CodexQuotaClass,
+};
+
+pub const CAPACITY_MAX_AGE_MS: i64 = 30 * gateway_authority_contracts::MINUTE_MS;
 pub fn capacity_observation_is_fresh(row: &CapacityObservation, now: i64) -> bool {
     row.state == CapacityState::Available
         && row.snapshot_at_ms >= 0
@@ -30,7 +35,7 @@ pub fn capacity_headroom_for_observation(
     model: Option<&ModelId>,
 ) -> Option<f64> {
     let model = model
-        .map(crate::routing::model_quota_label)
+        .map(gateway_authority_routing_evidence::models::model_quota_label)
         .unwrap_or_default();
     if model.is_empty() {
         return headroom(&row.windows);
@@ -49,7 +54,7 @@ pub fn capacity_headroom_for_observation(
             .reduce(f64::max)
     }
 }
-pub(crate) fn capacity_for<'a>(
+pub fn capacity_for<'a>(
     store: &'a CapacityStore,
     account: &RoutingAccountHash,
     model: &ModelId,
@@ -63,7 +68,7 @@ pub(crate) fn capacity_for<'a>(
     capacity_observation_is_fresh(row, now).then_some(())?;
     Some((row, capacity_headroom_for_observation(row, Some(model))?))
 }
-pub(crate) fn merge_capacity(
+pub fn merge_capacity(
     store: &CapacityStore,
     inputs: &[CapacityObservation],
     now: i64,
@@ -115,4 +120,68 @@ pub fn plan_capacity_observation_store(
         capacity_revision: revision,
         capacity: merge_capacity(store, inputs, now),
     }
+}
+
+pub fn apply_capacity_observation(
+    state: &RoutingState,
+    row: &CapacityObservation,
+    now: i64,
+    model: Option<&ModelId>,
+    updated_at_ms: i64,
+) -> Result<Option<RoutingState>, GatewayError> {
+    if row.snapshot_at_ms > now {
+        return Ok(None);
+    }
+    let Some(current) = state.slots.get(usize::from(row.slot)) else {
+        return Ok(None);
+    };
+    if current.account_id_hash.as_ref() != Some(&row.account_id_hash)
+        || current
+            .capacity_observed_at_ms
+            .is_some_and(|at| row.snapshot_at_ms < at)
+    {
+        return Ok(None);
+    }
+    let class = model
+        .map(gateway_authority_routing_evidence::models::model_quota_class)
+        .unwrap_or(CodexQuotaClass::Unknown);
+    let positive = capacity_observation_is_fresh(row, now)
+        && capacity_headroom_for_observation(row, model).is_some_and(|h| h > 0.0);
+    let newer = current
+        .quota_signal_for(class)
+        .is_some_and(|at| at >= row.snapshot_at_ms);
+    let clear = positive && !newer;
+    let mut slot = current.clone();
+    if clear {
+        slot.remove_quota_class(class);
+    }
+    slot.primary_used_percent = row.windows.primary.as_ref().and_then(|w| w.used_percent);
+    slot.secondary_used_percent = row.windows.secondary.as_ref().and_then(|w| w.used_percent);
+    slot.capacity_observed_at_ms = Some(row.snapshot_at_ms);
+    if clear {
+        if current.reset_identity_ambiguous
+            || current.recovery_pending
+            || current.probe_lease.is_some()
+        {
+            slot.retained_reset_at_ms = current.retained_reset_at_ms;
+            slot.reset_identity_stable = current.reset_identity_stable;
+            slot.reset_identity_ambiguous = current.reset_identity_ambiguous;
+            slot.recovery_pending = current.recovery_pending;
+            slot.probe_lease = current.probe_lease.clone();
+        } else if slot.quota_blocks.is_empty() {
+            slot.retained_reset_at_ms = None;
+            slot.reset_identity_stable = false;
+            slot.reset_identity_ambiguous = false;
+            slot.recovery_pending = false;
+            slot.generation = next_generation(current.generation)?;
+            slot.probe_lease = None;
+        }
+    }
+    if &slot == current {
+        return Ok(None);
+    }
+    let mut next = state.clone();
+    next.slots[usize::from(row.slot)] = slot;
+    next.updated_at_ms = updated_at_ms;
+    Ok(Some(next))
 }

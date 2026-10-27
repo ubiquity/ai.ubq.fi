@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/gateway-authority-capacity",
+  "crates/gateway-authority-capacity-policy",
   "crates/gateway-authority-routing-evidence",
   "crates/gateway-authority-local-completion",
   "crates/gateway-authority-kernel",
@@ -61,6 +63,8 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-capacity = { path = "crates/gateway-authority-capacity" }
+gateway-authority-capacity-policy = { path = "crates/gateway-authority-capacity-policy" }
 gateway-authority-routing-evidence = { path = "crates/gateway-authority-routing-evidence" }
 gateway-authority-local-completion = { path = "crates/gateway-authority-local-completion" }
 gateway-authority-kernel = { path = "crates/gateway-authority-kernel" }

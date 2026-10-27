@@ -946,6 +946,8 @@ dependencies = [
 name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-capacity-policy",
+ "gateway-authority-capacity",
  "gateway-authority-routing-evidence",
  "gateway-authority-local-completion",
  "gateway-authority-kernel-protocol",
@@ -1009,6 +1011,32 @@ dependencies = [
  "gateway-core",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-capacity"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-authority-capacity-policy",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-capacity-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-authority-contracts",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-records",
+ "gateway-core",
 ]
 
 [[package]]
@@ -1137,6 +1165,7 @@ dependencies = [
 name = "gateway-capacity-recovery"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-capacity",
  "gateway-authority-routing-evidence",
  "gateway-authority-contracts",
  "gateway-authority-paid-control-records",
@@ -1357,6 +1386,7 @@ dependencies = [
 name = "gateway-observability"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-capacity",
  "gateway-authority-routing-evidence",
  "gateway-authority-contracts",
  "gateway-authority-paid-control-records",
@@ -1545,6 +1575,7 @@ dependencies = [
 name = "gateway-worker"
 version = "0.1.0"
 dependencies = [
+ "gateway-authority-capacity",
  "gateway-authority-routing-evidence",
  "gateway-authority-kernel",
  "gateway-authority-kernel-protocol",

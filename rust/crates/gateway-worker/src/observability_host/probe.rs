@@ -1,14 +1,12 @@
 //! Fixed free provider GETs with one actual request cancellation and absolute deadline.
 use super::{RequestHost, unavailable};
-use crate::transport::outbound::{
-    Cancellation, Deadline, PinnedDestination, send_constructed, send_http,
-};
+use crate::transport::outbound::send_http;
+use crate::{transport::outbound::Cancellation, transport::outbound::Deadline};
+use crate::{transport::outbound::PinnedDestination, transport::outbound::send_constructed};
 use gateway_admin_runtime::claude;
-use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
-};
+use gateway_auth::{provider_credentials as codex, provider_credentials::CodexSourceAccount};
+use gateway_core::source_serialization as source;
+use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_observability::{
     host_types::*,
     types::{HealthEvent, HealthTarget},
@@ -510,7 +508,7 @@ impl RequestHost {
     pub(super) async fn capacity_probe(
         &self,
         account: &CapacityAccountRef,
-        fence: &gateway_authority::capacity::CodexCapacityObservationFence,
+        fence: &gateway_authority_capacity::CodexCapacityObservationFence,
         deadline: i64,
     ) -> Result<CapacityProbe, GatewayError> {
         let expected = fence

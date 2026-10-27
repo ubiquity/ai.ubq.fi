@@ -594,7 +594,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             }) {
                 return Err(error(409, "codex_reset_concurrent_update"));
             }
-            let capacity = crate::capacity_rules::plan_capacity_observation_store(
+            let capacity = gateway_authority_capacity_policy::plan_capacity_observation_store(
                 tx.revision(&keys::capacity()),
                 &view.capacity,
                 std::slice::from_ref(&current_usage),

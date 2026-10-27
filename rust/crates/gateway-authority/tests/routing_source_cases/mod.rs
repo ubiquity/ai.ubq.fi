@@ -1,4 +1,7 @@
 use crate::TestResult;
+use gateway_authority_capacity_policy::{
+    apply_capacity_observation, capacity_headroom_for_observation, plan_capacity_observation_store,
+};
 use gateway_authority_routing_evidence::capacity::{
     CapacityObservation, CapacityStore, normalize_capacity_window,
 };
@@ -6,9 +9,7 @@ use gateway_authority_routing_records::codec::{normalize, parse_routing_state};
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 mod live_selection;
 use super::support::*;
-use gateway_authority::capacity_rules::*;
 
-use gateway_authority::routing_rules::*;
 use gateway_authority::routing_types::*;
 use gateway_core::identity::{PoolVersionstamp, SubscriptionSelectionHash};
 use serde_json::{Value, from_value, json};

@@ -515,7 +515,7 @@ fn configured_operator_composes_access_only_request_and_empty_store_adoption()
     let model = gateway_core::model::ModelId::from_scalar("gpt-6.1-sol");
     let selected = run(authority.select_account(
         &model,
-        gateway_authority::routing::model_quota_class(&model),
+        gateway_authority_routing_evidence::models::model_quota_class(&model),
         2300,
     ))?;
     let gateway_authority::routing_types::RouteSelection::Eligible(selected) = selected else {

@@ -1,14 +1,12 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
-use crate::host_types::{CapacityAccountRef, CapacityProbe, ClaudeAccountReadback};
-use crate::{
-    ObservabilityRuntime, capacity_shapes as shape, health, replay_values::SourceObject, store,
-    types::ObservabilityHost,
-};
+use crate::{ObservabilityRuntime, capacity_shapes as shape, host_types::ClaudeAccountReadback};
+use crate::{health, replay_values::SourceObject, store, types::ObservabilityHost};
+use crate::{host_types::CapacityAccountRef, host_types::CapacityProbe};
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
-use gateway_core::{
-    error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
-};
+use gateway_authority_capacity::CapacityOperations;
+use gateway_core::source_serialization as source;
+use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};
 use serde_json::{Value, json};
 
 fn view(
@@ -168,7 +166,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         &self,
         account: Option<&CapacityAccountRef>,
         slot: u8,
-        fence: Option<&gateway_authority::capacity::CodexCapacityObservationFence>,
+        fence: Option<&gateway_authority_capacity::CodexCapacityObservationFence>,
         at: i64,
     ) -> Result<Value, GatewayError> {
         let Some(account) = account else {
@@ -273,8 +271,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let source = if account.slot == 1 { &one } else { &two };
             let invalid =
                 || store::error("Capacity source observation does not match authority DTO");
-            observations.push(gateway_authority::capacity::CodexCapacitySample {
-                account: gateway_authority::capacity::CodexCapacityAccountRef {
+            observations.push(gateway_authority_capacity::CodexCapacitySample {
+                account: gateway_authority_capacity::CodexCapacityAccountRef {
                     source_slot: account.slot,
                     account_id: account.account_id,
                 },

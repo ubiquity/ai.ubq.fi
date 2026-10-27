@@ -1,27 +1,29 @@
-//! Fixed trusted sampler capability. Data-plane requests cannot construct its source fence.
-use crate::{
-    capacity_rules::merge_capacity,
-    invalid,
-    routing_rules::apply_capacity_observation,
-    store::{Authority, Transaction},
-    text, unavailable,
-};
+//! Complete trusted capacity producer/source fence and ordered durable acceptance operations.
+mod backend;
+use backend::Transaction;
 use gateway_auth::provider_credentials::{
     CodexNativeOwner, codex_source_pool_key, read_codex_source_pool,
 };
-use gateway_authority_contracts::TokenSource;
+use gateway_authority_capacity_policy::{apply_capacity_observation, merge_capacity};
+use gateway_authority_contracts::{
+    AuthorityClock, TokenSource, invalid, text, unavailable, validate_time,
+};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
-use gateway_authority_routing_evidence::capacity::{
-    CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityWindows,
-    parse_capacity_observation, parse_capacity_store,
+use gateway_authority_routing_evidence::{
+    capacity::{
+        CapacityAdditionalRateLimit, CapacityObservation, CapacityState, CapacityWindows,
+        parse_capacity_observation, parse_capacity_store,
+    },
+    reader::{RoutingEvidenceReader, RoutingReadMode},
 };
-use gateway_authority_routing_records::codec::parse_routing_state;
-use gateway_authority_routing_records::types::SubscriptionPool;
-use gateway_core::error::GatewayError;
-use gateway_core::identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash};
-use gateway_core::model::ModelId;
-use gateway_core::state::AuthorityStore;
+use gateway_authority_routing_records::{codec::parse_routing_state, types::SubscriptionPool};
+use gateway_core::{
+    error::GatewayError,
+    identity::{CredentialVersion, RoutingAccountHash, SubscriptionSelectionHash},
+    model::ModelId,
+    state::AuthorityStore,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -60,7 +62,7 @@ struct SourceFacts {
 }
 /// No caller deserializer, revision list, keys or public constructor.
 /// ```compile_fail
-/// use gateway_authority::capacity::CodexCapacityObservationFence;
+/// use gateway_authority_capacity::CodexCapacityObservationFence;
 /// let _: CodexCapacityObservationFence = serde_json::from_str("{}").unwrap();
 /// ```
 #[derive(Clone)]
@@ -135,13 +137,54 @@ fn changed() -> GatewayError {
         "Capacity producer identity changed.",
     )
 }
-impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+
+pub struct CapacityService<'a, S, I> {
+    store: &'a S,
+    tokens: &'a I,
+    clock: Option<&'a dyn AuthorityClock>,
+}
+impl<S, I> Copy for CapacityService<'_, S, I> {}
+impl<S, I> Clone for CapacityService<'_, S, I> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<'a, S: AuthorityStore, I: TokenSource> CapacityService<'a, S, I> {
+    pub fn new(store: &'a S, tokens: &'a I, clock: Option<&'a dyn AuthorityClock>) -> Self {
+        Self {
+            store,
+            tokens,
+            clock,
+        }
+    }
+    fn transaction(&self, now: i64) -> Result<Transaction<'_, S, I>, GatewayError> {
+        Transaction::new(self.store, self.tokens, now)
+    }
+    fn fresh_time(&self, started_at: i64) -> Result<i64, GatewayError> {
+        let now = self
+            .clock
+            .ok_or_else(|| {
+                unavailable(
+                    "authority_clock_unavailable",
+                    "Time-sensitive authority actions require a trusted current clock.",
+                )
+            })?
+            .now_ms()?;
+        validate_time(now)?;
+        if now < started_at {
+            return Err(unavailable(
+                "invalid_clock",
+                "Authority clock moved backwards.",
+            ));
+        }
+        Ok(now)
+    }
     async fn capacity_sources(
         &self,
         tx: &mut Transaction<'_, S, I>,
         now: i64,
     ) -> Result<SourceFacts, GatewayError> {
-        let snapshot = read_codex_source_pool(&self.store, now)
+        let snapshot = read_codex_source_pool(self.store, now)
             .await?
             .ok_or_else(|| {
                 unavailable(
@@ -218,49 +261,6 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             owner,
             accounts,
         })
-    }
-    pub async fn begin_codex_capacity_observation(
-        &self,
-        accounts: &[CodexCapacityAccountRef],
-    ) -> Result<CodexCapacityObservationFence, GatewayError> {
-        if accounts.is_empty() || accounts.len() > 2 {
-            return Err(invalid(
-                "Capacity sampling requires one or two fixed source accounts.",
-            ));
-        }
-        let mut slots = BTreeSet::new();
-        for account in accounts {
-            if !(1..=2).contains(&account.source_slot) || !slots.insert(account.source_slot) {
-                return Err(invalid("Capacity sample slot is duplicated or invalid."));
-            }
-            text(&account.account_id)?;
-        }
-        let now = self.fresh_time(0)?;
-        for _ in 0..3 {
-            let mut tx = self.transaction(now)?;
-            let facts = self.capacity_sources(&mut tx, now).await?;
-            for reference in accounts {
-                if facts
-                    .accounts
-                    .get(usize::from(reference.source_slot - 1))
-                    .is_none_or(|a| a.account_id != reference.account_id)
-                {
-                    return Err(changed());
-                }
-            }
-            self.fresh_time(now)?;
-            if tx.commit().await? {
-                return Ok(CodexCapacityObservationFence {
-                    facts,
-                    requested: accounts.to_vec(),
-                    observed_at_ms: now,
-                });
-            }
-        }
-        Err(unavailable(
-            "codex_capacity_conflict",
-            "Capacity source capture changed concurrently.",
-        ))
     }
     fn capacity_samples(
         &self,
@@ -343,105 +343,176 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             code: "codex_capacity_reconciliation_conflict",
         }
     }
-    pub async fn record_codex_capacity_observations(
+}
+pub trait CapacityFactory {
+    type Store: AuthorityStore;
+    type Tokens: TokenSource;
+    fn capacity(&self) -> CapacityService<'_, Self::Store, Self::Tokens>;
+}
+pub trait CapacityOperations: CapacityFactory {
+    fn begin_codex_capacity_observation(
+        &self,
+        accounts: &[CodexCapacityAccountRef],
+    ) -> impl std::future::Future<Output = Result<CodexCapacityObservationFence, GatewayError>>
+    {
+        async move {
+            let context = self.capacity();
+            if accounts.is_empty() || accounts.len() > 2 {
+                return Err(invalid(
+                    "Capacity sampling requires one or two fixed source accounts.",
+                ));
+            }
+            let mut slots = BTreeSet::new();
+            for account in accounts {
+                if !(1..=2).contains(&account.source_slot) || !slots.insert(account.source_slot) {
+                    return Err(invalid("Capacity sample slot is duplicated or invalid."));
+                }
+                text(&account.account_id)?;
+            }
+            let now = context.fresh_time(0)?;
+            for _ in 0..3 {
+                let mut tx = context.transaction(now)?;
+                let facts = context.capacity_sources(&mut tx, now).await?;
+                for reference in accounts {
+                    if facts
+                        .accounts
+                        .get(usize::from(reference.source_slot - 1))
+                        .is_none_or(|a| a.account_id != reference.account_id)
+                    {
+                        return Err(changed());
+                    }
+                }
+                context.fresh_time(now)?;
+                if tx.commit().await? {
+                    return Ok(CodexCapacityObservationFence {
+                        facts,
+                        requested: accounts.to_vec(),
+                        observed_at_ms: now,
+                    });
+                }
+            }
+            Err(unavailable(
+                "codex_capacity_conflict",
+                "Capacity source capture changed concurrently.",
+            ))
+        }
+    }
+    fn record_codex_capacity_observations(
         &self,
         fence: &CodexCapacityObservationFence,
         samples: &[CodexCapacitySample],
-    ) -> Result<AcceptedCodexCapacityObservations, GatewayError> {
-        let observations = self.capacity_samples(fence, samples)?;
-        for _ in 0..3 {
-            let now = self.fresh_time(fence.observed_at_ms)?;
-            let mut tx = self.transaction(now)?;
-            if self.capacity_sources(&mut tx, now).await? != fence.facts {
+    ) -> impl std::future::Future<Output = Result<AcceptedCodexCapacityObservations, GatewayError>>
+    {
+        async move {
+            let context = self.capacity();
+            let observations = context.capacity_samples(fence, samples)?;
+            for _ in 0..3 {
+                let now = context.fresh_time(fence.observed_at_ms)?;
+                let mut tx = context.transaction(now)?;
+                if context.capacity_sources(&mut tx, now).await? != fence.facts {
+                    return Err(changed());
+                }
+                // C is a retryable destination, never frozen before upstream I/O.
+                let current = tx
+                    .read::<Value>(&keys::capacity())
+                    .await?
+                    .as_ref()
+                    .map(parse_capacity_store)
+                    .transpose()?
+                    .unwrap_or_default();
+                context.fresh_time(fence.observed_at_ms)?;
+                let merged = merge_capacity(&current, &observations, fence.observed_at_ms);
+                tx.put(&keys::capacity(), &merged, None)?;
+                let revision = tx
+                    .post_checks()
+                    .into_iter()
+                    .find(|r| r.key == keys::capacity())
+                    .and_then(|r| r.expected_revision)
+                    .ok_or_else(|| invalid("Capacity commit has no revision."))?;
+                context.fresh_time(fence.observed_at_ms)?;
+                if tx.commit().await? {
+                    let reconciliation = context
+                        .reconcile_capacity_rows(fence, &merged.observations)
+                        .await;
+                    return Ok(AcceptedCodexCapacityObservations {
+                        capacity_revision: revision,
+                        observed_at_ms: fence.observed_at_ms,
+                        reconciliation,
+                    });
+                }
+            }
+            Err(unavailable(
+                "codex_capacity_conflict",
+                "Capacity observation merge changed concurrently.",
+            ))
+        }
+    }
+    /// An existing event can retry the ordered R step after a restart. It reads
+    /// already accepted durable C; callers cannot provide replacement evidence.
+    fn reconcile_codex_capacity_from_store(
+        &self,
+        fence: &CodexCapacityObservationFence,
+    ) -> impl std::future::Future<Output = Result<CapacityReconciliation, GatewayError>> {
+        async move {
+            let context = self.capacity();
+            let now = context.fresh_time(fence.observed_at_ms)?;
+            let mut tx = context.transaction(now)?;
+            if context.capacity_sources(&mut tx, now).await? != fence.facts {
                 return Err(changed());
             }
-            // C is a retryable destination, never frozen before upstream I/O.
-            let current = tx
+            let capacity = tx
                 .read::<Value>(&keys::capacity())
                 .await?
                 .as_ref()
                 .map(parse_capacity_store)
                 .transpose()?
                 .unwrap_or_default();
-            self.fresh_time(fence.observed_at_ms)?;
-            let merged = merge_capacity(&current, &observations, fence.observed_at_ms);
-            tx.put(&keys::capacity(), &merged, None)?;
-            let revision = tx
-                .post_checks()
-                .into_iter()
-                .find(|r| r.key == keys::capacity())
-                .and_then(|r| r.expected_revision)
-                .ok_or_else(|| invalid("Capacity commit has no revision."))?;
-            self.fresh_time(fence.observed_at_ms)?;
-            if tx.commit().await? {
-                let reconciliation = self
-                    .reconcile_capacity_rows(fence, &merged.observations)
-                    .await;
-                return Ok(AcceptedCodexCapacityObservations {
-                    capacity_revision: revision,
-                    observed_at_ms: fence.observed_at_ms,
-                    reconciliation,
+            if !tx.commit().await? {
+                return Ok(CapacityReconciliation::Pending {
+                    code: "codex_capacity_reconciliation_conflict",
                 });
             }
+            Ok(context
+                .reconcile_capacity_rows(fence, &capacity.observations)
+                .await)
         }
-        Err(unavailable(
-            "codex_capacity_conflict",
-            "Capacity observation merge changed concurrently.",
-        ))
     }
-    /// An existing event can retry the ordered R step after a restart. It reads
-    /// already accepted durable C; callers cannot provide replacement evidence.
-    pub async fn reconcile_codex_capacity_from_store(
-        &self,
-        fence: &CodexCapacityObservationFence,
-    ) -> Result<CapacityReconciliation, GatewayError> {
-        let now = self.fresh_time(fence.observed_at_ms)?;
-        let mut tx = self.transaction(now)?;
-        if self.capacity_sources(&mut tx, now).await? != fence.facts {
-            return Err(changed());
-        }
-        let capacity = tx
-            .read::<Value>(&keys::capacity())
-            .await?
-            .as_ref()
-            .map(parse_capacity_store)
-            .transpose()?
-            .unwrap_or_default();
-        if !tx.commit().await? {
-            return Ok(CapacityReconciliation::Pending {
-                code: "codex_capacity_reconciliation_conflict",
-            });
-        }
-        Ok(self
-            .reconcile_capacity_rows(fence, &capacity.observations)
-            .await)
-    }
-    pub(crate) async fn reconcile_capacity_for_model(
+    fn reconcile_capacity_for_model(
         &self,
         model: &ModelId,
         now: i64,
-    ) -> Result<(), GatewayError> {
-        for _ in 0..3 {
-            let mut tx = self.transaction(now)?;
-            let mut view = crate::routing::read_view(&mut tx).await?;
-            let mut changed = false;
-            for row in &view.capacity.observations {
-                if let Some(next) =
-                    apply_capacity_observation(&view.state, row, now, Some(model), now)?
-                {
-                    view.state = next;
-                    changed = true;
+    ) -> impl std::future::Future<Output = Result<(), GatewayError>> {
+        async move {
+            let context = self.capacity();
+            for _ in 0..3 {
+                let mut tx = context.transaction(now)?;
+                let evidence = {
+                    let reader = tx.routing_read_store();
+                    RoutingEvidenceReader::new(&reader, now)?
+                        .read(RoutingReadMode::GlobalSelection)
+                        .await?
+                };
+                let mut state = evidence.state().clone();
+                let mut changed = false;
+                for row in &evidence.capacity().observations {
+                    if let Some(next) =
+                        apply_capacity_observation(&state, row, now, Some(model), now)?
+                    {
+                        state = next;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    return Ok(());
+                }
+                tx.put(&keys::routing(), &state, None)?;
+                if tx.commit().await? {
+                    return Ok(());
                 }
             }
-            if !changed {
-                return Ok(());
-            }
-            tx.put(&keys::routing(), &view.state, None)?;
-            if tx.commit().await? {
-                return Ok(());
-            }
+            // Selection still has its coherent in-memory latest-capacity guard.
+            Ok(())
         }
-        // Selection still has its coherent in-memory latest-capacity guard.
-        Ok(())
     }
 }
+impl<T: CapacityFactory + ?Sized> CapacityOperations for T {}
