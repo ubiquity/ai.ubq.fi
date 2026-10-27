@@ -214,7 +214,7 @@ pub trait PaidAdmissionOperations: PaidAdmissionFactory {
                         "Paid fallback is disabled or this model is not allowed.",
                     ));
                 }
-                let routing = self
+                let routing = context
                     .require_paid_route(&mut tx, input, receipt, now)
                     .await?;
                 match authorization {

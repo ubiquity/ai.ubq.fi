@@ -361,7 +361,7 @@ pub trait ResetRecoveryOperations: ResetRecoveryFactory {
                 };
                 let stale = record.routing_generation != candidate.binding.routing_generation;
                 return Ok(
-                    match self
+                    match context
                         .elect_reset_recovery(
                             ResetAuthorization::ExistingLedger(&candidate, original),
                             &record,
