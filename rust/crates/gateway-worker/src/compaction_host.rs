@@ -1,16 +1,15 @@
 //! Finite compaction I/O inside the original request lifetime; never a child admission.
 mod protocol;
 
-use crate::{
-    host::{PlatformHost, provider_secret},
-    transport::{
-        body,
-        outbound::{Cancellation, PinnedDestination, send_http},
-        random,
-    },
-};
+use crate::host::PlatformHost;
+use crate::host::provider_secret;
+use crate::transport::body;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
 use gateway_compaction::types::{CompactionFailure, CompactionHost, FailureKind};
 use gateway_core::{error::GatewayError, source_json::SourceJson};
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::random;
 use protocol::{Call, RequestPlan};
 use worker::Method;
 

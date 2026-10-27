@@ -1,6 +1,6 @@
-use super::outbound::Cancellation;
 use futures_util::StreamExt;
 use gateway_core::error::GatewayError;
+use gateway_worker_platform::cancellation::Cancellation;
 use worker::{AbortSignal, Request, Response, ResponseBody};
 
 pub const INFERENCE_JSON_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -142,7 +142,7 @@ pub async fn response_bytes(
         return Ok(Vec::new());
     }
     let mut source = response.stream().map_err(|_| {
-        super::platform_error(
+        gateway_worker_platform::error::platform_error(
             "The upstream body is unavailable.",
             "upstream_body_unavailable",
         )
@@ -150,19 +150,19 @@ pub async fn response_bytes(
     let mut bytes = Vec::new();
     while let Some(chunk) = source.next().await {
         if signal.aborted() {
-            return Err(super::platform_error(
+            return Err(gateway_worker_platform::error::platform_error(
                 "The upstream request was interrupted.",
                 "upstream_request_interrupted",
             ));
         }
         let chunk = chunk.map_err(|_| {
-            super::platform_error(
+            gateway_worker_platform::error::platform_error(
                 "The upstream body could not be read.",
                 "upstream_body_read_error",
             )
         })?;
         append_bounded(&mut bytes, &chunk, max_bytes).map_err(|_| {
-            super::platform_error(
+            gateway_worker_platform::error::platform_error(
                 "The upstream body exceeds its configured limit.",
                 "upstream_body_too_large",
             )

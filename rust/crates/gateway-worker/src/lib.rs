@@ -107,7 +107,7 @@ pub async fn fetch_with_bindings(
         Ok(identity) => identity,
         Err(error) => return error_response(error).map(Into::into),
     };
-    let request_id = match transport::random::random_uuid() {
+    let request_id = match gateway_worker_platform::random::random_uuid() {
         Ok(id) => id,
         Err(error) => return error_response(error).map(Into::into),
     };

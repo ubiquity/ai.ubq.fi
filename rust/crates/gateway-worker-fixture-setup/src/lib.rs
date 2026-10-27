@@ -36,7 +36,7 @@ use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_worker::authority::RemoteAuthorityStore;
 
 fn nonce() -> Result<[u8; 32], GatewayError> {
-    gateway_worker::transport::random::random_bytes(32)?
+    gateway_worker_platform::random::random_bytes(32)?
         .try_into()
         .map_err(|_| invalid())
 }

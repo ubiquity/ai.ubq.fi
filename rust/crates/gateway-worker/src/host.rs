@@ -1,9 +1,6 @@
 //! Only actual platform clock, RNG, WebCrypto and fixed authentication reads.
-use crate::transport::{
-    crypto,
-    outbound::{Cancellation, PinnedDestination, send_http},
-    random,
-};
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
 use futures_util::StreamExt;
 use gateway_auth::{
     types::{AuthConfig, AuthHost},
@@ -12,6 +9,9 @@ use gateway_auth::{
 };
 use gateway_authority::store::{AuthorityClock, TokenSource};
 use gateway_core::error::GatewayError;
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::crypto;
+use gateway_worker_platform::random;
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Method, Request, RequestInit, RequestRedirect, Response, Url};
 

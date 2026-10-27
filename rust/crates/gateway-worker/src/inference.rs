@@ -9,7 +9,6 @@ use crate::inference_lifecycle::Session;
 use crate::inference_lifecycle::finish_hook;
 use crate::routing_host;
 use crate::transport::body;
-use crate::transport::outbound::Cancellation;
 use crate::transport::outbound::DispatchAttempt;
 use crate::transport::outbound::DispatchFailure;
 use crate::transport::outbound::DispatchOrigin;
@@ -41,6 +40,7 @@ use gateway_schema::{
     request::RequestSurface,
     source_request::{SourceRequestDocument, parse_http_body},
 };
+use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc};

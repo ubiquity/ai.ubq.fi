@@ -209,7 +209,7 @@ impl ObservabilityHost for Host {
         gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX)
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
-        crate::transport::random::random_bytes(length)
+        gateway_worker_platform::random::random_bytes(length)
     }
     fn compare_labels(&self, left: &str, right: &str) -> Result<std::cmp::Ordering, GatewayError> {
         crate::admin_host::compare_labels(left, right)

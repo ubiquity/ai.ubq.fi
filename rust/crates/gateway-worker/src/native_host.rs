@@ -284,7 +284,7 @@ impl NativeBindings {
         use gateway_auth::native_control::{NativeControlDisposition, NativeControlRequest};
         let envelope = NativeControlEnvelope {
             v: NATIVE_WIRE_VERSION,
-            operation_id: crate::transport::random::opaque_token()?,
+            operation_id: gateway_worker_platform::random::opaque_token()?,
             request: NativeControlRequest::CodexRenewAccess {
                 action_ref: action.action_ref().to_owned(),
             },

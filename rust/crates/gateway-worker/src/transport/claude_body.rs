@@ -2,7 +2,7 @@
 use futures_util::StreamExt;
 use worker::{Response, ResponseBody};
 
-use super::outbound::Cancellation;
+use gateway_worker_platform::cancellation::Cancellation;
 
 const PREFIX_UNITS: usize = 4096;
 

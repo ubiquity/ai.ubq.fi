@@ -1,12 +1,6 @@
 //! Constructor-only native transport. Service bindings use a synthetic origin;
 //! HTTPS carriers pin their origin before any request-owned input is available.
-use crate::{
-    host::PlatformHost,
-    transport::{
-        outbound::{Cancellation, Deadline},
-        random,
-    },
-};
+use crate::host::PlatformHost;
 use gateway_auth::{
     crypto::base64url,
     native::{
@@ -18,6 +12,9 @@ use gateway_auth::{
     native_control::{NATIVE_CONTROL_MAX_BYTES, unverified},
 };
 use gateway_core::error::GatewayError;
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::cancellation::Deadline;
+use gateway_worker_platform::random;
 use std::rc::Rc;
 use worker::{
     Fetcher, Headers, Method, RequestInit, RequestRedirect, Response, Url, js_sys::Uint8Array,

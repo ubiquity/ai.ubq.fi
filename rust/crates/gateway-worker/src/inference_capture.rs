@@ -3,7 +3,6 @@ use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
 use crate::observability_host;
 use crate::observability_host::CaptureInput;
-use crate::transport::outbound::Cancellation;
 use futures_util::Stream;
 use gateway_core::{
     error::GatewayError,
@@ -21,6 +20,7 @@ use gateway_observability::{
 use gateway_providers::sse::{
     MAX_CHAT_EVENT_BYTES, MAX_RESPONSES_EVENT_BYTES, SseFrame, SseParser,
 };
+use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use std::{
     cell::{Cell, RefCell},

@@ -4,10 +4,7 @@ use crate::catalog::CatalogState;
 use crate::host::PlatformHost;
 use crate::host::auth_config;
 use crate::inference;
-use crate::transport::HeaderLimits;
 use crate::transport::body;
-use crate::transport::bounded_headers;
-use crate::transport::outbound::Cancellation;
 use gateway_admin::service::AdminService;
 use gateway_auth::{
     resolve::AuthService,
@@ -24,6 +21,9 @@ use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::headers::HeaderLimits;
+use gateway_worker_platform::headers::bounded_headers;
 use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response};
@@ -406,7 +406,7 @@ async fn live_response(
     .await?;
     let runtime = LiveRuntime::new(
         Rc::new(store),
-        Rc::new(crate::transport::random::opaque_token),
+        Rc::new(gateway_worker_platform::random::opaque_token),
     );
     match route {
         LiveRoute::Create => {

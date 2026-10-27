@@ -1,8 +1,8 @@
 //! Fixed free provider GETs with one actual request cancellation and absolute deadline.
 use super::{RequestHost, unavailable};
-use crate::transport::outbound::{
-    Cancellation, Deadline, PinnedDestination, send_constructed, send_http,
-};
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_constructed;
+use crate::transport::outbound::send_http;
 use gateway_admin_runtime::claude;
 use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
 use gateway_core::{
@@ -13,6 +13,8 @@ use gateway_observability::{
     host_types::*,
     types::{HealthEvent, HealthTarget},
 };
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::cancellation::Deadline;
 use std::collections::BTreeMap;
 use worker::{Method, Response};
 

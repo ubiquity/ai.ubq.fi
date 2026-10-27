@@ -4,13 +4,11 @@ use super::{
     invalid, provider_correlation, set_header,
 };
 use super::{dispatch_attempts, interrupted, stream_failure};
+use crate::inference_lifecycle::Lifecycle;
+use crate::inference_lifecycle::Usage;
 use crate::inference_lifecycle::finish_hook;
 use crate::routing_host;
 use crate::transport::body;
-use crate::{
-    inference_lifecycle::{Lifecycle, Usage},
-    transport::outbound::{Cancellation, Deadline},
-};
 use gateway_admission::handoff::{Pending, enqueue};
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
 use gateway_providers::response::decode_response;
@@ -20,13 +18,13 @@ use gateway_routing_runtime::types::PreparedWireRequest;
 use gateway_routing_runtime::types::{
     AttemptFailure, FailureOrigin, RefusalDecision, RoutingError, TransportState,
 };
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_platform::cancellation::Deadline;
 use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use gateway_worker_stream::relay::PrepareDisposition;
-use gateway_worker_stream::{
-    control::StreamControl,
-    relay::{PreparedRelay, TerminalObserver},
-};
+use gateway_worker_stream::relay::PreparedRelay;
+use gateway_worker_stream::relay::TerminalObserver;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Response, ResponseBody};
 
@@ -526,24 +524,6 @@ impl Reply<'_> {
     }
 }
 
-impl StreamControl for Cancellation {
-    type Deadline = Deadline;
-    fn signal(&self) -> worker::AbortSignal {
-        Cancellation::signal(self)
-    }
-    fn register_waker(&self, waker: &std::task::Waker) {
-        Cancellation::register_waker(self, waker);
-    }
-    fn client_aborted(&self) -> bool {
-        Cancellation::client_aborted(self)
-    }
-    fn set_timeout_ms(&self, milliseconds: i32) -> Result<Deadline, GatewayError> {
-        Cancellation::set_timeout_ms(self, milliseconds)
-    }
-    fn abort(&self) {
-        Cancellation::abort(self);
-    }
-}
 impl TerminalObserver for Lifecycle {
     fn observe_terminal(
         &self,

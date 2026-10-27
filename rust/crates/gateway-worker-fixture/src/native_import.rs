@@ -46,7 +46,7 @@ impl AuthorityClock for Clock {
 struct Tokens;
 impl TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
-        gateway_worker::transport::random::random_uuid()
+        gateway_worker_platform::random::random_uuid()
     }
 }
 struct Host;
@@ -63,7 +63,7 @@ impl AuthHost for Host {
         now()
     }
     fn random_bytes(&self, len: usize) -> Result<Vec<u8>, GatewayError> {
-        gateway_worker::transport::random::random_bytes(len)
+        gateway_worker_platform::random::random_bytes(len)
     }
     async fn fetch_auth(
         &self,

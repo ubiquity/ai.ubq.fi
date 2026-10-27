@@ -6,7 +6,6 @@ use crate::host::response_bytes;
 use crate::host::setting;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use crate::transport::random;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
@@ -16,6 +15,7 @@ use gateway_core::{
     error::GatewayError,
     state::{AuthorityStore, RevisionCheck},
 };
+use gateway_worker_platform::random;
 use gateway_worker_storage::store::now_ms;
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Url};
@@ -80,16 +80,17 @@ impl gateway_catalog_runtime::admin::AdminCatalogHost for Host {
         let service = crate::catalog::service();
         let mut host = self.clone();
         self.context.wait_until(async move {
-            let cancellation = match crate::transport::outbound::Cancellation::background() {
-                Ok(cancellation) => cancellation,
-                Err(error) => {
-                    worker::console_error!(
-                        "OpenRouter catalog warm remains unavailable: {}",
-                        error.envelope.error.message
-                    );
-                    return;
-                }
-            };
+            let cancellation =
+                match gateway_worker_platform::cancellation::Cancellation::background() {
+                    Ok(cancellation) => cancellation,
+                    Err(error) => {
+                        worker::console_error!(
+                            "OpenRouter catalog warm remains unavailable: {}",
+                            error.envelope.error.message
+                        );
+                        return;
+                    }
+                };
             // The source warm has its own fixed discovery deadline and does
             // not inherit the downstream caller's disconnect signal.
             host.platform.cancellation = Rc::new(cancellation);

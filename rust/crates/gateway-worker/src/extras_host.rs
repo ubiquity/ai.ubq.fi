@@ -4,7 +4,6 @@ use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
 use crate::routing_host;
-use crate::transport::aead;
 use crate::transport::body;
 use crate::transport::outbound;
 use crate::transport::outbound::DispatchAttempt;
@@ -19,6 +18,7 @@ use gateway_routing_runtime::{
     extras::{AdmissionHandle, ChildScope, DispatchTicket},
     types::TransportState,
 };
+use gateway_worker_platform::aead;
 use gateway_worker_storage::store::now_ms;
 use serde_json::json;
 use std::{
@@ -212,7 +212,7 @@ impl ExtrasHost for Host {
         now_ms().unwrap_or(i64::MAX)
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
-        crate::transport::random::random_bytes(length)
+        gateway_worker_platform::random::random_bytes(length)
     }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()

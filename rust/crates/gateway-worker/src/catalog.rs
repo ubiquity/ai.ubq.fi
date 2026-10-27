@@ -63,7 +63,7 @@ pub fn schedule_warm(
     let store = store.clone();
     let version = version.to_owned();
     context.wait_until(async move {
-        let cancellation = match crate::transport::outbound::Cancellation::background() {
+        let cancellation = match gateway_worker_platform::cancellation::Cancellation::background() {
             Ok(cancellation) => cancellation,
             Err(error) => {
                 worker::console_error!(

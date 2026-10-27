@@ -93,7 +93,7 @@ impl CatalogHost for AccountCatalog<'_> {
         self.host.platform.now_ms()
     }
     fn unique_id(&self) -> String {
-        crate::transport::random::opaque_token().expect("Validated platform randomness")
+        gateway_worker_platform::random::opaque_token().expect("Validated platform randomness")
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         worker::Delay::from(std::time::Duration::from_millis(u64::from(milliseconds))).await;
