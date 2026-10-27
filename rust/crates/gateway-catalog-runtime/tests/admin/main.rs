@@ -179,15 +179,6 @@ struct Outcome {
     gate: Option<Rc<Cell<bool>>>,
     hook: Option<Hook>,
 }
-impl Outcome {
-    fn json(body: Value) -> Self {
-        Self {
-            body: Ok(body),
-            gate: None,
-            hook: None,
-        }
-    }
-}
 struct Host {
     now: Cell<i64>,
     sequence: Cell<u32>,

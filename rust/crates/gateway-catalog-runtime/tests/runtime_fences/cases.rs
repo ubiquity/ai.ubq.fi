@@ -1,5 +1,5 @@
 use super::FailIds;
-use super::{Host, Outcome, SelectionReads, Store, body, catalog, ids, run};
+use super::{Host, Outcome, SelectionReads, Store, catalog, ids, run};
 use gateway_catalog_inputs::state::{self, source_key};
 use gateway_catalog_provider::host::CatalogProvider;
 use gateway_catalog_provider::host::ProviderBinding;

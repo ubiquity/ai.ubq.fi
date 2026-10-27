@@ -11,7 +11,7 @@ use gateway_core::state::{
     StoredRecord,
 };
 use gateway_core::tuple_key::TupleKey;
-use gateway_routing_runtime_test_support::source_catalog::{self, Collator};
+use gateway_routing_runtime_test_support::source_catalog;
 use gateway_schema::catalog_cache::CatalogResponse;
 
 use serde_json::{Value, json};

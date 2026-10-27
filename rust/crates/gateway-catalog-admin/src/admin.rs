@@ -367,43 +367,6 @@ async fn admin_discover<S: QueryStore, H: CatalogHost, const N: usize>(
     .await
 }
 
-#[cfg(test)]
-mod source_error_tests {
-    use super::*;
-    #[test]
-    fn runtime_error_keeps_opaque_model_units_and_original_status_mapping() {
-        let message = gateway_core::js_string::JsString16::from_units(
-            "runtime config default model is absent from the catalog: "
-                .encode_utf16()
-                .chain([0xd800])
-                .collect(),
-        );
-        let error = runtime_error(SourceRequestError::new(
-            503,
-            message.clone(),
-            "server_error",
-            Some("runtime_config_invalid"),
-            None,
-        ));
-        assert_eq!(error.status, 409);
-        assert_eq!(
-            source::string(&member(&member(error.body(), "error"), "message")),
-            Some(message)
-        );
-        assert_eq!(
-            member(&member(error.body(), "error"), "code"),
-            json_source("runtime_config_invalid")
-        );
-        assert!(error.body().deserialize::<Value>().is_err());
-        let large = runtime_error(lift(GatewayError::new(
-            503,
-            "runtime config is too large",
-            Some("runtime_config_invalid"),
-        )));
-        assert_eq!(large.status, 413);
-    }
-}
-
 fn check(key: RecordKey, record: Option<&StoredRecord>) -> RevisionCheck {
     RevisionCheck {
         key,
@@ -514,5 +477,42 @@ impl CatalogAdmin for CatalogRuntime {
                 admin_refresh(runtime, store, host).await.map_err(lift)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod source_error_tests {
+    use super::*;
+    #[test]
+    fn runtime_error_keeps_opaque_model_units_and_original_status_mapping() {
+        let message = gateway_core::js_string::JsString16::from_units(
+            "runtime config default model is absent from the catalog: "
+                .encode_utf16()
+                .chain([0xd800])
+                .collect(),
+        );
+        let error = runtime_error(SourceRequestError::new(
+            503,
+            message.clone(),
+            "server_error",
+            Some("runtime_config_invalid"),
+            None,
+        ));
+        assert_eq!(error.status, 409);
+        assert_eq!(
+            source::string(&member(&member(error.body(), "error"), "message")),
+            Some(message)
+        );
+        assert_eq!(
+            member(&member(error.body(), "error"), "code"),
+            json_source("runtime_config_invalid")
+        );
+        assert!(error.body().deserialize::<Value>().is_err());
+        let large = runtime_error(lift(GatewayError::new(
+            503,
+            "runtime config is too large",
+            Some("runtime_config_invalid"),
+        )));
+        assert_eq!(large.status, 413);
     }
 }
