@@ -73,7 +73,7 @@ async fn bind_api<S: QueryStore>(
             .as_ref()
             .and_then(|r| r.json_value().ok())
             .and_then(|v| {
-                serde_json::from_value::<gateway_admin::keys::ApiKeyRecord>(v.clone()).ok()
+                serde_json::from_value::<gateway_admin_keys::keys::ApiKeyRecord>(v.clone()).ok()
             })
             .filter(|r| r.policy.id == id && r.policy.usage_quota_version == 3);
         let mut policy = None;
@@ -93,7 +93,7 @@ async fn bind_api<S: QueryStore>(
                     })
                 })
             {
-                policy = Some(gateway_admin::keys::authority_policy(&parsed, now));
+                policy = Some(gateway_admin_keys::keys::authority_policy(&parsed, now));
             }
         }
         transition.mutations.push(if let Some(policy) = policy {
@@ -136,10 +136,10 @@ pub(crate) async fn bind<S: QueryStore>(
             {
                 if name == "kernel_policy_limit_requests" {
                     defaults.usage_limit_requests =
-                        gateway_admin_runtime::parse::limit(value).unwrap_or(-1);
+                        gateway_admin_contracts::fields::limit(value).unwrap_or(-1);
                 } else {
                     defaults.window_ms =
-                        gateway_admin_runtime::parse::positive(value).unwrap_or(604800000);
+                        gateway_admin_contracts::fields::positive(value).unwrap_or(604800000);
                 }
             }
         }

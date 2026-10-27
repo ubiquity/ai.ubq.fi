@@ -5,13 +5,13 @@ pub mod kernel;
 mod prefixes;
 pub mod retention;
 
-use crate::error;
 use gateway_core::{
     error::GatewayError,
     state::{AtomicTransition, RecordKey, RecordMutation, RevisionCheck, StoredRecord},
     tuple_key::TupleKey,
     value::PortableValue,
 };
+use gateway_profile_values::scalar::error;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

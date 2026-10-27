@@ -1,4 +1,5 @@
 use gateway_admin_data::{profile, projection};
+use gateway_profile_values::codec::{from_profile, to_profile};
 use serde_json::Value;
 
 // Both wire formats use JavaScript numbers. Integer/f64 JSON representations
@@ -48,12 +49,11 @@ fn kernel_policy_normalization_matches_frozen_bun_source() {
 }
 
 #[test]
-fn profile_types_match_frozen_bun_source() {
-    let cases: Vec<Value> =
-        serde_json::from_str(include_str!("fixtures/profile-golden.json")).unwrap();
+fn profile_types_match_frozen_bun_source() -> Result<(), Box<dyn std::error::Error>> {
+    let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/profile-golden.json"))?;
     assert_eq!(cases.len(), 53);
     for (index, case) in cases.iter().enumerate() {
-        let decoded = profile::from_profile(&case["input"]);
+        let decoded = from_profile(&case["input"]);
         assert_eq!(
             decoded.is_ok(),
             case["ok"] == true,
@@ -67,13 +67,14 @@ fn profile_types_match_frozen_bun_source() {
                 "storage {index}"
             );
             assert_eq!(
-                profile::to_profile(&decoded).unwrap(),
+                to_profile(&decoded)?,
                 case["expected"],
                 "profile round trip {index}: {}",
                 case["input"]
             );
         }
     }
+    Ok(())
 }
 
 #[test]

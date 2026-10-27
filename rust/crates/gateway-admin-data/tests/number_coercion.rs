@@ -1,4 +1,4 @@
-use gateway_admin_data::profile::js_number;
+use gateway_profile_values::coercion::js_number;
 use serde_json::Value;
 
 #[test]

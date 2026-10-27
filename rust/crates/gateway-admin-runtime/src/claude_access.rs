@@ -1,5 +1,6 @@
 //! Source Claude principal policy. Parsing data never mints a routing/cohort capability.
 use crate::store;
+use gateway_admin_contracts::source_input::{trim, whitespace};
 use gateway_auth::{
     store::{check, commit},
     types::{AuthHost, conflict, invalid},
@@ -57,14 +58,12 @@ fn unique_source_ids(value: &SourceJson) -> Result<Vec<JsString16>, GatewayError
     for value in values {
         let id = source::string(&value)
             .filter(|id| {
-                !gateway_admin::source_input::trim(id).as_units().is_empty()
+                !trim(id).as_units().is_empty()
                     && id.as_units().len() <= 256
-                    && !id.as_units().iter().any(|&unit| {
-                        gateway_admin::source_input::whitespace(unit)
-                            || unit == 44
-                            || unit < 32
-                            || unit == 127
-                    })
+                    && !id
+                        .as_units()
+                        .iter()
+                        .any(|&unit| whitespace(unit) || unit == 44 || unit < 32 || unit == 127)
             })
             .ok_or_else(|| invalid("allowed_key_ids must be an explicit array of principal IDs"))?;
         if seen.insert(id.clone()) {

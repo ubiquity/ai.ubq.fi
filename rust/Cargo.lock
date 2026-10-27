@@ -842,7 +842,9 @@ dependencies = [
 name = "gateway-admin"
 version = "0.1.0"
 dependencies = [
- "gateway-admin-data",
+ "gateway-admin-contracts",
+ "gateway-admin-kernel",
+ "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-authority",
@@ -855,14 +857,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-admin-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-profile-values",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-admin-data"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "gateway-core",
+ "gateway-profile-values",
  "gateway-schema",
- "regress",
  "ryu-js",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-admin-kernel"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-admin-keys"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-data",
+ "gateway-auth",
+ "gateway-authority",
+ "gateway-core",
+ "gateway-profile-values",
  "serde",
  "serde_json",
 ]
@@ -872,11 +912,13 @@ name = "gateway-admin-runtime"
 version = "0.1.0"
 dependencies = [
  "gateway-admin",
- "gateway-admin-data",
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-profile-values",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -886,9 +928,15 @@ dependencies = [
 name = "gateway-admin-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-admin",
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-authority",
  "gateway-core",
  "gateway-schema",
+ "serde_json",
 ]
 
 [[package]]
@@ -988,13 +1036,13 @@ dependencies = [
 name = "gateway-claude-runtime"
 version = "0.1.0"
 dependencies = [
- "gateway-admin-data",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime-test-support",
  "gateway-core",
+ "gateway-profile-values",
  "gateway-providers",
  "gateway-schema",
  "rusqlite",
@@ -1116,7 +1164,9 @@ name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
  "gateway-admin",
+ "gateway-admin-contracts",
  "gateway-admin-data",
+ "gateway-admin-keys",
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-authority",
@@ -1125,6 +1175,7 @@ dependencies = [
  "gateway-migration-test-support",
  "gateway-native",
  "gateway-observability",
+ "gateway-profile-values",
  "gateway-routing-runtime",
  "gateway-schema",
  "rusqlite",
@@ -1213,6 +1264,18 @@ dependencies = [
  "gateway-core",
  "gateway-observability",
  "gateway-schema",
+]
+
+[[package]]
+name = "gateway-profile-values"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gateway-core",
+ "gateway-schema",
+ "regress",
+ "ryu-js",
+ "serde_json",
 ]
 
 [[package]]
@@ -1350,7 +1413,8 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-admin",
- "gateway-admin-data",
+ "gateway-admin-contracts",
+ "gateway-admin-kernel",
  "gateway-admin-runtime",
  "gateway-admission",
  "gateway-auth",
@@ -1368,6 +1432,7 @@ dependencies = [
  "gateway-migration",
  "gateway-observability",
  "gateway-observability-test-support",
+ "gateway-profile-values",
  "gateway-providers",
  "gateway-publication",
  "gateway-publication-policy",

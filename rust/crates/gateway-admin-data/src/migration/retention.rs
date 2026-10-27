@@ -1,5 +1,5 @@
 use super::starts;
-use crate::integer;
+use gateway_profile_values::scalar::integer;
 use serde_json::Value;
 pub const DAY: i64 = 86_400_000;
 pub const USAGE_RETENTION: i64 = 7 * DAY;

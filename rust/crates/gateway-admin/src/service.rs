@@ -1,9 +1,9 @@
-use crate::{
-    keys::KeyService,
+use gateway_admin_contracts::{
     operations::{AdminHost, AdminInput},
     routes::{AdminOperation, match_route},
     source_input as input,
 };
+use gateway_admin_keys::keys::KeyService;
 use gateway_auth::{
     crypto::uuid_from_random,
     passkeys::{PasskeyUser, user_wire},
@@ -73,13 +73,13 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
                 crate::reads::key_changes(self.store, &query, self.host.now_ms()).await?
             }
             AdminOperation::KernelPublicKeysGet => {
-                crate::kernel_keys::list(self.store, self.host.now_ms()).await?
+                gateway_admin_kernel::kernel_keys::list(self.store, self.host.now_ms()).await?
             }
             AdminOperation::KernelPublicKeysCreate => {
-                crate::kernel_keys::create(self.store, self.host, &body).await?
+                gateway_admin_kernel::kernel_keys::create(self.store, self.host, &body).await?
             }
             AdminOperation::KernelPublicKeysDelete => {
-                crate::kernel_keys::delete(self.store, self.host, &query).await?
+                gateway_admin_kernel::kernel_keys::delete(self.store, self.host, &query).await?
             }
             AdminOperation::PasskeyUsersUpdate => {
                 let id = input::member(&body, "id")

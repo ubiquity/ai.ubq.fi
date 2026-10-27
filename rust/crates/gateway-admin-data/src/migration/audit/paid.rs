@@ -2,10 +2,14 @@ use super::{
     Audit, AuditInventory, SliceInventory, api_id, positive, reference, safe,
     source_fields as source, under,
 };
-use crate::{integer, migration::ObservedRow, number, text};
+use crate::migration::ObservedRow;
 use gateway_core::{
     error::GatewayError, source_control::decode_source_control_record, source_json::SourceJson,
     source_serialization,
+};
+use gateway_profile_values::{
+    coercion::js_string,
+    scalar::{integer, number, text},
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -65,7 +69,7 @@ pub fn valid_source_paid_request(v: &SourceJson) -> bool {
         .iter()
         .all(|(field, allowed)| {
             source::finite(v, field)
-                .is_some_and(|value| allowed.contains(&crate::profile::js_string(&value).as_str()))
+                .is_some_and(|value| allowed.contains(&js_string(&value).as_str()))
         })
         && source::safe(v, "reconciliation_attempts")
         && [
