@@ -24,6 +24,8 @@
       "src/http.ts isAdminPath/withCors"
     ],
     "extraction": "Complete frozen function bodies; only refresh result and current-state builder are finite public fixture inputs. No real auth/KV/provider imports.",
-    "headers": "Compare actual source content-type/cache-control/retry-after; existing CORS/build/request identity composition remains a separate Worker acceptance surface."
+    "headers": "Compare actual source content-type/cache-control/retry-after; existing CORS/build/request identity composition remains a separate Worker acceptance surface.",
+    "fixture_sha256": "974a138c4b8661dbfb54d9ed90bde48388757a5f3c9d5595994d90a927a4aa0e",
+    "cases": 16
   }
 }

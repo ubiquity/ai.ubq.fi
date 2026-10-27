@@ -219,7 +219,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         roster: &host::ClaudeRosterReadback,
         at: i64,
     ) -> Result<(Vec<SourceJson>, Option<SourceObject>), GatewayError> {
-        let dates = |s| self.host.parse_claude_usage_date(s);
+        let dates = |s: &_| self.host.parse_claude_usage_date(s);
         let project = |quota: &SourceJson| quota_readback(quota, &dates);
         let mut accounts = Vec::new();
         let mut active = None;
