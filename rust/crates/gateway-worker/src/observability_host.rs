@@ -16,7 +16,10 @@ thread_local! {static STATE:ObservabilityState=ObservabilityState::default();}
 pub fn shared_state() -> ObservabilityState {
     STATE.with(Clone::clone)
 }
-pub type Runtime = ObservabilityRuntime<crate::authority::RemoteAuthorityStore, RequestHost>;
+pub type Runtime = ObservabilityRuntime<
+    gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+    RequestHost,
+>;
 pub enum CaptureInput {
     Ready(gateway_observability::replay_producer::ReplayInput),
     Omitted(&'static str),
@@ -79,7 +82,7 @@ pub async fn persist_failure(
         .await
 }
 pub struct RequestHost {
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: crate::host::PlatformHost,
     request_id: String,
     original_body: ReplayBody,
@@ -90,7 +93,7 @@ pub struct RequestHost {
 pub fn bind(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
 ) -> Runtime {
@@ -100,7 +103,7 @@ pub fn bind(
 pub fn bind_admin(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
     actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
@@ -121,7 +124,7 @@ pub fn bind_admin(
 fn bind_request(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
 ) -> Runtime {

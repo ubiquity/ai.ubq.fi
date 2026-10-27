@@ -1,6 +1,5 @@
 use super::platform::{self, Host};
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformHost, response_bytes},
     transport::outbound::{PinnedDestination, construct_request, send_constructed},
 };
@@ -17,6 +16,7 @@ use gateway_claude_runtime::host::ClaudePoolHost;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_core::state::RevisionCheck;
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use std::collections::BTreeMap;
 
 pub struct Publication {

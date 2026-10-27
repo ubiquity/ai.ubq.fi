@@ -14,6 +14,7 @@ entrypoint = []
 stream-drop-fixture = ["entrypoint", "gateway-worker/fixture-stream-drop"]
 
 [dependencies]
+gateway-worker-authority-binding.workspace = true
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }

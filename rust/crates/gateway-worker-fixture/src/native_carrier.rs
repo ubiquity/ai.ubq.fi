@@ -31,7 +31,8 @@ pub(super) async fn fetch(
             Vec::new(),
             super::now,
         )?;
-        let store = gateway_worker::authority::RemoteAuthorityStore::from_env(&env)?;
+        let store =
+            gateway_worker_authority_binding::authority::RemoteAuthorityStore::from_env(&env)?;
         initialize(&store, &identity, &inputs, &receiver, "codex").await?;
         let bindings = gateway_worker::native_host::NativeBindings::configured_https(
             "https://localhost",

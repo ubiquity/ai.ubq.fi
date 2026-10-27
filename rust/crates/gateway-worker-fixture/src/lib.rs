@@ -70,7 +70,8 @@ pub async fn fetch(
         let inputs = inputs()?;
         let receiver =
             PublicationReceiver::configured(identity.clone(), inputs.clone(), Vec::new(), now)?;
-        let store = gateway_worker::authority::RemoteAuthorityStore::from_env(&env)?;
+        let store =
+            gateway_worker_authority_binding::authority::RemoteAuthorityStore::from_env(&env)?;
         initialize(&store, &identity, &inputs, &receiver, &scenario).await?;
         Ok(receiver)
     }

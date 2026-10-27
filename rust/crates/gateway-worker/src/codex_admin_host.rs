@@ -19,7 +19,7 @@ pub struct OriginalAdmin<'a> {
 }
 
 pub async fn execute(
-    store: &crate::authority::RemoteAuthorityStore,
+    store: &gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     owner: OriginalAdmin<'_>,
     request: CodexRequest,

@@ -2,11 +2,12 @@
 //! store; bounds here apply only to new Passport app-session operations.
 use crate::{
     host::{PlatformHost, response_bytes},
-    transport::outbound::{Cancellation, PinnedDestination, send_http},
+    transport::outbound::{PinnedDestination, send_http},
 };
 use gateway_auth_contracts::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
 use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_worker_platform::cancellation::Cancellation;
 use std::{cell::Cell, collections::BTreeMap, task::Poll};
 use worker::{
     Method, ResponseBody,

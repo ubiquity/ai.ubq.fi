@@ -3,7 +3,6 @@ use gateway_cache_experiment_dispatch::CacheDispatchOperations;
 use gateway_cache_experiment_runner::io::{ExperimentIo, ReadSample};
 use gateway_cache_experiment_runner::{CacheRunOperations, PreparedTarget};
 mod sample;
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
@@ -21,6 +20,7 @@ use gateway_observability::{
 };
 use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::cancellation::Deadline;
 use gateway_worker_platform::random;

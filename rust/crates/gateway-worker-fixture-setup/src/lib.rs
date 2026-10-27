@@ -30,7 +30,7 @@ use gateway_publication_policy::protocol::{
 };
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_source::error::GatewayError;
-use gateway_worker::authority::RemoteAuthorityStore;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 
 fn nonce() -> Result<[u8; 32], GatewayError> {
     gateway_worker_platform::random::random_bytes(32)?
@@ -365,7 +365,6 @@ mod tests {
         native_auth::{NativeAuthHeaders, NativeAuthenticator},
         native_replay::StoreNonceAuthority,
     };
-    use gateway_authority_keys as keys;
     use gateway_core::{
         state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
         state::RecordMutation, state::StoredRecord,
@@ -375,8 +374,6 @@ mod tests {
         PreparedConfigurationPublication, bootstrap_fixture_owner, fixture_owner_statement,
         runtime_config_key,
     };
-    use gateway_publication_transport::transport::PublicationReceiver;
-    use gateway_source::error::GatewayError;
     use std::{
         cell::RefCell,
         collections::{BTreeMap, BTreeSet},

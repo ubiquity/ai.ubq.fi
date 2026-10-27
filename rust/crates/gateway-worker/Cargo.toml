@@ -14,6 +14,7 @@ entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
 [dependencies]
+gateway-worker-authority-binding.workspace = true
 gateway-native-authority-wire.workspace = true
 gateway-source.workspace = true
 gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }

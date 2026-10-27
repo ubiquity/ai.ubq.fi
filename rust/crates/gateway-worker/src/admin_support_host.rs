@@ -37,7 +37,7 @@ impl Binding {
             .await
             .map_err(catalogue_error)?;
         let subscriptions = picker::subscriptions(&self.catalog.store).await;
-        picker::project(
+        gateway_worker_web::admin_picker::project(
             &gateway_source::source_serialization::member(&response.body, "data").unwrap_or_else(
                 || {
                     gateway_source::source_json::SourceJson::parse("null")
@@ -57,7 +57,7 @@ impl Binding {
     ) -> Result<PricingSnapshot, GatewayError> {
         let ratios = pricing::fetch(self, pricing::Metadata::Ratios).await?;
         let status = pricing::fetch(self, pricing::Metadata::Status).await?;
-        pricing::project(
+        gateway_worker_web::admin_pricing::project(
             models,
             &ratios,
             &status,
@@ -183,7 +183,6 @@ fn catalogue_error(
 
 #[cfg(test)]
 mod catalogue_tests {
-    use gateway_source::error::GatewayError;
 
     #[test]
     fn catalogue_lift_preserves_the_exact_original_gateway_error()
@@ -198,7 +197,8 @@ mod catalogue_tests {
         let actual = super::catalogue_error(source);
         assert_eq!(actual, original);
         assert_eq!(
-            gateway_source::source_json::SourceJson::from_serializable(&actual.envelope)?.as_bytes(),
+            gateway_source::source_json::SourceJson::from_serializable(&actual.envelope)?
+                .as_bytes(),
             expected
         );
         Ok(())

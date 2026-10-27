@@ -1,5 +1,4 @@
 //! Fixed M15 HTTP/AEAD capabilities over the original M14 dispatch reservation.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
@@ -19,6 +18,7 @@ use gateway_routing_runtime::{
     extras::{AdmissionHandle, ChildScope, DispatchTicket},
     types::TransportState,
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::aead;
 use gateway_worker_storage::store::now_ms;

@@ -1,21 +1,34 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
 use crate::host::provider_secret;
 use crate::host::response_bytes;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
-use gateway_catalog_provider::host::{
-    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
-    CredentialPublication, ProviderBinding,
-};
+use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_auth::provider_credentials::read_codex_source_pool;
+use gateway_catalog_provider::host::CatalogFetch;
+use gateway_catalog_provider::host::CatalogFetchResponse;
+use gateway_catalog_provider::host::CatalogHost;
+use gateway_catalog_provider::host::CatalogProvider;
+use gateway_catalog_provider::host::CodexAccount;
+use gateway_catalog_provider::host::CredentialPublication;
+use gateway_catalog_provider::host::ProviderBinding;
+use gateway_core::state::AuthorityStore;
+use gateway_core::state::RevisionCheck;
 use gateway_source::error::GatewayError;
-use gateway_core::state::{AuthorityStore, RevisionCheck};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::random;
 use gateway_worker_storage::store::now_ms;
-use std::{collections::BTreeMap, rc::Rc};
-use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Url};
+use std::collections::BTreeMap;
+use std::rc::Rc;
+use worker::Env;
+use worker::Fetch;
+use worker::Headers;
+use worker::Method;
+use worker::Request;
+use worker::RequestInit;
+use worker::RequestRedirect;
+use worker::Url;
 
 #[derive(Clone)]
 pub struct Host {

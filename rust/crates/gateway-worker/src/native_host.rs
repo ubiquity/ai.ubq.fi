@@ -272,7 +272,7 @@ impl NativeBindings {
         action: &gateway_authority::native_control::NativeRenewalAction,
         receiver: &gateway_authority::native_control::receiver::NativeRenewalAuthority<
             '_,
-            crate::authority::RemoteAuthorityStore,
+            gateway_worker_authority_binding::authority::RemoteAuthorityStore,
             crate::host::PlatformTokens,
             PlatformHost,
         >,

@@ -1,5 +1,4 @@
 //! One explicit manual reset. Shared authority owns every intent, budget and promotion.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
@@ -20,6 +19,7 @@ use gateway_authority_routing_evidence::{
 };
 use gateway_core::state::AuthorityStore;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};

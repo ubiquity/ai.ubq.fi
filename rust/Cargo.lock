@@ -3160,11 +3160,32 @@ dependencies = [
  "gateway-schema",
  "gateway-source",
  "gateway-wait-observation",
+ "gateway-worker-authority-binding",
  "gateway-worker-http-body",
  "gateway-worker-platform",
  "gateway-worker-storage",
  "gateway-worker-stream",
  "gateway-worker-web",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-authority-binding"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "gateway-admin-runtime",
+ "gateway-auth-contracts",
+ "gateway-core",
+ "gateway-migration",
+ "gateway-profile-values",
+ "gateway-source",
+ "gateway-worker-http-body",
+ "gateway-worker-platform",
+ "gateway-worker-storage",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -3186,6 +3207,7 @@ dependencies = [
  "gateway-publication-transport",
  "gateway-source",
  "gateway-worker",
+ "gateway-worker-authority-binding",
  "gateway-worker-fixture-setup",
  "gateway-worker-platform",
  "gateway-worker-storage",
@@ -3211,7 +3233,7 @@ dependencies = [
  "gateway-publication-policy",
  "gateway-publication-transport",
  "gateway-source",
- "gateway-worker",
+ "gateway-worker-authority-binding",
  "gateway-worker-platform",
  "gateway-worker-storage",
  "serde_json",
@@ -3272,6 +3294,9 @@ dependencies = [
 name = "gateway-worker-web"
 version = "0.1.0"
 dependencies = [
+ "gateway-admin-runtime",
+ "gateway-contracts",
+ "gateway-core",
  "gateway-schema",
  "gateway-source",
  "gateway-worker-platform",

@@ -346,11 +346,11 @@ impl RemoteAuthorityStore {
         })
     }
 
-    pub(crate) async fn profile_migration(
+    pub async fn profile_migration(
         &self,
         request: gateway_admin_runtime::capabilities::MigrationRequest,
         context: gateway_admin_runtime::capabilities::Context,
-    ) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
+    ) -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
         match self
             .exchange(StoreRequest::ProfileMigration {
                 request: request.into(),
@@ -364,7 +364,8 @@ impl RemoteAuthorityStore {
                 headers,
                 body,
             } => {
-                let mut response = gateway_auth::types::AuthResponse::source_json(status, body);
+                let mut response =
+                    gateway_auth_contracts::types::AuthResponse::source_json(status, body);
                 response.headers = headers;
                 Ok(response)
             }

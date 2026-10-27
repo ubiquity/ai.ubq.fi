@@ -1,5 +1,4 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
-use crate::authority::RemoteAuthorityStore;
 use crate::catalog::CatalogState;
 use crate::host::PlatformHost;
 use crate::host::auth_config;
@@ -20,6 +19,7 @@ use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::headers::HeaderLimits;
