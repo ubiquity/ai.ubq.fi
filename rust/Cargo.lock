@@ -1127,6 +1127,7 @@ dependencies = [
 name = "gateway-migration"
 version = "0.1.0"
 dependencies = [
+ "gateway-migration-copied-store-support",
  "gateway-migration-graph",
  "gateway-admin",
  "gateway-admin-contracts",
@@ -1149,6 +1150,19 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-schema",
  "gateway-source-audit",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "gateway-migration-copied-store-support"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-migration",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1221,6 +1235,13 @@ dependencies = [
 name = "gateway-migration-test-support"
 version = "0.1.0"
 dependencies = [
+ "gateway-profile-values",
+ "gateway-profile-source",
+ "gateway-migration",
+ "gateway-authority",
+ "gateway-auth",
+ "gateway-admin-runtime",
+ "gateway-admin-contracts",
  "gateway-core",
  "rusqlite",
  "serde",

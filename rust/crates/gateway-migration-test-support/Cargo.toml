@@ -11,6 +11,13 @@ serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gateway-admin-contracts.workspace = true
+gateway-admin-runtime.workspace = true
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-migration.workspace = true
+gateway-profile-source.workspace = true
+gateway-profile-values.workspace = true
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 
 [lints]

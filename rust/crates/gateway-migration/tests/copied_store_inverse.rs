@@ -1,11 +1,6 @@
 #![cfg(all(unix, not(target_arch = "wasm32")))]
 use gateway_migration_graph::transport as graph_transport;
-mod copied_store_inverse {
-    pub mod driver;
-    pub mod store;
-}
 
-use copied_store_inverse::store::ReadonlyStore;
 use gateway_auth::crypto::base64url;
 use gateway_auth::native_auth::NativeNonceAuthority;
 use gateway_auth::native_credentials::{NativeOwnerId, OwnerFence, parse_native_document};
@@ -23,6 +18,7 @@ use gateway_migration::{
     native_capture::{NativeCapture, NativeEntry, NativeRevision, NativeValue, prepare_native},
     native_operator::{NativeCustodyRegistration, prepare_local_bootstrap},
 };
+use gateway_migration_copied_store_support::{driver, store::ReadonlyStore};
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use rusqlite::{Connection, params};
@@ -271,8 +267,8 @@ impl Fixture {
         }
     }
 
-    fn invoke(&self) -> Result<copied_store_inverse::driver::Receipt, Box<dyn std::error::Error>> {
-        copied_store_inverse::driver::execute(serde_json::from_value(self.input.clone()).unwrap())
+    fn invoke(&self) -> Result<driver::Receipt, Box<dyn std::error::Error>> {
+        driver::execute(serde_json::from_value(self.input.clone()).unwrap())
     }
 
     fn receipt_path(&self) -> PathBuf {

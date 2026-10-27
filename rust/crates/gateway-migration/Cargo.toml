@@ -34,6 +34,7 @@ sha2 = "=0.10.9"
 gateway-migration-fixture-port.workspace = true
 gateway-migration-fixture-inputs.workspace = true
 gateway-migration-fixture-custody.workspace = true
+gateway-migration-copied-store-support.workspace = true
 gateway-migration-test-support.workspace = true
 gateway-native = { path = "../gateway-native" }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }

@@ -47,6 +47,7 @@ members = [
   "crates/gateway-migration-fixture-port",
   "crates/gateway-migration-fixture-inputs",
   "crates/gateway-migration-fixture-custody",
+  "crates/gateway-migration-copied-store-support",
   "crates/gateway-migration-test-support",
 ]
 exclude = ["vendor/webauthn-rs-core-0.6.1-dev"]
@@ -106,6 +107,7 @@ gateway-extras-runtime-test-support = { path = "crates/gateway-extras-runtime-te
 gateway-migration-fixture-port = { path = "crates/gateway-migration-fixture-port" }
 gateway-migration-fixture-inputs = { path = "crates/gateway-migration-fixture-inputs" }
 gateway-migration-fixture-custody = { path = "crates/gateway-migration-fixture-custody" }
+gateway-migration-copied-store-support = { path = "crates/gateway-migration-copied-store-support" }
 gateway-migration-test-support = { path = "crates/gateway-migration-test-support" }
 
 [profile.dev]
