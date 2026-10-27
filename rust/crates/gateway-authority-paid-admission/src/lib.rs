@@ -1,4 +1,5 @@
 //! Complete checked paid operations; every existing effect retains one atomic transition.
+use gateway_authority_paid_control_records::PaidRoutingPolicy;
 mod backend;
 use backend::Transaction;
 use gateway_authority_api_protocol::ApiKeyPolicy;

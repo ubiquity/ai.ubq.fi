@@ -1143,6 +1143,7 @@ dependencies = [
  "gateway-authority-claude-proof",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-authority-paid-control-records",
  "gateway-authority-paid-records",
  "gateway-authority-paid-route",
  "gateway-authority-routing-evidence",
