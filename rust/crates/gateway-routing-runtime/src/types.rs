@@ -19,7 +19,7 @@ use gateway_providers::types::{
 use gateway_schema::catalog::CatalogInput;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, future::Future};
+use std::future::Future;
 
 #[derive(Clone, Debug)]
 pub struct RoutingInput {
@@ -77,77 +77,7 @@ impl RoutingInput {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct RoutingError {
-    pub error: Box<GatewayError>,
-    pub headers: Headers,
-    pub source_body: Option<SourceRefusalBody>,
-}
-
-#[derive(Clone, Debug)]
-pub enum SourceRefusalBody {
-    Json(gateway_core::source_json::SourceJson),
-    /// Exact source HTTP-constructor failure; never a quota or paid proof.
-    InternalServerError,
-}
-impl SourceRefusalBody {
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            Self::Json(body) => body.as_bytes(),
-            Self::InternalServerError => b"Internal Server Error",
-        }
-    }
-}
-impl std::fmt::Display for RoutingError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self.error.as_ref(), formatter)
-    }
-}
-impl std::error::Error for RoutingError {}
-impl RoutingError {
-    /// Cleanup is an internal diagnostic; the original wire status/body remain authoritative.
-    pub(crate) fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {
-        if self.source_body.is_none() {
-            self.source_body = Some(SourceRefusalBody::Json(
-                gateway_core::source_json::SourceJson::from_serializable(&self.error.envelope)
-                    .expect("A scalar error envelope is valid source JSON"),
-            ));
-        }
-        let code = cleanup
-            .error
-            .envelope
-            .error
-            .code
-            .as_deref()
-            .unwrap_or("unknown")
-            .chars()
-            .take(48)
-            .collect::<String>();
-        self.error.envelope.error.message = format!(
-            "Original request failure; original-lifetime cleanup also failed (status {}, code {}).",
-            cleanup.error.status, code,
-        );
-        self
-    }
-}
-impl From<GatewayError> for RoutingError {
-    fn from(error: GatewayError) -> Self {
-        Self {
-            error: Box::new(error),
-            headers: BTreeMap::new(),
-            source_body: None,
-        }
-    }
-}
-impl From<gateway_schema::source_request::error::SourceRequestError> for RoutingError {
-    fn from(error: gateway_schema::source_request::error::SourceRequestError) -> Self {
-        Self {
-            error: Box::new(error.diagnostic().clone()),
-            headers: BTreeMap::new(),
-            source_body: Some(SourceRefusalBody::Json(error.body().clone())),
-        }
-    }
-}
+use gateway_local_refusal::routing_error::RoutingError;
 pub type RoutingResult<T> = Result<T, RoutingError>;
 
 /// No credentials or request bodies are serialized in the recoverable journal.
@@ -514,7 +444,7 @@ mod source_cleanup_tests {
     use gateway_core::{js_string::JsString16, source_json::SourceJson};
     #[test]
     fn cleanup_diagnostic_never_overwrites_original_source_wire_truth() {
-        let source = gateway_schema::source_request::error::SourceRequestError::new(
+        let source = gateway_local_refusal::source_error::SourceRequestError::new(
             400,
             JsString16::from_units(vec![0xd800]),
             "invalid_request_error",

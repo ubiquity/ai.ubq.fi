@@ -241,7 +241,7 @@ fn validate_defaults_fields(body: &SourceJson) -> Result<Option<AuthResponse>, G
                 .encode_utf16()
                 .collect::<Vec<_>>();
             units.extend_from_slice(name.as_units());
-            let error = gateway_schema::source_request::error::SourceRequestError::new(
+            let error = gateway_local_refusal::source_error::SourceRequestError::new(
                 400,
                 JsString16::from_units(units),
                 "invalid_request_error",

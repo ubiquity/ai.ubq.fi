@@ -1,6 +1,6 @@
 //! Catalog wire responses preserve the source document and error envelope.
 use gateway_core::source_json::SourceJson;
-use gateway_schema::source_request::error::SourceRequestError;
+use gateway_local_refusal::source_error::SourceRequestError;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq)]

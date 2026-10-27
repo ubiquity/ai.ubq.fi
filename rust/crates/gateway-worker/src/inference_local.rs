@@ -10,13 +10,10 @@ use crate::{
 use futures_util::{Stream, task::AtomicWaker};
 use gateway_compaction::types::{CompactionOutcome, ResponseOptions};
 use gateway_core::lifecycle::{BodyOutcome, ReaderTermination, TransportObservation};
+use gateway_local_refusal::routing_error::RoutingError;
 use gateway_routing_runtime::{
-    local_work::{
-        LocalAdmissionInput, LocalRequestMetadata, LocalWorkHandle,
-        completion::response::LocalWireKind,
-    },
-    session::RoutingSession,
-    types::RoutingError,
+    local_work::LocalAdmissionInput, local_work::LocalRequestMetadata, local_work::LocalWorkHandle,
+    local_work::completion::response::LocalWireKind, session::RoutingSession,
 };
 use gateway_schema::source_request::SourceRequestDocument;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
@@ -122,7 +119,7 @@ async fn start_inner(
     let built = crate::inference_currentness::run_local(&local, host.cancellation.clone(), async {
         let stream = document
             .stream()
-            .map_err(gateway_routing_runtime::types::RoutingError::from)?;
+            .map_err(gateway_local_refusal::routing_error::RoutingError::from)?;
         capture
             .begin_local(local.original_context(), document.original_source(), stream)
             .await;

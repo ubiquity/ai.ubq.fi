@@ -51,7 +51,7 @@ fn build_runtime_config(
     model: Option<&str>,
     effort: Option<&str>,
     now: i64,
-) -> Result<Value, gateway_schema::source_request::error::SourceRequestError> {
+) -> Result<Value, gateway_local_refusal::source_error::SourceRequestError> {
     build_runtime_config_source(
         snapshot,
         model.map(Into::into).as_ref(),

@@ -7,6 +7,7 @@ pub struct SourceRequestError {
     pub status: u16,
     body: SourceJson,
     diagnostic: Box<GatewayError>,
+    local_aggregate_context_overflow: bool,
 }
 impl SourceRequestError {
     pub fn new(
@@ -41,11 +42,27 @@ impl SourceRequestError {
         .expect("Source error fields are valid JSON");
         Self {
             status,
+            local_aggregate_context_overflow: false,
             body,
             diagnostic: Box::new(
                 GatewayError::new(status, "Invalid source request.", code).with_type(error_type),
             ),
         }
+    }
+    /// Internal data classification only; no serialized field can select this kind.
+    pub fn aggregate_context_overflow(message: impl Into<JsString16>) -> Self {
+        let mut error = Self::new(
+            400,
+            message,
+            "invalid_request_error",
+            Some("context_length_exceeded"),
+            Some(Some(JsString16::from_utf8("input"))),
+        );
+        error.local_aggregate_context_overflow = true;
+        error
+    }
+    pub fn is_local_aggregate_context_overflow(&self) -> bool {
+        self.local_aggregate_context_overflow
     }
     pub fn invalid(message: impl Into<JsString16>, param: Option<JsString16>) -> Self {
         Self::new(
@@ -65,6 +82,7 @@ impl SourceRequestError {
             .expect("Scalar error fields are valid JSON");
         Self {
             status: error.status,
+            local_aggregate_context_overflow: false,
             body,
             diagnostic: Box::new(error),
         }
@@ -75,14 +93,14 @@ impl SourceRequestError {
     pub fn diagnostic(&self) -> &GatewayError {
         &self.diagnostic
     }
-    pub(crate) fn scalar(message: &str, param: Option<&str>) -> Self {
+    pub fn scalar(message: &str, param: Option<&str>) -> Self {
         Self::invalid(
             JsString16::from_utf8(message),
             param.map(JsString16::from_utf8),
         )
     }
     /// Only the old scalar API calls this after supplying an actual serde Value.
-    pub(crate) fn into_scalar(self) -> GatewayError {
+    pub fn into_scalar(self) -> GatewayError {
         #[derive(serde::Deserialize)]
         struct Body {
             error: Fields,

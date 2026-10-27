@@ -322,7 +322,7 @@ impl Host {
         attempt: &gateway_routing_runtime::types::PreparedAttempt,
     ) -> Result<
         crate::transport::outbound::ConstructedRequest,
-        gateway_routing_runtime::types::RoutingError,
+        gateway_local_refusal::routing_error::RoutingError,
     > {
         if attempt.original_request_id != self.original.request_id.0 {
             return Err(GatewayError::new(

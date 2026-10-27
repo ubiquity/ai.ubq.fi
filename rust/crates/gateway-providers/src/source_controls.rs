@@ -106,7 +106,7 @@ pub(crate) fn ordinary(
         let view = document.for_surface(gateway_schema::request::RequestSurface::ChatCompletions);
         let messages = s::get(raw, "messages");
         let messages = json::array(&messages).ok_or_else(|| {
-            gateway_schema::source_request::error::SourceRequestError::new(
+            gateway_local_refusal::source_error::SourceRequestError::new(
                 400,
                 "messages must be an array",
                 "invalid_request_error",
@@ -116,7 +116,7 @@ pub(crate) fn ordinary(
         })?;
         if messages.is_empty() {
             return Err(
-                gateway_schema::source_request::error::SourceRequestError::new(
+                gateway_local_refusal::source_error::SourceRequestError::new(
                     400,
                     "messages must be a non-empty array",
                     "invalid_request_error",

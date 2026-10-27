@@ -146,8 +146,8 @@ impl LocalLifecycle {
 }
 
 pub(crate) fn response_error(
-    error: &gateway_routing_runtime::types::RoutingError,
-) -> Result<worker::Response, gateway_routing_runtime::types::RoutingError> {
+    error: &gateway_local_refusal::routing_error::RoutingError,
+) -> Result<worker::Response, gateway_local_refusal::routing_error::RoutingError> {
     let mut response = if let Some(body) = &error.source_body {
         let mut wire = worker::Response::from_bytes(body.as_bytes().to_vec())
             .map_err(|_| wrapper_error())?
@@ -156,10 +156,10 @@ pub(crate) fn response_error(
             .set(
                 "content-type",
                 match body {
-                    gateway_routing_runtime::types::SourceRefusalBody::Json(_) => {
+                    gateway_local_refusal::routing_error::SourceRefusalBody::Json(_) => {
                         "application/json"
                     }
-                    gateway_routing_runtime::types::SourceRefusalBody::InternalServerError => {
+                    gateway_local_refusal::routing_error::SourceRefusalBody::InternalServerError => {
                         "text/plain; charset=utf-8"
                     }
                 },
@@ -182,12 +182,14 @@ pub(crate) fn response_error(
     }
     Ok(response)
 }
-pub(super) fn wrapper_error() -> gateway_routing_runtime::types::RoutingError {
-    gateway_routing_runtime::types::RoutingError {
+pub(super) fn wrapper_error() -> gateway_local_refusal::routing_error::RoutingError {
+    gateway_local_refusal::routing_error::RoutingError {
         error: Box::new(
             GatewayError::new(500, "Internal Server Error", None).with_type("server_error"),
         ),
-        source_body: Some(gateway_routing_runtime::types::SourceRefusalBody::InternalServerError),
+        source_body: Some(
+            gateway_local_refusal::routing_error::SourceRefusalBody::InternalServerError,
+        ),
         headers: Default::default(),
     }
 }

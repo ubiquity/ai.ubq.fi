@@ -1,12 +1,8 @@
 use crate::{
-    journal::{self, AttemptRecord, Journal, Phase, unavailable},
-    policy::RouteHop,
-    session::RoutingSession,
-    settlement,
-    types::{
-        ClaudeSelection, CodexRecovery, CredentialFence, PreparedAttempt, PublishedCredential,
-        RoutingError, RoutingHost, RoutingResult, SourceRefusalBody,
-    },
+    journal, journal::AttemptRecord, journal::Journal, journal::Phase, journal::unavailable,
+    policy::RouteHop, session::RoutingSession, settlement, types::ClaudeSelection,
+    types::CodexRecovery, types::CredentialFence, types::PreparedAttempt,
+    types::PublishedCredential, types::RoutingHost, types::RoutingResult,
 };
 use gateway_authority::paid_types::{
     PaidAdmission, PaidAuthorization, PaidRequest, PaidReservation,
@@ -18,8 +14,9 @@ use gateway_core::provider::UpstreamProvider::{ChatgptCodex, ClaudeCode};
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::query::QueryStore;
 use gateway_core::{identity::PaidAttemptId, model::ModelId};
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
 use gateway_providers::types::ClientSurface;
-use gateway_schema::source_request::error::SourceRequestError;
 
 type SelectedHop = (
     UpstreamProvider,
@@ -159,25 +156,25 @@ impl<
                         headers,
                         body,
                     } => {
-                        return Err(RoutingError {
-                            error: Box::new(GatewayError::new(
+                        return Err(RoutingError::new(
+                            Box::new(GatewayError::new(
                                 status,
                                 "Claude subscription request was refused.",
                                 Some("claude_code_refused"),
                             )),
                             headers,
-                            source_body: Some(SourceRefusalBody::Json(body)),
-                        });
+                            Some(SourceRefusalBody::Json(body)),
+                        ));
                     }
                     ClaudeSelection::InternalServerError => {
-                        return Err(RoutingError {
-                            error: Box::new(GatewayError::new(500, "Internal Server Error", None)),
-                            headers: gateway_providers::types::Headers::from([(
+                        return Err(RoutingError::new(
+                            Box::new(GatewayError::new(500, "Internal Server Error", None)),
+                            gateway_providers::types::Headers::from([(
                                 "Content-Type".into(),
                                 "text/plain; charset=utf-8".into(),
                             )]),
-                            source_body: Some(SourceRefusalBody::InternalServerError),
-                        });
+                            Some(SourceRefusalBody::InternalServerError),
+                        ));
                     }
                     ClaudeSelection::Unavailable => {
                         self.change(|j| {

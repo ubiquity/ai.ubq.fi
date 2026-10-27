@@ -200,8 +200,8 @@ pub fn unsupported_model(
 }
 pub(crate) fn model_unavailable_error(
     model: &ModelId,
-) -> gateway_schema::source_request::error::SourceRequestError {
-    gateway_schema::source_request::error::SourceRequestError::new(
+) -> gateway_local_refusal::source_error::SourceRequestError {
+    gateway_local_refusal::source_error::SourceRequestError::new(
         404,
         source_message(
             "The model '",

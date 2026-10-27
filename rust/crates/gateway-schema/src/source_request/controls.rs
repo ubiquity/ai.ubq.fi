@@ -1,8 +1,6 @@
 //! Request controls share the same source string view as content validation.
-use super::{
-    error::SourceRequestError,
-    value::{Value, keyed_error, unknown_key},
-};
+use super::{value::Value, value::keyed_error, value::unknown_key};
+use gateway_local_refusal::source_error::SourceRequestError;
 fn invalid(message: impl AsRef<str>, param: Option<&str>) -> SourceRequestError {
     SourceRequestError::scalar(message.as_ref(), param)
 }

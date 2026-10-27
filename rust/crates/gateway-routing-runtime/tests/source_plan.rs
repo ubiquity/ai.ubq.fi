@@ -4,11 +4,9 @@ use gateway_core::{
     js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
 use gateway_providers::types::ClientSurface;
-use gateway_routing_runtime::{
-    policy::{self, RouteHop},
-    types::{RoutingError, RoutingInput, SourceRefusalBody},
-};
+use gateway_routing_runtime::{policy, policy::RouteHop, types::RoutingInput};
 use source_input::{NOW, input};
 fn fixture_json<T: serde::Serialize + ?Sized>(value: &T) -> SourceJson {
     SourceJson::from_serializable(value).unwrap()

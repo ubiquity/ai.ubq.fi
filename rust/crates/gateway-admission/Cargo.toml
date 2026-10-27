@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-local-refusal.workspace = true
 gateway-core.workspace = true
 
 [dev-dependencies]

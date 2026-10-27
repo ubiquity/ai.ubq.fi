@@ -7,7 +7,8 @@ use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
     source_json::SourceJson, source_serialization as source,
 };
-use gateway_schema::source_request::{error::SourceRequestError, value::Value};
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_schema::source_request::value::Value;
 use image::{ImagePlan, ParsedImageRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as ScalarValue;

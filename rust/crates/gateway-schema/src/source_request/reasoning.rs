@@ -1,8 +1,9 @@
 //! Open-string reasoning syntax over original UTF16 values, independent of catalogs.
-use super::{error::SourceRequestError, trim};
+use super::trim;
 use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 pub fn parse_effort(
     value: Option<&SourceJson>,
     field: &str,
@@ -45,7 +46,7 @@ pub fn parse_reasoning(
         })? {
             Some(effort) => {
                 entries[index].1 =
-                    source::quoted(&effort).map_err(SourceRequestError::from_scalar)?
+                    source::quoted(&effort).map_err(SourceRequestError::from_gateway)?
             }
             None => {
                 entries.remove(index);
@@ -72,6 +73,6 @@ pub fn parse_reasoning(
     } else {
         source::object_keys(entries)
             .map(Some)
-            .map_err(SourceRequestError::from_scalar)
+            .map_err(SourceRequestError::from_gateway)
     }
 }

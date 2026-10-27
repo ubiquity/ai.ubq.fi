@@ -9,10 +9,10 @@ use futures_util::{
     task::AtomicWaker,
 };
 use gateway_core::error::GatewayError;
+use gateway_local_refusal::routing_error::RoutingError;
 use gateway_routing_runtime::{
-    currentness::{ObservedRoutingLease, RoutingLeaseState},
+    currentness::ObservedRoutingLease, currentness::RoutingLeaseState,
     local_work::KERNEL_RENEWAL_INTERVAL_MS,
-    types::RoutingError,
 };
 use std::{
     cell::{Cell, RefCell},

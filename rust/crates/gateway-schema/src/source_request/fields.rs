@@ -1,14 +1,11 @@
 //! Envelope and finite controls are separate source phases, never transcript scalarization.
-use super::{
-    error::SourceRequestError,
-    member,
-    value::{Value, keyed_error, unknown_key},
-};
+use super::{member, value::Value, value::keyed_error, value::unknown_key};
 use crate::{
     allowlists::*,
     request::{RequestExtensions, RequestSurface},
 };
 use gateway_core::{source_json::SourceJson, source_serialization as source};
+use gateway_local_refusal::source_error::SourceRequestError;
 fn invalid(message: impl AsRef<str>, param: Option<&str>) -> SourceRequestError {
     SourceRequestError::scalar(message.as_ref(), param)
 }

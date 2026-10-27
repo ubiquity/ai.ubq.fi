@@ -918,6 +918,7 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-local-refusal",
  "gateway-profile-values",
  "gateway-schema",
  "serde",
@@ -944,6 +945,7 @@ name = "gateway-admission"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-local-refusal",
  "gateway-routing-runtime",
  "serde_json",
 ]
@@ -1009,6 +1011,7 @@ dependencies = [
  "gateway-auth",
  "gateway-core",
  "gateway-decision-protocol",
+ "gateway-local-refusal",
  "gateway-providers",
  "gateway-schema",
  "serde",
@@ -1023,6 +1026,7 @@ dependencies = [
  "gateway-authority",
  "gateway-catalog-provider",
  "gateway-core",
+ "gateway-local-refusal",
  "gateway-native",
  "gateway-providers",
  "gateway-publication-policy",
@@ -1115,6 +1119,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-core",
+ "gateway-local-refusal",
  "gateway-providers",
  "gateway-schema",
  "serde",
@@ -1158,6 +1163,14 @@ dependencies = [
  "ryu-js",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-local-refusal"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "serde",
 ]
 
 [[package]]
@@ -1294,6 +1307,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
+ "gateway-local-refusal",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -1382,6 +1396,7 @@ dependencies = [
  "gateway-core",
  "gateway-decision-protocol",
  "gateway-extras-contract",
+ "gateway-local-refusal",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -1410,6 +1425,7 @@ dependencies = [
  "flate2",
  "gateway-core",
  "gateway-decision-protocol",
+ "gateway-local-refusal",
  "indexmap 2.14.2",
  "ryu-js",
  "serde",
@@ -1439,6 +1455,7 @@ dependencies = [
  "gateway-extras-contract",
  "gateway-extras-runtime",
  "gateway-live-runtime",
+ "gateway-local-refusal",
  "gateway-migration",
  "gateway-observability",
  "gateway-observability-test-support",

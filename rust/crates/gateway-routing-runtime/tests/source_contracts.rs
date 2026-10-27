@@ -8,15 +8,13 @@ use gateway_core::{
     source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_local_refusal::routing_error::SourceRefusalBody;
 use gateway_providers::policy::HopFailure;
 use gateway_routing_runtime::{
-    classify, policy,
-    session::RoutingSession,
-    settlement::recover_pending,
-    types::{
-        AttemptFailure, AttemptUsage, PreparedAttempt, PreparedWireRequest, RefusalDecision,
-        RoutingHost, RoutingInput, RoutingResult, SourceRefusalBody, TransportState,
-    },
+    classify, policy, session::RoutingSession, settlement::recover_pending, types::AttemptFailure,
+    types::AttemptUsage, types::PreparedAttempt, types::PreparedWireRequest,
+    types::RefusalDecision, types::RoutingHost, types::RoutingInput, types::RoutingResult,
+    types::TransportState,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use serde_json::{Value, json};

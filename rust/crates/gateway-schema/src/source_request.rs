@@ -9,17 +9,16 @@ pub(crate) mod cache_metadata;
 mod chat_engine;
 mod content_engine;
 mod controls;
-pub mod error;
 pub mod fields;
 pub mod normalized;
 pub mod ordinary;
 pub mod reasoning;
 pub mod value;
 use self::{
-    error::SourceRequestError, fields::validate_request_fields, ordinary::OrdinarySourceRequest,
-    reasoning::parse_reasoning,
+    fields::validate_request_fields, ordinary::OrdinarySourceRequest, reasoning::parse_reasoning,
 };
 use gateway_core::{js_string::JsString16, source_json::SourceJson};
+use gateway_local_refusal::source_error::SourceRequestError;
 
 pub const MAX_ACCEPTED_JSON_BODY_BYTES: usize = 32 * 1024 * 1024;
 
@@ -167,7 +166,7 @@ pub fn resolve_model(
 ) -> Result<JsString16, SourceRequestError> {
     match model_request(value)? {
         SourceModelRequest::Named(value) => Ok(value),
-        SourceModelRequest::Default => default.map(JsString16::from_utf8).ok_or_else(|| SourceRequestError::from_scalar(
+        SourceModelRequest::Default => default.map(JsString16::from_utf8).ok_or_else(|| SourceRequestError::from_gateway(
             GatewayError::new(503, "Default model is unavailable: no configured default model or Codex model snapshot.", Some("server_error")))),
     }
 }

@@ -24,16 +24,14 @@ use gateway_core::{
     identity::{ApiKeyId, PrincipalId, RequestContext, RequestId},
     provider::UpstreamProvider,
 };
+use gateway_local_refusal::routing_error::RoutingError;
 use gateway_observability::replay_trace::{AttemptTrace, TraceTerminal};
 use gateway_providers::types::Headers;
 use gateway_routing_runtime::{
-    local_work::LocalRequestMetadata,
-    session::RoutingSession,
-    types::{
-        AttemptFailure, FailureOrigin, PreparedAttempt, PreparedWireRequest, RefusalDecision,
-        ResponseDecision, ResponseHead, RoutingError, RoutingInput, TransportState,
-        WorkspaceContinuation,
-    },
+    local_work::LocalRequestMetadata, session::RoutingSession, types::AttemptFailure,
+    types::FailureOrigin, types::PreparedAttempt, types::PreparedWireRequest,
+    types::RefusalDecision, types::ResponseDecision, types::ResponseHead, types::RoutingInput,
+    types::TransportState, types::WorkspaceContinuation,
 };
 use gateway_schema::{
     request::RequestSurface,

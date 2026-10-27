@@ -165,9 +165,7 @@ fn unavailable(message: &str) -> GatewayError {
 // Only AdminCatalogOperation::Catalog reaches this helper. Its exact two errors
 // are admin.rs213/216 map_err(lift), lift73 = SourceRequestError::from_gateway.
 // Clone therefore preserves the actual original error body/status, not a fallback diagnostic.
-fn catalogue_error(
-    error: gateway_schema::source_request::error::SourceRequestError,
-) -> GatewayError {
+fn catalogue_error(error: gateway_local_refusal::source_error::SourceRequestError) -> GatewayError {
     error.diagnostic().clone()
 }
 
@@ -181,9 +179,8 @@ mod catalogue_tests {
         let original = GatewayError::new(409, "original catalog error", Some("catalog_fixture"))
             .with_type("server_error")
             .with_param(None);
-        let source = gateway_schema::source_request::error::SourceRequestError::from_gateway(
-            original.clone(),
-        );
+        let source =
+            gateway_local_refusal::source_error::SourceRequestError::from_gateway(original.clone());
         let expected = source.body().as_bytes().to_vec();
         let actual = super::catalogue_error(source);
         assert_eq!(actual, original);

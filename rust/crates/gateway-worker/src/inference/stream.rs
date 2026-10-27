@@ -14,12 +14,13 @@ use crate::{
 };
 use gateway_admission::handoff::{Pending, enqueue};
 use gateway_core::{error::GatewayError, lifecycle::SemanticTerminal, provider::UpstreamProvider};
+use gateway_local_refusal::routing_error::RoutingError;
 use gateway_providers::response::decode_response;
 use gateway_providers::types::Headers;
 use gateway_providers::types::{DecodePlan, ProviderEvent};
 use gateway_routing_runtime::types::PreparedWireRequest;
-use gateway_routing_runtime::types::{
-    AttemptFailure, FailureOrigin, RefusalDecision, RoutingError, TransportState,
+use gateway_routing_runtime::{
+    types::AttemptFailure, types::FailureOrigin, types::RefusalDecision, types::TransportState,
 };
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use gateway_worker_stream::relay::PrepareDisposition;
@@ -37,9 +38,9 @@ pub(super) struct PendingLifetime {
     pub(super) deadline: Option<Deadline>,
 }
 pub(super) fn cleanup_error(
-    original: gateway_routing_runtime::types::RoutingError,
-    cleanup: Result<(), gateway_routing_runtime::types::RoutingError>,
-) -> gateway_routing_runtime::types::RoutingError {
+    original: gateway_local_refusal::routing_error::RoutingError,
+    cleanup: Result<(), gateway_local_refusal::routing_error::RoutingError>,
+) -> gateway_local_refusal::routing_error::RoutingError {
     match cleanup {
         Ok(()) => original,
         Err(error) => error,
@@ -48,7 +49,7 @@ pub(super) fn cleanup_error(
 impl PendingLifetime {
     pub(super) async fn cleanup(
         self,
-        error: gateway_routing_runtime::types::RoutingError,
+        error: gateway_local_refusal::routing_error::RoutingError,
         capture: Rc<crate::inference_capture::Capture>,
         cancellation: Rc<Cancellation>,
     ) -> ResponseResult {

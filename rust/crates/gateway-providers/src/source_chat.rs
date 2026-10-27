@@ -8,6 +8,7 @@ use crate::{
 use gateway_core::{
     js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as json,
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 
 pub(crate) struct Projection {
     pub body: SourceJson,
@@ -15,7 +16,7 @@ pub(crate) struct Projection {
     pub elisions: Vec<Elision>,
     pub warnings: Vec<String>,
 }
-fn error(message: &str, param: &str) -> gateway_schema::source_request::error::SourceRequestError {
+fn error(message: &str, param: &str) -> SourceRequestError {
     s::invalid(JsString16::from_utf8(message), param)
 }
 fn bytes(text: &JsString16) -> usize {

@@ -13,18 +13,16 @@ use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId, provider::UpstreamProvider,
     source_json::SourceJson, source_serialization as json,
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema::{
-    request::RequestSurface,
-    source_request::{SourceModelRequest, SourceRequestDocument, error::SourceRequestError},
+    request::RequestSurface, source_request::SourceModelRequest,
+    source_request::SourceRequestDocument,
 };
-fn lift(error: GatewayError) -> SourceRequestError {
-    SourceRequestError::from_gateway(error)
-}
 fn invalid(message: &str, field: &str) -> SourceRequestError {
     s::invalid(JsString16::from_utf8(message), field)
 }
 fn unavailable(message: &str, code: &str) -> SourceRequestError {
-    lift(GatewayError::unavailable(message, code))
+    SourceRequestError::from_gateway(GatewayError::unavailable(message, code))
 }
 pub fn prepare_source_request(
     provider: UpstreamProvider,

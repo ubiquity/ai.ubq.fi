@@ -3,17 +3,14 @@ use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema::{
-    request::{RequestExtensions, RequestSurface},
-    source_request::{
-        SourceRequestDocument,
-        error::SourceRequestError,
-        fields::validate_prompt_cache_controls,
-        normalized::{
-            normalize_chat_message, normalize_function_output, normalize_response_content,
-            normalize_response_message,
-        },
-    },
+    request::RequestExtensions, request::RequestSurface, source_request::SourceRequestDocument,
+    source_request::fields::validate_prompt_cache_controls,
+    source_request::normalized::normalize_chat_message,
+    source_request::normalized::normalize_function_output,
+    source_request::normalized::normalize_response_content,
+    source_request::normalized::normalize_response_message,
 };
 use serde::{Deserialize, Serialize};
 type TestResult = Result<(), Box<dyn std::error::Error>>;

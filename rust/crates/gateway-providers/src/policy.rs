@@ -406,7 +406,7 @@ pub fn validate_flash_effort(raw: &Value) -> Result<(), gateway_core::error::Gat
 }
 pub fn validate_source_flash_effort(
     raw: &SourceJson,
-) -> Result<(), gateway_schema::source_request::error::SourceRequestError> {
+) -> Result<(), gateway_local_refusal::source_error::SourceRequestError> {
     let effort = source::string(&s::path(raw, &["reasoning", "effort"]))
         .filter(|value| !s::trim(value).as_units().is_empty())
         .or_else(|| {
@@ -423,7 +423,7 @@ pub fn validate_source_flash_effort(
         })
     {
         return Err(
-            gateway_schema::source_request::error::SourceRequestError::new(
+            gateway_local_refusal::source_error::SourceRequestError::new(
                 400,
                 s::concat(&[
                     &JsString16::from_utf8(

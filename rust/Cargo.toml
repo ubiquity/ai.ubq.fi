@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/gateway-local-refusal",
   "crates/gateway-decision-runtime",
   "crates/gateway-extras-contract",
   "crates/gateway-decision-protocol",
@@ -56,6 +57,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-local-refusal = { path = "crates/gateway-local-refusal" }
 gateway-decision-runtime = { path = "crates/gateway-decision-runtime" }
 gateway-extras-contract = { path = "crates/gateway-extras-contract" }
 gateway-decision-protocol = { path = "crates/gateway-decision-protocol" }

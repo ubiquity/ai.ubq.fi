@@ -11,7 +11,7 @@ pub fn normalize_breakpoint(
         .map(gateway_core::source_json::SourceJson::from_serializable)
         .transpose()?;
     crate::source_request::normalized::normalize_breakpoint(value.as_ref(), param)
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)?
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
         .map(|value| value.deserialize())
         .transpose()
 }
@@ -20,7 +20,7 @@ pub fn validate_prompt_cache_controls(body: &Value) -> Result<(), GatewayError> 
     crate::source_request::fields::validate_prompt_cache_controls(
         &gateway_core::source_json::SourceJson::from_serializable(body)?,
     )
-    .map_err(crate::source_request::error::SourceRequestError::into_scalar)
+    .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 
 fn scalar_source(value: &Value) -> Option<gateway_core::source_json::SourceJson> {
@@ -95,5 +95,5 @@ pub fn validate_known_unsupported(
         &input,
         input_key,
     )
-    .map_err(crate::source_request::error::SourceRequestError::into_scalar)
+    .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }

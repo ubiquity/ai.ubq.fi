@@ -8,6 +8,7 @@ use gateway_core::{
     js_string::JsString16, model::ModelId, provider::UpstreamProvider, source_json::SourceJson,
     source_serialization as source,
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_providers::{
     source_request::prepare_source_request,
     types::{
@@ -15,7 +16,6 @@ use gateway_providers::{
         PreparedClaudeOrdinary,
     },
 };
-use gateway_schema::source_request::error::SourceRequestError;
 /// A derived per-hop object, never a mutation of the authoritative original request.
 pub(crate) fn set(
     raw: &mut SourceJson,

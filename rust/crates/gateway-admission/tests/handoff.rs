@@ -5,7 +5,7 @@ use gateway_admission::{
     AdmissionWait, Permit, WaitFuture,
 };
 use gateway_core::{error::GatewayError, lifecycle::TransportObservation, source_json::SourceJson};
-use gateway_routing_runtime::types::{RoutingError, SourceRefusalBody};
+use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},

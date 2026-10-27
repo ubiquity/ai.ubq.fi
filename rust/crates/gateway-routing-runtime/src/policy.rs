@@ -5,12 +5,12 @@ use gateway_core::model::ModelId;
 use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
 use gateway_core::source_json::SourceJson;
 use gateway_core::source_serialization as source;
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_providers::policy::{self, DeepseekHop, PaidRoutingInput, PaidRoutingPlan};
 use gateway_providers::types::ClientSurface;
 use gateway_schema::{
-    aliases,
-    request::{RequestExtensions, RequestSurface},
-    source_request::{SourceModelRequest, SourceRequestDocument, error::SourceRequestError},
+    aliases, request::RequestExtensions, request::RequestSurface,
+    source_request::SourceModelRequest, source_request::SourceRequestDocument,
 };
 use serde::{Deserialize, Serialize};
 

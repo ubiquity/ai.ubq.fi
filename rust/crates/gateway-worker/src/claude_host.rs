@@ -223,7 +223,7 @@ impl Binding {
         body: &gateway_providers::types::PreparedClaudeBody,
     ) -> Result<
         crate::transport::outbound::ConstructedRequest,
-        gateway_routing_runtime::types::RoutingError,
+        gateway_local_refusal::routing_error::RoutingError,
     > {
         let (_request, selected) = self.selected(fence, model)?;
         platform::physical_request(selected.binding(), body)

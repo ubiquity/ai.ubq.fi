@@ -3,7 +3,7 @@ use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as json,
 };
-use gateway_schema::source_request::error::SourceRequestError;
+use gateway_local_refusal::source_error::SourceRequestError;
 use serde::Serialize;
 
 pub(crate) type Result<T> = std::result::Result<T, SourceRequestError>;

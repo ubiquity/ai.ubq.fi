@@ -318,7 +318,7 @@ pub(super) fn keyed_error(
     prefix: &str,
     key: &JsString16,
     param_prefix: Option<&str>,
-) -> super::error::SourceRequestError {
+) -> gateway_local_refusal::source_error::SourceRequestError {
     let mut message = prefix.encode_utf16().collect::<Vec<_>>();
     message.extend_from_slice(key.as_units());
     let param = param_prefix.map(|prefix| {
@@ -326,5 +326,8 @@ pub(super) fn keyed_error(
         units.extend_from_slice(key.as_units());
         JsString16::from_units(units)
     });
-    super::error::SourceRequestError::invalid(JsString16::from_units(message), param)
+    gateway_local_refusal::source_error::SourceRequestError::invalid(
+        JsString16::from_units(message),
+        param,
+    )
 }

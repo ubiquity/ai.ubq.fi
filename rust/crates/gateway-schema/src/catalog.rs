@@ -1,11 +1,12 @@
 //! Catalog assembly consumes observations; network, authentication and refresh are adapter-owned.
 use crate::metadata::{MetadataHint, MetadataSources, ResolvedMetadata, resolve_metadata};
 use crate::selection::{ModelWhitelist, ProviderSelection};
+use crate::snapshot::ModelSnapshot;
 use crate::{aliases::FLASH_ORDER, model_control as c, reasoning::ModelReasoning};
-use crate::{snapshot::ModelSnapshot, source_request::error::SourceRequestError};
 use gateway_core::{
     js_string::JsString16, model::ModelId, source_json::SourceJson, source_serialization as source,
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

@@ -105,14 +105,14 @@ impl ModelReasoning {
 pub fn parse_effort(value: Option<&Value>, field: &str) -> Result<Option<String>, GatewayError> {
     let value = crate::source_request::scalar_value(value)?;
     crate::source_request::reasoning::parse_effort(value.as_ref(), field)
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)?
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
         .map(|value| value.try_utf8())
         .transpose()
 }
 pub fn parse_reasoning(value: Option<&Value>) -> Result<Option<Map<String, Value>>, GatewayError> {
     let value = crate::source_request::scalar_value(value)?;
     crate::source_request::reasoning::parse_reasoning(value.as_ref())
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)?
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
         .map(|value| value.deserialize())
         .transpose()
 }
@@ -134,7 +134,7 @@ pub fn resolve_reasoning(
     value: Option<&SourceJson>,
     model: &ModelReasoning,
     default_effort: &JsString16,
-) -> Result<ResolvedReasoning, crate::source_request::error::SourceRequestError> {
+) -> Result<ResolvedReasoning, gateway_local_refusal::source_error::SourceRequestError> {
     let parsed = crate::source_request::reasoning::parse_reasoning(value)?;
     let label = parsed
         .as_ref()

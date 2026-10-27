@@ -2,13 +2,11 @@
 use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema::{
-    prompt_cache,
-    source_request::{
-        cache_capability::validate_known_unsupported_prompt_cache,
-        error::SourceRequestError,
-        normalized::{normalize_chat_messages, normalize_responses_input},
-    },
+    prompt_cache, source_request::cache_capability::validate_known_unsupported_prompt_cache,
+    source_request::normalized::normalize_chat_messages,
+    source_request::normalized::normalize_responses_input,
 };
 use serde_json::{Value, json};
 type TestResult = Result<(), Box<dyn std::error::Error>>;

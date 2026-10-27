@@ -35,7 +35,7 @@ pub(crate) fn oversized(
     path: &str,
     original_bytes: usize,
     call_id: Option<&JsString16>,
-) -> gateway_schema::source_request::error::SourceRequestError {
+) -> gateway_local_refusal::source_error::SourceRequestError {
     let call_note = call_id
         .map(|id| {
             crate::source::concat(&[
@@ -52,7 +52,7 @@ pub(crate) fn oversized(
             " carries {original_bytes} bytes; this route forwards at most {FORWARD_LIMIT} bytes per message under {FORWARD_VERSION}, and the request set truncation 'disabled', so the gateway will not reduce it. Reduce the payload or send truncation 'auto' to allow the declared reduction."
         )),
     ]);
-    gateway_schema::source_request::error::SourceRequestError::new(
+    gateway_local_refusal::source_error::SourceRequestError::new(
         400,
         message,
         "invalid_request_error",

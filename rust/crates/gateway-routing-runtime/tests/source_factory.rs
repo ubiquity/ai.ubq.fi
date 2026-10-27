@@ -8,10 +8,10 @@ use gateway_core::{
     source_serialization as source,
     tuple_key::{ScalarKeyPart, TupleKey},
 };
+use gateway_local_refusal::routing_error::SourceRefusalBody;
 use gateway_routing_runtime::{
-    local_work::{LocalAdmissionInput, LocalProviderAdmission, LocalRequestMetadata},
-    session::RoutingSession,
-    types::{RoutingInput, SourceRefusalBody},
+    local_work::LocalAdmissionInput, local_work::LocalProviderAdmission,
+    local_work::LocalRequestMetadata, session::RoutingSession, types::RoutingInput,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_schema::{request::RequestSurface, source_request::SourceRequestDocument};

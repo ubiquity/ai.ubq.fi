@@ -227,7 +227,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             if let Ok(message) = message.try_utf8() {
                 return Err(invalid(&message));
             }
-            let error = gateway_schema::source_request::error::SourceRequestError::new(
+            let error = gateway_local_refusal::source_error::SourceRequestError::new(
                 400,
                 message,
                 "invalid_request_error",
