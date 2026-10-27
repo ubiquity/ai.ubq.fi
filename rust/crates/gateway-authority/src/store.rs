@@ -614,3 +614,23 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         gateway_authority_actor_currentness::app::ActorService::new(&self.store, host, config)
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn source_manual_resets<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+    ) -> gateway_authority_manual_reset::SourceManualResetService<'a, S, I, H> {
+        gateway_authority_manual_reset::SourceManualResetService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            host,
+            config,
+        )
+    }
+}

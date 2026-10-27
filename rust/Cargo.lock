@@ -1228,6 +1228,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
+ "gateway-auth-credentials",
  "gateway-auth-native-wire",
  "gateway-auth-passport-contracts",
  "gateway-authority-actor-currentness",
@@ -1243,6 +1244,7 @@ dependencies = [
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
  "gateway-authority-local-completion",
+ "gateway-authority-manual-reset",
  "gateway-authority-paid-admission",
  "gateway-authority-paid-backfill",
  "gateway-authority-paid-control-records",
@@ -1487,6 +1489,33 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-local-journal",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-authority-manual-reset"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-credentials",
+ "gateway-auth-contracts",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-passport-sessions",
+ "gateway-auth-primitives",
+ "gateway-authority-actor-currentness",
+ "gateway-authority-actor-records",
+ "gateway-authority-capacity-policy",
+ "gateway-authority-contracts",
+ "gateway-authority-keys",
+ "gateway-authority-reset-records",
+ "gateway-authority-reset-spend",
+ "gateway-authority-routing-evidence",
+ "gateway-authority-routing-policy",
+ "gateway-authority-routing-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
  "gateway-source",
  "serde",
  "serde_json",
