@@ -1115,6 +1115,7 @@ dependencies = [
  "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
+ "gateway-native-confinement",
  "gateway-native-http-framing",
  "gateway-native-import-client",
  "gateway-native-import-source",
@@ -1128,11 +1129,9 @@ dependencies = [
  "getrandom 0.4.3",
  "httparse",
  "landlock",
- "libc",
  "rusqlite",
  "rustix",
  "rustls",
- "seccompiler",
  "serde",
  "serde_json",
  "socket2",
@@ -1141,6 +1140,16 @@ dependencies = [
  "ureq",
  "url",
  "webpki-roots",
+]
+
+[[package]]
+name = "gateway-native-confinement"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "landlock",
+ "libc",
+ "seccompiler",
 ]
 
 [[package]]

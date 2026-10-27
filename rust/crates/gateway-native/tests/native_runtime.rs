@@ -136,7 +136,7 @@ fn actual_kernel_profile_refuses_unconfigured_files_sockets_network_and_exec() {
 #[test]
 #[ignore = "isolated child entered only by the kernel profile acceptance test"]
 fn confinement_child() {
-    use gateway_native::confinement::{NativeConfinement, enforce};
+    use gateway_native_confinement::confinement::{NativeConfinement, enforce};
     use std::{net::TcpStream, os::unix::net::UnixStream, process::Command};
     let input: serde_json::Value =
         serde_json::from_str(&std::env::var("UOS_NATIVE_TEST_PROFILE").unwrap()).unwrap();

@@ -14,7 +14,6 @@ pub fn require_production_artifact() -> Result<(), GatewayError> {
 pub mod access_publication;
 #[cfg(unix)]
 pub mod authority_http;
-pub mod confinement;
 #[cfg(unix)]
 #[doc(hidden)]
 pub mod connector_fd;

@@ -85,7 +85,7 @@ fn exact_reverse_fd_binding_and_all_bootstrap_faults_settle_the_receiver_process
         #[cfg(target_os = "macos")]
         let profile = crate::connector_policy::request(
             &binary,
-            &crate::confinement::NativeConfinement {
+            &gateway_native_confinement::confinement::NativeConfinement {
                 readonly_paths: Vec::new(),
                 list_directories: Vec::new(),
                 replay_directory: directory.clone(),

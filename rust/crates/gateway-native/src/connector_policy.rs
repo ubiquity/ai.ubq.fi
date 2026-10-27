@@ -1,5 +1,6 @@
 //! One prelaunch OS policy per child. This is never an advisory permission flag.
-use crate::{confinement::NativeConfinement, connector_protocol::ControlError};
+use crate::connector_protocol::ControlError;
+use gateway_native_confinement::confinement::NativeConfinement;
 use std::{net::SocketAddr, path::Path};
 fn quoted(path: &Path) -> Result<String, ControlError> {
     if !path.is_absolute() {

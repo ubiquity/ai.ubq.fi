@@ -2,7 +2,8 @@
 //! Named connector fixture runner. Test harness only; not a product role.
 mod connector_bootstrap_cases;
 mod connector_cases;
-use gateway_native::{confinement, connector_policy, connector_worker};
+use gateway_native::{connector_policy, connector_worker};
+use gateway_native_confinement::confinement;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
