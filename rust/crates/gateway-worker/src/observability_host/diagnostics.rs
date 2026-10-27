@@ -97,9 +97,8 @@ impl RequestHost {
         let Some(account) = self.diagnostic_account(reference).await? else {
             return Ok(None);
         };
-        let base = crate::host::setting(&self.platform.env, "CODEX_BASE_URL")
-            .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
-        let url = inventory_url(&base)?;
+        let base = "https://chatgpt.com/backend-api/codex";
+        let url = inventory_url(base)?;
         let headers = BTreeMap::from([
             (
                 "Authorization".into(),
@@ -208,9 +207,8 @@ impl RequestHost {
         let Some(account) = self.diagnostic_account(reference).await? else {
             return Ok(None);
         };
-        let base = crate::host::setting(&self.platform.env, "CODEX_BASE_URL")
-            .unwrap_or_else(|| "https://chatgpt.com/backend-api/codex".into());
-        let url = worker::Url::parse(&base)
+        let base = "https://chatgpt.com/backend-api/codex";
+        let url = worker::Url::parse(base)
             .and_then(|u| u.join("/backend-api/wham/usage"))
             .map_err(|_| unavailable("Codex diagnostics base URL is invalid."))?;
         let headers = BTreeMap::from([
