@@ -308,19 +308,19 @@ impl<T: SpoolValue> Reader<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn directory() -> PathBuf {
-        crate::directory(&std::env::temp_dir()).unwrap()
+    type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+    fn directory() -> Result<PathBuf, GatewayError> {
+        crate::directory(&std::env::temp_dir())
     }
     #[test]
-    fn independent_replays_keep_order_and_callback_failures() {
-        let dir = directory();
-        let mut writer = Writer::<Value>::create(&dir.join("frames")).unwrap();
+    fn independent_replays_keep_order_and_callback_failures() -> TestResult<()> {
+        let dir = directory()?;
+        let mut writer = Writer::<Value>::create(&dir.join("frames"))?;
         for n in 0..3 {
-            writer
-                .push(&serde_json::json!({"n":n,"typed":[1,2,3]}))
-                .unwrap();
+            writer.push(&serde_json::json!({"n":n,"typed":[1,2,3]}))?;
         }
-        let rows = writer.seal().unwrap();
+        let rows = writer.seal()?;
         let mut visits = vec![];
         rows.visit(&mut |row| {
             let mut nested = vec![];
@@ -331,32 +331,33 @@ mod tests {
             assert_eq!(nested, vec![Value::from(0), Value::from(1), Value::from(2)]);
             visits.push(row["n"].clone());
             Ok(())
-        })
-        .unwrap();
+        })?;
         assert_eq!(visits.len(), 3);
         let result = rows.visit(&mut |_| Err(invalid("callback refusal")));
         assert!(result.is_err());
-        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
     }
     #[test]
-    fn replay_rejects_truncation_replacement_and_changed_payload() {
+    fn replay_rejects_truncation_replacement_and_changed_payload() -> TestResult<()> {
         use std::io::{Seek, SeekFrom};
-        let dir = directory();
+        let dir = directory()?;
         let path = dir.join("frames");
-        let mut writer = Writer::<Value>::create(&path).unwrap();
-        writer.push(&serde_json::json!({"a":1})).unwrap();
-        let rows = writer.seal().unwrap();
-        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
-        file.seek(SeekFrom::Start(5)).unwrap();
-        file.write_all(b"2").unwrap();
-        file.sync_all().unwrap();
+        let mut writer = Writer::<Value>::create(&path)?;
+        writer.push(&serde_json::json!({"a":1}))?;
+        let rows = writer.seal()?;
+        let mut file = OpenOptions::new().write(true).open(&path)?;
+        file.seek(SeekFrom::Start(5))?;
+        file.write_all(b"2")?;
+        file.sync_all()?;
         assert!(rows.visit(&mut |_| Ok(())).is_err());
-        file.set_len(2).unwrap();
+        file.set_len(2)?;
         assert!(rows.get(0).is_err());
         drop(file);
-        std::fs::rename(&path, dir.join("old")).unwrap();
-        std::fs::write(&path, b"{\"a\":1}").unwrap();
+        std::fs::rename(&path, dir.join("old"))?;
+        std::fs::write(&path, b"{\"a\":1}")?;
         assert!(rows.visit(&mut |_| Ok(())).is_err());
-        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
     }
 }

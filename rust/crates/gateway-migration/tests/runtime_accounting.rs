@@ -30,9 +30,9 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let path = directory.file("paid.sqlite3");
-    let input = paid_exposure_capture();
+    let input = paid_exposure_capture()?;
     let mut input = input;
-    let (keys, _) = fixture();
+    let (keys, _) = fixture()?;
     input.entries.extend(keys.entries.into_iter().take(2));
     let store = SqliteStore::open(&path);
     run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
@@ -63,7 +63,7 @@ fn pending_paid_exposure_and_rollup_marker_survive_restart_and_deferral_inverse(
     let result = run(export_latest(&store, 2300))?;
     let mut next = None;
     for e in &result.entries {
-        if e.key.last() == Some(&raw(json!({"type":"string","value":"pending-attempt"})))
+        if e.key.last() == Some(&raw(json!({"type":"string","value":"pending-attempt"}))?)
             && from_profile(&e.value)?
                 .to_json_lossless()
                 .ok_or("Expected lossless fixture JSON")?
@@ -104,7 +104,7 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let path = directory.file("admin.sqlite3");
-    let (input, _) = fixture();
+    let (input, _) = fixture()?;
     let store = SqliteStore::open(&path);
     run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     drop(store);
@@ -160,13 +160,13 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert()
             json!(1),
             "default-limit",
             None,
-        ),
+        )?,
         source(
             json!(["default", "kernel_policy_window_ms"]),
             json!(1000),
             "default-window",
             None,
-        ),
+        )?,
     ]);
     run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     let authority = gateway_authority::store::Authority::with_clock(
@@ -210,10 +210,11 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert()
         1
     );
     let inverse = run(export_latest(&store, 2300))?;
+    let expected_org_window = raw(json!({"type":"string","value":"org_window"}))?;
     let window = inverse
         .entries
         .iter()
-        .find(|e| e.key.get(3) == Some(&raw(json!({"type":"string","value":"org_window"}))))
+        .find(|e| e.key.get(3) == Some(&expected_org_window))
         .ok_or("Expected org window source entry")?;
     let value = from_profile(&window.value)?
         .to_json_lossless()
@@ -225,9 +226,10 @@ fn source_kernel_defaults_feed_actual_admission_and_new_org_rows_invert()
     assert_eq!(window.versionstamp, generated_window.revision);
     assert_eq!(window.expires_at_ms, generated_window.expires_at_ms);
     let mut missing_reservation = inverse.clone();
-    missing_reservation.entries.retain(|entry| {
-        entry.key.get(3) != Some(&raw(json!({"type":"string","value":"org_reservation"})))
-    });
+    let expected_org_reservation = raw(json!({"type":"string","value":"org_reservation"}))?;
+    missing_reservation
+        .entries
+        .retain(|entry| entry.key.get(3) != Some(&expected_org_reservation));
     assert!(matches!(
         prepare(&missing_reservation, &CanonicalDates),
         Err(MigrationError::SourceInventory(_))

@@ -80,6 +80,59 @@ fn receipt(p: &Progress, sealed: bool) -> StageReceipt {
         activation_authorized: false,
     }
 }
+async fn begin<S: QueryStore>(
+    store: &S,
+    header: StageHeader,
+    manifest_key: RecordKey,
+) -> Result<StageReceipt, GatewayError> {
+    if header.manifest.v != 4
+        || header.manifest.native_revision.is_none()
+        || header.records
+            != header
+                .manifest
+                .source_rows
+                .checked_mul(2)
+                .and_then(|v| v.checked_add(header.manifest.derived.len()))
+                .ok_or_else(|| invalid("Stage count overflow"))?
+        || header.digest.len() != 64
+    {
+        return Err(invalid("Private staged header is inconsistent"));
+    }
+    let page = store
+        .query(QueryRequest {
+            selector: QuerySelector::Prefix {
+                prefix: TupleKey::from_parts(&[])?.to_record_key(),
+                start: None,
+                end: None,
+            },
+            reverse: false,
+            limit: 1,
+            cursor: None,
+            now_ms: 0,
+        })
+        .await?;
+    if !page.entries.is_empty() || page.next_cursor.is_some() {
+        return Err(invalid("Staged target is not empty"));
+    }
+    let progress = Progress {
+        digest: initial(&header.manifest.capture_id),
+        header,
+        sequence: 0,
+        received: 0,
+        last_key: None,
+    };
+    transition(
+        store,
+        vec![check(progress_key(), None), check(manifest_key, None)],
+        vec![RecordMutation::Put {
+            key: progress_key(),
+            record: progress_record(&progress)?,
+        }],
+    )
+    .await?;
+    Ok(receipt(&progress, false))
+}
+
 /// Caller must be the existing trusted private host with exclusive unpublished
 /// target custody. A deserialized frame grants no public/live authority.
 pub async fn execute_staged<S: QueryStore>(
@@ -95,52 +148,7 @@ pub async fn execute_staged<S: QueryStore>(
         return Err(invalid("Target already adopted"));
     }
     if let StageRequest::Begin(header) = request {
-        if header.manifest.v != 4
-            || header.manifest.native_revision.is_none()
-            || header.records
-                != header
-                    .manifest
-                    .source_rows
-                    .checked_mul(2)
-                    .and_then(|v| v.checked_add(header.manifest.derived.len()))
-                    .ok_or_else(|| invalid("Stage count overflow"))?
-            || header.digest.len() != 64
-        {
-            return Err(invalid("Private staged header is inconsistent"));
-        }
-        let page = store
-            .query(QueryRequest {
-                selector: QuerySelector::Prefix {
-                    prefix: TupleKey::from_parts(&[])?.to_record_key(),
-                    start: None,
-                    end: None,
-                },
-                reverse: false,
-                limit: 1,
-                cursor: None,
-                now_ms: 0,
-            })
-            .await?;
-        if !page.entries.is_empty() || page.next_cursor.is_some() {
-            return Err(invalid("Staged target is not empty"));
-        }
-        let progress = Progress {
-            digest: initial(&header.manifest.capture_id),
-            header,
-            sequence: 0,
-            received: 0,
-            last_key: None,
-        };
-        transition(
-            store,
-            vec![check(progress_key(), None), check(manifest_key, None)],
-            vec![RecordMutation::Put {
-                key: progress_key(),
-                record: progress_record(&progress)?,
-            }],
-        )
-        .await?;
-        return Ok(receipt(&progress, false));
+        return begin(store, header, manifest_key).await;
     }
     let previous = store
         .read(&progress_key())

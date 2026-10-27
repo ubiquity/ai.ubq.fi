@@ -330,18 +330,20 @@ impl AuthorityStore for &Store {
 #[cfg(test)]
 mod frame_tests {
     use super::*;
+    type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
     use gateway_core::source_json::SourceJson;
     use std::io::{BufReader, Cursor};
     fn raw(bytes: &[u8], capacity: usize) -> Result<SourceJson, GatewayError> {
         read_frame(&mut BufReader::with_capacity(capacity, Cursor::new(bytes)))
     }
     #[test]
-    fn actual_multiline_native_capture_retains_all_original_source_bytes() {
+    fn actual_multiline_native_capture_retains_all_original_source_bytes() -> TestResult<()> {
         let capture = include_str!("../../gateway-migration/tests/fixtures/native-source.json");
         let document = format!("{{\"operation\":\"candidate\",\"capture\":{capture}}}");
         let framed = format!("{document}\n");
         for capacity in [1, 7, framed.len()] {
-            let value = raw(framed.as_bytes(), capacity).unwrap();
+            let value = raw(framed.as_bytes(), capacity)?;
             assert!(
                 value.as_str() == document,
                 "Raw SourceJson must not be normalized"
@@ -351,25 +353,28 @@ mod frame_tests {
                 operation: String,
                 capture: gateway_migration_data::native_capture::NativeCapture,
             }
-            let parsed: Envelope = value.deserialize().unwrap();
+            let parsed: Envelope = value.deserialize()?;
             assert_eq!(parsed.operation, "candidate");
             assert_eq!(parsed.capture.v, 2);
         }
+        Ok(())
     }
     #[test]
-    fn strings_numbers_utf8_nested_and_two_coalesced_frames_keep_the_original_bytes() {
+    fn strings_numbers_utf8_nested_and_two_coalesced_frames_keep_the_original_bytes()
+    -> TestResult<()> {
         let document = r#" {"numbers":[1e3,-0,9007199254740993],
 "strings":["\ud800","\" \\ {} []","escaped\nnot-a-frame"],"α":{"array":[{},[]]}} "#;
         let wire = format!("{document}\n{{\"second\":true}}\n");
         let mut cursor = BufReader::with_capacity(1, Cursor::new(wire.as_bytes()));
-        let first: SourceJson = read_frame(&mut cursor).unwrap();
+        let first: SourceJson = read_frame(&mut cursor)?;
         // SourceJson's existing typed decoder excludes only outer whitespace.
         assert!(
             first.as_str() == document.trim(),
             "Original native string/number source tokens changed"
         );
-        let second: SourceJson = read_frame(&mut cursor).unwrap();
+        let second: SourceJson = read_frame(&mut cursor)?;
         assert_eq!(second.as_str(), "{\"second\":true}");
+        Ok(())
     }
     #[test]
     fn malformed_partial_mismatched_trailing_and_non_utf8_messages_refuse() {
@@ -393,7 +398,7 @@ mod frame_tests {
         }
     }
     #[test]
-    fn whole_frame_cap_counts_structural_newlines_before_retained_allocation() {
+    fn whole_frame_cap_counts_structural_newlines_before_retained_allocation() -> TestResult<()> {
         let mut bytes = vec![b' '; MAX_BYTES + 1];
         bytes[0] = b'{';
         for at in (1024..bytes.len()).step_by(1024) {
@@ -413,16 +418,19 @@ mod frame_tests {
         exact[MAX_BYTES - 3] = b'{';
         exact[MAX_BYTES - 2] = b'}';
         exact[MAX_BYTES - 1] = b'\n';
-        assert_eq!(raw(&exact, 4096).unwrap().as_str(), "{}");
+        assert_eq!(raw(&exact, 4096)?.as_str(), "{}");
+        Ok(())
     }
     #[test]
-    fn fixed_typed_store_response_ids_and_closed_schema_still_apply_after_multiline_framing() {
-        let incoming:Incoming=read_frame(&mut Cursor::new(b"{\n\"operation\":\"store_response\",\n\"id\":7,\"response\":{\"operation\":\"read\",\"record\":null}}\n")).unwrap();
+    fn fixed_typed_store_response_ids_and_closed_schema_still_apply_after_multiline_framing()
+    -> TestResult<()> {
+        let incoming:Incoming=read_frame(&mut Cursor::new(b"{\n\"operation\":\"store_response\",\n\"id\":7,\"response\":{\"operation\":\"read\",\"record\":null}}\n"))?;
         assert_eq!(incoming.operation, "store_response");
         assert_eq!(incoming.id, 7);
         assert!(matches!(incoming.response, Response::Read { record: None }));
         for bytes in [b"{\"operation\":\"store_response\",\"id\":7,\"response\":{\"operation\":\"sql\"}}\n".as_slice(),b"{\"operation\":\"store_response\",\"id\":7,\"id\":7,\"response\":{\"operation\":\"read\",\"record\":null}}\n"]{
             assert!(read_frame::<Incoming,_>(&mut Cursor::new(bytes)).is_err());
         }
+        Ok(())
     }
 }

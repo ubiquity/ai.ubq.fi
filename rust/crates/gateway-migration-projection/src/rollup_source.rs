@@ -50,128 +50,118 @@ pub fn validate(key: &RecordKey, record: &StoredRecord) -> Result<(), GatewayErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
     use gateway_core::source_control::{
         decode_source_control_record, encode_source_control_record,
     };
     use gateway_core::source_json::SourceJson;
 
-    fn fixture() -> (RecordKey, StoredRecord) {
+    fn fixture() -> TestResult<(RecordKey, StoredRecord)> {
         let envelope = SourceJson::parse(include_str!(
             "../../gateway-migration/tests/fixtures/source-usage-rollup-writer.json"
-        ))
-        .unwrap();
+        ))?;
         assert_eq!(
             source::member(&envelope, "source_sha")
-                .unwrap()
-                .deserialize::<String>()
-                .unwrap(),
+                .ok_or("Fixture source identity missing")?
+                .deserialize::<String>()?,
             "5c177d8c228b5e4f96043b9a81076a46e6a366cc"
         );
         let case = source::member(&envelope, "fixtures")
-            .unwrap()
-            .array_items()
-            .unwrap()
-            .remove(0);
+            .ok_or("Writer fixtures missing")?
+            .array_items()?
+            .into_iter()
+            .next()
+            .ok_or("Writer fixture missing")?;
         let row = source::member(&case, "rows")
-            .unwrap()
-            .array_items()
-            .unwrap()
-            .remove(0);
-        (
-            RecordKey(source::member(&row, "key").unwrap().deserialize().unwrap()),
+            .ok_or("Writer fixture rows missing")?
+            .array_items()?
+            .into_iter()
+            .next()
+            .ok_or("Writer fixture row missing")?;
+        Ok((
+            RecordKey(
+                source::member(&row, "key")
+                    .ok_or("Writer fixture key missing")?
+                    .deserialize()?,
+            ),
             source::member(&row, "record")
-                .unwrap()
-                .deserialize()
-                .unwrap(),
-        )
+                .ok_or("Writer fixture record missing")?
+                .deserialize()?,
+        ))
     }
-    fn field(record: &StoredRecord, name: &str, value: SourceJson) -> StoredRecord {
-        let document = decode_source_control_record(record).unwrap();
-        let mut fields = source::entries(&document).unwrap();
+    fn field(record: &StoredRecord, name: &str, value: SourceJson) -> TestResult<StoredRecord> {
+        let document = decode_source_control_record(record)?;
+        let mut fields = source::entries(&document)?;
         let old = fields
             .iter_mut()
             .find(|(key, _)| key.as_units().iter().copied().eq(name.encode_utf16()))
-            .unwrap();
+            .ok_or("Source fixture field missing")?;
         old.1 = value;
-        encode_source_control_record(
+        Ok(encode_source_control_record(
             &record.revision,
-            &source::object_keys(fields).unwrap(),
+            &source::object_keys(fields)?,
             record.expires_at_ms,
-        )
-        .unwrap()
+        )?)
     }
-    fn source_key(record: &StoredRecord, shard: f64) -> RecordKey {
-        let document = decode_source_control_record(record).unwrap();
-        gateway_authority::keys::paid_rollup_source(
+    fn source_key(record: &StoredRecord, shard: f64) -> TestResult<RecordKey> {
+        let document = decode_source_control_record(record)?;
+        Ok(gateway_authority::keys::paid_rollup_source(
             source::member(&document, "bucket_start_at_ms")
-                .unwrap()
-                .deserialize()
-                .unwrap(),
+                .ok_or("Fixture bucket missing")?
+                .deserialize()?,
             &source::member(&document, "model")
-                .unwrap()
-                .deserialize()
-                .unwrap(),
+                .ok_or("Fixture model missing")?
+                .deserialize()?,
             &source::member(&document, "provider")
-                .unwrap()
-                .deserialize()
-                .unwrap(),
+                .ok_or("Fixture provider missing")?
+                .deserialize()?,
             shard,
-        )
-        .unwrap()
+        )?)
     }
     #[test]
-    fn actual_general_writer_fixture_keeps_first_label_sums_and_metadata() {
-        let (key, record) = fixture();
+    fn actual_general_writer_fixture_keeps_first_label_sums_and_metadata() -> TestResult<()> {
+        let (key, record) = fixture()?;
         let before = record.clone();
-        validate(&key, &record).unwrap();
-        let document = decode_source_control_record(&record).unwrap();
+        validate(&key, &record)?;
+        let document = decode_source_control_record(&record)?;
         assert_eq!(
             source::member(&document, "model")
-                .unwrap()
-                .deserialize::<JsString16>()
-                .unwrap()
+                .ok_or("Source fixture model missing")?
+                .deserialize::<JsString16>()?
                 .as_units(),
             &[0xd800]
         );
         assert_eq!(
             source::member(&document, "request_count")
-                .unwrap()
-                .deserialize::<f64>()
-                .unwrap(),
+                .ok_or("Source fixture request_count missing")?
+                .deserialize::<f64>()?,
             3.0
         );
         assert_eq!(
             source::member(&document, "provider")
-                .unwrap()
-                .deserialize::<String>()
-                .unwrap(),
+                .ok_or("Source fixture provider missing")?
+                .deserialize::<String>()?,
             "chatgpt_codex"
         );
         assert_eq!(record, before);
         let mut expired_data = record;
         expired_data.expires_at_ms = Some(42);
-        validate(&key, &expired_data).unwrap();
+        validate(&key, &expired_data)?;
         assert_eq!(expired_data.expires_at_ms, Some(42));
+        Ok(())
     }
     #[test]
-    fn source_provider_units_and_number_bits_are_not_scalarized() {
-        let (_, record) = fixture();
+    fn source_provider_units_and_number_bits_are_not_scalarized() -> TestResult<()> {
+        let (_, record) = fixture()?;
         // These are explicitly synthetic variants of the real writer output.
-        let record = field(
-            &record,
-            "provider",
-            SourceJson::parse(r#""\udc00""#).unwrap(),
-        );
-        let key = source_key(&record, 6.0);
-        validate(&key, &record).unwrap();
-        let signed = field(
-            &record,
-            "bucket_start_at_ms",
-            SourceJson::parse("-0.0").unwrap(),
-        );
-        let signed_key = source_key(&signed, 6.0);
+        let record = field(&record, "provider", SourceJson::parse(r#""\udc00""#)?)?;
+        let key = source_key(&record, 6.0)?;
+        validate(&key, &record)?;
+        let signed = field(&record, "bucket_start_at_ms", SourceJson::parse("-0.0")?)?;
+        let signed_key = source_key(&signed, 6.0)?;
         assert_ne!(key, signed_key);
-        validate(&signed_key, &signed).unwrap();
+        validate(&signed_key, &signed)?;
         assert!(validate(&key, &signed).is_err());
         let model = ModelId::from_scalar("scalar-model");
         assert_eq!(
@@ -185,28 +175,29 @@ mod tests {
                 &model,
                 &JsString16::from_utf8("chatgpt_codex"),
                 6.0
-            )
-            .unwrap()
+            )?
         );
+        Ok(())
     }
     #[test]
-    fn malformed_values_keys_and_metadata_refuse_without_mutation() {
-        let (key, record) = fixture();
+    fn malformed_values_keys_and_metadata_refuse_without_mutation() -> TestResult<()> {
+        let (key, record) = fixture()?;
         let wrong_label = field(
             &record,
             "model",
-            SourceJson::from_serializable("other-model").unwrap(),
-        );
+            SourceJson::from_serializable("other-model")?,
+        )?;
         assert!(validate(&key, &wrong_label).is_err());
-        let wrong_number = field(&record, "quota_sum", SourceJson::parse("-1").unwrap());
+        let wrong_number = field(&record, "quota_sum", SourceJson::parse("-1")?)?;
         assert!(validate(&key, &wrong_number).is_err());
-        assert!(validate(&source_key(&record, 16.0), &record).is_err());
+        assert!(validate(&source_key(&record, 16.0)?, &record).is_err());
         let mut corrupt = record.clone();
         corrupt.revision = " ".into();
         assert!(validate(&key, &corrupt).is_err());
         corrupt = record.clone();
         corrupt.expires_at_ms = Some(-1);
         assert!(validate(&key, &corrupt).is_err());
-        assert_eq!(record, fixture().1);
+        assert_eq!(record, fixture()?.1);
+        Ok(())
     }
 }

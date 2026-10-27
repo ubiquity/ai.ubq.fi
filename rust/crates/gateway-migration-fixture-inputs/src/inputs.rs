@@ -344,26 +344,26 @@ pub fn prepare(directory: &str, now_ms: i64) -> Result<Prepared, GatewayError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn original() -> NativeCapture {
-        serde_json::from_str(include_str!(
+    type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+    fn original() -> TestResult<NativeCapture> {
+        Ok(serde_json::from_str(include_str!(
             "../../gateway-migration/tests/fixtures/native-source.json"
-        ))
-        .unwrap()
+        ))?)
     }
-    fn at(graph: &mut SourceGraph, name: &str) -> GraphAtom {
-        root_entries(graph)
-            .unwrap()
+    fn at(graph: &mut SourceGraph, name: &str) -> TestResult<GraphAtom> {
+        Ok(root_entries(graph)?
             .iter()
             .find(|(key, _)| *key == JsString16::from_utf8(name))
-            .unwrap()
+            .ok_or("Fixture graph field missing")?
             .1
-            .clone()
+            .clone())
     }
     #[test]
-    fn time_window_policy_key_and_expiry_cohorts_are_coherent() {
-        let time = FixtureTime::new(1_800_000_000_000).unwrap();
-        let old = original();
-        let new = source(time).unwrap();
+    fn time_window_policy_key_and_expiry_cohorts_are_coherent() -> TestResult<()> {
+        let time = FixtureTime::new(1_800_000_000_000)?;
+        let old = original()?;
+        let new = source(time)?;
         assert_eq!(new.captured_at_ms, time.origin);
         assert_eq!(new.source_git_sha, old.source_git_sha);
         assert_eq!(new.data_revision, old.data_revision);
@@ -379,8 +379,8 @@ mod tests {
             );
             if index >= 3 {
                 assert!(
-                    serde_json::to_string(&entry.value).unwrap()
-                        == serde_json::to_string(&old.entries[index].value).unwrap(),
+                    serde_json::to_string(&entry.value)?
+                        == serde_json::to_string(&old.entries[index].value)?,
                     "Opaque fixture value changed"
                 );
                 assert!(
@@ -390,15 +390,15 @@ mod tests {
             }
         }
         for index in [0, 1] {
-            let mut policy = graph_value(&new.entries[index]).unwrap();
-            assert_eq!(at(&mut policy, "window_ms"), number(300_000));
-            assert_eq!(at(&mut policy, "usage_reset_at_ms"), number(time.deadline));
-            assert_eq!(at(&mut policy, "usage_limit_requests"), number(3));
-            assert_eq!(at(&mut policy, "usage_quota_version"), number(3));
-            assert_eq!(at(&mut policy, "expires_at_ms"), number(-1));
-            let mut before = graph_value(&old.entries[index]).unwrap();
+            let mut policy = graph_value(&new.entries[index])?;
+            assert_eq!(at(&mut policy, "window_ms")?, number(300_000));
+            assert_eq!(at(&mut policy, "usage_reset_at_ms")?, number(time.deadline));
+            assert_eq!(at(&mut policy, "usage_limit_requests")?, number(3));
+            assert_eq!(at(&mut policy, "usage_quota_version")?, number(3));
+            assert_eq!(at(&mut policy, "expires_at_ms")?, number(-1));
+            let mut before = graph_value(&old.entries[index])?;
             for graph in [&mut policy, &mut before] {
-                root_entries(graph).unwrap().retain(|(name, _)| {
+                root_entries(graph)?.retain(|(name, _)| {
                     !["window_ms", "usage_reset_at_ms", "created_at_ms"]
                         .iter()
                         .any(|field| *name == JsString16::from_utf8(field))
@@ -406,70 +406,72 @@ mod tests {
             }
             assert!(policy == before, "Unchanged API fixture data changed");
         }
-        let mut window = graph_value(&new.entries[2]).unwrap();
-        assert_eq!(at(&mut window, "policy_version"), string("v3:300000"));
-        assert_eq!(at(&mut window, "window_start_ms"), number(time.origin));
-        assert_eq!(at(&mut window, "window_reset_at_ms"), number(time.deadline));
-        assert_eq!(at(&mut window, "reserved_requests"), number(0));
+        let mut window = graph_value(&new.entries[2])?;
+        assert_eq!(at(&mut window, "policy_version")?, string("v3:300000"));
+        assert_eq!(at(&mut window, "window_start_ms")?, number(time.origin));
+        assert_eq!(
+            at(&mut window, "window_reset_at_ms")?,
+            number(time.deadline)
+        );
+        assert_eq!(at(&mut window, "reserved_requests")?, number(0));
         assert_eq!(
             new.entries[2].raw_key,
             TupleKey::from_record_key(&gateway_authority::keys::api_window(
                 "offline-key",
                 "v3:300000",
                 time.origin
-            ))
-            .unwrap()
+            ))?
             .sort_bytes()
         );
+        Ok(())
     }
     #[test]
-    fn opaque_numbers_dates_identity_and_bytes_are_not_rebased() {
-        let time = FixtureTime::new(1_800_000_000_000).unwrap();
-        let mut old = original();
-        let mut opaque = graph_value(&old.entries[3]).unwrap();
+    fn opaque_numbers_dates_identity_and_bytes_are_not_rebased() -> TestResult<()> {
+        let time = FixtureTime::new(1_800_000_000_000)?;
+        let mut old = original()?;
+        let mut opaque = graph_value(&old.entries[3])?;
         let index = opaque.nodes.len() as u32;
-        root_entries(&mut opaque)
-            .unwrap()
+        root_entries(&mut opaque)?
             .push((JsString16::from_utf8("opaque_date"), GraphAtom::Ref(index)));
-        root_entries(&mut opaque)
-            .unwrap()
-            .push((JsString16::from_utf8("opaque_number"), number(3000)));
+        root_entries(&mut opaque)?.push((JsString16::from_utf8("opaque_number"), number(3000)));
         opaque.nodes.push(GraphNode::Date {
             epoch_ms: Some(9000),
         });
         old.entries[3].value =
-            NativeValue::SourceGraphV1(graph_transport::to_source_graph(&opaque).unwrap());
-        let before = serde_json::to_string(&old.entries[3].value).unwrap();
-        let new = rebase(old, time).unwrap();
+            NativeValue::SourceGraphV1(graph_transport::to_source_graph(&opaque)?);
+        let before = serde_json::to_string(&old.entries[3].value)?;
+        let new = rebase(old, time)?;
         assert!(
-            serde_json::to_string(&new.entries[3].value).unwrap() == before,
+            serde_json::to_string(&new.entries[3].value)? == before,
             "Opaque numbers, dates or graph identity changed"
         );
+        Ok(())
     }
     #[test]
-    fn unexpected_expired_never_key_or_policy_baselines_are_refused() {
-        let time = FixtureTime::new(1_800_000_000_000).unwrap();
+    fn unexpected_expired_never_key_or_policy_baselines_are_refused() -> TestResult<()> {
+        let time = FixtureTime::new(1_800_000_000_000)?;
         for expiry in [0, -1, 8999] {
-            let mut old = original();
+            let mut old = original()?;
             old.entries[3].expiration_ms = expiry;
             assert!(rebase(old, time).is_err());
         }
-        let mut old = original();
+        let mut old = original()?;
         old.entries[7].expiration_ms = 9000;
         assert!(rebase(old, time).is_err());
-        let mut old = original();
+        let mut old = original()?;
         old.entries[2].raw_key.push(0);
         assert!(rebase(old, time).is_err());
-        let mut old = original();
-        let mut policy = graph_value(&old.entries[0]).unwrap();
-        replace(&mut policy, "window_ms", number(1000), number(2000)).unwrap();
+        let mut old = original()?;
+        let mut policy = graph_value(&old.entries[0])?;
+        replace(&mut policy, "window_ms", number(1000), number(2000))?;
         old.entries[0].value =
-            NativeValue::SourceGraphV1(graph_transport::to_source_graph(&policy).unwrap());
+            NativeValue::SourceGraphV1(graph_transport::to_source_graph(&policy)?);
         assert!(rebase(old, time).is_err());
+        Ok(())
     }
     #[test]
-    fn budget_expires_without_refresh_or_unsafe_time() {
-        let time = FixtureTime::new(1_800_000_000_000).unwrap();
+    fn budget_expires_without_refresh_or_unsafe_time() -> TestResult<()> {
+        let time = FixtureTime::new(1_800_000_000_000)?;
         assert!(time.check_at(time.origin).is_ok());
         assert!(time.check_at(time.deadline - 1).is_ok());
         assert!(time.check_at(time.deadline).is_err());
@@ -479,6 +481,7 @@ mod tests {
         assert_eq!(time.deadline - time.origin, 300_000);
         assert!(FixtureTime::new(1199).is_err());
         assert!(FixtureTime::new(i64::MAX).is_err());
-        assert!(FixtureTime::new(2200).unwrap().check().is_err());
+        assert!(FixtureTime::new(2200)?.check().is_err());
+        Ok(())
     }
 }

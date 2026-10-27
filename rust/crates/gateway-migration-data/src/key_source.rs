@@ -15,7 +15,8 @@ pub fn decimal_key(negative: bool, magnitude: &[u8]) -> String {
     let mut decimal = digits
         .into_iter()
         .rev()
-        .map(|d| char::from_digit(d, 10).expect("decimal digit"))
+        // Both digit writes above are modulo ten; this is an ASCII index in 0..10.
+        .map(|d| char::from(b"0123456789"[d as usize]))
         .collect::<String>();
     if negative && decimal != "0" {
         decimal.insert(0, '-');

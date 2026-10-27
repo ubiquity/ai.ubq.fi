@@ -325,24 +325,29 @@ fn verify_refresh_only_projection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
     use gateway_auth::{crypto::base64url, native_credentials::parse_native_document};
     use gateway_migration_test_support::fixture::{Directory, run};
     use serde_json::json;
 
-    fn fixture(directory: &Directory, expires_at_seconds: u64) -> (Host, Vec<(PathBuf, Vec<u8>)>) {
+    fn fixture(
+        directory: &Directory,
+        expires_at_seconds: u64,
+    ) -> TestResult<(Host, Vec<(PathBuf, Vec<u8>)>)> {
         let mut bindings = BTreeMap::new();
         let mut original = Vec::new();
         for id in ["managed-a", "managed-b"] {
             let home = directory.file(id);
-            std::fs::create_dir(&home).unwrap();
+            std::fs::create_dir(&home)?;
             let token = format!(
                 "e30.{}.synthetic",
                 base64url(json!({"exp":expires_at_seconds}).to_string().as_bytes())
             );
             let document = json!({"auth_mode":"chatgpt","tokens":{"account_id":id,"access_token":token,"id_token":token,"refresh_token":format!("synthetic-native-{id}-fixture-refresh")},"last_refresh":"2026-10-19T00:00:00.000000000Z"});
-            let bytes = serde_json::to_vec(&document).unwrap();
-            std::fs::write(home.join("auth.json"), &bytes).unwrap();
-            let credentials = parse_native_document(&document).unwrap();
+            let bytes = serde_json::to_vec(&document)?;
+            std::fs::write(home.join("auth.json"), &bytes)?;
+            let credentials = parse_native_document(&document)?;
             bindings.insert(
                 id.into(),
                 (
@@ -357,41 +362,43 @@ mod tests {
             );
             original.push((home, bytes));
         }
-        (
+        Ok((
             Host {
                 bindings,
                 now_ms: 0,
             },
             original,
-        )
+        ))
     }
 
     #[test]
-    fn fixture_uses_configured_custody_with_real_freshness_and_preserves_siblings() {
+    fn fixture_uses_configured_custody_with_real_freshness_and_preserves_siblings() -> TestResult<()>
+    {
         let directory = Directory::new();
         let expiry = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)?
             .as_secs()
             + 3600;
-        let (host, original) = fixture(&directory, expiry);
+        let (host, original) = fixture(&directory, expiry)?;
         assert!(run(host.observe("managed-a")).is_ok());
         assert!(run(host.observe("managed-b")).is_ok());
         assert!(run(host.observe("unregistered")).is_err());
         for (home, bytes) in original {
-            assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), bytes);
+            assert_eq!(std::fs::read(home.join("auth.json"))?, bytes);
         }
+        Ok(())
     }
 
     #[test]
-    fn synthetic_ledger_clock_cannot_make_expired_native_credentials_usable() {
+    fn synthetic_ledger_clock_cannot_make_expired_native_credentials_usable() -> TestResult<()> {
         let directory = Directory::new();
-        let (host, original) = fixture(&directory, 3600);
+        let (host, original) = fixture(&directory, 3600)?;
         assert_eq!(host.now_ms, 0);
         assert!(run(host.observe("managed-a")).is_err());
         assert!(run(host.observe("managed-b")).is_err());
         for (home, bytes) in original {
-            assert_eq!(std::fs::read(home.join("auth.json")).unwrap(), bytes);
+            assert_eq!(std::fs::read(home.join("auth.json"))?, bytes);
         }
+        Ok(())
     }
 }

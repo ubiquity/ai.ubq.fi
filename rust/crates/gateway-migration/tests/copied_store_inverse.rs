@@ -271,7 +271,7 @@ impl Fixture {
     }
 
     fn invoke(&self) -> Result<driver::Receipt, Box<dyn std::error::Error>> {
-        driver::execute(serde_json::from_value(self.input.clone()).unwrap())
+        driver::execute(serde_json::from_value(self.input.clone())?)
     }
 
     fn receipt_path(&self) -> PathBuf {

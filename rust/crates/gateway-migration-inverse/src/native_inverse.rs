@@ -73,13 +73,14 @@ pub async fn export<S: QueryStore>(
     for row in rows {
         let original = row.mapping.as_ref().and_then(|m| m.native_origin.as_ref());
         let unchanged = if let (Some(mapping), Some(origin)) = (&row.mapping, original) {
-            row.record.revision == origin.revision.record_revision()?
-                && digest(&row.record)? == mapping.baseline_digest
+            let same = row.record.revision == origin.revision.record_revision()?
+                && digest(&row.record)? == mapping.baseline_digest;
+            same.then(|| origin.revision.clone())
         } else {
-            false
+            None
         };
-        let revision = if unchanged {
-            original.expect("checked native origin").revision.clone()
+        let revision = if let Some(revision) = unchanged {
+            revision
         } else {
             changed = true;
             let version = version

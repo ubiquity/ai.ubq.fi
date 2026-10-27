@@ -1,4 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
 use gateway_auth::store::key;
 use gateway_core::state::AtomicTransition;
 use gateway_core::state::AuthorityStore;
@@ -22,7 +23,8 @@ use gateway_profile_values::date::CanonicalDates;
 use serde_json::json;
 
 #[test]
-fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() {
+fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() -> FixtureResult<()>
+{
     use gateway_core::query::QueryStore;
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("private-sidecars.sqlite3"));
@@ -33,33 +35,28 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
             json!({"id":"user-fixture","handle":"fixture","is_admin":true,"credential_ids":[],"created_at_ms":1000,"updated_at_ms":2000}),
             "user-source",
             None,
-        ),
+        )?,
         source(
             json!(["uos_ai", "auth", "handles", "fixture"]),
             json!("user-fixture"),
             "handle-source",
             None,
-        ),
+        )?,
         source(
             json!(["uos_ai", "auth", "sessions", token]),
             json!({"token":token,"user_id":"user-fixture","created_at_ms":2000,"expires_at_ms":9000}),
             "session-source",
             Some(9000),
-        ),
+        )?,
     ]);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     let session = key(json!(["uos_ai", "auth", "sessions", token]));
     let fence = run(gateway_auth::session_index::read_current(
         &store,
         &gateway_auth::session_index::digest(token),
         2300,
-    ))
-    .unwrap()
-    .unwrap();
+    ))?
+    .ok_or("Required fixture row missing")?;
     assert_eq!(fence.fence.session_revision, "session-source");
     assert_eq!(fence.fence.user_id, "user-fixture");
     run(store.commit(AtomicTransition {
@@ -72,12 +69,10 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
             RecordMutation::Delete {
                 key: gateway_auth::session_index::index_key(&gateway_auth::session_index::digest(
                     token,
-                ))
-                .unwrap(),
+                ))?,
             },
         ],
-    }))
-    .unwrap();
+    }))?;
     let metadata = run(store.query(gateway_core::query::QueryRequest {
         selector: gateway_core::query::QuerySelector::Prefix {
             prefix: key(json!(["uos_ai", "migration"])),
@@ -88,10 +83,9 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
         limit: 100,
         cursor: None,
         now_ms: 2300,
-    }))
-    .unwrap();
+    }))?;
     for row in metadata.entries {
-        assert!(!serde_json::to_string(&row.record).unwrap().contains(token));
+        assert!(!serde_json::to_string(&row.record)?.contains(token));
         assert!(
             !row.key.0.contains(
                 &token
@@ -101,21 +95,19 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
             )
         );
     }
-    let inverse = run(export_latest(&store, 2300)).unwrap();
+    let inverse = run(export_latest(&store, 2300))?;
     assert_eq!(inverse.entries.len(), 2);
-    assert!(!serde_json::to_string(&inverse).unwrap().contains(token));
+    assert!(!serde_json::to_string(&inverse)?.contains(token));
+    Ok(())
 }
 
 #[test]
-fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it() {
+fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it()
+-> FixtureResult<()> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("control-custody.sqlite3"));
-    let (input, _) = fixture();
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    let (input, _) = fixture()?;
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     let nonce = gateway_auth::native_replay::native_nonce_key();
     let nonce_value =
         json!({"v":1,"nonces":{"fixture-key:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA":9000}});
@@ -126,7 +118,10 @@ fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it(
     let owner = gateway_authority::keys::paid_control_owner();
     store.put(owner.clone(),StoredRecord::json("current-owner-revision",json!({"v":1,"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"f".repeat(64)}),None));
     assert_eq!(
-        run(export_latest(&store, 2300)).unwrap_err().code(),
+        run(export_latest(&store, 2300))
+            .err()
+            .ok_or("Expected fixture operation refusal")?
+            .code(),
         Some("migration_control_custody_required")
     );
     let context = ArtifactContext {
@@ -136,33 +131,38 @@ fn rust_control_nonce_custody_is_separate_and_source_only_export_cannot_drop_it(
         native_sha256: "d".repeat(64),
         native_nonce_capture_sha256: Some("e".repeat(64)),
     };
-    let bundle = run(export_rollback_bundle(&store, 2300, context)).unwrap();
+    let bundle = run(export_rollback_bundle(&store, 2300, context))?;
     assert_eq!(bundle.rust_controls.len(), 2);
     let replay = bundle
         .rust_controls
         .iter()
         .find(|r| r.key == nonce.0)
-        .unwrap();
+        .ok_or("Required fixture value missing")?;
     assert_eq!(replay.record.revision, "current-replay-fence");
     assert_eq!(replay.record.value, nonce_value);
     assert!(replay.record.expires_at_ms.is_none());
-    assert!(!bundle.source.entries.iter().any(|e| e.key.get(1)
-        == Some(&raw(
-            json!({"type":"string","value":"native_nonce_registry"})
-        ))));
+    let expected_nonce_label = raw(json!({"type":"string","value":"native_nonce_registry"}))?;
+    assert!(
+        !bundle
+            .source
+            .entries
+            .iter()
+            .any(|e| e.key.get(1) == Some(&expected_nonce_label))
+    );
     // No restore API consumes these rows. Current transport ownership/replay must be reconciled externally.
     let rollback = SqliteStore::open(&directory.file("source-only-new-destination.sqlite3"));
     run(adopt_empty(
         &rollback,
-        &prepare(&bundle.source, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
-    assert!(run(rollback.read(&nonce)).unwrap().is_none());
-    assert!(run(rollback.read(&owner)).unwrap().is_none());
+        &prepare(&bundle.source, &CanonicalDates)?,
+    ))?;
+    assert!(run(rollback.read(&nonce))?.is_none());
+    assert!(run(rollback.read(&owner))?.is_none());
+    Ok(())
 }
 
 #[test]
-fn inverse_refuses_to_drop_derived_kernel_policy_without_matching_source_defaults() {
+fn inverse_refuses_to_drop_derived_kernel_policy_without_matching_source_defaults()
+-> FixtureResult<()> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("kernel-defaults-drift.sqlite3"));
     let input = capture(vec![source(
@@ -170,37 +170,35 @@ fn inverse_refuses_to_drop_derived_kernel_policy_without_matching_source_default
         json!(1),
         "source-limit",
         None,
-    )]);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    )?]);
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     let key = gateway_authority::keys::kernel_defaults();
-    let mut changed = run(store.read(&key)).unwrap().unwrap();
+    let mut changed = run(store.read(&key))?.ok_or("Required fixture row missing")?;
     changed.revision = "independent-runtime-write".into();
     changed.value["usage_limit_requests"] = json!(17);
     store.put(key, changed);
     assert_eq!(
-        run(export_latest(&store, 2300)).unwrap_err().code(),
+        run(export_latest(&store, 2300))
+            .err()
+            .ok_or("Expected fixture operation refusal")?
+            .code(),
         Some("migration_state_invalid")
     );
     store.put(
         crate::key(json!(["default", "kernel_policy_limit_requests"])),
         StoredRecord::json("matching-current-source", json!(17), None),
     );
-    let result = run(export_latest(&store, 2300)).unwrap();
+    let result = run(export_latest(&store, 2300))?;
     assert_eq!(
-        from_profile(&result.entries[0].value)
-            .unwrap()
-            .to_json_lossless(),
+        from_profile(&result.entries[0].value)?.to_json_lossless(),
         Some(json!(17))
     );
     assert_eq!(result.entries[0].versionstamp, "matching-current-source");
+    Ok(())
 }
 
 #[test]
-fn inverse_refuses_changed_or_missing_private_mapping_metadata() {
+fn inverse_refuses_changed_or_missing_private_mapping_metadata() -> FixtureResult<()> {
     use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("mapping-integrity.sqlite3"));
@@ -209,12 +207,8 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() {
         json!("retained current data"),
         "original",
         None,
-    )]);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    )?]);
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     let page = run(store.query(QueryRequest {
         selector: QuerySelector::Prefix {
             prefix: key(json!(["uos_ai", "migration", "v3", "row"])),
@@ -225,9 +219,11 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() {
         limit: 10,
         cursor: None,
         now_ms: 2300,
-    }))
-    .unwrap();
-    let mapping = page.entries.first().unwrap();
+    }))?;
+    let mapping = page
+        .entries
+        .first()
+        .ok_or("Required fixture value missing")?;
     let mut corrupt = mapping.record.clone();
     corrupt.value["baseline_digest"] = json!("tampered baseline");
     store.put(mapping.key.clone(), corrupt);
@@ -242,14 +238,13 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() {
         mutations: vec![RecordMutation::Delete {
             key: mapping.key.clone(),
         }],
-    }))
-    .unwrap();
+    }))?;
     assert!(run(export_latest(&store, 2300)).is_err());
     assert_eq!(
-        run(store.read(&key(json!(["default", "fixture"]))))
-            .unwrap()
-            .unwrap()
+        run(store.read(&key(json!(["default", "fixture"]))))?
+            .ok_or("Required fixture row missing")?
             .value,
         "retained current data"
     );
+    Ok(())
 }

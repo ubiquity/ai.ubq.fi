@@ -184,6 +184,25 @@ fn paid_unresolved(entry: &NativeEntry) -> Result<bool, GatewayError> {
     ))
 }
 
+fn classify_source_namespace(p: &[Value]) -> Result<Decision, MigrationError> {
+    if starts(p, &["ubq_ai", "api_keys"])
+        || starts(p, &["ubq_ai", "claude_code_auth"])
+        || starts(p, &["ubq_ai", "claude_code_quota"])
+        || starts(p, &["ubq_ai", "claude_code_workspace"])
+        || starts(p, &["ubq_ai", "codex_auth"])
+        || starts(p, &["ubq_ai", "codex_catalog"])
+        || starts(p, &["ubq_ai", "codex_catalog_auth_generation"])
+        || starts(p, &["ubq_ai", "codex_catalog_chunk"])
+        || starts(p, &["ubq_ai", "codex_catalog_refresh_lease"])
+        || starts(p, &["ubq_ai", "codex_catalog_source_chunk"])
+        || starts(p, &["ubq_ai", "codex_models"])
+        || starts(p, &["ubq_ai", "kernel_auth"])
+    {
+        return Ok(Decision::Include("ubq_ai_operational_state"));
+    }
+    Err(invalid("Core-state selection found an unsupported ubq_ai family").into())
+}
+
 fn classify(
     entry: &NativeEntry,
     captured_at_ms: i64,
@@ -194,22 +213,7 @@ fn classify(
         return Ok(Decision::Include("default_operational_settings"));
     }
     if starts(&p, &["ubq_ai"]) {
-        if starts(&p, &["ubq_ai", "api_keys"])
-            || starts(&p, &["ubq_ai", "claude_code_auth"])
-            || starts(&p, &["ubq_ai", "claude_code_quota"])
-            || starts(&p, &["ubq_ai", "claude_code_workspace"])
-            || starts(&p, &["ubq_ai", "codex_auth"])
-            || starts(&p, &["ubq_ai", "codex_catalog"])
-            || starts(&p, &["ubq_ai", "codex_catalog_auth_generation"])
-            || starts(&p, &["ubq_ai", "codex_catalog_chunk"])
-            || starts(&p, &["ubq_ai", "codex_catalog_refresh_lease"])
-            || starts(&p, &["ubq_ai", "codex_catalog_source_chunk"])
-            || starts(&p, &["ubq_ai", "codex_models"])
-            || starts(&p, &["ubq_ai", "kernel_auth"])
-        {
-            return Ok(Decision::Include("ubq_ai_operational_state"));
-        }
-        return Err(invalid("Core-state selection found an unsupported ubq_ai family").into());
+        return classify_source_namespace(&p);
     }
     if starts(&p, &["agent_messages"]) || starts(&p, &["embeddings"]) || starts(&p, &["key"]) {
         return Ok(Decision::Exclude("non_operational_history"));

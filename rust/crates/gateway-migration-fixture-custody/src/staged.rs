@@ -59,6 +59,59 @@ fn mark(directory: &str, stage: &str) -> Result<(), MigrationError> {
         &serde_json::json!({"stage":stage,"pid":std::process::id(),"epoch_ms":epoch_ms}),
     )
 }
+fn prepared_only(
+    directory: &str,
+    source_bytes: u64,
+    source_rows: usize,
+    plan: &mut gateway_migration_stage::plan::StagePlan,
+) -> Result<(), MigrationError> {
+    let mut frames = 0;
+    let mut maximum = 0;
+    let mut frame = Vec::new();
+    while plan.write_next_batch(&mut frame)? {
+        maximum = maximum.max(frame.len());
+        frames += 1;
+        frame.clear();
+    }
+    mark(directory, "prepared_only_complete")?;
+    port::write(&serde_json::json!({"operation":"staged_prepared_only","source_bytes":source_bytes,"source_rows":source_rows,"bounded_frames":frames,"max_stage_frame_bytes":maximum,"target_touched":false})).map_err(Into::into)
+}
+
+fn verify_large_history(
+    source_inventory: &native_stage::Captured,
+    latest: &native_stage::Captured,
+) -> Result<(), GatewayError> {
+    let mut keys = std::collections::BTreeMap::new();
+    let mut ordinal = 0;
+    latest.visit_entries(&mut |entry| {
+        if keys.insert(entry.raw_key.clone(), ordinal).is_some() {
+            return Err(port::error("Duplicate latest raw key"));
+        }
+        ordinal += 1;
+        Ok(())
+    })?;
+    source_inventory.visit_entries(&mut |entry| {
+        if entry
+            .raw_key
+            .windows(b"staged-history-".len())
+            .any(|w| w == b"staged-history-")
+        {
+            let index = keys
+                .get(&entry.raw_key)
+                .ok_or_else(|| port::error("Large historical row missing from latest inverse"))?;
+            if serde_json::to_vec(entry).map_err(port::error)?
+                != serde_json::to_vec(&latest.entry(*index)?).map_err(port::error)?
+            {
+                return Err(port::error(
+                    "Large historical metadata/value changed in inverse",
+                ));
+            }
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
 pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), MigrationError> {
     let prepared: Prepared = serde_json::from_str(
         &serde_json::to_string(&inputs::prepare(directory, now_ms)?).map_err(port::error)?,
@@ -108,16 +161,7 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
     )?;
     mark(directory, "staged_begin_append")?;
     if prepare_only {
-        let mut frames = 0;
-        let mut maximum = 0;
-        let mut frame = Vec::new();
-        while plan.write_next_batch(&mut frame)? {
-            maximum = maximum.max(frame.len());
-            frames += 1;
-            frame.clear();
-        }
-        mark(directory, "prepared_only_complete")?;
-        return port::write(&serde_json::json!({"operation":"staged_prepared_only","source_bytes":source_bytes,"source_rows":source_rows,"bounded_frames":frames,"max_stage_frame_bytes":maximum,"target_touched":false})).map_err(Into::into);
+        return prepared_only(directory, source_bytes, source_rows, &mut plan);
     }
     let store = port::Store::default();
     support_run(execute_staged(&store, plan.begin()))?;
@@ -190,34 +234,7 @@ pub fn run(directory: &str, now_ms: i64, prepare_only: bool) -> Result<(), Migra
         &latest_path,
         &gateway_migration_spool::directory(Path::new(directory))?,
     )?;
-    let mut keys = std::collections::BTreeMap::new();
-    let mut ordinal = 0;
-    latest.visit_entries(&mut |entry| {
-        if keys.insert(entry.raw_key.clone(), ordinal).is_some() {
-            return Err(port::error("Duplicate latest raw key"));
-        }
-        ordinal += 1;
-        Ok(())
-    })?;
-    source_inventory.visit_entries(&mut |entry| {
-        if entry
-            .raw_key
-            .windows(b"staged-history-".len())
-            .any(|w| w == b"staged-history-")
-        {
-            let index = keys
-                .get(&entry.raw_key)
-                .ok_or_else(|| port::error("Large historical row missing from latest inverse"))?;
-            if serde_json::to_vec(entry).map_err(port::error)?
-                != serde_json::to_vec(&latest.entry(*index)?).map_err(port::error)?
-            {
-                return Err(port::error(
-                    "Large historical metadata/value changed in inverse",
-                ));
-            }
-        }
-        Ok(())
-    })?;
+    verify_large_history(&source_inventory, &latest)?;
     mark(directory, "finished")?;
     port::write(
         &serde_json::json!({"operation":"staged_exercised","source_bytes":source_bytes,"latest_bytes":std::fs::metadata(latest_path).map_err(port::error)?.len(),"source_rows":source_rows,"latest_rows":rows,"max_stage_frame_bytes":wire_max,"receipt":sealed,"runtime":runtime,"source_file":source_path.to_str(),"latest_file":Path::new(directory).join("large-latest.json").to_str(),"custody_file":controls_path.to_str(),"historical_roundtrip_exact":true,"cases":["complete_native_audit_before_staging","over32mib_bounded_common_do_transfer","reordered_corrupt_duplicate_batches_refused","partial_seal_and_inverse_refused","partial_common_do_restart_resumed","staged_seal_not_atomic_adoption_or_activation","actual_post_restart_auth_admission_latest_write_delete","native_private_latest_sink_exact_large_history"]}),

@@ -1,4 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
 use gateway_auth::store::key;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::ApiKeyId;
@@ -38,7 +39,7 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let path = directory.file("one-authority.sqlite3");
-    let (original, token) = fixture();
+    let (original, token) = fixture()?;
     let prepared = prepare(&original, &CanonicalDates)?;
     let store = SqliteStore::open(&path);
     let receipt = run(adopt_empty(&store, &prepared))?;
@@ -128,10 +129,11 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
             .iter()
             .any(|e| e.versionstamp == "debug-original")
     );
+    let expected_request_key = raw(json!({"type":"string","value":"new-request"}))?;
     let request = exported
         .entries
         .iter()
-        .find(|e| e.key.last() == Some(&raw(json!({"type":"string","value":"new-request"}))))
+        .find(|e| e.key.last() == Some(&expected_request_key))
         .ok_or("Expected latest request source entry")?;
     let value = from_profile(&request.value)?
         .to_json_lossless()
@@ -158,11 +160,11 @@ fn actual_sqlite_adoption_restart_auth_admission_mutation_and_latest_inverse()
 }
 
 #[test]
-fn adoption_conflict_never_partially_writes_and_keeps_foreign_state() {
+fn adoption_conflict_never_partially_writes_and_keeps_foreign_state() -> FixtureResult<()> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("conflict.sqlite3"));
-    let (capture, _) = fixture();
-    let prepared = prepare(&capture, &CanonicalDates).unwrap();
+    let (capture, _) = fixture()?;
+    let prepared = prepare(&capture, &CanonicalDates)?;
     let foreign_key = key(json!(["ubq_ai", "api_keys", "id", "fixture-key"]));
     *store.before_commit.borrow_mut() = Some((
         foreign_key.clone(),
@@ -170,23 +172,18 @@ fn adoption_conflict_never_partially_writes_and_keeps_foreign_state() {
     ));
     assert!(run(adopt_empty(&store, &prepared)).is_err());
     assert_eq!(
-        run(store.read(&foreign_key)).unwrap().unwrap().revision,
+        run(store.read(&foreign_key))?
+            .ok_or("Required fixture row missing")?
+            .revision,
         "foreign-owner"
     );
-    assert!(
-        run(store.read(&key(json!(["uos_ai", "migration", "v3", "manifest"]))))
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        run(store.read(&gateway_authority::keys::api_policy("fixture-key")))
-            .unwrap()
-            .is_none()
-    );
+    assert!(run(store.read(&key(json!(["uos_ai", "migration", "v3", "manifest"]))))?.is_none());
+    assert!(run(store.read(&gateway_authority::keys::api_policy("fixture-key")))?.is_none());
+    Ok(())
 }
 
 #[test]
-fn typed_values_revision_expiry_and_deleted_rows_survive_inverse() {
+fn typed_values_revision_expiry_and_deleted_rows_survive_inverse() -> FixtureResult<()> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("typed.sqlite3"));
     let value = PortableValue::Map(vec![(
@@ -203,33 +200,30 @@ fn typed_values_revision_expiry_and_deleted_rows_survive_inverse() {
         Value::Null,
         "typed-source-revision",
         Some(9900),
-    );
-    row.value = to_profile(&value).unwrap();
+    )?;
+    row.value = to_profile(&value)?;
     let input = capture(vec![row]);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     drop(store);
     let store = SqliteStore::open(&directory.file("typed.sqlite3"));
-    let result = run(export_latest(&store, 2300)).unwrap();
+    let result = run(export_latest(&store, 2300))?;
     assert_eq!(result.entries[0].versionstamp, "typed-source-revision");
     assert_eq!(result.entries[0].expires_at_ms, Some(9900));
     assert_eq!(
-        from_profile(&result.entries[0].value).unwrap(),
-        from_profile(&input.entries[0].value).unwrap()
+        from_profile(&result.entries[0].value)?,
+        from_profile(&input.entries[0].value)?
     );
+    Ok(())
 }
 
 #[test]
-fn wrong_indexes_unknown_state_and_duplicates_refuse_before_writes() {
-    let (mut input, _) = fixture();
-    let mut bad: Value = input.entries[2].value.deserialize().unwrap();
+fn wrong_indexes_unknown_state_and_duplicates_refuse_before_writes() -> FixtureResult<()> {
+    let (mut input, _) = fixture()?;
+    let mut bad: Value = input.entries[2].value.deserialize()?;
     bad["value"]["reserved_requests"] = json!({"type":"number","value":2});
-    input.entries[2].value = raw(bad);
+    input.entries[2].value = raw(bad)?;
     assert!(prepare(&input, &CanonicalDates).is_err());
-    let (mut input, _) = fixture();
+    let (mut input, _) = fixture()?;
     input.entries.push(input.entries[0].clone());
     assert!(prepare(&input, &CanonicalDates).is_err());
     let input = capture(vec![source(
@@ -237,8 +231,9 @@ fn wrong_indexes_unknown_state_and_duplicates_refuse_before_writes() {
         json!({}),
         "x",
         None,
-    )]);
+    )?]);
     assert!(prepare(&input, &CanonicalDates).is_err());
+    Ok(())
 }
 
 #[test]
@@ -267,7 +262,7 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly()
         serde_json::to_value(&catalog.metadata)?,
         "catalog-meta-source",
         Some(9999),
-    )];
+    )?];
     for (is_source, chunks) in [(false, &catalog.chunks), (true, &catalog.source_chunks)] {
         for (index, bytes) in chunks.iter().enumerate() {
             let key = chunk_key("0.163.0", "body-fixture", index, is_source);
@@ -290,7 +285,7 @@ fn captured_uint8_catalog_is_usable_after_sqlite_restart_and_inverts_exactly()
                 Value::Null,
                 &format!("catalog-chunk-{is_source}-{index}"),
                 Some(9999),
-            );
+            )?;
             row.value = to_profile(&PortableValue::Binary {
                 kind: "Uint8Array".into(),
                 bytes: bytes.clone(),
@@ -373,7 +368,8 @@ fn source_date_host_is_explicit_and_nested_values_keep_the_selected_realm()
 }
 
 #[test]
-fn source_shaped_routing_capacity_keep_timeout_legacy_probe_and_named_limits_as_data() {
+fn source_shaped_routing_capacity_keep_timeout_legacy_probe_and_named_limits_as_data()
+-> FixtureResult<()> {
     let directory = Directory::new();
     let path = directory.file("source-routing.sqlite3");
     let routing = json!({"v":2,"updated_at_ms":2100,"banked_reset_legacy_identity_unresolved":true,"slots":[{"account_id_hash":null,"credential_version":"fixture-generation","quota_blocked_until_ms":9000,"quota_block_source":"header_retry_after","quota_blocked_classes":["spark"],"quota_blocks_by_class":{"spark":{"blocked_until_ms":9000,"source":"header_retry_after","legacy_fallback":true,"quota_signal_observed_at_ms":2000,"observed_reset_at_ms":9000,"observed_reset_at_is_stable":false,"banked_reset_generation_ambiguous":true,"banked_reset_recovery_probe_pending":true}},"invalid_credential_version":null,"primary_used_percent":100,"secondary_used_percent":20,"quota_signal_observed_at_ms":2000,"capacity_observed_at_ms":2050,"upstream_timeout_blocked_until_ms":8000,"observed_reset_at_ms":9000,"observed_reset_at_is_stable":false,"banked_reset_generation_ambiguous":true,"banked_reset_recovery_probe_pending":true,"generation":3,"probe_lease":{"token":"fixture-probe","expires_at_ms":7000,"generation":3,"circuit":"upstream_timeout","quota_class":null}}]});
@@ -384,52 +380,43 @@ fn source_shaped_routing_capacity_keep_timeout_legacy_probe_and_named_limits_as_
             routing.clone(),
             "routing-source",
             None,
-        ),
+        )?,
         source(
             json!(["uos_ai", "codex_capacity_routing", "v1", "observations"]),
             capacity.clone(),
             "capacity-source",
             None,
-        ),
+        )?,
     ]);
     let store = SqliteStore::open(&path);
-    run(adopt_empty(
-        &store,
-        &prepare(&input, &CanonicalDates).unwrap(),
-    ))
-    .unwrap();
+    run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
     assert_eq!(
-        run(store.read(&gateway_authority::keys::routing()))
-            .unwrap()
-            .unwrap()
+        run(store.read(&gateway_authority::keys::routing()))?
+            .ok_or("Required fixture row missing")?
             .value,
         routing
     );
     assert_eq!(
-        run(store.read(&gateway_authority::keys::capacity()))
-            .unwrap()
-            .unwrap()
+        run(store.read(&gateway_authority::keys::capacity()))?
+            .ok_or("Required fixture row missing")?
             .value,
         capacity
     );
     // Data adoption never creates an enabled normalized pool or current publication proof.
-    assert!(
-        run(store.read(&gateway_authority::keys::pool()))
-            .unwrap()
-            .is_none()
-    );
-    let result = run(export_latest(&store, 2300)).unwrap();
+    assert!(run(store.read(&gateway_authority::keys::pool()))?.is_none());
+    let result = run(export_latest(&store, 2300))?;
     for original in &input.entries {
         let actual = result
             .entries
             .iter()
             .find(|e| e.key == original.key)
-            .unwrap();
+            .ok_or("Required fixture value missing")?;
         assert_eq!(actual.value, original.value);
         assert_eq!(actual.versionstamp, original.versionstamp);
     }
+    Ok(())
 }
 
 #[test]
@@ -469,8 +456,8 @@ fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts()
         ]
         .into_iter()
         .map(raw)
-        .collect(),
-        value: raw(json!({"type":"string","value":"typed tuple payload"})),
+        .collect::<Result<Vec<_>, GatewayError>>()?,
+        value: raw(json!({"type":"string","value":"typed tuple payload"}))?,
         versionstamp: "typed-key-source".into(),
         expires_at_ms: Some(9000),
     };
@@ -492,14 +479,13 @@ fn identity_mapping_reconstructs_all_source_supported_typed_tuple_parts()
 }
 
 #[test]
-fn a_profile_row_without_explicit_expiry_is_not_a_full_capture() {
-    let (capture, _) = fixture();
-    let mut json = serde_json::to_value(&capture).unwrap();
+fn a_profile_row_without_explicit_expiry_is_not_a_full_capture() -> FixtureResult<()> {
+    let (capture, _) = fixture()?;
+    let mut json = serde_json::to_value(&capture)?;
     json["entries"][0]
         .as_object_mut()
-        .unwrap()
+        .ok_or("Required fixture value missing")?
         .remove("expires_at_ms");
-    assert!(
-        serde_json::from_str::<PrivateCapture>(&serde_json::to_string(&json).unwrap()).is_err()
-    );
+    assert!(serde_json::from_str::<PrivateCapture>(&serde_json::to_string(&json)?).is_err());
+    Ok(())
 }

@@ -373,6 +373,73 @@ fn validate(
     Ok((manifest, entries, controls, mapping_keys))
 }
 
+fn write_source<W: std::io::Write>(
+    header: &NativeCapture,
+    source: &gateway_migration_stage::native_stage::AuditedNativeSource,
+    source_sink: &mut W,
+) -> Result<(), GatewayError> {
+    let mut prefix =
+        serde_json::to_vec(header).map_err(|_| invalid("Latest header cannot be encoded"))?;
+    if !prefix.ends_with(b"[]}") {
+        return Err(invalid("Latest header is malformed"));
+    }
+    prefix.truncate(prefix.len() - 3);
+    source_sink
+        .write_all(&prefix)
+        .and_then(|_| source_sink.write_all(b"["))
+        .map_err(|_| invalid("Private latest source sink failed"))?;
+    let mut first = true;
+    source.visit_entries(&mut |entry| {
+        if !first {
+            source_sink
+                .write_all(b",")
+                .map_err(|_| invalid("Private latest source sink failed"))?;
+        }
+        first = false;
+        serde_json::to_writer(&mut *source_sink, entry)
+            .map_err(|_| invalid("Private latest source sink failed"))
+    })?;
+    source_sink
+        .write_all(b"]}")
+        .map_err(|_| invalid("Private latest source sink failed"))?;
+    Ok(())
+}
+
+fn write_custody<C: std::io::Write>(
+    all: &DiskMap,
+    controls: &[String],
+    artifacts: &ArtifactContext,
+    custody_sink: &mut C,
+) -> Result<(), GatewayError> {
+    custody_sink
+        .write_all(b"{\"rust_controls\":[")
+        .map_err(|_| invalid("Private latest custody sink failed"))?;
+    for (index, key) in controls.iter().enumerate() {
+        if index != 0 {
+            custody_sink
+                .write_all(b",")
+                .map_err(|_| invalid("Private latest custody sink failed"))?;
+        }
+        serde_json::to_writer(
+            &mut *custody_sink,
+            &CustodyRecord {
+                key: key.clone(),
+                record: all.required(key)?,
+            },
+        )
+        .map_err(|_| invalid("Private latest custody sink failed"))?;
+    }
+    custody_sink
+        .write_all(b"],\"artifacts\":")
+        .map_err(|_| invalid("Private latest custody sink failed"))?;
+    serde_json::to_writer(&mut *custody_sink, artifacts)
+        .map_err(|_| invalid("Private latest custody sink failed"))?;
+    custody_sink
+        .write_all(b"}")
+        .map_err(|_| invalid("Private latest custody sink failed"))?;
+    Ok(())
+}
+
 pub async fn write_latest<S: QueryStore, H: NativeCustody, W: std::io::Write, C: std::io::Write>(
     store: &S,
     now_ms: i64,
@@ -432,13 +499,14 @@ pub async fn write_latest_for_reconciliation<
             .transpose()?;
         let original = mapping.as_ref().and_then(|m| m.native_origin.as_ref());
         let unchanged = if let (Some(mapping), Some(origin)) = (&mapping, original) {
-            record.revision == origin.revision.record_revision()?
-                && digest(&record)? == mapping.baseline_digest
+            let same = record.revision == origin.revision.record_revision()?
+                && digest(&record)? == mapping.baseline_digest;
+            same.then(|| origin.revision.clone())
         } else {
-            false
+            None
         };
-        let revision = if unchanged {
-            original.expect("checked native origin").revision.clone()
+        let revision = if let Some(revision) = unchanged {
+            revision
         } else {
             changed = true;
             let revision = NativeRevision {
@@ -506,55 +574,7 @@ pub async fn write_latest_for_reconciliation<
     // Reopen a separately sealed latest native stream (the validated input is retained
     // in its existing private file; this cursor has an independent offset).
 
-    let mut prefix =
-        serde_json::to_vec(&header).map_err(|_| invalid("Latest header cannot be encoded"))?;
-    if !prefix.ends_with(b"[]}") {
-        return Err(invalid("Latest header is malformed").into());
-    }
-    prefix.truncate(prefix.len() - 3);
-    source_sink
-        .write_all(&prefix)
-        .and_then(|_| source_sink.write_all(b"["))
-        .map_err(|_| invalid("Private latest source sink failed"))?;
-    let mut first = true;
-    source.visit_entries(&mut |entry| {
-        if !first {
-            source_sink
-                .write_all(b",")
-                .map_err(|_| invalid("Private latest source sink failed"))?;
-        }
-        first = false;
-        serde_json::to_writer(&mut *source_sink, entry)
-            .map_err(|_| invalid("Private latest source sink failed"))
-    })?;
-    source_sink
-        .write_all(b"]}")
-        .map_err(|_| invalid("Private latest source sink failed"))?;
-    custody_sink
-        .write_all(b"{\"rust_controls\":[")
-        .map_err(|_| invalid("Private latest custody sink failed"))?;
-    for (index, key) in controls.iter().enumerate() {
-        if index != 0 {
-            custody_sink
-                .write_all(b",")
-                .map_err(|_| invalid("Private latest custody sink failed"))?;
-        }
-        serde_json::to_writer(
-            &mut *custody_sink,
-            &CustodyRecord {
-                key: key.clone(),
-                record: all.required(key)?,
-            },
-        )
-        .map_err(|_| invalid("Private latest custody sink failed"))?;
-    }
-    custody_sink
-        .write_all(b"],\"artifacts\":")
-        .map_err(|_| invalid("Private latest custody sink failed"))?;
-    serde_json::to_writer(&mut *custody_sink, &artifacts)
-        .map_err(|_| invalid("Private latest custody sink failed"))?;
-    custody_sink
-        .write_all(b"}")
-        .map_err(|_| invalid("Private latest custody sink failed"))?;
+    write_source(&header, &source, source_sink)?;
+    write_custody(&all, &controls, &artifacts, custody_sink)?;
     Ok((count, manifest, mapping_keys))
 }

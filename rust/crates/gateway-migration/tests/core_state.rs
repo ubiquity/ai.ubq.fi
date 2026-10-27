@@ -462,14 +462,12 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
 }
 
 #[test]
-fn bounded_core_staging_uses_the_same_spool_and_write_budget() {
+fn bounded_core_staging_uses_the_same_spool_and_write_budget() -> FixtureResult<()> {
     let directory = Directory::new();
     let spool = directory.file("spool");
-    std::fs::create_dir(&spool).unwrap();
-    let (manifest, mut plan) = run(Captured::owned(capture(valid_core_entries()), &spool)
-        .unwrap()
-        .prepare_core(&NoCustody))
-    .unwrap();
+    std::fs::create_dir(&spool)?;
+    let (manifest, mut plan) =
+        run(Captured::owned(capture(valid_core_entries()), &spool)?.prepare_core(&NoCustody))?;
     let summary = plan.summary();
     assert_eq!(summary.source_rows, manifest.selected_rows);
     assert_eq!(summary.derived_rows, manifest.derived_rows);
@@ -478,24 +476,21 @@ fn bounded_core_staging_uses_the_same_spool_and_write_budget() {
     run(gateway_migration_protocol::staged::execute_staged(
         &store,
         plan.begin(),
-    ))
-    .unwrap();
-    while let Some(batch) = plan.next_batch().unwrap() {
+    ))?;
+    while let Some(batch) = plan.next_batch()? {
         run(gateway_migration_protocol::staged::execute_staged(
             &store, batch,
-        ))
-        .unwrap();
+        ))?;
     }
     let receipt = run(gateway_migration_protocol::staged::execute_staged(
         &store,
         plan.seal(),
-    ))
-    .unwrap();
+    ))?;
     assert!(receipt.sealed);
     assert!(!receipt.activation_authorized);
     assert_eq!(receipt.accepted_records as u64 + 1, manifest.do_row_writes);
+    Ok(())
 }
-
 struct NoCustody;
 impl NativeCustody for NoCustody {
     async fn observe(
@@ -508,6 +503,8 @@ impl NativeCustody for NoCustody {
         ))
     }
 }
+
+type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 #[derive(serde::Deserialize)]
 struct ClaudeSourceFixture {
@@ -525,9 +522,9 @@ struct ClaudeSourceRow {
     expires_at_ms: Option<i64>,
 }
 
-fn claude_source_entries() -> Vec<NativeEntry> {
+fn claude_source_entries() -> FixtureResult<Vec<NativeEntry>> {
     let fixture: ClaudeSourceFixture =
-        serde_json::from_str(include_str!("fixtures/claude-core-retention-source.json")).unwrap();
+        serde_json::from_str(include_str!("fixtures/claude-core-retention-source.json"))?;
     assert_eq!(
         fixture.source_sha,
         "b59243d674567d418d1410f8390fc7fe47a08c92"
@@ -537,79 +534,76 @@ fn claude_source_entries() -> Vec<NativeEntry> {
     fixture
         .rows
         .into_iter()
-        .map(|row| NativeEntry {
-            raw_key: TupleKey::from_json_parts(&row.key)
-                .unwrap()
-                .sort_bytes()
-                .to_vec(),
-            value: NativeValue::SourceGraphV1(
-                gateway_migration_graph::transport::tree_to_source_graph(
-                    &gateway_core::source_control::source_json_tree(&row.value).unwrap(),
-                )
-                .unwrap(),
-            ),
-            revision: NativeRevision {
-                version: row.revision,
-                sequence: "0".into(),
-            },
-            expiration_ms: row.expires_at_ms.unwrap_or(-1),
+        .map(|row| {
+            Ok(NativeEntry {
+                raw_key: TupleKey::from_json_parts(&row.key)?.sort_bytes().to_vec(),
+                value: NativeValue::SourceGraphV1(
+                    gateway_migration_graph::transport::tree_to_source_graph(
+                        &gateway_core::source_control::source_json_tree(&row.value)?,
+                    )?,
+                ),
+                revision: NativeRevision {
+                    version: row.revision,
+                    sequence: "0".into(),
+                },
+                expiration_ms: row.expires_at_ms.unwrap_or(-1),
+            })
         })
         .collect()
 }
 
-fn entry_key(entry: &NativeEntry) -> gateway_core::state::RecordKey {
-    TupleKey::from_sort_bytes(entry.raw_key.clone())
-        .unwrap()
-        .to_record_key()
+fn entry_key(entry: &NativeEntry) -> FixtureResult<gateway_core::state::RecordKey> {
+    Ok(TupleKey::from_sort_bytes(entry.raw_key.clone())?.to_record_key())
 }
 
-fn native_tree(entry: &NativeEntry) -> gateway_core::value::PortableValue {
+fn native_tree(entry: &NativeEntry) -> FixtureResult<gateway_core::value::PortableValue> {
     let NativeValue::SourceGraphV1(graph) = &entry.value else {
-        panic!("Expected source-produced JSON graph");
+        return Err("Expected source-produced JSON graph".into());
     };
-    gateway_migration_graph::transport::from_source_graph(graph)
-        .unwrap()
-        .try_identity_free_tree()
-        .unwrap()
-        .unwrap()
+    Ok(
+        gateway_migration_graph::transport::from_source_graph(graph)?
+            .try_identity_free_tree()?
+            .ok_or("Expected identity-free source JSON")?,
+    )
 }
 
-fn assert_original_entry(actual: &NativeCapture, expected: &NativeEntry) {
+fn assert_original_entry(actual: &NativeCapture, expected: &NativeEntry) -> FixtureResult<()> {
     let row = actual
         .entries
         .iter()
         .find(|row| row.raw_key == expected.raw_key)
-        .expect("Retained source row is missing");
+        .ok_or("Retained source row is missing")?;
     assert_eq!(row.revision, expected.revision);
     assert_eq!(row.expiration_ms, expected.expiration_ms);
-    assert_eq!(native_tree(row), native_tree(expected));
+    assert_eq!(native_tree(row)?, native_tree(expected)?);
+    Ok(())
 }
 
-fn claude_parts(entry: &NativeEntry) -> Vec<Value> {
-    gateway_migration_data::parts(&entry_key(entry)).unwrap()
+fn claude_parts(entry: &NativeEntry) -> FixtureResult<Vec<Value>> {
+    Ok(gateway_migration_data::parts(&entry_key(entry)?)?)
 }
 
 fn write_current_quota_and_delete_lease(
     store: &SqliteStore,
     quota: &NativeEntry,
     lease: &NativeEntry,
-) -> Result<gateway_core::value::PortableValue, gateway_core::error::GatewayError> {
+) -> FixtureResult<gateway_core::value::PortableValue> {
     use gateway_core::state::{
         AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
     };
     use gateway_core::value::PortableValue;
-    let quota_key = entry_key(quota);
-    let lease_key = entry_key(lease);
-    let current_quota = run(store.read(&quota_key))?.unwrap();
-    let current_lease = run(store.read(&lease_key))?.unwrap();
-    let mut next = native_tree(quota);
+    let quota_key = entry_key(quota)?;
+    let lease_key = entry_key(lease)?;
+    let current_quota = run(store.read(&quota_key))?.ok_or("Current quota row missing")?;
+    let current_lease = run(store.read(&lease_key))?.ok_or("Current collector lease missing")?;
+    let mut next = native_tree(quota)?;
     let PortableValue::ObjectUtf16(fields) = &mut next else {
-        panic!("Expected a lossless source object");
+        return Err("Expected a lossless source object".into());
     };
     fields
         .iter_mut()
         .find(|(name, _)| *name == gateway_core::js_string::JsString16::from_utf8("updated_at_ms"))
-        .unwrap()
+        .ok_or("Source quota update clock missing")?
         .1 = PortableValue::number(2300.0);
     let record = StoredRecord::profile_v2(
         "post-adoption-current-quota",
@@ -644,16 +638,21 @@ fn write_current_quota_and_delete_lease(
 #[test]
 fn source_claude_core_keeps_current_rows_and_latest_writes_without_renewing_lease_expiry()
 -> Result<(), Box<dyn std::error::Error>> {
-    let rows = claude_source_entries();
+    let rows = claude_source_entries()?;
     assert_eq!(rows.len(), 5);
-    let lease = rows
-        .iter()
-        .find(|row| gateway_migration_data::claude::usage_lease_key(&claude_parts(row)))
-        .unwrap();
-    let quota = rows
-        .iter()
-        .find(|row| claude_parts(row)[1] == "claude_code_quota")
-        .unwrap();
+    let mut lease = None;
+    let mut quota = None;
+    for row in &rows {
+        let parts = claude_parts(row)?;
+        if gateway_migration_data::claude::usage_lease_key(&parts) {
+            lease = Some(row);
+        }
+        if parts[1] == "claude_code_quota" {
+            quota = Some(row);
+        }
+    }
+    let lease = lease.ok_or("Source collector lease missing")?;
+    let quota = quota.ok_or("Source quota row missing")?;
     assert_eq!(lease.expiration_ms, 22_200);
     assert_eq!(quota.expiration_ms, -1);
     let mut entries = valid_core_entries();
@@ -666,27 +665,26 @@ fn source_claude_core_keeps_current_rows_and_latest_writes_without_renewing_leas
     assert_eq!(core.manifest.selected_rows, 9);
     assert_eq!(core.manifest.excluded_rows, 3);
     assert_eq!(core.manifest.do_row_writes, 23);
-    assert_original_entry(&core.capture, lease);
-    assert_original_entry(&core.capture, quota);
-    assert!(
-        rows.iter()
-            .filter(
-                |row| gateway_migration_data::claude::historical_capacity_key(&claude_parts(row))
-            )
-            .all(|excluded| core
-                .capture
-                .entries
-                .iter()
-                .all(|row| row.raw_key != excluded.raw_key))
-    );
+    assert_original_entry(&core.capture, lease)?;
+    assert_original_entry(&core.capture, quota)?;
+    for excluded in &rows {
+        if gateway_migration_data::claude::historical_capacity_key(&claude_parts(excluded)?) {
+            assert!(
+                core.capture
+                    .entries
+                    .iter()
+                    .all(|row| row.raw_key != excluded.raw_key)
+            );
+        }
+    }
     let path = directory.file("claude-core.sqlite3");
     let store = SqliteStore::open(&path);
     run(adopt_empty(&store, &prepare_native(&core.capture)?))?;
     drop(store);
     let store = SqliteStore::open(&path);
     let unchanged = run(export_native_latest(&store, 2300))?;
-    assert_original_entry(&unchanged, lease);
-    assert_original_entry(&unchanged, quota);
+    assert_original_entry(&unchanged, lease)?;
+    assert_original_entry(&unchanged, quota)?;
     let next = write_current_quota_and_delete_lease(&store, quota, lease)?;
     drop(store);
     let store = SqliteStore::open(&path);
@@ -701,26 +699,28 @@ fn source_claude_core_keeps_current_rows_and_latest_writes_without_renewing_leas
         .entries
         .iter()
         .find(|row| row.raw_key == quota.raw_key)
-        .unwrap();
+        .ok_or("Updated current quota row missing")?;
     assert_ne!(updated.revision, quota.revision);
     assert_eq!(updated.expiration_ms, -1);
-    assert_eq!(native_tree(updated), next);
-    assert!(
-        latest.entries.iter().all(
-            |row| !gateway_migration_data::claude::historical_capacity_key(&claude_parts(row))
-        )
-    );
+    assert_eq!(native_tree(updated)?, next);
+    for row in &latest.entries {
+        assert!(!gateway_migration_data::claude::historical_capacity_key(
+            &claude_parts(row)?
+        ));
+    }
     let inverse_path = directory.file("claude-core-inverse.sqlite3");
     let inverse = SqliteStore::open(&inverse_path);
     run(adopt_empty(&inverse, &prepare_native(&latest)?))?;
     drop(inverse);
     let inverse = SqliteStore::open(&inverse_path);
-    assert!(run(inverse.read(&entry_key(lease)))?.is_none());
+    assert!(run(inverse.read(&entry_key(lease)?))?.is_none());
     let inverse_latest = run(export_native_latest(&inverse, 2300))?;
-    assert_original_entry(&inverse_latest, updated);
+    assert_original_entry(&inverse_latest, updated)?;
     let api = gateway_authority::keys::api_window("core-key", "v3:1000", 2000);
     assert_eq!(
-        run(inverse.read(&api))?.unwrap().json_value()?["committed_requests"],
+        run(inverse.read(&api))?
+            .ok_or("Current API window missing")?
+            .json_value()?["committed_requests"],
         42
     );
     Ok(())
@@ -729,7 +729,7 @@ fn source_claude_core_keeps_current_rows_and_latest_writes_without_renewing_leas
 #[test]
 fn full_history_export_still_retains_every_source_claude_history_kind()
 -> Result<(), Box<dyn std::error::Error>> {
-    let rows = claude_source_entries();
+    let rows = claude_source_entries()?;
     let mut entries = valid_core_entries();
     entries.extend(rows.clone());
     let input = capture(entries);
@@ -743,13 +743,13 @@ fn full_history_export_still_retains_every_source_claude_history_kind()
     let store = SqliteStore::open(&path);
     let latest = run(export_native_latest(&store, 2300))?;
     for row in &rows {
-        assert_original_entry(&latest, row);
+        assert_original_entry(&latest, row)?;
     }
     Ok(())
 }
 
 #[test]
-fn unknown_claude_versions_kinds_and_key_shapes_refuse_core_selection() {
+fn unknown_claude_versions_kinds_and_key_shapes_refuse_core_selection() -> FixtureResult<()> {
     for key in [
         json!(["uos_ai", "claude_code_usage", "v2", "lease", "a", "c"]),
         json!(["uos_ai", "claude_code_usage", "v1", "future", "a", "c"]),
@@ -825,16 +825,11 @@ fn unknown_claude_versions_kinds_and_key_shapes_refuse_core_selection() {
         }
         let directory = Directory::new();
         let spool = directory.file("unknown-claude-spool");
-        std::fs::create_dir(&spool).unwrap();
-        assert!(
-            Captured::owned(input, &spool)
-                .unwrap()
-                .core_capture()
-                .is_err()
-        );
+        std::fs::create_dir(&spool)?;
+        assert!(Captured::owned(input, &spool)?.core_capture().is_err());
     }
+    Ok(())
 }
-
 mod support_clock {
     use gateway_core::error::GatewayError;
     pub struct Tokens(pub std::sync::atomic::AtomicU64);
