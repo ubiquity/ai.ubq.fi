@@ -8,20 +8,8 @@ export const API_KEY_NO_USAGE_LIMIT = -1;
 export const PAID_FALLBACK_NO_LIMIT = -1;
 export const MICROCREDITS_PER_CREDIT = 1_000_000;
 
-const getEnvNumber = (key: string, defaultValue: number): number => {
-  try {
-    const value = process.env[key];
-    if (!value) return defaultValue;
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return defaultValue;
-    return Math.trunc(parsed);
-  } catch {
-    return defaultValue;
-  }
-};
-
-export const DEFAULT_USAGE_LIMIT_REQUESTS = getEnvNumber("UOS_API_KEY_DEFAULT_USAGE_LIMIT", 50);
-export const DEFAULT_EXPIRY_DAYS = getEnvNumber("UOS_API_KEY_DEFAULT_EXPIRY_DAYS", 90);
+export const DEFAULT_USAGE_LIMIT_REQUESTS = 50;
+export const DEFAULT_EXPIRY_DAYS = 90;
 export const USAGE_RESET_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const apiKeyIdKey = (id: string) => [...API_KEY_ID_PREFIX, id] as const;

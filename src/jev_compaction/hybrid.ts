@@ -7,9 +7,9 @@
  * tail of the latest memory. Large memories are rewritten in context-sized
  * chunks and concatenated, because a real 1M-token session renders a memory
  * (up to `SUMMARY_CHAR_CAP`) that exceeds the residue model's context window;
- * the single-call path remains for memories that already fit. The pass is on by
- * default; setting `JEV_COMPACTION_HYBRID=0` disables it as an operator kill
- * switch. It is best-effort by contract: any missing credential, transport
+ * the single-call path remains for memories that already fit. Isolated callers
+ * select the pass through the existing residue injection seam.
+ * It is best-effort by contract: any missing credential, transport
  * failure, timeout, empty or non-shrinking output returns null and the caller
  * keeps the pure Jev summary, so a compaction can never fail because of this
  * pass.
@@ -19,7 +19,6 @@
  */
 import { CEREBRAS_GPT_OSS_120B_MODEL, fetchCerebrasChatCompletions, readCerebrasApiKey } from "../provider/cerebras.ts";
 
-export const HYBRID_ENV = "JEV_COMPACTION_HYBRID";
 export const HYBRID_RESIDUE_TIMEOUT_MS = 20_000;
 export const HYBRID_TAIL_FRACTION = 0.12;
 export const HYBRID_LEDGER_LIMIT = 300;
@@ -275,18 +274,5 @@ export async function runHybridResiduePass(summary: string, deps: HybridResidueD
     }
     hybridFailureLog(error instanceof Error && error.name === "TimeoutError" ? "timeout" : "transport");
     return null;
-  }
-}
-
-/**
- * Operator switch: the residue pass runs by default and `JEV_COMPACTION_HYBRID=0`
- * is the kill switch. An environment that cannot be read at all keeps the safe
- * pure-Jev behavior.
- */
-export function hybridResidueEnabled(): boolean {
-  try {
-    return process.env[HYBRID_ENV] !== "0";
-  } catch {
-    return false;
   }
 }

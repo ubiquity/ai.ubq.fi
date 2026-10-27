@@ -610,7 +610,7 @@ export { codexResetRedemptionKey } from "../../src/codex/banked-reset.ts";
 export { codexResetUsageKey } from "../../src/codex/reset-settings.ts";
 export { attemptCodexBankedReset };
 export { evaluateCodexBankedResetPool } from "../../src/codex/banked-reset-pool.ts";
-export { parseCodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
+export { loadCodexBankedResetConfig } from "../../src/codex/banked-reset.ts";
 export { parseCodexResetRedemptionRecord } from "../../src/codex/banked-reset.ts";
 export { providerSupportsLiveRedemption } from "../../src/codex/banked-reset-provider.ts";
 export { providerSupportsResetType } from "../../src/codex/banked-reset-provider.ts";

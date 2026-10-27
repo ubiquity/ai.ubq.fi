@@ -156,7 +156,7 @@ const armKernelLeaseExpiry = (): Readonly<{ expire: () => void; restore: () => v
 };
 
 type ProviderCall = Readonly<{ provider: string; body: Record<string, unknown> }>;
-type HarnessOptions = Readonly<{ kernel?: boolean }>;
+type HarnessOptions = Readonly<{ kernel?: boolean; holdDeepSeek?: boolean }>;
 
 /** Real HTTP ingress, real authentication/admission/quota, memory-only KV and blocked external fetches. */
 const startHarness = async (asker: JevAsker, options: HarnessOptions = {}) => {
@@ -225,6 +225,10 @@ const startHarness = async (asker: JevAsker, options: HarnessOptions = {}) => {
   if (kernelToken) await reloadKernelPublicKeys();
 
   const calls: ProviderCall[] = [];
+  let providerStarted: () => void = () => {};
+  const providerDispatched = new Promise<void>((resolve) => {
+    providerStarted = resolve;
+  });
   const terminals: Record<string, unknown>[] = [];
   const originalInfo = console.info;
   console.info = (...args: unknown[]): void => {
@@ -248,6 +252,19 @@ const startHarness = async (asker: JevAsker, options: HarnessOptions = {}) => {
       return Promise.resolve(Response.json({ error: { message: "controlled quota refusal" } }, { status: 429 }));
     }
     calls.push({ provider: "deepseek", body });
+    providerStarted();
+    if (options.holdDeepSeek) {
+      const signal = init?.signal;
+      assert.ok(signal, "the provider must inherit cancellation");
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = (): void => {
+          const reason: unknown = signal.reason;
+          reject(reason instanceof Error ? reason : new DOMException("Provider cancelled", "AbortError"));
+        };
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      });
+    }
     return Promise.resolve(
       new Response(`${chatChunk("pong", null)}${chatChunk(null, "stop")}data: [DONE]\n\n`, {
         headers: { "content-type": "text/event-stream", "x-request-id": "compaction-deepseek" },
@@ -284,6 +301,7 @@ const startHarness = async (asker: JevAsker, options: HarnessOptions = {}) => {
     policy,
     controller,
     calls,
+    providerDispatched,
     terminals,
     token,
     post,
@@ -329,7 +347,7 @@ const settledTerminal = async (harness: Harness, requestId: string): Promise<Rec
   return terminals[0];
 };
 
-test("marked compaction: failed Jev retains one quota reservation across Lithos 429 and DeepSeek success", async () => {
+test("marked compaction uses stock providers and one quota reservation even when the isolated Jev asker would fail", async () => {
   let jevCalls = 0;
   const harness = await startHarness({
     ask(): Promise<JevResponse> {
@@ -340,7 +358,7 @@ test("marked compaction: failed Jev retains one quota reservation across Lithos 
   try {
     const response = await harness.post(requestBody());
     const text = await response.text();
-    assert.equal(jevCalls, 1, "the failure must come from the injected Jev asker");
+    assert.equal(jevCalls, 0, "marked requests must never invoke the isolated Jev asker");
     assert.equal(response.status, 200, `the intact fallback must complete instead of quota-dispatch 503: ${text}`);
     assert.deepEqual(
       harness.calls.map((call) => call.provider),
@@ -374,18 +392,17 @@ test("marked compaction: failed Jev retains one quota reservation across Lithos 
   }
 });
 
-test("marked compaction: handler caller cancellation during Jev releases quota without provider fallback", async () => {
+test("marked compaction propagates caller cancellation to the stock provider", async () => {
   let jevCalls = 0;
-  let rejectAsker: (reason: Error) => void = () => {};
-  const decision = new Promise<JevResponse>((_resolve, reject) => {
-    rejectAsker = reject;
-  });
-  const harness = await startHarness({
-    ask(): Promise<JevResponse> {
-      jevCalls += 1;
-      return decision;
+  const harness = await startHarness(
+    {
+      ask(): Promise<JevResponse> {
+        jevCalls += 1;
+        return Promise.reject(new Error("Jev must not be called"));
+      },
     },
-  });
+    { holdDeepSeek: true }
+  );
   const abort = new AbortController();
   try {
     // Deno HTTP does not signal a disconnect before response headers here.
@@ -398,72 +415,70 @@ test("marked compaction: handler caller cancellation during Jev releases quota w
         signal: abort.signal,
       })
     );
-    await waitFor(() => jevCalls === 1, "the injected Jev decision");
+    await harness.providerDispatched;
     abort.abort();
-    rejectAsker(new Error("controlled Jev cancellation"));
     const response = await pending;
     assert.equal(response.status, 499);
     await response.text();
-    assert.equal(harness.calls.length, 0, "a cancelled Jev request must never dispatch a fallback provider");
+    assert.equal(jevCalls, 0);
+    assert.deepEqual(
+      harness.calls.map((call) => call.provider),
+      ["lithos", "deepseek"]
+    );
     const requestId = response.headers.get("x-uos-request-id");
     assert.ok(requestId);
     const terminal = await settledTerminal(harness, requestId);
     assert.equal(terminal.status, 499);
     const ledger = await quota(harness, requestId);
-    assert.equal(ledger.window.committed_requests, 0);
+    assert.equal(ledger.window.committed_requests, 1);
     assert.equal(ledger.window.reserved_requests, 0);
-    assert.equal(ledger.request.state, "released");
+    assert.equal(ledger.request.state, "dispatched");
     assert.equal(quotaCommits(harness.kv, harness.policy, requestId), 2);
   } finally {
     abort.abort();
-    rejectAsker(new Error("settle controlled Jev cancellation"));
     await harness.stop();
   }
 });
 
-test("marked repository compaction: kernel reservation cancellation stops Jev before completion", async () => {
+test("marked repository compaction expires through the stock provider deadline", async () => {
   let jevCalls = 0;
-  let questions: JevQuestions = {};
-  let resolveDecision: (response: JevResponse) => void = () => {};
-  const decision = new Promise<JevResponse>((resolve) => {
-    resolveDecision = resolve;
-  });
   const harness = await startHarness(
     {
-      ask(_state, askedQuestions: JevQuestions): Promise<JevResponse> {
+      ask(): Promise<JevResponse> {
         jevCalls += 1;
-        questions = askedQuestions;
-        return decision;
+        return Promise.reject(new Error("Jev must not be called"));
       },
     },
-    { kernel: true }
+    { kernel: true, holdDeepSeek: true }
   );
   const lease = armKernelLeaseExpiry();
   try {
     const pending = harness.post(requestBody());
-    await waitFor(() => jevCalls === 1, "the injected Jev decision");
+    await harness.providerDispatched;
     lease.expire();
-    resolveDecision({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { noul: 0.1 }])) });
     const response = await pending;
-    assert.equal(response.status, 499, "an expired kernel reservation must cancel local compaction");
+    assert.equal(response.status, 504, "the expired lease clock must stop the stock provider at its deadline");
     await response.text();
-    assert.equal(harness.calls.length, 0, "an expired kernel reservation must not dispatch a fallback provider");
+    assert.equal(jevCalls, 0);
+    assert.deepEqual(
+      harness.calls.map((call) => call.provider),
+      ["lithos", "deepseek"]
+    );
     const requestId = response.headers.get("x-uos-request-id");
     assert.ok(requestId);
     const terminal = await settledTerminal(harness, requestId);
-    assert.equal(terminal.status, 499);
+    assert.equal(terminal.status, 504);
     const ledger = await quota(harness, requestId);
-    assert.equal(ledger.window.committed_requests, 0);
+    assert.equal(ledger.window.committed_requests, 1);
     assert.equal(ledger.window.reserved_requests, 0);
-    assert.equal(ledger.request.state, "released");
+    assert.equal(ledger.request.state, "dispatched");
   } finally {
     lease.restore();
-    resolveDecision({ answers: Object.fromEntries(Object.keys(questions).map((key) => [key, { noul: 0.1 }])) });
     await harness.stop();
   }
 });
 
-test("marked compaction: successful local Jev releases the request once without provider dispatch", async () => {
+test("marked compaction uses stock providers even when the isolated Jev asker would succeed", async () => {
   let jevCalls = 0;
   const harness = await startHarness({
     ask(_state, questions: JevQuestions): Promise<JevResponse> {
@@ -475,21 +490,25 @@ test("marked compaction: successful local Jev releases the request once without 
     const response = await harness.post(requestBody());
     const text = await response.text();
     assert.equal(response.status, 200);
-    assert.equal(jevCalls, 1);
-    assert.equal(harness.calls.length, 0);
-    assert.ok(response.headers.get("x-jev-compaction"));
-    assert.ok(text.includes("# fast-jev-compaction memory summary"));
+    assert.equal(jevCalls, 0);
+    assert.deepEqual(
+      harness.calls.map((call) => call.provider),
+      ["lithos", "deepseek"]
+    );
+    assert.equal(response.headers.get("x-jev-compaction"), null);
+    assert.ok(text.includes("pong"));
+    assert.ok(!text.includes("# fast-jev-compaction memory summary"));
     assert.equal((text.match(/event: response.completed\n/g) ?? []).length, 1);
     const requestId = response.headers.get("x-uos-request-id");
     assert.ok(requestId);
     const terminal = await settledTerminal(harness, requestId);
-    assert.equal(terminal.provider, "gateway");
-    assert.equal(terminal.usage_observed, false, "local compaction must not invent upstream token usage");
+    assert.equal(terminal.provider, "deepseek");
+    assert.equal(terminal.usage_observed, true);
     const ledger = await quota(harness, requestId);
-    assert.equal(ledger.window.committed_requests, 0);
+    assert.equal(ledger.window.committed_requests, 1);
     assert.equal(ledger.window.reserved_requests, 0);
-    assert.equal(ledger.request.state, "released");
-    assert.equal(quotaCommits(harness.kv, harness.policy, requestId), 2, "one reserve plus one release commit");
+    assert.equal(ledger.request.state, "dispatched");
+    assert.equal(quotaCommits(harness.kv, harness.policy, requestId), 2, "one reserve plus one dispatch commit");
   } finally {
     await harness.stop();
   }
