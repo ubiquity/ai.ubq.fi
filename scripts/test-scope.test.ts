@@ -5,7 +5,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  ciScopeForSelection,
+  ciScopeForSelection as sourceCiScopeForSelection,
   classifyChangedPaths,
   existingPaths,
   formatScopeMessage,
@@ -16,6 +16,10 @@ import {
   testRequiresNativeKv,
   type TestSelection,
 } from "./test-scope.ts";
+
+// Synthetic CI contexts describe paths at frozen HEAD; Git fixtures cover real deltas.
+const ciScopeForSelection = (selection: TestSelection, root = ROOT, environment: NodeJS.ProcessEnv = {}) =>
+  sourceCiScopeForSelection(selection, root, { TEST_SCOPE_BASE: "HEAD", ...environment });
 
 const fixture = mkdtempSync(join(tmpdir(), "uos-test-scope-"));
 mkdirSync(join(fixture, "src"));
@@ -71,6 +75,7 @@ const scopeCommand = (args: readonly string[], context: NodeJS.ProcessEnv, paths
       PATH: process.env.PATH,
       TMPDIR: fixture,
       TEST_SCOPE_PATHS: paths,
+      TEST_SCOPE_BASE: "HEAD",
       TEST_SCOPE_IGNORE_UNTRACKED: "1",
       ...context,
     },
@@ -269,7 +274,7 @@ describe("Sentinel complete CI check set", () => {
   test("development push wrappers use the actual before-to-head diff when the fetched development ref already equals HEAD", () => {
     const repository = mkdtempSync(join(fixture, "push-"));
     mkdirSync(join(repository, "scripts"));
-    for (const path of ["test-scope.ts", "verify.sh", "_bootstrap.sh"]) {
+    for (const path of ["test-scope.ts", "rust-inputs.ts", "rust-scope.ts", "verify.sh", "_bootstrap.sh"]) {
       copyFileSync(join(ROOT, "scripts", path), join(repository, "scripts", path));
     }
     const git = (...args: string[]): string => {
@@ -734,7 +739,7 @@ test.each(["gateway-admin-test-support", "gateway-extras-runtime-test-support"])
       affectedTests: [],
       needsRustNative: true,
       needsRustWasm: true,
-      needsRustBuild: true,
+      needsRustBuild: false,
       needsTypeScriptValidate: false,
     });
   }
@@ -747,4 +752,18 @@ test("parser launcher and staged Clippy tests are in the selected quality profil
     const profiles = JSON.parse(selected.stdout) as { files: string[] }[];
     expect(profiles.flatMap((profile) => profile.files)).toContain(path.replace(".ts", ".test.ts"));
   }
+});
+
+test.each([".cargo/config", ".cargo/config.toml"])("root Cargo config %s selects Rust jobs without unrelated TS tests", (path) => {
+  const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], {}, path);
+  expect(ci.status).toBe(0);
+  expect(JSON.parse(ci.stdout)).toMatchObject({
+    paths: [path],
+    affectedTests: [],
+    runAll: false,
+    needsTypeScriptValidate: false,
+    needsRustNative: true,
+    needsRustWasm: true,
+    needsRustBuild: true,
+  });
 });

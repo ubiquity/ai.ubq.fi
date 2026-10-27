@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectCiScope, isDocumentationPath, isRustGatePath, RUST_NATIVE_ONLY_PACKAGES } from "./test-scope.ts";
+import { detectCiScope } from "./test-scope.ts";
+import { createRustVerificationPlan } from "./rust-verify-plan.ts";
+import type { RustScope } from "./rust-scope.ts";
+export { rustPackages } from "./rust-verify-plan.ts";
 import { testNetworkArgv } from "./test-network.ts";
-import { observeRustCommandResult as observeCommandResult, rustClippyCommand, rustQualityCommands } from "./rust-verify-quality.ts";
+import { observeRustCommandResult as observeCommandResult } from "./rust-verify-quality.ts";
 import { guardRustTarget } from "./rust-target-owner.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -20,19 +23,13 @@ export const rustNativeTarget = (host: RustHost = process): string => {
   if (host.arch === "arm64" && host.platform === "darwin") return "aarch64-apple-darwin";
   throw new Error("Rust verification requires a supported Darwin or Linux ARM64 host");
 };
-type Package = Readonly<{
-  name: string;
-  directory: string;
-  dependencies: readonly string[];
-  runtimeDependencies: readonly string[];
-  hasTests: boolean;
-}>;
 export type RustPlan = Readonly<{
   stage: RustStage;
   packages: readonly string[];
   testPackages: readonly string[];
   buildWorker: boolean;
   commands: readonly RustCommand[];
+  scope?: RustScope;
 }>;
 export type RustCommand = Readonly<{
   argv: readonly string[];
@@ -53,135 +50,12 @@ const table = (value: unknown): Table => (typeof value === "object" && value !==
 const digest = (bytes: string | Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const toml = (path: string): Table => table(Bun.TOML.parse(readFileSync(path, "utf8")));
 const strings = (value: unknown): string[] => (Array.isArray(value) && value.every((item) => typeof item === "string") ? value : []);
-const unique = (items: readonly string[]): string[] => [...new Set(items)].sort((left, right) => left.localeCompare(right));
 const inside = (parent: string, child: string): boolean => {
   const path = relative(parent, child);
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith("../"));
 };
-const sourceHasTests = (directory: string): boolean =>
-  existsSync(directory) &&
-  readdirSync(directory, { withFileTypes: true }).some((entry) => {
-    const path = join(directory, entry.name);
-    return entry.isDirectory() ? sourceHasTests(path) : entry.name.endsWith(".rs") && /#\s*\[\s*(?:test|tokio::test)\s*\]/.test(readFileSync(path, "utf8"));
-  });
-// Recognize only the reviewed native-target predicate. Unknown selectors remain
-// in the portable closure so a new or malformed cfg cannot hide native code.
-const excludesWasmTarget = (selector: string): boolean => /^cfg\(\s*all\(\s*unix\s*,\s*not\(\s*target_arch\s*=\s*"wasm32"\s*\)\s*\)\s*\)$/.test(selector);
-const portableTargetDependencies = (value: unknown, names: ReadonlySet<string>, includeTests: boolean): string[] =>
-  Object.entries(table(value)).flatMap(([selector, configuration]) => {
-    // Only NORMAL edges use the reviewed target exclusion. BUILD dependencies
-    // may depend on the host; retain them until separately proven safe.
-    const selected = Object.entries(table(configuration)).filter(([kind]) => kind !== "dependencies" || !excludesWasmTarget(selector));
-    return packageDependencies(Object.fromEntries(selected), names, includeTests, true);
-  });
-const packageDependencies = (value: unknown, names: ReadonlySet<string>, includeTests = true, portable = false): string[] => {
-  const found: string[] = [];
-  const entries = Object.entries(table(value)).filter(([key]) => includeTests || key !== "dev-dependencies");
-  for (const [key, child] of entries) {
-    if (["dependencies", "dev-dependencies", "build-dependencies"].includes(key)) {
-      for (const [alias, dependency] of Object.entries(table(child))) {
-        const name = table(dependency).package ?? alias;
-        if (typeof name === "string" && names.has(name)) found.push(name);
-      }
-    } else if (key === "target" && portable) found.push(...portableTargetDependencies(child, names, includeTests));
-    else if (typeof child === "object" && child !== null) found.push(...packageDependencies(child, names, includeTests, portable));
-  }
-  return unique(found);
-};
-export const rustPackages = (root: string): readonly Package[] => {
-  const workspaceDirectory = join(root, "rust");
-  const manifest = toml(join(workspaceDirectory, "Cargo.toml"));
-  const members = strings(table(manifest.workspace).members);
-  if (members.length === 0 || members.some((member) => ["*", "?", "[", "]"].some((part) => member.includes(part))))
-    throw new Error("Rust workspace needs explicit, nonempty member paths");
-  const manifests = members.map((member) => {
-    const directory = resolve(workspaceDirectory, member);
-    if (!inside(workspaceDirectory, directory)) throw new Error("Rust workspace member escapes rust/");
-    const value = toml(join(directory, "Cargo.toml"));
-    const name = table(value.package).name;
-    if (typeof name !== "string" || !/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error("Rust workspace member has no safe package name");
-    return { name, directory, value };
-  });
-  const names = new Set(manifests.map((item) => item.name));
-  if (names.size !== manifests.length) throw new Error("Rust workspace contains duplicate package names");
-  return manifests.map(({ name, directory, value }) => ({
-    name,
-    directory,
-    dependencies: packageDependencies(value, names),
-    runtimeDependencies: packageDependencies(value, names, false, true),
-    hasTests: sourceHasTests(join(directory, "src")) || sourceHasTests(join(directory, "tests")),
-  }));
-};
-const reverseDependencies = (packages: readonly Package[], affected: Set<string>): Set<string> => {
-  for (;;) {
-    const before = affected.size;
-    for (const item of packages) if (item.dependencies.some((name) => affected.has(name))) affected.add(item.name);
-    if (before === affected.size) return affected;
-  }
-};
-const affectedPackages = (root: string, packages: readonly Package[], changed: readonly string[], complete: boolean): Set<string> => {
-  const owners = changed.map((path) => {
-    const owner = packages.find((item) => inside(item.directory, resolve(root, path)));
-    if (owner) return owner.name;
-    if (path.startsWith("rust/crates/")) throw new Error(`Changed Rust path has no registered Cargo member: ${path}`);
-    return null;
-  });
-  const names = complete || owners.includes(null) ? packages.map((item) => item.name) : owners.filter((name): name is string => name !== null);
-  return reverseDependencies(packages, new Set(names));
-};
-const workerDependencies = (packages: readonly Package[], worker: Package): Set<string> => {
-  const names = new Set([worker.name]);
-  for (;;) {
-    const before = names.size;
-    for (const item of packages) if (names.has(item.name)) for (const name of item.runtimeDependencies) names.add(name);
-    if (before === names.size) return names;
-  }
-};
-const testCommands = (names: readonly string[], target: string, cwd: string): RustCommand[] =>
-  names.flatMap<RustCommand>((name) => {
-    const argv = ["cargo", "test", "--locked", "--offline", "--target", target, "-p", name];
-    // Darwin prelaunch tests install their own child profiles; nesting those
-    // beneath the package-wide Seatbelt changes the policy being tested.
-    if (name === "gateway-native" && target === "aarch64-apple-darwin")
-      return [
-        { argv, cwd, isolated: true, darwinNativeTests: true },
-        { argv: [...argv, "--features", "native-import-fixture"], cwd, isolated: true, nativeImportFixture: true },
-      ];
-    return [
-      { argv: [...argv, "--", "--list"], cwd, isolated: true, testListing: true },
-      { argv, cwd, isolated: true, testRun: true },
-    ];
-  });
-export const planRustVerification = (root: string, paths: readonly string[], stage: RustStage, complete = false, host: RustHost = process): RustPlan => {
-  if (!existsSync(join(root, "rust/Cargo.lock")) || readFileSync(join(root, "rust/Cargo.lock"), "utf8").trim() === "")
-    throw new Error("Committed rust/Cargo.lock is required; verification never generates it");
-  const packages = rustPackages(root);
-  const changed = paths.filter((path) => !isDocumentationPath(path) && isRustGatePath(path));
-  if (!complete && changed.length === 0) throw new Error("No Rust work selected; this invocation is not a verification result");
-  const affected = affectedPackages(root, packages, changed, complete);
-  const worker = packages.find((item) => item.name === "gateway-worker");
-  if (!worker) throw new Error("Rust workspace is missing gateway-worker");
-  const wasm = workerDependencies(packages, worker);
-  if (RUST_NATIVE_ONLY_PACKAGES.some((name) => wasm.has(name))) throw new Error("Worker dependency closure contains a native-only package");
-  const selected = packages.filter((item) => affected.has(item.name) && (stage === "native" || !RUST_NATIVE_ONLY_PACKAGES.some((name) => name === item.name)));
-  if (selected.length === 0) throw new Error(`Rust ${stage} gate has no selected packages`);
-  const names = unique(selected.map((item) => item.name));
-  const flags = names.flatMap((name) => ["-p", name]);
-  const cwd = join(root, "rust");
-  const target = stage === "native" ? rustNativeTarget(host) : WASM_TARGET;
-  const cargo = ["--locked", "--offline", "--target", target, ...flags];
-  const commands: RustCommand[] = [
-    ...rustQualityCommands(root, cwd),
-    { argv: ["cargo", "fmt", "--all", "--", "--check"], cwd, isolated: true },
-    rustClippyCommand(stage, cwd, cargo, names),
-  ];
-  // A complete CI job still retains documentation-only zero-test selection.
-  const testAffected = affectedPackages(root, packages, changed, false);
-  const tests = stage === "native" ? selected.filter((item) => item.hasTests && testAffected.has(item.name)).map((item) => item.name) : [];
-  commands.push(...testCommands(tests, target, cwd));
-  if (stage === "wasm") commands.push({ argv: ["worker-build", "--release", "--locked"], cwd: worker.directory, isolated: true });
-  return { stage, packages: names, testPackages: tests, buildWorker: stage === "wasm", commands };
-};
+export const planRustVerification = (root: string, paths: readonly string[], stage: RustStage, complete = false, host: RustHost = process): RustPlan =>
+  createRustVerificationPlan(root, paths, stage, complete, stage === "native" ? rustNativeTarget(host) : WASM_TARGET);
 
 const macRustBin = (environment: Record<string, string>): string => join(environment.RUSTUP_HOME, "toolchains", `${RUST_VERSION}-aarch64-apple-darwin`, "bin");
 export const rustToolPath = (name: string, environment: Record<string, string>, host: RustHost = process): string => {
@@ -952,6 +826,7 @@ const main = async (): Promise<void> => {
   const environment = rustVerificationEnvironment();
   const sha = await checkedRun(["git", "rev-parse", "HEAD"], ROOT, environment);
   const tree = await checkedRun(["git", "rev-parse", "HEAD^{tree}"], ROOT, environment);
+  if (plan.scope?.head !== sha) throw new Error("Rust gates require immutable committed compiler inputs");
   if (await checkedRun(["git", "status", "--porcelain", "--untracked-files=no"], ROOT, environment))
     throw new Error("Rust gates require a clean committed source tree");
   await checkedRun(["git", "ls-files", "--error-unmatch", "rust/Cargo.lock"], ROOT, environment);
