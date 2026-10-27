@@ -122,7 +122,7 @@ fn authority_peer(
         let count = if mode == "lost" { 1 } else { 4 };
         for index in 0..count {
             let (headers, body) = request(&mut tls);
-            let now = crate::http_server::now_ms().unwrap();
+            let now = gateway_native_http_framing::response::now_ms().unwrap();
             let proof = futures_executor::block_on(
                 NativeLiveAuthenticator::new(&identity, &Nonces).authenticate_authority(
                     NativeAuthHeaders {
@@ -254,7 +254,7 @@ fn actual_startup_composer_reuses_reverse_tls_for_currentness_and_native_101_fra
         let mut request = format!("ws://{address}/v1/native/live")
             .into_client_request()
             .unwrap();
-        let now = crate::http_server::now_ms().unwrap();
+        let now = gateway_native_http_framing::response::now_ms().unwrap();
         let nonce = base64url(&[7; 32]);
         let mac = identity
             .sign_live_request(now, &nonce, "fixture-action")

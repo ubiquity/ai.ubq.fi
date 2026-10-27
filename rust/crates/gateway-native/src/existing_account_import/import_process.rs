@@ -34,7 +34,7 @@ impl NativeRenewalCancellation for ActorCancellation {
     fn cancelled(&self) -> bool {
         self.parent_dead.load(Ordering::Acquire)
             || Instant::now() >= self.deadline
-            || crate::http_server::disconnected(&self.client)
+            || gateway_native_http_framing::response::disconnected(&self.client)
     }
 }
 pub(super) struct PreparedImportActor {
@@ -156,8 +156,8 @@ fn run_actor() -> Result<(), GatewayError> {
         deadline,
     } = actor;
     let result = (|| {
-        let head = crate::http_server::read_import_head(&mut client)?;
-        let auth = head.auth_headers()?;
+        let head = gateway_native_http_framing::request::read_import_head(&mut client)?;
+        let auth = crate::import_ingress::auth_headers(&head)?;
         let cancelled = || cancellation.cancelled();
         let original =
             crate::owner_control::NativeControlContext::admitted(deadline, &cancelled, auth);
@@ -213,10 +213,15 @@ fn run_actor() -> Result<(), GatewayError> {
         )?;
         let verified = prepared.publish(&authority, &sender, &store, &context)?;
         let result = verified.source_result(&authority, &context)?;
-        crate::import_ingress::write_result(&mut client, result)
+        gateway_native_http_framing::response::write_import_response(
+            &mut client,
+            result.status,
+            result.headers,
+            result.body,
+        )
     })();
     match result {
         Ok(()) => Ok(()),
-        Err(error) => crate::http_server::write_error(&mut client, error),
+        Err(error) => gateway_native_http_framing::response::write_error(&mut client, error),
     }
 }

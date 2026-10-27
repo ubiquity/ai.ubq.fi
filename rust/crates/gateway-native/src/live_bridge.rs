@@ -94,7 +94,10 @@ impl NativeLiveHandler for NativeLiveService {
         request: NativeLiveUpgradeRequest,
         proof: AuthenticatedNativeLive,
     ) -> Result<NativeLiveOutcome, GatewayError> {
-        proof.require_upgrade(&request.action_ref, crate::http_server::now_ms()?)?;
+        proof.require_upgrade(
+            &request.action_ref,
+            gateway_native_http_framing::response::now_ms()?,
+        )?;
         let mut random = [0; 32];
         getrandom::fill(&mut random).map_err(|_| unavailable())?;
         let connection_id = base64url(&random);

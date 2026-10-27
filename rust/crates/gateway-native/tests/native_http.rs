@@ -199,7 +199,7 @@ fn signed_request(path: &str, body: &Value, nonce: u8, chunked: bool) -> Vec<u8>
     )
     .unwrap();
     let body = serde_json::to_vec(body).unwrap();
-    let now = gateway_native::http_server::now_ms().unwrap();
+    let now = gateway_native_http_framing::response::now_ms().unwrap();
     let nonce = base64url(&[nonce; 32]);
     let mac = identity.sign(path, now, &nonce, &body).unwrap();
     let framing = if chunked {

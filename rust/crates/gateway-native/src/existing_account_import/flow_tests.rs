@@ -127,7 +127,7 @@ fn key(parts: &[&str]) -> gateway_core::state::RecordKey {
 const OLD: &[u8] = br#"{"tokens":{"access_token":"SYNTHETIC_OLD_ACCESS","refresh_token":"SYNTHETIC_OLD_REFRESH","account_id":"synthetic-account"},"OPENAI_API_KEY":"SYNTHETIC_INDEPENDENT","unrelated":"\ud800"}"#;
 const NEW: &[u8] = br#"{"auth":{"tokens":{"access_token":"SYNTHETIC_NEW_ACCESS","refresh_token":"SYNTHETIC_NEW_REFRESH","account_id":"synthetic-account"}},"models":{"client_version":"0.163.0"}}"#;
 fn now() -> i64 {
-    crate::http_server::now_ms().unwrap()
+    gateway_native_http_framing::response::now_ms().unwrap()
 }
 fn id() -> NativeTransportIdentity {
     NativeTransportIdentity::new(

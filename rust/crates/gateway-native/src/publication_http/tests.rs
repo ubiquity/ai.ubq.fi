@@ -219,7 +219,7 @@ fn real_https_transport_verifies_peer_and_signed_publication_receipts() {
             NativePublicationSender::configured(&identity, &carrier).send(
                 &command,
                 [9; 32],
-                crate::http_server::now_ms().unwrap(),
+                gateway_native_http_framing::response::now_ms().unwrap(),
             ),
         );
         let reached_http = peer.finish();

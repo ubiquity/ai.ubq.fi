@@ -183,7 +183,7 @@ fn start(service: NativeLiveService) -> (SocketAddr, thread::JoinHandle<()>) {
                     mac: one(NATIVE_MAC_HEADER),
                 },
                 &action_ref,
-                crate::http_server::now_ms().unwrap(),
+                gateway_native_http_framing::response::now_ms().unwrap(),
             ),
         )
         .unwrap();
@@ -207,7 +207,7 @@ fn request(address: SocketAddr) -> tungstenite::handshake::client::Request {
     let mut request = format!("ws://{address}/v1/native/live")
         .into_client_request()
         .unwrap();
-    let now = crate::http_server::now_ms().unwrap();
+    let now = gateway_native_http_framing::response::now_ms().unwrap();
     let nonce = base64url(&[19; 32]);
     let identity = identity();
     let mac = identity

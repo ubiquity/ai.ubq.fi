@@ -372,7 +372,7 @@ fn actual_ordinary_private_https_reader_keeps_65536_even_for_a_new_import_body()
         .to_owned()]),
     )?;
     let nonce = base64url(&[7; 32]);
-    let now = crate::http_server::now_ms()?;
+    let now = gateway_native_http_framing::response::now_ms()?;
     let id = identity();
     let headers = vec![
         (NATIVE_VERSION_HEADER.into(), "1".into()),

@@ -85,7 +85,7 @@ fn run() -> Result<(), ControlError> {
         let mut stream = stream.map_err(io_error)?;
         if active.fetch_add(1, Ordering::AcqRel) >= 64 {
             active.fetch_sub(1, Ordering::AcqRel);
-            let _ = http_server::write_error(
+            let _ = gateway_native_http_framing::response::write_error(
                 &mut stream,
                 GatewayError::unavailable(
                     "Native listener is at capacity",

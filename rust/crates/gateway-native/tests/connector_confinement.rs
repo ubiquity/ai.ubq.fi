@@ -163,7 +163,7 @@ fn actual_request_worker_uses_inherited_client_and_one_persistent_replay_fence()
     )
     .unwrap();
     let body = br#"{"v":1,"request":{"operation":"supervisor_sessions"}}"#;
-    let now = gateway_native::http_server::now_ms().unwrap();
+    let now = gateway_native_http_framing::response::now_ms().unwrap();
     let nonce = base64url(&[19; 32]);
     let mac = identity
         .sign(

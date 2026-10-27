@@ -1,7 +1,6 @@
 //! Closed HTTP import adapter. Actual shared authority mints every proof; no effect implementation.
 use crate::{
-    http_server::{disconnected, now_ms},
-    native_import::{NativeImportHandler, NativeImportResult, auth_body_error, dispatch_import},
+    native_import::{NativeImportHandler, auth_body_error, dispatch_import},
     nonce_sqlite::SqliteNonceStore,
     owner_control::NativeControlContext,
 };
@@ -23,6 +22,10 @@ use gateway_authority::native_control::{
 };
 use gateway_authority::store::{Authority, TokenSource};
 use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_native_http_framing::{
+    import_head::ImportHead,
+    response::{disconnected, now_ms, write_import_response},
+};
 use std::{
     io::{Read, Write},
     net::TcpStream,
@@ -30,58 +33,40 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) fn kind(path: &str) -> Option<NativeImportKind> {
-    [NativeImportKind::CodexAuth, NativeImportKind::NativeProfile]
-        .into_iter()
-        .find(|kind| {
-            path == kind.path()
-                || (*kind == NativeImportKind::NativeProfile
-                    && path
-                        .strip_prefix(kind.path())
-                        .is_some_and(|suffix| suffix.starts_with('?')))
-        })
+pub(crate) fn auth_headers(head: &ImportHead) -> Result<NativeAuthHeaders<'_>, GatewayError> {
+    Ok(NativeAuthHeaders {
+        version: one(head, NATIVE_VERSION_HEADER)?,
+        key_id: one(head, NATIVE_KEY_HEADER)?,
+        time_ms: one(head, NATIVE_TIME_HEADER)?,
+        nonce: one(head, NATIVE_NONCE_HEADER)?,
+        mac: one(head, NATIVE_MAC_HEADER)?,
+    })
 }
-pub(crate) struct ImportHead {
-    pub(crate) kind: NativeImportKind,
-    pub(crate) path: String,
-    pub(crate) headers: Vec<(String, String)>,
-    pub(crate) framing_deadline: Instant,
+fn metadata(head: &ImportHead) -> Result<NativeImportMetadata, GatewayError> {
+    Ok(NativeImportMetadata {
+        v: 1,
+        operation_id: one(head, NATIVE_IMPORT_OPERATION_HEADER)?.into(),
+        action_ref: one(head, NATIVE_IMPORT_ACTION_HEADER)?.into(),
+    })
 }
-impl ImportHead {
-    pub(crate) fn auth_headers(&self) -> Result<NativeAuthHeaders<'_>, GatewayError> {
-        Ok(NativeAuthHeaders {
-            version: self.one(NATIVE_VERSION_HEADER)?,
-            key_id: self.one(NATIVE_KEY_HEADER)?,
-            time_ms: self.one(NATIVE_TIME_HEADER)?,
-            nonce: self.one(NATIVE_NONCE_HEADER)?,
-            mac: self.one(NATIVE_MAC_HEADER)?,
-        })
+fn optional<'a>(head: &'a ImportHead, name: &str) -> Result<Option<&'a str>, GatewayError> {
+    let mut values = head
+        .headers
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(name));
+    let first = values.next().map(|(_, value)| value.as_str());
+    if values.next().is_some() {
+        return Err(invalid());
     }
-    fn metadata(&self) -> Result<NativeImportMetadata, GatewayError> {
-        Ok(NativeImportMetadata {
-            v: 1,
-            operation_id: self.one(NATIVE_IMPORT_OPERATION_HEADER)?.into(),
-            action_ref: self.one(NATIVE_IMPORT_ACTION_HEADER)?.into(),
-        })
-    }
-    fn optional(&self, name: &str) -> Result<Option<&str>, GatewayError> {
-        let mut values = self
-            .headers
-            .iter()
-            .filter(|(key, _)| key.eq_ignore_ascii_case(name));
-        let first = values.next().map(|(_, value)| value.as_str());
-        if values.next().is_some() {
-            return Err(invalid());
-        }
-        Ok(first)
-    }
-    fn one(&self, name: &str) -> Result<&str, GatewayError> {
-        self.optional(name)
-            .map_err(|_| unauthorized())?
-            .filter(|value| !value.is_empty())
-            .ok_or_else(unauthorized)
-    }
+    Ok(first)
 }
+fn one<'a>(head: &'a ImportHead, name: &str) -> Result<&'a str, GatewayError> {
+    optional(head, name)
+        .map_err(|_| unauthorized())?
+        .filter(|value| !value.is_empty())
+        .ok_or_else(unauthorized)
+}
+
 // Crate-private and implemented only by this fixed real-authority adapter, not an auth callback API.
 pub(crate) trait ImportReceiver: Send + Sync {
     fn receive(
@@ -135,8 +120,8 @@ where
         identity: &NativeTransportIdentity,
         nonces: &SqliteNonceStore,
     ) -> Result<(), GatewayError> {
-        let auth = head.auth_headers()?;
-        let metadata = head.metadata()?;
+        let auth = auth_headers(&head)?;
+        let metadata = metadata(&head)?;
         let watch = stream.try_clone().map_err(|_| unavailable())?;
         let cancelled = || disconnected(&watch);
         let original = NativeControlContext::admitted(
@@ -174,7 +159,7 @@ where
             &original,
         ))?;
         original.check()?;
-        write_result(stream, result)
+        write_import_response(stream, result.status, result.headers, result.body)
     }
 }
 fn admit_headers(
@@ -190,7 +175,7 @@ fn admit_headers(
         head.kind,
         NativeImportAuthHeaders {
             auth: original.original_auth_headers(),
-            body_sha256: head.one(NATIVE_IMPORT_BODY_HEADER)?,
+            body_sha256: one(&head, NATIVE_IMPORT_BODY_HEADER)?,
         },
         metadata,
         now_ms()?,
@@ -218,7 +203,7 @@ pub(crate) fn read_remote_import<C: NativeRenewalCancellation>(
     registered_target: (&str, &str),
 ) -> Result<RemoteImportDocument, GatewayError> {
     let (native_owner_id, account_id_hash) = registered_target;
-    let metadata = head.metadata()?;
+    let metadata = metadata(&head)?;
     let header = admit_headers(head, identity, nonces, &metadata, original)?;
     let admitted = authority.admit_import(header)?;
     original.check()?;
@@ -253,8 +238,8 @@ fn read_body(
     head: &ImportHead,
     original: &NativeControlContext<'_>,
 ) -> Result<NativeDocument, GatewayError> {
-    let length = head.optional("content-length")?;
-    let encoding = head.optional("transfer-encoding")?;
+    let length = optional(&head, "content-length")?;
+    let encoding = optional(&head, "transfer-encoding")?;
     if length.is_some() && encoding.is_some() {
         return Err(invalid());
     }
@@ -347,40 +332,6 @@ fn append(
         original.check()?;
     }
     Ok(())
-}
-pub(crate) fn write_result(
-    stream: &mut TcpStream,
-    result: NativeImportResult,
-) -> Result<(), GatewayError> {
-    let body = serde_json::to_vec(&result.body).map_err(|_| unavailable())?;
-    let mut response = format!("HTTP/1.1 {} Native\r\n", result.status);
-    let mut content_type = false;
-    for (name, value) in result.headers {
-        let name =
-            ureq::http::HeaderName::from_bytes(name.as_bytes()).map_err(|_| unavailable())?;
-        let value = ureq::http::HeaderValue::from_str(&value).map_err(|_| unavailable())?;
-        if matches!(
-            name.as_str(),
-            "connection" | "content-length" | "transfer-encoding"
-        ) {
-            return Err(unavailable());
-        }
-        content_type |= name.as_str() == "content-type";
-        response.push_str(name.as_str());
-        response.push_str(": ");
-        response.push_str(value.to_str().map_err(|_| unavailable())?);
-        response.push_str("\r\n");
-    }
-    if !content_type {
-        response.push_str("Content-Type: application/json\r\n");
-    }
-    response.push_str(&format!(
-        "Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    ));
-    let mut response = response.into_bytes();
-    response.extend_from_slice(&body);
-    stream.write_all(&response).map_err(|_| unavailable())
 }
 fn unavailable() -> GatewayError {
     GatewayError::unavailable(
