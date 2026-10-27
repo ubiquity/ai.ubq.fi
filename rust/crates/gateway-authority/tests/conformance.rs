@@ -1,99 +1,58 @@
-use gateway_routing_runtime_test_support::authority as support;
-mod capacity_cases;
-mod claude_cases;
-mod full_pool_reset;
-mod paid_control_cases;
-mod paid_original;
-mod paid_retention_f13;
-mod reset_spend;
-mod source_model_cases;
-use gateway_authority::{
-    DAY_MS, PAID_RETENTION_MS, QUOTA_RETENTION_MS,
-    kernel::{KernelPolicy, KernelTerminal, KernelWindow},
-    paid_types::{
-        PaidAdmission, PaidAuthorization, PaidCorrelation, PaidRequest, PaidRoutingPolicy,
-        PaidUsage, PaidWindow,
-    },
-    quota::ApiUsageWindow,
-    reset::utc_day,
-    reset_types::{
-        AccountDayBudget, ResetCandidate, ResetClaim, ResetConfig, ResetCredit, ResetMode,
-        ResetState, reset_invocation,
-    },
-    routing_types::RouteSelection,
-};
+use gateway_authority::DAY_MS;
+use gateway_authority::PAID_RETENTION_MS;
+use gateway_authority::QUOTA_RETENTION_MS;
+use gateway_authority::kernel::KernelPolicy;
+use gateway_authority::kernel::KernelTerminal;
+use gateway_authority::kernel::KernelWindow;
+use gateway_authority::paid_types::PaidAuthorization;
+use gateway_authority::paid_types::PaidCorrelation;
+use gateway_authority::paid_types::PaidUsage;
+use gateway_authority::paid_types::PaidWindow;
+use gateway_authority::quota::ApiUsageWindow;
+use gateway_authority::reset::utc_day;
+use gateway_authority::reset_types::AccountDayBudget;
+use gateway_authority::reset_types::ResetCandidate;
+use gateway_authority::reset_types::ResetClaim;
+use gateway_authority::reset_types::ResetConfig;
+use gateway_authority::reset_types::ResetCredit;
+use gateway_authority::reset_types::ResetMode;
+use gateway_authority::reset_types::ResetState;
+use gateway_authority::reset_types::reset_invocation;
+use gateway_authority::routing_types::RouteSelection;
 use gateway_authority_keys as keys;
-use gateway_core::identity::{ApiKeyId, PaidAttemptId, PoolVersionstamp, RequestId};
-use gateway_core::lifecycle::{BillingState, PaidTerminalState};
-use gateway_core::provider::{CodexQuotaClass, PaidProvider, UpstreamProvider};
-use gateway_core::state::{AuthorityStore, RecordKey, StoredRecord};
-use gateway_routing_runtime_test_support::authority::{
-    MemoryStore, NOW, TestAuthority, Tokens, admin_hash, admitted, authority, block, policy, pool,
-    routing_hash, run, seed_pool, source_account,
-};
-use serde::de::DeserializeOwned;
+use gateway_authority_test_support::TestResult;
+use gateway_authority_test_support::fixture_json;
+use gateway_authority_test_support::fixture_row;
+use gateway_authority_test_support::id;
+use gateway_authority_test_support::paid_request;
+use gateway_authority_test_support::paid_reservation;
+use gateway_authority_test_support::paid_setup;
+use gateway_authority_test_support::reserve_paid;
+use gateway_authority_test_support::seed_policy;
+use gateway_core::identity::PaidAttemptId;
+use gateway_core::identity::PoolVersionstamp;
+use gateway_core::lifecycle::BillingState;
+use gateway_core::lifecycle::PaidTerminalState;
+use gateway_core::provider::CodexQuotaClass;
+use gateway_core::provider::PaidProvider;
+use gateway_core::provider::UpstreamProvider;
+use gateway_core::state::AuthorityStore;
+use gateway_core::state::StoredRecord;
+use gateway_routing_runtime_test_support::authority::MemoryStore;
+use gateway_routing_runtime_test_support::authority::NOW;
+use gateway_routing_runtime_test_support::authority::TestAuthority;
+use gateway_routing_runtime_test_support::authority::Tokens;
+use gateway_routing_runtime_test_support::authority::admin_hash;
+use gateway_routing_runtime_test_support::authority::admitted;
+use gateway_routing_runtime_test_support::authority::authority;
+use gateway_routing_runtime_test_support::authority::block;
+use gateway_routing_runtime_test_support::authority::policy;
+use gateway_routing_runtime_test_support::authority::pool;
+use gateway_routing_runtime_test_support::authority::routing_hash;
+use gateway_routing_runtime_test_support::authority::run;
+use gateway_routing_runtime_test_support::authority::seed_pool;
+use gateway_routing_runtime_test_support::authority::source_account;
 use std::sync::atomic::Ordering;
-
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-fn fixture_row(store: &MemoryStore, key: &RecordKey) -> TestResult<StoredRecord> {
-    store.row(key).ok_or_else(|| "expected fixture row".into())
-}
-fn fixture_json<T: DeserializeOwned>(store: &MemoryStore, key: &RecordKey) -> TestResult<T> {
-    Ok(serde_json::from_value(fixture_row(store, key)?.value)?)
-}
-fn id(value: &str) -> RequestId {
-    RequestId(value.to_owned())
-}
-fn seed_policy(store: &MemoryStore) {
-    store.seed(keys::api_policy("key-a"), &policy());
-}
-fn paid_setup(store: &MemoryStore) {
-    seed_policy(store);
-    paid_control_cases::seed_controls(store);
-}
-fn paid_request(attempt: &str, provider: PaidProvider) -> PaidRequest {
-    PaidRequest {
-        key_id: ApiKeyId("key-a".to_owned()),
-        request_id: id("client-one"),
-        attempt_id: PaidAttemptId(attempt.to_owned()),
-        provider,
-        model: "paid-model".into(),
-        route: "responses".to_owned(),
-        path: "/v1/responses".to_owned(),
-        stream: true,
-        reasoning: None,
-        created_at_ms: NOW,
-    }
-}
-async fn reserve_paid(
-    authority: &TestAuthority,
-    input: &PaidRequest,
-    authorization: &PaidAuthorization,
-    now: i64,
-) -> Result<PaidAdmission, gateway_core::error::GatewayError> {
-    authority.store().clock(now);
-    let context = paid_control_cases::context(input);
-    let receipt = paid_original::authorize(authority, input, &context, now).await?;
-    authority
-        .reserve_paid(input, authorization, &receipt, now)
-        .await
-}
-
-fn paid_reservation(
-    authority: &TestAuthority,
-    input: &PaidRequest,
-) -> TestResult<gateway_authority::paid_types::PaidReservation> {
-    match run(reserve_paid(
-        authority,
-        input,
-        &PaidAuthorization::DirectPaidModel,
-        NOW,
-    ))? {
-        PaidAdmission::Reserved(reservation) => Ok(reservation),
-        _ => Err("expected fresh reservation".into()),
-    }
-}
-
 #[test]
 fn serial_identity_survives_headroom_reorder_and_same_account_refresh() {
     let store = MemoryStore::default();

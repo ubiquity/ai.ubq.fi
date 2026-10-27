@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/gateway-authority-test-support",
   "crates/gateway-cache-experiment-records",
   "crates/gateway-authority-keys",
   "crates/gateway-quality",
@@ -50,6 +51,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-test-support = { path = "crates/gateway-authority-test-support" }
 gateway-cache-experiment-records = { path = "crates/gateway-cache-experiment-records" }
 gateway-authority-keys = { path = "crates/gateway-authority-keys" }
 serde = { version = "=1.0.229", features = ["derive"] }

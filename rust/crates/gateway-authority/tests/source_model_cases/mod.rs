@@ -1,6 +1,22 @@
-use super::*;
-use crate::{TestResult, fixture_row};
 use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_authority::paid_types::PaidAuthorization;
+use gateway_authority::routing_types::RouteSelection;
+use gateway_authority_keys as keys;
+use gateway_authority_test_support::paid_request;
+use gateway_authority_test_support::paid_setup;
+use gateway_authority_test_support::{TestResult, fixture_row};
+use gateway_core::provider::CodexQuotaClass;
+use gateway_core::provider::PaidProvider;
+use gateway_routing_runtime_test_support::authority::MemoryStore;
+use gateway_routing_runtime_test_support::authority::NOW;
+use gateway_routing_runtime_test_support::authority::admin_hash;
+use gateway_routing_runtime_test_support::authority::admitted;
+use gateway_routing_runtime_test_support::authority::authority;
+use gateway_routing_runtime_test_support::authority::block;
+use gateway_routing_runtime_test_support::authority::pool;
+use gateway_routing_runtime_test_support::authority::routing_hash;
+use gateway_routing_runtime_test_support::authority::run;
+use gateway_routing_runtime_test_support::authority::seed_pool;
 use gateway_schema::selection::AccountModelsStore;
 use serde_json::json;
 
@@ -113,13 +129,13 @@ fn expanded_source_selection_cannot_use_a_partial_cohort_after_new_projection() 
         keys::provider_selection(),
         &json!({"provider_ids":["codex","surplus","openlux"],"updated_at_ms":NOW}),
     );
-    super::paid_control_cases::republish(&store);
+    gateway_authority_test_support::control::republish(&store);
     let mut input = paid_request("selection-expanded", PaidProvider::Surplus);
     input.model = "gpt-test".into();
-    let receipt = run(super::paid_original::authorize(
+    let receipt = run(gateway_authority_test_support::original::authorize(
         &authority,
         &input,
-        &super::paid_control_cases::context(&input),
+        &gateway_authority_test_support::control::context(&input),
         NOW,
     ))
     .unwrap();

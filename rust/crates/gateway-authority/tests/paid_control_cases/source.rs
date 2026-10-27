@@ -1,6 +1,6 @@
 use super::*;
-use crate::TestResult;
 use gateway_authority::paid_types::{PaidAttempt, PaidReservation};
+use gateway_authority_test_support::TestResult;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, model::ModelId,
     source_control::decode_source_control_record, source_json::SourceJson,
@@ -121,7 +121,7 @@ fn source_paid_attempt_writes_exact_model_effort_and_not_transient_prompt() {
         let mut fields = source::entries(&context.body).unwrap();
         fields.push(("input".into(), SourceJson::parse(r#""\ud800""#).unwrap()));
         context.body = source::object_keys(fields).unwrap();
-        let receipt = run(super::super::paid_original::authorize(
+        let receipt = run(gateway_authority_test_support::original::authorize(
             &authority, &input, &context, NOW,
         ))
         .unwrap();
@@ -170,7 +170,7 @@ fn source_paid_attempt_writes_exact_model_effort_and_not_transient_prompt() {
 fn ordinary_source_v3_guard_keeps_exact_active_paid_binding_and_missing_history_refusal() {
     let (store, authority, input) = setup(logical(&[0xd800]));
     let context = context(&input);
-    let receipt = run(super::super::paid_original::authorize(
+    let receipt = run(gateway_authority_test_support::original::authorize(
         &authority, &input, &context, NOW,
     ))
     .unwrap();
@@ -185,7 +185,7 @@ fn ordinary_source_v3_guard_keeps_exact_active_paid_binding_and_missing_history_
         PaidAdmission::Reserved(value) => value,
         _ => panic!("new source request"),
     };
-    let key = super::super::paid_original::journal_key(&input.request_id.0);
+    let key = gateway_authority_test_support::original::journal_key(&input.request_id.0);
     let mut journal = decode_source_control_record(&store.row(&key).unwrap()).unwrap();
     let original: gateway_core::identity::RequestContext = source::member(&journal, "context")
         .unwrap()

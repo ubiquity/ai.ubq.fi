@@ -1,5 +1,5 @@
-use super::support::*;
 use gateway_auth::provider_credentials::{CodexSourcePool, codex_source_pool_key};
+use gateway_authority::routing_types::RouteSelection;
 use gateway_authority::{
     capacity::*,
     capacity_rules::*,
@@ -13,9 +13,18 @@ use gateway_authority_routing_records::types::{
     PoolAccount, ProbeCircuit, ProbeLease, QuotaBlock, QuotaBlockSource, SubscriptionPool,
 };
 use gateway_core::error::GatewayError;
+use gateway_core::identity::PoolVersionstamp;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
+use gateway_routing_runtime_test_support::authority::MemoryStore;
+use gateway_routing_runtime_test_support::authority::NOW;
+use gateway_routing_runtime_test_support::authority::Tokens;
+use gateway_routing_runtime_test_support::authority::pool;
+use gateway_routing_runtime_test_support::authority::routing_hash;
+use gateway_routing_runtime_test_support::authority::run;
+use gateway_routing_runtime_test_support::authority::seed_pool;
+use gateway_routing_runtime_test_support::authority::source_account;
 use serde_json::{Value, json};
 use std::sync::{
     Arc, Mutex,
