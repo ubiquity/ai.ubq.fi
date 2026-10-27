@@ -1,5 +1,6 @@
 //! Source analytics.ts and admin/error-log.ts. This is the existing request ledger.
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
+use gateway_capacity_projection::scalars::{DAY, trim};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, lifecycle::DeliveryOutcome, query::QueryStore,
     source_json::SourceJson, source_serialization as source,
@@ -9,8 +10,8 @@ use serde_json::{Value, json};
 
 pub mod terminal_rollup;
 
-pub const REQUEST_RETENTION_MS: i64 = 365 * store::DAY;
-pub const ERROR_RETENTION_MS: i64 = 7 * store::DAY;
+pub const REQUEST_RETENTION_MS: i64 = 365 * DAY;
+pub const ERROR_RETENTION_MS: i64 = 7 * DAY;
 fn integer(value: Option<&Value>, fallback: f64) -> f64 {
     value
         .and_then(Value::as_f64)
@@ -63,7 +64,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         key_id: &str,
         input: &SourceJson,
     ) -> Result<(), GatewayError> {
-        if store::trim(key_id).is_empty() {
+        if trim(key_id).is_empty() {
             return Ok(());
         }
         let at = store::now(self.host.as_ref())?;
@@ -117,7 +118,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         patch: &SourceJson,
         only_existing: bool,
     ) -> Result<(), GatewayError> {
-        if store::trim(key_id).is_empty() {
+        if trim(key_id).is_empty() {
             return Ok(());
         }
         let key = gateway_core::tuple_key::TupleKey::from_parts(&[
@@ -183,7 +184,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         key_id: &str,
         limit: u32,
     ) -> Result<Vec<gateway_core::source_json::SourceJson>, GatewayError> {
-        if store::trim(key_id).is_empty() {
+        if trim(key_id).is_empty() {
             return Ok(Vec::new());
         }
         let at = store::now(self.host.as_ref())?;

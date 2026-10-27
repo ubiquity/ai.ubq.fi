@@ -1,9 +1,6 @@
-use crate::{
-    ObservabilityRuntime,
-    capacity_events::{event_key, valid_event},
-    capacity_math, capacity_shapes as shape, store,
-    types::ObservabilityHost,
-};
+use crate::{ObservabilityRuntime, capacity_events::event_key, store, types::ObservabilityHost};
+use gateway_capacity_projection::scalars::safe_i64;
+use gateway_capacity_projection::{events::valid_event, math as capacity_math, shapes as shape};
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QuerySelector, QueryStore};
 use gateway_core::state::{RecordKey, RecordMutation, StoredRecord};
@@ -30,18 +27,18 @@ fn available_key(slot: u8) -> RecordKey {
     ]))
 }
 fn observation(value: &Value) -> Option<Value> {
-    let at = store::safe_i64(&value["sampled_at_ms"])?;
+    let at = safe_i64(&value["sampled_at_ms"])?;
     let source = shape::read_codex(&value["source"], at)?;
     (source["state"] == "available")
         .then(|| json!({"sampled_at_ms":value["sampled_at_ms"],"source":source}))
 }
 pub(crate) fn valid_rollup(v: &Value) -> bool {
     if v["v"] != 1
-        || store::safe_i64(&v["bucket_start_at_ms"]).is_none_or(|t| t % shape::HOUR_MS != 0)
+        || safe_i64(&v["bucket_start_at_ms"]).is_none_or(|t| t % shape::HOUR_MS != 0)
         || ["sample_count", "first_sampled_at_ms", "last_sampled_at_ms"]
             .iter()
-            .any(|f| store::safe_i64(&v[f]).is_none())
-        || store::safe_i64(&v["first_sampled_at_ms"]) > store::safe_i64(&v["last_sampled_at_ms"])
+            .any(|f| safe_i64(&v[f]).is_none())
+        || safe_i64(&v["first_sampled_at_ms"]) > safe_i64(&v["last_sampled_at_ms"])
     {
         return false;
     }
@@ -49,26 +46,25 @@ pub(crate) fn valid_rollup(v: &Value) -> bool {
         return false;
     };
     for (index, slot) in slots.iter().enumerate() {
-        if store::safe_i64(&slot["slot"]) != Some(index as i64 + 1)
+        if safe_i64(&slot["slot"]) != Some(index as i64 + 1)
             || !matches!(
                 slot["last_state"].as_str(),
                 Some("available" | "stale" | "unavailable")
             )
-            || store::safe_i64(&slot["available_sample_count"]).is_none()
-            || store::safe_i64(&slot["available_sample_count"])
-                > store::safe_i64(&v["sample_count"])
+            || safe_i64(&slot["available_sample_count"]).is_none()
+            || safe_i64(&slot["available_sample_count"]) > safe_i64(&v["sample_count"])
         {
             return false;
         }
         for name in ["primary", "secondary"] {
             let w = &slot[name];
-            if store::safe_i64(&w["samples"]).is_none() {
+            if safe_i64(&w["samples"]).is_none() {
                 return false;
             }
             for name in ["limit_window_seconds", "last_reset_at_ms"] {
                 if !w
                     .get(name)
-                    .is_some_and(|v| v.is_null() || store::safe_i64(v).is_some())
+                    .is_some_and(|v| v.is_null() || safe_i64(v).is_some())
                 {
                     return false;
                 }
@@ -99,22 +95,22 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         for entry in store::scan(self.store.as_ref(), key("history"), false, at, usize::MAX).await?
         {
             let p = store::parts(&entry.key)?;
-            let Some(bucket) = p.get(4).and_then(store::safe_i64) else {
+            let Some(bucket) = p.get(4).and_then(safe_i64) else {
                 continue;
             };
             if bucket < cutoff || bucket > newest {
                 continue;
             }
             if let Some(point) = shape::read_history(entry.record.json_value()?)
-                && store::safe_i64(&point["bucket_start_at_ms"]) == Some(bucket)
+                && safe_i64(&point["bucket_start_at_ms"]) == Some(bucket)
             {
                 out.push(point)
             }
         }
         out.sort_by_key(|p| {
             (
-                store::safe_i64(&p["bucket_start_at_ms"]),
-                store::safe_i64(&p["sampled_at_ms"]),
+                safe_i64(&p["bucket_start_at_ms"]),
+                safe_i64(&p["sampled_at_ms"]),
             )
         });
         Ok(out)
@@ -185,9 +181,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 .await
                 .ok()
                 .flatten();
-            if snapshot.as_ref().is_some_and(|s| {
-                previous.is_none() || store::safe_i64(&s["snapshot_at_ms"]) != previous
-            }) {
+            if snapshot
+                .as_ref()
+                .is_some_and(|s| previous.is_none() || safe_i64(&s["snapshot_at_ms"]) != previous)
+            {
                 return Ok(snapshot);
             }
             if lease.is_none() {
@@ -241,8 +238,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 let candidate = retained
                     .iter()
                     .filter(|p| {
-                        store::safe_i64(&p["sampled_at_ms"])
-                            < store::safe_i64(&snapshot["snapshot_at_ms"])
+                        safe_i64(&p["sampled_at_ms"]) < safe_i64(&snapshot["snapshot_at_ms"])
                     })
                     .filter_map(|p| {
                         shape::source(p, slot)
@@ -252,7 +248,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                             })
                             .map(|s| json!({"sampled_at_ms":p["sampled_at_ms"],"source":s}))
                     })
-                    .max_by_key(|v| store::safe_i64(&v["sampled_at_ms"]));
+                    .max_by_key(|v| safe_i64(&v["sampled_at_ms"]));
                 if let Some(v) = candidate {
                     last.push(v)
                 }
@@ -263,8 +259,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             || previous_history
                 .as_ref()
                 .is_some_and(|p| capacity_math::preserve_transition(p, &point));
-        let bucket = store::safe_i64(&point["bucket_start_at_ms"])
-            .expect("validated source bucket")
+        let bucket = safe_i64(&point["bucket_start_at_ms"]).expect("validated source bucket")
             / shape::HOUR_MS
             * shape::HOUR_MS;
         let rollup_key = store::key(json!([
@@ -350,7 +345,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .filter_map(|v| Some((v["event_id"].as_str()?.to_owned(), v.clone())))
             .collect();
         let mut ordered = history.to_vec();
-        ordered.sort_by_key(|p| store::safe_i64(&p["sampled_at_ms"]));
+        ordered.sort_by_key(|p| safe_i64(&p["sampled_at_ms"]));
         for slot in [1, 2] {
             let mut previous: Option<Value> = None;
             let mut outage = false;
@@ -411,8 +406,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .collect();
         let mut error = None;
         out.sort_by(|a, b| {
-            store::safe_i64(&a["observed_at_ms"])
-                .cmp(&store::safe_i64(&b["observed_at_ms"]))
+            safe_i64(&a["observed_at_ms"])
+                .cmp(&safe_i64(&b["observed_at_ms"]))
                 .then_with(|| {
                     match self.host.compare_labels(
                         a["event_id"].as_str().unwrap_or(""),
@@ -458,13 +453,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         for entry in store::scan_selector(self.store.as_ref(), selector, false, at, 20000).await? {
             let v = entry.record.json_value()?;
             if valid_rollup(v)
-                && store::safe_i64(&v["bucket_start_at_ms"])
-                    .is_some_and(|t| t >= first && t <= last)
+                && safe_i64(&v["bucket_start_at_ms"]).is_some_and(|t| t >= first && t <= last)
             {
                 rows.push(v.clone())
             }
         }
-        rows.sort_by_key(|v| store::safe_i64(&v["bucket_start_at_ms"]));
+        rows.sort_by_key(|v| safe_i64(&v["bucket_start_at_ms"]));
         Ok(rows)
     }
 }

@@ -2,6 +2,7 @@
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
 use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context, ProviderRequest};
 use gateway_auth::types::AuthResponse;
+use gateway_capacity_projection::scalars::{DAY, safe_i64};
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QuerySelector, QueryStore};
 use gateway_core::source_json::SourceJson;
@@ -19,11 +20,11 @@ pub fn valid_usage_rollup(v: &Value) -> bool {
 
 pub fn valid_balance_sample(v: &Value) -> bool {
     v["v"] == 1
-        && store::safe_i64(&v["bucket_start_at_ms"]).is_some()
-        && store::safe_i64(&v["observed_at_ms"]).is_some()
+        && safe_i64(&v["bucket_start_at_ms"]).is_some()
+        && safe_i64(&v["observed_at_ms"]).is_some()
         && signed_safe(&v["balance_quota"])
         && signed_safe(&v["baseline_quota"])
-        && store::safe_i64(&v["quota_per_credit"]).is_some_and(|n| n > 0)
+        && safe_i64(&v["quota_per_credit"]).is_some_and(|n| n > 0)
         && v.get("remaining_percent")
             .is_some_and(|v| v.is_null() || v.as_f64().is_some_and(|n| n.is_finite() && n >= 0.0))
         && v.get("unlimited_quota").is_none_or(Value::is_boolean)
@@ -37,16 +38,15 @@ pub fn resample_balance(samples: &[Value], bucket: i64, limit: usize) -> Vec<Val
     }
     let mut buckets: BTreeMap<i64, Value> = BTreeMap::new();
     for sample in samples {
-        let Some(at) = store::safe_i64(&sample["observed_at_ms"]) else {
+        let Some(at) = safe_i64(&sample["observed_at_ms"]) else {
             continue;
         };
         let start = at / bucket * bucket;
         let current = buckets.get(&start);
         if current.is_none_or(|p| {
-            store::safe_i64(&sample["observed_at_ms"]) > store::safe_i64(&p["observed_at_ms"])
+            safe_i64(&sample["observed_at_ms"]) > safe_i64(&p["observed_at_ms"])
                 || (sample["observed_at_ms"] == p["observed_at_ms"]
-                    && store::safe_i64(&sample["bucket_start_at_ms"])
-                        > store::safe_i64(&p["bucket_start_at_ms"]))
+                    && safe_i64(&sample["bucket_start_at_ms"]) > safe_i64(&p["bucket_start_at_ms"]))
         }) {
             let mut point = sample.clone();
             point["bucket_start_at_ms"] = json!(start);
@@ -180,13 +180,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     .ok()
                     .filter(|v| {
                         valid_balance_sample(v)
-                            && store::safe_i64(&v["observed_at_ms"])
-                                .is_some_and(|t| t >= since && t <= at)
+                            && safe_i64(&v["observed_at_ms"]).is_some_and(|t| t >= since && t <= at)
                     })
                     .cloned()
             })
             .collect();
-        points.sort_by_key(|v| store::safe_i64(&v["bucket_start_at_ms"]));
+        points.sort_by_key(|v| safe_i64(&v["bucket_start_at_ms"]));
         Ok(points)
     }
     pub async fn quota_projection_response(
@@ -213,10 +212,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let (snapshot, (rollups, (history, growth))) = futures_util::future::join(
             self.host.metered_quota_snapshot(false, at + 10000),
             futures_util::future::join(
-                self.paid_usage_rollups(at - i64::from(days) * store::DAY, at),
+                self.paid_usage_rollups(at - i64::from(days) * DAY, at),
                 futures_util::future::join(
                     self.balance_history(
-                        at - i64::from(balance_days) * store::DAY,
+                        at - i64::from(balance_days) * DAY,
                         at,
                         fingerprint.as_deref(),
                     ),
@@ -249,7 +248,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .ok_or_else(|| store::error("Invalid source projection response"))?;
         fields.extend([
             ("balance_window_days".into(),SourceJson::from_serializable(&balance_days)?),
-            ("retention".into(),SourceJson::from_serializable(&json!({"rollup_bucket_ms":HOUR,"rollup_window_ms":i64::from(days)*store::DAY,"balance_history_source_bucket_ms":HOUR,"balance_history_bucket_ms":bucket,"balance_history_window_ms":i64::from(balance_days)*store::DAY}))?),
+            ("retention".into(),SourceJson::from_serializable(&json!({"rollup_bucket_ms":HOUR,"rollup_window_ms":i64::from(days)*DAY,"balance_history_source_bucket_ms":HOUR,"balance_history_bucket_ms":bucket,"balance_history_window_ms":i64::from(balance_days)*DAY}))?),
             ("balance_history".into(),SourceJson::from_serializable(&history.as_ref().map(|s|resample_balance(s,bucket,365)).unwrap_or_default())?),
             ("ledger_growth".into(),SourceJson::from_serializable(&growth)?),
         ]);

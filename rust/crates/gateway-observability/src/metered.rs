@@ -1,5 +1,6 @@
 //! Source metered-quota.ts monitoring only; this never authorizes a paid request.
 use crate::{store, types::ObservabilityHost};
+use gateway_capacity_projection::scalars::is_record;
 use gateway_core::{
     error::GatewayError,
     state::{AuthorityStore, RecordKey, RecordMutation},
@@ -20,7 +21,7 @@ fn counter(v: &Value) -> bool {
     safe(v) && v.as_f64().is_some_and(|n| n >= 0.0)
 }
 pub fn valid_state(v: &Value) -> bool {
-    store::is_record(v)
+    is_record(v)
         && ["current_balance_quota", "post_refill_baseline_quota"]
             .iter()
             .all(|f| safe(&v[f]))
@@ -54,7 +55,7 @@ pub fn valid_state(v: &Value) -> bool {
 pub fn token_usage_state(envelope: &Value, at: i64) -> Result<Value, GatewayError> {
     let data = &envelope["data"];
     if envelope["success"] != true
-        || !store::is_record(data)
+        || !is_record(data)
         || !data["unlimited_quota"].is_boolean()
         || !["total_available", "total_granted", "total_used"]
             .iter()

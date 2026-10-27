@@ -1,13 +1,12 @@
 //! Source analytics-only chart observations. These keys never enter routing/reset state.
-use crate::{
-    ObservabilityRuntime,
-    capacity_math::bucketed,
-    capacity_shapes::{BUCKET_MS, RETENTION_MS, read_history},
-    store,
-    types::ObservabilityHost,
-};
+use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::types::AuthResponse;
+use gateway_capacity_projection::scalars::safe_i64;
+use gateway_capacity_projection::{
+    math::bucketed,
+    shapes::{BUCKET_MS, RETENTION_MS, read_history},
+};
 use gateway_core::{error::GatewayError, query::QueryStore};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -63,11 +62,11 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let mut indexes = BTreeMap::new();
         let mut accepted: Vec<Value> = Vec::new();
         for point in points {
-            let bucket = store::safe_i64(&point["bucket_start_at_ms"]).expect("source bucket");
+            let bucket = safe_i64(&point["bucket_start_at_ms"]).expect("source bucket");
             if bucket < (at - RETENTION_MS).max(0) || bucket > at + BUCKET_MS {
                 continue;
             }
-            let sample = store::safe_i64(&point["sampled_at_ms"]).expect("source sample");
+            let sample = safe_i64(&point["sampled_at_ms"]).expect("source sample");
             if let Some(index) = indexes.get(&(bucket, sample)).copied() {
                 accepted[index] = point
             } else {
@@ -130,7 +129,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             let Some(point) = read_history(entry.record.json_value()?).filter(bucketed) else {
                 continue;
             };
-            let Some(bucket) = store::safe_i64(&point["bucket_start_at_ms"]) else {
+            let Some(bucket) = safe_i64(&point["bucket_start_at_ms"]) else {
                 continue;
             };
             if bucket < (at - RETENTION_MS).max(0) || bucket > at + BUCKET_MS {
@@ -140,11 +139,10 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         }
         let mut error = None;
         out.sort_by(|(ah, a), (bh, b)| {
-            store::safe_i64(&a["sampled_at_ms"])
-                .cmp(&store::safe_i64(&b["sampled_at_ms"]))
+            safe_i64(&a["sampled_at_ms"])
+                .cmp(&safe_i64(&b["sampled_at_ms"]))
                 .then_with(|| {
-                    store::safe_i64(&a["bucket_start_at_ms"])
-                        .cmp(&store::safe_i64(&b["bucket_start_at_ms"]))
+                    safe_i64(&a["bucket_start_at_ms"]).cmp(&safe_i64(&b["bucket_start_at_ms"]))
                 })
                 .then_with(|| match self.host.compare_labels(ah, bh) {
                     Ok(order) => order,

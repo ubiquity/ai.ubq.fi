@@ -1,13 +1,13 @@
 //! Post-acceptance source Claude history/rollups. Never a quota writer.
 use crate::{
     ObservabilityRuntime,
-    capacity_shapes::{BUCKET_MS, HOUR_MS, RETENTION_MS, STALE_MS},
     host_types::{ClaudeAcceptedObservation, ClaudeObservationState, CredentialKind},
     replay_values::SourceObject,
     store,
     types::ObservabilityHost,
 };
 use gateway_auth::crypto::sha256_hex;
+use gateway_capacity_projection::shapes::{BUCKET_MS, HOUR_MS, RETENTION_MS, STALE_MS};
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;
 use gateway_core::query::{QuerySelector, QueryStore};

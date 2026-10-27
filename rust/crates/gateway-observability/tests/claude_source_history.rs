@@ -1,5 +1,6 @@
 //! Actual frozen Bun writer cases, plus the named post-acceptance carrier only.
 //! This fixture grants no quota, routing, native credential or live provider authority.
+use gateway_capacity_projection::shapes::{BUCKET_MS, RETENTION_MS, unavailable_snapshot};
 mod support;
 use gateway_admin_runtime::capabilities::Context;
 use gateway_core::{
@@ -14,7 +15,6 @@ use gateway_core::{
 };
 use gateway_observability::{
     ObservabilityRuntime,
-    capacity_shapes::{BUCKET_MS, RETENTION_MS, unavailable_snapshot},
     claude_capacity::*,
     host_types::*,
     types::{HealthProvider, HealthTarget, ObservabilityHost},

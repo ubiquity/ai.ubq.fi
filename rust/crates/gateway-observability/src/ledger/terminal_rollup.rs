@@ -2,6 +2,7 @@
 use crate::{
     ObservabilityRuntime, records::valid_usage_rollup_source, store, types::ObservabilityHost,
 };
+use gateway_capacity_projection::scalars::trim;
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,
@@ -47,7 +48,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         input: TerminalUsageRollup<'_>,
     ) -> Result<bool, GatewayError> {
         let model = input.model.map(crate::records::trim).unwrap_or_default();
-        let provider = input.provider.map(store::trim).unwrap_or_default();
+        let provider = input.provider.map(trim).unwrap_or_default();
         if model.as_units().is_empty()
             || provider.is_empty()
             || matches!(provider, "gateway" | "mixed" | "metered" | "surplus")
@@ -63,7 +64,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             return Ok(false);
         };
         let now = store::now(self.host.as_ref())?;
-        let request = store::trim(input.request_id);
+        let request = trim(input.request_id);
         let request = if request.is_empty() {
             store::uuid(self.host.as_ref())?
         } else {

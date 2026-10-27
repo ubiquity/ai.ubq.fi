@@ -3,8 +3,6 @@
 pub mod api;
 pub mod capacity;
 pub mod capacity_events;
-pub mod capacity_math;
-pub mod capacity_shapes;
 mod capacity_store;
 pub mod claude_capacity;
 mod completion;

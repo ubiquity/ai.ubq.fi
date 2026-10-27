@@ -1,11 +1,12 @@
 //! Source lease-guarded event/admin sampler. No timer, alarm, or inference operation.
 use crate::host_types::{CapacityAccountRef, CapacityProbe, ClaudeAccountReadback};
 use crate::{
-    ObservabilityRuntime, capacity_shapes as shape, health, replay_values::SourceObject, store,
-    types::ObservabilityHost,
+    ObservabilityRuntime, health, replay_values::SourceObject, store, types::ObservabilityHost,
 };
 use gateway_admin_runtime::capabilities::Context;
 use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
+use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
+use gateway_capacity_projection::shapes as shape;
 use gateway_core::{
     error::GatewayError, query::QueryStore, source_json::SourceJson, source_serialization as source,
 };
@@ -238,7 +239,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         if accounts.len() > 2
             || accounts.iter().any(|a| {
                 !(1..=2).contains(&a.slot)
-                    || store::trim(&a.account_id).is_empty()
+                    || trim(&a.account_id).is_empty()
                     || !slots.insert(a.slot)
             })
         {
@@ -279,7 +280,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                     account_id: account.account_id,
                 },
                 state: serde_json::from_value(source["state"].clone()).map_err(|_| invalid())?,
-                source_observed_at_ms: store::safe_i64(&source["source_observed_at_ms"]),
+                source_observed_at_ms: safe_i64(&source["source_observed_at_ms"]),
                 snapshot_at_ms: at,
                 windows: serde_json::from_value(source["windows"].clone())
                     .map_err(|_| invalid())?,
@@ -354,9 +355,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let Some(lease) = lease else {
             let snapshot = self
                 .wait_capacity_snapshot(
-                    cached
-                        .as_ref()
-                        .and_then(|s| store::safe_i64(&s["snapshot_at_ms"])),
+                    cached.as_ref().and_then(|s| safe_i64(&s["snapshot_at_ms"])),
                 )
                 .await
                 .unwrap_or(None)
@@ -404,8 +403,8 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 history.push(point);
                 history.sort_by_key(|p| {
                     (
-                        store::safe_i64(&p["bucket_start_at_ms"]),
-                        store::safe_i64(&p["sampled_at_ms"]),
+                        safe_i64(&p["bucket_start_at_ms"]),
+                        safe_i64(&p["sampled_at_ms"]),
                     )
                 });
             }
@@ -466,7 +465,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         let inventory = self.host.provider_inventory(&context).await?;
         let cached = self.persisted_capacity_view().await?;
         let fresh = cached["cache_state"] != "unavailable"
-            && store::safe_i64(&cached["snapshot_at_ms"]).is_some_and(|t| at - t < 30000);
+            && safe_i64(&cached["snapshot_at_ms"]).is_some_and(|t| at - t < 30000);
         let mut body = if !live && fresh {
             cached
         } else {
@@ -507,7 +506,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             .unwrap_or_default();
         if !remote.is_empty() {
             let local = body["history"].as_array().cloned().unwrap_or_default();
-            body["history"] = json!(crate::capacity_math::merge_remote_history(
+            body["history"] = json!(gateway_capacity_projection::math::merge_remote_history(
                 &local,
                 &remote,
                 |a, b| self.host.compare_labels(a, b)
@@ -531,7 +530,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             window_days.min(365)
         };
         let at = store::now(self.host.as_ref())?;
-        let window = i64::from(days) * store::DAY;
+        let window = i64::from(days) * DAY;
         let points = self
             .capacity_rollup_points((at - window).max(0), at)
             .await

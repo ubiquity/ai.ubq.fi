@@ -1,5 +1,6 @@
 //! Explicit source records: only these declared text fields may use ProfileV2 strings.
 use crate::{ledger::ErrorObservation, store, types::ObservabilityHost};
+use gateway_capacity_projection::scalars::js_whitespace;
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,
@@ -14,7 +15,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub(crate) fn trim(value: &JsString16) -> JsString16 {
-    let whitespace = |v: &u16| char::from_u32(u32::from(*v)).is_some_and(store::js_whitespace);
+    let whitespace = |v: &u16| char::from_u32(u32::from(*v)).is_some_and(js_whitespace);
     let units = value.as_units();
     let start = units
         .iter()

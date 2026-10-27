@@ -1,3 +1,4 @@
+use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
 mod support;
 use gateway_admin_runtime::capabilities::{Context, ProviderRequest};
 use gateway_auth::crypto::sha256_hex;
@@ -8,11 +9,7 @@ use gateway_core::{
     tuple_key::TupleKey,
 };
 use gateway_observability::{
-    ObservabilityRuntime,
-    api::*,
-    capacity_shapes::{history_point, unavailable_snapshot},
-    host_types::*,
-    types::ObservabilityHost,
+    ObservabilityRuntime, api::*, host_types::*, types::ObservabilityHost,
 };
 use serde_json::{Value, json};
 use support::{Host, Memory, run};

@@ -1,5 +1,6 @@
 //! Source ba5ef05e provider/health.ts and paid-fallback/health.ts.
 use crate::{ObservabilityRuntime, completion::Completion, store, types::*};
+use gateway_capacity_projection::scalars::{is_record, trim};
 use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;
 use gateway_core::state::{AuthorityStore, RecordKey};
@@ -69,7 +70,7 @@ impl Drop for HealthCompletion {
 
 pub fn normalize_provider_request_id(value: Option<&str>) -> Option<String> {
     value
-        .map(store::trim)
+        .map(trim)
         .filter(|s| {
             !s.is_empty()
                 && s.encode_utf16().count() <= 256
@@ -88,7 +89,7 @@ pub fn health_key(target: &HealthTarget, record: &str) -> RecordKey {
     ]))
 }
 pub fn parse_observation(value: &Value) -> Option<HealthObservation> {
-    if !store::is_record(value)
+    if !is_record(value)
         || !value
             .get("status")
             .is_some_and(|v| v.is_null() || v.as_f64().is_some_and(f64::is_finite))
@@ -179,28 +180,27 @@ pub fn paid_health(
         return None;
     }
     let payload = if complete && body.len() <= 64 * 1024 {
-        serde_json::from_slice::<Value>(body)
-            .ok()
-            .filter(store::is_record)
+        serde_json::from_slice::<Value>(body).ok().filter(is_record)
     } else {
         None
     };
     let exhausted = payload.as_ref().is_some_and(|v| {
         if is_surplus {
-            let error = v.get("error").filter(|v| store::is_record(v)).unwrap_or(v);
+            let error = v.get("error").filter(|v| is_record(v)).unwrap_or(v);
             ["code", "type"].iter().any(|field| {
                 error[*field]
                     .as_str()
-                    .is_some_and(|s| store::trim(s).eq_ignore_ascii_case("insufficient_credit"))
+                    .is_some_and(|s| trim(s).eq_ignore_ascii_case("insufficient_credit"))
             })
         } else {
-            let error = v.get("error").filter(|v| store::is_record(v));
+            let error = v.get("error").filter(|v| is_record(v));
             error.is_some_and(|e| {
-                e["code"].as_str().is_some_and(|s| {
-                    store::trim(s).eq_ignore_ascii_case("local:insufficient_quota")
-                }) || e["message"]
+                e["code"]
                     .as_str()
-                    .is_some_and(|s| s.to_lowercase().contains("quota is not enough"))
+                    .is_some_and(|s| trim(s).eq_ignore_ascii_case("local:insufficient_quota"))
+                    || e["message"]
+                        .as_str()
+                        .is_some_and(|s| s.to_lowercase().contains("quota is not enough"))
             })
         }
     });
