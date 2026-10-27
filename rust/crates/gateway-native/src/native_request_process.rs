@@ -3,11 +3,11 @@ use crate::{
     daemon_config::NativeDaemonConfig,
     live_bridge::socket::{LiveDialContext, NativeLiveConnector},
 };
-use gateway_core::error::GatewayError;
 use gateway_native_connector::{
     connector_fd::{ControlEndpoint, ReceiveProcess, Side},
     connector_protocol::{ControlError, ControlFrame},
 };
+use gateway_source::error::GatewayError;
 use rustix::event::PollFlags;
 use std::{
     io::{self, Read},

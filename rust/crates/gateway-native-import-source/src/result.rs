@@ -1,4 +1,4 @@
-use gateway_core::source_json::SourceJson;
+use gateway_source::source_json::SourceJson;
 use std::collections::BTreeMap;
 
 /// Native-only source result data, not a durable publication proof or CF completion grant.

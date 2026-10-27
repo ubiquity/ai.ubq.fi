@@ -1,10 +1,11 @@
 //! Fixed-path synthetic signed publication TLS peer; replies remain plain DATA.
 use crate::observation::Observed;
-use gateway_auth::{crypto::base64url, native_auth::NativeTransportIdentity};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER,
     NATIVE_TIME_HEADER,
 };
+use gateway_auth_primitives::crypto::base64url;
 use rustls::{
     ServerConfig, ServerConnection, StreamOwned,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},

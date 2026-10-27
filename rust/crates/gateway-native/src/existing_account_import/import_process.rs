@@ -5,13 +5,13 @@ use super::{
     actor_channel::{ActorBootstrap, InheritedCustodyChannel},
 };
 use crate::{daemon_config::NativeDaemonConfig, import_custody_protocol::unavailable};
-use gateway_auth::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, receiver::RegisteredRenewalOwner,
 };
-use gateway_core::error::GatewayError;
 use gateway_native_custody_wire::bootstrap::ImportEndpointData;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
+use gateway_source::error::GatewayError;
 use std::{
     io::Read,
     net::{Shutdown, TcpStream},

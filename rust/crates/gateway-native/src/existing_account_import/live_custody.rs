@@ -8,8 +8,8 @@ use gateway_authority::native_control::import::{
     effects::{NativeImportBinding, NativeImportStart},
     remote::AuthenticatedImportTerminal,
 };
-use gateway_core::error::GatewayError;
 use gateway_native_custody_wire::wire::{self as data, Frame, Header, Release, Stopped};
+use gateway_source::error::GatewayError;
 use std::{
     os::unix::fs::MetadataExt,
     time::{Duration, Instant},

@@ -1,25 +1,33 @@
 //! Actual in-process admin preparation + native signed construction, not HTTP,
 //! effect/provider import or verified Cloudflare completion.
-use gateway_auth::{
-    crypto::{Secret, base64url, sha256_hex},
-    native_auth::{
-        NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
-        NativeTransportIdentity,
-    },
-    native_import::*,
-    passkeys::{self, PasskeySession, PasskeyUser},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
-        ManagedNativeSource, codex_source_pool_key,
-    },
-    session_index,
+use gateway_auth_contracts::{
+    passkeys::{PasskeySession, PasskeyUser},
     types::{AuthConfig, AuthHost, AuthRequest},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+};
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
+    ManagedNativeSource, codex_source_pool_key,
+};
+use gateway_auth_native_contracts::{
+    native_import::{
+        NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
+        NativeImportKind, NativeImportTarget,
+    },
+    nonce::NativeNonceAuthority,
+};
+use gateway_auth_native_proof::{
+    native_auth::{
+        NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
+    },
+    native_import::NativeImportAuthHeaders,
 };
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
     NATIVE_VERSION_HEADER,
 };
+use gateway_auth_passkeys::{passkeys, session_index};
+use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
 use gateway_authority::{
     keys,
     native_control::{
@@ -33,13 +41,13 @@ use gateway_authority::{
     store::{Authority, AuthorityClock, TokenSource},
 };
 use gateway_core::{
-    error::GatewayError,
     identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId},
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
 use gateway_native_import_client::client::{ClientError, NativeImportClient};
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::json;
 use std::{
@@ -129,16 +137,16 @@ impl NativeRenewalCancellation for Cancel {
     }
 }
 struct Host;
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(fail())
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(fail())
     }
@@ -222,7 +230,12 @@ impl Fixture {
                 openlux_discovery_binding: None,
                 openlux_binding: None,
                 source_checks: vec![PaidSourceCheck {
-                    key: gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"])).0,
+                    key: gateway_auth_primitives::store::key(json!([
+                        "uos_ai",
+                        "runtime_config",
+                        "v2"
+                    ]))
+                    .0,
                     expected_revision: None,
                 }],
             },

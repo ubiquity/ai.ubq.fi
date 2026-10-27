@@ -4,7 +4,7 @@ use gateway_auth_native_wire::{
     control::NATIVE_CONTROL_MAX_BYTES,
     native_read::{NATIVE_CONTROL_PATH, NATIVE_MAX_BODY_BYTES},
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{
     io::Read,
     net::TcpStream,

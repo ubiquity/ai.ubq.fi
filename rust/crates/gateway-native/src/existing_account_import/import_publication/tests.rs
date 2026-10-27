@@ -1,9 +1,9 @@
 //! Actual TLS and response authentication only, never a durable completion issuer.
 use super::*;
-use gateway_auth::native_import::publication::NativeImportPublicationDisposition;
+use gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition;
 use gateway_auth_native_wire::publication_data::ImportPublicationDataV1;
-use gateway_core::source_json::SourceJson;
 use gateway_native_https_test_support::publication::{Peer, PendingPeer, Response};
+use gateway_source::source_json::SourceJson;
 use std::{collections::BTreeSet, time::Duration};
 
 type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -23,7 +23,7 @@ fn identity() -> NativeTransportIdentity {
         "owner".into(),
         "epoch".into(),
         [43; 32],
-        BTreeSet::from([gateway_auth::native_auth::NativeCapability::CodexAuthImport]),
+        BTreeSet::from([gateway_auth_native_proof::native_auth::NativeCapability::CodexAuthImport]),
     )
     .unwrap()
 }

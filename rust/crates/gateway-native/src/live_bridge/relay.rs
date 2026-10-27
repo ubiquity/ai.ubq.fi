@@ -6,8 +6,8 @@ use super::{
     close_value, read_downstream, socket, unavailable,
 };
 use gateway_authority::native_live::wire::NativeLiveRetirement;
-use gateway_core::error::GatewayError;
 use gateway_native_live_buffer::queue::{PendingSocket, PreopenQueue, blocked, websocket_config};
+use gateway_source::error::GatewayError;
 use std::{
     net::TcpStream,
     sync::{

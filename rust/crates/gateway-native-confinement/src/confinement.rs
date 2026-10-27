@@ -1,6 +1,6 @@
 //! Mandatory OS policy before serving. Unsupported enforcement fails closed;
 //! portable business logic never substitutes for filesystem/network/process denial.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::path::PathBuf;
 
 pub struct NativeConfinement {

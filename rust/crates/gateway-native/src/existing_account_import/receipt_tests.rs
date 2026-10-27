@@ -5,10 +5,11 @@ use crate::{
     native_import::{NativeImportContext, NativeImportHandler},
     owner_control::NativeControlContext,
 };
-use gateway_auth::{
-    crypto::sha256_hex, native_import::NativeImportMetadata, passkeys,
-    provider_credentials::codex_source_pool_key,
-};
+use gateway_auth_credentials::native_credentials::parse_native_document;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_native_contracts::native_import::NativeImportMetadata;
+use gateway_auth_passkeys::passkeys;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::{
     native_control::{
         import::AuthenticatedNativeImport,
@@ -17,13 +18,13 @@ use gateway_authority::{
     },
     store::Authority,
 };
-use gateway_core::{error::GatewayError, source_json::SourceJson};
 use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_native_import_test_support::{
     fixture::{Cancel, Fixture, Store, Tokens, fail, now_ms, run},
     receipt::{Home, document, fixture},
     socket::SocketRequest,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{
     collections::BTreeMap,
@@ -130,7 +131,7 @@ impl Issuer<'_> {
         assert_eq!(receipt.account_id_hash(), f.account);
         assert_eq!(
             receipt.native_generation(),
-            gateway_auth::native_credentials::parse_native_document(next)
+            parse_native_document(next)
                 .map_err(|_| fail())?
                 .generation_hash()
         );
@@ -405,7 +406,7 @@ fn production_mutation_is_unavailable_without_real_native_writer_exclusion()
     let home = Home::fresh()?;
     let old = document("old")?;
     home.write_auth(&old)?;
-    let hash = gateway_auth::native_credentials::parse_native_document(&old)
+    let hash = parse_native_document(&old)
         .map_err(|_| fail())?
         .routing_account_hash();
     let native = ExistingAccountImportStore::configured(

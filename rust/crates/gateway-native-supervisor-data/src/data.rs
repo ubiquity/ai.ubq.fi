@@ -1,6 +1,6 @@
 //! Constructor-owned read-only source registry, snapshot cache and selection capabilities.
 use crate::collect;
-use gateway_core::{error::GatewayError, redaction::redact};
+use gateway_core::redaction::redact;
 use gateway_native_local_transport::{
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
@@ -13,6 +13,7 @@ use gateway_native_supervisor_read::{
     inventory::{self, SessionParts, ThreadProbe, text},
     metadata::{self as supervisor_metadata, MetadataRead},
 };
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},

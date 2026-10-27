@@ -1,11 +1,12 @@
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use super::socket::LiveDialContext;
 use super::{authority::LiveAuthorization, *};
-use gateway_auth::{
-    native_auth::{
-        NativeAuthHeaders, NativeCapability, NativeNonceAuthority, NativeTransportIdentity,
-    },
-    native_live::{NATIVE_LIVE_ACTION_HEADER, NativeLiveAuthenticator},
+use gateway_auth_native_contracts::{
+    native_live::NATIVE_LIVE_ACTION_HEADER, nonce::NativeNonceAuthority,
+};
+use gateway_auth_native_proof::{
+    native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
+    native_live::NativeLiveAuthenticator,
 };
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,

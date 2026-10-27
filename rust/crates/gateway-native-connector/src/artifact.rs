@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 /// A compile-time fixture artifact is never an ordinary native service, even
 /// when dependency feature unification enabled it without the native feature.
 pub fn require_production_artifact() -> Result<(), GatewayError> {

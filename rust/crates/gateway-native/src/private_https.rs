@@ -1,7 +1,7 @@
 //! One constructor-preconnected socket, fixed URI and normal Rustls validation.
 //! No DNS, new network socket, proxy, redirect or reconnection after confinement.
-use gateway_core::error::GatewayError;
 use gateway_native_connected_io::tcp::PreconnectedTcp;
+use gateway_source::error::GatewayError;
 use std::{
     net::{SocketAddr, TcpStream},
     sync::Mutex,
@@ -213,7 +213,7 @@ impl PrivateHttps {
             headers,
             body,
             deadline,
-            gateway_auth::native_import::publication::import_publication_reply_max_bytes(),
+            gateway_auth_native_protocol::native_import::publication::import_publication_reply_max_bytes(),
             65_536,
         )
     }

@@ -4,7 +4,7 @@ use crate::{
     import_head::ImportHead,
 };
 use gateway_authority::native_control::NativeRenewalCancellation;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{io::Read, net::TcpStream, time::Instant};
 
 /// Unauthenticated raw request bytes only; no proof or source authority.

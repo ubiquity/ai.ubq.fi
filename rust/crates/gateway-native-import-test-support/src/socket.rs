@@ -1,6 +1,7 @@
 //! Real synthetic loopback request DATA and durable nonce storage, without a receive/proof factory.
 use crate::fixture::{Fixture, Store, Tokens, fail, now_ms, run};
-use gateway_auth::{crypto::base64url, native_import::NativeImportMetadata};
+use gateway_auth_native_contracts::native_import::NativeImportMetadata;
+use gateway_auth_primitives::crypto::base64url;
 use gateway_authority::store::Authority;
 use gateway_native_import_client::client::NativeImportClient;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
@@ -14,7 +15,7 @@ use std::{
 };
 
 pub struct Directory(pub PathBuf);
-fn fresh_directory() -> Result<Directory, gateway_core::error::GatewayError> {
+fn fresh_directory() -> Result<Directory, gateway_source::error::GatewayError> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let path = std::fs::canonicalize(std::env::temp_dir())
         .map_err(|_| fail())?
@@ -50,7 +51,7 @@ impl SocketRequest {
         f: &Fixture,
         authority: &Authority<Store, Tokens>,
         body: &[u8],
-    ) -> Result<Self, gateway_core::error::GatewayError> {
+    ) -> Result<Self, gateway_source::error::GatewayError> {
         let directory = fresh_directory()?;
         let nonces =
             SqliteNonceStore::open(&directory.0.join("nonce.sqlite3")).map_err(|_| fail())?;
@@ -78,7 +79,7 @@ impl SocketRequest {
         head.extend_from_slice(b"\r\n");
         let metadata = upload.metadata().clone();
         *f.store.action_key.lock().map_err(|_| fail())? =
-            Some(gateway_auth::store::key(serde_json::json!([
+            Some(gateway_auth_primitives::store::key(serde_json::json!([
                 "uos_ai",
                 "authority",
                 "native_owner_renewal",
@@ -98,10 +99,10 @@ impl SocketRequest {
             directory,
         })
     }
-    pub fn send_head(&mut self) -> Result<(), gateway_core::error::GatewayError> {
+    pub fn send_head(&mut self) -> Result<(), gateway_source::error::GatewayError> {
         self.client.write_all(&self.head).map_err(|_| fail())
     }
-    pub fn send(&mut self, body: &[u8]) -> Result<(), gateway_core::error::GatewayError> {
+    pub fn send(&mut self, body: &[u8]) -> Result<(), gateway_source::error::GatewayError> {
         self.send_head()?;
         self.client.write_all(body).map_err(|_| fail())
     }

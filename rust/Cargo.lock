@@ -1502,16 +1502,20 @@ name = "gateway-native"
 version = "0.1.0"
 dependencies = [
  "futures-executor",
- "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
  "gateway-auth-native-contracts",
+ "gateway-auth-native-import-data",
  "gateway-auth-native-proof",
  "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-core",
  "gateway-native-confinement",
- "gateway-native-connector",
  "gateway-native-connected-io",
+ "gateway-native-connector",
  "gateway-native-custody-wire",
  "gateway-native-http-framing",
  "gateway-native-https-test-support",
@@ -1548,7 +1552,7 @@ dependencies = [
 name = "gateway-native-confinement"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
+ "gateway-source",
  "landlock",
  "libc",
  "seccompiler",
@@ -1566,10 +1570,10 @@ dependencies = [
 name = "gateway-native-connector"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-native-contracts",
  "gateway-authority",
- "gateway-core",
  "gateway-native-confinement",
+ "gateway-source",
  "rustix",
  "serde",
  "serde_json",
@@ -1580,7 +1584,7 @@ name = "gateway-native-custody-wire"
 version = "0.1.0"
 dependencies = [
  "gateway-authority",
- "gateway-core",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1589,11 +1593,11 @@ dependencies = [
 name = "gateway-native-http-framing"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-native-contracts",
  "gateway-auth-native-wire",
  "gateway-authority",
- "gateway-core",
  "gateway-native-import-source",
+ "gateway-source",
  "httparse",
  "serde_json",
  "ureq",
@@ -1603,8 +1607,9 @@ dependencies = [
 name = "gateway-native-https-test-support"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "rustls",
  "ureq",
 ]
@@ -1613,10 +1618,16 @@ dependencies = [
 name = "gateway-native-import-client"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-core",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1625,10 +1636,12 @@ dependencies = [
 name = "gateway-native-import-source"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-auth-native-wire",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-core",
+ "gateway-source",
  "serde",
  "serde_json",
  "url",
@@ -1638,12 +1651,18 @@ dependencies = [
 name = "gateway-native-import-test-support"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-core",
  "gateway-native-import-client",
  "gateway-native-replay",
+ "gateway-source",
  "serde",
  "serde_json",
 ]
@@ -1652,8 +1671,8 @@ dependencies = [
 name = "gateway-native-live-buffer"
 version = "0.1.0"
 dependencies = [
- "gateway-core",
  "gateway-native-https-test-support",
+ "gateway-source",
  "rustls",
  "socket2",
  "tungstenite",
@@ -1663,8 +1682,9 @@ dependencies = [
 name = "gateway-native-local-transport"
 version = "0.1.0"
 dependencies = [
- "gateway-auth",
- "gateway-core",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
+ "gateway-source",
  "serde_json",
  "socket2",
  "tungstenite",
@@ -1675,7 +1695,8 @@ name = "gateway-native-publication"
 version = "0.1.0"
 dependencies = [
  "futures-executor",
- "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
@@ -1683,6 +1704,7 @@ dependencies = [
  "gateway-native-local-transport",
  "gateway-publication",
  "gateway-publication-policy",
+ "gateway-source",
  "rustix",
  "rustls",
  "serde_json",
@@ -1695,8 +1717,11 @@ name = "gateway-native-replay"
 version = "0.1.0"
 dependencies = [
  "futures-executor",
- "gateway-auth",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-protocol",
+ "gateway-auth-primitives",
  "gateway-core",
+ "gateway-source",
  "rusqlite",
  "serde_json",
 ]
@@ -1706,10 +1731,12 @@ name = "gateway-native-supervisor"
 version = "0.1.0"
 dependencies = [
  "futures-executor",
- "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-core",
  "gateway-native-local-transport",
  "gateway-native-supervisor-read",
+ "gateway-source",
  "serde",
  "serde_json",
  "time",
@@ -1724,6 +1751,7 @@ dependencies = [
  "gateway-native-local-transport",
  "gateway-native-supervisor",
  "gateway-native-supervisor-read",
+ "gateway-source",
  "rusqlite",
  "serde_json",
  "tungstenite",

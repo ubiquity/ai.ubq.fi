@@ -1,5 +1,5 @@
 //! Import route/header framing DATA only; no authenticated admission helpers.
-use gateway_auth::native_import::NativeImportKind;
+use gateway_auth_native_contracts::native_import::NativeImportKind;
 use std::time::Instant;
 
 pub fn kind(path: &str) -> Option<NativeImportKind> {

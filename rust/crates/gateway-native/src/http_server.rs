@@ -3,20 +3,24 @@
 use crate::live_bridge::{NativeLiveHandler, NativeLiveUpgradeRequest};
 use crate::owner_control::{NativeControlContext, NativeOwnerRenewalHandler};
 use gateway_auth_native_contracts::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
-use gateway_auth_native_proof::native_auth::{
-    AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-    NativeTransportIdentity,
+use gateway_auth_native_proof::{
+    native_auth::{
+        AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
+        NativeTransportIdentity,
+    },
+    native_live::NativeLiveAuthenticator,
 };
-use gateway_auth_native_proof::native_live::NativeLiveAuthenticator;
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
-use gateway_auth_native_wire::control::{
-    NATIVE_RENEWAL_MAX_MS, NativeControlDisposition, NativeControlEnvelope, NativeControlReason,
-    NativeControlResponse,
-};
-use gateway_auth_native_wire::native_read::{
-    NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,
-    NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH, NATIVE_TIME_HEADER,
-    NATIVE_VERSION_HEADER,
+use gateway_auth_native_wire::{
+    control::{
+        NATIVE_RENEWAL_MAX_MS, NativeControlDisposition, NativeControlEnvelope,
+        NativeControlReason, NativeControlResponse,
+    },
+    native_read::{
+        NATIVE_CONTROL_PATH, NATIVE_FOLLOW_PATH, NATIVE_KEY_HEADER, NATIVE_MAC_HEADER,
+        NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER, NATIVE_RPC_PATH, NATIVE_TIME_HEADER,
+        NATIVE_VERSION_HEADER,
+    },
 };
 use gateway_native_http_framing::{
     request::{HttpRequest, IncomingRequest, read_request, validate_live_upgrade},
@@ -71,7 +75,7 @@ impl NativeHttpService {
         mut self,
         authority: gateway_authority::store::Authority<S, I>,
         owner: gateway_authority::native_control::receiver::RegisteredRenewalOwner,
-        current_config: gateway_auth::types::AuthConfig,
+        current_config: gateway_auth_contracts::types::AuthConfig,
         handler: H,
     ) -> Self
     where

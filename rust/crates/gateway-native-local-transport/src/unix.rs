@@ -3,10 +3,10 @@ use crate::{
     limits::{RENEWAL_FRAME_LIMIT, SUPERVISOR_FRAME_LIMIT},
     transport::{NativeOwnerTransport, RenewalStep, SupervisorMethod, SupervisorTransport},
 };
-use gateway_auth::native_credentials::{
+use gateway_auth_credentials::native_credentials::{
     NativeCredentials, NativeOwnerId, owner_unavailable, parse_native_document,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use socket2::{Domain, SockAddr, Socket as OsSocket, Type};
 use std::{

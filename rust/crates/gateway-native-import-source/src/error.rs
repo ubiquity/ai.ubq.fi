@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 pub(crate) fn unavailable() -> GatewayError {
     GatewayError::unavailable(
         "Native import custody is unavailable; reconcile the original action",

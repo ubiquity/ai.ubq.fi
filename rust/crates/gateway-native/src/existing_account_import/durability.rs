@@ -1,15 +1,14 @@
 //! Only fixed native files are decoded here. No receipt constructor is public.
 use super::{ExistingAccountImportStore, unavailable};
+use gateway_auth_credentials::native_credentials::NativeCredentials;
 #[cfg(test)]
-use gateway_auth::native_credentials::parse_native_document;
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_credentials::NativeCredentials,
-};
+use gateway_auth_credentials::native_credentials::parse_native_document;
+use gateway_auth_primitives::crypto::{Secret, sha256_hex};
 use gateway_authority::native_control::import::{
     AuthenticatedNativeImport, effects::NativeImportBinding,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 use rustix::fs::{Mode, OFlags, fstat, openat};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -138,14 +137,13 @@ fn read_fixed(directory: &File, name: &str, limit: u64) -> Result<Vec<u8>, Gatew
     Ok(bytes)
 }
 fn receipt_name(action_ref: &str) -> Result<String, GatewayError> {
-    if !gateway_auth::provider_credentials::valid_native_generation(action_ref) {
+    if !gateway_auth_credentials::provider_credentials::valid_native_generation(action_ref) {
         return Err(unavailable());
     }
     Ok(format!(".uos-import-{action_ref}.receipt"))
 }
 fn credentials(raw: &[u8]) -> Result<NativeCredentials, GatewayError> {
-    let document =
-        gateway_core::source_json::SourceJson::parse_bytes(raw).map_err(|_| unavailable())?;
+    let document = SourceJson::parse_bytes(raw).map_err(|_| unavailable())?;
     gateway_native_import_source::documents::credentials(&document).map_err(|_| unavailable())
 }
 pub(super) fn reconcile(
@@ -183,7 +181,7 @@ pub(super) fn reconcile(
         &wire.persisted_document_sha256,
         &wire.original_document_sha256,
     ] {
-        if !gateway_auth::provider_credentials::valid_native_generation(hash) {
+        if !gateway_auth_credentials::provider_credentials::valid_native_generation(hash) {
             return Err(unavailable());
         }
     }
@@ -382,7 +380,7 @@ pub(super) fn persist_live(
     {
         return Err(unavailable());
     }
-    let previous_document = gateway_core::source_json::SourceJson::parse_bytes(&previous_bytes)?;
+    let previous_document = SourceJson::parse_bytes(&previous_bytes)?;
     let merged =
         gateway_native_import_source::documents::merge(&previous_document, &candidate.document)?;
     let bytes = merged.as_bytes();
@@ -493,7 +491,7 @@ pub(super) fn retain_rotated(
     proof: &AuthenticatedNativeImport,
     original_body: &[u8],
     context: &super::NativeImportInputs<'_>,
-    rotated: &gateway_core::source_json::SourceJson,
+    rotated: &SourceJson,
 ) -> Result<(), GatewayError> {
     use std::io::Write;
     custody.check_live(store, proof, original_body, context)?;

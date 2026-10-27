@@ -1,18 +1,21 @@
 //! Real loopback bytes and real AuthService/M22 proofs. Recording only; no credential effects.
 use super::*;
 use crate::native_import::{NativeImportContext, NativeImportHandler};
-use gateway_auth::{
-    crypto::{Secret, base64url, sha256_hex},
-    native_import::*,
-    passkeys::{self, PasskeySession, PasskeyUser},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
-        ManagedNativeSource, codex_source_pool_key,
-    },
-    session_index,
+use gateway_auth_contracts::{
+    passkeys::{PasskeySession, PasskeyUser},
     types::{AuthConfig, AuthRequest},
 };
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
+    ManagedNativeSource, codex_source_pool_key,
+};
+use gateway_auth_native_contracts::native_import::{
+    NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
+    NativeImportKind, NativeImportMetadata, NativeImportTarget,
+};
 use gateway_auth_native_wire::control::NATIVE_CONTROL_MAX_BYTES;
+use gateway_auth_passkeys::{passkeys, session_index};
+use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
 use gateway_authority::keys;
 use gateway_authority::native_control::{
     actor,
@@ -26,6 +29,9 @@ use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
 use gateway_authority::store::Authority;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
 use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
+use gateway_source::js_string::JsString16;
+use gateway_source::source_json::SourceJson;
+use gateway_source::source_serialization;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -42,8 +48,8 @@ use gateway_native_import_test_support::fixture::{Cancel, Host, Store, Tokens, f
 struct Observed {
     documents: Vec<Vec<u8>>,
     source_result: bool,
-    client_versions: Vec<Option<gateway_core::js_string::JsString16>>,
-    account_ids: Vec<gateway_core::js_string::JsString16>,
+    client_versions: Vec<Option<JsString16>>,
+    account_ids: Vec<JsString16>,
 }
 struct Recording(Arc<Mutex<Observed>>);
 impl NativeImportHandler for Recording {
@@ -60,13 +66,11 @@ impl NativeImportHandler for Recording {
         let mut observed = self.0.lock().map_err(|_| fail())?;
         observed.documents.push(body.to_vec());
         let auth = context.auth_data();
-        let tokens =
-            gateway_core::source_serialization::member(auth.auth(), "tokens").ok_or_else(fail)?;
-        let account =
-            gateway_core::source_serialization::member(&tokens, "account_id").ok_or_else(fail)?;
+        let tokens = source_serialization::member(auth.auth(), "tokens").ok_or_else(fail)?;
+        let account = source_serialization::member(&tokens, "account_id").ok_or_else(fail)?;
         observed
             .account_ids
-            .push(gateway_core::source_serialization::string(&account).ok_or_else(fail)?);
+            .push(source_serialization::string(&account).ok_or_else(fail)?);
         observed
             .client_versions
             .push(auth.client_version().cloned());
@@ -74,7 +78,7 @@ impl NativeImportHandler for Recording {
             return Ok(NativeImportResult {
                 status: 503,
                 headers: BTreeMap::from([("x-uos-upstream".into(), "fixture-native-only".into())]),
-                body: gateway_core::source_json::SourceJson::parse(r#"{"error":{"message":"native-only\ud800","code":"fixture_effect_unavailable"}}"#).map_err(|_|fail())?,
+                body: SourceJson::parse(r#"{"error":{"message":"native-only\ud800","code":"fixture_effect_unavailable"}}"#).map_err(|_|fail())?,
                 completion: NativeImportCompletion::Unavailable,
             });
         }
@@ -106,7 +110,7 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> Result<String, GatewayEr
             key_fingerprint: id.key_fingerprint().into(),
         },
     )?;
-    let runtime = gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime = gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]));
     store.seed(
         keys::paid_control_config(),
         "config-1",
@@ -238,14 +242,15 @@ fn prepare(
     .map_err(|_| fail())?
     .metadata()
     .clone();
-    *store.action_key.lock().map_err(|_| fail())? = Some(gateway_auth::store::key(json!([
-        "uos_ai",
-        "authority",
-        "native_owner_renewal",
-        "v1",
-        "action",
-        prepared.action_ref
-    ])));
+    *store.action_key.lock().map_err(|_| fail())? =
+        Some(gateway_auth_primitives::store::key(json!([
+            "uos_ai",
+            "authority",
+            "native_owner_renewal",
+            "v1",
+            "action",
+            prepared.action_ref
+        ])));
     Ok(prepared)
 }
 struct Fixture {
@@ -740,19 +745,12 @@ fn native_only_source_result_preserves_status_headers_and_utf16_without_success_
         .position(|part| part == b"\r\n\r\n")
         .ok_or_else(fail)?
         + 4;
-    let body = gateway_core::source_json::SourceJson::parse(
-        std::str::from_utf8(&response[start..]).map_err(|_| fail())?,
-    )
-    .map_err(|_| fail())?;
-    let error = gateway_core::source_serialization::member(&body, "error").ok_or_else(fail)?;
-    let message = gateway_core::source_serialization::member(&error, "message").ok_or_else(fail)?;
-    let expected = gateway_core::js_string::JsString16::from_units(
-        "native-only".encode_utf16().chain([0xd800]).collect(),
-    );
-    assert_eq!(
-        gateway_core::source_serialization::string(&message),
-        Some(expected)
-    );
+    let body = SourceJson::parse(std::str::from_utf8(&response[start..]).map_err(|_| fail())?)
+        .map_err(|_| fail())?;
+    let error = source_serialization::member(&body, "error").ok_or_else(fail)?;
+    let message = source_serialization::member(&error, "message").ok_or_else(fail)?;
+    let expected = JsString16::from_units("native-only".encode_utf16().chain([0xd800]).collect());
+    assert_eq!(source_serialization::string(&message), Some(expected));
     assert_eq!(fixture.calls()?, 1);
     assert!(
         !std::str::from_utf8(&response)
@@ -773,15 +771,11 @@ fn actual_wrapped_auth_data_and_source_client_version_are_bound_to_handler_conte
     assert_eq!(observed.documents, [body.to_vec()]);
     assert_eq!(
         observed.client_versions,
-        [Some(gateway_core::js_string::JsString16::from_utf8(
-            "0.126.0"
-        ))]
+        [Some(JsString16::from_utf8("0.126.0"))]
     );
     assert_eq!(
         observed.account_ids,
-        [gateway_core::js_string::JsString16::from_utf8(
-            "synthetic-account"
-        )]
+        [JsString16::from_utf8("synthetic-account")]
     );
     assert!(
         !std::str::from_utf8(&response)

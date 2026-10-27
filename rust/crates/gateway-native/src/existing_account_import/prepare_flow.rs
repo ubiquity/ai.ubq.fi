@@ -18,8 +18,8 @@ use gateway_authority::native_control::{
         remote::{AuthenticatedImportTerminal, RemoteImportAuthority},
     },
 };
-use gateway_core::error::GatewayError;
 use gateway_native_import_source::catalog::CatalogValidation;
+use gateway_source::error::GatewayError;
 
 /// No caller-created document, Started DATA or receipt marker can construct it.
 /// This is still not final publication/completion authority.
@@ -49,9 +49,10 @@ impl VerifiedImportPublication<'_> {
     }
     pub(super) fn disposition(
         &self,
-    ) -> gateway_auth::native_import::publication::NativeImportPublicationDisposition {
+    ) -> gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition
+    {
         self.reply.as_ref().map(|reply| reply.publication().disposition)
-            .unwrap_or(gateway_auth::native_import::publication::NativeImportPublicationDisposition::AlreadyCurrent)
+            .unwrap_or(gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition::AlreadyCurrent)
     }
 }
 impl<'a> PreparedExistingImport<'a> {

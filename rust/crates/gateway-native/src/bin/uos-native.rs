@@ -1,5 +1,5 @@
 #[cfg(unix)]
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 #[cfg(unix)]
 fn main() {
     if let Err(error) = run() {
@@ -181,7 +181,7 @@ fn source_unavailable(message: &str) -> GatewayError {
 #[cfg(unix)]
 fn prepare_owner_renewal(
     config: gateway_native::daemon_config::OwnerRenewalConfig,
-    identity: &gateway_auth::native_auth::NativeTransportIdentity,
+    identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     readonly_paths: &mut Vec<std::path::PathBuf>,
     unix_sockets: &mut Vec<std::path::PathBuf>,
 ) -> Result<
@@ -190,7 +190,7 @@ fn prepare_owner_renewal(
     >,
     GatewayError,
 > {
-    use gateway_auth::native_credentials::NativeOwnerId;
+    use gateway_auth_credentials::native_credentials::NativeOwnerId;
     use gateway_auth_native_wire::native_read::{
         NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
     };

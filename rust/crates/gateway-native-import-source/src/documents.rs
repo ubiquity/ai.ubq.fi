@@ -1,7 +1,7 @@
 //! Native-private credential parsing/merge. Unrelated UTF16 data never passes through Value.
 use crate::error::unavailable;
-use gateway_auth::native_credentials::{NativeCredentials, parse_native_document};
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_auth_credentials::native_credentials::{NativeCredentials, parse_native_document};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
 pub fn member(document: &SourceJson, name: &str) -> Result<Option<SourceJson>, GatewayError> {
     let key = JsString16::from_utf8(name);

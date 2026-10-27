@@ -1,9 +1,9 @@
 //! Trusted local startup input only. There is no dotenv discovery, default
 //! listener, public configuration route, command or caller-selected source path.
-use gateway_auth::crypto::{base64url, decode_base64url};
-use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-use gateway_core::error::GatewayError;
+use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_primitives::crypto::{base64url, decode_base64url};
 use gateway_native_supervisor::supervisor::SourceId;
+use gateway_source::error::GatewayError;
 use serde::Deserialize;
 use std::{collections::BTreeSet, io::Read, net::SocketAddr, path::PathBuf};
 

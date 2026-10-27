@@ -78,7 +78,7 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
         let profile = String::from_utf8(generated.stdout).unwrap();
         eprintln!(
             "PROFILE {name} sha256={}",
-            gateway_auth::crypto::sha256_hex(profile.as_bytes())
+            gateway_auth_primitives::crypto::sha256_hex(profile.as_bytes())
         );
         let result = run("policy-probe", &input, Some(&profile));
         assert!(
@@ -106,10 +106,8 @@ fn actual_separate_prelaunch_profiles_enforce_files_processes_and_network() {
 #[test]
 fn actual_request_worker_uses_inherited_client_and_one_persistent_replay_fence()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use gateway_auth::{
-        crypto::base64url,
-        native_auth::{NativeCapability, NativeTransportIdentity},
-    };
+    use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+    use gateway_auth_primitives::crypto::base64url;
     use std::{
         collections::BTreeSet,
         io::{BufRead, BufReader, Read},

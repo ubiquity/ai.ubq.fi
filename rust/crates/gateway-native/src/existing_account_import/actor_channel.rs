@@ -1,10 +1,10 @@
 //! Safe fixed-role Child/bootstrap channel. Neither an accepted socket nor JSON is custody.
 use super::{exclusive_owner::PinnedExecutable, import_endpoints::ResolvedImportEndpoints};
 use crate::import_custody_protocol::{self as wire, unavailable};
-use gateway_auth::crypto::sha256_hex;
-use gateway_core::error::GatewayError;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_native_custody_wire::bootstrap::{Bootstrap, ImportEndpointData};
 use gateway_native_custody_wire::wire::{Frame, Header, HeaderView, Stopped};
+use gateway_source::error::GatewayError;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -462,8 +462,8 @@ fn bootstrap_part(input: &mut impl Read, maximum: usize) -> Result<Vec<u8>, Gate
 #[cfg(test)]
 mod tests {
     use super::{bootstrap_max_bytes, bootstrap_part};
-    use gateway_core::error::GatewayError;
     use gateway_native_custody_wire::bootstrap::{Bootstrap, ImportEndpointData};
+    use gateway_source::error::GatewayError;
     use std::net::SocketAddr;
     #[test]
     fn bootstrap_bound_is_derived_and_unknown_peer_data_refuses() -> Result<(), GatewayError> {

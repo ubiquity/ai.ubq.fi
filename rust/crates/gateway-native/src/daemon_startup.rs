@@ -1,10 +1,10 @@
 //! Existing source assembly shared by the prelaunch request worker and policy.
 use crate::{daemon_config::PreparedNativeDaemonConfig, http_server::NativeHttpService};
-use gateway_core::error::GatewayError;
 use gateway_native_confinement::confinement::NativeConfinement;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_native_supervisor::supervisor::SourceId;
 use gateway_native_supervisor_data::data::{SupervisorData, SupervisorSourceConfig};
+use gateway_source::error::GatewayError;
 use std::path::PathBuf;
 pub(crate) mod live_bootstrap;
 pub(crate) fn source_policy(
@@ -134,7 +134,7 @@ fn request_service_with(
     build_live: impl FnOnce(
         &str,
         std::net::TcpStream,
-        gateway_auth::native_auth::NativeTransportIdentity,
+        gateway_auth_native_proof::native_auth::NativeTransportIdentity,
         std::sync::Arc<dyn crate::live_bridge::socket::NativeLiveConnector>,
     ) -> Result<crate::live_bridge::NativeLiveService, GatewayError>,
 ) -> Result<NativeHttpService, GatewayError> {
@@ -148,7 +148,7 @@ fn request_service_with(
             let target = format!(
                 "{}{}",
                 live.authority_origin(),
-                gateway_auth::native_live::NATIVE_LIVE_AUTHORITY_PATH
+                gateway_auth_native_contracts::native_live::NATIVE_LIVE_AUTHORITY_PATH
             );
             Some(build_live(
                 &target,

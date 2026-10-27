@@ -1,11 +1,8 @@
-use gateway_auth::{
-    crypto::{Secret, base64url},
-    native_credentials::{
-        NativeCredentials, native_refresh_time_ns, parse_native_document, verify_bootstrap,
-        verify_daemon_account, verify_generation,
-    },
+use gateway_auth_credentials::native_credentials::{
+    NativeCredentials, native_refresh_time_ns, parse_native_document, verify_bootstrap,
+    verify_daemon_account, verify_generation,
 };
-use gateway_core::error::GatewayError;
+use gateway_auth_primitives::crypto::{Secret, base64url};
 use gateway_native_local_transport::transport::{
     RenewalStep, SupervisorMethod, SupervisorTransport,
 };
@@ -14,6 +11,7 @@ use gateway_native_supervisor::supervisor::{
     select_follow_updates,
 };
 use gateway_native_supervisor_read::state::{SupervisorState, classify_state};
+use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::collections::BTreeSet;
 

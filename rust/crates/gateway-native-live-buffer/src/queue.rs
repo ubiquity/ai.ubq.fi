@@ -2,7 +2,7 @@ use crate::{
     error::failure,
     limits::{MAX_BUFFERED_BYTES, MAX_PAYLOAD_BYTES, PREOPEN_MAX_FRAMES},
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{
     collections::VecDeque,
     io::{Read, Write},

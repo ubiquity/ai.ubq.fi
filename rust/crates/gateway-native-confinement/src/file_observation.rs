@@ -1,5 +1,5 @@
 //! Actual metadata DATA for an already-owned File; no snapshot grants pinning, ownership or custody.
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{fs::File, os::unix::fs::MetadataExt};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

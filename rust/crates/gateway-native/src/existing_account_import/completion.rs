@@ -1,12 +1,12 @@
 use super::NativeImportInputs;
 use super::prepare_flow::VerifiedImportPublication;
-use gateway_auth::native_import::authority::completion::ImportCompletionModelsData;
+use gateway_auth_native_import_data::native_import::authority::completion::ImportCompletionModelsData;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, import::remote::RemoteImportAuthority,
 };
-use gateway_core::{error::GatewayError, source_json::SourceJson};
 use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_native_import_source::{catalog::CatalogValidation, display::expiry_display_ms};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -95,8 +95,8 @@ impl VerifiedImportPublication<'_> {
         let publication_revision = self.publication_revision().to_owned();
         let native_receipt_ref = self.native_receipt_ref().to_owned();
         let completion = match self.disposition() {
-            gateway_auth::native_import::publication::NativeImportPublicationDisposition::Applied => NativeImportCompletion::Published { publication_revision, native_receipt_ref },
-            gateway_auth::native_import::publication::NativeImportPublicationDisposition::AlreadyCurrent => NativeImportCompletion::AlreadyCurrent { publication_revision, native_receipt_ref },
+            gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition::Applied => NativeImportCompletion::Published { publication_revision, native_receipt_ref },
+            gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition::AlreadyCurrent => NativeImportCompletion::AlreadyCurrent { publication_revision, native_receipt_ref },
         };
         Ok(NativeImportResult {
             status: 200,

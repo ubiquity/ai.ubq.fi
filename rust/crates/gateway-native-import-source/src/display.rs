@@ -1,5 +1,5 @@
 //! Source display facts only, not OAuth/renewal eligibility or a proof issuer.
-use gateway_core::{
+use gateway_source::{
     source_json::SourceJson,
     source_serialization::{member, number},
 };
@@ -45,7 +45,8 @@ pub fn expiry_display_ms(token: &str) -> Option<f64> {
         };
         *last = alphabet[index & mask];
     }
-    let decoded = gateway_auth::crypto::decode_base64url(std::str::from_utf8(&bare).ok()?).ok()?;
+    let decoded =
+        gateway_auth_primitives::crypto::decode_base64url(std::str::from_utf8(&bare).ok()?).ok()?;
     let decoded = decoded
         .strip_prefix(&[0xef, 0xbb, 0xbf])
         .unwrap_or(&decoded);
@@ -73,7 +74,7 @@ mod tests {
         ] {
             let token = format!(
                 "\u{feff} head.{}.signature \u{feff}",
-                gateway_auth::crypto::base64url(payload.as_bytes())
+                gateway_auth_primitives::crypto::base64url(payload.as_bytes())
             );
             assert_eq!(expiry_display_ms(&token), expected);
         }

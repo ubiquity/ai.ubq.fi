@@ -344,7 +344,7 @@ fn actual_revoked_publication_retains_native_receipt_but_never_source_success()
     let record = futures_executor::block_on(store.read(&codex_source_pool_key()))
         .map_err(|_| base::fail())?
         .ok_or_else(base::fail)?;
-    let pool = gateway_auth::provider_credentials::parse_codex_source_pool(
+    let pool = gateway_auth_credentials::provider_credentials::parse_codex_source_pool(
         record.json_value().map_err(|_| base::fail())?,
     )
     .map_err(|_| base::fail())?

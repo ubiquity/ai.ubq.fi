@@ -9,6 +9,7 @@ publish.workspace = true
 gateway-core.workspace = true
 gateway-native-local-transport.workspace = true
 gateway-native-supervisor-read.workspace = true
+gateway-source.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
@@ -16,8 +17,9 @@ serde_json.workspace = true
 time = { version = "=0.3.44", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
+gateway-auth-credentials.workspace = true
+gateway-auth-primitives.workspace = true
 futures-executor = "=0.3.34"
-gateway-auth.workspace = true
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
 //! Closed serialized native bootstrap/endpoint DATA; no shape or address proves a parent, peer, role or custody.
 use crate::wire::{self as data, unavailable};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 

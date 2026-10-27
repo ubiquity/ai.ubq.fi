@@ -1,6 +1,6 @@
 //! Serialized custody DATA only; a decoded frame never grants stop, mutation or completion.
 use gateway_authority::native_control::import::custody_session::ImportCustodyStartedRequest;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 
 // Five 4096-byte authority-text fields may each escape to six bytes per UTF8 byte.

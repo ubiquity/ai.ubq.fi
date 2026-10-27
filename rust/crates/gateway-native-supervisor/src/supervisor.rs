@@ -1,5 +1,5 @@
-use gateway_core::error::GatewayError;
 use gateway_native_local_transport::transport::{SupervisorMethod, SupervisorTransport};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};

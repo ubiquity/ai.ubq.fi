@@ -1,14 +1,14 @@
 //! Fixed native owner-effect injection. The shared authority implementation
 //! owns action preparation, current-fact checks, claims and reconciliation.
-use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders};
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeAuthHeaders};
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlResponse};
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// The context is reachable, but only the real receiver can construct it.
 /// ```compile_fail,E0624
 /// use gateway_native::owner_control::NativeControlContext;
-/// use gateway_auth::native_auth::NativeAuthHeaders;
+/// use gateway_auth_native_proof::native_auth::NativeAuthHeaders;
 /// let headers=NativeAuthHeaders {version:"1",key_id:"key",time_ms:"1",nonce:"nonce",mac:"mac"};
 /// let disconnected=||false;
 /// let _=NativeControlContext::admitted(std::time::Instant::now(),&disconnected,headers);

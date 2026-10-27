@@ -10,6 +10,7 @@ gateway-core.workspace = true
 gateway-native-local-transport.workspace = true
 gateway-native-supervisor.workspace = true
 gateway-native-supervisor-read.workspace = true
+gateway-source.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(unix)'.dependencies]

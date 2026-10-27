@@ -1,6 +1,7 @@
 //! Native-private import custody. Independent native writer exclusion is not yet available.
 //! The production mutation boundary fails closed; a recovered durability receipt is not publication.
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_native_contracts::native_import::NativeImportMetadata;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::{
     native_control::{
         NativeRenewalCancellation,
@@ -12,7 +13,8 @@ use gateway_authority::{
     },
     store::TokenSource,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use std::{fs::File, path::Path};
 mod acl_inspector;
 mod actor_channel;
@@ -38,7 +40,7 @@ struct NativeImportInputs<'a> {
 impl<'a> NativeImportInputs<'a> {
     fn checked(
         proof: &'a AuthenticatedNativeImport,
-        metadata: &'a gateway_auth::native_import::NativeImportMetadata,
+        metadata: &'a NativeImportMetadata,
         body: &'a [u8],
         context: &'a crate::native_import::NativeImportContext<'a>,
         original: &'a crate::owner_control::NativeControlContext<'a>,
@@ -68,7 +70,7 @@ impl<'a> NativeImportInputs<'a> {
     fn check_document(
         &self,
         proof: &AuthenticatedNativeImport,
-        metadata: &gateway_auth::native_import::NativeImportMetadata,
+        metadata: &NativeImportMetadata,
         body: &[u8],
     ) -> Result<(), GatewayError> {
         self.context.require_original(self.original)?;
@@ -112,7 +114,9 @@ impl ExistingAccountImportStore {
         let native_owner_id = registered.native_owner_id().to_owned();
         let home = Path::new(registered.registered_home());
         if native_owner_id.is_empty()
-            || !gateway_auth::provider_credentials::valid_native_generation(&account_id_hash)
+            || !gateway_auth_credentials::provider_credentials::valid_native_generation(
+                &account_id_hash,
+            )
         {
             return Err(unavailable());
         }

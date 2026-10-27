@@ -1,13 +1,13 @@
 use super::*;
 use crate::managed_publication_http::NativeAccessPublicationHttp;
-use gateway_auth::{
-    crypto::Secret,
-    native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
+use gateway_auth_native_proof::native_auth::{
+    NativeAuthHeaders, NativeCapability, NativeTransportIdentity,
 };
 use gateway_auth_native_wire::native_read::{
     NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH,
     NATIVE_RESPONSE_MAC_HEADER,
 };
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority::{
     cache_experiment::{
         RefreshContext,
@@ -409,7 +409,8 @@ fn actual_signed_v2_rechecks_preserve_four_contexts_and_opaque_old_new_versions(
 }
 #[test]
 fn actual_signed_v2_rechecks_preserve_source_model_units_as_ordinary_strings() {
-    use gateway_core::{js_string::JsString16, model::ModelId};
+    use gateway_core::model::ModelId;
+    use gateway_source::js_string::JsString16;
     for units in [
         vec![0xd800],
         vec![0xdc00],

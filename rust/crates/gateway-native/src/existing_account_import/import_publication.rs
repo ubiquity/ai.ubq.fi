@@ -7,19 +7,17 @@ use super::{
     validation::ValidatedNativeImport,
 };
 use crate::import_custody_protocol::unavailable;
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_import::publication::NativeImportPublication,
-    provider_credentials::codex_credential_identity,
-};
+use gateway_auth_credentials::provider_credentials::codex_credential_identity;
+use gateway_auth_native_protocol::native_import::publication::NativeImportPublication;
 use gateway_auth_native_wire::publication_command::{
     ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData,
 };
+use gateway_auth_primitives::crypto::{Secret, sha256_hex};
 use gateway_authority::native_control::import::{
     AuthenticatedNativeImport, remote::AuthenticatedImportTerminal,
 };
-use gateway_core::error::GatewayError;
 use gateway_native_import_source::catalog::CatalogValidation;
+use gateway_source::error::GatewayError;
 
 /// Native-only producer; no JSON/receipt-DATA/Boolean constructor.
 pub(super) struct PreparedImportPublication<'a> {
@@ -172,11 +170,12 @@ impl AuthenticatedImportPublicationReply {
 }
 
 use crate::private_https::PrivateHttps;
-use gateway_auth::{crypto::base64url, native_auth::NativeTransportIdentity};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
     NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
+use gateway_auth_primitives::crypto::base64url;
 use std::{net::TcpStream, time::Instant};
 /// One actual constructor-selected TLS transport; no raw-response/callback issuer.
 pub(super) struct ImportPublicationHttp {

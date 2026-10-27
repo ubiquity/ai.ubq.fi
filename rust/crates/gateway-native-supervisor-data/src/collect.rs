@@ -1,5 +1,4 @@
 //! Real selected-source collection stays private with registry/cache currentness.
-use gateway_core::error::GatewayError;
 use gateway_native_local_transport::{
     transport::{SupervisorMethod, SupervisorTransport},
     unix::UnixSupervisor,
@@ -13,6 +12,7 @@ use gateway_native_supervisor::{
     supervisor::KnownThread,
 };
 use gateway_native_supervisor_read::inventory::{epoch_ms, text};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{
     path::Path,

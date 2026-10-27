@@ -1,8 +1,8 @@
 //! Trusted prelaunch resolution, then fixed once-connected actor transports.
 use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::NativeRenewalCancellation;
-use gateway_core::error::GatewayError;
 use gateway_native_custody_wire::bootstrap::ImportEndpointData;
+use gateway_source::error::GatewayError;
 use std::{
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
@@ -137,7 +137,7 @@ fn resolve(host: &str, port: u16) -> Result<SocketAddr, GatewayError> {
 pub(super) fn fixed_authority_client<'a, C: NativeRenewalCancellation>(
     origin: &str,
     socket: TcpStream,
-    identity: gateway_auth::native_auth::NativeTransportIdentity,
+    identity: gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     cancellation: &'a C,
     deadline: Instant,
 ) -> Result<

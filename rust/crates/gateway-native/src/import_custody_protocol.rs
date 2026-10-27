@@ -2,10 +2,10 @@
 use crate::native_import::NativeImportContext;
 #[cfg(test)]
 use gateway_authority::native_control::import::custody_session::ImportCustodyStartedRequest;
-use gateway_core::error::GatewayError;
 use gateway_native_custody_wire::wire::{CUSTODY_FRAME_MAX, Frame};
 #[cfg(test)]
 use gateway_native_custody_wire::wire::{Header, Release, STARTED_BINDING_MAX, Stopped};
+use gateway_source::error::GatewayError;
 use std::{
     io::{Read, Write},
     net::TcpStream,
@@ -15,7 +15,7 @@ use std::{
 pub(crate) fn random_ref() -> Result<String, GatewayError> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|_| unavailable())?;
-    Ok(gateway_auth::crypto::sha256_hex(&bytes))
+    Ok(gateway_auth_primitives::crypto::sha256_hex(&bytes))
 }
 fn remaining(deadline: Instant) -> Result<Duration, GatewayError> {
     deadline

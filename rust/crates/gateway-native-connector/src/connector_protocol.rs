@@ -119,7 +119,8 @@ impl ControlFrame {
     }
 }
 fn reference(value: &str) -> Result<(), ControlError> {
-    gateway_auth::native_live::validate_reference(value).map_err(|_| ControlError::InvalidFrame)
+    gateway_auth_native_contracts::native_live::validate_reference(value)
+        .map_err(|_| ControlError::InvalidFrame)
 }
 
 impl ControlError {

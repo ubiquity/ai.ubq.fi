@@ -1,9 +1,9 @@
 #![cfg(unix)]
 
-use gateway_auth::crypto::base64url;
-use gateway_auth::native_credentials::{
+use gateway_auth_credentials::native_credentials::{
     NativeGeneration, NativeOwnerId, OwnerFence, parse_native_document,
 };
+use gateway_auth_primitives::crypto::base64url;
 use gateway_native_local_transport::{
     limits::SUPERVISOR_FRAME_LIMIT,
     transport::{
@@ -263,7 +263,7 @@ impl std::error::Error for FixtureThreadFailure {}
 
 fn renewal_fixture(
     persist_generation: bool,
-) -> FixtureResult<Result<NativeGeneration, gateway_core::error::GatewayError>> {
+) -> FixtureResult<Result<NativeGeneration, gateway_source::error::GatewayError>> {
     renewal_with_guard(persist_generation, GuardPolicy::Allow)
 }
 
@@ -282,16 +282,16 @@ struct FixtureGuard {
     policy: GuardPolicy,
 }
 impl gateway_native_local_transport::guard::NativeRenewalGuard for FixtureGuard {
-    fn now_ms(&self) -> Result<i64, gateway_core::error::GatewayError> {
+    fn now_ms(&self) -> Result<i64, gateway_source::error::GatewayError> {
         Ok(1_000_000)
     }
-    async fn ensure_current(&self) -> Result<(), gateway_core::error::GatewayError> {
+    async fn ensure_current(&self) -> Result<(), gateway_source::error::GatewayError> {
         if self.policy == GuardPolicy::RevokeAfterIdentity
             && self
                 .observed
                 .lock()
                 .map_err(|error| {
-                    gateway_core::error::GatewayError::unavailable(
+                    gateway_source::error::GatewayError::unavailable(
                         error.to_string(),
                         "fixture_observation_poisoned",
                     )
@@ -299,7 +299,7 @@ impl gateway_native_local_transport::guard::NativeRenewalGuard for FixtureGuard 
                 .len()
                 >= 3
         {
-            return Err(gateway_core::error::GatewayError::new(
+            return Err(gateway_source::error::GatewayError::new(
                 409,
                 "Synthetic current authority changed",
                 Some("native_owner_changed"),
@@ -307,9 +307,9 @@ impl gateway_native_local_transport::guard::NativeRenewalGuard for FixtureGuard 
         }
         Ok(())
     }
-    async fn start_refresh(&self) -> Result<(), gateway_core::error::GatewayError> {
+    async fn start_refresh(&self) -> Result<(), gateway_source::error::GatewayError> {
         if self.policy == GuardPolicy::RefuseStart {
-            return Err(gateway_core::error::GatewayError::unavailable(
+            return Err(gateway_source::error::GatewayError::unavailable(
                 "Synthetic original operation is already started",
                 "native_control_outcome_unknown",
             ));
@@ -321,7 +321,7 @@ impl gateway_native_local_transport::guard::NativeRenewalGuard for FixtureGuard 
 fn renewal_with_guard(
     persist_generation: bool,
     policy: GuardPolicy,
-) -> FixtureResult<Result<NativeGeneration, gateway_core::error::GatewayError>> {
+) -> FixtureResult<Result<NativeGeneration, gateway_source::error::GatewayError>> {
     run(async {
         let home = FixtureHome::new();
         let old = document("fixture-refresh-a", "2026-10-18T12:00:00.000000001Z");

@@ -4,13 +4,14 @@ pub mod authority;
 mod relay;
 pub mod socket;
 use authority::NativeLiveAuthority;
-use gateway_auth::{crypto::base64url, native_live::AuthenticatedNativeLive};
-use gateway_core::error::GatewayError;
+use gateway_auth_native_proof::native_live::AuthenticatedNativeLive;
+use gateway_auth_primitives::crypto::base64url;
 use gateway_native_live_buffer::{
     error::failure,
     limits::MAX_PAYLOAD_BYTES,
     queue::{PendingSocket, PreopenQueue, blocked},
 };
+use gateway_source::error::GatewayError;
 use socket::NativeLiveConnector;
 use std::{
     io::Write,
@@ -171,7 +172,7 @@ fn sideband_response(
 ) -> Result<tungstenite::handshake::server::Response, GatewayError> {
     let mut builder = tungstenite::http::Request::builder()
         .method("GET")
-        .uri(gateway_auth::native_live::NATIVE_LIVE_PATH);
+        .uri(gateway_auth_native_contracts::native_live::NATIVE_LIVE_PATH);
     let mut version_seen = false;
     let mut key_seen = false;
     for (name, value) in headers {

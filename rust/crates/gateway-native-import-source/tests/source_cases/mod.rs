@@ -1,10 +1,10 @@
-use gateway_auth::crypto::sha256_hex;
-use gateway_core::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_native_import_source::body::{
     AUTH_MAX_BYTES, AuthReadFailure, BodyError, PROFILE_MAX_BYTES, decode_auth,
     profile::profile_plan, read_auth_json,
+};
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde::Deserialize;
 use serde_json::Value;

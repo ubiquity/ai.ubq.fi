@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 pub fn control_interrupted() -> GatewayError {
     GatewayError::unavailable(
         "Native control was interrupted; reconcile the original action",

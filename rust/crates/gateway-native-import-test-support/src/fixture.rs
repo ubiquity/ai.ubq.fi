@@ -1,18 +1,18 @@
 //! Synthetic DATA and real public store/host components only; no context/actor/Start/durability/custody factory.
 //! Real proof/authority fixtures for native typed AUTH context only.
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_auth::{NativeCapability, NativeTransportIdentity},
-    native_import::NativeImportTarget,
-    passkeys::{self, PasskeySession, PasskeyUser},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
-        ManagedNativeSource, codex_source_pool_key,
-    },
-    session_index,
+use gateway_auth_contracts::{
+    passkeys::{PasskeySession, PasskeyUser},
     types::{AuthConfig, AuthHost, AuthRequest},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
 };
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
+    ManagedNativeSource, codex_source_pool_key,
+};
+use gateway_auth_native_contracts::native_import::NativeImportTarget;
+use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_passkeys::{passkeys, session_index};
+use gateway_auth_primitives::crypto::{Secret, sha256_hex};
 use gateway_authority::keys;
 use gateway_authority::native_control::{
     NativeRenewalCancellation, actor, receiver::RegisteredRenewalOwner,
@@ -22,11 +22,11 @@ use gateway_authority::paid_control::{
 };
 use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
 use gateway_authority::store::{Authority, AuthorityClock, TokenSource};
-use gateway_core::error::GatewayError;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
+use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::json;
 use std::{
@@ -164,16 +164,16 @@ impl NativeRenewalCancellation for Cancel {
     }
 }
 pub struct Host;
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(fail())
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(fail())
     }
@@ -260,7 +260,12 @@ impl Fixture {
                 openlux_discovery_binding: None,
                 openlux_binding: None,
                 source_checks: vec![PaidSourceCheck {
-                    key: gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"])).0,
+                    key: gateway_auth_primitives::store::key(json!([
+                        "uos_ai",
+                        "runtime_config",
+                        "v2"
+                    ]))
+                    .0,
                     expected_revision: None,
                 }],
             },

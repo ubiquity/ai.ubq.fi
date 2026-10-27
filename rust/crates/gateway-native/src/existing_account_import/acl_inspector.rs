@@ -2,9 +2,9 @@
 use super::exclusive_owner::{PinnedExecutable, fail};
 #[cfg(target_os = "macos")]
 use super::owner_runtime::verified_tool;
-use gateway_core::error::GatewayError;
 #[cfg(target_os = "macos")]
 use gateway_native_confinement::file_observation::Facts;
+use gateway_source::error::GatewayError;
 use std::{fs::File, time::Instant};
 #[cfg(target_os = "macos")]
 use std::{

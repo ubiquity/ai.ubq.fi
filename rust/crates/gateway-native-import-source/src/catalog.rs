@@ -1,7 +1,7 @@
 //! Source import parsing/catalog/error projections only. DATA never authenticates a candidate or grants an effect.
 use crate::{documents as document, error::unavailable};
-use gateway_auth::native_credentials::NativeCredentials;
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_auth_credentials::native_credentials::NativeCredentials;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
 pub enum CatalogValidation {
     Normalized {

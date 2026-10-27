@@ -1,5 +1,5 @@
 use super::*;
-use gateway_auth::native_auth::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::{NativeAuthHeaders, NativeCapability};
 use gateway_native_confinement::confinement::{NativeConfinement, enforce};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{

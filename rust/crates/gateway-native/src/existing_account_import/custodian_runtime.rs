@@ -7,8 +7,8 @@ use crate::import_custody_protocol::unavailable;
 use gateway_authority::native_control::import::{
     custody_session::VerifiedCurrentImportStarted, remote::VerifiedCurrentImportTerminal,
 };
-use gateway_core::error::GatewayError;
 use gateway_native_custody_wire::wire::Header;
+use gateway_source::error::GatewayError;
 use std::time::{Duration, Instant};
 
 pub(crate) struct KernelSnapshot {
@@ -61,8 +61,9 @@ impl CustodianRuntime {
             .parent()
             .ok_or_else(unavailable)?
             .join("uos-native-import");
-        let digest =
-            gateway_auth::crypto::sha256_hex(&std::fs::read(&actor).map_err(|_| unavailable())?);
+        let digest = gateway_auth_primitives::crypto::sha256_hex(
+            &std::fs::read(&actor).map_err(|_| unavailable())?,
+        );
         self.serve_from_artifact(client, config, &actor, &digest, endpoints)
     }
     fn serve_from_artifact(

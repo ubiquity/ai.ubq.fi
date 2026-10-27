@@ -1,7 +1,7 @@
 //! Fixed native-only receiver and authenticated source-data boundary.
 //! No socket, refresh, provider effect or publication implementation.
 use crate::owner_control::NativeControlContext;
-use gateway_auth::native_import::{NativeImportKind, NativeImportMetadata};
+use gateway_auth_native_contracts::native_import::{NativeImportKind, NativeImportMetadata};
 use gateway_authority::{
     native_control::{
         NativeRenewalCancellation, import::AuthenticatedNativeImport,
@@ -9,10 +9,9 @@ use gateway_authority::{
     },
     store::TokenSource,
 };
-use gateway_core::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson, state::AuthorityStore,
-};
+use gateway_core::state::AuthorityStore;
 use gateway_native_import_source::{body as import_body, result::NativeImportResult};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 
 /// Read-only native credential DATA, not proof, effect authority or CF completion.
 /// Constructed only by dispatch from the one original-body decoder after binding.
@@ -111,9 +110,9 @@ impl<'a> NativeImportContext<'a> {
 /// ```compile_fail,E0521
 /// use gateway_native::{native_import::{NativeImportHandler,NativeImportContext},owner_control::NativeControlContext};
 /// use gateway_native_import_source::result::NativeImportResult;
-/// use gateway_auth::native_import::NativeImportMetadata;
+/// use gateway_auth_native_contracts::native_import::NativeImportMetadata;
 /// use gateway_authority::native_control::import::AuthenticatedNativeImport;
-/// use gateway_core::error::GatewayError;
+/// use gateway_source::error::GatewayError;
 /// struct Keep(std::sync::Mutex<Option<&'static AuthenticatedNativeImport>>);
 /// impl NativeImportHandler for Keep {
 ///     fn import_document(&self,proof:&AuthenticatedNativeImport,_:&NativeImportMetadata,_:&[u8],_:&NativeImportContext<'_>,_:&NativeControlContext<'_>)->Result<NativeImportResult,GatewayError> {

@@ -1,12 +1,10 @@
 #![cfg(target_os = "linux")]
 
-use gateway_auth::{
-    crypto::base64url,
-    native_auth::{NativeCapability, NativeTransportIdentity},
-};
+use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
 use gateway_auth_native_wire::native_read::{
     NATIVE_FOLLOW_PATH, NATIVE_MAX_BODY_BYTES, NATIVE_RPC_PATH,
 };
+use gateway_auth_primitives::crypto::base64url;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,

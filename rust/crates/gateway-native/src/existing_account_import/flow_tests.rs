@@ -1,22 +1,26 @@
 //! Actual debug-only two-process native import fixtures. No v3 row rewriting,
 //! credential provider traffic, fake Start, raw-response issuer or live UID work.
 use super::{foundation_tests::assert_owned_canonical_directory, *};
-use gateway_auth::{
-    crypto::{Secret, base64url, sha256_hex},
-    native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
-    native_import::*,
-    passkeys::{self, PasskeySession, PasskeyUser},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
-        ManagedNativeSource, codex_source_pool_key,
-    },
-    session_index,
+use gateway_auth_contracts::{
+    passkeys::{PasskeySession, PasskeyUser},
     types::AuthRequest,
+};
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
+    ManagedNativeSource, codex_source_pool_key,
+};
+use gateway_auth_native_contracts::native_import::catalog_seed::ImportCatalogSeedRequestData;
+use gateway_auth_native_contracts::native_import::{NativeImportMetadata, NativeImportTarget};
+use gateway_auth_native_import_data::native_import::authority::ImportAuthorityRequestData;
+use gateway_auth_native_proof::native_auth::{
+    NativeAuthHeaders, NativeCapability, NativeTransportIdentity,
 };
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_MAX_BODY_BYTES, NATIVE_NONCE_HEADER,
     NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
+use gateway_auth_passkeys::{passkeys, session_index};
+use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
 use gateway_authority::keys;
 use gateway_authority::native_control::{
     actor,
@@ -25,9 +29,7 @@ use gateway_authority::native_control::{
 use gateway_authority::paid_control::PaidControlOwner;
 use gateway_authority::routing_types::{PoolAccount, SubscriptionPool};
 use gateway_authority::store::Authority;
-use gateway_core::error::GatewayError;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
-use gateway_core::source_json::SourceJson;
 use gateway_core::state::AuthorityStore;
 use gateway_native_import_test_support::fixture as base;
 use gateway_publication_policy::control_publication::{
@@ -35,6 +37,7 @@ use gateway_publication_policy::control_publication::{
 };
 use gateway_publication_policy::protocol::{OwnedNativeAuthHeaders, PublicationRequest};
 use gateway_publication_transport::transport::PublicationReceiver;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -96,7 +99,7 @@ fn id() -> NativeTransportIdentity {
     )
     .unwrap()
 }
-fn credentials() -> gateway_auth::native_credentials::NativeCredentials {
+fn credentials() -> gateway_auth_credentials::native_credentials::NativeCredentials {
     gateway_native_import_source::documents::credentials(&SourceJson::parse_bytes(OLD).unwrap())
         .unwrap()
 }
@@ -541,10 +544,8 @@ fn serve_tls(socket: TcpStream, role: u8, store: base::Store, home: &Path, traff
         traffic.requests[role as usize].fetch_add(1, Ordering::SeqCst);
         let phase = if path == NATIVE_PUBLICATION_PATH {
             "publication"
-        } else if let Ok(request) =
-            gateway_auth::native_import::authority::ImportAuthorityRequestData::parse(&body)
-        {
-            use gateway_auth::native_import::authority::ImportAuthorityCommand as C;
+        } else if let Ok(request) = ImportAuthorityRequestData::parse(&body) {
+            use gateway_auth_native_import_data::native_import::authority::ImportAuthorityCommand as C;
             match request.command {
                 C::Admit { .. } => "admit",
                 C::FinishCurrent { .. } => "finish",
@@ -555,11 +556,7 @@ fn serve_tls(socket: TcpStream, role: u8, store: base::Store, home: &Path, traff
                 C::Terminal { .. } => "terminal",
                 C::CustodyTerminal { .. } => "custody_terminal",
             }
-        } else if gateway_auth::native_import::catalog_seed::ImportCatalogSeedRequestData::parse(
-            &body,
-        )
-        .is_ok()
-        {
+        } else if ImportCatalogSeedRequestData::parse(&body).is_ok() {
             "catalog_seed"
         } else if role == 1 {
             "models"
@@ -617,7 +614,13 @@ fn serve_tls(socket: TcpStream, role: u8, store: base::Store, home: &Path, traff
                             &body,
                         )
                         .await?;
-                    if gateway_auth::native_import::catalog_seed::ImportCatalogSeedRequestData::parse(&body).is_ok(){control.handle_import_catalog_seed(&peer,&body).await}else if gateway_auth::native_import::authority::ImportAuthorityRequestData::parse(&body).is_ok(){control.handle_import_authority(&peer,&body).await}else{control.handle_import_started(&peer,&body).await}
+                    if ImportCatalogSeedRequestData::parse(&body).is_ok() {
+                        control.handle_import_catalog_seed(&peer, &body).await
+                    } else if ImportAuthorityRequestData::parse(&body).is_ok() {
+                        control.handle_import_authority(&peer, &body).await
+                    } else {
+                        control.handle_import_started(&peer, &body).await
+                    }
                 });
                 let (status, reply) = match result {
                     Ok(reply) => (200, reply),
@@ -1002,7 +1005,7 @@ fn actual_existing_account_original_start_owned_child_custody_durability_and_pub
     let pool_record = futures_executor::block_on(store.read(&codex_source_pool_key()))
         .map_err(|_| base::fail())?
         .ok_or_else(base::fail)?;
-    let pool = gateway_auth::provider_credentials::parse_codex_source_pool(
+    let pool = gateway_auth_credentials::provider_credentials::parse_codex_source_pool(
         pool_record.json_value().map_err(|_| base::fail())?,
     )
     .map_err(|_| base::fail())?

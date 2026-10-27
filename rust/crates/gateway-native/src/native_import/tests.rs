@@ -3,21 +3,23 @@ use super::{
     AuthenticatedNativeImport, NativeControlContext, NativeImportContext, decode_context,
     dispatch_import,
 };
-use gateway_auth::{
-    crypto::{base64url, sha256_hex},
+use gateway_auth_native_contracts::native_import::NativeImportKind;
+use gateway_auth_native_proof::{
     native_auth::{NativeAuthHeaders, NativeAuthenticator},
-    native_import::{NativeImportAuthHeaders, NativeImportKind},
-    native_replay::StoreNonceAuthority,
+    native_import::NativeImportAuthHeaders,
 };
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
     NATIVE_VERSION_HEADER,
 };
+use gateway_auth_primitives::crypto::{base64url, sha256_hex};
 use gateway_authority::{native_control::receiver::NativeRenewalAuthority, store::Authority};
 use gateway_native_import_test_support::{
     fixture::{Fixture, Store, Tokens, fail, now_ms, run},
     socket::SocketRequest,
 };
+use gateway_source::error::GatewayError;
 use std::{
     collections::BTreeMap,
     time::{Duration, Instant},
@@ -38,8 +40,7 @@ fn proof(
     socket: &SocketRequest,
     body: &[u8],
     n: u8,
-) -> Result<(AuthenticatedNativeImport, BTreeMap<String, String>), gateway_core::error::GatewayError>
-{
+) -> Result<(AuthenticatedNativeImport, BTreeMap<String, String>), GatewayError> {
     let mut h = socket.headers.clone();
     let digest = sha256_hex(body);
     let at = now_ms()?;
@@ -72,8 +73,7 @@ fn proof(
     Ok((run(control.finish_import(admitted, body))?, h))
 }
 #[test]
-fn a_different_actual_proof_cannot_observe_the_retained_auth_context()
--> Result<(), gateway_core::error::GatewayError> {
+fn a_different_actual_proof_cannot_observe_the_retained_auth_context() -> Result<(), GatewayError> {
     let f = Fixture::new()?;
     let a = f.authority();
     let socket = SocketRequest::prepared(&f, &a, AUTH)?;
@@ -102,7 +102,7 @@ fn a_different_actual_proof_cannot_observe_the_retained_auth_context()
 }
 #[test]
 fn a_different_genuine_original_context_cannot_extend_or_rebind_the_decoded_context()
--> Result<(), gateway_core::error::GatewayError> {
+-> Result<(), GatewayError> {
     let f = Fixture::new()?;
     let a = f.authority();
     let socket = SocketRequest::prepared(&f, &a, AUTH)?;
@@ -133,7 +133,7 @@ fn a_different_genuine_original_context_cannot_extend_or_rebind_the_decoded_cont
 }
 #[test]
 fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error()
--> Result<(), gateway_core::error::GatewayError> {
+-> Result<(), GatewayError> {
     let f = Fixture::new()?;
     let a = f.authority();
     let body = b"{";
@@ -146,14 +146,12 @@ fn original_cancellation_metadata_and_raw_binding_precede_any_decode_error()
         fn import_document(
             &self,
             _: &AuthenticatedNativeImport,
-            _: &gateway_auth::native_import::NativeImportMetadata,
+            _: &gateway_auth_native_contracts::native_import::NativeImportMetadata,
             _: &[u8],
             _: &NativeImportContext<'_>,
             _: &NativeControlContext<'_>,
-        ) -> Result<
-            gateway_native_import_source::result::NativeImportResult,
-            gateway_core::error::GatewayError,
-        > {
+        ) -> Result<gateway_native_import_source::result::NativeImportResult, GatewayError>
+        {
             panic!("binding/cancellation must precede decoder/handler");
         }
     }

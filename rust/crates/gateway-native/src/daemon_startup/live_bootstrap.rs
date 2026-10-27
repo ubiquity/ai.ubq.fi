@@ -1,5 +1,5 @@
 //! One purpose-bound reverse FD, delivered only to an expendable request process.
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_native_connector::{connector_fd::ReceiveProcess, connector_protocol::ControlError};
 use rustix::{
     io::{FdFlags, fcntl_getfd, fcntl_setfd},

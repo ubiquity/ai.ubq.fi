@@ -1,6 +1,6 @@
 //! Raw framed native response data and connection observation, never delivery/accounting proof.
 use crate::error::unavailable;
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::{
     io::Write,
     net::TcpStream,
@@ -43,7 +43,7 @@ pub fn write_import_response(
     stream: &mut TcpStream,
     status: u16,
     headers: std::collections::BTreeMap<String, String>,
-    source_body: gateway_core::source_json::SourceJson,
+    source_body: gateway_source::source_json::SourceJson,
 ) -> Result<(), GatewayError> {
     let body = serde_json::to_vec(&source_body).map_err(|_| unavailable())?;
     let mut response = format!("HTTP/1.1 {status} Native\r\n");

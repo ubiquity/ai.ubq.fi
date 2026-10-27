@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use std::future::Future;
 
 /// Constructor-owned bridge to the original durable action. The start hook

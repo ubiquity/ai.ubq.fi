@@ -1,7 +1,6 @@
 //! Fixed native import validation. Candidates are DATA, never mutation or publication authority.
 use super::NativeImportInputs;
-use gateway_auth::native_credentials::NativeCredentials;
-use gateway_core::source_json::SourceJson;
+use gateway_auth_credentials::native_credentials::NativeCredentials;
 use gateway_native_import_source::{
     catalog::{
         CatalogValidation, invalid_catalog, model_error, normalized_catalog, selected_version,
@@ -9,6 +8,7 @@ use gateway_native_import_source::{
     },
     documents as document,
 };
+use gateway_source::source_json::SourceJson;
 
 // Only the fixed models/OAuth producer below may create this; callers cannot deserialize it.
 pub(super) struct ValidatedNativeImport<'a> {
@@ -29,7 +29,7 @@ use crate::{
     private_https::{PrivateHttps, PrivateResponse},
 };
 use gateway_authority::native_control::import::AuthenticatedNativeImport;
-use gateway_core::{error::GatewayError, js_string::JsString16};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::{
     net::TcpStream,
     time::{Duration, Instant},
@@ -89,7 +89,7 @@ impl ImportValidation {
             return Err(unavailable());
         }
         match context.original_proof().target() {
-            gateway_auth::native_import::NativeImportTarget::ExistingAccount {
+            gateway_auth_native_contracts::native_import::NativeImportTarget::ExistingAccount {
                 account_id_hash,
             } if *account_id_hash == credentials.routing_account_hash() => (),
             _ => return Err(unavailable()),

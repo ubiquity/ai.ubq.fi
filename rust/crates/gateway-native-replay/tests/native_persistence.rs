@@ -1,7 +1,7 @@
 #![cfg(unix)]
-use gateway_auth::{
-    crypto::base64url, native_auth::NativeNonceAuthority, native_replay::StoreNonceAuthority,
-};
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
+use gateway_auth_primitives::crypto::base64url;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use std::{
     fs,

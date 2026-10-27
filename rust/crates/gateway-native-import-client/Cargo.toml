@@ -6,10 +6,16 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-gateway-auth.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-authority.workspace = true
 gateway-core.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-auth-credentials.workspace = true
+gateway-auth-native-contracts.workspace = true
+gateway-auth-native-proof.workspace = true
+gateway-auth-passkeys.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-source.workspace = true
 
 [dev-dependencies]
 serde.workspace = true

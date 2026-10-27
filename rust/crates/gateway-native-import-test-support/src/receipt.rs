@@ -1,6 +1,7 @@
 //! Synthetic temporary-home and document DATA only; no live writer/custody/receipt grant.
 use crate::fixture::{Fixture, fail, now_ms};
-use gateway_auth::{crypto::base64url, provider_credentials::codex_source_pool_key};
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_primitives::crypto::base64url;
 use gateway_authority::native_control::receiver::RegisteredRenewalOwner;
 use serde_json::json;
 use std::{
@@ -15,7 +16,7 @@ impl Home {
     pub fn path(&self) -> &Path {
         &self.0
     }
-    pub fn fresh() -> Result<Self, gateway_core::error::GatewayError> {
+    pub fn fresh() -> Result<Self, gateway_source::error::GatewayError> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         let root = fs::canonicalize(std::env::temp_dir()).map_err(|_| fail())?;
         assert!(root.is_dir());
@@ -31,7 +32,7 @@ impl Home {
     pub fn write_auth(
         &self,
         value: &serde_json::Value,
-    ) -> Result<(), gateway_core::error::GatewayError> {
+    ) -> Result<(), gateway_source::error::GatewayError> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -53,7 +54,7 @@ impl Drop for Home {
         }
     }
 }
-pub fn document(label: &str) -> Result<serde_json::Value, gateway_core::error::GatewayError> {
+pub fn document(label: &str) -> Result<serde_json::Value, gateway_source::error::GatewayError> {
     let access = format!(
         "fixture.{}.signature",
         base64url(
@@ -69,14 +70,14 @@ pub fn document(label: &str) -> Result<serde_json::Value, gateway_core::error::G
 pub fn fixture(
     home: &Home,
     old: &serde_json::Value,
-) -> Result<Fixture, gateway_core::error::GatewayError> {
+) -> Result<Fixture, gateway_source::error::GatewayError> {
     let mut f = Fixture::new()?;
-    let credentials =
-        gateway_auth::native_credentials::parse_native_document(old).map_err(|_| fail())?;
+    let credentials = gateway_auth_credentials::native_credentials::parse_native_document(old)
+        .map_err(|_| fail())?;
     let key = codex_source_pool_key();
     let mut source = {
         let rows = f.store.rows.lock().map_err(|_| fail())?;
-        gateway_auth::provider_credentials::parse_codex_source_pool(
+        gateway_auth_credentials::provider_credentials::parse_codex_source_pool(
             &rows.get(&key.0).ok_or_else(fail)?.value,
         )
         .map_err(|_| fail())?

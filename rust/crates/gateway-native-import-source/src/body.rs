@@ -1,5 +1,5 @@
 //! Native-only source import body data. No admission, store, validation or effect.
-use gateway_core::{
+use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 

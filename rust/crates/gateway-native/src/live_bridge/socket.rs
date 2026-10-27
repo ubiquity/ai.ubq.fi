@@ -2,7 +2,7 @@ use super::{
     authority::{LiveAuthorization, NativeLiveAuthority},
     unavailable,
 };
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
 use std::{
     io::{self, Read, Write},

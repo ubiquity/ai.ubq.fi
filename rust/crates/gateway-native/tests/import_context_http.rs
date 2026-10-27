@@ -1,12 +1,10 @@
 #![cfg(unix)]
 //! Real accepted-socket import admission. No private context/proof constructor or fixture issuer.
-use gateway_auth::{
-    crypto::sha256_hex,
-    native_import::NativeImportMetadata,
-    passkeys::{self, PasskeyUser},
-};
+use gateway_auth_contracts::passkeys::PasskeyUser;
+use gateway_auth_native_contracts::native_import::NativeImportMetadata;
+use gateway_auth_passkeys::passkeys;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority::{native_control::import::AuthenticatedNativeImport, store::Authority};
-use gateway_core::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_native::{
     import_ingress::receive_import_connection,
     native_import::{NativeImportContext, NativeImportHandler},
@@ -20,6 +18,7 @@ use gateway_native_import_test_support::{
     fixture::{Fixture, Store, Tokens, fail, now_ms},
     socket::SocketRequest,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::{
     collections::BTreeMap,
     io::Write,
