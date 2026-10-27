@@ -1,6 +1,6 @@
 //! Source replay-retention.ts: fenced reservations, staging and exactly-once charge release.
 use crate::{
-    ObservabilityRuntime, replay_model as model, replay_retention_schema as schema,
+    ObservabilityRuntime, replay_retention_schema as schema,
     replay_retention_schema::RetentionLimits, store,
 };
 use gateway_core::{
@@ -9,6 +9,7 @@ use gateway_core::{
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, query::ReplayRows, types::ObservabilityHost,
 };
+use gateway_observability_replay_model::{replay_crypto, replay_model as model};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 pub(crate) struct Reservation {
@@ -126,7 +127,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         limits: RetentionLimits,
     ) -> Result<bool, GatewayError> {
         for (batch_index, batch) in ciphertext
-            .chunks(crate::replay_crypto::CHUNK_BYTES * 12)
+            .chunks(replay_crypto::CHUNK_BYTES * 12)
             .enumerate()
         {
             let mut staged = None;
@@ -178,7 +179,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             };
             let expiry = data::now(self.host.as_ref())? + model::PAYLOAD_TTL;
             let mut chunks = Vec::new();
-            for (index, bytes) in batch.chunks(crate::replay_crypto::CHUNK_BYTES).enumerate() {
+            for (index, bytes) in batch.chunks(replay_crypto::CHUNK_BYTES).enumerate() {
                 chunks.push(RecordMutation::Put {
                     key: model::chunk_key(&reservation.row.capture_id, batch_index * 12 + index),
                     record: StoredRecord::profile_v2(

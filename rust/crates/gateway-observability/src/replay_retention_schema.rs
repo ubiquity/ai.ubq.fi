@@ -1,10 +1,13 @@
 //! Source capture-owned budget/accounting rows. This is unrelated to paid accounting.
-use crate::{replay_model as model, replay_values};
+use crate::replay_values;
 use gateway_core::{
     state::AuthorityStore, state::RecordKey, state::RecordMutation, state::StoredRecord,
 };
 use gateway_observability_contracts::{
     data, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_observability_replay_model::{
+    records::read_json_record, replay_crypto, replay_model as model,
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -64,7 +67,7 @@ pub(crate) fn reservation_charge(plaintext: usize, metadata: usize) -> f64 {
     charge(
         plaintext
             .saturating_add(65_536 + 16)
-            .min(crate::replay_crypto::MAX_CIPHERTEXT_BYTES),
+            .min(replay_crypto::MAX_CIPHERTEXT_BYTES),
         metadata,
     )
 }
@@ -72,7 +75,7 @@ pub(crate) fn metadata_charge(document: &SourceJson) -> f64 {
     document.as_bytes().len() as f64 + OVERHEAD
 }
 pub(crate) fn row_metadata_charge(row: Option<&StoredRecord>) -> Result<f64, GatewayError> {
-    row.map(|r| replay_values::read_json_record(r).map(|s| metadata_charge(&s)))
+    row.map(|r| read_json_record(r).map(|s| metadata_charge(&s)))
         .transpose()
         .map(|v| v.unwrap_or(0.0))
 }
@@ -260,7 +263,7 @@ pub(crate) fn decode<T: DeserializeOwned>(
     row: &StoredRecord,
     names: &[&str],
 ) -> Result<T, GatewayError> {
-    SourceObject::parse(&replay_values::read_json_record(row)?)?
+    SourceObject::parse(&read_json_record(row)?)?
         .select(names)?
         .deserialize()
 }
@@ -301,7 +304,7 @@ pub(crate) fn mutation<H: ObservabilityHost, T: Serialize>(
 ) -> Result<RecordMutation, GatewayError> {
     let fresh = SourceJson::from_serializable(value)?;
     let document = if let Some(row) = previous {
-        let mut document = SourceObject::parse(&replay_values::read_json_record(row)?)?;
+        let mut document = SourceObject::parse(&read_json_record(row)?)?;
         for (name, value) in fresh.object_entries()? {
             document.set(&name.try_utf8()?, &value)?;
         }

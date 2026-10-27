@@ -1,4 +1,3 @@
-mod support;
 use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
@@ -6,12 +5,15 @@ use gateway_core::{
     state::StoredRecord, tuple_key::DecodedKeyPart, tuple_key::TupleKey,
 };
 use gateway_observability::{
-    ObservabilityRuntime, replay_crypto::ReplayBody, replay_crypto::ReplayKey,
-    replay_producer::ClientFailureObservation, replay_producer::FailureObservation,
-    replay_producer::PersistResult, replay_producer::ReplayInput, replay_producer::ReplayRequest,
+    ObservabilityRuntime, replay_producer::ClientFailureObservation,
+    replay_producer::FailureObservation, replay_producer::PersistResult,
+    replay_producer::ReplayInput, replay_producer::ReplayRequest,
     replay_retention_schema::RetentionLimits, replay_trace::UpstreamTrace,
 };
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
+use gateway_observability_replay_model::{
+    replay_crypto::ReplayBody, replay_crypto::ReplayKey, replay_model,
+};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -95,10 +97,7 @@ fn client(failure: &FailureObservation) -> ClientFailureObservation {
 fn ready<S: QueryStore>(runtime: &ObservabilityRuntime<S, CaptureHost>, limits: RetentionLimits) {
     for attempt in 0..20 {
         let status = run(runtime.maintain_replays(limits)).unwrap_or_else(|error| {
-            let budget = run(runtime
-                .store()
-                .read(&gateway_observability::replay_model::key("budget")))
-            .unwrap();
+            let budget = run(runtime.store().read(&replay_model::key("budget"))).unwrap();
             panic!(
                 "maintenance pass {attempt}: {error:?}; budget encoding {:?}",
                 budget.map(|row| row.value_encoding)
@@ -202,9 +201,7 @@ fn actual_ciphertext_publication_exports_decrypts_and_duplicate_keeps_the_origin
     let retention = run(runtime.replay_retention_status(limits));
     assert_eq!(retention["records"], 1.0);
     assert_eq!(retention["reserved_bytes"], 0.0);
-    host.clock
-        .at
-        .set(1001 + gateway_observability::replay_model::PAYLOAD_TTL);
+    host.clock.at.set(1001 + replay_model::PAYLOAD_TTL);
     run(runtime.maintain_replays(limits)).unwrap();
     run(runtime.maintain_replays(limits)).unwrap();
     let retention = run(runtime.replay_retention_status(limits));

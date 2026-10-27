@@ -1,9 +1,11 @@
 //! Real platform primitives for request-owned observational reads and writes.
 use gateway_admin_runtime::capabilities::Context;
 use gateway_core::identity::RequestId;
-use gateway_observability::{ObservabilityRuntime, ObservabilityState, replay_crypto::ReplayBody};
+use gateway_observability::{ObservabilityRuntime, ObservabilityState};
 use gateway_observability_contracts::host_types;
 use gateway_observability_contracts::{host_types::BuildIdentity, types::ObservabilityHost};
+use gateway_observability_replay_model::replay_crypto;
+use gateway_observability_replay_model::replay_crypto::ReplayBody;
 use gateway_source::error::GatewayError;
 use std::{
     cell::{Cell, RefCell},
@@ -33,8 +35,7 @@ pub fn capture_input(
         return Ok(CaptureInput::Omitted("non_post"));
     }
     let host = runtime.host();
-    if host.original_body.as_bytes().len() > gateway_observability::replay_crypto::MAX_REQUEST_BYTES
-    {
+    if host.original_body.as_bytes().len() > replay_crypto::MAX_REQUEST_BYTES {
         return Ok(CaptureInput::Omitted("body_over_limit"));
     }
     let url = request
@@ -71,10 +72,8 @@ pub async fn persist_failure(
 ) -> Result<gateway_observability::replay_producer::PersistResult, GatewayError> {
     let key =
         crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
-            gateway_observability::replay_crypto::ReplayKey::decode(
-                raw.trim_matches(gateway_schema::util::js_whitespace),
-            )
-            .ok()
+            replay_crypto::ReplayKey::decode(raw.trim_matches(gateway_schema::util::js_whitespace))
+                .ok()
         });
     runtime
         .persist_failure(input, observation, client, key.as_ref())

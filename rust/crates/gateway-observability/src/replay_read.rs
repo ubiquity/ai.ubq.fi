@@ -1,9 +1,5 @@
 //! Source replay-read.ts. Reads preserve expiry/status truth and export only frozen manifest fields.
-use crate::{
-    ObservabilityRuntime, replay_model as model, replay_model::CaptureState,
-    replay_model::Manifest, replay_model::Status, replay_model::StatusDocument,
-    replay_values::read_json_record, store,
-};
+use crate::{ObservabilityRuntime, store};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::{
@@ -12,6 +8,10 @@ use gateway_core::{
 };
 use gateway_observability_contracts::{
     data, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_observability_replay_model::{
+    records::read_json_record, replay_model as model, replay_model::CaptureState,
+    replay_model::Manifest, replay_model::Status, replay_model::StatusDocument,
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::Serialize;

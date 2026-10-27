@@ -1,5 +1,5 @@
 //! Source incident-outbox.ts: durable safe classifications, never raw request data.
-use crate::{ObservabilityRuntime, replay_model as model, replay_values::read_json_record, store};
+use crate::{ObservabilityRuntime, store};
 use gateway_admin_runtime::{capabilities::CaptureRequest, capabilities::Context};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_primitives::crypto::sha256_hex;
@@ -9,6 +9,9 @@ use gateway_core::{
 };
 use gateway_observability_contracts::{
     data, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_observability_replay_model::{
+    records::read_json_record, replay_model, replay_model as model,
 };
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
@@ -305,7 +308,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
     pub(crate) async fn new_capture_index_publication(
         &self,
         binding: &NewCaptureIndex<'_>,
-        manifest: &crate::replay_model::Manifest,
+        manifest: &replay_model::Manifest,
         manifest_key: &RecordKey,
     ) -> Result<Option<IndexPublication>, GatewayError> {
         if !model::digest(binding.fingerprint) || !model::digest(binding.ciphertext_sha256) {

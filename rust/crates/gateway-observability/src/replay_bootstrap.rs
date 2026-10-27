@@ -1,13 +1,13 @@
 //! Bounded resumable source accounting bootstrap. Shared state contains owner ids only.
-use crate::{
-    ObservabilityRuntime, replay_model as model, replay_retention_schema as schema,
-    replay_values::read_json_record, store,
-};
+use crate::{ObservabilityRuntime, replay_retention_schema as schema, store};
 use gateway_core::{
     query::QueryRequest, query::QuerySelector, query::QueryStore, state::RecordMutation,
 };
 use gateway_observability_contracts::{
     data, query, query::ObservationRead, types::ObservabilityHost,
+};
+use gateway_observability_replay_model::{
+    records::read_json_record, replay_model, replay_model as model,
 };
 use gateway_source::error::GatewayError;
 use std::{collections::BTreeMap, collections::BTreeSet};
@@ -234,7 +234,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                                 }
                             }
                             "request" => {
-                                crate::replay_model::StatusDocument::parse(&read_json_record(
+                                replay_model::StatusDocument::parse(&read_json_record(
                                     &entry.record,
                                 )?)?;
                                 ledger.status_records += 1.0;

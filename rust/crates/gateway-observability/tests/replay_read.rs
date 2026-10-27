@@ -3,9 +3,8 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_core::{
     state::RecordKey, state::StoredRecord, tuple_key::TupleKey, value::PortableValue,
 };
-use gateway_observability::{
-    ObservabilityRuntime, incidents::IncidentObservation, replay_model as model,
-};
+use gateway_observability::{ObservabilityRuntime, incidents::IncidentObservation};
+use gateway_observability_replay_model::replay_model as model;
 use serde_json::{Value, json};
 use support::{Host, Memory, run};
 fn key(value: Value) -> RecordKey {

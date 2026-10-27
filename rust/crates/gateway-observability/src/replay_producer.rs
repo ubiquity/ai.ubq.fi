@@ -1,16 +1,18 @@
 //! Source request-owned failure capture. No caller JSON can mint this transport input.
 use crate::{
     ObservabilityRuntime, incidents::IncidentEvidence, incidents::IncidentObservation,
-    replay_crypto, replay_crypto::FingerprintInput, replay_crypto::ReplayBody,
-    replay_crypto::ReplayKey, replay_model as model, replay_retention::Admission,
-    replay_retention_schema as schema, replay_retention_schema::RetentionLimits,
-    replay_trace::UpstreamTrace, replay_values::read_json_record,
+    replay_retention::Admission, replay_retention_schema as schema,
+    replay_retention_schema::RetentionLimits, replay_trace::UpstreamTrace,
 };
 use base64::{Engine, engine::general_purpose::STANDARD, engine::general_purpose::URL_SAFE_NO_PAD};
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::{query::QueryStore, state::RecordKey};
 use gateway_observability_contracts::{
     data, host_types::BuildIdentity, source_object::SourceObject, types::ObservabilityHost,
+};
+use gateway_observability_replay_model::{
+    records::read_json_record, replay_crypto, replay_crypto::FingerprintInput,
+    replay_crypto::ReplayBody, replay_crypto::ReplayKey, replay_model as model,
 };
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
