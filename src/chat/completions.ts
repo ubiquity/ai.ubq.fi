@@ -36,6 +36,7 @@ import {
   reconcileCompletedRefusal,
   recordEmptyUpstreamCompletion,
   recordSuccessfulChatCompletion,
+  setChatOutputTextPart,
   translatedChatOutputObserved,
 } from "./stream-translation.ts";
 
@@ -207,7 +208,7 @@ export const streamChatCompletions = (
           return malformedFunctionCallStream("Upstream output-text delta is not a string.");
         }
         const key = chatOutputTextPartStorageKey(ev);
-        outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
+        setChatOutputTextPart(outputTextParts, ev, `${outputTextParts.get(key) ?? ""}${delta}`);
         outputText += delta;
         emitContent(delta);
       };
@@ -219,7 +220,7 @@ export const streamChatCompletions = (
         const key = chatOutputTextPartStorageKey(ev);
         const partText = outputTextParts.get(key) ?? "";
         const suffix = reconcileCompletedOutputText(partText, completedText);
-        outputTextParts.set(key, `${partText}${suffix}`);
+        setChatOutputTextPart(outputTextParts, ev, `${partText}${suffix}`);
         if (suffix) {
           outputText += suffix;
           emitContent(suffix);
@@ -231,7 +232,7 @@ export const streamChatCompletions = (
         const delta = getString(ev.delta);
         if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
         const key = chatOutputTextPartStorageKey(ev);
-        refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
+        setChatOutputTextPart(refusalParts, ev, `${refusalParts.get(key) ?? ""}${delta}`);
         refusal += delta;
         emitRefusal(delta);
       };
@@ -243,7 +244,7 @@ export const streamChatCompletions = (
         const key = chatOutputTextPartStorageKey(ev);
         const partRefusal = refusalParts.get(key) ?? "";
         const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
-        refusalParts.set(key, `${partRefusal}${suffix}`);
+        setChatOutputTextPart(refusalParts, ev, `${partRefusal}${suffix}`);
         if (suffix) {
           refusal += suffix;
           emitRefusal(suffix);
@@ -572,7 +573,7 @@ export const completeChatCompletions = async (
       return malformedFunctionCallStream("Upstream output-text delta is not a string.");
     }
     const key = chatOutputTextPartStorageKey(ev);
-    outputTextParts.set(key, `${outputTextParts.get(key) ?? ""}${delta}`);
+    setChatOutputTextPart(outputTextParts, ev, `${outputTextParts.get(key) ?? ""}${delta}`);
     content += delta;
     if (delta.length > 0) markChatSemanticOutput(usageContext);
   };
@@ -585,7 +586,7 @@ export const completeChatCompletions = async (
     const key = chatOutputTextPartStorageKey(ev);
     const partText = outputTextParts.get(key) ?? "";
     const suffix = reconcileCompletedOutputText(partText, completedText);
-    outputTextParts.set(key, `${partText}${suffix}`);
+    setChatOutputTextPart(outputTextParts, ev, `${partText}${suffix}`);
     content += suffix;
     if (suffix.length > 0) markChatSemanticOutput(usageContext);
   };
@@ -594,7 +595,7 @@ export const completeChatCompletions = async (
     const delta = getString(ev.delta);
     if (delta === null) return malformedFunctionCallStream("Upstream refusal delta is not a string.");
     const key = chatOutputTextPartStorageKey(ev);
-    refusalParts.set(key, `${refusalParts.get(key) ?? ""}${delta}`);
+    setChatOutputTextPart(refusalParts, ev, `${refusalParts.get(key) ?? ""}${delta}`);
     refusal += delta;
     if (delta.length > 0) markChatSemanticOutput(usageContext);
   };
@@ -607,7 +608,7 @@ export const completeChatCompletions = async (
     const key = chatOutputTextPartStorageKey(ev);
     const partRefusal = refusalParts.get(key) ?? "";
     const suffix = reconcileCompletedRefusal(partRefusal, completedRefusal);
-    refusalParts.set(key, `${partRefusal}${suffix}`);
+    setChatOutputTextPart(refusalParts, ev, `${partRefusal}${suffix}`);
     refusal += suffix;
     if (suffix.length > 0) markChatSemanticOutput(usageContext);
   };
