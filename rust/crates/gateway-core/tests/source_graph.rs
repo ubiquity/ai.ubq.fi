@@ -1,10 +1,5 @@
-use gateway_core::{
-    js_string::JsString16,
-    source_graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind},
-    source_json::SourceJson,
-    state::StoredRecord,
-    value::{PortableValue, ValueEncoding},
-};
+use gateway_core::{source_graph::{ErrorKind, GraphAtom, GraphNode, SourceGraph, ViewKind}, state::StoredRecord, value::{PortableValue, ValueEncoding}};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use serde_json::{Value, json};
 

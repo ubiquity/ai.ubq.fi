@@ -1,5 +1,6 @@
 //! Routing credentials use the owner-derived current source and routing fences.
-use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformHost;
 use gateway_auth::crypto::Secret;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_auth::types::AuthPrincipal;
@@ -13,6 +14,8 @@ use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
+use gateway_wait_observation::outcome::WaitOutcome;
+use gateway_worker_storage::store::now_ms;
 use worker::Env;
 
 #[derive(Clone)]
@@ -40,33 +43,30 @@ impl RoutingHost for Host {
     fn source_string_collator(
         &self,
     ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
-        crate::source_collator::shared()
+        gateway_worker_platform::source_collator::shared()
     }
     fn cancelled(&self) -> bool {
         self.platform.cancellation.signal().aborted()
     }
     fn cancellation_error(&self) -> GatewayError {
-        if self.platform.cancellation.client_aborted() {
-            gateway_admission::cancellation_error()
-        } else {
-            GatewayError::new(
-                504,
-                "The gateway request deadline expired.",
-                Some("gateway_timeout"),
-            )
-            .with_type("server_error")
-        }
+        self.platform.cancellation.routing_error()
     }
-    async fn wait(&self, milliseconds: i64) -> gateway_routing_runtime::types::WaitOutcome {
-        let started = crate::admission::monotonic()
-            .expect("Routing requires the validated platform monotonic clock");
+    async fn wait(&self, milliseconds: i64) -> WaitOutcome {
+        let started = match gateway_worker_platform::clock::monotonic() {
+            Ok(started) => started,
+            Err(error) => {
+                return WaitOutcome::NotStarted {
+                    error: if self.cancelled() {
+                        self.cancellation_error()
+                    } else {
+                        error
+                    },
+                };
+            }
+        };
         let result = self.wait_result(milliseconds).await;
-        let ended = crate::admission::monotonic()
-            .expect("Routing requires the validated platform monotonic clock");
-        let elapsed_ms = (ended.saturating_sub(started).as_secs_f64() * 1000.0)
-            .round()
-            .min(i64::MAX as f64) as i64;
-        gateway_routing_runtime::types::WaitOutcome { elapsed_ms, result }
+        let elapsed_ms = gateway_worker_platform::clock::elapsed_ms_since(started);
+        WaitOutcome::Attempted { elapsed_ms, result }
     }
     async fn credential(
         &self,
@@ -476,7 +476,7 @@ fn unavailable(message: &str) -> GatewayError {
 // Never call this from paid_credential: receipt/currentness rechecks are read-only.
 async fn prepare_credential_catalog<
     S: gateway_core::query::QueryStore,
-    H: gateway_catalog_runtime::host::CatalogHost,
+    H: gateway_catalog_provider::host::CatalogHost,
 >(
     provider: UpstreamProvider,
     store: &S,

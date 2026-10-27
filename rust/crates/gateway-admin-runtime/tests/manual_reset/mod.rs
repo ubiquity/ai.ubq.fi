@@ -3,11 +3,12 @@ use super::*;
 #[test]
 fn manual_reset_exact_route_rejects_other_methods_and_aliases() -> TestResult {
     let path = "/admin/providers/codex/banked-resets/consume";
-    let route = gateway_admin::routes::match_route("POST", path).ok_or("missing route")?;
+    let route =
+        gateway_admin_contracts::routes::match_route("POST", path).ok_or("missing route")?;
     assert_eq!(route.operation, AdminOperation::CodexResetConsume);
     assert_eq!(route.operation.capability(), "codex_capacity_authority");
-    assert!(gateway_admin::routes::match_route("GET", path).is_none());
-    assert!(gateway_admin::routes::match_route("POST", &format!("{path}/")).is_none());
+    assert!(gateway_admin_contracts::routes::match_route("GET", path).is_none());
+    assert!(gateway_admin_contracts::routes::match_route("POST", &format!("{path}/")).is_none());
     Ok(())
 }
 

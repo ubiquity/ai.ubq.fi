@@ -503,16 +503,19 @@ impl<
         }
         self.lithos_attempted.borrow_mut().clear();
         self.renew().await?;
-        let outcome = self.host.wait(wait).await;
-        if !(0..=9_007_199_254_740_991).contains(&outcome.elapsed_ms) {
-            return Err(journal::unavailable("The host wait duration is invalid.").into());
+        let outcome = self.host.wait(wait).await.into_observation()?;
+        if let Some(elapsed_ms) = outcome.elapsed_ms {
+            if !(0..=9_007_199_254_740_991).contains(&elapsed_ms) {
+                return Err(journal::unavailable("The host wait duration is invalid.").into());
+            }
+            let elapsed = &self.elapsed_wait_ms;
+            elapsed.set(elapsed.get().saturating_add(elapsed_ms));
         }
-        let elapsed = &self.elapsed_wait_ms;
-        elapsed.set(elapsed.get().saturating_add(outcome.elapsed_ms));
         outcome.result?;
         if self.host.cancelled() {
             return Ok(RefusalDecision::Abort);
         }
+        outcome.measurement?;
         Ok(RefusalDecision::Continue)
     }
     pub async fn finish(

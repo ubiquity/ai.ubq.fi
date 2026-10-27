@@ -5,11 +5,11 @@ use gateway_routing_runtime_test_support::source_catalog;
 type MemoryStore = Store;
 type TestAuthority = gateway_authority::store::Authority<Store, Tokens>;
 use gateway_authority::{keys, paid_control::*};
-use gateway_catalog_runtime::CatalogRuntime;
-use gateway_catalog_runtime::host::{
+use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
+use gateway_catalog_runtime::CatalogRuntime;
 use gateway_catalog_runtime::state;
 use gateway_core::error::GatewayError;
 use gateway_core::provider::PaidProvider;
@@ -241,10 +241,10 @@ impl CatalogHost for Host {
     fn now_ms(&self) -> i64 {
         self.store.now.get()
     }
-    fn unique_id(&self) -> String {
+    fn unique_id(&self) -> Result<String, GatewayError> {
         let sequence = self.sequence.get() + 1;
         self.sequence.set(sequence);
-        format!("observation-{sequence}")
+        Ok(format!("observation-{sequence}"))
     }
     async fn wait(&self, milliseconds: u32) -> Result<(), GatewayError> {
         self.store

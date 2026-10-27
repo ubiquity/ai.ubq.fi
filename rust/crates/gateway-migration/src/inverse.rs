@@ -6,7 +6,6 @@ use crate::{
     error::MigrationError,
     invalid, key, parts, starts, unavailable,
 };
-use gateway_admin_data::profile::{encode_base64, source::to_source_profile as to_profile};
 use gateway_core::error::GatewayError;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::source_json::SourceJson;
@@ -15,6 +14,8 @@ use gateway_core::state::StoredRecord;
 use gateway_core::tuple_key::DecodedKeyPart;
 use gateway_core::tuple_key::TupleKey;
 use gateway_core::value::PortableValue;
+use gateway_profile_source::codec::to_source_profile as to_profile;
+use gateway_profile_values::{coercion::encode_base64, date::CanonicalDates};
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
@@ -127,7 +128,7 @@ pub(crate) fn inverse_value(
     }
     let current = record.json_value()?;
     let original = source
-        .map(|s| gateway_admin_data::profile::source::from_source_profile(&s.value))
+        .map(|s| gateway_profile_source::codec::from_source_profile(&s.value))
         .transpose()?
         .and_then(|v| v.to_json_lossless())
         .unwrap_or(json!({}));
@@ -293,12 +294,12 @@ fn authority_control(
             all.get(&crate::key(json!(["default", "kernel_policy_limit_requests"])).0)
         {
             expected.usage_limit_requests =
-                gateway_admin_runtime::parse::limit(source.json_value()?).unwrap_or(-1);
+                gateway_admin_contracts::fields::limit(source.json_value()?).unwrap_or(-1);
         }
         if let Some(source) = all.get(&crate::key(json!(["default", "kernel_policy_window_ms"])).0)
         {
-            expected.window_ms =
-                gateway_admin_runtime::parse::positive(source.json_value()?).unwrap_or(604800000);
+            expected.window_ms = gateway_admin_contracts::fields::positive(source.json_value()?)
+                .unwrap_or(604800000);
         }
         let actual: gateway_authority::kernel::KernelDefaults = decode(record.json_value()?)?;
         if actual != expected {
@@ -315,8 +316,8 @@ fn authority_control(
         let source = all
             .get(&gateway_auth::api_keys::id_key(id).0)
             .ok_or_else(|| invalid("Derived API policy has no source ID"))?;
-        let source: gateway_admin::keys::ApiKeyRecord = decode(source.json_value()?)?;
-        let mut expected = gateway_admin::keys::authority_policy(&source, now_ms);
+        let source: gateway_admin_keys::keys::ApiKeyRecord = decode(source.json_value()?)?;
+        let mut expected = gateway_admin_keys::keys::authority_policy(&source, now_ms);
         let actual: gateway_authority::quota::ApiKeyPolicy = decode(record.json_value()?)?;
         if source.policy.revoked_at_ms.is_some() && actual.expires_at_ms <= now_ms {
             expected.expires_at_ms = actual.expires_at_ms;
@@ -587,7 +588,7 @@ async fn export_internal<S: QueryStore>(
     };
     // A private export is not a successful rollback until every latest source/index
     // invariant can be re-adopted. This reads no old database or backup.
-    crate::engine::prepare(&result, &gateway_admin_data::profile::CanonicalDates)?;
+    crate::engine::prepare(&result, &CanonicalDates)?;
     Ok((result, controls))
 }
 

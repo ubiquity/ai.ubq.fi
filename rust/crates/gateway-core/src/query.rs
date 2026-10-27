@@ -5,11 +5,11 @@ use std::future::Future;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::GatewayError,
     identity::{MAX_SAFE_INTEGER, UnixMillis},
     state::{AuthorityStore, RecordKey, StoredRecord},
     tuple_key::{TupleKey, decode_hex, encode_hex},
 };
+use gateway_source::error::GatewayError;
 
 const CURSOR_PREFIX: &str = "query-v1:";
 

@@ -1,0 +1,767 @@
+[
+  {
+    "path": "rust/crates/gateway-auth/src/api_keys.rs",
+    "lines": 171,
+    "sha256": "7b8a5a00e415df7d350be63743869f8e2a2dff886e6b01ffc736a272d08c0142",
+    "symbols": [
+      "ApiKeyHashRecord",
+      "ApiKeyPolicy",
+      "api_key_shape",
+      "generate_token",
+      "hash_key",
+      "id_key",
+      "current_window",
+      "policy_from_record",
+      "authenticate"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/bootstrap.rs",
+    "lines": 79,
+    "sha256": "cb8383c301e6705ce6508f7314e539d506331d05bca073e8d6e9e87aa9e4ed8c",
+    "symbols": [
+      "tokens",
+      "nonempty",
+      "kernel_pems"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/crypto.rs",
+    "lines": 61,
+    "sha256": "7f66ea3f25393260723fcf3fb81ad5247ffd9c89aa30cbef6cf6f6bfee5c604c",
+    "symbols": [
+      "Secret",
+      "sha256_hex",
+      "sha256_base64url",
+      "base64url",
+      "decode_base64url",
+      "uuid_from_random"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/lib.rs",
+    "lines": 23,
+    "sha256": "055039adc231e01e3b2929a3c1a981b89e03c27ee8d192b5b646051627873e51",
+    "symbols": [
+      "api_keys",
+      "bootstrap",
+      "crypto",
+      "managed_access",
+      "native",
+      "native_auth",
+      "native_control",
+      "native_credentials",
+      "native_import",
+      "native_live",
+      "native_replay",
+      "origin",
+      "passkeys",
+      "passport",
+      "provider_credentials",
+      "resolve",
+      "session_index",
+      "store",
+      "types",
+      "upstream",
+      "webauthn"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/managed_access.rs",
+    "lines": 79,
+    "sha256": "4eaa379c24bd7d64e11e15d54356da07a735f804f66dd8f26f8b5880e03837c1",
+    "symbols": [
+      "ManagedAccessProjection",
+      "invalid"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native.rs",
+    "lines": 83,
+    "sha256": "90027a999d69c6755e16fd3ceac6664578397538663638406af036bd4f81f889",
+    "symbols": [
+      "signature_input",
+      "publication_response_input"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_auth.rs",
+    "lines": 393,
+    "sha256": "e40dcb3b189a7a823b436aacb901076b659d2faa8f53958ed7d7ab8d13d6e2a2",
+    "symbols": [
+      "NativeCapability",
+      "NativeTransportIdentity",
+      "NativeAuthHeaders",
+      "NativeNonceAuthority",
+      "AuthenticatedNativeOwner",
+      "NativeAuthenticator",
+      "unauthorized",
+      "unavailable"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_control.rs",
+    "lines": 55,
+    "sha256": "ce216b6103958585264bd8aca0aae2d2cfb5cb68687393ece32f983036f2e62e",
+    "symbols": [
+      "control_response_input",
+      "authority_response_input",
+      "invalid"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_credentials.rs",
+    "lines": 276,
+    "sha256": "81692896c20f5c3ce3fd8f0721514743e6326ab2acd7a66675a8886eb688b07d",
+    "symbols": [
+      "NativeOwnerId",
+      "OwnerFence",
+      "NativeCredentials",
+      "NativeGeneration",
+      "jwt_payload",
+      "native_refresh_time_ns",
+      "nonempty",
+      "parse_native_document",
+      "verify_bootstrap",
+      "verify_generation",
+      "verify_fence",
+      "verify_daemon_account",
+      "owner_unavailable",
+      "owner_conflict",
+      "generation_failed"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_import/authority/completion.rs",
+    "lines": 59,
+    "sha256": "a691eb91cb6b61b7714ee272f3665766288cb8b5488fb5a0a66d39d945e83754",
+    "symbols": [
+      "ImportCompletionModelsData",
+      "ImportCompletionData",
+      "completion_envelope_max_bytes"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_import/authority/result.rs",
+    "lines": 195,
+    "sha256": "f1d92bd82829ff9337d18adab0703382ada8c98204d7a8b37d7dec8fdfc4e7cc",
+    "symbols": [
+      "ImportAuthorityReplyData"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_import/authority/tests.rs",
+    "lines": 326,
+    "sha256": "6048131a1f8294a34b8535c1261f164a330f99d796cbdec9fae6b3bbfb6b35e6",
+    "symbols": [
+      "nonce",
+      "accepts_request",
+      "accepts_reply",
+      "only_exact_new_lifecycle_gets_derived_larger_request_bound",
+      "bare_b1_exact_twelve_fields_keep_original_canonical_mac_body",
+      "old_request_and_success_error_bounds_never_expand",
+      "new_replies_require_exact_direction_phase_binding_and_canonical_bytes",
+      "maximal_terminal_reply_is_finite_and_matching_not_a_generic_large_body",
+      "bare_started_reply_echoes_exact_request_and_remaining_lifetime",
+      "readonly_custody_terminal_has_closed_matching_echo_and_computed_bounds",
+      "sample_completion",
+      "actor_completion_preserves_required_nullable_utf16_and_request_specific_ceiling"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_import/authority.rs",
+    "lines": 608,
+    "sha256": "3556176a50a94ea5e49e9b79987f7180e4d0041a64e5182f0c1370d136ef8b87",
+    "symbols": [
+      "invalid",
+      "nullable",
+      "text",
+      "reference",
+      "hash",
+      "time",
+      "encoded",
+      "ImportAuthorityStateData",
+      "ImportAuthorityClaimMode",
+      "ImportAuthorityCommand",
+      "ImportAuthorityRequestData",
+      "ImportAuthorityTerminalData",
+      "completion",
+      "result",
+      "ImportCustodyStartedWire",
+      "ImportCustodyStartedReplyData",
+      "max_state",
+      "max_terminal",
+      "max_custody",
+      "import_authority_request_max_bytes",
+      "import_authority_reply_max_bytes",
+      "original_terminal_reply_max_bytes",
+      "import_authority_reply_max_bytes_for",
+      "import_custody_request_max_bytes",
+      "import_custody_reply_max_bytes",
+      "new_request_limit",
+      "new_response_limit",
+      "tests"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_import/catalog_seed.rs",
+    "lines": 122,
+    "sha256": "d1d1aac988953a70431eba3cd58aabdac2be4e37c191c0c4224211706f4e6477",
+    "symbols": [
+      "invalid",
+      "nullable",
+      "ImportCatalogSeedRequestData",
+      "ImportCatalogSeedReplyData",
+      "import_catalog_seed_reply_max_bytes",
+      "request_limit"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_import/publication.rs",
+    "lines": 140,
+    "sha256": "2b0732296135af7d7896caf6e9267be177289b835aead35a28922526f20d588c",
+    "symbols": [
+      "unavailable",
+      "NativeImportPublicationDisposition",
+      "NativeImportPublication",
+      "import_publication_reply_max_bytes",
+      "new_reply_limit"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_import.rs",
+    "lines": 323,
+    "sha256": "c1dc5bef911db072ce1480737d29764a9225895c962e78136399ee3d58d0e10f",
+    "symbols": [
+      "authority",
+      "catalog_seed",
+      "publication",
+      "NativeImportKind",
+      "NativeImportMetadata",
+      "NativeImportTarget",
+      "NativeImportAuthHeaders",
+      "NativeImportAdmission",
+      "VerifiedNativeImportBody",
+      "signature_input",
+      "reference",
+      "digest",
+      "invalid",
+      "unauthorized",
+      "forbidden"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_live.rs",
+    "lines": 298,
+    "sha256": "3c6f67d37e3ded99e7d30d27d4c6e04402344f1fc40e77eff296663386d4746a",
+    "symbols": [
+      "validate_reference",
+      "frame_fields",
+      "request_signature_input",
+      "authority_signature_input",
+      "authority_response_input",
+      "Purpose",
+      "AuthenticatedNativeLive",
+      "NativeLiveAuthenticator",
+      "invalid"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/native_replay.rs",
+    "lines": 118,
+    "sha256": "51780180b08cf411bcdb2c9b02001a64a63a55522d1a0cdd65aafb1c7d32bf18",
+    "symbols": [
+      "native_nonce_key",
+      "NonceRegistry",
+      "StoreNonceAuthority",
+      "unavailable"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/origin.rs",
+    "lines": 175,
+    "sha256": "1b19a28e596e604d4d2dd279c3e20b0cb3270a69b5d9d11486ee60373b983451",
+    "symbols": [
+      "exact_origin",
+      "deno_preview",
+      "trusted_relay_origin",
+      "loopback_host",
+      "local_bypass",
+      "request_audience",
+      "passkey_meta",
+      "same_origin_mutation"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/passkeys/session_index_cases/support.rs",
+    "lines": 201,
+    "sha256": "e14a30e3ae322e59dcd7a0d920f6050c5a6e0b0da58a82f3c2b3954bc975f9fe",
+    "symbols": [
+      "run",
+      "Store",
+      "Host",
+      "request",
+      "user",
+      "session",
+      "install"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/passkeys/session_index_cases.rs",
+    "lines": 316,
+    "sha256": "4f6b8e1ff833f0d1563458aef19c5d7f974853ef043351bb21e823951097cc4d",
+    "symbols": [
+      "support",
+      "actual_session_creation_and_logout_publish_and_delete_one_atomic_pair",
+      "creation_conflicts_and_unknown_writes_never_detach_a_valid_index",
+      "logout_cannot_report_success_on_conflict_or_unknown_write",
+      "expiry_cleanup_deletes_both_and_source_ttl_bounds_the_metadata_lifetime",
+      "replacement_and_current_user_revision_fence_prepared_actions"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/passkeys.rs",
+    "lines": 748,
+    "sha256": "274821b7fde82ace11d160c8dc982979edceeed3a22b629b148426e86e711f2e",
+    "symbols": [
+      "PasskeyUser",
+      "PasskeyCredential",
+      "PasskeySession",
+      "PasskeyChallenge",
+      "SessionView",
+      "RegistrationVerification",
+      "VerifiedRegistration",
+      "AssertionVerification",
+      "key",
+      "user_wire",
+      "normalize_handle",
+      "token_handle",
+      "cookie_token",
+      "PasskeyService",
+      "client_data",
+      "session_index_cases"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/passport.rs",
+    "lines": 603,
+    "sha256": "89d00024b827212d78167884813f75508ea5fa94df2d930e94b8a75211146b87",
+    "symbols": [
+      "PassportConfig",
+      "valid_https_origin",
+      "config_for_request",
+      "PassportClaims",
+      "reset_jwks_cache",
+      "invalid_token",
+      "passport_unavailable",
+      "jwt_shaped",
+      "parse_jwt",
+      "verify_jwt",
+      "jwks_keys",
+      "cached_jwks",
+      "verify",
+      "cookie",
+      "session_cookie",
+      "state_cookie",
+      "clear_state_cookie",
+      "clear_session_cookie",
+      "PassportService",
+      "method_json",
+      "tests"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/provider_credentials.rs",
+    "lines": 404,
+    "sha256": "e3ade92f429e14e4f3276d1e50bbead0d237b3050e2d2ec35df209d3d676826e",
+    "symbols": [
+      "CodexNativeOwner",
+      "ManagedNativeSource",
+      "CodexSourceAccount",
+      "CodexSourcePool",
+      "CodexCredentialIdentity",
+      "codex_credential_identity",
+      "string",
+      "source_whitespace",
+      "decode_source_base64",
+      "jwt_payload",
+      "codex_access_expiry_ms",
+      "external_identity",
+      "owner_error",
+      "parse_owner",
+      "parse_account",
+      "valid_native_generation",
+      "parse_codex_source_pool",
+      "parse_codex_auth_document",
+      "parse_codex_auth_binding",
+      "codex_source_pool_key",
+      "CodexSourceSnapshot",
+      "read_codex_source_pool"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/resolve.rs",
+    "lines": 687,
+    "sha256": "a1313330c9258a3673247433fb8f03b1000e2802c37771b17d6dc2b2beb41fde",
+    "symbols": [
+      "AuthService",
+      "passport_not_configured",
+      "token_shape"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/session_index.rs",
+    "lines": 139,
+    "sha256": "90aab3b08021f384ffb687dfa806e933a7b2a1fc6d86af6120af3aa595c54b22",
+    "symbols": [
+      "digest",
+      "index_key",
+      "SessionRevisionFence",
+      "SessionIndexSnapshot",
+      "validate",
+      "validate_custody_record",
+      "record_for_session",
+      "read_current",
+      "invalid"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/store.rs",
+    "lines": 72,
+    "sha256": "133705c1287a8e0e01bcf81ec72c1d14e0587e05f02a2cf185c28d0161e4d64a",
+    "symbols": [
+      "key",
+      "decode",
+      "check",
+      "put",
+      "commit"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/types.rs",
+    "lines": 281,
+    "sha256": "18fafafc98842df8be3c9551cf8e8a2d4350a337218b9df8aa2d6842eb016405",
+    "symbols": [
+      "AuthRequest",
+      "NativePeer",
+      "AuthResponseBody",
+      "AuthResponse",
+      "AuthConfig",
+      "AuthMethod",
+      "AuthPrincipal",
+      "AuthHost",
+      "unauthorized",
+      "invalid",
+      "conflict"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/upstream.rs",
+    "lines": 345,
+    "sha256": "ecf943777271954ce2c9bb9cd8b699cf231f85c07a6735c03582f90a31fdca68",
+    "symbols": [
+      "AuthUpstreamRequest",
+      "AuthUpstreamResponse",
+      "KernelClaims",
+      "github_token_shape",
+      "kernel_public_keys_key",
+      "deno_token_shape",
+      "verify_kernel",
+      "kernel_error",
+      "console_title_matches",
+      "parse_json_body",
+      "upstream_unavailable",
+      "github_rejected",
+      "invalid_admin"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/src/webauthn.rs",
+    "lines": 506,
+    "sha256": "b5ad63033b8b9de552690591c9e04b8aa5ba8f3a6815c71bc9235084b841d999",
+    "symbols": [
+      "SignatureAlgorithm",
+      "CosePublicKey",
+      "SignatureInput",
+      "WebAuthnCrypto",
+      "field",
+      "integer",
+      "bytes",
+      "cbor",
+      "text_field",
+      "parse_cose_key",
+      "encoded_field",
+      "verify_client",
+      "authenticator_header",
+      "consume_extensions",
+      "verify_assertion",
+      "verify_registration"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/bootstrap.rs",
+    "lines": 69,
+    "sha256": "8b9b64f6f8c6f8cab658ef54f0d37c0ae929040dc2bb5af621c762b1275d89fd",
+    "symbols": [
+      "source_bootstrap_keeps_token_roles_and_nullish_hosting_precedence",
+      "source_bootstrap_extracts_public_key_blocks_and_preserves_source_escape_rules"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/contracts.rs",
+    "lines": 585,
+    "sha256": "ae36f82a47ee38e0906fc2805c2ca2c099194764ebd4d97254dd806ad86086bb",
+    "symbols": [
+      "authentication_requires_declared_json_and_never_guesses_profile_tags",
+      "run",
+      "Store",
+      "Host",
+      "request",
+      "insert",
+      "source_pool_reads_keep_codec_expiry_and_authority_revision_explicit",
+      "exact_candidate_rp_and_relay_trust",
+      "loopback_bypass_requires_actual_peer_and_origin",
+      "anonymous_budget_and_challenge_count_are_bounded",
+      "session_reads_current_role_and_audience_and_expiry",
+      "failed_assertion_consumes_challenge_without_creating_session",
+      "api_key_authentication_is_quota_free_and_secret_debug_is_redacted",
+      "admin_allowlist_and_github_tokens_never_mix",
+      "deno_console_requires_real_title_and_exact_candidate_is_prepared_only",
+      "named_kernel_public_key_reader_preserves_source_rows_until_crypto_projection"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/lossless_response.rs",
+    "lines": 51,
+    "sha256": "6fac7151d344173b397296d72fe8e303f5607d70143926c39bc7bd3a5e6c9d36",
+    "symbols": [
+      "OperatorError",
+      "source_response_body_emits_real_json_string_without_private_tags_or_double_escaping",
+      "ordinary_json_response_bytes_headers_and_inspection_remain_unchanged"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/managed_access.rs",
+    "lines": 124,
+    "sha256": "c766d905689b011c0833c481d0addf5996bea5dd6e1decc175cf161f23f6c40c",
+    "symbols": [
+      "managed_generation",
+      "projected_source",
+      "explicit_managed_projection_round_trips_without_refresh_export_or_external_relabeling",
+      "managed_source_marker_is_versioned_strict_and_cannot_mix_external_or_refresh_material",
+      "projection_requires_managed_local_custody_fixed_account_and_usable_access"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/native_auth.rs",
+    "lines": 394,
+    "sha256": "02f7f1c3232668b8e35a5e1080b3f933edb2fac953aedd754b8ebc4d5d2268a6",
+    "symbols": [
+      "run",
+      "Nonces",
+      "identity",
+      "real_hmac_authentication_mints_only_fresh_scoped_owner_proof",
+      "invalid_authentication_never_spends_nonce_and_destination_or_body_changes_refuse",
+      "live_nonce_capacity_fails_closed_without_evicting_a_replay_fence",
+      "publication_response_hmac_has_independent_domain_and_exact_receipt_binding"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/native_control.rs",
+    "lines": 190,
+    "sha256": "a64cc3406ba01381421d4d987fb55b7e028a5e1aa818cd1b3d9a1f2be61597d1",
+    "symbols": [
+      "native_control_has_one_strict_reference_operation",
+      "success_requires_matching_operation_and_durable_publication_revision",
+      "identity",
+      "control_response_mac_has_independent_exact_request_status_nonce_domain",
+      "control_frame_limits_are_smaller_without_changing_read_or_publication_limits",
+      "reverse_authority_response_mac_isolated_from_forward_control_and_publication"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/native_import.rs",
+    "lines": 313,
+    "sha256": "a5cbc357b86cbd5fa328f2e6073d3f96b1ba3c207c7c8c9738d06f8416b6340f",
+    "symbols": [
+      "run",
+      "Replay",
+      "identity",
+      "metadata",
+      "admit",
+      "native_import_domains_metadata_and_unknown_fields_fail_closed",
+      "actual_mac_nonce_body_and_expiry_proofs_do_not_create_effect_authority",
+      "wrong_capability_kind_signature_and_canonical_time_refuse_before_body",
+      "import_domain_does_not_inherit_legacy_rpc_body_cap_or_claim_parser_success"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/native_import_catalog_seed.rs",
+    "lines": 161,
+    "sha256": "4776e0d589e58efaca75c25464b84d5c050b5e889b4f3b69404dbfed4bdc56b9",
+    "symbols": [
+      "request",
+      "exact_existing_frame_ceiling_and_one_over_are_optional_transport_not_raw_caps",
+      "exact_seed_marker_nullable_headers_canonical_and_original_limits_stay_closed",
+      "raw_json_and_headers_are_lossless_not_snapshot_reconstruction"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/native_import_publication.rs",
+    "lines": 344,
+    "sha256": "ef12eb63d8ab20675b76c024b0212c32b44d333e01d53067734fb02ac18964cd",
+    "symbols": [
+      "request",
+      "reply",
+      "identity",
+      "exact_limited_maximum_can_be_authenticated_but_one_more_byte_cannot",
+      "normalized_max_version_and_lone_utf16_command_retain_exact_shared_domain",
+      "wrong_terminal_pair_request_digest_or_required_nullable_cannot_get_large_bound",
+      "old_publication_and_every_error_reply_keep_exact_old_cap",
+      "overlong_retained_revision_and_normalized_revision_mismatch_refuse",
+      "selected_auth_timestamp_is_required_finite_and_inside_existing_access_document_budget",
+      "closed_reply_bound_matches_former_encoder_and_escaped_finite_dtos"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/native_live.rs",
+    "lines": 154,
+    "sha256": "5382d528b61b87747a4d386ac00d8738b2f430bb320049b5395413a704e383b7",
+    "symbols": [
+      "run",
+      "Nonces",
+      "identity_for",
+      "headers",
+      "fixed_get_frame_has_no_post_cross_purpose_or_opaque_reference_ambiguity",
+      "upgrade_proof_requires_live_capability_current_time_exact_action_and_persistent_replay_owner",
+      "reverse_request_and_response_mac_bind_all_exact_bytes_and_cannot_cross_domains"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/native_protocol.rs",
+    "lines": 117,
+    "sha256": "c4341ff78c40b97ca4e4ae98afba05b79038d3db0621e59ccd22949840aefcc1",
+    "symbols": [
+      "private_wire_rejects_open_commands_paths_and_extra_fields",
+      "authentication_frame_binds_destination_identity_time_nonce_and_exact_body_bytes",
+      "follow_descriptor_cannot_be_substituted_or_replaced_by_json_success"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/passport.rs",
+    "lines": 695,
+    "sha256": "4da186b3943b9a6b43e4d0b9f513842eda20e8359bf115a68a2d9788556f25a7",
+    "symbols": [
+      "run",
+      "private",
+      "public_jwk",
+      "jwt",
+      "claims",
+      "token",
+      "Host",
+      "Store",
+      "config",
+      "request",
+      "with_cookie",
+      "login_redirect_contains_the_exact_fixed_authorize_contract",
+      "callback_verifies_state_exchange_and_sets_two_cookie_headers",
+      "callback_rejects_missing_mismatched_and_replayed_state_without_exchange",
+      "callback_rejects_exchange_status_and_malformed_token",
+      "claim_signature_and_algorithm_failures_fail_closed",
+      "jwks_cache_refreshes_exactly_once_for_an_unknown_kid",
+      "jwks_transport_failure_and_non_success_status_are_unavailable",
+      "assert_unauthorized",
+      "cookie_and_bearer_principals_map_to_the_passport_subject",
+      "invalid_jwt_shaped_bearer_never_falls_through_to_admin",
+      "admin_cookie_requires_isadmin_and_same_origin_mutations",
+      "same_origin_mutation_rejects_foreign_browser_markers",
+      "preview_client_config_is_explicit_and_fail_closed",
+      "claims_serde_keeps_the_required_wire_metadata"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/provider_credentials.rs",
+    "lines": 143,
+    "sha256": "f43e03dbf04a35ba7785500409f839f2864db01e0500d89f9a766c337da1034d",
+    "symbols": [
+      "golden",
+      "source_numbers",
+      "pool_parser_matches_executed_source_shape_ownership_and_external_identity_cases",
+      "configured_documents_preserve_source_nonexternal_route_without_native_owner_claims",
+      "forgiving_base64_and_four_identity_domains_match_executed_source_vectors"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/session_custody.rs",
+    "lines": 54,
+    "sha256": "d08089f3a01ba0b30e508fa1c74bfa1afc305dce0c560ecc9c2fbba422382b80",
+    "symbols": [
+      "row",
+      "expired_session_custody_is_data_without_renewing_its_expiry",
+      "session_custody_requires_exact_key_revision_expiry_and_schema"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/session_index.rs",
+    "lines": 131,
+    "sha256": "24538f44b4977b2cced9d7147b18870336091f9a7042be748da5ccacdf888dbe",
+    "symbols": [
+      "support",
+      "digest_and_fixed_key_do_not_contain_bearers_or_alias_noncanonical_digests",
+      "controlled_constructor_preserves_source_revision_and_minimum_absolute_expiry_without_token_data",
+      "missing_legacy_index_never_becomes_implicit_native_session_proof",
+      "malformed_version_identity_revision_ttl_and_secret_fields_refuse_current_reads"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/support/mod.rs",
+    "lines": 204,
+    "sha256": "bfdc8abae212b0621ce218112ceb35fe04c8cd7c0f91444ac6b5414daf012f6e",
+    "symbols": [
+      "run",
+      "Store",
+      "Host",
+      "request",
+      "user",
+      "session",
+      "install"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/webauthn-source.rs",
+    "lines": 273,
+    "sha256": "420f11bfabb2b7e7bff0207fef12fdd1e6b24b4358e835c5af195b3b7b38c206",
+    "symbols": [
+      "run",
+      "integer",
+      "cose",
+      "MaintainedCrypto",
+      "source_golden_registration_formats_and_exact_storage_bytes",
+      "source_generated_algorithm_ceremonies_and_current_role_metadata",
+      "CrlCrypto",
+      "downloaded_der_revocation_and_source_best_effort_failure_semantics",
+      "host_clock_rejects_negative_and_unsafe_integer_time"
+    ]
+  },
+  {
+    "path": "rust/crates/gateway-auth/tests/webauthn.rs",
+    "lines": 253,
+    "sha256": "4eddccb910e49503cfc88ce5aeb99db6347668215976070a468f0553fffebce9",
+    "symbols": [
+      "run",
+      "signing",
+      "cbor",
+      "integer",
+      "public_key",
+      "RealP256",
+      "assertion",
+      "actual_p256_signature_verifies_and_wire_tampering_fails",
+      "assertion_requires_exact_challenge_origin_rp_and_current_uv",
+      "counter_replay_and_malformed_algorithm_or_key_are_refused",
+      "registration",
+      "none_registration_validates_real_key_and_retains_exact_cose",
+      "malformed_attestations_fail_closed_after_maintained_verification",
+      "real_algorithm_matrix_preserves_source_acceptance_and_webcrypto_parameters"
+    ]
+  }
+]

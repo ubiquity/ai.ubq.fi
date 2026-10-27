@@ -11,8 +11,12 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 entrypoint = []
+stream-drop-fixture = ["entrypoint", "gateway-worker/fixture-stream-drop"]
 
 [dependencies]
+gateway-worker-web.workspace = true
+gateway-worker-platform.workspace = true
+gateway-worker-storage.workspace = true
 gateway-worker = { path = "../gateway-worker", default-features = false }
 gateway-worker-fixture-setup.workspace = true
 gateway-core.workspace = true

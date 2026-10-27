@@ -61,7 +61,7 @@ impl RustInitialControlInstaller {
                 &deployment,
                 &input.to_vec(),
                 env!("UOS_RUST_BUILD_GIT_TREE"),
-                crate::storage::now_ms().map_err(|_| rejected())?,
+                gateway_worker_storage::store::now_ms().map_err(|_| rejected())?,
             )
             .map_err(|_| rejected())?;
             let store =
@@ -70,7 +70,7 @@ impl RustInitialControlInstaller {
                 &store,
                 &prepared.adoption,
                 &prepared.owner,
-                crate::storage::now_ms().map_err(|_| rejected())?,
+                gateway_worker_storage::store::now_ms().map_err(|_| rejected())?,
             )
             .await
             .map_err(|_| rejected())?;

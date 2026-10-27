@@ -6,14 +6,15 @@ use gateway_admin_runtime::{
 use gateway_auth::types::AuthHost;
 use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
 use gateway_auth::webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto};
-use gateway_catalog_runtime::host::ProviderBinding;
+use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_runtime::host::{
-    AcceptedObservation, ClaudePoolHost, HealthObservation, OutcomeDecision, PoolConfig,
-    PoolSelection, ResponseObservation, SelectedAccount, SelectionInput, WorkspaceResponse,
+    ClaudePoolHost, HealthObservation, OutcomeDecision, PoolConfig, PoolSelection,
+    ResponseObservation, SelectedAccount, SelectionInput, WorkspaceResponse,
 };
 use gateway_claude_runtime::persistence::quota_key;
 use gateway_claude_runtime::pool::ClaudePoolSession;
-use gateway_claude_runtime::quota;
+use gateway_claude_usage_quota as quota;
+use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::claude::ClaudeErrorEvidence as ErrorEvidence;
 use gateway_core::error::GatewayError;
 use gateway_core::js_string::JsString16;

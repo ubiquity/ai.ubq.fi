@@ -5,6 +5,7 @@ use gateway_auth::{
     crypto::sha256_hex,
     provider_credentials::{self as codex, CodexSourceAccount},
 };
+use gateway_claude_usage_history_records::types::CredentialKind;
 use gateway_core::{
     error::GatewayError,
     source_json::SourceJson,
@@ -30,7 +31,7 @@ impl RequestHost {
     pub(super) async fn codex_accounts(
         &self,
     ) -> Result<(CodexAuthMetadata, Vec<CodexSourceAccount>), GatewayError> {
-        let at = crate::storage::now_ms()?;
+        let at = gateway_worker_storage::store::now_ms()?;
         let snapshot = codex::read_codex_source_pool(&self.store, at).await?;
         let (source, updated, accounts) = if let Some(snapshot) = snapshot {
             (
@@ -87,7 +88,7 @@ impl RequestHost {
                 "Administrative provider context does not match this request.",
             ));
         }
-        let at = crate::storage::now_ms()?;
+        let at = gateway_worker_storage::store::now_ms()?;
         let (codex, _) = self.codex_accounts().await?;
         let mut configured = BTreeSet::new();
         for (provider, key) in [
@@ -120,7 +121,7 @@ impl RequestHost {
         let access = match self.store.read(&claude_access::policy_key()).await? {
             Some(row) if row.expires_at_ms.is_none_or(|t| t > at) => {
                 claude_access::decode_policy_record(&row, at, &|a, b| {
-                    crate::source_collator::shared().compare(a, b)
+                    gateway_worker_platform::source_collator::shared().compare(a, b)
                 })?
                 .map(|policy| ClaudeAccessReadback {
                     source: match policy.source {
@@ -192,7 +193,9 @@ impl RequestHost {
         ),
         GatewayError,
     > {
-        let roster = claude::read_roster(&self.store, at).await?;
+        let seed =
+            crate::claude_host::platform::bootstrap_for_source(&self.store, &self.platform).await?;
+        let roster = Some(claude::load_roster(&self.store, &self.platform, &seed).await?);
         let mut accounts = Vec::new();
         let mut active_id = None;
         let mut active_reason = None;
@@ -200,15 +203,21 @@ impl RequestHost {
             active_id = roster.roster.active_account_id;
             active_reason = Some(roster.roster.active_reason);
             for account in roster.roster.accounts {
-                let quota_key = gateway_claude_runtime::persistence::quota_key(&account);
-                let quota_row = self.store.read(&quota_key).await?;
-                let quota = quota_row
-                    .as_ref()
-                    .map(|row| gateway_claude_runtime::quota::parse_record(row, at))
-                    .transpose()?
-                    .flatten()
+                let quota = gateway_claude_usage_runtime::collect::load(&self.store, &account, at)
+                    .await?
                     .map(|mut quota| {
                         quota.pool_proofs = None;
+                        quota.usage_snapshot = quota
+                            .usage_snapshot
+                            .as_ref()
+                            .and_then(|s| {
+                                gateway_claude_usage_protocol::snapshot::read(
+                                    s,
+                                    &gateway_claude_usage_runtime::platform::parse_date,
+                                )
+                            })
+                            .map(|s| gateway_claude_usage_protocol::snapshot::serialize(&s))
+                            .transpose()?;
                         SourceJson::from_serializable(&quota)
                     })
                     .transpose()?;

@@ -1,0 +1,4118 @@
+{
+  "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
+  "at": 1800000000000,
+  "dates": [
+    [
+      "1",
+      978307200000
+    ],
+    [
+      "2026-10-25T23:00:00.123456+00:00",
+      1792969200123
+    ],
+    [
+      "\ud800",
+      null
+    ],
+    [
+      "future\ud800",
+      null
+    ],
+    [
+      "weekly",
+      null
+    ],
+    [
+      "2026-11-01T18:00:00Z",
+      1793556000000
+    ],
+    [
+      "vendor_future",
+      null
+    ],
+    [
+      "",
+      null
+    ],
+    [
+      "OAuth \udfff",
+      null
+    ],
+    [
+      "Future",
+      null
+    ],
+    [
+      "retained",
+      null
+    ],
+    [
+      "session",
+      null
+    ],
+    [
+      "invalid",
+      null
+    ],
+    [
+      "USD",
+      null
+    ],
+    [
+      "start",
+      null
+    ],
+    [
+      "end",
+      null
+    ],
+    [
+      "opaque",
+      null
+    ],
+    [
+      "first",
+      null
+    ],
+    [
+      "second",
+      null
+    ],
+    [
+      "1.25",
+      980380800000
+    ],
+    [
+      "  ",
+      null
+    ],
+    [
+      "0x10",
+      null
+    ],
+    [
+      "Wed, 20 Jan 2027 00:00:00 GMT",
+      1800403200000
+    ]
+  ],
+  "cases": [
+    {
+      "name": "five_hour:null",
+      "input": "{\"five_hour\":{\"utilization\":null,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": {
+            "utilization": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": null,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": {
+              "utilization": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "five_hour:0",
+      "input": "{\"five_hour\":{\"utilization\":0,\"resets_at\":null},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": {
+            "utilization": 0,
+            "resets_at": null
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 0,
+            "resets_at": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": {
+              "utilization": 0,
+              "resets_at": null
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 0,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "five_hour:-5",
+      "input": "{\"five_hour\":{\"utilization\":-5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": {
+            "utilization": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": {
+              "utilization": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "five_hour:12.5",
+      "input": "{\"five_hour\":{\"utilization\":12.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": {
+            "utilization": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.125,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": {
+              "utilization": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "five_hour:100",
+      "input": "{\"five_hour\":{\"utilization\":100,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": {
+            "utilization": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 1,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": {
+              "utilization": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "five_hour:121.5",
+      "input": "{\"five_hour\":{\"utilization\":121.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": {
+            "utilization": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 1,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": {
+              "utilization": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "five_hour:null",
+      "input": "{\"five_hour\":null}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": null
+        },
+        "meters": []
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": null
+          },
+          "meters": []
+        }
+      }
+    },
+    {
+      "name": "seven_day:null",
+      "input": "{\"seven_day\":{\"utilization\":null,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day": {
+            "utilization": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day",
+            "label": "Weekly window",
+            "kind": "seven_day",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": null,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day": {
+              "utilization": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day",
+              "label": "Weekly window",
+              "kind": "seven_day",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day:0",
+      "input": "{\"seven_day\":{\"utilization\":0,\"resets_at\":null},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day": {
+            "utilization": 0,
+            "resets_at": null
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day",
+            "label": "Weekly window",
+            "kind": "seven_day",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 0,
+            "resets_at": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": 0,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day": {
+              "utilization": 0,
+              "resets_at": null
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day",
+              "label": "Weekly window",
+              "kind": "seven_day",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 0,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day:-5",
+      "input": "{\"seven_day\":{\"utilization\":-5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day": {
+            "utilization": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day",
+            "label": "Weekly window",
+            "kind": "seven_day",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": 0,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day": {
+              "utilization": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day",
+              "label": "Weekly window",
+              "kind": "seven_day",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day:12.5",
+      "input": "{\"seven_day\":{\"utilization\":12.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day": {
+            "utilization": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day",
+            "label": "Weekly window",
+            "kind": "seven_day",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": 0.125,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day": {
+              "utilization": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day",
+              "label": "Weekly window",
+              "kind": "seven_day",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day:100",
+      "input": "{\"seven_day\":{\"utilization\":100,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day": {
+            "utilization": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day",
+            "label": "Weekly window",
+            "kind": "seven_day",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": 1,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day": {
+              "utilization": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day",
+              "label": "Weekly window",
+              "kind": "seven_day",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day:121.5",
+      "input": "{\"seven_day\":{\"utilization\":121.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day": {
+            "utilization": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day",
+            "label": "Weekly window",
+            "kind": "seven_day",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": 1,
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day": {
+              "utilization": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day",
+              "label": "Weekly window",
+              "kind": "seven_day",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day:null",
+      "input": "{\"seven_day\":null}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day": null
+        },
+        "meters": []
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day": null
+          },
+          "meters": []
+        }
+      }
+    },
+    {
+      "name": "seven_day_oauth_apps:null",
+      "input": "{\"seven_day_oauth_apps\":{\"utilization\":null,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_oauth_apps": {
+            "utilization": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_oauth_apps",
+            "label": "Weekly OAuth apps",
+            "kind": "seven_day_oauth_apps",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_oauth_apps": {
+              "utilization": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_oauth_apps",
+              "label": "Weekly OAuth apps",
+              "kind": "seven_day_oauth_apps",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_oauth_apps:0",
+      "input": "{\"seven_day_oauth_apps\":{\"utilization\":0,\"resets_at\":null},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_oauth_apps": {
+            "utilization": 0,
+            "resets_at": null
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_oauth_apps",
+            "label": "Weekly OAuth apps",
+            "kind": "seven_day_oauth_apps",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 0,
+            "resets_at": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_oauth_apps": {
+              "utilization": 0,
+              "resets_at": null
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_oauth_apps",
+              "label": "Weekly OAuth apps",
+              "kind": "seven_day_oauth_apps",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 0,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_oauth_apps:-5",
+      "input": "{\"seven_day_oauth_apps\":{\"utilization\":-5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_oauth_apps": {
+            "utilization": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_oauth_apps",
+            "label": "Weekly OAuth apps",
+            "kind": "seven_day_oauth_apps",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_oauth_apps": {
+              "utilization": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_oauth_apps",
+              "label": "Weekly OAuth apps",
+              "kind": "seven_day_oauth_apps",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_oauth_apps:12.5",
+      "input": "{\"seven_day_oauth_apps\":{\"utilization\":12.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_oauth_apps": {
+            "utilization": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_oauth_apps",
+            "label": "Weekly OAuth apps",
+            "kind": "seven_day_oauth_apps",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_oauth_apps": {
+              "utilization": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_oauth_apps",
+              "label": "Weekly OAuth apps",
+              "kind": "seven_day_oauth_apps",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_oauth_apps:100",
+      "input": "{\"seven_day_oauth_apps\":{\"utilization\":100,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_oauth_apps": {
+            "utilization": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_oauth_apps",
+            "label": "Weekly OAuth apps",
+            "kind": "seven_day_oauth_apps",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_oauth_apps": {
+              "utilization": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_oauth_apps",
+              "label": "Weekly OAuth apps",
+              "kind": "seven_day_oauth_apps",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_oauth_apps:121.5",
+      "input": "{\"seven_day_oauth_apps\":{\"utilization\":121.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_oauth_apps": {
+            "utilization": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_oauth_apps",
+            "label": "Weekly OAuth apps",
+            "kind": "seven_day_oauth_apps",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_oauth_apps": {
+              "utilization": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_oauth_apps",
+              "label": "Weekly OAuth apps",
+              "kind": "seven_day_oauth_apps",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_oauth_apps:null",
+      "input": "{\"seven_day_oauth_apps\":null}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_oauth_apps": null
+        },
+        "meters": []
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_oauth_apps": null
+          },
+          "meters": []
+        }
+      }
+    },
+    {
+      "name": "seven_day_opus:null",
+      "input": "{\"seven_day_opus\":{\"utilization\":null,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_opus": {
+            "utilization": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_opus",
+            "label": "Weekly Opus",
+            "kind": "seven_day_opus",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_opus": {
+              "utilization": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_opus",
+              "label": "Weekly Opus",
+              "kind": "seven_day_opus",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_opus:0",
+      "input": "{\"seven_day_opus\":{\"utilization\":0,\"resets_at\":null},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_opus": {
+            "utilization": 0,
+            "resets_at": null
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_opus",
+            "label": "Weekly Opus",
+            "kind": "seven_day_opus",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 0,
+            "resets_at": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_opus": {
+              "utilization": 0,
+              "resets_at": null
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_opus",
+              "label": "Weekly Opus",
+              "kind": "seven_day_opus",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 0,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_opus:-5",
+      "input": "{\"seven_day_opus\":{\"utilization\":-5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_opus": {
+            "utilization": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_opus",
+            "label": "Weekly Opus",
+            "kind": "seven_day_opus",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_opus": {
+              "utilization": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_opus",
+              "label": "Weekly Opus",
+              "kind": "seven_day_opus",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_opus:12.5",
+      "input": "{\"seven_day_opus\":{\"utilization\":12.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_opus": {
+            "utilization": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_opus",
+            "label": "Weekly Opus",
+            "kind": "seven_day_opus",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_opus": {
+              "utilization": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_opus",
+              "label": "Weekly Opus",
+              "kind": "seven_day_opus",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_opus:100",
+      "input": "{\"seven_day_opus\":{\"utilization\":100,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_opus": {
+            "utilization": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_opus",
+            "label": "Weekly Opus",
+            "kind": "seven_day_opus",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_opus": {
+              "utilization": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_opus",
+              "label": "Weekly Opus",
+              "kind": "seven_day_opus",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_opus:121.5",
+      "input": "{\"seven_day_opus\":{\"utilization\":121.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_opus": {
+            "utilization": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_opus",
+            "label": "Weekly Opus",
+            "kind": "seven_day_opus",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_opus": {
+              "utilization": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_opus",
+              "label": "Weekly Opus",
+              "kind": "seven_day_opus",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_opus:null",
+      "input": "{\"seven_day_opus\":null}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_opus": null
+        },
+        "meters": []
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_opus": null
+          },
+          "meters": []
+        }
+      }
+    },
+    {
+      "name": "seven_day_sonnet:null",
+      "input": "{\"seven_day_sonnet\":{\"utilization\":null,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_sonnet": {
+            "utilization": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_sonnet",
+            "label": "Weekly Sonnet",
+            "kind": "seven_day_sonnet",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": null,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_sonnet": {
+              "utilization": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_sonnet",
+              "label": "Weekly Sonnet",
+              "kind": "seven_day_sonnet",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": null,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_sonnet:0",
+      "input": "{\"seven_day_sonnet\":{\"utilization\":0,\"resets_at\":null},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_sonnet": {
+            "utilization": 0,
+            "resets_at": null
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_sonnet",
+            "label": "Weekly Sonnet",
+            "kind": "seven_day_sonnet",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 0,
+            "resets_at": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_sonnet": {
+              "utilization": 0,
+              "resets_at": null
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_sonnet",
+              "label": "Weekly Sonnet",
+              "kind": "seven_day_sonnet",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 0,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_sonnet:-5",
+      "input": "{\"seven_day_sonnet\":{\"utilization\":-5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_sonnet": {
+            "utilization": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_sonnet",
+            "label": "Weekly Sonnet",
+            "kind": "seven_day_sonnet",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": -5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_sonnet": {
+              "utilization": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_sonnet",
+              "label": "Weekly Sonnet",
+              "kind": "seven_day_sonnet",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": -5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_sonnet:12.5",
+      "input": "{\"seven_day_sonnet\":{\"utilization\":12.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_sonnet": {
+            "utilization": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_sonnet",
+            "label": "Weekly Sonnet",
+            "kind": "seven_day_sonnet",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 12.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_sonnet": {
+              "utilization": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_sonnet",
+              "label": "Weekly Sonnet",
+              "kind": "seven_day_sonnet",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 12.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_sonnet:100",
+      "input": "{\"seven_day_sonnet\":{\"utilization\":100,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_sonnet": {
+            "utilization": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_sonnet",
+            "label": "Weekly Sonnet",
+            "kind": "seven_day_sonnet",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 100,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_sonnet": {
+              "utilization": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_sonnet",
+              "label": "Weekly Sonnet",
+              "kind": "seven_day_sonnet",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 100,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_sonnet:121.5",
+      "input": "{\"seven_day_sonnet\":{\"utilization\":121.5,\"resets_at\":\"2026-10-25T23:00:00.123456+00:00\"},\"vendor\":{\"opaque\":\"\\ud800\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_sonnet": {
+            "utilization": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00"
+          },
+          "vendor": {
+            "opaque": "\ud800"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:seven_day_sonnet",
+            "label": "Weekly Sonnet",
+            "kind": "seven_day_sonnet",
+            "group": "weekly",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 121.5,
+            "resets_at": "2026-10-25T23:00:00.123456+00:00",
+            "reset_at_ms": 1792969200123,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_sonnet": {
+              "utilization": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00"
+            },
+            "vendor": {
+              "opaque": "\ud800"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:seven_day_sonnet",
+              "label": "Weekly Sonnet",
+              "kind": "seven_day_sonnet",
+              "group": "weekly",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 121.5,
+              "resets_at": "2026-10-25T23:00:00.123456+00:00",
+              "reset_at_ms": 1792969200123,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seven_day_sonnet:null",
+      "input": "{\"seven_day_sonnet\":null}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "seven_day_sonnet": null
+        },
+        "meters": []
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "seven_day_sonnet": null
+          },
+          "meters": []
+        }
+      }
+    },
+    {
+      "name": "scope:undefined",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true}],\"five_hour\":{\"utilization\":42,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true
+            }
+          ],
+          "five_hour": {
+            "utilization": 42,
+            "resets_at": null
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",null]:0",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": null,
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",null]:1",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": null,
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.42,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true
+              }
+            ],
+            "five_hour": {
+              "utilization": 42,
+              "resets_at": null
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",null]:0",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": null,
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",null]:1",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": null,
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "scope:null",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":null},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":null}],\"five_hour\":{\"utilization\":42,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": null
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": null
+            }
+          ],
+          "five_hour": {
+            "utilization": 42,
+            "resets_at": null
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",null]:0",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": null,
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",null]:1",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": null,
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.42,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": null
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": null
+              }
+            ],
+            "five_hour": {
+              "utilization": 42,
+              "resets_at": null
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",null]:0",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": null,
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",null]:1",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": null,
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "scope:{}",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{}},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{}}],\"five_hour\":{\"utilization\":42,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {}
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {}
+            }
+          ],
+          "five_hour": {
+            "utilization": 42,
+            "resets_at": null
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{}]:0",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {},
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{}]:1",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {},
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.42,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {}
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {}
+              }
+            ],
+            "five_hour": {
+              "utilization": 42,
+              "resets_at": null
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{}]:0",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {},
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{}]:1",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {},
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "scope:[]",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":[]},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":[]}],\"five_hour\":{\"utilization\":42,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": []
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": []
+            }
+          ],
+          "five_hour": {
+            "utilization": 42,
+            "resets_at": null
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",[]]:0",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": [],
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",[]]:1",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": [],
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.42,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": []
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": []
+              }
+            ],
+            "five_hour": {
+              "utilization": 42,
+              "resets_at": null
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",[]]:0",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": [],
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",[]]:1",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": [],
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "scope:{\"model\":null}",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"model\":null}},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"model\":null}}],\"five_hour\":{\"utilization\":42,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "model": null
+              }
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "model": null
+              }
+            }
+          ],
+          "five_hour": {
+            "utilization": 42,
+            "resets_at": null
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":null}]:0",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "model": null
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":null}]:1",
+            "label": "weekly · future\ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "model": null
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.42,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "model": null
+                }
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "model": null
+                }
+              }
+            ],
+            "five_hour": {
+              "utilization": 42,
+              "resets_at": null
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":null}]:0",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": null
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":null}]:1",
+              "label": "weekly · future\ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": null
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "scope:{\"surface\":{\"display_name\":\"\"}}",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"surface\":{\"display_name\":\"\"}}},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"surface\":{\"display_name\":\"\"}}}],\"five_hour\":{\"utilization\":42,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "surface": {
+                  "display_name": ""
+                }
+              }
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "surface": {
+                  "display_name": ""
+                }
+              }
+            }
+          ],
+          "five_hour": {
+            "utilization": 42,
+            "resets_at": null
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"surface\":{\"display_name\":\"\"}}]:0",
+            "label": "weekly · future\ud800 · ",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "surface": {
+                "display_name": ""
+              }
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"surface\":{\"display_name\":\"\"}}]:1",
+            "label": "weekly · future\ud800 · ",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "surface": {
+                "display_name": ""
+              }
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.42,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "surface": {
+                    "display_name": ""
+                  }
+                }
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "surface": {
+                    "display_name": ""
+                  }
+                }
+              }
+            ],
+            "five_hour": {
+              "utilization": 42,
+              "resets_at": null
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"surface\":{\"display_name\":\"\"}}]:0",
+              "label": "weekly · future\ud800 · ",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "surface": {
+                  "display_name": ""
+                }
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"surface\":{\"display_name\":\"\"}}]:1",
+              "label": "weekly · future\ud800 · ",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "surface": {
+                  "display_name": ""
+                }
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "scope:{\"model\":{\"display_name\":\"\\ud800\"},\"surface\":null}",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"model\":{\"display_name\":\"\\ud800\"},\"surface\":null}},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"model\":{\"display_name\":\"\\ud800\"},\"surface\":null}}],\"five_hour\":{\"utilization\":42,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "model": {
+                  "display_name": "\ud800"
+                },
+                "surface": null
+              }
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "model": {
+                  "display_name": "\ud800"
+                },
+                "surface": null
+              }
+            }
+          ],
+          "five_hour": {
+            "utilization": 42,
+            "resets_at": null
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"\\ud800\"},\"surface\":null}]:0",
+            "label": "weekly · future\ud800 · \ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "model": {
+                "display_name": "\ud800"
+              },
+              "surface": null
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"\\ud800\"},\"surface\":null}]:1",
+            "label": "weekly · future\ud800 · \ud800",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "model": {
+                "display_name": "\ud800"
+              },
+              "surface": null
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0.42,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "model": {
+                    "display_name": "\ud800"
+                  },
+                  "surface": null
+                }
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "model": {
+                    "display_name": "\ud800"
+                  },
+                  "surface": null
+                }
+              }
+            ],
+            "five_hour": {
+              "utilization": 42,
+              "resets_at": null
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"\\ud800\"},\"surface\":null}]:0",
+              "label": "weekly · future\ud800 · \ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "\ud800"
+                },
+                "surface": null
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"model\":{\"display_name\":\"\\ud800\"},\"surface\":null}]:1",
+              "label": "weekly · future\ud800 · \ud800",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "model": {
+                  "display_name": "\ud800"
+                },
+                "surface": null
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dynamic-order",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}},{\"kind\":\"session\",\"group\":\"weekly\",\"percent\":-4,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":false,\"scope\":{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}},{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}}],\"seven_day\":{\"utilization\":10,\"resets_at\":null},\"vendor\":{\"retained\":true}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "1": null,
+                "2": true,
+                "surface": {
+                  "display_name": "OAuth \udfff",
+                  "vendor": 7
+                },
+                "model": {
+                  "display_name": "Future"
+                },
+                "vendor": "retained"
+              }
+            },
+            {
+              "kind": "session",
+              "group": "weekly",
+              "percent": -4,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": false,
+              "scope": {
+                "1": null,
+                "2": true,
+                "surface": {
+                  "display_name": "OAuth \udfff",
+                  "vendor": 7
+                },
+                "model": {
+                  "display_name": "Future"
+                },
+                "vendor": "retained"
+              }
+            },
+            {
+              "kind": "future\ud800",
+              "group": "weekly",
+              "percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "severity": "vendor_future",
+              "is_active": true,
+              "scope": {
+                "1": null,
+                "2": true,
+                "surface": {
+                  "display_name": "OAuth \udfff",
+                  "vendor": 7
+                },
+                "model": {
+                  "display_name": "Future"
+                },
+                "vendor": "retained"
+              }
+            }
+          ],
+          "seven_day": {
+            "utilization": 10,
+            "resets_at": null
+          },
+          "vendor": {
+            "retained": true
+          }
+        },
+        "meters": [
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}]:0",
+            "label": "weekly · future\ud800 · Future · OAuth \udfff",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "1": null,
+              "2": true,
+              "surface": {
+                "display_name": "OAuth \udfff",
+                "vendor": 7
+              },
+              "model": {
+                "display_name": "Future"
+              },
+              "vendor": "retained"
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"session\",\"weekly\",{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}]:0",
+            "label": "weekly · session · Future · OAuth \udfff",
+            "kind": "session",
+            "group": "weekly",
+            "scope": {
+              "1": null,
+              "2": true,
+              "surface": {
+                "display_name": "OAuth \udfff",
+                "vendor": 7
+              },
+              "model": {
+                "display_name": "Future"
+              },
+              "vendor": "retained"
+            },
+            "severity": "vendor_future",
+            "is_active": false,
+            "used_percent": -4,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          },
+          {
+            "id": "limits:[\"future\\ud800\",\"weekly\",{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}]:1",
+            "label": "weekly · future\ud800 · Future · OAuth \udfff",
+            "kind": "future\ud800",
+            "group": "weekly",
+            "scope": {
+              "1": null,
+              "2": true,
+              "surface": {
+                "display_name": "OAuth \udfff",
+                "vendor": 7
+              },
+              "model": {
+                "display_name": "Future"
+              },
+              "vendor": "retained"
+            },
+            "severity": "vendor_future",
+            "is_active": true,
+            "used_percent": 121.5,
+            "resets_at": "2026-11-01T18:00:00Z",
+            "reset_at_ms": 1793556000000,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": 0.1,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "1": null,
+                  "2": true,
+                  "surface": {
+                    "display_name": "OAuth \udfff",
+                    "vendor": 7
+                  },
+                  "model": {
+                    "display_name": "Future"
+                  },
+                  "vendor": "retained"
+                }
+              },
+              {
+                "kind": "session",
+                "group": "weekly",
+                "percent": -4,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": false,
+                "scope": {
+                  "1": null,
+                  "2": true,
+                  "surface": {
+                    "display_name": "OAuth \udfff",
+                    "vendor": 7
+                  },
+                  "model": {
+                    "display_name": "Future"
+                  },
+                  "vendor": "retained"
+                }
+              },
+              {
+                "kind": "future\ud800",
+                "group": "weekly",
+                "percent": 121.5,
+                "resets_at": "2026-11-01T18:00:00Z",
+                "severity": "vendor_future",
+                "is_active": true,
+                "scope": {
+                  "1": null,
+                  "2": true,
+                  "surface": {
+                    "display_name": "OAuth \udfff",
+                    "vendor": 7
+                  },
+                  "model": {
+                    "display_name": "Future"
+                  },
+                  "vendor": "retained"
+                }
+              }
+            ],
+            "seven_day": {
+              "utilization": 10,
+              "resets_at": null
+            },
+            "vendor": {
+              "retained": true
+            }
+          },
+          "meters": [
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}]:0",
+              "label": "weekly · future\ud800 · Future · OAuth \udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "1": null,
+                "2": true,
+                "surface": {
+                  "display_name": "OAuth \udfff",
+                  "vendor": 7
+                },
+                "model": {
+                  "display_name": "Future"
+                },
+                "vendor": "retained"
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"session\",\"weekly\",{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}]:0",
+              "label": "weekly · session · Future · OAuth \udfff",
+              "kind": "session",
+              "group": "weekly",
+              "scope": {
+                "1": null,
+                "2": true,
+                "surface": {
+                  "display_name": "OAuth \udfff",
+                  "vendor": 7
+                },
+                "model": {
+                  "display_name": "Future"
+                },
+                "vendor": "retained"
+              },
+              "severity": "vendor_future",
+              "is_active": false,
+              "used_percent": -4,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            },
+            {
+              "id": "limits:[\"future\\ud800\",\"weekly\",{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}]:1",
+              "label": "weekly · future\ud800 · Future · OAuth \udfff",
+              "kind": "future\ud800",
+              "group": "weekly",
+              "scope": {
+                "1": null,
+                "2": true,
+                "surface": {
+                  "display_name": "OAuth \udfff",
+                  "vendor": 7
+                },
+                "model": {
+                  "display_name": "Future"
+                },
+                "vendor": "retained"
+              },
+              "severity": "vendor_future",
+              "is_active": true,
+              "used_percent": 121.5,
+              "resets_at": "2026-11-01T18:00:00Z",
+              "reset_at_ms": 1793556000000,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "empty-precedence",
+      "input": "{\"limits\":[],\"seven_day\":{\"utilization\":14,\"resets_at\":null}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": [],
+          "seven_day": {
+            "utilization": 14,
+            "resets_at": null
+          }
+        },
+        "meters": []
+      },
+      "observation": {
+        "windows": {
+          "7d": {
+            "status": null,
+            "utilization": 0.14,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": [],
+            "seven_day": {
+              "utilization": 14,
+              "resets_at": null
+            }
+          },
+          "meters": []
+        }
+      }
+    },
+    {
+      "name": "null-fallback",
+      "input": "{\"limits\":null,\"five_hour\":{\"utilization\":105,\"resets_at\":\"invalid\"}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "limits": null,
+          "five_hour": {
+            "utilization": 105,
+            "resets_at": "invalid"
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 105,
+            "resets_at": "invalid",
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 1,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "limits": null,
+            "five_hour": {
+              "utilization": 105,
+              "resets_at": "invalid"
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 105,
+              "resets_at": "invalid",
+              "reset_at_ms": null,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "credits",
+      "input": "{\"extra_usage\":{\"is_enabled\":false,\"monthly_limit\":null,\"used_credits\":12,\"utilization\":null,\"currency\":\"USD\",\"disabled_reason\":null},\"cinder_cove\":{\"utilization\":110,\"resets_at\":null},\"wattle_ember\":{\"utilization\":null,\"resets_at\":\"invalid\",\"periods\":[{\"starts_at\":\"start\",\"ends_at\":\"end\",\"unknown\":2}],\"label\":\"\\ud800\",\"limit_dollars\":null,\"used_dollars\":2,\"remaining_dollars\":-2},\"unknown\":[null,\"opaque\"]}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "extra_usage": {
+            "is_enabled": false,
+            "monthly_limit": null,
+            "used_credits": 12,
+            "utilization": null,
+            "currency": "USD",
+            "disabled_reason": null
+          },
+          "cinder_cove": {
+            "utilization": 110,
+            "resets_at": null
+          },
+          "wattle_ember": {
+            "utilization": null,
+            "resets_at": "invalid",
+            "periods": [
+              {
+                "starts_at": "start",
+                "ends_at": "end",
+                "unknown": 2
+              }
+            ],
+            "label": "\ud800",
+            "limit_dollars": null,
+            "used_dollars": 2,
+            "remaining_dollars": -2
+          },
+          "unknown": [
+            null,
+            "opaque"
+          ]
+        },
+        "meters": []
+      },
+      "observation": {
+        "windows": {},
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "extra_usage": {
+              "is_enabled": false,
+              "monthly_limit": null,
+              "used_credits": 12,
+              "utilization": null,
+              "currency": "USD",
+              "disabled_reason": null
+            },
+            "cinder_cove": {
+              "utilization": 110,
+              "resets_at": null
+            },
+            "wattle_ember": {
+              "utilization": null,
+              "resets_at": "invalid",
+              "periods": [
+                {
+                  "starts_at": "start",
+                  "ends_at": "end",
+                  "unknown": 2
+                }
+              ],
+              "label": "\ud800",
+              "limit_dollars": null,
+              "used_dollars": 2,
+              "remaining_dollars": -2
+            },
+            "unknown": [
+              null,
+              "opaque"
+            ]
+          },
+          "meters": []
+        }
+      }
+    },
+    {
+      "name": "invalid",
+      "input": "{}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "invalid",
+      "input": "{\"foo\":null}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "invalid",
+      "input": "{\"five_hour\":{}}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "invalid",
+      "input": "{\"seven_day\":{\"utilization\":1}}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "invalid",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":\"1\",\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"1\":null,\"2\":true,\"surface\":{\"display_name\":\"OAuth \\udfff\",\"vendor\":7},\"model\":{\"display_name\":\"Future\"},\"vendor\":\"retained\"}}]}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "invalid",
+      "input": "{\"limits\":[{\"kind\":\"future\\ud800\",\"group\":\"weekly\",\"percent\":121.5,\"resets_at\":\"2026-11-01T18:00:00Z\",\"severity\":\"vendor_future\",\"is_active\":true,\"scope\":{\"model\":{}}}]}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "invalid",
+      "input": "{\"extra_usage\":{\"is_enabled\":true}}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "invalid",
+      "input": "{\"wattle_ember\":{\"utilization\":1,\"resets_at\":null,\"periods\":[{}]}}",
+      "snapshot": null,
+      "observation": null
+    },
+    {
+      "name": "duplicate-numeric-unknown",
+      "input": "{\"five_hour\":{\"utilization\":1,\"utilization\":-0,\"resets_at\":null},\"unknown\":{\"z\":1e400,\"2\":\"second\",\"1\":\"first\",\"\\ud800\":-0,\"z\":2}}",
+      "snapshot": {
+        "v": 1,
+        "observed_at_ms": 1800000000000,
+        "payload": {
+          "five_hour": {
+            "utilization": 0,
+            "resets_at": null
+          },
+          "unknown": {
+            "1": "first",
+            "2": "second",
+            "z": 2,
+            "\ud800": 0
+          }
+        },
+        "meters": [
+          {
+            "id": "legacy:five_hour",
+            "label": "5-hour window",
+            "kind": "five_hour",
+            "group": "session",
+            "scope": null,
+            "severity": null,
+            "is_active": false,
+            "used_percent": 0,
+            "resets_at": null,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        ]
+      },
+      "observation": {
+        "windows": {
+          "5h": {
+            "status": null,
+            "utilization": 0,
+            "reset_at_ms": null,
+            "observed_at_ms": 1800000000000
+          }
+        },
+        "standard": {},
+        "representative_claim": null,
+        "observed_at_ms": 1800000000000,
+        "usage_snapshot": {
+          "v": 1,
+          "observed_at_ms": 1800000000000,
+          "payload": {
+            "five_hour": {
+              "utilization": 0,
+              "resets_at": null
+            },
+            "unknown": {
+              "1": "first",
+              "2": "second",
+              "z": 2,
+              "\ud800": 0
+            }
+          },
+          "meters": [
+            {
+              "id": "legacy:five_hour",
+              "label": "5-hour window",
+              "kind": "five_hour",
+              "group": "session",
+              "scope": null,
+              "severity": null,
+              "is_active": false,
+              "used_percent": 0,
+              "resets_at": null,
+              "reset_at_ms": null,
+              "observed_at_ms": 1800000000000
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "errors": [
+    {
+      "status": 403,
+      "body": "",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "scope_missing",
+        "status": 403,
+        "observed_at_ms": 1800000000000,
+        "message": "Claude OAuth credential cannot read usage because the user:profile scope is missing.",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 401,
+      "body": "{\"error\":{\"message\":\"bad token\"}}",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "auth_invalid",
+        "status": 401,
+        "observed_at_ms": 1800000000000,
+        "message": "bad token",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 401,
+      "body": "{\"message\":\"insufficient scope\"}",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "scope_missing",
+        "status": 401,
+        "observed_at_ms": 1800000000000,
+        "message": "insufficient scope",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 429,
+      "body": "{\"message\":\"wait\"}",
+      "retry": "1.25",
+      "result": {
+        "ok": false,
+        "kind": "rate_limited",
+        "status": 429,
+        "observed_at_ms": 1800000000000,
+        "message": "wait",
+        "retry_after_ms": 1250
+      }
+    },
+    {
+      "status": 429,
+      "body": "wait",
+      "retry": "",
+      "result": {
+        "ok": false,
+        "kind": "rate_limited",
+        "status": 429,
+        "observed_at_ms": 1800000000000,
+        "message": "wait",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 429,
+      "body": "wait",
+      "retry": "0x10",
+      "result": {
+        "ok": false,
+        "kind": "rate_limited",
+        "status": 429,
+        "observed_at_ms": 1800000000000,
+        "message": "wait",
+        "retry_after_ms": 16000
+      }
+    },
+    {
+      "status": 429,
+      "body": "wait",
+      "retry": "Wed, 20 Jan 2027 00:00:00 GMT",
+      "result": {
+        "ok": false,
+        "kind": "rate_limited",
+        "status": 429,
+        "observed_at_ms": 1800000000000,
+        "message": "wait",
+        "retry_after_ms": 403200000
+      }
+    },
+    {
+      "status": 500,
+      "body": "a\t \n b",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "upstream_error",
+        "status": 500,
+        "observed_at_ms": 1800000000000,
+        "message": "a b",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 302,
+      "body": "redirect",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "http_error",
+        "status": 302,
+        "observed_at_ms": 1800000000000,
+        "message": "redirect",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 418,
+      "body": "{\"error\":{\"message\":\"  diagnostic\\ud800  \"}}",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "http_error",
+        "status": 418,
+        "observed_at_ms": 1800000000000,
+        "message": "diagnostic\ud800",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 200,
+      "body": "bad json",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "invalid_response",
+        "status": 200,
+        "observed_at_ms": 1800000000000,
+        "message": "Claude usage returned an unreadable JSON payload.",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 200,
+      "body": "{}",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "invalid_response",
+        "status": 200,
+        "observed_at_ms": 1800000000000,
+        "message": "Claude usage returned an invalid or unrecognized meter payload.",
+        "retry_after_ms": null
+      }
+    },
+    {
+      "status": 400,
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\ud800tailtailtailtailtailtailtailtailtailtailtailtailtailtailtailtailtailtailtailtail",
+      "retry": null,
+      "result": {
+        "ok": false,
+        "kind": "http_error",
+        "status": 400,
+        "observed_at_ms": 1800000000000,
+        "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "retry_after_ms": null
+      }
+    }
+  ]
+}

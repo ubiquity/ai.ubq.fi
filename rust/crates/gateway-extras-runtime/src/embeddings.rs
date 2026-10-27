@@ -1,13 +1,17 @@
+use crate::store::{hash, hash_source, js_whitespace, now, retry_seconds, uuid};
 use crate::{
-    cache::*,
+    cache::{TIMEOUT_MS, cache_best_effort, cached, chunks, estimate, reserve},
     idempotency::{self, Acquired, Lease},
-    store::*,
-    types::*,
 };
 use chrono::{DateTime, Utc};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, lifecycle::SemanticTerminal, query::QueryStore,
     source_json::SourceJson,
+};
+use gateway_extras_contract::errors::{cancelled, invalid, server};
+use gateway_extras_contract::types::{
+    DispatchFailure, DispatchFailureOrigin, ExtrasDispatch, ExtrasHost, ExtrasProvider,
+    ExtrasRequest, ExtrasResponse, Headers, PreparedCall,
 };
 use gateway_providers::extras::{self, EmbeddingsProfile};
 use gateway_providers::types::PrepareOptions;
@@ -66,14 +70,9 @@ pub(crate) async fn fetch_chunk<H: ExtrasHost>(
         truncation: profile.truncation,
     })
     .map_err(DispatchFailure::transport)?;
-    let prepared = extras::prepare_source_embeddings(&raw, options)
+    let call = PreparedCall::prepare(ExtrasProvider::Voyage, &raw, options, deadline)
         .map_err(|error| DispatchFailure::transport(error.diagnostic().clone()))?;
-    let response = host
-        .dispatch(ExtrasDispatch::Voyage(PreparedCall {
-            prepared,
-            deadline_ms: deadline,
-        }))
-        .await?;
+    let response = host.dispatch(ExtrasDispatch::Voyage(call)).await?;
     if !(200..300).contains(&response.status) {
         return Err(DispatchFailure {
             origin: DispatchFailureOrigin::Upstream,

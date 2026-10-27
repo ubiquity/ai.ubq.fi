@@ -1,5 +1,7 @@
-use gateway_auth::{crypto::base64url, native::*, types::AuthResponse};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_native_protocol::native::*;
 use gateway_auth_native_wire::native_read::*;
+use gateway_auth_primitives::crypto::base64url;
 use serde_json::{Value, json};
 
 #[test]

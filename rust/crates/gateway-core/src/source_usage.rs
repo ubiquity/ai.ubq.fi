@@ -1,6 +1,7 @@
 //! One source extractUsageTokens engine for inference, telemetry and the fixed cache experiment.
 //! Missing usage is not an invalid object, and unreported counters never become zero.
-use crate::{error::GatewayError, source_json::SourceJson};
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
 use serde::Serialize;
 use serde_json::{Map, Value};
 

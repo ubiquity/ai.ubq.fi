@@ -49,7 +49,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     }
     if row.record.value_encoding != gateway_core::value::ValueEncoding::Json {
         if quota_family(p) {
-            gateway_claude_runtime::quota::parse_record(&row.record, 0)?;
+            gateway_claude_usage_quota::parse_record(&row.record, 0)?;
             return Ok(());
         }
         if retained_typed(p) && known(p) {
@@ -94,7 +94,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
             ));
         }
     } else if quota_family(p) {
-        gateway_claude_runtime::quota::parse_record(&row.record, 0)?;
+        gateway_claude_usage_quota::parse_record(&row.record, 0)?;
     } else if starts(p, &["uos_ai", "claude_code_accounts"]) {
         gateway_admin_runtime::claude::parse_roster(&v)?;
     } else if starts(p, &["uos_ai", "auth", "users"]) {
@@ -127,11 +127,11 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
 fn project_api(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
     let p = &row.parts;
     if starts(p, &["ubq_ai", "api_keys", "id"]) {
-        let record: gateway_admin::keys::ApiKeyRecord = decode(v)?;
+        let record: gateway_admin_keys::keys::ApiKeyRecord = decode(v)?;
         if p.len() != 4
             || p[3] != record.policy.id
             || record.policy.usage_quota_version != 3
-            || !gateway_admin_data::migration::audit::keys::valid_key_policy(v, true)
+            || !gateway_source_audit::keys::valid_key_policy(v, true)
         {
             return Err(invalid(
                 "API key ID policy is malformed or requires legacy migration",
@@ -139,7 +139,7 @@ fn project_api(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
         }
     } else if starts(p, &["ubq_ai", "api_keys", "hash"]) {
         let _: gateway_auth::api_keys::ApiKeyHashRecord = decode(v)?;
-        if p.len() != 4 || !gateway_admin_data::migration::audit::keys::valid_key_policy(v, false) {
+        if p.len() != 4 || !gateway_source_audit::keys::valid_key_policy(v, false) {
             return Err(invalid("API key hash policy is malformed"));
         }
     } else if starts(p, &["uos_ai", "api_key_usage", "v3", "window"]) {
@@ -186,9 +186,9 @@ fn project_kernel(row: &mut Row, v: &Value) -> Result<bool, GatewayError> {
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("Kernel tuple missing kind"))?;
         if matches!(kind, "repo_window" | "org_window") {
-            let (scope, owner, repo) = gateway_admin_data::migration::kernel::identity(p, "window")
+            let (scope, owner, repo) = gateway_migration_ledger::kernel::identity(p, "window")
                 .ok_or_else(|| invalid("Kernel source window identity is malformed"))?;
-            if gateway_admin_data::migration::kernel::normalize_window(
+            if gateway_migration_ledger::kernel::normalize_window(
                 v,
                 &scope,
                 &owner,

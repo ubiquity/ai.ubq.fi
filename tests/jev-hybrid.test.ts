@@ -2,7 +2,7 @@ import { createFetchMock } from "./helpers/fetch-mock.ts";
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { buildCompactionResponse, handleJevResponsesCompaction } from "../src/jev_compaction/compaction.ts";
-import { composeHybridSummary, harvestLedger, hybridResidueEnabled, runHybridResiduePass } from "../src/jev_compaction/hybrid.ts";
+import { composeHybridSummary, harvestLedger, runHybridResiduePass } from "../src/jev_compaction/hybrid.ts";
 import type { JevAsker, JevQuestions, JevResponse } from "../lib/jev_compaction/types.ts";
 
 /** Focused coverage for the hybrid residue pass: mechanical guards, every
@@ -207,7 +207,6 @@ test("handler routes the residue seam through the real compaction handler", asyn
   assert.equal(response.status, 200);
   assert.ok((response.headers.get("x-jev-compaction") ?? "").includes("hybrid=1"));
   assert.ok((await response.text()).includes(SLIM_MARKER));
-  assert.equal(typeof hybridResidueEnabled(), "boolean");
 });
 
 test("injected asker seams bypass the default residue pass without any network attempt", async () => {

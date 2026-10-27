@@ -1,4 +1,4 @@
-use gateway_admin::{
+use gateway_admin_contracts::{
     operations::{AdminHost, AdminInput},
     routes::AdminOperation,
 };

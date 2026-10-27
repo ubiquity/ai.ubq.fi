@@ -1,17 +1,20 @@
-use crate::{
-    api_keys,
-    crypto::{Secret, sha256_base64url, sha256_hex},
-    origin::local_bypass,
-    passkeys::{PasskeyService, SessionView},
-    types::{
-        AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse, unauthorized,
-    },
-    upstream::{
-        AuthUpstreamRequest, console_title_matches, deno_token_shape, github_rejected,
-        github_token_shape, kernel_public_keys_key, upstream_unavailable, verify_kernel,
-    },
+use gateway_auth_attestation::upstream::{
+    console_title_matches, deno_token_shape, github_rejected, github_token_shape,
+    kernel_public_keys_key, upstream_unavailable, verify_kernel,
 };
-use gateway_core::{error::GatewayError, state::AuthorityStore};
+use gateway_auth_contracts::{
+    passkeys::SessionView,
+    types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest, AuthResponse},
+    upstream::AuthUpstreamRequest,
+};
+use gateway_auth_passkeys::{origin::local_bypass, passkeys::PasskeyService};
+use gateway_auth_primitives::{
+    api_keys,
+    crypto::{Secret, sha256_base64url},
+    error::unauthorized,
+};
+use gateway_core::state::AuthorityStore;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 use url::Url;
@@ -24,7 +27,9 @@ pub struct AuthService<'a, S, H> {
     deno_cache: RefCell<BTreeMap<String, i64>>,
 }
 
-impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
+impl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::session::PassportDate>
+    AuthService<'a, S, H>
+{
     pub fn new(store: &'a S, host: &'a H, config: &'a AuthConfig) -> Self {
         Self {
             store,
@@ -57,12 +62,19 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             is_super_admin,
         }
     }
-    fn passport_principal(claims: crate::passport::PassportClaims, bearer: bool) -> AuthPrincipal {
+    fn passport_principal(
+        claims: gateway_auth_passport_contracts::session::PassportSourceClaims,
+        bearer: bool,
+    ) -> AuthPrincipal {
         let eligible_admin = claims.is_admin && claims.agent_token_id.is_none();
         let method = if bearer {
             AuthMethod::PassportBearer { claims }
         } else {
-            AuthMethod::PassportSession { claims }
+            AuthMethod::PassportSession {
+                identity: gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt(
+                    claims,
+                ),
+            }
         };
         Self::principal(None, method, eligible_admin, false)
     }
@@ -118,7 +130,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 .as_ref()
                 .map(
                     |record| -> Result<
-                        Option<Vec<gateway_core::source_json::SourceJson>>,
+                        Option<Vec<gateway_source::source_json::SourceJson>>,
                         GatewayError,
                     > {
                         record.validate_version()?;
@@ -129,7 +141,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                             return Ok(None);
                         }
                         gateway_core::source_control::decode_source_control_record(record)?
-                            .deserialize::<Vec<gateway_core::source_json::SourceJson>>()
+                            .deserialize::<Vec<gateway_source::source_json::SourceJson>>()
                             .map(Some)
                             .map_err(|_| {
                                 GatewayError::unavailable(
@@ -145,9 +157,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             for record in stored_keys {
                 // Source skips each failed PEM import. Lone units necessarily
                 // fail atob; reject only this crypto projection, never storage.
-                if let Some(pem) = gateway_core::source_serialization::member(&record, "pem")
+                if let Some(pem) = gateway_source::source_serialization::member(&record, "pem")
                     .as_ref()
-                    .and_then(gateway_core::source_serialization::string)
+                    .and_then(gateway_source::source_serialization::string)
                     .and_then(|pem| pem.try_utf8().ok())
                     && !verification_config
                         .kernel_public_keys_pem
@@ -302,6 +314,46 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             true,
         ))
     }
+    async fn local_api_key_policy(
+        &self,
+    ) -> Result<Option<gateway_auth_primitives::api_keys::ApiKeyPolicy>, GatewayError> {
+        let Some(row) = self
+            .store
+            .read(&api_keys::id_key("local-development"))
+            .await?
+        else {
+            return Ok(None);
+        };
+        row.validate_version()?;
+        // This named source metadata read grants no role. Preserve the checked
+        // native listener gate and the separate model-free hash-policy read.
+        let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
+        if !gateway_source::source_serialization::member(&metadata, "revoked_at_ms")
+            .is_some_and(|value| value.as_str() == "null")
+        {
+            return Ok(None);
+        }
+        let (Some(hash), Some(id)) = (
+            gateway_source::source_serialization::member(&metadata, "hash")
+                .and_then(|v| v.deserialize::<String>().ok()),
+            gateway_source::source_serialization::member(&metadata, "id")
+                .and_then(|v| v.deserialize::<String>().ok()),
+        ) else {
+            return Ok(None);
+        };
+        let Some(row) = self.store.read(&api_keys::hash_key(&hash)).await? else {
+            return Ok(None);
+        };
+        row.validate_version()?;
+        let record = serde_json::from_value(row.json_value()?.clone()).map_err(|_| {
+            GatewayError::unavailable(
+                "Local API key quota migration is incomplete",
+                "server_error",
+            )
+        })?;
+        let policy = api_keys::policy_from_record(hash, record, self.host.now_ms())?;
+        Ok((id == "local-development").then_some(policy))
+    }
     pub async fn authenticate_client(
         &self,
         request: &AuthRequest,
@@ -309,68 +361,24 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         let token = request.bearer();
         if local_bypass(request, self.config) {
             // Only the checked native listener can resolve the existing local-development principal.
-            let row = self
-                .store
-                .read(&api_keys::id_key("local-development"))
-                .await?;
-            if let Some(row) = row {
-                row.validate_version()?;
-                // This one named ID row can now hold source name/model
-                // metadata. Keep the original peer/origin gate and separate
-                // model-free hash policy read; data decoding grants no role.
-                let metadata = gateway_core::source_control::decode_source_control_record(&row)?;
-                if gateway_core::source_serialization::member(&metadata, "revoked_at_ms")
-                    .is_some_and(|value| value.as_str() == "null")
-                    && let (Some(hash), Some(id)) = (
-                        gateway_core::source_serialization::member(&metadata, "hash")
-                            .and_then(|value| value.deserialize::<String>().ok()),
-                        gateway_core::source_serialization::member(&metadata, "id")
-                            .and_then(|value| value.deserialize::<String>().ok()),
-                    )
-                {
-                    let hash_row = self.store.read(&api_keys::hash_key(&hash)).await?;
-                    if let Some(hash_row) = hash_row {
-                        hash_row.validate_version()?;
-                        let record = serde_json::from_value(hash_row.json_value()?.clone())
-                            .map_err(|_| {
-                                GatewayError::unavailable(
-                                    "Local API key quota migration is incomplete",
-                                    "server_error",
-                                )
-                            })?;
-                        let policy = api_keys::policy_from_record(
-                            hash.to_owned(),
-                            record,
-                            self.host.now_ms(),
-                        )?;
-                        if id == "local-development" {
-                            return Ok(Self::principal(
-                                token,
-                                AuthMethod::KvApiKey {
-                                    key_id: id.to_owned(),
-                                    policy,
-                                },
-                                false,
-                                false,
-                            ));
-                        }
-                    }
-                }
+            if let Some(policy) = self.local_api_key_policy().await? {
+                return Ok(Self::principal(
+                    token,
+                    AuthMethod::KvApiKey {
+                        key_id: policy.key_id.clone(),
+                        policy,
+                    },
+                    false,
+                    false,
+                ));
             }
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
         }
         if self.legacy_local(request) {
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
         }
-        if crate::passport::cookie(request, crate::passport::PASSPORT_COOKIE).is_some() {
-            let config = crate::passport::config_for_request(self.config, request)
-                .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
-                host: self.host,
-                config: &config,
-            };
-            let claims = passport.session(request).await?.ok_or_else(unauthorized)?;
-            return Ok(Self::passport_principal(claims, false));
+        if let Some(principal) = self.passport_cookie(request).await? {
+            return Ok(principal);
         }
         let Some(token) = token else {
             return self
@@ -426,14 +434,19 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         }
         // A JWT-shaped credential is never an admin or opaque token. Invalid
         // Passport material fails closed instead of reaching the admin path.
-        if crate::passport::jwt_shaped(token) {
-            let config = crate::passport::config_for_request(self.config, request)
+        if gateway_auth_passport::passport::jwt_shaped(token) {
+            let config = gateway_auth_passport::passport::config_for_request(self.config, request)
                 .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
+            let passport = gateway_auth_passport::passport::PassportService {
                 host: self.host,
                 config: &config,
             };
-            let claims = passport.bearer(token).await?;
+            let claims = gateway_auth_passport::passport::verify_source_for_config(
+                self.host,
+                passport.config,
+                token,
+            )
+            .await?;
             return Ok(Self::passport_principal(claims, true));
         }
         self.admin_token(token).await
@@ -452,27 +465,24 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         }
         // Passport-admin authority is cookie-only; a Passport/agent bearer can
         // never be promoted even when its own claims say isAdmin.
-        if request.bearer().is_some_and(crate::passport::jwt_shaped) {
+        if request
+            .bearer()
+            .is_some_and(gateway_auth_passport::passport::jwt_shaped)
+        {
             return Err(unauthorized());
         }
-        if crate::passport::cookie(request, crate::passport::PASSPORT_COOKIE).is_some() {
-            let config = crate::passport::config_for_request(self.config, request)
-                .ok_or_else(unauthorized)?;
-            let passport = crate::passport::PassportService {
-                host: self.host,
-                config: &config,
-            };
-            let claims = passport.session(request).await?.ok_or_else(unauthorized)?;
-            if !claims.is_admin {
-                return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
-            }
-            if claims.agent_token_id.is_some() {
+        if let Some(principal) = self.passport_cookie(request).await? {
+            if matches!(&principal.method,AuthMethod::PassportSession {identity:gateway_auth_passport_contracts::actor_data::PassportSessionData::Jwt(c)} if c.agent_token_id.is_some())
+            {
                 return Err(unauthorized());
             }
-            if !crate::origin::same_origin_mutation(request) {
+            if !principal.is_admin {
                 return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
             }
-            return Ok(Self::passport_principal(claims, false));
+            if !gateway_auth_passkeys::origin::same_origin_mutation(request) {
+                return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
+            }
+            return Ok(principal);
         }
         let mut session = self.passkeys().session(request, None).await?;
         if session.is_none()
@@ -500,7 +510,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             }
             if request.bearer().is_none()
                 && request.header("cookie").is_some()
-                && !crate::origin::same_origin_mutation(request)
+                && !gateway_auth_passkeys::origin::same_origin_mutation(request)
             {
                 return Err(GatewayError::new(403, "Forbidden", Some("forbidden")));
             }
@@ -513,8 +523,17 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         &self,
         request: &AuthRequest,
     ) -> Result<Option<AuthResponse>, GatewayError> {
-        let url =
-            Url::parse(&request.url).map_err(|_| crate::types::invalid("Invalid request URL"))?;
+        let url = Url::parse(&request.url)
+            .map_err(|_| gateway_auth_primitives::error::invalid("Invalid request URL"))?;
+        if let Some(response) = (gateway_auth_passport::browser::PassportBrowser {
+            store: self.store,
+            host: self.host,
+        })
+        .route(request)
+        .await
+        {
+            return Ok(Some(response));
+        }
         let result = match (request.method.as_str(), url.path()) {
             ("POST", "/api/auth/register/start") => {
                 let admin = self.authenticate_admin(request).await?;
@@ -560,42 +579,33 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                 let token = auth.token.as_ref().map(Secret::expose);
                 let shape = token.map(token_shape);
                 let principal = auth.method.principal_id(token);
-                AuthResponse::json(
+                let mut response = AuthResponse::source_json(
                     200,
-                    json!({"ok":true,"service":"ai.ubq.fi","auth":{"mode":if local_bypass(request,self.config)||self.legacy_local(request){"disabled"}else{"required"},"is_admin":auth.is_admin,"is_super_admin":auth.is_super_admin,"principal":principal,"method":method,"token":{"present":token.is_some(),"length":token.map(str::len),"shape":shape,"sha256_12":token.map(|token|sha256_hex(token.as_bytes())[..12].to_owned())}}}),
-                )
+                    crate::report::document(
+                        if local_bypass(request, self.config) || self.legacy_local(request) {
+                            "disabled"
+                        } else {
+                            "required"
+                        },
+                        &auth,
+                        &principal,
+                        &method,
+                        token,
+                        shape,
+                    )?,
+                );
+                gateway_auth_passport::browser::renew_report_cookie(request, &mut response);
+                response
             }
-            ("GET", "/auth/login") => {
-                let config = crate::passport::config_for_request(self.config, request)
-                    .ok_or_else(passport_not_configured)?;
-                crate::passport::PassportService {
-                    host: self.host,
-                    config: &config,
-                }
-                .login(request)
-                .await?
-            }
-            ("GET", "/auth/callback") => {
-                let config = crate::passport::config_for_request(self.config, request)
-                    .ok_or_else(passport_not_configured)?;
-                crate::passport::PassportService {
-                    host: self.host,
-                    config: &config,
-                }
-                .callback(request)
-                .await?
-            }
-            ("POST", "/auth/logout") => crate::passport::PassportService {
-                host: self.host,
-                config: &crate::passport::PassportConfig::production(),
-            }
-            .logout(),
             _ => return Ok(None),
         };
         Ok(Some(result))
     }
-    async fn method_wire(&self, method: &AuthMethod) -> Result<Value, GatewayError> {
-        Ok(match method {
+    async fn method_wire(
+        &self,
+        method: &AuthMethod,
+    ) -> Result<gateway_source::source_json::SourceJson, GatewayError> {
+        let value = match method {
             AuthMethod::PasskeySession {
                 user_id,
                 handle,
@@ -612,14 +622,18 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
             } => {
                 json!({"kind":"github_token","repo":{"owner":owner,"repo":repo},"state_id":state_id,"limit_scope":limit_scope})
             }
-            AuthMethod::PassportSession { claims } => crate::passport::method_json(claims, false),
-            AuthMethod::PassportBearer { claims } => crate::passport::method_json(claims, true),
+            AuthMethod::PassportSession { identity } => {
+                return gateway_auth_passport::identity_report::session(identity);
+            }
+            AuthMethod::PassportBearer { claims } => {
+                return gateway_auth_passport::identity_report::jwt(claims, true);
+            }
             AuthMethod::KvApiKey { key_id, policy } => {
                 let mut key = json!({"id":key_id});
                 if let Some(row) = self.store.read(&api_keys::id_key(key_id)).await? {
                     row.validate_version()?;
                     let record = row.json_value()?.clone();
-                    let wk = crate::store::key(json!([
+                    let wk = gateway_auth_primitives::store::key(json!([
                         "uos_ai",
                         "api_key_usage",
                         "v3",
@@ -636,12 +650,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                                 .get("committed_requests")
                                 .and_then(Value::as_i64)
                                 .filter(|n| *n >= 0)
-                                .ok_or_else(|| {
-                                    GatewayError::unavailable(
-                                        "API key quota ledger is unavailable",
-                                        "server_error",
-                                    )
-                                })?
+                                .ok_or_else(quota_ledger_unavailable)?
                         }
                     };
                     key = json!({"id":key_id,"name":record.get("name"),"prefix":record.get("prefix"),"created_at_ms":record.get("created_at_ms"),"expires_at_ms":policy.expires_at_ms,"revoked_at_ms":record.get("revoked_at_ms"),"usage_limit_requests":policy.usage_limit_requests,"usage_requests":usage,"usage_reset_at_ms":policy.usage_reset_at_ms,"window_ms":policy.window_ms});
@@ -654,16 +663,9 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
                     "auth_state_corrupt",
                 )
             })?,
-        })
+        };
+        gateway_source::source_json::SourceJson::from_serializable(&value)
     }
-}
-
-fn passport_not_configured() -> GatewayError {
-    GatewayError::new(
-        404,
-        "Passport browser login is not configured for this deployment.",
-        Some("passport_not_configured"),
-    )
 }
 
 pub fn token_shape(token: &str) -> &'static str {
@@ -684,4 +686,8 @@ pub fn token_shape(token: &str) -> &'static str {
     } else {
         "other"
     }
+}
+
+fn quota_ledger_unavailable() -> GatewayError {
+    GatewayError::unavailable("API key quota ledger is unavailable", "server_error")
 }

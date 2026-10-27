@@ -9,8 +9,9 @@ use gateway_core::{error::GatewayError, state::AuthorityStore};
 use gateway_providers::types::{AuthMaterial, PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
-    PublishedCredential, RefreshOutcome, ResponseHead, RoutingHost, WaitOutcome, direct_credential,
+    PublishedCredential, RefreshOutcome, ResponseHead, RoutingHost, direct_credential,
 };
+use gateway_wait_observation::outcome::WaitOutcome;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{
@@ -25,6 +26,8 @@ pub struct Host {
     pub store: Store,
     pub cancelled: Arc<AtomicBool>,
     pub cancel_wait_after_ms: Option<i64>,
+    pub wait_start_clock_error: Option<GatewayError>,
+    pub wait_end_clock_error: Option<GatewayError>,
     pub claude: Option<PublishedCredential>,
     pub claude_refused: Option<(
         u16,
@@ -44,6 +47,8 @@ impl Host {
             store: store.clone(),
             cancelled: Arc::new(AtomicBool::new(false)),
             cancel_wait_after_ms: None,
+            wait_start_clock_error: None,
+            wait_end_clock_error: None,
             claude: None,
             claude_refused: None,
             claude_outcomes: Arc::new(Mutex::new(VecDeque::new())),
@@ -65,6 +70,15 @@ impl RoutingHost for Host {
         GatewayError::new(499, "fixture cancelled", Some("fixture_cancelled"))
     }
     async fn wait(&self, milliseconds: i64) -> WaitOutcome {
+        if let Some(error) = &self.wait_start_clock_error {
+            return WaitOutcome::NotStarted {
+                error: if self.cancelled() {
+                    self.cancellation_error()
+                } else {
+                    error.clone()
+                },
+            };
+        }
         let elapsed_ms = self.cancel_wait_after_ms.unwrap_or(milliseconds);
         self.store.advance(elapsed_ms);
         let result = if self.cancel_wait_after_ms.is_some() {
@@ -73,7 +87,11 @@ impl RoutingHost for Host {
         } else {
             Ok(())
         };
-        WaitOutcome { elapsed_ms, result }
+        let elapsed_ms = self
+            .wait_end_clock_error
+            .clone()
+            .map_or(Ok(elapsed_ms), Err);
+        WaitOutcome::Attempted { elapsed_ms, result }
     }
     async fn credential(
         &self,

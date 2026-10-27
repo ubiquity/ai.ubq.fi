@@ -2,6 +2,7 @@ import type { SequenceStep } from "./sequence.ts";
 // Metered paid fallback routing matrix, part 1 of 2, moved out of tests/openai-compat.test.ts.
 
 import assert from "node:assert/strict";
+import { codexResetUsageKey } from "../../src/codex/reset-settings.ts";
 import {
   CODEX_ACCOUNT_ROUTING_KV_KEY,
   type CodexAuthPoolState,
@@ -32,6 +33,7 @@ import {
   setExposePaidFallbackLedgerEntries,
   setRemovedProviderApiKeyForTest,
   setRemovedProviderTestAdapterForTest,
+  sha256Hex,
   sseResponse,
   waitForPaidFallbackTerminal,
   withFetchMock,
@@ -39,6 +41,11 @@ import {
 } from "./openai-compat-harness.ts";
 
 export const runMeteredPaidFallbackMatrixPart1 = async (step: SequenceStep): Promise<void> => {
+  // This matrix measures straight paid fallback, without automatic reset inventory.
+  const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+  for (const account of authPool.accounts) {
+    kvStore.set(keyToString(codexResetUsageKey(await sha256Hex(account.account_id))), { enabled: false });
+  }
   const originalApiKey = process.env.METERED_API_KEY;
   process.env.METERED_API_KEY = "metered-test-key";
   try {

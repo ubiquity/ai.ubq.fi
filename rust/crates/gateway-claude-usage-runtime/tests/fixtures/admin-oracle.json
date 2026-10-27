@@ -1,0 +1,587 @@
+{
+  "source_sha": "b59243d674567d418d1410f8390fc7fe47a08c92",
+  "cases": [
+    {
+      "kind": "changed",
+      "retry": null,
+      "refresh": {
+        "kind": "changed"
+      },
+      "expected": {
+        "status": 409,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\"Claude account changed during usage refresh\",\"type\":\"invalid_request_error\",\"code\":\"claude_code_account_changed\"}}",
+        "block_reads": 0
+      }
+    },
+    {
+      "kind": "busy",
+      "retry": null,
+      "refresh": {
+        "kind": "busy"
+      },
+      "expected": {
+        "status": 200,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"data\":{\"accepted\":\"source\",\"label\":\"\\ud800\"},\"refreshed\":false,\"reason\":\"refresh_in_progress\",\"message\":\"A usage refresh is already in progress.\"}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "fresh",
+      "retry": null,
+      "refresh": {
+        "kind": "fresh",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "ok",
+          "status": 200,
+          "message": null,
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": 1800000000000
+        }
+      },
+      "expected": {
+        "status": 200,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"data\":{\"accepted\":\"source\",\"label\":\"\\ud800\"},\"refreshed\":false,\"reason\":\"fresh\",\"observed_at_ms\":1800000000000,\"usage\":{\"source\":\"oauth_usage\",\"state\":\"ok\",\"status\":200,\"message\":null,\"attempted_at_ms\":1800000000000,\"observed_at_ms\":1800000000000}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "success",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "ok",
+          "status": 200,
+          "message": null,
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": 1800000000000
+        },
+        "result": {
+          "ok": true,
+          "status": 200,
+          "observed_at_ms": 1800000000000,
+          "observation": {}
+        }
+      },
+      "expected": {
+        "status": 200,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"data\":{\"accepted\":\"source\",\"label\":\"\\ud800\"},\"refreshed\":true,\"source\":\"oauth_usage\",\"observed_at_ms\":1800000000000,\"usage\":{\"source\":\"oauth_usage\",\"state\":\"ok\",\"status\":200,\"message\":null,\"attempted_at_ms\":1800000000000,\"observed_at_ms\":1800000000000}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "scope_missing",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "scope_missing",
+          "status": 403,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "scope_missing",
+          "status": 403,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 200,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"data\":{\"accepted\":\"source\",\"label\":\"\\ud800\"},\"refreshed\":false,\"reason\":\"scope_missing\",\"message\":\" diagnostic\\ud800 \",\"usage\":{\"source\":\"oauth_usage\",\"state\":\"scope_missing\",\"status\":403,\"message\":\" diagnostic\\ud800 \",\"attempted_at_ms\":1800000000000,\"observed_at_ms\":null}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "unsupported_credential",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "unsupported_credential",
+          "status": null,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "unsupported_credential",
+          "status": null,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 200,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"data\":{\"accepted\":\"source\",\"label\":\"\\ud800\"},\"refreshed\":false,\"reason\":\"unsupported_credential\",\"message\":\" diagnostic\\ud800 \",\"usage\":{\"source\":\"oauth_usage\",\"state\":\"unsupported_credential\",\"status\":null,\"message\":\" diagnostic\\ud800 \",\"attempted_at_ms\":1800000000000,\"observed_at_ms\":null}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "auth_invalid",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "auth_invalid",
+          "status": 401,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "auth_invalid",
+          "status": 401,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "rate_limited",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "rate_limited",
+          "status": 429,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "rate_limited",
+          "status": 429,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "rate_limited",
+      "retry": "0",
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "rate_limited",
+          "status": 429,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "rate_limited",
+          "status": 429,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": 0
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "retry-after",
+            "1"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "rate_limited",
+      "retry": "2200",
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "rate_limited",
+          "status": 429,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "rate_limited",
+          "status": 429,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": 2200
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "retry-after",
+            "3"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "rate_limited",
+      "retry": "1e+24",
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "rate_limited",
+          "status": 429,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "rate_limited",
+          "status": 429,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": 1e+24
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "retry-after",
+            "1e+21"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "rate_limited",
+      "retry": "Infinity",
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "rate_limited",
+          "status": 429,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "rate_limited",
+          "status": 429,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "retry-after",
+            "Infinity"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "upstream_error",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "upstream_error",
+          "status": 503,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "upstream_error",
+          "status": 503,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "http_error",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "http_error",
+          "status": 418,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "http_error",
+          "status": 418,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "unreachable",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "unreachable",
+          "status": null,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "unreachable",
+          "status": null,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    },
+    {
+      "kind": "invalid_response",
+      "retry": null,
+      "refresh": {
+        "kind": "completed",
+        "usage": {
+          "source": "oauth_usage",
+          "state": "invalid_response",
+          "status": 200,
+          "message": " diagnostic\ud800 ",
+          "attempted_at_ms": 1800000000000,
+          "observed_at_ms": null
+        },
+        "result": {
+          "ok": false,
+          "kind": "invalid_response",
+          "status": 200,
+          "observed_at_ms": 1800000000000,
+          "message": " diagnostic\ud800 ",
+          "retry_after_ms": null
+        }
+      },
+      "expected": {
+        "status": 502,
+        "headers": [
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "content-type",
+            "application/json"
+          ]
+        ],
+        "body": "{\"error\":{\"message\":\" diagnostic\\ud800 \",\"type\":\"invalid_request_error\",\"code\":\"claude_usage_unavailable\"}}",
+        "block_reads": 1
+      }
+    }
+  ]
+}

@@ -1,4 +1,3 @@
-use crate::types::ExtrasHost;
 use gateway_auth::crypto::{sha256_hex, uuid_from_random};
 use gateway_core::{
     error::GatewayError,
@@ -8,6 +7,8 @@ use gateway_core::{
     },
     tuple_key::TupleKey,
 };
+use gateway_extras_contract::errors::invalid_state;
+use gateway_extras_contract::types::ExtrasHost;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -16,20 +17,7 @@ pub(crate) fn key(parts: Value) -> RecordKey {
         .expect("source scalar tuple")
         .to_record_key()
 }
-pub(crate) fn invalid_state() -> GatewayError {
-    GatewayError::unavailable(
-        "Embeddings durable state is invalid.",
-        "embeddings_state_invalid",
-    )
-}
-pub(crate) fn invalid(message: impl Into<String>, param: Option<&str>) -> GatewayError {
-    GatewayError::new(400, message, Some("invalid_request_error")).with_param(param)
-}
-pub(crate) fn server(message: impl Into<String>, code: &str) -> GatewayError {
-    GatewayError::new(502, message, Some(code))
-        .with_type("server_error")
-        .with_param(None)
-}
+
 pub(crate) fn now<H: ExtrasHost>(host: &H) -> Result<i64, GatewayError> {
     let n = host.now_ms();
     if (0..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&n) {
@@ -88,11 +76,7 @@ pub(crate) async fn commit<S: AuthorityStore>(
 pub(crate) fn retry_seconds(ms: u64) -> u64 {
     ms.div_ceil(1000).max(1)
 }
-pub(crate) fn cancelled() -> GatewayError {
-    GatewayError::new(499, "Request was cancelled.", Some("request_cancelled"))
-        .with_type("server_error")
-        .with_param(None)
-}
+
 pub(crate) fn js_whitespace(c: char) -> bool {
     matches!(c,'\u{0009}'..='\u{000d}'|' '|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}')
 }

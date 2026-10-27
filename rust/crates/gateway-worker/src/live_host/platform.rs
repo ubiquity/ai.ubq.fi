@@ -5,12 +5,9 @@ use super::{
     body::{self, Body},
     health,
 };
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformTokens},
-    storage::now_ms,
-    transport::outbound::Cancellation,
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformClock;
+use crate::host::PlatformTokens;
 use gateway_auth::provider_credentials::{codex_access_expiry_ms, read_codex_source_pool};
 use gateway_authority::{
     routing::{LiveAccountSelection, LiveRouteSelection},
@@ -21,6 +18,8 @@ use gateway_live_runtime::{
     runtime::PreparedSideband,
     types::{LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse},
 };
+use gateway_worker_platform::cancellation::Cancellation;
+use gateway_worker_storage::store::now_ms;
 use std::collections::BTreeMap;
 
 impl WorkerLiveHost {
@@ -121,7 +120,7 @@ impl WorkerLiveHost {
     pub async fn upgrade(
         &self,
         prepared: PreparedSideband<RemoteAuthorityStore, CurrentLiveAccount>,
-    ) -> Result<crate::response::GatewayResponse, GatewayError> {
+    ) -> Result<gateway_worker_web::response::GatewayResponse, GatewayError> {
         let parts = prepared.into_parts();
         parts.account.ensure_current().await?;
         let transport = self.platform.native.transport()?;

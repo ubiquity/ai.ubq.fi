@@ -25,7 +25,6 @@ const PROVIDER_ENV = [
   "METERED_API_KEY",
   "SURPLUS_API_KEY",
   "OPENROUTER_API_KEY",
-  "IMAGE_BASE_MODEL",
   "GIT_REVISION",
   "GITHUB_SHA",
   "DENO_DEPLOYMENT_ID",
@@ -89,6 +88,8 @@ const quality = (): Group =>
       "scripts/test-native-kv.test.ts",
       "scripts/test-scope.test.ts",
       "scripts/rust-verify.test.ts",
+      "scripts/rust-inputs.test.ts",
+      "scripts/rust-scope.test.ts",
       "scripts/rust-quality.test.ts",
       "scripts/rust-quality-clippy.test.ts",
       "scripts/prepare-worker-test-runtime.test.ts",
@@ -254,6 +255,19 @@ const settleGroup = async (pid: number): Promise<void> => {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
   }
 };
+/** Only this finite Darwin fixture controller applies first profiles to its product children. */
+export const testFileArgv = (
+  path: string,
+  command: readonly string[],
+  policy: TestNetworkPolicy,
+  platform: NodeJS.Platform = process.platform,
+  networkArgv = testNetworkArgv
+): string[] => {
+  const canonical = realpathSync(path);
+  if (platform === "darwin" && path === canonical && canonical === join(ROOT, "tests/private-bun-copy-confinement.test.ts") && policy.live === undefined)
+    return [...command];
+  return networkArgv(command, policy);
+};
 const runFile = async (
   path: string,
   selected: Pick<Group, "profile" | "environment"> & Readonly<{ policy: TestNetworkPolicy }>,
@@ -266,7 +280,7 @@ const runFile = async (
   if (binding) command.push("--define", "UOS_TEST_NATIVE_KV_BINDING:" + JSON.stringify(binding));
   if (preload) command.push("--preload", preload);
   command.push("--no-orphans", "--max-concurrency=1", "--timeout=300000", path);
-  const argv = testNetworkArgv(command, selected.policy);
+  const argv = testFileArgv(path, command, selected.policy);
   const child = Bun.spawn(argv, {
     cwd: ROOT,
     detached: true,

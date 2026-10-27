@@ -175,9 +175,9 @@ fn openrouter_native(input: &CatalogInput) -> Vec<SourceJson> {
     if !input.enabled("openrouter") || !input.configured("openrouter") {
         return Vec::new();
     }
-    input.rows("openrouter").iter().filter_map(|model|{
+    input.rows("openrouter").iter().filter(|row| gateway_decision_protocol::catalog::text_model(row)).filter_map(|model|{
         let id=ModelId::from_source(c::get(model,"id").as_ref().and_then(c::string)?);let resolved=input.metadata(&id,None,None,false);
-        let mut row=c::object(vec![("slug",c::json(&id)),("display_name",c::json(&id)),("description",c::json("OpenRouter upstream (Chat Completions and Responses) served by this gateway.")),("owned_by",c::json(&openrouter_owner(&id))),("supported_endpoint_types",c::json(&["openai-response","openai-chat"]))]);
+        let mut row=c::object(vec![("slug",c::json(&id)),("display_name",c::json(&id)),("description",c::json("OpenRouter upstream (Chat Completions and Responses) served by this gateway.")),("owned_by",c::json(&gateway_decision_protocol::catalog::owner(&id))),("supported_endpoint_types",c::json(&["openai-response","openai-chat"]))]);
         reasoning_fields(&mut row,&resolved,true);apply_resolved_fields(&mut row,&resolved,true,false);common_fields(&mut row,1000,false);Some(row)
     }).collect()
 }

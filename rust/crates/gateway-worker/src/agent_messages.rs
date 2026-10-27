@@ -1,9 +1,5 @@
 //! Source GitHub/kernel-scoped agent-message API over the shared tuple store.
-use crate::{
-    authority::RemoteAuthorityStore,
-    storage::now_ms,
-    transport::{body::inference_bytes, random},
-};
+use crate::authority::RemoteAuthorityStore;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_core::{
     error::GatewayError,
@@ -18,6 +14,9 @@ use gateway_schema::{
     request::parse_json_body,
     util::{js_trim, json_stringify},
 };
+use gateway_worker_http_body::body::inference_bytes;
+use gateway_worker_platform::random;
+use gateway_worker_storage::store::now_ms;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use worker::{Method, Request, Response};

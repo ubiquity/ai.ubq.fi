@@ -1,4 +1,4 @@
-use gateway_core::error::GatewayError;
+use gateway_source::error::GatewayError;
 use gateway_core::health::{HealthResponse, ReleaseIdentity};
 use gateway_core::identity::{MAX_SAFE_INTEGER, MicrocreditLimit, Microcredits};
 use gateway_core::lifecycle::{

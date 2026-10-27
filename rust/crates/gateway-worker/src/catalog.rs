@@ -1,13 +1,12 @@
 //! Source catalog runtime over one strong authority and credential-owner publication.
-use crate::{
-    authority::RemoteAuthorityStore, catalog_host::Host, host::PlatformHost, storage::now_ms,
-};
-use gateway_catalog_runtime::{CatalogRuntime, admin::AdminCatalogResponse, host::CatalogHost};
+use crate::authority::RemoteAuthorityStore;
+use crate::catalog_host::Host;
+use crate::host::PlatformHost;
+use gateway_catalog_provider::host::CatalogHost;
+use gateway_catalog_runtime::CatalogRuntime;
 use gateway_core::{error::GatewayError, source_json::SourceJson};
-use gateway_schema::{
-    catalog::CatalogInput, catalog_cache::CatalogResponse,
-    source_request::error::SourceRequestError,
-};
+use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
+use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Request};
 
@@ -40,25 +39,9 @@ pub async fn public_response(
         platform: platform.clone(),
         context,
     };
-    Ok(into_auth_response(
+    Ok(gateway_catalog_provider::response::into_auth_response(
         service().public_catalog(store, &host).await,
     ))
-}
-
-pub(crate) fn into_auth_response(
-    response: Result<AdminCatalogResponse, SourceRequestError>,
-) -> gateway_auth::types::AuthResponse {
-    match response {
-        Ok(response) => {
-            let mut wire =
-                gateway_auth::types::AuthResponse::source_json(response.status, response.body);
-            wire.headers.extend(response.headers);
-            wire
-        }
-        Err(error) => {
-            gateway_auth::types::AuthResponse::source_json(error.status, error.body().clone())
-        }
-    }
 }
 
 /// The existing versioned refresh path, scheduled after a stale response on a
@@ -80,7 +63,7 @@ pub fn schedule_warm(
     let store = store.clone();
     let version = version.to_owned();
     context.wait_until(async move {
-        let cancellation = match crate::transport::outbound::Cancellation::background() {
+        let cancellation = match gateway_worker_platform::cancellation::Cancellation::background() {
             Ok(cancellation) => cancellation,
             Err(error) => {
                 worker::console_error!(
@@ -112,6 +95,16 @@ pub struct CatalogState {
 }
 
 impl CatalogState {
+    pub async fn resolve_inference(
+        mut self,
+        document: &gateway_schema::source_request::SourceRequestDocument,
+    ) -> Result<Self, GatewayError> {
+        self.service
+            .resolve_inference_catalog(&self.host.store, &self.host, &mut self.input, document)
+            .await?;
+        Ok(self)
+    }
+
     pub async fn load(
         store: &RemoteAuthorityStore,
         env: &Env,
@@ -151,6 +144,48 @@ impl CatalogState {
         })
     }
 
+    pub async fn decision_models(
+        &self,
+        store: &RemoteAuthorityStore,
+    ) -> Result<Vec<gateway_core::model::ModelId>, GatewayError> {
+        let publication = self.host.publication().await?;
+        let state = self
+            .service
+            .load_state(store, &publication, now_ms()?)
+            .await?;
+        if state.input.configured("openrouter")
+            && state
+                .input
+                .providers
+                .get("openrouter")
+                .is_none_or(|row| row.updated_at_ms.is_none())
+        {
+            self.service
+                .refresh_provider(
+                    store,
+                    &self.host,
+                    gateway_catalog_provider::host::CatalogProvider::Openrouter,
+                    false,
+                )
+                .await?;
+        }
+        let publication = self.host.publication().await?;
+        let snapshot = self.service.cached_provider(
+            &publication,
+            gateway_catalog_provider::host::CatalogProvider::Openrouter,
+        );
+        Ok(snapshot
+            .into_iter()
+            .flat_map(|snapshot| snapshot.models)
+            .filter(gateway_decision_protocol::catalog::decision_model)
+            .filter_map(|row| {
+                gateway_core::source_serialization::member(&row, "id")
+                    .as_ref()
+                    .and_then(gateway_core::source_serialization::string)
+            })
+            .map(gateway_core::model::ModelId::from_source)
+            .collect())
+    }
     pub async fn native_models(
         &self,
         store: &RemoteAuthorityStore,
@@ -168,38 +203,5 @@ impl CatalogState {
         self.service
             .versioned_models(store, &self.host, version, conditional.as_deref())
             .await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gateway_core::js_string::JsString16;
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn public_catalog_rendering_retains_raw_models_and_source_error_fields() {
-        let body = SourceJson::parse(r#"{"models":[{"id":"model-\ud800"}]}"#).unwrap();
-        let response = into_auth_response(Ok(AdminCatalogResponse {
-            status: 200,
-            body: body.clone(),
-            headers: BTreeMap::from([("x-fixture".into(), "source".into())]),
-        }));
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body.to_bytes().unwrap(), body.as_bytes());
-        assert_eq!(response.headers["x-fixture"], "source");
-        assert_eq!(response.headers["cache-control"], "no-store");
-        let error = SourceRequestError::new(
-            400,
-            JsString16::from_units(vec![0xdc00]),
-            "invalid_request_error",
-            Some("invalid_request_error"),
-            Some(Some(JsString16::from_units(vec![0xd800]))),
-        );
-        let expected = error.body().as_bytes().to_vec();
-        let response = into_auth_response(Err(error));
-        assert_eq!(response.status, 400);
-        assert_eq!(response.body.to_bytes().unwrap(), expected);
-        assert_eq!(response.headers["content-type"], "application/json");
     }
 }

@@ -94,7 +94,7 @@ impl<
         host: H,
         clock: C,
         tokens: I,
-        family: Option<crate::extras::ExtrasFamily>,
+        family: Option<gateway_extras_contract::family::ExtrasFamily>,
     ) -> RoutingResult<Self> {
         if host.cancelled() {
             return Err(host.cancellation_error().into());
