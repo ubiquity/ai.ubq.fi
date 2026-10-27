@@ -37,7 +37,7 @@ impl Binding {
             .await
             .map_err(catalogue_error)?;
         let subscriptions = picker::subscriptions(&self.catalog.store).await;
-        picker::project(
+        gateway_worker_web::admin_picker::project(
             &gateway_core::source_serialization::member(&response.body, "data").unwrap_or_else(
                 || {
                     gateway_core::source_json::SourceJson::parse("null")
@@ -57,7 +57,7 @@ impl Binding {
     ) -> Result<PricingSnapshot, GatewayError> {
         let ratios = pricing::fetch(self, pricing::Metadata::Ratios).await?;
         let status = pricing::fetch(self, pricing::Metadata::Status).await?;
-        pricing::project(
+        gateway_worker_web::admin_pricing::project(
             models,
             &ratios,
             &status,

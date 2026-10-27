@@ -1944,6 +1944,7 @@ dependencies = [
 name = "gateway-worker-web"
 version = "0.1.0"
 dependencies = [
+ "gateway-admin-runtime",
  "gateway-core",
  "gateway-schema",
  "gateway-source",
