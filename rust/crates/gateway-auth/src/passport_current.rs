@@ -17,7 +17,7 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> AuthService<'_, S, H> {
         use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal};
         use gateway_auth_passport::{
             browser::{cookie, production_request},
-            passport::{config_for_request, verify_source_for_config},
+            passport::verify_source,
         };
         use gateway_auth_passport_contracts::{
             actor_data::PassportSessionData, passport::PASSPORT_COOKIE,
@@ -25,10 +25,10 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> AuthService<'_, S, H> {
         let Some(token) = cookie(request, PASSPORT_COOKIE) else {
             return Ok(None);
         };
+        if !production_request(request) {
+            return Err(gateway_auth_primitives::error::unauthorized());
+        }
         let identity = if gateway_auth_passport_sessions::sessions::token_shape(&token) {
-            if !production_request(request) {
-                return Err(gateway_auth_primitives::error::unauthorized());
-            }
             PassportSessionData::App(
                 PassportSessions {
                     store: self.store,
@@ -38,9 +38,7 @@ impl<S: AuthorityStore, H: AuthHost + PassportDate> AuthService<'_, S, H> {
                 .await?,
             )
         } else {
-            let config = config_for_request(self.config, request)
-                .ok_or_else(gateway_auth_primitives::error::unauthorized)?;
-            PassportSessionData::Jwt(verify_source_for_config(self.host, &config, &token).await?)
+            PassportSessionData::Jwt(verify_source(self.host, &token).await?)
         };
         let is_admin = identity.is_admin();
         Ok(Some(AuthPrincipal {

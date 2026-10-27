@@ -737,6 +737,33 @@ fn new_authentication_accepts_source_non_scalar_subject_jti_and_reports_them_los
         &token,
     );
     let principal = run(auth.authenticate_client(&request))?;
+    let mut forwarded = request.clone();
+    forwarded.url = "http://ai.ubq.fi/uos/auth".into();
+    forwarded
+        .headers
+        .insert("x-forwarded-proto".into(), "https".into());
+    assert_eq!(
+        run(auth.authenticate_client(&forwarded))?
+            .method
+            .principal_id(None),
+        principal.method.principal_id(None)
+    );
+    forwarded.headers.remove("x-forwarded-proto");
+    assert_eq!(
+        run(auth.authenticate_client(&forwarded))
+            .err()
+            .ok_or("expected insecure cookie refusal")?
+            .status,
+        401
+    );
+    forwarded.url = "https://foreign.invalid/uos/auth".into();
+    assert_eq!(
+        run(auth.authenticate_client(&forwarded))
+            .err()
+            .ok_or("expected foreign cookie refusal")?
+            .status,
+        401
+    );
     assert!(principal.is_admin);
     assert!(!principal.is_super_admin);
     assert!(serde_json::to_string(&principal.method).is_err());

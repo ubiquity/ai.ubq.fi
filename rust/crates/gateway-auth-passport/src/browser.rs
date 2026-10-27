@@ -73,6 +73,16 @@ fn suffix(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 fn error_response(error: GatewayError) -> AuthResponse {
+    // Frozen passport.ts::errorResponse, restricted to this Passport boundary.
+    let error = match error.status {
+        401 => unauthorized(),
+        502 | 503 => GatewayError::new(
+            error.status,
+            "Passport verification is unavailable.",
+            Some("passport_unavailable"),
+        ),
+        _ => error,
+    };
     let mut response = AuthResponse::error(error);
     response
         .headers
@@ -82,7 +92,11 @@ fn error_response(error: GatewayError) -> AuthResponse {
 pub fn authentication_error(request: &AuthRequest, error: GatewayError) -> AuthResponse {
     let clear = error.status == 401
         && cookie(request, PASSPORT_COOKIE).is_some_and(|token| token_shape(&token));
-    let mut response = error_response(error);
+    let mut response = if cookie(request, PASSPORT_COOKIE).is_some() {
+        error_response(error)
+    } else {
+        AuthResponse::error(error)
+    };
     if clear {
         response.set_cookies.push(clear_session_cookie());
     }
@@ -215,7 +229,12 @@ impl<S: gateway_core::state::AuthorityStore, H: AuthHost + PassportDate> Passpor
                 code_verifier: Secret::new(verifier),
             })
             .await
-            .map_err(|_| exchange_unavailable())?;
+            .map_err(|error| match error.envelope.error.code.as_deref() {
+                Some("upstream_response_too_large" | "passport_exchange_body_missing") => {
+                    exchange_unavailable()
+                }
+                _ => unauthorized(),
+            })?;
         if !response.success() || response.body.len() > 65_536 {
             return Err(exchange_unavailable());
         }

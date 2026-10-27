@@ -3,7 +3,7 @@
 const binding = Object.freeze({ clientId: "ai", audience: "ai", origin: "https://ai.ubq.fi", redirectUri: "https://ai.ubq.fi/auth/callback" });
 const encoder = new TextEncoder();
 const gates = new WeakMap();
-const modes = new Set(["normal", "demoted", "unavailable", "unauthorized", "reject_cancel", "malformed", "oversize", "substituted", "revoke_unavailable"]);
+const modes = new Set(["normal", "demoted", "unavailable", "unauthorized", "reject_cancel", "malformed", "oversize", "substituted", "revoke_unavailable", "exchange_network", "exchange_missing", "exchange_http", "exchange_oversize", "exchange_malformed"]);
 const base64url = (bytes) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 const randomToken = () => `uos_app_session_${base64url(crypto.getRandomValues(new Uint8Array(32)))}`;
 const matchesBinding = (value) => value !== null && typeof value === "object" && Object.entries(binding).every(([key, expected]) => value[key] === expected);
@@ -47,6 +47,8 @@ export async function authPassportControl(request, storage) {
   if (request.method !== "POST") return new Response(null, { status: 405 });
   const command = await request.json();
   if (command.operation === "mode" && modes.has(command.value)) write(storage, "mode", command.value);
+  else if (command.operation === "created_at" && typeof command.value === "string") write(storage, "created-at", command.value);
+  else if (command.operation === "created_at_reset") remove(storage, "created-at");
   else if (command.operation === "hold") {
     const pending = gate(storage); pending.hold = true; pending.entered = 0; pending.wait = new Promise((resolve) => { pending.release = resolve; }); pending.enteredWait = new Promise((resolve) => { pending.enteredResolve = resolve; });
   } else if (command.operation === "release") {
@@ -72,9 +74,15 @@ export async function authPassportUpstream(request, storage) {
   const body = await request.json();
   if (!matchesBinding(body)) return new Response(null, { status: 400 });
   if (url.pathname === "/api/auth/sso/exchange") {
+    const mode = read(storage, "mode") ?? "normal";
+    if (mode === "exchange_network") throw new Error("Synthetic exchange transport failure");
+    if (mode === "exchange_missing") return new Response(null);
+    if (mode === "exchange_http") return new Response(null, { status: 503 });
+    if (mode === "exchange_oversize") return new Response("x".repeat(65_537));
+    if (mode === "exchange_malformed") return new Response("{");
     if (body.appSession !== true || !/^[A-Za-z0-9_-]{43}$/u.test(body.codeVerifier) || !["admin", "user", "agent", "utf16"].includes(body.code)) return new Response(null, { status: 400 });
     const subject = body.code === "utf16" ? "fixture-\ud800" : `fixture-${body.code}`;
-    const grant = { ...binding, subject, createdAt: new Date().toUTCString(), token: randomToken(), fixtureCode: body.code };
+    const grant = { ...binding, subject, createdAt: read(storage, "created-at") ?? new Date().toUTCString(), token: randomToken(), fixtureCode: body.code };
     write(storage, `grant:${await digest(grant.token)}`, grant);
     return Response.json({ accessToken: await sign(storage, body.code, subject), appSession: grant });
   }

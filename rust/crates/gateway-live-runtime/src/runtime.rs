@@ -100,7 +100,7 @@ impl<S: AuthorityStore> LiveRuntime<S> {
         &self,
         mut response: LiveResponse<B>,
         account: &str,
-        principal: &str,
+        principal: &gateway_core::identity::PrincipalId,
         now: i64,
     ) -> LiveResponse<B> {
         let location = response.headers.get("location").cloned();
@@ -116,7 +116,8 @@ impl<S: AuthorityStore> LiveRuntime<S> {
                     format!("/v1/live/{}", encode_call_id(&id)),
                 );
                 if (200..300).contains(&response.status) {
-                    self.write_mapping(&id, account, principal, now).await;
+                    self.write_mapping(&id, account, principal.as_source(), now)
+                        .await;
                 }
             } else {
                 response.headers.insert("location".into(), location);
@@ -136,7 +137,7 @@ impl<S: AuthorityStore> LiveRuntime<S> {
             .read_mapping(call_id, host.now_ms())
             .await
             .ok_or_else(|| response_error(host, mapping_missing()))?;
-        if mapping.principal_id.as_deref() != Some(&principal_id(principal)) {
+        if mapping.principal_id.as_ref() != Some(principal_id(principal).as_source()) {
             return Err(response_error(
                 host,
                 GatewayError::new(

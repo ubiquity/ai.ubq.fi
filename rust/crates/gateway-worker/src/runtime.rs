@@ -242,7 +242,9 @@ async fn authentication_route(
     auth_request: &mut AuthRequest,
 ) -> Result<Option<crate::response::GatewayResponse>, GatewayError> {
     if path.starts_with("/api/auth/") || path.starts_with("/auth/") || path == "/uos/auth" {
-        if request.method() == Method::Post {
+        if request.method() == Method::Post
+            && !matches!(path, "/auth/login" | "/auth/callback" | "/auth/logout")
+        {
             // Source authenticates this admin before the registration handler
             // reads its body. Keep the handler's own check intact below.
             if path == "/api/auth/register/start" {

@@ -324,3 +324,58 @@ fn decode_mapping(record: &StoredRecord) -> Option<Mapping> {
         principal_id: source::member(&value, "principal_id").and_then(|v| source::string(&v)),
     })
 }
+
+#[cfg(test)]
+mod passport_data_cases {
+    use super::{decode_mapping, encode_mapping};
+    use gateway_core::state::StoredRecord;
+    use gateway_core::value::ValueEncoding;
+    use gateway_source::js_string::JsString16;
+
+    #[test]
+    fn mapping_codec_preserves_exact_identity_units_and_scalar_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for units in [
+            vec![],
+            vec![112, 0, 0xd800, 0xdfff],
+            "ordinary".encode_utf16().collect(),
+        ] {
+            let principal = JsString16::from_units(units);
+            let row = encode_mapping("revision".into(), "account", &principal, 100)?;
+            let decoded = decode_mapping(&row).ok_or("mapping codec refused its valid output")?;
+            assert_eq!(decoded.account_id, "account");
+            assert_eq!(decoded.principal_id, Some(principal.clone()));
+            assert_eq!(
+                row.expires_at_ms,
+                Some(100 + crate::types::LIVE_CALL_ACCOUNT_TTL_MS)
+            );
+            assert_eq!(row.revision, "revision");
+            assert_eq!(
+                row.value_encoding,
+                if principal.try_utf8().is_ok() {
+                    ValueEncoding::Json
+                } else {
+                    ValueEncoding::ProfileV2
+                }
+            );
+        }
+        for value in [
+            serde_json::json!({"account_id":"account"}),
+            serde_json::json!({"account_id":"account","principal_id":false}),
+            serde_json::json!({"account_id":"account","principal_id":null}),
+        ] {
+            assert!(
+                decode_mapping(&StoredRecord::json("revision", value, None))
+                    .ok_or("legacy mapping")?
+                    .principal_id
+                    .is_none()
+            );
+        }
+        let scalar = encode_mapping("r".into(), "account", &JsString16::from_utf8("p"), 100)?;
+        assert_eq!(
+            serde_json::to_string(scalar.json_value()?)?,
+            r#"{"account_id":"account","principal_id":"p","created_at_ms":100}"#
+        );
+        Ok(())
+    }
+}

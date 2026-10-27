@@ -6,10 +6,10 @@ use crate::{
 };
 use gateway_auth_contracts::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
 use gateway_auth_passport_contracts::session::PassportDate;
-use gateway_core::{error::GatewayError, js_string::JsString16};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::{cell::Cell, collections::BTreeMap, task::Poll};
 use worker::{
-    Method,
+    Method, ResponseBody,
     js_sys::{Function, JsString, Reflect},
     wasm_bindgen::{JsCast, JsValue},
 };
@@ -103,6 +103,15 @@ async fn fetch_inner(
     .await
     .map_err(|failure| failure.error)?;
     let status = response.status_code();
+    if matches!(request, AuthUpstreamRequest::PassportPkceExchange { .. })
+        && matches!(response.body(), ResponseBody::Empty)
+    {
+        return Err(GatewayError::new(
+            502,
+            "Passport verification is unavailable.",
+            Some("passport_exchange_body_missing"),
+        ));
+    }
     if request.status_only(status) {
         rejected
             .set(matches!(request, AuthUpstreamRequest::PassportSession { .. }) && status == 401);
