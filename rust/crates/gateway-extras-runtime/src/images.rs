@@ -1,6 +1,10 @@
-use crate::{store::*, types::*};
 use futures_util::future::join_all;
 use gateway_core::{error::GatewayError, source_json::SourceJson, source_serialization as source};
+use gateway_extras_contract::errors::{invalid, invalid_state};
+use gateway_extras_contract::types::{
+    DispatchFailure, ExtrasDispatch, ExtrasHost, ExtrasRequest, ExtrasResponse, Headers, ImageKind,
+    UpstreamResponse,
+};
 use gateway_providers::extras;
 use gateway_schema::source_request::value::Value as SourceValue;
 use serde_json::{Value, json};

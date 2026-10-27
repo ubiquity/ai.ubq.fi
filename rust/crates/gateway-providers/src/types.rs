@@ -13,6 +13,7 @@ pub enum ClientSurface {
     Responses,
     Chat,
     SystemOne,
+    Decisions,
     Embeddings,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -32,6 +33,7 @@ pub enum ResponseDecode {
     AnthropicChatToResponses,
     Voyage,
     SystemOne,
+    Decisions,
 }
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ToolIdentity {

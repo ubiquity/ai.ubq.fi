@@ -7,6 +7,7 @@ export const MATRIX_MODELS = Object.freeze({
   lithos: "deepseek-ai/DeepSeek-V4.1-Flash",
   openrouter: "openai/gpt-matrix-test",
   flash: "deepseek-v4.1-flash",
+  decision: "baseten/elephant-1:free",
 });
 export const MATRIX_KEYS = Object.freeze({
   surplus: "fixture-matrix-surplus",
@@ -21,7 +22,10 @@ const destinations = new Map([
   ["api.surplusintelligence.ai", { provider: "surplus", paths: ["/v1/responses", "/v1/chat/completions", "/v1/models"] }],
   ["api.openlux.ai", { provider: "openlux", paths: ["/v1/responses", "/v1/messages", "/v1/models", "/api/ratio_config", "/api/status", "/api/log/token"] }],
   ["api.lithosai.cloud", { provider: "lithos", paths: ["/v1/chat/completions", "/v1/models"] }],
-  ["openrouter.ai", { provider: "openrouter", paths: ["/api/v1/responses", "/api/v1/chat/completions", "/api/v1/models", "/api/v1/systemone"] }],
+  [
+    "openrouter.ai",
+    { provider: "openrouter", paths: ["/api/v1/responses", "/api/v1/chat/completions", "/api/v1/models", "/api/v1/systemone", "/api/alpha/decisions"] },
+  ],
   ["api.deepseek.com", { provider: "deepseek", paths: ["/chat/completions"] }],
 ]);
 
@@ -85,12 +89,16 @@ function models(provider) {
     };
   }
   let ids = [MATRIX_MODELS[provider] ?? MATRIX_MODELS.codex];
-  if (provider === "openrouter") ids = [MATRIX_MODELS.openrouter, "typesafe/jev-fast", "~deepseek/deepseek-flash-latest"];
+  if (provider === "openrouter")
+    ids = [MATRIX_MODELS.openrouter, "typesafe/jev-fast", "~deepseek/deepseek-flash-latest", MATRIX_MODELS.decision, "~typesafe/jev-latest"];
   if (provider === "surplus" || provider === "openlux") ids = [MATRIX_MODELS.codex, MATRIX_MODELS.flash];
   return {
     data: ids.map((id) => ({
       id,
       object: "model",
+      ...(provider === "openrouter" && [MATRIX_MODELS.decision, "~typesafe/jev-latest"].includes(id)
+        ? { architecture: { output_modalities: ["decisions"] } }
+        : {}),
       name: id,
       display_name: id,
       created: 1_800_000_000,
@@ -457,6 +465,12 @@ export async function handleProviderMatrix(request, _env, context, recordEvent) 
   if (request.method !== "POST") return null;
   const body = await request.clone().json();
   if (!isObject(body)) return null;
+  if (provider === "openrouter" && url.pathname === "/api/alpha/decisions") {
+    if (!credentialMatches(request, provider, false)) return new Response(null, { status: 401 });
+    if (![MATRIX_MODELS.decision, "~typesafe/jev-latest"].includes(body.model)) return new Response(null, { status: 400 });
+    await recordEvent({ kind: "matrix_dispatch", provider, marker: body.state, model: body.model, wire: "decisions", credential_matched: true });
+    return Response.json({ answers: { ready: 0.9 }, usage: { input_tokens: 7, output_tokens: 3, cost: 0.01 }, trace: body.trace });
+  }
   if (provider === "openrouter" && url.pathname === "/api/v1/systemone") return compactionDecisions(request, body, recordEvent);
   const marker = markerIn(body);
   if (!marker) return null;

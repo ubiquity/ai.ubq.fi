@@ -9,7 +9,7 @@ use gateway_auth::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_catalog_runtime::host::ProviderBinding;
+use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_runtime::host::{
     AcceptedObservation, ClaudePoolHost, HealthObservation, WorkspaceResponse,
 };

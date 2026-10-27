@@ -1,10 +1,7 @@
-use crate::{
-    CatalogRuntime,
-    host::{
-        CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
-        CatalogProvider, CodexAccount, CredentialPublication, unavailable,
-    },
-    state,
+use crate::{CatalogRuntime, state};
+use gateway_catalog_provider::host::{
+    CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
+    CatalogProvider, CodexAccount, CredentialPublication, unavailable,
 };
 use gateway_core::{
     error::GatewayError, model::ModelId, query::QueryStore, source_json::SourceJson,

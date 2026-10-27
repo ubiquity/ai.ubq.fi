@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use gateway_core::{error::GatewayError, model::ModelId, source_json::SourceJson};
-use gateway_extras_runtime::types::{
+use gateway_extras_contract::types::{
     DispatchFailure, DispatchFailureOrigin, ImageKind, UpstreamResponse,
 };
 use gateway_providers::{policy::HopFailure, response::decode_response};

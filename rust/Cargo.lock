@@ -955,12 +955,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-catalog-provider"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-decision-protocol",
+ "gateway-providers",
+ "gateway-schema",
+ "serde",
+]
+
+[[package]]
 name = "gateway-catalog-runtime"
 version = "0.1.0"
 dependencies = [
  "gateway-admin-test-support",
  "gateway-auth",
  "gateway-authority",
+ "gateway-catalog-provider",
  "gateway-core",
  "gateway-native",
  "gateway-providers",
@@ -978,6 +991,7 @@ dependencies = [
  "gateway-admin-data",
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime-test-support",
  "gateway-core",
@@ -994,6 +1008,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
+ "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
  "gateway-core",
@@ -1025,6 +1040,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-decision-protocol"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-decision-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "gateway-decision-protocol",
+ "gateway-extras-contract",
+ "gateway-providers",
+ "gateway-schema",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-extras-contract"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth",
+ "gateway-core",
+ "gateway-providers",
+ "gateway-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-extras-runtime"
 version = "0.1.0"
 dependencies = [
@@ -1034,6 +1082,8 @@ dependencies = [
  "futures-util",
  "gateway-auth",
  "gateway-core",
+ "gateway-decision-runtime",
+ "gateway-extras-contract",
  "gateway-extras-runtime-test-support",
  "gateway-providers",
  "gateway-schema",
@@ -1170,6 +1220,7 @@ name = "gateway-providers"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-decision-protocol",
  "gateway-schema",
  "serde",
  "serde_json",
@@ -1256,6 +1307,8 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-core",
+ "gateway-decision-protocol",
+ "gateway-extras-contract",
  "gateway-providers",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
@@ -1283,6 +1336,7 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "gateway-core",
+ "gateway-decision-protocol",
  "indexmap 2.14.2",
  "ryu-js",
  "serde",
@@ -1302,10 +1356,13 @@ dependencies = [
  "gateway-auth",
  "gateway-authority",
  "gateway-capacity-recovery",
+ "gateway-catalog-provider",
  "gateway-catalog-runtime",
  "gateway-claude-runtime",
  "gateway-compaction",
  "gateway-core",
+ "gateway-decision-protocol",
+ "gateway-extras-contract",
  "gateway-extras-runtime",
  "gateway-live-runtime",
  "gateway-migration",

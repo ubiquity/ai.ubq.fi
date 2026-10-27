@@ -418,6 +418,11 @@ impl Inference<'_> {
                 return crate::inference_source::error_response(error.into(), self.capture).await;
             }
         };
+        let catalog = if local_compaction {
+            catalog
+        } else {
+            catalog.resolve_inference(&document).await?
+        };
         let original = RequestContext {
             request_id,
             principal: PrincipalId(crate::lifecycle::principal_id(self.principal)),

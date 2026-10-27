@@ -376,7 +376,7 @@ fn paid_synthetic_hop_uses_server_pinned_context_and_distinct_billing_identity()
 fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
-        use gateway_routing_runtime::extras::ExtrasFamily;
+        use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(
@@ -429,7 +429,7 @@ fn extras_children_cannot_refund_started_siblings_or_finish_the_outer_kernel() -
 fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
-        use gateway_routing_runtime::extras::ExtrasFamily;
+        use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(
@@ -492,7 +492,7 @@ fn extras_known_no_transport_refunds_but_unknown_intent_recovery_does_not() -> T
 fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
-        use gateway_routing_runtime::extras::ExtrasFamily;
+        use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(
@@ -553,7 +553,7 @@ fn sequential_extras_reuse_original_scope_and_cannot_borrow_another_ticket() -> 
 fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
-        use gateway_routing_runtime::extras::ExtrasFamily;
+        use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         seed_pool(&store);
@@ -593,7 +593,7 @@ fn image_child_uses_codex_only_and_aggregate_dispatch_without_second_admission()
 fn embedding_job_read_without_retry_releases_and_never_commits_kernel_admission() -> TestResult {
     run(async {
         use gateway_authority::kernel::KernelTerminal;
-        use gateway_routing_runtime::extras::ExtrasFamily;
+        use gateway_extras_contract::family::ExtrasFamily;
         let store = Store::new();
         seed_key(&store);
         let session = RoutingSession::begin_extras(

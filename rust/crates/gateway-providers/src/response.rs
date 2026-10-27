@@ -541,6 +541,9 @@ fn decode_buffered_response(
         }
         ResponseDecode::Voyage => crate::source_embeddings::decode_embeddings(value, plan)?,
         ResponseDecode::SystemOne => s::generated(&crate::extras::decode_systemone(value)?),
+        ResponseDecode::Decisions => {
+            gateway_decision_protocol::response::decode(&s::generated(value))?
+        }
     };
     if plan.stream && !events.is_empty() {
         output_headers.insert("Content-Type".into(), "text/event-stream".into());
@@ -548,7 +551,10 @@ fn decode_buffered_response(
     let terminal = terminal_for(&body).or_else(|| {
         matches!(
             plan.surface,
-            ClientSurface::Chat | ClientSurface::Embeddings | ClientSurface::SystemOne
+            ClientSurface::Chat
+                | ClientSurface::Embeddings
+                | ClientSurface::SystemOne
+                | ClientSurface::Decisions
         )
         .then_some(SemanticTerminal::Completed)
     });

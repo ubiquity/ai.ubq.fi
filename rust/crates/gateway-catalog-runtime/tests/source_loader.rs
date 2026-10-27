@@ -1,5 +1,5 @@
 //! Actual source-aware provider parser output; no network or JavaScript projector.
-use gateway_catalog_runtime::{host::CatalogProvider, providers};
+use gateway_catalog_provider::{host::CatalogProvider, providers};
 use gateway_core::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
