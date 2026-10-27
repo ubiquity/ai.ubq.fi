@@ -235,6 +235,8 @@ pub async fn record_usage<
             next.usage = Some(usage.clone());
         }
         next.updated_at_ms = now as f64;
+        // A bound source outcome records an empty proof map when no proof exists.
+        if next.pool_proofs.is_none() { next.pool_proofs=Some(BTreeMap::new()); }
         let revision = gateway_auth::crypto::uuid_from_random(&host.random_bytes(16)?)?;
         let record = gateway_claude_usage_quota::stored_state(&next, revision)?;
         if commit(

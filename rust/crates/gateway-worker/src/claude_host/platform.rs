@@ -11,8 +11,9 @@ use gateway_auth::{
 };
 use gateway_catalog_provider::host::ProviderBinding;
 use gateway_claude_runtime::host::{
-    AcceptedObservation, ClaudePoolHost, HealthObservation, WorkspaceResponse,
+    ClaudePoolHost, HealthObservation, WorkspaceResponse,
 };
+use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::{error::GatewayError, state::RevisionCheck};
 use gateway_observability::{
     ObservabilityRuntime,

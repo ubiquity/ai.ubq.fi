@@ -4,7 +4,8 @@ use gateway_auth::{
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_claude_runtime::host::{AcceptedObservation, ClaudePoolHost};
+use gateway_claude_runtime::host::ClaudePoolHost;
+use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_claude_runtime_test_support::fixture::{Host, NOW, Store, account, run, seed};
 use gateway_claude_usage_protocol::state::UsageState;
 use gateway_claude_usage_runtime::{
@@ -217,7 +218,7 @@ fn inference_recency_is_independent_and_usage_failure_never_mints_pool_proof() -
         q.usage.as_ref().ok_or("usage absent")?.state,
         "auth_invalid"
     );
-    assert!(q.pool_proofs.is_none());
+    assert!(q.pool_proofs.as_ref().ok_or("bound proof map absent")?.is_empty());
     assert!(q.last_error.is_none());
     assert!(q.cooldown_until_ms.is_none());
     assert!(q.blocked_until_ms.is_none());

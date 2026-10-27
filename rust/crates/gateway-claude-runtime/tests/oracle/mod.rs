@@ -80,35 +80,37 @@ fn exact_bun_source_classification_vectors_preserve_all_detail_units() -> crate:
 }
 
 #[test]
-fn exact_bun_source_observation_vectors_preserve_missing_and_numeric_headers() {
+fn exact_bun_source_observation_vectors_preserve_missing_and_numeric_headers() -> crate::support::TestResult {
     let fixture = fixture();
-    let cases = fixture["observations"].as_array().unwrap();
+    let cases = crate::support::required(fixture["observations"].as_array())?;
     assert_eq!(cases.len(), 8);
     for (index, case) in cases.iter().enumerate() {
         let expected: Option<gateway_claude_usage_quota::QuotaObservation> =
-            serde_json::from_str(&case["expected"].to_string()).unwrap();
+            serde_json::from_str(&case["expected"].to_string())?;
         assert_eq!(
             response::observe_headers(&headers(&case["headers"]), NOW),
             expected,
             "observation {index}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior() {
+fn exact_bun_source_state_vectors_preserve_malformed_optional_record_behavior() -> crate::support::TestResult {
     let fixture = fixture();
-    let cases = fixture["states"].as_array().unwrap();
+    let cases = crate::support::required(fixture["states"].as_array())?;
     assert_eq!(cases.len(), 7);
     for (index, case) in cases.iter().enumerate() {
         let expected: Option<gateway_claude_usage_quota::QuotaState> =
-            serde_json::from_str(&case["expected"].to_string()).unwrap();
+            serde_json::from_str(&case["expected"].to_string())?;
         assert_eq!(
             gateway_claude_usage_quota::parse_state(&case["raw"]),
             expected,
             "state {index}"
         );
     }
+    Ok(())
 }
 
 #[test]

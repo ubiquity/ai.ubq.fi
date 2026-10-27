@@ -139,13 +139,10 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
             let mut truncated = rows.len() > LIMIT;
             for entry in rows.into_iter().take(LIMIT) {
                 let value = claude_history_bucket_record_source(&entry.key, &entry.record)?;
-                for point in recent_points(self.host,&value,at,cutoff)? {
-                    if points.len() >= LIMIT {
-                        truncated = true;
-                        break;
-                    }
-                    points.push(point);
-                }
+                let recent=recent_points(self.host,&value,at,cutoff)?;
+                let remaining=LIMIT.saturating_sub(points.len());
+                truncated |= recent.len()>remaining;
+                points.extend(recent.into_iter().take(remaining));
                 if points.len() >= LIMIT && truncated {
                     break;
                 }

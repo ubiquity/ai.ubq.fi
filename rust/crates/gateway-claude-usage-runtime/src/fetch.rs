@@ -32,7 +32,7 @@ pub trait UsageHost: AuthHost {
     ) -> impl Future<Output = Result<Response, GetFailure>>;
     fn accepted_usage(
         &self,
-        event: &gateway_claude_runtime::host::AcceptedObservation,
+        event: &gateway_claude_usage_quota::observation::AcceptedObservation,
     ) -> impl Future<Output = Result<(), GatewayError>>;
 }
 #[derive(Clone, Debug)]

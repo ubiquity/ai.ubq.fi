@@ -124,7 +124,7 @@ impl UsageHost for Fixture {
     }
     async fn accepted_usage(
         &self,
-        event: &gateway_claude_runtime::host::AcceptedObservation,
+        event: &gateway_claude_usage_quota::observation::AcceptedObservation,
     ) -> Result<(), GatewayError> {
         let event = ClaudeAcceptedObservation::from_source(&event.source_value()?)?;
         History {

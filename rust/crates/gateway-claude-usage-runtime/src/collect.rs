@@ -155,7 +155,7 @@ async fn collect_claimed<S: AuthorityStore,H:UsageHost>(store:&S,host:&H,account
             return Ok(Refresh::Changed);
         };
         if let Some(observation) = result.observation() {
-            let event = gateway_claude_runtime::host::AcceptedObservation {
+            let event = gateway_claude_usage_quota::observation::AcceptedObservation {
                 v: 1,
                 observation_id: uuid_from_random(&host.random_bytes(16)?)?,
                 account_id: account.account_id.clone(),

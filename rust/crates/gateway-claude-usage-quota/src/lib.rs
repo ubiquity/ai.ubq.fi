@@ -1,4 +1,5 @@
 //! Source Claude quota truth. Health/history remain optional post-acceptance subscribers.
+pub mod observation;
 use gateway_core::{
     error::GatewayError,
     js_string::JsString16,
