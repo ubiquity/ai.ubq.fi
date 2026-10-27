@@ -340,7 +340,7 @@ fn credential(selected: &SelectedAccount) -> PublishedCredential {
     let kind = platform::credential_kind(&selected.binding().credential);
     let mut options = selected.prepare_options(Default::default());
     if let Some(context) = replay_context(selected) {
-        let now = crate::storage::now_ms().unwrap_or(i64::MAX);
+        let now = gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX);
         CLAUDE_REPLAY.with(|store| {
             store.borrow_mut().restore_prepare_options(
                 &context,

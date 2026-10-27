@@ -50,7 +50,7 @@ pub async fn initialize(
 ) -> Result<(), GatewayError> {
     if initialized(store, identity, inputs).await? {
         if scenario == "paid" {
-            let now = gateway_worker::storage::now_ms()?;
+            let now = gateway_worker_storage::store::now_ms()?;
             if let Some(prepared) = after_runtime_bootstrap(store, identity, inputs, now).await? {
                 send_configuration(
                     store,
@@ -69,7 +69,7 @@ pub async fn initialize(
     if matches!(scenario, "codex" | "paid") {
         seed_pool(store).await?;
     }
-    let now = gateway_worker::storage::now_ms()?;
+    let now = gateway_worker_storage::store::now_ms()?;
     let body = fixture_owner_statement(identity)?;
     let nonce = base64url(&nonce()?);
     let time = now.to_string();
@@ -271,7 +271,7 @@ async fn seed_pool(store: &RemoteAuthorityStore) -> Result<(), GatewayError> {
         }
         return Ok(());
     }
-    let now = gateway_worker::storage::now_ms()?;
+    let now = gateway_worker_storage::store::now_ms()?;
     let pool = fixture_pool(now);
     let raw = pool.private_source_value();
     let parsed = parse_codex_source_pool(&raw)?.ok_or_else(invalid)?;

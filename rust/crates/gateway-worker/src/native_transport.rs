@@ -125,7 +125,7 @@ impl NativeTransport {
         platform: &PlatformHost,
     ) -> Result<crate::response::GatewayResponse, GatewayError> {
         use gateway_auth::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
-        let now = crate::storage::now_ms()?;
+        let now = gateway_worker_storage::store::now_ms()?;
         let nonce = base64url(&random::random_bytes(32)?);
         let mac = self.identity.sign_live_request(now, &nonce, action_ref)?;
         let headers = Headers::new();
@@ -183,7 +183,7 @@ impl NativeTransport {
             return Err(unavailable());
         }
         let deadline = cancellation.set_timeout_ms(timeout_ms)?;
-        let now = crate::storage::now_ms()?;
+        let now = gateway_worker_storage::store::now_ms()?;
         let nonce = base64url(&random::random_bytes(32)?);
         let mac = self.identity.sign(path, now, &nonce, &body)?;
         let headers = Headers::new();

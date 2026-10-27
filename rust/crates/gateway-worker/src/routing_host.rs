@@ -1,5 +1,6 @@
 //! Routing credentials use the owner-derived current source and routing fences.
-use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformHost;
 use gateway_auth::crypto::Secret;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_auth::types::AuthPrincipal;
@@ -13,6 +14,7 @@ use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
+use gateway_worker_storage::store::now_ms;
 use worker::Env;
 
 #[derive(Clone)]

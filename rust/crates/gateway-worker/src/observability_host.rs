@@ -162,7 +162,7 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
     let host = runtime.host();
     let configured = inventory::monitoring_key(&host.platform.env).is_some();
     let snapshot = if configured {
-        let deadline = crate::storage::now_ms()?
+        let deadline = gateway_worker_storage::store::now_ms()?
             .checked_add(10_000)
             .ok_or_else(|| unavailable("Metered diagnostics deadline is invalid."))?;
         host.metered_quota_snapshot(false, deadline).await?
@@ -206,7 +206,7 @@ impl ObservabilityHost for Host {
     }
 
     fn now_ms(&self) -> i64 {
-        crate::storage::now_ms().unwrap_or(i64::MAX)
+        gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX)
     }
     fn random_bytes(&self, length: usize) -> Result<Vec<u8>, GatewayError> {
         crate::transport::random::random_bytes(length)

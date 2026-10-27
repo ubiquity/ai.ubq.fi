@@ -16,8 +16,9 @@ pub(super) async fn response(
     response: &LiveResponse<Body>,
     context: Rc<Context>,
 ) {
-    let expired = codex_access_expiry_ms(&account.source.access_token)
-        .is_some_and(|expiry| expiry <= crate::storage::now_ms().unwrap_or(i64::MAX) as f64);
+    let expired = codex_access_expiry_ms(&account.source.access_token).is_some_and(|expiry| {
+        expiry <= gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX) as f64
+    });
     let event = match response.status {
         401 => HealthEvent::AuthInvalid,
         403 if expired => HealthEvent::AuthInvalid,
@@ -32,7 +33,7 @@ pub(super) async fn response(
         let status = response.status;
         context.wait_until(async move {
             if status >= 500
-                && let Ok(now) = crate::storage::now_ms()
+                && let Ok(now) = gateway_worker_storage::store::now_ms()
             {
                 background
                     .record_capacity_downtime("upstream_error", Some(status), now)
@@ -95,7 +96,7 @@ pub(super) async fn failure(
             .contains(&failure.response.status)
             .then_some(failure.response.status);
         context.wait_until(async move {
-            if let Ok(now) = crate::storage::now_ms() {
+            if let Ok(now) = gateway_worker_storage::store::now_ms() {
                 runtime
                     .record_capacity_downtime("unreachable", status, now)
                     .await;

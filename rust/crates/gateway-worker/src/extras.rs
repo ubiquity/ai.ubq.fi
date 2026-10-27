@@ -1,14 +1,13 @@
 //! Actual fixed embeddings/jobs/SystemOne routes; M15 owns their source behavior.
-use crate::{
-    authority::RemoteAuthorityStore,
-    catalog::CatalogState,
-    extras_host::Host,
-    host::{PlatformClock, PlatformHost, PlatformTokens},
-    inference::RequestResources,
-    routing_host,
-    storage::now_ms,
-    transport::body,
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::catalog::CatalogState;
+use crate::extras_host::Host;
+use crate::host::PlatformClock;
+use crate::host::PlatformHost;
+use crate::host::PlatformTokens;
+use crate::inference::RequestResources;
+use crate::routing_host;
+use crate::transport::body;
 use gateway_auth::types::{AuthMethod, AuthPrincipal};
 use gateway_authority::kernel::KernelTerminal;
 use gateway_core::{
@@ -24,6 +23,7 @@ use gateway_extras_contract::types::{
 use gateway_extras_runtime::ExtrasRuntime;
 use gateway_providers::types::ClientSurface;
 use gateway_routing_runtime::{session::RoutingSession, types::RoutingInput};
+use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use std::rc::Rc;
 use worker::{Request, Response};

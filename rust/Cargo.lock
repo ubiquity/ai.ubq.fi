@@ -1440,6 +1440,7 @@ dependencies = [
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
+ "gateway-worker-storage",
  "gateway-worker-stream",
  "serde",
  "serde_json",
@@ -1458,6 +1459,7 @@ dependencies = [
  "gateway-publication-transport",
  "gateway-worker",
  "gateway-worker-fixture-setup",
+ "gateway-worker-storage",
  "serde_json",
  "worker",
 ]
@@ -1473,7 +1475,17 @@ dependencies = [
  "gateway-publication-policy",
  "gateway-publication-transport",
  "gateway-worker",
+ "gateway-worker-storage",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-worker-storage"
+version = "0.1.0"
+dependencies = [
+ "gateway-core",
+ "serde",
+ "worker",
 ]
 
 [[package]]

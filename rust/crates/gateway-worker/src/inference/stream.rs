@@ -6,7 +6,6 @@ use super::{
 use super::{dispatch_attempts, interrupted, stream_failure};
 use crate::inference_lifecycle::finish_hook;
 use crate::routing_host;
-use crate::storage::now_ms;
 use crate::transport::body;
 use crate::{
     inference_lifecycle::{Lifecycle, Usage},
@@ -21,6 +20,7 @@ use gateway_routing_runtime::types::PreparedWireRequest;
 use gateway_routing_runtime::types::{
     AttemptFailure, FailureOrigin, RefusalDecision, RoutingError, TransportState,
 };
+use gateway_worker_storage::store::now_ms;
 use gateway_worker_stream::observed::{FinishHook, ObservationHandle, ObservedStream};
 use gateway_worker_stream::relay::PrepareDisposition;
 use gateway_worker_stream::{

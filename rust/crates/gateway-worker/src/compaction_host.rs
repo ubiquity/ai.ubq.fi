@@ -109,7 +109,7 @@ impl PlatformCompactionHost {
 
 impl CompactionHost for PlatformCompactionHost {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        crate::storage::now_ms()
+        gateway_worker_storage::store::now_ms()
     }
     fn random_uuid(&self) -> Result<String, GatewayError> {
         random::random_uuid()

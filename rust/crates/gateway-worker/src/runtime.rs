@@ -1,12 +1,13 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
-use crate::{
-    authority::RemoteAuthorityStore,
-    catalog::CatalogState,
-    host::{PlatformHost, auth_config},
-    inference,
-    storage::now_ms,
-    transport::{HeaderLimits, body, bounded_headers, outbound::Cancellation},
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::catalog::CatalogState;
+use crate::host::PlatformHost;
+use crate::host::auth_config;
+use crate::inference;
+use crate::transport::HeaderLimits;
+use crate::transport::body;
+use crate::transport::bounded_headers;
+use crate::transport::outbound::Cancellation;
 use gateway_admin::service::AdminService;
 use gateway_auth::{
     resolve::AuthService,
@@ -23,6 +24,7 @@ use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
+use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Method, Request, Response};
 

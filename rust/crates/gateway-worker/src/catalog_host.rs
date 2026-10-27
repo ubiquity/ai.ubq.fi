@@ -1,13 +1,12 @@
 //! Fixed catalog reads bound to credential-owner publications and source revisions.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformHost, provider_secret, response_bytes, setting},
-    storage::now_ms,
-    transport::{
-        outbound::{PinnedDestination, send_http},
-        random,
-    },
-};
+use crate::authority::RemoteAuthorityStore;
+use crate::host::PlatformHost;
+use crate::host::provider_secret;
+use crate::host::response_bytes;
+use crate::host::setting;
+use crate::transport::outbound::PinnedDestination;
+use crate::transport::outbound::send_http;
+use crate::transport::random;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CodexAccount,
@@ -17,6 +16,7 @@ use gateway_core::{
     error::GatewayError,
     state::{AuthorityStore, RevisionCheck},
 };
+use gateway_worker_storage::store::now_ms;
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Url};
 

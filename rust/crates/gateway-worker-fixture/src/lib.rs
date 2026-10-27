@@ -15,7 +15,7 @@ pub const OPENLUX_DISCOVERY_SECRET: &str = "fixture-matrix-openlux-discovery";
 pub const OPENLUX_SPEND_SECRET: &str = "fixture-matrix-openlux-spend";
 
 fn now() -> i64 {
-    gateway_worker::storage::now_ms().unwrap_or(i64::MAX)
+    gateway_worker_storage::store::now_ms().unwrap_or(i64::MAX)
 }
 fn identity() -> Result<NativeTransportIdentity, GatewayError> {
     NativeTransportIdentity::new(

@@ -40,7 +40,7 @@ const SESSION: &str = "uos_ai_session_SYNTHETIC_WORKER_IMPORT_TOKEN";
 struct Clock;
 impl AuthorityClock for Clock {
     fn now_ms(&self) -> Result<i64, GatewayError> {
-        gateway_worker::storage::now_ms()
+        gateway_worker_storage::store::now_ms()
     }
 }
 struct Tokens;

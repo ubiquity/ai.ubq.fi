@@ -30,7 +30,7 @@ impl RequestHost {
     pub(super) async fn codex_accounts(
         &self,
     ) -> Result<(CodexAuthMetadata, Vec<CodexSourceAccount>), GatewayError> {
-        let at = crate::storage::now_ms()?;
+        let at = gateway_worker_storage::store::now_ms()?;
         let snapshot = codex::read_codex_source_pool(&self.store, at).await?;
         let (source, updated, accounts) = if let Some(snapshot) = snapshot {
             (
@@ -87,7 +87,7 @@ impl RequestHost {
                 "Administrative provider context does not match this request.",
             ));
         }
-        let at = crate::storage::now_ms()?;
+        let at = gateway_worker_storage::store::now_ms()?;
         let (codex, _) = self.codex_accounts().await?;
         let mut configured = BTreeSet::new();
         for (provider, key) in [
