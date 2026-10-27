@@ -1,0 +1,19 @@
+{
+  "fixedInputRoot": "/workspace/.ai-rust-inputs/continuation-01a17ebe/runtime-families-base-7694",
+  "hashes": {
+    "canonical-7694-bc8.bundle": "8277d71d387a8fc7434fe109d2950e31f08c08f4b065356879a742517b2f9620",
+    "source-files.json": "598ec832a7eb2ba603e5e4d883879fb5e7fbf8143fdb0628c8629ce61cb90c35",
+    "runtime-cloud-assignments-v1.md": "1892afbf538eeb1b46484f65b9a478e0b3631a3a444fa2c396c4f0f9dd2ce814",
+    "C-core-six-owner-api-v3.json": "843c705afd5441843191ad312c28c809df0df8a2d24ff21c460bc815fffca438"
+  },
+  "allMatch": true,
+  "base": "7694a49787c7379180cb0e268b8b03fac093d879",
+  "baseTree": "7a950bf53c082af013bf02d9deb12d5819c14723",
+  "firstCommand": "pwd",
+  "firstCommandObservedCwd": "/workspace/.ai-rust-source/admin-claude-runtime-family/repo/.codex-worktrees/handoff-2026-10-18-ai-rust-wasm-admin-claude-runtime-family-ac4da650491",
+  "branch": "codex/handoff-2026-10-18-ai-rust-wasm-admin-claude-runtime-family-ac4da650491",
+  "initialTrackedState": "clean",
+  "nonShallow": true,
+  "model": "unknown",
+  "effort": "unknown"
+}

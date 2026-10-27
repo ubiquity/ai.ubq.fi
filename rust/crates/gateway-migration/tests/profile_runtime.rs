@@ -1,5 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_admin_runtime::capabilities::{
+use gateway_admin_runtime_contracts::capabilities::{
     Context, MigrationImport, MigrationProfile, MigrationRequest,
 };
 use gateway_auth::types::{AuthResponse, AuthResponseBody};

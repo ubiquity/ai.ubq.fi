@@ -5,7 +5,7 @@ use gateway_claude_usage_history_records::{
     *,
 };
 mod support;
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_capacity_projection::{
     shapes::BUCKET_MS, shapes::RETENTION_MS, shapes::unavailable_snapshot,
 };
@@ -545,7 +545,7 @@ fn inventory(memory: &Memory, current: bool) -> InventoryHost {
     let base = Host::default();
     base.at.set(AT);
     let source=SourceJson::parse(r#"{"kind":"api_key","secret":"sk-ant-api-ab\ud83d\ude00synthetic-hidden-middle-tail","label":"label\udc00","updated_at_ms":1}"#).unwrap();
-    let credential = gateway_admin_runtime::claude::parse_source_credential(&source, "kv").unwrap();
+    let credential = gateway_claude_roster::claude::parse_source_credential(&source, "kv").unwrap();
     let bound = key(json!(["synthetic-binding"]));
     memory.rows.borrow_mut().insert(
         bound.0.clone(),

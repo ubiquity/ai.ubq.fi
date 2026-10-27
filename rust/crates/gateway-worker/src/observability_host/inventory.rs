@@ -1,10 +1,12 @@
 //! Passive provider metadata over the same request-owned authority; never refreshes credentials.
 use super::RequestHost;
-use gateway_admin_runtime::{capabilities::Context, claude, claude_access};
+use gateway_admin_runtime_contracts::capabilities::Context;
+use gateway_admin_runtime_records::claude_access;
 use gateway_auth::{
     crypto::sha256_hex,
     provider_credentials::{self as codex, CodexSourceAccount},
 };
+use gateway_claude_roster::claude;
 use gateway_claude_usage_history_records::types::CredentialKind;
 use gateway_core::{
     error::GatewayError,

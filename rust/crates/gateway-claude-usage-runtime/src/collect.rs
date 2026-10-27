@@ -1,9 +1,9 @@
 use crate::fetch::{self, ResultData, UsageHost};
-use gateway_admin_runtime::claude::{self, AccountBinding};
 use gateway_auth::{
     crypto::uuid_from_random,
     store::{check, commit, key},
 };
+use gateway_claude_roster::claude::{self, AccountBinding};
 use gateway_claude_usage_protocol::state::UsageState;
 use gateway_claude_usage_quota::QuotaState;
 use gateway_core::{
@@ -49,7 +49,7 @@ pub async fn load<S: AuthorityStore>(
         return Ok(None);
     }
     store
-        .read(&gateway_claude_runtime::persistence::quota_key(account))
+        .read(&gateway_claude_policy::quota::quota_key(account))
         .await?
         .as_ref()
         .map(|r| gateway_claude_usage_quota::parse_record(r, now))
@@ -146,7 +146,7 @@ async fn collect_claimed<S: AuthorityStore, H: UsageHost>(
     }
     let result = fetch::fetch(host, account).await?;
     let usage = result.usage();
-    let Some(state) = gateway_claude_runtime::quota::record_usage(
+    let Some(state) = gateway_claude_policy::quota::record_usage(
         store,
         host,
         account,
@@ -172,8 +172,8 @@ async fn collect_claimed<S: AuthorityStore, H: UsageHost>(
             source_observed_at_ms: usage.observed_at_ms,
             sampled_at_ms: usage.attempted_at_ms,
             response_status: usage.status,
-            state: if gateway_claude_runtime::quota::blocked(Some(&state), usage.attempted_at_ms)
-                || gateway_claude_runtime::quota::cooling_down(Some(&state), usage.attempted_at_ms)
+            state: if gateway_claude_policy::quota::blocked(Some(&state), usage.attempted_at_ms)
+                || gateway_claude_policy::quota::cooling_down(Some(&state), usage.attempted_at_ms)
             {
                 "unavailable"
             } else {

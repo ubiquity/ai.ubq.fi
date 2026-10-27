@@ -1,7 +1,7 @@
 //! Existing public profile import, distinct from stopped complete-state adoption.
 use crate::{Mapping, Row, Transform, capture::SourceEntry, invalid, starts};
 use gateway_admin_data::policy::{self as migration, ImportOptions, Profile};
-use gateway_admin_runtime::capabilities::{Context, MigrationProfile, MigrationRequest};
+use gateway_admin_runtime_contracts::capabilities::{Context, MigrationProfile, MigrationRequest};
 use gateway_auth::types::AuthResponse;
 use gateway_core::error::GatewayError;
 use gateway_core::query::QueryStore;

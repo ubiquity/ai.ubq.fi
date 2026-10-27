@@ -1,0 +1,22 @@
+[package]
+name = "gateway-claude-roster"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+gateway-source.workspace = true
+gateway-schema.workspace = true
+gateway-core.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-admin-runtime-records.workspace = true
+
+[dev-dependencies]
+gateway-admin-test-support.workspace = true
+
+[lints]
+workspace = true

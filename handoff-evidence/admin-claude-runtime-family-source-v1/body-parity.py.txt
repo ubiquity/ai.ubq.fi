@@ -1,0 +1,133 @@
+from pathlib import Path
+import re,json,subprocess,hashlib,collections
+R=Path('rust/crates');E=Path('handoff-evidence/admin-claude-runtime-family-source-v1');BASE='7694a49787c7379180cb0e268b8b03fac093d879'
+# Lexical body inventory only: literal bytes are tokens, comments/whitespace are skipped.
+# This is not the repository AST/parser gate and never compiles or executes product code.
+def tokens(s):
+ out=[];i=0
+ while i<len(s):
+  if s[i].isspace():i+=1;continue
+  if s.startswith('//',i):
+   j=s.find('\n',i);i=len(s) if j<0 else j+1;continue
+  if s.startswith('/*',i):
+   depth=1;i+=2
+   while depth:
+    if s.startswith('/*',i):depth+=1;i+=2
+    elif s.startswith('*/',i):depth-=1;i+=2
+    else:i+=1
+   continue
+  raw=re.match(r'(?:br|cr|r)(#*)"',s[i:])
+  if raw:
+   close='"'+raw.group(1);end=s.index(close,i+len(raw.group(0)))+len(close);out.append(s[i:end]);i=end;continue
+  quoted=re.match(r'(?:b|c)?"',s[i:])
+  char=re.match(r"(?:b)?'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'",s[i:])
+  if quoted:
+   end=i+len(quoted.group(0))
+   while end<len(s):
+    if s[end]=='\\':end+=2
+    elif s[end]=='"':end+=1;break
+    else:end+=1
+   out.append(s[i:end]);i=end;continue
+  if char:out.append(char.group());i+=len(char.group());continue
+  word=re.match(r'(?:r#)?[A-Za-z_][A-Za-z0-9_]*|[0-9]+(?:\.[0-9]+)?(?:[a-z][0-9]+)?',s[i:])
+  if word:out.append(word.group());i+=len(word.group());continue
+  out.append(s[i]);i+=1
+ return out
+
+def functions(s):
+ ts=tokens(s);out=[]
+ for i,t in enumerate(ts):
+  if t!='fn' or i+2>=len(ts) or ts[i+2]!='(': # generic functions have < before arguments
+   if t!='fn' or i+2>=len(ts) or ts[i+2]!='<':continue
+  name=ts[i+1];at=i+2;rounds=0;angles=0
+  while at<len(ts):
+   t=ts[at]
+   if t=='(':rounds+=1
+   elif t==')':rounds-=1
+   elif t==';' and rounds==0:break
+   elif t=='{' and rounds==0:
+    depth=1;end=at+1
+    while depth:
+     if ts[end]=='{':depth+=1
+     elif ts[end]=='}':depth-=1
+     end+=1
+    out.append({'name':name,'body':ts[at+1:end-1]});break
+   at+=1
+ return out
+maps=json.loads((E/'direct-import-moves.json').read_text());mapping={**maps['mapping'],**maps['currentDefiningAPIs']}
+# Replace nominal paths in code tokens only; quoted/raw fixtures are never normalized.
+allprefix={**mapping,
+ 'persistence::now':'now','persistence::revision':'revision',
+ 'gateway_claude_policy::host::now':'now','gateway_claude_policy::host::revision':'revision',
+ 'crate::unavailable':'unavailable','crate::invalid':'invalid',
+ 'crate::error::unavailable':'unavailable','crate::error::invalid':'invalid',
+ 'gateway_claude_policy::error::unavailable':'unavailable','gateway_claude_policy::error::invalid':'invalid',
+ 'crate::persistence::quota_key':'quota_key',
+ 'crate::claude_access':'gateway_admin_runtime_records::claude_access',
+ 'gateway_admin_runtime_records::claude_access':'gateway_admin_runtime_records::claude_access',
+}
+# Long form -> short defining imports. No runtime operation or literal is translated.
+shorts=['Context','ErrorDiagnostics','MigrationRequest','ClaudePoolHost','PoolConfig','SelectionInput','ResponseObservation','HealthObservation']
+for typ in shorts:
+ for prefix in ['gateway_admin_runtime::capabilities','gateway_admin_runtime_contracts::capabilities','gateway_claude_runtime::host','gateway_claude_policy::host','host']:
+  allprefix[prefix+'::'+typ]=typ
+# Imports in bodies remain scope declarations, not executable algorithms.
+def strip_use(ts):
+ out=[];i=0
+ while i<len(ts):
+  if ts[i]=='use':
+   while ts[i]!=';':i+=1
+   i+=1;continue
+  out.append(ts[i]);i+=1
+ return out
+
+def canon(ts,ps=''):
+ ts=strip_use(ts)
+ # General defining maps precede the final short-form mappings.
+ for mp in [mapping,allprefix]:
+  for old,new in sorted(mp.items(),key=lambda x:-len(x[0])):
+   a=tokens(old);b=tokens(new);out=[];i=0
+   while i<len(ts):
+    if ts[i:i+len(a)]==a:out+=b;i+=len(a)
+    else:out.append(ts[i]);i+=1
+   ts=out
+ s=''.join(ts)
+ s=re.sub(r',(?=[)\]}])','',s)
+ s=s.replace('serde_json::json!', 'json!')
+ s=s.replace('crate::claude::source_secret::', 'gateway_claude_roster::claude::source_secret::')
+ s=re.sub(r'\|\|\{([^{};]+)\}',r'||\1',s)
+ # Only receiver expressions are structurally new; borrowed fields are exactly the prior references.
+ for typ in ['SettingsAdmin','KernelAdmin','PaidAdmin','DiagnosticsAdmin']:
+  literal=typ+'{store:self.store,host:self.host,capabilities:self.capabilities'+(',config:self.config' if typ=='SettingsAdmin' else '')+'}'
+  s=s.replace('('+literal+')','self').replace(literal,'self')
+ if ps.endswith('/tests/key_deletion.rs'):
+  s=s.replace('.finish_deletion(','.finish_key_deletion(').replace('.abort_deletion(','.abort_key_deletion(')
+ s=re.sub(r'=>\{(self\.[A-Za-z_]+\([^{}]*?\)\.await)\}',r'=>\1',s)
+ s=re.sub(r'\.await,(?=[A-Z])','.await',s)
+ # Rustfmt trailing commas have no source effect and may appear in expanded calls.
+ s=re.sub(r',(?=[)\]}])','',s)
+ return s
+
+reloc={v['old']:v['new'] for v in json.loads((E/'relocations.json').read_text())}
+newowners=set(json.loads((E/'registrations.json').read_text())['newOwners'])
+newfiles={str(p):functions(p.read_text()) for n in newowners|{'gateway-admin-runtime','gateway-claude-runtime','gateway-admin-test-support','gateway-claude-runtime-test-support'} for p in (R/n).rglob('*.rs')}
+base=json.loads((E/'baseline.json').read_text());bodyresults=[];testresults=[];fail=[]
+for file in base['files']:
+ ps=file['path'];old=subprocess.check_output(['git','show',BASE+':'+ps]).decode();oldf=functions(old)
+ paths=[reloc.get(ps,ps)]
+ if ps.endswith('gateway-admin-runtime/src/claude/source_tests.rs'):paths=['rust/crates/gateway-claude-roster/src/claude/source_tests.rs','rust/crates/gateway-claude-roster/tests/source_records.rs','rust/crates/gateway-admin-test-support/src/claude_source_fixtures.rs']
+ if ps.endswith('gateway-claude-runtime/src/pool.rs'):paths+=['rust/crates/gateway-claude-policy/src/selection.rs']
+ if ps.endswith('gateway-claude-runtime/src/persistence.rs'):paths+=['rust/crates/gateway-claude-policy/src/host.rs','rust/crates/gateway-claude-policy/src/selection.rs','rust/crates/gateway-claude-policy/src/quota.rs']
+ if ps.endswith('gateway-claude-runtime/src/lib.rs'):paths=['rust/crates/gateway-claude-policy/src/error.rs']
+ if ps.endswith('gateway-admin-runtime/src/kernel.rs'):paths+=['rust/crates/gateway-admin-runtime-records/src/kernel_data.rs']
+ candidates=[(p,f) for p in paths if Path(p).exists() for f in newfiles.get(p,functions(Path(p).read_text()))]
+ for f in oldf:
+  expected=canon(f['body'],ps);possible=[(p,g) for p,g in candidates if g['name']==f['name']];matches=[(p,g) for p,g in possible if canon(g['body'],ps)==expected]
+  row={'oldPath':ps,'name':f['name'],'newPath':matches[0][0] if matches else (possible[0][0] if possible else None),'lexicalBodyEqualAfterDeclaredNominalMoves':bool(matches)}
+  bodyresults.append(row)
+  if f['name'] in file['testNames']:testresults.append(row)
+  if not matches:
+   fail.append({**row,'before':expected,'after':[canon(g['body'],ps) for _,g in possible]})
+(E/'body-parity.json').write_text(json.dumps({'classification':'LEXICAL_BODY_RELOCATION_INVENTORY_NOT_PARSER_OR_COMPILER_PROOF','nominalMaps':allprefix,'bodies':bodyresults,'tests':testresults,'unmatchedCount':len(fail),'unmatched':fail},indent=2)+'\n')
+print('original bodies',len(bodyresults),'test bodies',len(testresults),'unmatched',len(fail))
+for v in fail:print(v['oldPath'],v['name'],len(v['before']),[len(x) for x in v['after']])

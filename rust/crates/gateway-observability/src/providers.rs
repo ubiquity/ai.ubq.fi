@@ -7,7 +7,7 @@ use crate::{
     store,
     types::{HealthProvider, HealthTarget, ObservabilityHost},
 };
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_auth::types::AuthResponse;
 use gateway_claude_usage_protocol::readback::quota as quota_readback;
 use gateway_core::{error::GatewayError, query::QueryStore, source_json::SourceJson};

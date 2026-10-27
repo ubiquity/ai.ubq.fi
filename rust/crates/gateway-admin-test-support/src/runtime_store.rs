@@ -1,11 +1,11 @@
 //! Admin runtime fixture storage retaining CAS, query and read-count behavior.
 use gateway_core::{
-    error::GatewayError,
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     state::{
         AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
     },
 };
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::{
     cell::{Cell, RefCell},
@@ -20,7 +20,7 @@ pub struct Store {
 }
 impl Store {
     pub fn put(&self, parts: Value, value: Value) {
-        let key = gateway_auth::store::key(parts);
+        let key = gateway_auth_primitives::store::key(parts);
         self.rows
             .borrow_mut()
             .insert(key.0, StoredRecord::json("fixture", value, None));
@@ -28,7 +28,7 @@ impl Store {
     pub fn get(&self, parts: Value) -> Option<Value> {
         self.rows
             .borrow()
-            .get(&gateway_auth::store::key(parts).0)
+            .get(&gateway_auth_primitives::store::key(parts).0)
             .map(|r| r.value.clone())
     }
 }

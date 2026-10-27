@@ -6,6 +6,12 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source.workspace = true
+gateway-claude-roster.workspace = true
+gateway-claude-policy.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-admin-runtime-records.workspace = true
 gateway-claude-usage-quota.workspace = true
 gateway-catalog-provider.workspace = true
 gateway-admin-runtime.workspace = true

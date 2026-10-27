@@ -1,28 +1,36 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_admin_runtime::{
-    claude::{self, AccountBinding, AccountStore, Credential, CredentialKind},
-    claude_access,
+use gateway_admin_runtime_records::claude_access;
+use gateway_auth_contracts::{
+    types::AuthHost,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_auth::types::AuthHost;
-use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_auth::webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto};
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_claude_runtime::host::{
-    ClaudePoolHost, HealthObservation, OutcomeDecision, PoolConfig, PoolSelection,
-    ResponseObservation, SelectedAccount, SelectionInput, WorkspaceResponse,
+use gateway_claude_policy::{
+    host::{
+        ClaudePoolHost, HealthObservation, PoolConfig, ResponseObservation, SelectionInput,
+        WorkspaceResponse,
+    },
+    quota::quota_key,
 };
-use gateway_claude_runtime::persistence::quota_key;
-use gateway_claude_runtime::pool::ClaudePoolSession;
+use gateway_claude_roster::claude::{
+    self, AccountBinding, AccountStore, Credential, CredentialKind,
+};
+use gateway_claude_runtime::{
+    host::{OutcomeDecision, PoolSelection, SelectedAccount},
+    pool::ClaudePoolSession,
+};
 use gateway_claude_usage_quota as quota;
 use gateway_claude_usage_quota::observation::AcceptedObservation;
-use gateway_core::claude::ClaudeErrorEvidence as ErrorEvidence;
-use gateway_core::error::GatewayError;
-use gateway_core::js_string::JsString16;
-use gateway_core::state::{
-    AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
+use gateway_core::{
+    claude::ClaudeErrorEvidence as ErrorEvidence,
+    state::{
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RevisionCheck, StoredRecord,
+    },
 };
 use gateway_providers::types::Headers;
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use std::{
@@ -217,7 +225,7 @@ pub fn seed(store: &Store, accounts: Vec<AccountBinding>) -> PoolConfig {
     }
 }
 pub fn native_key() -> RecordKey {
-    gateway_auth::store::key(json!(["uos_ai", "fixture_claude_native_owner"]))
+    gateway_auth_primitives::store::key(json!(["uos_ai", "fixture_claude_native_owner"]))
 }
 pub struct Host {
     pub store: Store,
@@ -234,7 +242,7 @@ pub struct Host {
 }
 impl Host {
     pub fn new(store: &Store) -> Self {
-        Self{store:store.clone(),random:Cell::new(50),catalog_calls:Cell::new(0),catalog_action:RefCell::default(),catalog:RefCell::new(ProviderCatalog{models:vec![gateway_core::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["low","high","Custom"]})).unwrap()],updated_at_ms:Some(NOW),configured:true,available:true,stale:false}),workspace_calls:Cell::new(0),workspace_action:RefCell::default(),workspace:RefCell::new(WorkspaceResponse{status:200,body:json!({"data":[{"id":"wrkspc_first","name":"Other"},{"id":"wrkspc_default","name":"Default"}]}).to_string()}),accepted:RefCell::default(),health:RefCell::default(),fail_telemetry:Cell::new(false)}
+        Self{store:store.clone(),random:Cell::new(50),catalog_calls:Cell::new(0),catalog_action:RefCell::default(),catalog:RefCell::new(ProviderCatalog{models:vec![gateway_source::source_json::SourceJson::from_serializable(&json!({"id":MODEL,"supports_disabled_thinking":true,"supported_reasoning_levels":["low","high","Custom"]})).unwrap()],updated_at_ms:Some(NOW),configured:true,available:true,stale:false}),workspace_calls:Cell::new(0),workspace_action:RefCell::default(),workspace:RefCell::new(WorkspaceResponse{status:200,body:json!({"data":[{"id":"wrkspc_first","name":"Other"},{"id":"wrkspc_default","name":"Default"}]}).to_string()}),accepted:RefCell::default(),health:RefCell::default(),fail_telemetry:Cell::new(false)}
     }
 }
 impl WebAuthnCrypto for Host {
@@ -309,7 +317,7 @@ impl ClaudePoolHost for Host {
         _: &AccountBinding,
     ) -> Result<Vec<RevisionCheck>, GatewayError> {
         let key = native_key();
-        Ok(vec![gateway_auth::store::check(
+        Ok(vec![gateway_auth_primitives::store::check(
             &key,
             self.store.get(&key).as_ref(),
         )])
@@ -362,23 +370,23 @@ impl ClaudePoolHost for Host {
         }
     }
 }
-pub fn raw() -> gateway_core::source_json::SourceJson {
-    gateway_core::source_json::SourceJson::from_serializable(
+pub fn raw() -> gateway_source::source_json::SourceJson {
+    gateway_source::source_json::SourceJson::from_serializable(
         &json!({"model":MODEL,"input":"fixture"}),
     )
     .unwrap()
 }
-pub fn fixture_effort(raw: &gateway_core::source_json::SourceJson) -> Option<JsString16> {
-    gateway_core::source_serialization::member(raw, "reasoning")
-        .and_then(|value| gateway_core::source_serialization::member(&value, "effort"))
+pub fn fixture_effort(raw: &gateway_source::source_json::SourceJson) -> Option<JsString16> {
+    gateway_source::source_serialization::member(raw, "reasoning")
+        .and_then(|value| gateway_source::source_serialization::member(&value, "effort"))
         .as_ref()
-        .and_then(gateway_core::source_serialization::string)
+        .and_then(gateway_source::source_serialization::string)
 }
 pub fn selected(
     session: &ClaudePoolSession,
     store: &Store,
     host: &Host,
-    raw: &gateway_core::source_json::SourceJson,
+    raw: &gateway_source::source_json::SourceJson,
 ) -> SelectedAccount {
     match run(session.select(
         store,

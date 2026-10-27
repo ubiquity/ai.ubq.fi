@@ -1,20 +1,21 @@
 //! Composition helpers for the original admin-runtime contract cases.
 use crate::{runtime_host::Host, runtime_store::Store};
 use gateway_admin_contracts::operations::AdminInput;
-use gateway_admin_runtime::{
-    AdminRuntime, RuntimeConfig,
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig,
     capabilities::{Context, ErrorDiagnostics, PricingSnapshot, RuntimeCapabilities},
 };
-use gateway_auth::types::{AuthMethod, AuthPrincipal, AuthResponseBody};
+use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal, AuthResponseBody};
 use gateway_core::{
-    error::GatewayError, js_string::JsString16, model::ModelId,
-    source_control::encode_source_control_record, source_json::SourceJson, state::StoredRecord,
+    model::ModelId, source_control::encode_source_control_record, state::StoredRecord,
 };
 use gateway_schema::{
     catalog_store::{codex_snapshot_key, runtime_config_key},
     runtime_config::build_runtime_config,
     snapshot::ModelSnapshot,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 

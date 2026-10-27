@@ -1,0 +1,565 @@
+{
+  "owned": {
+    "gateway-admin-diagnostics-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-source"
+    ],
+    "gateway-admin-kernel-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-paid-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-keys",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-runtime": [
+      "gateway-admin",
+      "gateway-admin-contracts",
+      "gateway-admin-diagnostics-runtime",
+      "gateway-admin-kernel-runtime",
+      "gateway-admin-keys",
+      "gateway-admin-paid-runtime",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-admin-settings-runtime",
+      "gateway-auth-contracts",
+      "gateway-auth-native-wire",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-claude-usage-protocol",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-runtime-contracts": [
+      "gateway-admin-contracts",
+      "gateway-auth-contracts",
+      "gateway-auth-native-wire",
+      "gateway-auth-primitives",
+      "gateway-claude-roster",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-runtime-records": [
+      "gateway-admin-contracts",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-settings-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-kernel-runtime",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-test-support": [
+      "gateway-admin",
+      "gateway-admin-contracts",
+      "gateway-admin-keys",
+      "gateway-admin-runtime",
+      "gateway-admin-runtime-contracts",
+      "gateway-auth",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-claude-roster",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-claude-policy": [
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-catalog-provider",
+      "gateway-claude-roster",
+      "gateway-claude-usage-protocol",
+      "gateway-claude-usage-quota",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-providers",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-claude-roster": [
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-claude-runtime": [
+      "gateway-admin-runtime-records",
+      "gateway-auth-primitives",
+      "gateway-catalog-provider",
+      "gateway-catalog-runtime",
+      "gateway-claude-policy",
+      "gateway-claude-roster",
+      "gateway-claude-usage-protocol",
+      "gateway-claude-usage-quota",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-providers",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-claude-runtime-test-support": [
+      "gateway-admin-runtime",
+      "gateway-admin-runtime-records",
+      "gateway-auth",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-catalog-provider",
+      "gateway-catalog-runtime",
+      "gateway-claude-policy",
+      "gateway-claude-roster",
+      "gateway-claude-runtime",
+      "gateway-claude-usage-quota",
+      "gateway-core",
+      "gateway-providers",
+      "gateway-schema",
+      "gateway-source"
+    ]
+  },
+  "normalClosure": {
+    "gateway-source": [],
+    "gateway-auth-native-wire": [
+      "gateway-source"
+    ],
+    "gateway-core": [
+      "gateway-source"
+    ],
+    "gateway-auth-passport-contracts": [
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-primitives": [
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-contracts": [
+      "gateway-auth-native-wire",
+      "gateway-auth-passport-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-attestation": [
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-credentials": [
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-native-contracts": [
+      "gateway-auth-native-wire",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-native-import-data": [
+      "gateway-auth-native-contracts",
+      "gateway-auth-native-wire",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-native-protocol": [
+      "gateway-auth-credentials",
+      "gateway-auth-native-contracts",
+      "gateway-auth-native-import-data",
+      "gateway-auth-native-wire",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-native-proof": [
+      "gateway-auth-native-contracts",
+      "gateway-auth-native-protocol",
+      "gateway-auth-native-wire",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-passkeys": [
+      "gateway-auth-attestation",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-passport-sessions": [
+      "gateway-auth-contracts",
+      "gateway-auth-passport-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth-passport": [
+      "gateway-auth-contracts",
+      "gateway-auth-passport-contracts",
+      "gateway-auth-passport-sessions",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-auth": [
+      "gateway-auth-attestation",
+      "gateway-auth-contracts",
+      "gateway-auth-credentials",
+      "gateway-auth-native-contracts",
+      "gateway-auth-native-import-data",
+      "gateway-auth-native-proof",
+      "gateway-auth-native-protocol",
+      "gateway-auth-native-wire",
+      "gateway-auth-passkeys",
+      "gateway-auth-passport",
+      "gateway-auth-passport-contracts",
+      "gateway-auth-passport-sessions",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-source"
+    ],
+    "gateway-decision-protocol": [
+      "gateway-core"
+    ],
+    "gateway-schema": [
+      "gateway-core",
+      "gateway-decision-protocol"
+    ],
+    "gateway-profile-values": [
+      "gateway-core",
+      "gateway-schema"
+    ],
+    "gateway-admin-contracts": [
+      "gateway-auth",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-schema"
+    ],
+    "gateway-providers": [
+      "gateway-core",
+      "gateway-decision-protocol",
+      "gateway-schema"
+    ],
+    "gateway-authority": [
+      "gateway-auth",
+      "gateway-auth-native-wire",
+      "gateway-core",
+      "gateway-providers",
+      "gateway-schema"
+    ],
+    "gateway-admin-runtime-records": [
+      "gateway-admin-contracts",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-claude-roster": [
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-runtime-contracts": [
+      "gateway-admin-contracts",
+      "gateway-auth-contracts",
+      "gateway-auth-native-wire",
+      "gateway-auth-primitives",
+      "gateway-claude-roster",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-diagnostics-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-source"
+    ],
+    "gateway-admin-kernel-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-migration-ledger": [
+      "gateway-core",
+      "gateway-profile-values"
+    ],
+    "gateway-profile-source": [
+      "gateway-core",
+      "gateway-profile-values"
+    ],
+    "gateway-admin-data": [
+      "gateway-core",
+      "gateway-migration-ledger",
+      "gateway-profile-source",
+      "gateway-profile-values"
+    ],
+    "gateway-ledger-audit": [
+      "gateway-admin-data",
+      "gateway-core",
+      "gateway-migration-ledger",
+      "gateway-profile-values"
+    ],
+    "gateway-source-audit": [
+      "gateway-admin-data",
+      "gateway-core",
+      "gateway-ledger-audit",
+      "gateway-migration-ledger",
+      "gateway-profile-values"
+    ],
+    "gateway-admin-keys": [
+      "gateway-admin-contracts",
+      "gateway-auth",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-source-audit"
+    ],
+    "gateway-admin-paid-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-keys",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-kernel": [
+      "gateway-admin-contracts",
+      "gateway-auth",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-migration-ledger"
+    ],
+    "gateway-admin": [
+      "gateway-admin-contracts",
+      "gateway-admin-kernel",
+      "gateway-admin-keys",
+      "gateway-auth",
+      "gateway-authority",
+      "gateway-core"
+    ],
+    "gateway-admin-settings-runtime": [
+      "gateway-admin-contracts",
+      "gateway-admin-kernel-runtime",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-claude-usage-protocol": [
+      "gateway-core"
+    ],
+    "gateway-admin-runtime": [
+      "gateway-admin",
+      "gateway-admin-contracts",
+      "gateway-admin-diagnostics-runtime",
+      "gateway-admin-kernel-runtime",
+      "gateway-admin-keys",
+      "gateway-admin-paid-runtime",
+      "gateway-admin-runtime-contracts",
+      "gateway-admin-runtime-records",
+      "gateway-admin-settings-runtime",
+      "gateway-auth-contracts",
+      "gateway-auth-native-wire",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-claude-usage-protocol",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-admin-test-support": [
+      "gateway-admin",
+      "gateway-admin-contracts",
+      "gateway-admin-keys",
+      "gateway-admin-runtime",
+      "gateway-admin-runtime-contracts",
+      "gateway-auth",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-authority",
+      "gateway-claude-roster",
+      "gateway-core",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-catalog-provider": [
+      "gateway-auth",
+      "gateway-core",
+      "gateway-decision-protocol",
+      "gateway-providers",
+      "gateway-schema"
+    ],
+    "gateway-claude-usage-quota": [
+      "gateway-claude-usage-protocol",
+      "gateway-core",
+      "gateway-schema"
+    ],
+    "gateway-claude-policy": [
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-catalog-provider",
+      "gateway-claude-roster",
+      "gateway-claude-usage-protocol",
+      "gateway-claude-usage-quota",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-providers",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-catalog-runtime": [
+      "gateway-authority",
+      "gateway-catalog-provider",
+      "gateway-core",
+      "gateway-providers",
+      "gateway-schema"
+    ],
+    "gateway-claude-runtime": [
+      "gateway-admin-runtime-records",
+      "gateway-auth-primitives",
+      "gateway-catalog-provider",
+      "gateway-catalog-runtime",
+      "gateway-claude-policy",
+      "gateway-claude-roster",
+      "gateway-claude-usage-protocol",
+      "gateway-claude-usage-quota",
+      "gateway-core",
+      "gateway-profile-values",
+      "gateway-providers",
+      "gateway-schema",
+      "gateway-source"
+    ],
+    "gateway-claude-runtime-test-support": [
+      "gateway-admin-runtime",
+      "gateway-admin-runtime-records",
+      "gateway-auth",
+      "gateway-auth-contracts",
+      "gateway-auth-primitives",
+      "gateway-catalog-provider",
+      "gateway-catalog-runtime",
+      "gateway-claude-policy",
+      "gateway-claude-roster",
+      "gateway-claude-runtime",
+      "gateway-claude-usage-quota",
+      "gateway-core",
+      "gateway-providers",
+      "gateway-schema",
+      "gateway-source"
+    ]
+  },
+  "topologicalOrder": [
+    "gateway-source",
+    "gateway-auth-native-wire",
+    "gateway-core",
+    "gateway-auth-passport-contracts",
+    "gateway-auth-primitives",
+    "gateway-auth-contracts",
+    "gateway-auth-attestation",
+    "gateway-auth-credentials",
+    "gateway-auth-native-contracts",
+    "gateway-auth-native-import-data",
+    "gateway-auth-native-protocol",
+    "gateway-auth-native-proof",
+    "gateway-auth-passkeys",
+    "gateway-auth-passport-sessions",
+    "gateway-auth-passport",
+    "gateway-auth",
+    "gateway-decision-protocol",
+    "gateway-schema",
+    "gateway-profile-values",
+    "gateway-admin-contracts",
+    "gateway-providers",
+    "gateway-authority",
+    "gateway-admin-runtime-records",
+    "gateway-claude-roster",
+    "gateway-admin-runtime-contracts",
+    "gateway-admin-diagnostics-runtime",
+    "gateway-admin-kernel-runtime",
+    "gateway-migration-ledger",
+    "gateway-profile-source",
+    "gateway-admin-data",
+    "gateway-ledger-audit",
+    "gateway-source-audit",
+    "gateway-admin-keys",
+    "gateway-admin-paid-runtime",
+    "gateway-admin-kernel",
+    "gateway-admin",
+    "gateway-admin-settings-runtime",
+    "gateway-claude-usage-protocol",
+    "gateway-admin-runtime",
+    "gateway-admin-test-support",
+    "gateway-catalog-provider",
+    "gateway-claude-usage-quota",
+    "gateway-claude-policy",
+    "gateway-catalog-runtime",
+    "gateway-claude-runtime",
+    "gateway-claude-runtime-test-support"
+  ],
+  "devEdgesDoNotGrantRuntimeAuthority": true
+}

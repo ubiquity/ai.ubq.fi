@@ -9,8 +9,8 @@ use worker::js_sys;
 
 pub async fn execute_profile<S: QueryStore>(
     store: &S,
-    request: gateway_admin_runtime::capabilities::MigrationRequest,
-    context: gateway_admin_runtime::capabilities::Context,
+    request: gateway_admin_runtime_contracts::capabilities::MigrationRequest,
+    context: gateway_admin_runtime_contracts::capabilities::Context,
 ) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
     gateway_migration::profile_runtime::execute_profile(store, &ProfileHost, request, context).await
 }

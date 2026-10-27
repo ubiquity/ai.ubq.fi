@@ -1,8 +1,8 @@
 //! Source account selectors, generation checks and submitted-workspace projection.
 //! Inputs remain data; account mutations stay with their existing authority.
 pub mod readback;
-use gateway_admin_runtime::claude::{self, AccountBinding, Workspace};
 use gateway_auth::types::AuthHost;
+use gateway_claude_roster::claude::{self, AccountBinding, Workspace};
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source, state::AuthorityStore,

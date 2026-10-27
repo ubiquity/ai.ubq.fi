@@ -1,5 +1,5 @@
 //! Named administrative Codex operations, always authenticated from the original request.
-use gateway_admin_runtime::capabilities::{CodexRequest, Context};
+use gateway_admin_runtime_contracts::capabilities::{CodexRequest, Context};
 use gateway_auth::{
     resolve::AuthService,
     types::{AuthConfig, AuthRequest, AuthResponse},

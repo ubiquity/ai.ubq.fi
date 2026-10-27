@@ -1,7 +1,9 @@
 //! Original admin-contract clock, entropy and denied host capabilities.
-use gateway_auth::types::AuthHost;
-use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_core::error::GatewayError;
+use gateway_auth_contracts::{
+    types::AuthHost,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+};
+use gateway_source::error::GatewayError;
 use std::cell::Cell;
 
 #[derive(Default)]
@@ -41,13 +43,13 @@ impl AuthHost for Host {
 }
 impl gateway_authority::store::TokenSource for &Host {
     fn next_token(&self) -> Result<String, GatewayError> {
-        gateway_auth::crypto::uuid_from_random(&self.random_bytes(16)?)
+        gateway_auth_primitives::crypto::uuid_from_random(&self.random_bytes(16)?)
     }
 }
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -56,7 +58,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",

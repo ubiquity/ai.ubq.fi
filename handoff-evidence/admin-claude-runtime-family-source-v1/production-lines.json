@@ -1,0 +1,354 @@
+{
+  "owned": {
+    "gateway-admin-diagnostics-runtime": {
+      "before": 0,
+      "after": 539,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-diagnostics-runtime/src/brief.rs",
+          "lines": 301,
+          "bytes": 11500,
+          "sha256": "30967c0dd18a824cc673ff937e573a06c9ba92e3aee04dde093607e67e0c8341"
+        },
+        {
+          "path": "rust/crates/gateway-admin-diagnostics-runtime/src/errors.rs",
+          "lines": 229,
+          "bytes": 9150,
+          "sha256": "4a3b49a0eb14205b0a2af644d5c82507b04bd45feb1c4d2f07866ed1c660324b"
+        },
+        {
+          "path": "rust/crates/gateway-admin-diagnostics-runtime/src/lib.rs",
+          "lines": 9,
+          "bytes": 222,
+          "sha256": "8f2d990e1d29e93814da1ebfd0a117a535bc7cd1c1b5c9fa34b0ac6db8064dfa"
+        }
+      ]
+    },
+    "gateway-admin-kernel-runtime": {
+      "before": 0,
+      "after": 869,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-kernel-runtime/src/kernel.rs",
+          "lines": 861,
+          "bytes": 35281,
+          "sha256": "41d93c73fe5e553d45f4ef1915db06e2b801d8d986bdfb5e745b84db71ba9ab6"
+        },
+        {
+          "path": "rust/crates/gateway-admin-kernel-runtime/src/lib.rs",
+          "lines": 8,
+          "bytes": 202,
+          "sha256": "0b689da554b1cdf8ea266b2edb47e5f19b596cc139d20874230869bc46ad9b7c"
+        }
+      ]
+    },
+    "gateway-admin-paid-runtime": {
+      "before": 0,
+      "after": 539,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-paid-runtime/src/lib.rs",
+          "lines": 8,
+          "bytes": 195,
+          "sha256": "b4118e6f0eb34a201013256fa6ef2e35122985147e7ce0f27ede09e26fa9d105"
+        },
+        {
+          "path": "rust/crates/gateway-admin-paid-runtime/src/paid.rs",
+          "lines": 531,
+          "bytes": 21397,
+          "sha256": "59a9919a9e3217e1b7b10a9a2b22a8472fa602c9aaec92f8d71edf3b7f72f090"
+        }
+      ]
+    },
+    "gateway-admin-runtime": {
+      "before": 5483,
+      "after": 693,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-runtime/src/lib.rs",
+          "lines": 693,
+          "bytes": 27599,
+          "sha256": "04141699fae1c65980d5c310434b1f72636ac735097c0bc9683ba4b62f2de376"
+        }
+      ]
+    },
+    "gateway-admin-runtime-contracts": {
+      "before": 0,
+      "after": 576,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-runtime-contracts/src/capabilities.rs",
+          "lines": 278,
+          "bytes": 8138,
+          "sha256": "dc85238cb23e93764146ba3817a5b02831d1a9782653f01a5881dce80a422094"
+        },
+        {
+          "path": "rust/crates/gateway-admin-runtime-contracts/src/lib.rs",
+          "lines": 9,
+          "bytes": 312,
+          "sha256": "2689e1f952f286361fcce6ac0e2fe935420504f9182cc83e4b7921a518c866a3"
+        },
+        {
+          "path": "rust/crates/gateway-admin-runtime-contracts/src/parse.rs",
+          "lines": 289,
+          "bytes": 10247,
+          "sha256": "452d86f664ece5d4225b44046751cdd03f66f50d2c9e9cdc86a82feb202a78c6"
+        }
+      ]
+    },
+    "gateway-admin-runtime-records": {
+      "before": 0,
+      "after": 587,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-runtime-records/src/claude_access.rs",
+          "lines": 216,
+          "bytes": 7776,
+          "sha256": "ed9ff9bf2c0d55640fa3b57b3ba306210644220e0f78a8f1fc4036785540f65a"
+        },
+        {
+          "path": "rust/crates/gateway-admin-runtime-records/src/kernel_data.rs",
+          "lines": 276,
+          "bytes": 9576,
+          "sha256": "cb8000614b9f5f6fbadb809f168b09ec1b119a8d8129e02edb1e6175ac2ccae2"
+        },
+        {
+          "path": "rust/crates/gateway-admin-runtime-records/src/lib.rs",
+          "lines": 4,
+          "bytes": 136,
+          "sha256": "f656ac28d32378357c734a1f87956a228925d84ef3a60540f77309f0ece8176b"
+        },
+        {
+          "path": "rust/crates/gateway-admin-runtime-records/src/store.rs",
+          "lines": 91,
+          "bytes": 2971,
+          "sha256": "d2d31814ab490687621aec1f0d9b3bd1fcf68ac0fee0564b6ce246ccddf71a00"
+        }
+      ]
+    },
+    "gateway-admin-settings-runtime": {
+      "before": 0,
+      "after": 720,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-settings-runtime/src/defaults.rs",
+          "lines": 387,
+          "bytes": 14792,
+          "sha256": "de8cc00f004b86d98c39cd34d5ed8d4b0593c29e18022347eff6ed127261725b"
+        },
+        {
+          "path": "rust/crates/gateway-admin-settings-runtime/src/lib.rs",
+          "lines": 10,
+          "bytes": 286,
+          "sha256": "5e5abdd1ceb7be414895f1458f5c7dc7a0c1e3d7e7a29b9d5d716b06b087c69b"
+        },
+        {
+          "path": "rust/crates/gateway-admin-settings-runtime/src/state.rs",
+          "lines": 323,
+          "bytes": 12453,
+          "sha256": "65e9dbbc5962dddee683d73325102dad82b20b3e0e04aca80a604f91b28c1475"
+        }
+      ]
+    },
+    "gateway-admin-test-support": {
+      "before": 682,
+      "after": 733,
+      "files": [
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/claude_source_fixtures.rs",
+          "lines": 44,
+          "bytes": 1515,
+          "sha256": "53157295b8349f818283de09c066317546357d433f46a710a7b1881dace48bcf"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/contract_host.rs",
+          "lines": 68,
+          "bytes": 1966,
+          "sha256": "7c6c03d1e58cf93eab8f2d0c3c23139cf98c6385dc8be4882a87f82dcb6a69ed"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/key_fixtures.rs",
+          "lines": 203,
+          "bytes": 7140,
+          "sha256": "b5bb3934c971009ff73837b19c28d66f7b70f410f0062ceae13f20abbe955b96"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/lib.rs",
+          "lines": 9,
+          "bytes": 283,
+          "sha256": "866112d642d72305a6714e948ceb98abaddf205b5c8d2efa89fd1267fbc38b8a"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/ranked_collator.rs",
+          "lines": 25,
+          "bytes": 875,
+          "sha256": "fb8640ae334dfb4bcbea4d5e54e962183c7b53b3c3ebcf542ff312b7e4f7a3a5"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/runtime_fixtures.rs",
+          "lines": 141,
+          "bytes": 5163,
+          "sha256": "49c923498f001385163b0292536ce4da4ddbfe664a8a3c09a5b3fa581a625bdd"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/runtime_host.rs",
+          "lines": 80,
+          "bytes": 2128,
+          "sha256": "2cc8bfbb8989ed6be82c3105d63ba8d7daf10233192bcb02e22ba55a6c25cd5f"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/runtime_store.rs",
+          "lines": 103,
+          "bytes": 3431,
+          "sha256": "61d8f87c96e948b0e9bfe7ac3b7577c0562d6b06a9bda7a796ac6a06abd18e62"
+        },
+        {
+          "path": "rust/crates/gateway-admin-test-support/src/source_store.rs",
+          "lines": 60,
+          "bytes": 2049,
+          "sha256": "26d951df30f8040d875e7b6d11cd40528fd77137ec8d98a1f4d8421c338a4c6a"
+        }
+      ]
+    },
+    "gateway-claude-policy": {
+      "before": 0,
+      "after": 788,
+      "files": [
+        {
+          "path": "rust/crates/gateway-claude-policy/src/error.rs",
+          "lines": 7,
+          "bytes": 293,
+          "sha256": "130bb9bedca649027c8cf200e53975470553e29c29da2e4af892a04e0f91923c"
+        },
+        {
+          "path": "rust/crates/gateway-claude-policy/src/host.rs",
+          "lines": 106,
+          "bytes": 3850,
+          "sha256": "4ba810e2de0c47615421281de87ae75b790c9605a2c3a7cef8e4b81cc9e3d425"
+        },
+        {
+          "path": "rust/crates/gateway-claude-policy/src/lib.rs",
+          "lines": 7,
+          "bytes": 197,
+          "sha256": "025318d743775bf68e969453dca06e2e9cef1180835ef0ba2a7584a78555aad1"
+        },
+        {
+          "path": "rust/crates/gateway-claude-policy/src/quota.rs",
+          "lines": 308,
+          "bytes": 10906,
+          "sha256": "738f838aa1f3bd5dc66c01a6e429b0ba1cb4c5783a0c67ca8916288fb6a853ab"
+        },
+        {
+          "path": "rust/crates/gateway-claude-policy/src/response.rs",
+          "lines": 260,
+          "bytes": 9542,
+          "sha256": "d3c55441f5bc35c2cb9eefca43a0bd784e2c37fa80741003cc0eb1fb6e216d8a"
+        },
+        {
+          "path": "rust/crates/gateway-claude-policy/src/selection.rs",
+          "lines": 53,
+          "bytes": 1812,
+          "sha256": "309d1a99f73b59a7307428644abc102e628ac3a3917dec8a196f4fc3e97d67f7"
+        },
+        {
+          "path": "rust/crates/gateway-claude-policy/src/workspace.rs",
+          "lines": 47,
+          "bytes": 1664,
+          "sha256": "75fb98e4ff2cb864d84ba675f762c1efc4863eebf5c88104364fe770741037f5"
+        }
+      ]
+    },
+    "gateway-claude-roster": {
+      "before": 0,
+      "after": 897,
+      "files": [
+        {
+          "path": "rust/crates/gateway-claude-roster/src/claude/source_secret.rs",
+          "lines": 38,
+          "bytes": 1469,
+          "sha256": "f1f12f1587963ce2a165a4a5e8683f95af05ade62b9d8a2199c04d1d745a0429"
+        },
+        {
+          "path": "rust/crates/gateway-claude-roster/src/claude/source_tests.rs",
+          "lines": 15,
+          "bytes": 663,
+          "sha256": "6c211477ba3162b21426c79dfa042966f0590ffe82378039c4ff1eb6ee84ff5f"
+        },
+        {
+          "path": "rust/crates/gateway-claude-roster/src/claude.rs",
+          "lines": 750,
+          "bytes": 26111,
+          "sha256": "2b7430cee398324585475a420fa8e1e17fbf8e02551d90afdb1fbdf745d97412"
+        },
+        {
+          "path": "rust/crates/gateway-claude-roster/src/claude_generation.rs",
+          "lines": 91,
+          "bytes": 3316,
+          "sha256": "7e40d22011a7d9f307c17c0eba06fb9a5e06a23882eeaa50c2ea4e7ba8ee8e52"
+        },
+        {
+          "path": "rust/crates/gateway-claude-roster/src/lib.rs",
+          "lines": 3,
+          "bytes": 109,
+          "sha256": "e6cb60aaaef16ea627f7135b0499163e0bfa9529c1b65f1e25ac0093a8f29446"
+        }
+      ]
+    },
+    "gateway-claude-runtime": {
+      "before": 1730,
+      "after": 982,
+      "files": [
+        {
+          "path": "rust/crates/gateway-claude-runtime/src/host.rs",
+          "lines": 105,
+          "bytes": 3924,
+          "sha256": "6b804db6e9abd539af8d144eb3c350156cd1a4a457147fdce51e828e69f2f608"
+        },
+        {
+          "path": "rust/crates/gateway-claude-runtime/src/lib.rs",
+          "lines": 6,
+          "bytes": 236,
+          "sha256": "2376705b21a932883458d58c83f2694d758dab7e0d385169fa312f3ed0a681f5"
+        },
+        {
+          "path": "rust/crates/gateway-claude-runtime/src/persistence.rs",
+          "lines": 231,
+          "bytes": 7844,
+          "sha256": "8f5f9fedabfca6d70a89d9f04c3b86fff40c4e521ffa2c4259387ab455adcd6f"
+        },
+        {
+          "path": "rust/crates/gateway-claude-runtime/src/pool.rs",
+          "lines": 522,
+          "bytes": 20116,
+          "sha256": "3447fca1a6ff08579f236e69dfad829b6ad4c9b60b6fd2c07bf273610edfefca"
+        },
+        {
+          "path": "rust/crates/gateway-claude-runtime/src/workspace.rs",
+          "lines": 118,
+          "bytes": 3769,
+          "sha256": "011bdba822ac2df8cd8d250f6db78a12c0195a0dea00df2eb7fad79d5fda69a7"
+        }
+      ]
+    },
+    "gateway-claude-runtime-test-support": {
+      "before": 439,
+      "after": 447,
+      "files": [
+        {
+          "path": "rust/crates/gateway-claude-runtime-test-support/src/fixture.rs",
+          "lines": 446,
+          "bytes": 15986,
+          "sha256": "ee22ae07b4db7c110fa823c94104d9be49e952b8f357331e252d0810e1da6e4f"
+        },
+        {
+          "path": "rust/crates/gateway-claude-runtime-test-support/src/lib.rs",
+          "lines": 1,
+          "bytes": 17,
+          "sha256": "8b97b524ccba81d4ace73bd2f2b9d50e2a09896b929e8eb0f820158cff16dc6c"
+        }
+      ]
+    }
+  },
+  "foreignChanges": [],
+  "oversizedForeignGrowth": false
+}

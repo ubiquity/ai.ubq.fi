@@ -3,23 +3,21 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as input,
 };
-use gateway_admin_runtime::{
-    AdminRuntime, RuntimeConfig, capabilities::RuntimeCapabilities, claude_access, parse,
-};
-use gateway_auth::{
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{RuntimeConfig, capabilities::RuntimeCapabilities, parse};
+use gateway_admin_runtime_records::claude_access;
+use gateway_auth_contracts::{
     types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse},
     upstream::*,
 };
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
     model::ModelId,
     query::*,
     source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
     state::*,
     value::ValueEncoding,
 };
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -115,10 +113,10 @@ impl AuthHost for Host {
         ))
     }
 }
-impl gateway_auth::webauthn::WebAuthnCrypto for Host {
+impl gateway_auth_contracts::webauthn::WebAuthnCrypto for Host {
     async fn validate_key(
         &self,
-        _: &gateway_auth::webauthn::CosePublicKey,
+        _: &gateway_auth_contracts::webauthn::CosePublicKey,
     ) -> Result<(), GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -127,7 +125,7 @@ impl gateway_auth::webauthn::WebAuthnCrypto for Host {
     }
     async fn verify_signature(
         &self,
-        _: gateway_auth::webauthn::SignatureInput,
+        _: gateway_auth_contracts::webauthn::SignatureInput,
     ) -> Result<bool, GatewayError> {
         Err(GatewayError::unavailable(
             "Fixture verifier absent",
@@ -479,11 +477,13 @@ struct ClearProbe {
 impl RuntimeCapabilities for ClearProbe {
     async fn claude(
         &self,
-        request: gateway_admin_runtime::capabilities::ClaudeRequest,
-        _: gateway_admin_runtime::capabilities::Context,
+        request: gateway_admin_runtime_contracts::capabilities::ClaudeRequest,
+        _: gateway_admin_runtime_contracts::capabilities::Context,
     ) -> Result<AuthResponse, GatewayError> {
-        let gateway_admin_runtime::capabilities::ClaudeRequest::ClearQuota { cohort_id, .. } =
-            request
+        let gateway_admin_runtime_contracts::capabilities::ClaudeRequest::ClearQuota {
+            cohort_id,
+            ..
+        } = request
         else {
             return Err(GatewayError::unavailable(
                 "Unexpected probe request",

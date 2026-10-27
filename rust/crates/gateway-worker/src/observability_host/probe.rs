@@ -3,8 +3,8 @@ use super::{RequestHost, unavailable};
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_constructed;
 use crate::transport::outbound::send_http;
-use gateway_admin_runtime::claude;
 use gateway_auth::provider_credentials::{self as codex, CodexSourceAccount};
+use gateway_claude_roster::claude;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

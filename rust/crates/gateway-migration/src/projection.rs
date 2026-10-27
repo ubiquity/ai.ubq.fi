@@ -96,7 +96,7 @@ pub(crate) fn forward(row: &mut Row) -> Result<(), GatewayError> {
     } else if quota_family(p) {
         gateway_claude_usage_quota::parse_record(&row.record, 0)?;
     } else if starts(p, &["uos_ai", "claude_code_accounts"]) {
-        gateway_admin_runtime::claude::parse_roster(&v)?;
+        gateway_claude_roster::claude::parse_roster(&v)?;
     } else if starts(p, &["uos_ai", "auth", "users"]) {
         let user: gateway_auth::passkeys::PasskeyUser = decode(&v)?;
         if p.len() != 4 || p[3] != user.id {

@@ -80,7 +80,7 @@ impl AuthHost for Host {
     }
 }
 struct Capabilities;
-impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
+impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for Capabilities {}
 fn admin(body: Value, now_ms: i64) -> Result<AdminInput, GatewayError> {
     Ok(AdminInput {
         parameter: None,

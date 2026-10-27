@@ -1,0 +1,66 @@
+[
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/store.rs",
+    "new": "rust/crates/gateway-admin-runtime-records/src/store.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/kernel_data.rs",
+    "new": "rust/crates/gateway-admin-runtime-records/src/kernel_data.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/claude_access.rs",
+    "new": "rust/crates/gateway-admin-runtime-records/src/claude_access.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/claude.rs",
+    "new": "rust/crates/gateway-claude-roster/src/claude.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/claude_generation.rs",
+    "new": "rust/crates/gateway-claude-roster/src/claude_generation.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/claude/source_secret.rs",
+    "new": "rust/crates/gateway-claude-roster/src/claude/source_secret.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/capabilities.rs",
+    "new": "rust/crates/gateway-admin-runtime-contracts/src/capabilities.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/parse.rs",
+    "new": "rust/crates/gateway-admin-runtime-contracts/src/parse.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/kernel.rs",
+    "new": "rust/crates/gateway-admin-kernel-runtime/src/kernel.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/defaults.rs",
+    "new": "rust/crates/gateway-admin-settings-runtime/src/defaults.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/state.rs",
+    "new": "rust/crates/gateway-admin-settings-runtime/src/state.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/paid.rs",
+    "new": "rust/crates/gateway-admin-paid-runtime/src/paid.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/errors.rs",
+    "new": "rust/crates/gateway-admin-diagnostics-runtime/src/errors.rs"
+  },
+  {
+    "old": "rust/crates/gateway-admin-runtime/src/brief.rs",
+    "new": "rust/crates/gateway-admin-diagnostics-runtime/src/brief.rs"
+  },
+  {
+    "old": "rust/crates/gateway-claude-runtime/src/quota.rs",
+    "new": "rust/crates/gateway-claude-policy/src/quota.rs"
+  },
+  {
+    "old": "rust/crates/gateway-claude-runtime/src/response.rs",
+    "new": "rust/crates/gateway-claude-policy/src/response.rs"
+  }
+]

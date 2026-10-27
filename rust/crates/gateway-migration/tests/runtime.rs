@@ -627,7 +627,7 @@ impl gateway_auth::types::AuthHost for AdminHost {
     }
 }
 struct Capabilities;
-impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
+impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for Capabilities {}
 fn admin_input(body: Value) -> Result<AdminInput, GatewayError> {
     Ok(AdminInput {
         parameter: None,
@@ -655,7 +655,7 @@ fn actual_admin_reads_and_writes_adopted_state_then_inverse_uses_new_revision()
     let store = SqliteStore::open(&path);
     let host = crate::AdminHost;
     let capabilities = Capabilities;
-    let config = gateway_admin_runtime::RuntimeConfig::default();
+    let config = gateway_admin_runtime_contracts::RuntimeConfig::default();
     let runtime = gateway_admin_runtime::AdminRuntime {
         store: &store,
         host: &host,

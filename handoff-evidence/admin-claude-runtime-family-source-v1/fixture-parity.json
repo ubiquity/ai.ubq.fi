@@ -1,0 +1,145 @@
+{
+  "exact": true,
+  "fixtures": [
+    {
+      "path": "rust/crates/gateway-admin-runtime/tests/fixtures/kernel-source-admin.json",
+      "bytes": 52317,
+      "sha256": "1638df0d47e2e3c32ef757bdeb29fb190974f6a1fc73c13895d2095af99c1290"
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/tests/fixtures/kernel-source-queue.json",
+      "bytes": 2009,
+      "sha256": "858f2d6c9134624c37aae0183fa974397e8023d6b659c8067ceed191c0e35f07"
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/tests/fixtures/source-principal-ids-golden.json",
+      "bytes": 28763,
+      "sha256": "0ca3245d39a60807885fa520b41b746e845ec3456992ba40e9894890f47d87f7"
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/tests/fixtures/supervisor-portable-golden.json",
+      "bytes": 35151,
+      "sha256": "1a277826c1b943a1790a01f4bb3e9594da15cbdb3c550c79156a5390222c38e6"
+    },
+    {
+      "path": "rust/crates/gateway-claude-runtime/tests/fixtures/cooldown-status.json",
+      "bytes": 637,
+      "sha256": "d5a05c2b07b1421a525e9f154909b80339185f88fe1c450b05ffffad8508a8b4"
+    },
+    {
+      "path": "rust/crates/gateway-claude-runtime/tests/fixtures/source-golden.json",
+      "bytes": 56142,
+      "sha256": "79780027927b36d3544fa2667daf7da546a88303943ec5153fe33be233764e7c"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/fixtures/admin-oracle.json",
+      "bytes": 16012,
+      "sha256": "974a138c4b8661dbfb54d9ed90bde48388757a5f3c9d5595994d90a927a4aa0e"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/fixtures/source-oracle.json",
+      "bytes": 129352,
+      "sha256": "64deb1feb27a7c53137e7c902cbd6f153392828fcdf5491bfd5d4862729dbf09"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/fixtures/wire-oracle.json",
+      "bytes": 1069,
+      "sha256": "52f335dd93121c759c6fa2aad43ffa35007129682b28edd11c6a034bb7bfd990"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/fixture-loader.ts",
+      "bytes": 910,
+      "sha256": "0cacd7ec5fd8ed0fc3926e97e926c18be37d4bb5297e15adb8c44cd9e6e9d182"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/generate-admin.ts",
+      "bytes": 2623,
+      "sha256": "7ad32ca295c2788531cf0c542753317770a324a6e9a5bce20fb609573fa5fbfe"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/generate-history.ts",
+      "bytes": 4015,
+      "sha256": "8c3534d33f792878590f7451412d97465361b4b96657a5d7d296dc0872ce2ff4"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/generate-wire.ts",
+      "bytes": 1488,
+      "sha256": "f396ed0d4c4eab9554f6b306db2073a7fef05cc0689eb7a62e1747d6df8a69bb"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/generate.ts",
+      "bytes": 4856,
+      "sha256": "fa2b5e6f9accf8dcf8d6d39b0840a9209f88593d906ca2e16e056d954938dd36"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/provenance.json",
+      "bytes": 4424,
+      "sha256": "1ea0164e2afdbaf7d16d877fe9e5b0cbaeda2956dd0c70528d6012fe7052482e"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/source-admin-refresh.ts.txt",
+      "bytes": 4282,
+      "sha256": "0340d0e20c1b147bde8906122321ec65d27bfde7a7da0756e5c414180069a823"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/source-constants.ts.txt",
+      "bytes": 182,
+      "sha256": "8f3a1d1e613efcacd2099507de36f58a6e3c257560d226061f96272e04c8409a"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/source-sanitize.ts.txt",
+      "bytes": 312,
+      "sha256": "3d24079e3650dab08a7e722b59bc7432561bcadb921f6bf761745a784ca0d18a"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/src/provider/capacity-contract.ts.txt",
+      "bytes": 8582,
+      "sha256": "a362473bfbfe005606132e828eada97ef3d3e9b415291af1eec2488edeb7c47e"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/src/provider/claude-capacity-history.ts.txt",
+      "bytes": 16174,
+      "sha256": "89778fc309138719ff2d5ae23a9465a1a95929f818a4693fd5f34c8dfb39b3bb"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/src/provider/claude-capacity-rollups.ts.txt",
+      "bytes": 15523,
+      "sha256": "d32df93b707d78c5c63b768b3ea25882f58fd469cceb72b3ebe15f0f9c1187ab"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/src/provider/claude-code-usage-schema.ts.txt",
+      "bytes": 7845,
+      "sha256": "9884485bc12ebb9e02ac079a20018fa95dcd5b6e89315eee4ab6d4bf58dcd9e0"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/src/provider/claude-code-usage.ts.txt",
+      "bytes": 7410,
+      "sha256": "37e697805ff94765dab60ff48a9c2859ed12a25d77fe0c24293f52c9a6b00358"
+    },
+    {
+      "path": "rust/crates/gateway-claude-usage-runtime/tests/oracle/src/utils.ts.txt",
+      "bytes": 508,
+      "sha256": "ae4f8df8ea106e116f8788a7d122e9a0df1355fb247980073c2a1d5a4949b1cf"
+    },
+    {
+      "path": "rust/crates/gateway-observability/tests/fixtures/claude-usage-history-oracle.json",
+      "bytes": 137681,
+      "sha256": "4d615650c8916c6956733996a29ca8e437664a1c74e034ba937b6e16530e6a2a"
+    },
+    {
+      "path": "rust/crates/gateway-observability/tests/fixtures/claude_capacity_source.json",
+      "bytes": 18489,
+      "sha256": "4d873e73dcda96ea5a26186437682476c4f2e245118cb36e2091b224080e7b62"
+    },
+    {
+      "path": "rust/crates/gateway-observability/tests/fixtures/crypto-source.json",
+      "bytes": 4837,
+      "sha256": "36247736462dddd77c527bab4fec1b3f8a239376568d971d2303524061252341"
+    },
+    {
+      "path": "rust/crates/gateway-observability/tests/fixtures/source-golden.json",
+      "bytes": 38078,
+      "sha256": "008a0cef5137c14869846fed38542b7288b3d64e9f98a002baf8a1f2038b3734"
+    }
+  ]
+}

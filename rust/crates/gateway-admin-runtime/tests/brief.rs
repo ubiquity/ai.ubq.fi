@@ -1,4 +1,5 @@
-use gateway_admin_runtime::{brief::*, capabilities::SupervisorBriefTarget};
+use gateway_admin_diagnostics_runtime::brief::*;
+use gateway_admin_runtime_contracts::capabilities::SupervisorBriefTarget;
 use gateway_core::redaction::{redact, redact_parts};
 use serde_json::{Value, json};
 fn golden() -> Value {

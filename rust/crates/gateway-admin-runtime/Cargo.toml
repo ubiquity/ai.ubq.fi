@@ -6,12 +6,20 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-source.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-admin-settings-runtime.workspace = true
+gateway-admin-runtime-records.workspace = true
+gateway-admin-runtime-contracts.workspace = true
+gateway-admin-paid-runtime.workspace = true
+gateway-admin-kernel-runtime.workspace = true
+gateway-admin-diagnostics-runtime.workspace = true
 gateway-claude-usage-protocol.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-admin-keys.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-core = { path = "../gateway-core" }
-gateway-auth = { path = "../gateway-auth" }
 gateway-admin = { path = "../gateway-admin" }
 gateway-profile-values.workspace = true
 gateway-authority = { path = "../gateway-authority" }
@@ -20,6 +28,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-claude-roster.workspace = true
 gateway-admin-test-support.workspace = true
 
 [lints]

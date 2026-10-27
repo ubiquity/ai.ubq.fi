@@ -1,5 +1,13 @@
 [workspace]
 members = [
+  "crates/gateway-admin-runtime-records",
+  "crates/gateway-claude-roster",
+  "crates/gateway-admin-runtime-contracts",
+  "crates/gateway-admin-kernel-runtime",
+  "crates/gateway-admin-settings-runtime",
+  "crates/gateway-admin-paid-runtime",
+  "crates/gateway-admin-diagnostics-runtime",
+  "crates/gateway-claude-policy",
   "crates/gateway-claude-usage-admin",
   "crates/gateway-claude-usage-history",
   "crates/gateway-claude-usage-history-records",
@@ -92,6 +100,14 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-admin-runtime-records = { path = "crates/gateway-admin-runtime-records" }
+gateway-claude-roster = { path = "crates/gateway-claude-roster" }
+gateway-admin-runtime-contracts = { path = "crates/gateway-admin-runtime-contracts" }
+gateway-admin-kernel-runtime = { path = "crates/gateway-admin-kernel-runtime" }
+gateway-admin-settings-runtime = { path = "crates/gateway-admin-settings-runtime" }
+gateway-admin-paid-runtime = { path = "crates/gateway-admin-paid-runtime" }
+gateway-admin-diagnostics-runtime = { path = "crates/gateway-admin-diagnostics-runtime" }
+gateway-claude-policy = { path = "crates/gateway-claude-policy" }
 gateway-claude-usage-admin = { path = "crates/gateway-claude-usage-admin" }
 gateway-claude-usage-history = { path = "crates/gateway-claude-usage-history" }
 gateway-claude-usage-history-records = { path = "crates/gateway-claude-usage-history-records" }

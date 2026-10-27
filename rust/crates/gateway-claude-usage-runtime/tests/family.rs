@@ -1,10 +1,10 @@
-use gateway_admin_runtime::claude::{self, AccountBinding};
 use gateway_auth::{
     types::AuthHost,
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_claude_runtime::host::ClaudePoolHost;
+use gateway_claude_policy::host::ClaudePoolHost;
+use gateway_claude_roster::claude::{self, AccountBinding};
 use gateway_claude_runtime_test_support::fixture::{Host, NOW, Store, account, run, seed};
 use gateway_claude_usage_protocol::state::UsageState;
 use gateway_claude_usage_quota::observation::AcceptedObservation;
@@ -199,7 +199,7 @@ fn inference_recency_is_independent_and_usage_failure_never_mints_pool_proof() -
         &|_| None,
     )
     .ok_or("observation absent")?;
-    run(gateway_claude_runtime::quota::record_usage(
+    run(gateway_claude_policy::quota::record_usage(
         &store,
         &host,
         &a,
@@ -214,7 +214,7 @@ fn inference_recency_is_independent_and_usage_failure_never_mints_pool_proof() -
         .ok_or("window absent")?
         .observed_at_ms = NOW as f64;
     store.put_record(
-        &gateway_claude_runtime::persistence::quota_key(&a),
+        &gateway_claude_policy::quota::quota_key(&a),
         gateway_claude_usage_quota::stored_state(&state, "inference-new".into())?,
     );
     *host.response.borrow_mut() = (
@@ -452,7 +452,7 @@ fn older_attempts_and_snapshots_do_not_replace_newer_success_and_restart_retains
             &|_| None,
         )
         .ok_or("observation absent")?;
-        run(gateway_claude_runtime::quota::record_usage(
+        run(gateway_claude_policy::quota::record_usage(
             &store,
             &host,
             &a,
@@ -483,10 +483,10 @@ fn a_refresh_committing_before_claim_is_found_by_the_second_freshness_check() ->
     let s = store.clone();
     let binding = a.clone();
     *store.after_read.borrow_mut() = Some((
-        gateway_claude_runtime::persistence::quota_key(&a),
+        gateway_claude_policy::quota::quota_key(&a),
         Box::new(move || {
             let h = Host::new(&s);
-            let result = run(gateway_claude_runtime::quota::record_usage(
+            let result = run(gateway_claude_policy::quota::record_usage(
                 &s,
                 &h,
                 &binding,
@@ -513,7 +513,7 @@ fn roster_change_between_strong_read_and_lease_claim_is_rejected_by_the_real_cas
     let s = store.clone();
     let id = a.account_id.clone();
     *store.after_read.borrow_mut() = Some((
-        gateway_claude_runtime::persistence::quota_key(&a),
+        gateway_claude_policy::quota::quota_key(&a),
         Box::new(move || {
             let h = Host::new(&s);
             assert!(

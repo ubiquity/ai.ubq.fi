@@ -1,0 +1,93 @@
+from pathlib import Path
+import json,re,subprocess,hashlib,tomllib,collections
+R=Path('rust/crates');E=Path('handoff-evidence/admin-claude-runtime-family-source-v1');BASE='7694a49787c7379180cb0e268b8b03fac093d879'
+regs=json.loads((E/'registrations.json').read_text());owned=set(regs['newOwners']+['gateway-admin-runtime','gateway-claude-runtime','gateway-admin-test-support','gateway-claude-runtime-test-support'])
+def sha(b):return hashlib.sha256(b).hexdigest()
+def blob(p):return subprocess.check_output(['git','show',BASE+':'+str(p)])
+def item(p):
+ b=p.read_bytes();return {'path':str(p),'lines':len(b.splitlines()),'bytes':len(b),'sha256':sha(b)}
+manifest={p.parent.name:tomllib.loads(p.read_text()) for p in R.glob('*/Cargo.toml')}
+normal={n:sorted(d for d in m.get('dependencies',{}) if d in manifest) for n,m in manifest.items()}
+order=[];active=set();visited=set()
+def visit(n):
+ if n in visited:return
+ if n in active:raise RuntimeError('normal dependency cycle '+n)
+ active.add(n)
+ for d in normal[n]:visit(d)
+ active.remove(n);visited.add(n);order.append(n)
+for n in sorted(owned):visit(n)
+(E/'family-dag.json').write_text(json.dumps({'owned':{n:normal[n] for n in sorted(owned)},'normalClosure':{n:normal[n] for n in order},'topologicalOrder':order,'devEdgesDoNotGrantRuntimeAuthority':True},indent=2)+'\n')
+# Production physical line inventory includes inactive and private test modules under src.
+prod={};foreign=[]
+for n in sorted(manifest):
+ files=sorted((R/n/'src').rglob('*.rs'));after=sum(len(p.read_bytes().splitlines()) for p in files)
+ oldpaths=subprocess.check_output(['git','ls-tree','-r','--name-only',BASE,'--',str(R/n/'src')]).decode().splitlines();before=sum(len(blob(p).splitlines()) for p in oldpaths if p.endswith('.rs'))
+ if n in owned:prod[n]={'before':before,'after':after,'files':[item(p) for p in files]}
+ elif after!=before:foreign.append({'owner':n,'before':before,'after':after,'delta':after-before})
+assert all(v['after']<=1000 for v in prod.values())
+assert all(v['after']<=v['before'] for v in foreign if v['before']>1000),foreign
+(E/'production-lines.json').write_text(json.dumps({'owned':prod,'foreignChanges':foreign,'oversizedForeignGrowth':False},indent=2)+'\n')
+# Conventional module inventories, deliberately not a parser-gate or typecheck.
+# No path attributes or source inclusion are used by these owned targets.
+def closure(p,seen=None):
+ seen=set() if seen is None else seen
+ if p in seen:return seen
+ seen.add(p);s=p.read_text()
+ for name in re.findall(r'(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;',s):
+  parent=p.parent if p.name in ['mod.rs','lib.rs','main.rs'] or p.parent.name in ['tests','examples','benches'] else p.with_suffix('')
+  choices=[q for q in [parent/(name+'.rs'),parent/name/'mod.rs'] if q.exists()]
+  assert len(choices)==1,(str(p),name,choices)
+  closure(choices[0],seen)
+ return seen
+targets=[]
+for n in sorted(owned):
+ for root in sorted((R/n/'tests').glob('*.rs')):
+  files=sorted(closure(root));lines=sum(len(p.read_bytes().splitlines()) for p in files);assert lines<=1000,(root,lines)
+  targets.append({'owner':n,'root':str(root),'lines':lines,'files':[item(p) for p in files]})
+(E/'test-target-closures.json').write_text(json.dumps({'classification':'STATIC_CONVENTIONAL_SOURCE_INVENTORY_NOT_GATE_EXECUTION','targets':targets},indent=2)+'\n')
+# Original fixture bytes remain immutable. Imports have no effect on this inventory.
+fixtures=[]
+for n in sorted(owned|{'gateway-claude-usage-runtime','gateway-observability'}):
+ paths=subprocess.check_output(['git','ls-tree','-r','--name-only',BASE,'--',str(R/n/'tests')]).decode().splitlines()
+ for ps in paths:
+  p=Path(ps)
+  if '/fixtures/' not in ps and '/oracle/' not in ps:continue
+  if p.suffix=='.rs':continue
+  old=blob(p);assert p.read_bytes()==old,ps;fixtures.append({'path':ps,'bytes':len(old),'sha256':sha(old)})
+(E/'fixture-parity.json').write_text(json.dumps({'exact':True,'fixtures':fixtures},indent=2)+'\n')
+# Byte-exact external lock blocks and all non-registration workspace settings.
+oldlock=blob('rust/Cargo.lock').decode();newlock=Path('rust/Cargo.lock').read_text()
+def external_blocks(s):return ['[[package]]\n'+b for b in s.split('[[package]]\n')[1:] if re.search(r'(?m)^source = ',b)]
+assert external_blocks(oldlock)==external_blocks(newlock)
+oldroot=tomllib.loads(blob('rust/Cargo.toml').decode());newroot=tomllib.loads(Path('rust/Cargo.toml').read_text())
+newnames=set(regs['newOwners']);expected=json.loads(json.dumps(newroot));expected['workspace']['members']=[x for x in expected['workspace']['members'] if x.removeprefix('crates/') not in newnames]
+for n in newnames:expected['workspace']['dependencies'].pop(n)
+assert expected==oldroot
+(E/'registration-parity.json').write_text(json.dumps({'allExternalLockBlocksByteExact':True,'externalBlocks':len(external_blocks(oldlock)),'externalBlocksSha256':sha(''.join(external_blocks(oldlock)).encode()),'workspaceSemanticsExceptEightNamedRegistrationsExact':True,'profilesUnchanged':True,'baselineUnchanged':blob('rust/quality-baseline.json')==Path('rust/quality-baseline.json').read_bytes(),'firstPartyLockBlocks':regs['lockPackageBlocks']},indent=2)+'\n')
+# No new authored syntax suppression/inclusion/forwarding spellings in owned source.
+forbidden={}
+for n in sorted(owned):
+ for p in (R/n).rglob('*.rs'):
+  matches=re.findall(r'\bpub(?:\([^)]*\))?\s+use\b|#\s*\[\s*(?:path\s*=|allow\b|expect\b)|\binclude\s*!',p.read_text())
+  if matches:forbidden[str(p)]=matches
+assert not forbidden,forbidden
+(E/'static-spelling-inventory.json').write_text(json.dumps({'classification':'BOUNDED_SPELLING_INVENTORY_NOT_AST_GATE','forbiddenMatches':forbidden},indent=2)+'\n')
+# Future Core map is factual import mapping ONLY, no source adoption.
+mp=Path('/workspace/.ai-rust-inputs/continuation-01a17ebe/runtime-families-base-7694/C-core-six-owner-api-v3.json');m=json.loads(mp.read_text());future=[]
+for n in sorted(owned):
+ for p in (R/n).rglob('*.rs'):
+  s=p.read_text()
+  # Flatten spelling only to report exact currently used defining Core modules.
+  for old,new in m['definingMap'].items():
+   module=old.removeprefix('gateway_core::')
+   if old.startswith('gateway_core::') and (old in s or re.search(r'use\s+gateway_core::\{[^;]*\b'+re.escape(module)+r'(?:::|\s*[,}])',s,re.S)):
+    future.append({'path':str(p),'current':old,'afterCanonicalCoreIntegration':new})
+(E/'held-core-nominal-ports.json').write_text(json.dumps({'mapSha256':sha(mp.read_bytes()),'adoptedCore8c5Source':False,'portOnlyAfterCanonicalCoreIntegration':True,'requirements':future},indent=2)+'\n')
+# Public nominal API declarations and phase ownership inventory, not a privacy/type proof.
+api=[]
+for n in sorted(owned):
+ for p in sorted((R/n/'src').rglob('*.rs')):
+  for line,t in enumerate(p.read_text().splitlines(),1):
+   if re.match(r'\s*pub(?:\([^)]*\))?\s+(?:(?:async|const)\s+)?(?:struct|enum|trait|type|fn)\b',t):api.append({'owner':n,'path':str(p),'line':line,'declaration':t.strip()})
+(E/'defining-api.json').write_text(json.dumps(api,indent=2)+'\n')
+print(json.dumps({'ownedCrates':len(prod),'testTargets':len(targets),'fixtures':len(fixtures),'maxOwnedProduction':max(v['after'] for v in prod.values()),'maxOwnedTestClosure':max(v['lines'] for v in targets),'foreignChanges':foreign,'futureCoreImportRequirements':len(future),'apiDeclarations':len(api)}))

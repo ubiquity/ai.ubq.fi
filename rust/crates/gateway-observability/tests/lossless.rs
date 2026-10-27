@@ -1,5 +1,5 @@
 mod support;
-use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context};
+use gateway_admin_runtime_contracts::capabilities::{AnalyticsRequest, Context};
 use gateway_core::{
     js_string::JsString16,
     lifecycle::DeliveryOutcome,

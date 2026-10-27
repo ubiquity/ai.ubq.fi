@@ -1,7 +1,7 @@
 //! Only the exact request-bound SourceJson and finite settings-selector adapters.
 use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
 mod support;
-use gateway_admin_runtime::capabilities::{CodexRequest, Context, ProviderRequest};
+use gateway_admin_runtime_contracts::capabilities::{CodexRequest, Context, ProviderRequest};
 use gateway_auth::crypto::sha256_hex;
 use gateway_core::{
     query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,

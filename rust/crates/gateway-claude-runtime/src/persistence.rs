@@ -1,42 +1,19 @@
-use crate::{
-    host::{ClaudePoolHost, CommittedOutcome, PoolConfig, ResponseObservation},
-    quota::{self, Outcome},
+use crate::host::CommittedOutcome;
+use gateway_auth_primitives::store::{check, commit};
+use gateway_claude_policy::{
+    host::{ClaudePoolHost, PoolConfig, ResponseObservation, now, revision},
+    quota::{self, Outcome, quota_key},
     response::{Classification, ResponseKind},
+    selection::same_pool,
 };
-use gateway_admin_runtime::claude::{self, AccountBinding, RosterRead};
-use gateway_auth::{
-    crypto::uuid_from_random,
-    store::{check, commit, key},
-    types::AuthHost,
-};
+use gateway_claude_roster::claude::{self, AccountBinding, RosterRead};
 use gateway_claude_usage_quota::{QuotaError, QuotaState};
 use gateway_core::{
-    error::GatewayError,
     model::ModelId,
-    state::{AuthorityStore, RecordKey, RecordMutation, RevisionCheck},
+    state::{AuthorityStore, RecordMutation, RevisionCheck},
 };
-use serde_json::json;
+use gateway_source::error::GatewayError;
 
-pub fn quota_key(binding: &AccountBinding) -> RecordKey {
-    key(json!([
-        "uos_ai",
-        "claude_code_quota",
-        "v1",
-        binding.account_id,
-        binding.account_cohort_id
-    ]))
-}
-pub(crate) fn revision<H: AuthHost>(host: &H) -> Result<String, GatewayError> {
-    uuid_from_random(&host.random_bytes(16)?)
-}
-pub(crate) fn now<H: AuthHost>(host: &H) -> Result<i64, GatewayError> {
-    let now = host.now_ms();
-    if (1..=gateway_core::identity::MAX_SAFE_INTEGER).contains(&now) {
-        Ok(now)
-    } else {
-        Err(crate::unavailable("Claude source clock is invalid."))
-    }
-}
 pub(crate) async fn load_quota<S: AuthorityStore>(
     store: &S,
     binding: &AccountBinding,
@@ -56,16 +33,6 @@ pub(crate) struct PoolView {
     pub accounts: Vec<(AccountBinding, Option<QuotaState>)>,
     pub quota_checks: Vec<RevisionCheck>,
     pub fresh: bool,
-}
-fn same_pool(left: &RosterRead, right: &RosterRead) -> bool {
-    left.roster.active_account_id == right.roster.active_account_id
-        && left.roster.accounts.len() == right.roster.accounts.len()
-        && left
-            .roster
-            .accounts
-            .iter()
-            .zip(&right.roster.accounts)
-            .all(|(a, b)| claude::same_binding(a, b))
 }
 pub(crate) async fn view<S: AuthorityStore, H: ClaudePoolHost>(
     store: &S,

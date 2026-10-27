@@ -5,11 +5,9 @@ use crate::host::response_bytes;
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::construct_request;
 use crate::transport::outbound::send_constructed;
-use gateway_admin_runtime::{
-    capabilities::{ClaudeRequest, ClaudeSubmission, Context},
-    claude::{self, AccountBinding, AccountUpdate, Credential},
-};
+use gateway_admin_runtime_contracts::capabilities::{ClaudeRequest, ClaudeSubmission, Context};
 use gateway_auth::types::{AuthHost, AuthResponse};
+use gateway_claude_roster::claude::{self, AccountBinding, AccountUpdate, Credential};
 use gateway_claude_usage_admin::{
     check_target_cohort, matching_target, readback::subscription_block, select_source_account,
     submitted_workspace,

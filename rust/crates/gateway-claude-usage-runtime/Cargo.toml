@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-claude-roster.workspace = true
+gateway-claude-policy.workspace = true
 worker.workspace = true
 gateway-profile-values.workspace = true
 gateway-core.workspace = true

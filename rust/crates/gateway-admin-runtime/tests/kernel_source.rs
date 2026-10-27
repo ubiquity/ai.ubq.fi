@@ -5,20 +5,21 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as body,
 };
-use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::UnboundCapabilities};
-use gateway_auth::{
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{RuntimeConfig, capabilities::UnboundCapabilities};
+use gateway_auth_contracts::{
     types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_core::{
-    error::GatewayError,
-    js_string::JsString16,
     query::*,
     source_control::{decode_source_control_record, encode_source_control_record},
-    source_json::SourceJson,
-    source_serialization as source,
     state::*,
+};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -508,7 +509,7 @@ fn queue_keeps_original_broader_labels_and_actual_source_presence_filter() {
         capabilities: &UnboundCapabilities,
         config: &config,
     };
-    let key = gateway_auth::store::key(json!(["uos_ai", "kernel_policy_queue"]));
+    let key = gateway_auth_primitives::store::key(json!(["uos_ai", "kernel_policy_queue"]));
     store.rows.borrow_mut().insert(
         key.0,
         encode_source_control_record("actual-queue-input", &fixture.input_rows, None).unwrap(),

@@ -1,6 +1,6 @@
 //! Fixed native Worker usage transport. No caller-selected URL, method or inference capability.
 use crate::fetch::{self, GetFailure, Response};
-use gateway_admin_runtime::claude::AccountBinding;
+use gateway_claude_roster::claude::AccountBinding;
 use gateway_core::{error::GatewayError, js_string::JsString16};
 use worker::{
     Fetch, Headers, Method, Request, RequestInit, RequestRedirect,

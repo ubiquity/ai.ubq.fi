@@ -1,0 +1,27 @@
+{
+  "allExternalLockBlocksByteExact": true,
+  "externalBlocks": 312,
+  "externalBlocksSha256": "a8b48ab49b91c7ed341a723d3dc47b3d6ae6c691b19985a4f7666cb238bcdb2c",
+  "workspaceSemanticsExceptEightNamedRegistrationsExact": true,
+  "profilesUnchanged": true,
+  "baselineUnchanged": true,
+  "firstPartyLockBlocks": [
+    "gateway-admin-diagnostics-runtime",
+    "gateway-admin-kernel-runtime",
+    "gateway-admin-paid-runtime",
+    "gateway-admin-runtime",
+    "gateway-admin-runtime-contracts",
+    "gateway-admin-runtime-records",
+    "gateway-admin-settings-runtime",
+    "gateway-admin-test-support",
+    "gateway-claude-policy",
+    "gateway-claude-roster",
+    "gateway-claude-runtime",
+    "gateway-claude-runtime-test-support",
+    "gateway-claude-usage-admin",
+    "gateway-claude-usage-runtime",
+    "gateway-migration",
+    "gateway-observability",
+    "gateway-worker"
+  ]
+}

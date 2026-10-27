@@ -3,14 +3,14 @@ use crate::{
     host::{PlatformHost, provider_secret},
     observability_host,
 };
-use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap, CredentialKind};
 use gateway_auth::{
     types::AuthHost,
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
+use gateway_claude_policy::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
+use gateway_claude_roster::claude::{self, AccountBinding, Bootstrap, CredentialKind};
 use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::{error::GatewayError, state::RevisionCheck};
 use gateway_observability::{
@@ -363,7 +363,7 @@ mod physical_tests {
     #[test]
     fn actual_prepared_body_kind_rejects_wrong_binding_before_any_host_header()
     -> Result<(), Box<dyn std::error::Error>> {
-        use gateway_admin_runtime::claude::{
+        use gateway_claude_roster::claude::{
             AccountBinding, Credential, CredentialKind, source_secret::ClaudeSourceSecret,
         };
         use gateway_core::source_json::SourceJson;

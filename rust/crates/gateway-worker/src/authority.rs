@@ -2,6 +2,7 @@
 //! The public router must never forward client requests to these store routes.
 
 use futures_util::StreamExt;
+use gateway_admin_runtime_contracts::capabilities::{Context, MigrationRequest};
 use gateway_core::{
     error::GatewayError,
     query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
@@ -68,9 +69,9 @@ enum ProfileKind {
     Local,
     Prod,
 }
-impl From<gateway_admin_runtime::capabilities::MigrationRequest> for ProfileMigration {
-    fn from(request: gateway_admin_runtime::capabilities::MigrationRequest) -> Self {
-        use gateway_admin_runtime::capabilities::{MigrationProfile, MigrationRequest};
+impl From<MigrationRequest> for ProfileMigration {
+    fn from(request: MigrationRequest) -> Self {
+        use gateway_admin_runtime_contracts::capabilities::MigrationProfile;
         match request {
             MigrationRequest::Validate => Self::Validate,
             MigrationRequest::Import(value) => Self::Import {
@@ -87,11 +88,9 @@ impl From<gateway_admin_runtime::capabilities::MigrationRequest> for ProfileMigr
         }
     }
 }
-impl From<ProfileMigration> for gateway_admin_runtime::capabilities::MigrationRequest {
+impl From<ProfileMigration> for MigrationRequest {
     fn from(request: ProfileMigration) -> Self {
-        use gateway_admin_runtime::capabilities::{
-            MigrationImport, MigrationProfile, MigrationRequest,
-        };
+        use gateway_admin_runtime_contracts::capabilities::{MigrationImport, MigrationProfile};
         match request {
             ProfileMigration::Validate => MigrationRequest::Validate,
             ProfileMigration::Import {
@@ -240,7 +239,7 @@ impl DurableObject for GatewayAuthority {
                     let result = crate::migration_host::execute_profile(
                         &store,
                         request.into(),
-                        gateway_admin_runtime::capabilities::Context { request_id, now_ms },
+                        Context { request_id, now_ms },
                     )
                     .await?;
                     if result.stream.is_some() {
@@ -349,8 +348,8 @@ impl RemoteAuthorityStore {
 
     pub(crate) async fn profile_migration(
         &self,
-        request: gateway_admin_runtime::capabilities::MigrationRequest,
-        context: gateway_admin_runtime::capabilities::Context,
+        request: MigrationRequest,
+        context: gateway_admin_runtime_contracts::capabilities::Context,
     ) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
         match self
             .exchange(StoreRequest::ProfileMigration {

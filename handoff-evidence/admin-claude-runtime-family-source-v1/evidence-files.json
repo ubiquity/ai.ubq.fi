@@ -1,0 +1,140 @@
+{
+  "classification": "SOURCE_EVIDENCE_INVENTORY",
+  "files": [
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/CONTRACT.md",
+      "bytes": 8803,
+      "sha256": "ce65e1dc20473db04771fe199dc8b87383ec63646a02bb444ea7bb42afb86074"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/baseline.json",
+      "bytes": 37503,
+      "sha256": "070f4326f28c4407b61861f3bc91953b683b6b9b1eb1d0bda992dcff316c8684"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/body-parity.json",
+      "bytes": 327592,
+      "sha256": "d85e13502e1b71d2df9ff1ef47d44d07eb79bc302a488e77dfe3ba6a334e0ff4"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/body-parity.py.txt",
+      "bytes": 7453,
+      "sha256": "a34cab682466cb13e410ef65a742e28760302160f600d14580569df02030f428"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/checkpoint-summary.json",
+      "bytes": 3109,
+      "sha256": "30325e0932d152cd2ecbf997cd8d28a58a79cbdc009e9d093647d54ce2059c04"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/defining-api.json",
+      "bytes": 50408,
+      "sha256": "57b91ce45235cc41794afed25f325639450e40281d8a5f6e406e084b7dc2dbf8"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/direct-import-moves.json",
+      "bytes": 7811,
+      "sha256": "0357d98deb8c76c6973ea12942b0c14011c506475e439d4e0211c727f09c07cc"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/family-dag.json",
+      "bytes": 15689,
+      "sha256": "238406c6c1fd6451b5069719c9429a95b8f02b3c86b53aa19e7309d801855ef6"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/fixture-parity.json",
+      "bytes": 5980,
+      "sha256": "ec23398d85fa65d2218b892edc5136b36076f1f24b0b75e9eb8e76240fc4b647"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/formatter-paths.json",
+      "bytes": 5659,
+      "sha256": "1a7ec5d64b9b8465bab6a2baedad8df10e3b9ec0fef4d7dfecbea7de123f38bb"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/held-core-nominal-ports.json",
+      "bytes": 17842,
+      "sha256": "6b20cac7e79dc026184018b2953ead632257ff1370743d3bcfb88530bf0f4d00"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/held-foreign-imports.json",
+      "bytes": 20073,
+      "sha256": "6ed1bc16839f85426f171460f84e91dc5ce17423b42a5d66be758b4c8f1d0f54"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/input-binding.json",
+      "bytes": 1057,
+      "sha256": "62be784dfef9349c265a5394eaa7cbcdabfbfcb4925e4ec459e0a2fd98320e8f"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/opaque-phase-boundaries.json",
+      "bytes": 1279,
+      "sha256": "e565ac463c9b422c28cc3f79f79b1571fca49f95a4deb288752d0949760da69b"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/phase-inventory.py.txt",
+      "bytes": 3406,
+      "sha256": "dd6d9eee5117a4b694069b935ea823a0944b478deff9cca8b2477793508d4562"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/production-lines.json",
+      "bytes": 12049,
+      "sha256": "85fc958e4e61451171036a618bde3cb57027b936d56926074d006823b136ca4d"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/registration-parity.json",
+      "bytes": 883,
+      "sha256": "04d8ac08f94f32d97380cc973dcedf92a8d6e4f3f3a0eb74715d3360079438a9"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/registrations.json",
+      "bytes": 1921,
+      "sha256": "b5e759730610d03a0e2c703223a4b5ebcbcdff942e41d9055d534a2ef7b3ccc5"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/relocations.json",
+      "bytes": 2295,
+      "sha256": "911323f5fc232d90f22dd376b5e63d2201be6fa83d7cb8c46e25b40dc6faeed6"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/rustfmt-check.json",
+      "bytes": 6093,
+      "sha256": "0e7ea0e939d2fe6dceeb795f56869dd8b46128c640e340981fb37dead12dcfd8"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/rustfmt-pass1.json",
+      "bytes": 6919,
+      "sha256": "0305d3f676326f22d115bf2dc29a51d47f73e6bc8e6a65f93d8a576a40872446"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/rustfmt-pass2.json",
+      "bytes": 6078,
+      "sha256": "9e0d58352a22d9365f9b98a5b0e528b76d6a44c8bba219c20442a85866230e0e"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/source-inventory.py.txt",
+      "bytes": 7342,
+      "sha256": "d74031000afacc06a9ee57042e68551123983b6d93afc6251199ccf0ca7f7f7b"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/static-spelling-inventory.json",
+      "bytes": 92,
+      "sha256": "9d46a9e140999be4ddc19f1a00412be5c5fd4ec365f33ee3a901b2d98f525a95"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/test-target-closures.json",
+      "bytes": 5895,
+      "sha256": "1d9712325b07a0b00fafde0073b576cf656b1969782da66f779664741be5027b"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/workspace-relocation.json",
+      "bytes": 548,
+      "sha256": "4e8e4047673ec9ba83b135143183a4e9fa973b4fb12e28d3c067fe48eae02fd5"
+    },
+    {
+      "path": "handoff-evidence/admin-claude-runtime-family-source-v1/workspace-relocation.py.txt",
+      "bytes": 1992,
+      "sha256": "439ac3496b19680aab08af08b94d7b7f02177f07ab499b7c50e89b98a9199038"
+    }
+  ]
+}

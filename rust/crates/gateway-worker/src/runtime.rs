@@ -376,15 +376,15 @@ async fn provider_health(
         Rc::clone(context),
     );
     let operation = if path == "/health/providers" {
-        gateway_admin_runtime::capabilities::ProviderRequest::PassiveHealth
+        gateway_admin_runtime_contracts::capabilities::ProviderRequest::PassiveHealth
     } else {
-        gateway_admin_runtime::capabilities::ProviderRequest::UpstreamHealth
+        gateway_admin_runtime_contracts::capabilities::ProviderRequest::UpstreamHealth
     };
     auth_response(
         observations
             .provider(
                 operation,
-                gateway_admin_runtime::capabilities::Context {
+                gateway_admin_runtime_contracts::capabilities::Context {
                     request_id: request_id.0.clone(),
                     now_ms: now_ms()?,
                 },
