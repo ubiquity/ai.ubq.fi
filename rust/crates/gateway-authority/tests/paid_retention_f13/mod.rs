@@ -5,9 +5,14 @@ use gateway_authority::DAY_MS;
 use gateway_authority::{
     PAID_RETENTION_MS,
     paid_control::*,
-    paid_types::{PaidAdmission, PaidAuthorization, PaidRequest, PaidRoutingPolicy},
+    paid_types::{PaidAdmission, PaidAuthorization, PaidRequest},
 };
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
+    PaidProviderObservation, PaidRequestContext, PaidRoutingPolicy, PaidRoutingProjection,
+    PaidSourceCheck,
+};
 use gateway_authority_test_support::{TestResult, fixture_row};
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
 use gateway_core::provider::{PaidProvider, UpstreamProvider};

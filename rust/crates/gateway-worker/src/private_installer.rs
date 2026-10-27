@@ -1,6 +1,6 @@
 //! Private account-operator composition. Ordinary fetch must never call this module.
 //! Runtime registration supplies the trusted deployment seal and actual namespace.
-use gateway_authority::initial_control_owner::{
+use gateway_authority_initial_owner::{
     INITIAL_AUTHORITY_BINDING, INITIAL_AUTHORITY_OBJECT, InitialControlOwnerDeployment,
     PreparedInitialControlOwner,
 };

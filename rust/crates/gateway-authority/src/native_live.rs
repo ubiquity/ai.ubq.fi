@@ -1,7 +1,6 @@
 //! Same-authority live custody. No admission, quota proof, refresh or paid authorization.
 use crate::{
     native_control::actor::{self, NativeActorScope, NativeRenewalActor, StoredNativeActor},
-    paid_control::PaidControlOwner,
     store::{Authority, TokenSource, Transaction},
 };
 use gateway_auth::{
@@ -13,6 +12,7 @@ use gateway_auth::{
     types::AuthConfig,
 };
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::{
     error::GatewayError,

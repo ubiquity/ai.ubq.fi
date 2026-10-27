@@ -371,7 +371,7 @@ fn live_rechecks_current_external_access_and_reconciles_real_terminal_after_revo
         store.seed(
             keys::paid_control_owner(),
             "owner-one",
-            crate::paid_control::PaidControlOwner {
+            gateway_authority_paid_control_records::PaidControlOwner {
                 v: 1,
                 owner_id: identity.owner_id().into(),
                 owner_epoch: identity.owner_epoch().into(),

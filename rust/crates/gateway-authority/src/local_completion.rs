@@ -172,6 +172,3 @@ fn kernel_snapshot_matches(
         _ => false,
     })
 }
-
-#[cfg(test)]
-mod tests;

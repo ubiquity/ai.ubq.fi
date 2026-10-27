@@ -1,8 +1,9 @@
 //! Original request fixture uses the actual public admission and existing full journal format.
 use super::{MemoryStore, TestAuthority};
 use gateway_authority::REQUEST_LEASE_MS;
-use gateway_authority::paid_control::{PaidRequestContext, PaidRoutingReceipt};
+use gateway_authority::paid_control::PaidRoutingReceipt;
 use gateway_authority::paid_types::PaidRequest;
+use gateway_authority_paid_control_records::PaidRequestContext;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{PrincipalId, RequestContext};
 use gateway_core::tuple_key::{ScalarKeyPart, TupleKey};

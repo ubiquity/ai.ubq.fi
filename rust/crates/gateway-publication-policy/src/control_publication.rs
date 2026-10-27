@@ -5,10 +5,10 @@ use gateway_auth::{
     native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
     store,
 };
-use gateway_authority::paid_control::{
+use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
-use gateway_authority_keys as keys;
 use gateway_core::{
     error::GatewayError,
     provider::PaidProvider,

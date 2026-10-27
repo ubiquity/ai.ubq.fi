@@ -1,3 +1,7 @@
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
+    PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
+};
 use gateway_core::{
     js_string::JsString16,
     lifecycle::{
@@ -132,7 +136,7 @@ fn paid_input(store: &Store, id: &str, model: &str) -> TestResult<RoutingInput> 
     store.seed(
         keys::paid_routing(),
         PaidRoutingProjection {
-            policy: gateway_authority::paid_types::PaidRoutingPolicy {
+            policy: gateway_authority_paid_control_records::PaidRoutingPolicy {
                 v: 2,
                 codex_enabled: true,
                 codex_models: vec!["gpt-test".into()],

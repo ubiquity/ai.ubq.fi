@@ -5,14 +5,11 @@ use crate::{
     host::{CatalogHost, CatalogProvider, CredentialPublication},
     state,
 };
-use gateway_authority::{
-    paid_control::{
-        PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
-        PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
-    },
-    paid_types::PaidRoutingPolicy,
-};
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
+    PaidProviderObservation, PaidRoutingPolicy, PaidRoutingProjection, PaidSourceCheck,
+};
 use gateway_core::{
     error::GatewayError,
     identity::MAX_SAFE_INTEGER,

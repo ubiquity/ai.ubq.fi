@@ -19,9 +19,9 @@ use gateway_authority::native_control::{
     actor,
     receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
 };
-use gateway_authority::paid_control::PaidControlOwner;
 use gateway_authority::store::Authority;
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::error::GatewayError;
 use gateway_core::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};

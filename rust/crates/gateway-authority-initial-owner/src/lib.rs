@@ -1,9 +1,9 @@
 //! Initial installation by the private account operator, never native MAC publication.
 //! The deployment seal is produced after independent local physical custody checks.
 //! Neither a signed identity nor a captured row can construct installation authority.
-use crate::paid_control::PaidControlOwner;
 use gateway_auth::{crypto::sha256_hex, native_auth::NativeTransportIdentity};
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::MAX_SAFE_INTEGER;
 use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
@@ -127,7 +127,7 @@ impl InitialControlOwnerDeployment {
 
 /// Opaque, nonserializable capability for exactly one fixed initial owner row.
 /// ```compile_fail
-/// use gateway_authority::initial_control_owner::PreparedInitialControlOwner;
+/// use gateway_authority_initial_owner::PreparedInitialControlOwner;
 /// let forged: PreparedInitialControlOwner = serde_json::from_str("{}").unwrap();
 /// ```
 pub struct PreparedInitialControlOwner {

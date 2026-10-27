@@ -22,12 +22,12 @@ use gateway_authority::{
         NativeRenewalCancellation, actor,
         receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
     },
-    paid_control::{
-        PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
-    },
     store::{Authority, AuthorityClock, TokenSource},
 };
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
+};
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::{
     error::GatewayError,

@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/gateway-authority-initial-owner",
+  "crates/gateway-authority-paid-control-records",
   "crates/gateway-authority-test-support",
   "crates/gateway-cache-experiment-records",
   "crates/gateway-authority-keys",
@@ -51,6 +53,8 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-initial-owner = { path = "crates/gateway-authority-initial-owner" }
+gateway-authority-paid-control-records = { path = "crates/gateway-authority-paid-control-records" }
 gateway-authority-test-support = { path = "crates/gateway-authority-test-support" }
 gateway-cache-experiment-records = { path = "crates/gateway-cache-experiment-records" }
 gateway-authority-keys = { path = "crates/gateway-authority-keys" }

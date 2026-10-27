@@ -2,21 +2,10 @@
 use crate::claude::ClaudeCohortProof;
 use crate::routing_types::CohortProof;
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
-use gateway_core::{js_string::JsString16, model::ModelId};
-pub mod model_map;
 use gateway_core::lifecycle::{BillingState, DispatchState, PaidTerminalState};
 use gateway_core::provider::PaidProvider;
+use gateway_core::{js_string::JsString16, model::ModelId};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct PaidRoutingPolicy {
-    pub v: u32,
-    pub codex_enabled: bool,
-    pub codex_models: Vec<ModelId>,
-    #[serde(with = "model_map")]
-    pub models: BTreeMap<ModelId, Vec<PaidProvider>>,
-}
 
 #[derive(Clone, Debug)]
 pub enum PaidAuthorization {

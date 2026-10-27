@@ -5,7 +5,7 @@ use crate::{
     engine::{AdoptionReceipt, PreparedAdoption},
     json,
 };
-use gateway_authority::initial_control_owner::{
+use gateway_authority_initial_owner::{
     InitialAdoptionAccountFacts, InitialAdoptionFacts, InitialControlOwnerReceipt,
     PreparedInitialControlOwner,
 };

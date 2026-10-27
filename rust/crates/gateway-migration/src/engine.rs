@@ -284,7 +284,7 @@ pub async fn adopt_empty<S: QueryStore>(
 pub async fn adopt_empty_with_initial_control_owner<S: QueryStore>(
     store: &S,
     prepared: &PreparedAdoption,
-    owner: &gateway_authority::initial_control_owner::PreparedInitialControlOwner,
+    owner: &gateway_authority_initial_owner::PreparedInitialControlOwner,
     now_ms: i64,
 ) -> Result<crate::initial_owner::InitialControlOwnerAdoptionReceipt, GatewayError> {
     crate::initial_owner::adopt(store, prepared, owner, now_ms).await

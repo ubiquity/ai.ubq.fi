@@ -9,7 +9,6 @@ use super::{
 };
 use crate::{
     native_live::mapping_key,
-    paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner},
     routing::LiveAccountSelection,
     store::{TokenSource, Transaction},
 };
@@ -18,6 +17,9 @@ use gateway_auth::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
+};
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::error::GatewayError;
 use gateway_core::identity::ActiveSelection;

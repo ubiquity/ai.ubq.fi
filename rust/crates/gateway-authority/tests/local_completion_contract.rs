@@ -1,9 +1,17 @@
-use super::*;
-use crate::kernel::KernelWindow;
+use gateway_authority::kernel::KernelWindow;
+use gateway_authority::kernel::{KernelReservation, KernelTerminal};
+use gateway_authority::local_completion::LocalCompletedIntentOutcome;
+use gateway_authority::quota::{ApiReservation, ApiUsageRequest, ApiUsageState};
+use gateway_authority::store::{Authority, TokenSource};
+use gateway_authority_keys as keys;
 use gateway_core::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
 use gateway_core::state::{
     AtomicTransition, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
+};
+use gateway_core::{
+    error::GatewayError, local_completion::LocalCompletedJournalPlan, source_json::SourceJson,
+    state::AuthorityStore,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -470,7 +478,7 @@ fn fixture_with_real_api_reservation() -> Fixture {
         .rows
         .borrow_mut()
         .remove(&api_key(f.api.as_ref().unwrap()).0);
-    let policy = crate::quota::ApiKeyPolicy {
+    let policy = gateway_authority::quota::ApiKeyPolicy {
         v: 3,
         key_id: ApiKeyId("key".into()),
         expires_at_ms: -1,

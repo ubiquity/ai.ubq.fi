@@ -3,7 +3,7 @@ use gateway_auth::{
     crypto::{Secret, sha256_hex},
     native_auth::{NativeCapability, NativeTransportIdentity},
 };
-use gateway_authority::initial_control_owner::*;
+use gateway_authority_initial_owner::*;
 use gateway_core::{
     error::GatewayError, js_string::JsString16, query::*, source_graph::*, state::*,
     tuple_key::TupleKey,

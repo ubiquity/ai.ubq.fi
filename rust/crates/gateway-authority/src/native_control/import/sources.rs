@@ -1,11 +1,13 @@
 use super::*;
-use crate::paid_control::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner};
 use crate::store::Transaction;
 use gateway_auth::{
     native_import::NativeImportTarget,
     provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
 };
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
+};
 use gateway_authority_routing_records::types::SubscriptionPool;
 use serde_json::Value;
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]

@@ -1,10 +1,8 @@
 //! Private offline operator data, never an HTTP/admin capability. The host must
 //! hold a NEW empty target unpublished and quiescent until seal and reconciliation.
 use crate::{decode, engine::PreparedAdoption, invalid, json, key};
-use gateway_authority::{
-    initial_control_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts},
-    paid_control::PaidControlOwner,
-};
+use gateway_authority_initial_owner::{InitialAdoptionAccountFacts, InitialAdoptionFacts};
+use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_core::error::GatewayError;
 use gateway_core::state::RecordKey;
 use gateway_core::state::StoredRecord;

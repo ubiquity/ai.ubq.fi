@@ -14,6 +14,7 @@ use gateway_auth::{
     },
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
 };
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingPolicy};
 use gateway_core::{error::GatewayError, source_json::SourceJson, state::*};
 use std::{
     cell::{Cell, RefCell},
@@ -848,7 +849,7 @@ async fn prepare_paid_fixture_custody(
     host: &Host,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-    use gateway_authority::{paid_control, paid_types::PaidRoutingPolicy};
+    use gateway_authority::paid_control;
     use gateway_authority_keys as keys;
     use gateway_core::provider::PaidProvider;
     use gateway_publication_policy::control_publication::{
@@ -885,7 +886,7 @@ async fn prepare_paid_fixture_custody(
     let config = prepared
         .publish(store, &config_proof, host.now_ms(), "race-config")
         .await?;
-    let observation = paid_control::PaidProviderObservation {
+    let observation = gateway_authority_paid_control_records::PaidProviderObservation {
         v: 1,
         provider: PaidProvider::Surplus,
         owner_id: config.owner_id,
@@ -909,19 +910,19 @@ async fn prepare_paid_fixture_custody(
     );
     let mut source_checks = Vec::new();
     for key in paid_control::paid_projection_source_keys() {
-        source_checks.push(paid_control::PaidSourceCheck {
+        source_checks.push(gateway_authority_paid_control_records::PaidSourceCheck {
             expected_revision: store.read(&key).await?.map(|row| row.revision),
             key: key.0,
         });
     }
-    let projection = paid_control::PaidRoutingProjection {
+    let projection = gateway_authority_paid_control_records::PaidRoutingProjection {
         policy: PaidRoutingPolicy {
             v: 2,
             codex_enabled: true,
             codex_models: vec!["codex-only".into()],
             models: BTreeMap::from([("paid-model".into(), vec![PaidProvider::Surplus])]),
         },
-        provenance: paid_control::PaidProjectionProvenance {
+        provenance: gateway_authority_paid_control_records::PaidProjectionProvenance {
             v: 1,
             owner_revision: "race-owner".into(),
             config_revision: "race-config".into(),
@@ -989,10 +990,7 @@ impl AuthorityStore for PaidRaceStore<'_> {
 fn claimed_deletion_uses_new_guard_revision_and_fences_actual_inflight_paid_admission()
 -> Result<(), Box<dyn std::error::Error>> {
     run(async {
-        use gateway_authority::{
-            paid_control::PaidRequestContext,
-            paid_types::{PaidAuthorization, PaidRequest},
-        };
+        use gateway_authority::paid_types::{PaidAuthorization, PaidRequest};
         use gateway_core::{
             identity::{ApiKeyId, PaidAttemptId, RequestId},
             provider::PaidProvider,

@@ -1,3 +1,7 @@
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProviderObservation,
+    PaidRequestContext, PaidRoutingProjection, PaidSourceCheck, PaidSyntheticHop,
+};
 mod original_request_fixture;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

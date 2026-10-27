@@ -1,6 +1,5 @@
-use crate::journal::unavailable;
 use crate::{
-    journal::{self, Journal},
+    journal::{self, Journal, unavailable},
     policy::{self, RoutePlan},
     settlement,
     types::*,
@@ -8,11 +7,12 @@ use crate::{
 use gateway_auth::types::AuthMethod;
 use gateway_authority::{
     kernel::KernelTerminal,
-    paid_control::{PaidRequestContext, PaidRoutingReceipt, PaidSyntheticHop},
+    paid_control::PaidRoutingReceipt,
     paid_types::PaidAuthorization,
     routing_types::{AdmittedAccount, RouteSelection},
     store::{Authority, AuthorityClock, TokenSource},
 };
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
 use gateway_core::{
     error::GatewayError, identity::ApiKeyId, model::ModelId, provider::UpstreamProvider,
     query::QueryStore,

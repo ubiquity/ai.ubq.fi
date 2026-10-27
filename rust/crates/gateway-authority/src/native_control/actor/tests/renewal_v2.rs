@@ -7,7 +7,6 @@ use crate::{
         NativeRenewalCancellation, NativeRenewalContext, NativeRenewalControl, NativeRenewalMode,
         receiver::NativeRenewalAuthority, receiver::RegisteredRenewalOwner,
     },
-    paid_control::{PaidControlConfig, PaidControlOwner, PaidSourceCheck},
     routing::LiveRouteSelection,
 };
 use gateway_auth::native_auth::{
@@ -20,6 +19,9 @@ use gateway_auth::provider_credentials::{
 };
 use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
 use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
+use gateway_authority_paid_control_records::{
+    PaidControlConfig, PaidControlOwner, PaidSourceCheck,
+};
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_core::identity::PoolVersionstamp;
 use gateway_core::js_string::JsString16;

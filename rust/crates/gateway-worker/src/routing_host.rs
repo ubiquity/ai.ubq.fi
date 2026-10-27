@@ -1,10 +1,10 @@
 //! Routing credentials use the owner-derived current source and routing fences.
 use crate::{authority::RemoteAuthorityStore, host::PlatformHost, storage::now_ms};
-use gateway_auth::crypto::Secret;
 use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
-use gateway_auth::types::AuthPrincipal;
+use gateway_auth::{crypto::Secret, types::AuthPrincipal};
 use gateway_authority::paid_types::{PaidReservation, PaidUsage};
 use gateway_authority::routing_types::CohortProof;
+use gateway_authority_paid_control_records as paid_records;
 use gateway_core::error::GatewayError;
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::state::{AuthorityStore, RecordKey};
@@ -412,10 +412,10 @@ impl Host {
             .read(&gateway_authority_keys::paid_control_config())
             .await?
             .ok_or_else(|| unavailable("The paid control configuration is not published."))?;
-        let owner: gateway_authority::paid_control::PaidControlOwner =
+        let owner: paid_records::PaidControlOwner =
             serde_json::from_value(owner.json_value()?.clone())
                 .map_err(|_| unavailable("The paid control owner is invalid."))?;
-        let configuration: gateway_authority::paid_control::PaidControlConfig =
+        let configuration: paid_records::PaidControlConfig =
             serde_json::from_value(configuration.json_value()?.clone())
                 .map_err(|_| unavailable("The paid control configuration is invalid."))?;
         let binding = gateway_publication_policy::control_publication::configured_paid_binding(
@@ -428,7 +428,7 @@ impl Host {
             configuration.openlux_binding.as_ref()
         };
         if owner.v != 1
-            || configuration.v != gateway_authority::paid_control::PAID_CONTROL_CONFIG_VERSION
+            || configuration.v != paid_records::PAID_CONTROL_CONFIG_VERSION
             || owner.owner_id != configuration.owner_id
             || owner.owner_epoch != configuration.owner_epoch
             || expected != Some(&binding)

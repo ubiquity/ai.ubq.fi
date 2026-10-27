@@ -6,24 +6,24 @@ use gateway_auth::native_auth::{
 use gateway_auth::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
 use gateway_authority::{
-    paid_control::{PaidRequestContext, PaidRoutingProjection, paid_projection_source_keys},
+    paid_control::paid_projection_source_keys,
     paid_types::PaidRequest,
     store::{Authority, TokenSource},
 };
 use gateway_authority_keys as keys;
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidRoutingProjection};
 use gateway_catalog_runtime::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
-use gateway_core::error::GatewayError;
 use gateway_core::identity::{ApiKeyId, PaidAttemptId, RequestId};
 use gateway_core::provider::{PaidProvider, UpstreamProvider};
 use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
 use gateway_core::source_control::decode_source_control_record;
-use gateway_core::source_json::SourceJson;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordKey, RecordMutation, StoredRecord,
 };
+use gateway_core::{error::GatewayError, source_json::SourceJson};
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
     fixture_owner_statement, runtime_config_key,
