@@ -370,7 +370,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         if self.legacy_local(request) {
             return Ok(Self::principal(token, AuthMethod::Disabled, false, false));
         }
-        if gateway_auth_passport::passport::cookie(
+        if gateway_auth_passport::browser::cookie(
             request,
             gateway_auth_passport_contracts::passport::PASSPORT_COOKIE,
         )
@@ -471,7 +471,7 @@ impl<'a, S: AuthorityStore, H: AuthHost> AuthService<'a, S, H> {
         {
             return Err(unauthorized());
         }
-        if gateway_auth_passport::passport::cookie(
+        if gateway_auth_passport::browser::cookie(
             request,
             gateway_auth_passport_contracts::passport::PASSPORT_COOKIE,
         )

@@ -96,6 +96,7 @@
   "gateway_auth::passport::PASSPORT_STATE_TTL_SECONDS": "gateway_auth_passport_contracts::passport::PASSPORT_STATE_TTL_SECONDS",
   "gateway_auth::passport::PassportClaims": "gateway_auth_passport_contracts::passport::PassportClaims",
   "gateway_auth::passport::PassportConfig": "gateway_auth_passport_contracts::passport::PassportConfig",
+  "gateway_auth::passport::cookie": "gateway_auth_passport::browser::cookie",
   "gateway_auth::provider_credentials": "gateway_auth_credentials::provider_credentials",
   "gateway_auth::session_index": "gateway_auth_passkeys::session_index",
   "gateway_auth::store": "gateway_auth_primitives::store",

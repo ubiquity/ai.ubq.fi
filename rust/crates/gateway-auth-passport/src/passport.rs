@@ -1,3 +1,4 @@
+use crate::browser::cookie;
 // Ubiquity Passport caller authentication. URLs are fixed constants; only a
 use gateway_auth_passport_contracts::passport::{
     PASSPORT_AUTHORIZE_URL, PASSPORT_COOKIE, PASSPORT_EXCHANGE_MAX_BYTES, PASSPORT_JWKS_CACHE_MS,
@@ -13,7 +14,10 @@ use gateway_auth_primitives::{
     crypto::{Secret, base64url, decode_base64url},
     error::unauthorized,
 };
-use gateway_core::error::GatewayError;
+use gateway_core::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use rsa::{
     BigUint, RsaPublicKey,
     pkcs1v15::{Signature, VerifyingKey},
@@ -41,7 +45,7 @@ pub fn config_for_request(config: &AuthConfig, request: &AuthRequest) -> Option<
 }
 
 thread_local! {
-    static JWKS_CACHE: RefCell<Option<(i64, BTreeMap<String, RsaPublicKey>)>> = const { RefCell::new(None) };
+    static JWKS_CACHE: RefCell<Option<(i64, BTreeMap<JsString16, RsaPublicKey>)>> = const { RefCell::new(None) };
 }
 
 /// Test isolation only: production code never calls this.
@@ -63,54 +67,49 @@ fn passport_unavailable() -> GatewayError {
 
 pub fn jwt_shaped(token: &str) -> bool {
     let parts = token.split('.').collect::<Vec<_>>();
-    if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) || parts[0].len() > 8_192 {
+    if parts.len() != 3 {
         return false;
     }
     decode_base64url(parts[0])
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .is_some_and(|header| header.get("alg").and_then(Value::as_str).is_some())
+        .and_then(|bytes| gateway_auth_passport_contracts::session::parse_source_json(&bytes).ok())
+        .and_then(|header| source::member(&header, "alg"))
+        .is_some_and(|value| value.deserialize::<JsString16>().is_ok())
 }
 
 fn parse_raw_jwt(
     token: &str,
-) -> Result<
-    (
-        Value,
-        gateway_core::source_json::SourceJson,
-        String,
-        Signature,
-    ),
-    GatewayError,
-> {
+) -> Result<(SourceJson, SourceJson, JsString16, Signature), GatewayError> {
     if token.len() > 32_768 {
         return Err(invalid_token());
     }
     let parts = token.split('.').collect::<Vec<_>>();
-    if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
-        return Err(invalid_token());
-    }
-    let header: Value =
-        serde_json::from_slice(&decode_base64url(parts[0]).map_err(|_| invalid_token())?)
-            .map_err(|_| invalid_token())?;
-    if !header.is_object()
-        || header.get("alg").and_then(Value::as_str) != Some("RS256")
-        || header.get("typ").and_then(Value::as_str) != Some("JWT")
+    if parts.len() != 3
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        })
     {
         return Err(invalid_token());
     }
-    if ["jku", "x5u", "x5c", "jwk", "crit"]
-        .iter()
-        .any(|name| header.get(*name).is_some())
+    let header = gateway_auth_passport_contracts::session::parse_source_json(
+        &decode_base64url(parts[0]).map_err(|_| invalid_token())?,
+    )
+    .map_err(|_| invalid_token())?;
+    if field_text(&header, "alg").as_deref() != Some("RS256")
+        || field_text(&header, "typ").as_deref() != Some("JWT")
+        || ["jku", "x5u", "x5c", "jwk", "crit"]
+            .iter()
+            .any(|name| source::member(&header, name).is_some())
     {
         return Err(invalid_token());
     }
-    let kid = header
-        .get("kid")
-        .and_then(Value::as_str)
-        .filter(|kid| !kid.is_empty() && kid.len() <= 200)
-        .ok_or_else(invalid_token)?
-        .to_owned();
+    let kid = source::member(&header, "kid")
+        .and_then(|v| v.deserialize::<JsString16>().ok())
+        .filter(|v| !v.as_units().is_empty() && v.as_units().len() <= 200)
+        .ok_or_else(invalid_token)?;
     let claims = gateway_auth_passport_contracts::session::parse_source_json(
         &decode_base64url(parts[1]).map_err(|_| invalid_token())?,
     )
@@ -128,7 +127,7 @@ pub fn verify_jwt(
     token: &str,
     config: &PassportConfig,
     now_seconds: i64,
-    keys: &BTreeMap<String, RsaPublicKey>,
+    keys: &BTreeMap<JsString16, RsaPublicKey>,
 ) -> Result<PassportClaims, GatewayError> {
     let (_, claims, kid, signature) = parse_raw_jwt(token)?;
     let claims: PassportClaims = claims.deserialize().map_err(|_| invalid_token())?;
@@ -148,56 +147,47 @@ pub fn verify_jwt(
     Ok(claims)
 }
 
-fn jwks_keys(body: &[u8]) -> Result<BTreeMap<String, RsaPublicKey>, GatewayError> {
+fn jwks_keys(body: &[u8]) -> Result<BTreeMap<JsString16, RsaPublicKey>, GatewayError> {
     if body.len() > PASSPORT_JWKS_MAX_BYTES {
         return Err(passport_unavailable());
     }
-    let document: Value = serde_json::from_slice(body).map_err(|_| passport_unavailable())?;
-    let keys = document
-        .get("keys")
-        .and_then(Value::as_array)
+    let document = gateway_auth_passport_contracts::session::parse_source_json(body)
+        .map_err(|_| passport_unavailable())?;
+    let keys = source::member(&document, "keys")
+        .and_then(|v| v.array_items().ok())
         .filter(|keys| !keys.is_empty())
         .ok_or_else(passport_unavailable)?;
     let mut parsed = BTreeMap::new();
     for key in keys {
-        if key.get("kty").and_then(Value::as_str) != Some("RSA")
-            || key
-                .get("alg")
-                .and_then(Value::as_str)
-                .is_some_and(|alg| alg != "RS256")
-            || key
-                .get("use")
-                .and_then(Value::as_str)
-                .is_some_and(|usage| usage != "sig")
+        if field_text(&key, "kty").as_deref() != Some("RSA")
+            || source::member(&key, "alg").is_some()
+                && field_text(&key, "alg").as_deref() != Some("RS256")
+            || source::member(&key, "use").is_some()
+                && field_text(&key, "use").as_deref() != Some("sig")
         {
             continue;
         }
-        let kid = key
-            .get("kid")
-            .and_then(Value::as_str)
-            .filter(|kid| !kid.is_empty() && kid.len() <= 200)
+        let kid = source::member(&key, "kid")
+            .and_then(|v| v.deserialize::<JsString16>().ok())
+            .filter(|v| !v.as_units().is_empty() && v.as_units().len() <= 200)
             .ok_or_else(passport_unavailable)?;
-        if parsed.contains_key(kid) {
+        if parsed.contains_key(&kid) {
             return Err(passport_unavailable());
         }
-        let modulus = key
-            .get("n")
-            .and_then(Value::as_str)
-            .and_then(|value| decode_base64url(value).ok())
-            .filter(|bytes| (256..=1_024).contains(&bytes.len()))
+        let modulus = field_text(&key, "n")
+            .and_then(|v| decode_base64url(&v).ok())
+            .filter(|bytes| (256..=1024).contains(&bytes.len()))
             .ok_or_else(passport_unavailable)?;
-        let exponent = key
-            .get("e")
-            .and_then(Value::as_str)
-            .and_then(|value| decode_base64url(value).ok())
-            .filter(|bytes| !bytes.is_empty() && bytes.len() <= 8)
+        let exponent = field_text(&key, "e")
+            .and_then(|v| decode_base64url(&v).ok())
+            .filter(|bytes| bytes.len() <= 8)
             .ok_or_else(passport_unavailable)?;
         let key = RsaPublicKey::new(
             BigUint::from_bytes_be(&modulus),
             BigUint::from_bytes_be(&exponent),
         )
         .map_err(|_| passport_unavailable())?;
-        parsed.insert(kid.to_owned(), key);
+        parsed.insert(kid, key);
     }
     if parsed.is_empty() {
         return Err(passport_unavailable());
@@ -208,8 +198,8 @@ fn jwks_keys(body: &[u8]) -> Result<BTreeMap<String, RsaPublicKey>, GatewayError
 async fn cached_jwks<H: AuthHost>(
     host: &H,
     now_ms: i64,
-    unknown_kid: Option<&str>,
-) -> Result<BTreeMap<String, RsaPublicKey>, GatewayError> {
+    unknown_kid: Option<&JsString16>,
+) -> Result<BTreeMap<JsString16, RsaPublicKey>, GatewayError> {
     let cached = JWKS_CACHE.with(|cache| {
         cache
             .borrow()
@@ -232,7 +222,7 @@ async fn cached_jwks<H: AuthHost>(
     let keys = jwks_keys(&response.body)?;
     JWKS_CACHE.with(|cache| *cache.borrow_mut() = Some((now_ms, keys.clone())));
     if unknown_kid.is_some_and(|kid| !keys.contains_key(kid)) {
-        return Err(passport_unavailable());
+        return Err(invalid_token());
     }
     Ok(keys)
 }
@@ -246,19 +236,6 @@ pub async fn verify<H: AuthHost>(
     let (_, _, kid, _) = parse_raw_jwt(token)?;
     let keys = cached_jwks(host, now_ms, Some(&kid)).await?;
     verify_jwt(token, config, now_ms.div_euclid(1000), &keys)
-}
-
-pub fn cookie(request: &AuthRequest, name: &str) -> Option<String> {
-    for part in request.header("cookie")?.split(';') {
-        let Some((key, value)) = part.split_once('=') else {
-            continue;
-        };
-        if key.trim() == name {
-            let value = value.trim();
-            return (!value.is_empty()).then(|| value.to_owned());
-        }
-    }
-    None
 }
 
 fn session_cookie(token: &str, max_age: i64) -> String {
@@ -470,4 +447,8 @@ pub async fn verify_source<H: AuthHost>(
         return Err(invalid_token());
     }
     Ok(claims)
+}
+
+fn field_text(value: &SourceJson, name: &str) -> Option<String> {
+    source::member(value, name).and_then(|v| v.deserialize::<String>().ok())
 }

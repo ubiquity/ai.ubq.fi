@@ -111,20 +111,29 @@ impl PassportClaims {
             && self.aud == config.audience
             && self.client_id == config.client_id
             && !self.sub.is_empty()
-            && self.sub.len() <= 500
+            && self.sub.encode_utf16().count() <= 500
             && !self.jti.is_empty()
-            && self.jti.len() <= 500
+            && self.jti.encode_utf16().count() <= 500
             && !self.auth.is_empty()
-            && self.auth.len() <= 160
-            && self.handle.len() <= 500
+            && self.auth.encode_utf16().count() <= 160
+            && self.handle.encode_utf16().count() <= 500
             && self.scopes.len() <= 128
-            && self.scopes.iter().all(|scope| scope.len() <= 500)
+            && self
+                .scopes
+                .iter()
+                .all(|scope| scope.encode_utf16().count() <= 500)
+            && (-gateway_core::identity::MAX_SAFE_INTEGER
+                ..=gateway_core::identity::MAX_SAFE_INTEGER)
+                .contains(&self.iat)
+            && (-gateway_core::identity::MAX_SAFE_INTEGER
+                ..=gateway_core::identity::MAX_SAFE_INTEGER)
+                .contains(&self.exp)
             && self.exp > now_seconds
             && self.iat <= now_seconds.saturating_add(60)
             && self.exp > self.iat
             && self
                 .agent_token_id
                 .as_ref()
-                .is_none_or(|id| !id.is_empty() && id.len() <= 500)
+                .is_none_or(|id| !id.is_empty() && id.encode_utf16().count() <= 500)
     }
 }

@@ -93,6 +93,7 @@ struct Host {
     hold: Cell<bool>,
     body: RefCell<Vec<u8>>,
     exchange: RefCell<Vec<u8>>,
+    kid: RefCell<Option<JsString16>>,
     requests: RefCell<Vec<AuthUpstreamRequest>>,
 }
 impl Default for Host {
@@ -106,6 +107,7 @@ impl Default for Host {
             hold: Cell::new(false),
             body: RefCell::new(central().to_string().into_bytes()),
             exchange: RefCell::new(Vec::new()),
+            kid: RefCell::new(None),
             requests: RefCell::new(Vec::new()),
         }
     }
@@ -178,11 +180,20 @@ impl AuthHost for Host {
                 status: self.status.get(),
                 body: self.exchange.borrow().clone(),
             }),
-            AuthUpstreamRequest::PassportJwks => Ok(AuthUpstreamResponse {
-                status: 200,
-                body: serde_json::to_vec(&json!({"keys":[public_jwk().map_err(|_|failure())?]}))
-                    .map_err(|_| failure())?,
-            }),
+            AuthUpstreamRequest::PassportJwks => {
+                let document =
+                    serde_json::to_string(&json!({"keys":[public_jwk().map_err(|_|failure())?]}))
+                        .map_err(|_| failure())?;
+                let document = if let Some(kid) = self.kid.borrow().as_ref() {
+                    document.replace("\"persistent-fixture\"", kid.to_source_json()?.as_str())
+                } else {
+                    document
+                };
+                Ok(AuthUpstreamResponse {
+                    status: 200,
+                    body: document.into_bytes(),
+                })
+            }
             _ => Err(failure()),
         }
     }
@@ -749,12 +760,24 @@ fn public_jwk() -> Result<Value, Box<dyn std::error::Error>> {
         json!({"kty":"RSA","kid":"persistent-fixture","alg":"RS256","use":"sig","n":base64url(&public.n().to_bytes_be()),"e":base64url(&public.e().to_bytes_be())}),
     )
 }
-fn signed_token(agent: bool) -> Result<String, Box<dyn std::error::Error>> {
+fn signed_token(
+    agent: bool,
+    kid: Option<&JsString16>,
+) -> Result<String, Box<dyn std::error::Error>> {
     use rsa::{
         pkcs8::DecodePrivateKey,
         signature::{SignatureEncoding, Signer},
     };
-    let header = base64url(br#"{"alg":"RS256","typ":"JWT","kid":"persistent-fixture"}"#);
+    let kid = kid
+        .cloned()
+        .unwrap_or_else(|| JsString16::from_utf8("persistent-fixture"));
+    let header = base64url(
+        format!(
+            r#"{{"alg":"RS256","typ":"JWT","kid":{}}}"#,
+            kid.to_source_json()?.as_str()
+        )
+        .as_bytes(),
+    );
     let mut claims = json!({"iss":"https://passport.ubq.fi","sub":"user-123","handle":"alice","isAdmin":true,"scopes":["ai"],"aud":"ai","clientId":"ai","auth":"sso","iat":1000,"exp":2000,"jti":"fixture-jti"});
     if agent {
         claims["agentTokenId"] = json!("agent-fixture");
@@ -778,7 +801,7 @@ fn callback_uses_pkce_and_real_signature_before_atomic_creation_and_rejects_agen
             let store = Store::default();
             let host = Host::default();
             *host.exchange.borrow_mut() = serde_json::to_vec(
-                &json!({"accessToken":signed_token(agent)?,"appSession":grant()}),
+                &json!({"accessToken":signed_token(agent,None)?,"appSession":grant()}),
             )?;
             let browser = PassportBrowser {
                 store: &store,
@@ -859,4 +882,65 @@ fn callback_validation_clears_only_transient_cookies_without_exchange_or_replace
         assert!(host.requests.borrow().is_empty());
         Ok(())
     })
+}
+
+#[test]
+fn source_key_ids_remain_utf16_and_tokens_reject_non_urlsafe_padding()
+-> Result<(), Box<dyn std::error::Error>> {
+    run(async {
+        for kid in [
+            JsString16::from_units(vec![0xd800]),
+            JsString16::from_utf8(&"é".repeat(200)),
+        ] {
+            reset_jwks_cache();
+            let host = Host::default();
+            *host.kid.borrow_mut() = Some(kid.clone());
+            let token = signed_token(false, Some(&kid))?;
+            assert_eq!(
+                gateway_auth_passport::passport::verify_source(&host, &token)
+                    .await?
+                    .sub,
+                JsString16::from_utf8("user-123")
+            );
+            let padded = format!("{token}=");
+            assert_eq!(
+                gateway_auth_passport::passport::verify_source(&host, &padded)
+                    .await
+                    .err()
+                    .ok_or("padded JWT was accepted")?
+                    .status,
+                401
+            );
+        }
+        reset_jwks_cache();
+        let host = Host::default();
+        let token = signed_token(false, Some(&JsString16::from_utf8("absent-kid")))?;
+        assert_eq!(
+            gateway_auth_passport::passport::verify_source(&host, &token)
+                .await
+                .err()
+                .ok_or("unknown kid was accepted")?
+                .status,
+            401
+        );
+        Ok(())
+    })
+}
+#[test]
+fn duplicate_passport_cookies_are_ambiguous_and_empty_value_is_preserved() {
+    let mut req = request("/uos/auth", "GET", None);
+    req.headers.insert(
+        "cookie".into(),
+        format!("{PASSPORT_COOKIE}=one; {PASSPORT_COOKIE}=two"),
+    );
+    assert_eq!(
+        gateway_auth_passport::browser::cookie(&req, PASSPORT_COOKIE),
+        None
+    );
+    req.headers
+        .insert("cookie".into(), format!("{PASSPORT_COOKIE}="));
+    assert_eq!(
+        gateway_auth_passport::browser::cookie(&req, PASSPORT_COOKIE),
+        Some(String::new())
+    );
 }

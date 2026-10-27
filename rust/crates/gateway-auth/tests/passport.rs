@@ -404,11 +404,14 @@ fn callback_rejects_exchange_status_and_malformed_token() {
 }
 
 #[test]
-fn claim_signature_and_algorithm_failures_fail_closed() {
+fn claim_signature_and_algorithm_failures_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
     reset_jwks_cache();
     let config = PassportConfig::production();
     let public = private().to_public_key();
-    let keys = BTreeMap::from([("key-a".to_owned(), public)]);
+    let keys = BTreeMap::from([(
+        gateway_core::js_string::JsString16::from_utf8("key-a"),
+        public,
+    )]);
     let valid = token(&claims());
     assert!(verify_jwt(&valid, &config, 1_500, &keys).is_ok());
 
@@ -426,7 +429,10 @@ fn claim_signature_and_algorithm_failures_fail_closed() {
     cases.push(("empty-jti", mutate("jti", json!(""))));
     cases.push(("exp-before-iat", mutate("exp", json!(999))));
     let mut missing = claims();
-    missing.as_object_mut().unwrap().remove("jti");
+    missing
+        .as_object_mut()
+        .ok_or("missing claims object")?
+        .remove("jti");
     cases.push(("missing-jti", missing));
     for (name, claims) in cases {
         let token = token(&claims);
@@ -450,9 +456,9 @@ fn claim_signature_and_algorithm_failures_fail_closed() {
     }
     let tampered = valid
         .rsplit_once('.')
-        .map(|(prefix, _)| format!("{prefix}.AAAA"))
-        .unwrap();
+        .map(|(prefix, _)| format!("{prefix}.AAAA"))?;
     assert!(verify_jwt(&tampered, &config, 1_500, &keys).is_err());
+    Ok(())
 }
 
 #[test]
