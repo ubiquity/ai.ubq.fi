@@ -1,10 +1,10 @@
 use crate::{invalid, text, validate_time};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
-use gateway_core::state::RecordKey;
+use gateway_core::state::StoredRecord;
 use gateway_core::{error::GatewayError, source_control::decode_source_control_record};
-use gateway_core::{source_control::encode_source_control_record, state::RecordMutation};
-use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::RevisionCheck};
-use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::StoredRecord};
+use gateway_core::{source_control::encode_source_control_record, state::RecordKey};
+use gateway_core::{source_json::SourceJson, state::AtomicTransition, state::RecordMutation};
+use gateway_core::{state::AuthorityStore, state::CommitOutcome, state::RevisionCheck};
 use gateway_schema::aliases::SourceStringCollator;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
@@ -527,6 +527,48 @@ impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_permit::ResetPer
     type Tokens = I;
     fn reset_permit(&self) -> gateway_authority_reset_permit::ResetPermitService<'_, S, I> {
         gateway_authority_reset_permit::ResetPermitService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_claim::ResetClaimFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_claim(&self) -> gateway_authority_reset_claim::ResetClaimService<'_, S, I> {
+        gateway_authority_reset_claim::ResetClaimService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_spend::ResetSpendFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_spend(&self) -> gateway_authority_reset_spend::ResetSpendService<'_, S, I> {
+        gateway_authority_reset_spend::ResetSpendService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+        )
+    }
+}
+
+impl<S: AuthorityStore, I: TokenSource> gateway_authority_reset_recovery::ResetRecoveryFactory
+    for Authority<S, I>
+{
+    type Store = S;
+    type Tokens = I;
+    fn reset_recovery(&self) -> gateway_authority_reset_recovery::ResetRecoveryService<'_, S, I> {
+        gateway_authority_reset_recovery::ResetRecoveryService::new(
             &self.store,
             &self.tokens,
             self.clock.as_deref(),

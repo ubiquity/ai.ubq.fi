@@ -13,6 +13,9 @@ default = ["entrypoint"]
 entrypoint = []
 
 [dependencies]
+gateway-authority-reset-recovery = { path = "../gateway-authority-reset-recovery" }
+gateway-authority-reset-spend = { path = "../gateway-authority-reset-spend" }
+gateway-authority-reset-claim = { path = "../gateway-authority-reset-claim" }
 gateway-authority-reset-permit = { path = "../gateway-authority-reset-permit" }
 gateway-authority-reset-evidence = { path = "../gateway-authority-reset-evidence" }
 gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }

@@ -270,3 +270,16 @@ pub fn utc_day(now: i64) -> Result<String, GatewayError> {
 }
 
 pub mod full_pool;
+
+pub fn check_record(record: &ResetRecord, expected: &ResetRecord) -> Result<(), GatewayError> {
+    if record.v != 1
+        || record.identity != expected.identity
+        || record.owner_token != expected.owner_token
+        || record.fence != expected.fence
+    {
+        return Err(unavailable("stale_owner", "Reset ownership changed."));
+    }
+    text(&record.owner_token)?;
+    nonnegative(record.lease_expires_at_ms)?;
+    Ok(())
+}

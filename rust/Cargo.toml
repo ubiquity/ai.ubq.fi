@@ -1,5 +1,9 @@
 [workspace]
 members = [
+  "crates/gateway-authority-reset-authorization",
+  "crates/gateway-authority-reset-recovery",
+  "crates/gateway-authority-reset-spend",
+  "crates/gateway-authority-reset-claim",
   "crates/gateway-authority-reset-permit",
   "crates/gateway-authority-reset-evidence",
   "crates/gateway-authority-paid-test-support",
@@ -76,6 +80,10 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-reset-authorization = { path = "crates/gateway-authority-reset-authorization" }
+gateway-authority-reset-recovery = { path = "crates/gateway-authority-reset-recovery" }
+gateway-authority-reset-spend = { path = "crates/gateway-authority-reset-spend" }
+gateway-authority-reset-claim = { path = "crates/gateway-authority-reset-claim" }
 gateway-authority-reset-permit = { path = "crates/gateway-authority-reset-permit" }
 gateway-authority-reset-evidence = { path = "crates/gateway-authority-reset-evidence" }
 gateway-authority-paid-test-support = { path = "crates/gateway-authority-paid-test-support" }

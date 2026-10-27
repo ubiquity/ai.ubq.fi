@@ -1,0 +1,24 @@
+[package]
+name = "gateway-authority-reset-recovery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
+gateway-authority-reset-authorization = { path = "../gateway-authority-reset-authorization" }
+gateway-authority-reset-evidence = { path = "../gateway-authority-reset-evidence" }
+gateway-authority-reset-permit = { path = "../gateway-authority-reset-permit" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-routing-policy = { path = "../gateway-authority-routing-policy" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-core = { path = "../gateway-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

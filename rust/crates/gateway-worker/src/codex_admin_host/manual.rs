@@ -1,14 +1,13 @@
 //! One explicit manual reset. Shared authority owns every intent, budget and promotion.
-use crate::transport::outbound::send_http;
-use crate::{authority::RemoteAuthorityStore, host::PlatformClock, host::PlatformHost};
-use crate::{host::PlatformTokens, storage::now_ms, transport::outbound::PinnedDestination};
-use gateway_auth::provider_credentials::CodexSourceAccount;
-use gateway_auth::types::AuthResponse;
+use crate::{authority::RemoteAuthorityStore, transport::outbound::PinnedDestination};
+use crate::{host::PlatformClock, host::PlatformHost, transport::outbound::send_http};
+use crate::{host::PlatformTokens, storage::now_ms};
+use gateway_auth::{provider_credentials::CodexSourceAccount, types::AuthResponse};
 use gateway_auth::{provider_credentials::read_codex_source_pool, types::AuthConfig};
-use gateway_authority::native_control::actor::NativeRenewalActor;
-use gateway_authority::store::Authority;
 use gateway_authority::{manual_reset::ManualResetPreparation, manual_reset::ManualResetTarget};
+use gateway_authority::{native_control::actor::NativeRenewalActor, store::Authority};
 use gateway_authority_reset_records::{ResetClaim, ResetState};
+use gateway_authority_reset_spend::ResetSpendOperations;
 use gateway_authority_routing_evidence::capacity::CapacityObservation;
 use gateway_authority_routing_evidence::capacity::parse_capacity_observation;
 use gateway_core::state::AuthorityStore;

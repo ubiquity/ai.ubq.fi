@@ -12,10 +12,10 @@ use gateway_authority_keys as keys;
 use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation};
 use gateway_authority_reset_records::{ResetMode, ResetRecord, ResetState};
 use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
-use gateway_core::tuple_key::TupleKey;
-use gateway_core::{error::GatewayError, identity::AccountBinding, identity::ActiveSelection};
+use gateway_core::{error::GatewayError, identity::AccountBinding, tuple_key::ScalarKeyPart};
+use gateway_core::{identity::ActiveSelection, tuple_key::TupleKey};
 use gateway_core::{identity::ActiveTransitionReason, identity::MAX_SAFE_INTEGER};
-use gateway_core::{state::AuthorityStore, state::RecordKey, tuple_key::ScalarKeyPart};
+use gateway_core::{state::AuthorityStore, state::RecordKey};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -469,7 +469,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 .read(&key)
                 .await?
                 .ok_or_else(|| error(409, "stale_owner"))?;
-            reset::check_record(&row, expected)?;
+            gateway_authority_reset_records::check_record(&row, expected)?;
             if row.identity != invocation.identity
                 || row.state
                     != if renew {
@@ -527,7 +527,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
                 ))
                 .await?
                 .ok_or_else(|| error(409, "codex_reset_unverified"))?;
-            reset::check_record(&row, verified)?;
+            gateway_authority_reset_records::check_record(&row, verified)?;
             if row.state != ResetState::Verified || row.identity != invocation.identity {
                 return Err(error(409, "codex_reset_unverified"));
             }
