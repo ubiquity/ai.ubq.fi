@@ -16,6 +16,7 @@ use gateway_core::tuple_key::TupleKey;
 use gateway_schema::{
     aliases::SourceStringCollator,
     catalog_store,
+    catalog_views::ordinary_models as ordinary_models_source,
     runtime_config::build_runtime_config as build_runtime_config_source,
     snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot as normalize_snapshot_source},
 };
