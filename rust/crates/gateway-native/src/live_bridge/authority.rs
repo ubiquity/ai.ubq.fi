@@ -1,19 +1,20 @@
 use crate::private_https::PrivateHttps;
-use gateway_auth::{
-    crypto::base64url,
-    native_auth::NativeTransportIdentity,
-    native_live::{NATIVE_LIVE_AUTHORITY_MAX_BYTES, NATIVE_LIVE_AUTHORITY_PATH},
+use gateway_auth_native_contracts::native_live::{
+    NATIVE_LIVE_AUTHORITY_MAX_BYTES, NATIVE_LIVE_AUTHORITY_PATH,
 };
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER,
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_authority::{
-    native_live::wire::NativeLiveAccess, native_live::wire::NativeLiveAuthorityRequest as Request,
-    native_live::wire::NativeLiveAuthorityResponse as Response, native_live::wire::NativeLiveFence,
-    native_live::wire::NativeLiveRetirement,
+use gateway_auth_primitives::crypto::base64url;
+use gateway_authority::native_live::wire::{
+    NativeLiveAccess, NativeLiveAuthorityRequest as Request,
 };
-use gateway_core::error::GatewayError;
+use gateway_native_authority_wire::live::{
+    NativeLiveAuthorityResponse as Response, NativeLiveFence, NativeLiveRetirement,
+};
+use gateway_source::error::GatewayError;
 use std::{net::TcpStream, time::Instant};
 
 pub struct LiveAuthorization {
@@ -80,13 +81,17 @@ impl NativeLiveAuthorityHttp {
             identity,
         })
     }
-    fn exchange(&self, request: Request, deadline: Instant) -> Result<Response, GatewayError> {
+    fn exchange(
+        &self,
+        request: Request,
+        deadline: Instant,
+    ) -> Result<Response<NativeLiveAccess>, GatewayError> {
         let body = serde_json::to_vec(&request).map_err(|_| super::unavailable())?;
         Request::parse(&body)?;
         let mut bytes = [0; 32];
         getrandom::fill(&mut bytes).map_err(|_| super::unavailable())?;
         let nonce = base64url(&bytes);
-        let now = crate::http_server::now_ms()?;
+        let now = gateway_native_http_framing::response::now_ms()?;
         let mac = self
             .identity
             .sign_live_authority_request(now, &nonce, &body)?;

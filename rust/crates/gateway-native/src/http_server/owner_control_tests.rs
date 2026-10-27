@@ -1,8 +1,9 @@
 //! Real confined HTTP/parser/MAC/capability fixture. This synthetic handler
 //! deliberately returns unknown and does not pretend to publish credentials.
 use super::*;
-use crate::confinement::{NativeConfinement, enforce};
-use gateway_auth::{crypto::base64url, native_auth::AuthenticatedNativeOwner};
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
+use gateway_auth_primitives::crypto::base64url;
+use gateway_native_confinement::confinement::{NativeConfinement, enforce};
 use std::{collections::BTreeSet, path::PathBuf, sync::atomic::AtomicU64};
 
 struct Fixture {

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub fn text(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
-        .map(|s| s.trim_matches(gateway_core::redaction::source_whitespace))
+        .map(|s| s.trim_matches(gateway_redaction::redaction::source_whitespace))
         .filter(|v| !v.is_empty())
         .map(str::to_owned)
 }

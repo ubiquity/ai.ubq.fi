@@ -19,8 +19,8 @@ use gateway_migration::native_custody::{
 };
 use gateway_migration::native_operator::{ConfiguredNativeCustody, NativeCustodyRegistration};
 use gateway_migration_test_support::fixture::{MANAGED_A_CASES, Receipt};
-use gateway_native::transport::NativeOwnerTransport;
-use gateway_native::unix::{NativeOwnerLocation, UnixOwnerTransport};
+use gateway_native_local_transport::transport::NativeOwnerTransport;
+use gateway_native_local_transport::unix::{NativeOwnerLocation, UnixOwnerTransport};
 use std::{collections::BTreeMap, path::PathBuf};
 
 pub struct Host {

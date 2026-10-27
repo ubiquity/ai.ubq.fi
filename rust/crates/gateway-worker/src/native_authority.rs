@@ -1,8 +1,7 @@
 //! Fixed reverse native protocols, authenticated against the common durable nonce authority.
 pub(crate) mod import_dispatch;
 use crate::authority::RemoteAuthorityStore;
-use crate::host::PlatformClock;
-use crate::host::PlatformTokens;
+use crate::host::{PlatformClock, PlatformTokens};
 use crate::native_host::NativeBindings;
 use gateway_auth::{
     native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeCapability},
@@ -16,9 +15,9 @@ use gateway_auth_native_wire::native_read::{
 use gateway_authority::{
     native_control::NativeRenewalCancellation, native_control::NativeRenewalControl,
     native_control::receiver::NativeRenewalAuthority,
-    native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest,
-    native_control::wire::NativeRenewalAuthorityResponse as RenewalResponse, store::Authority,
+    native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest, store::Authority,
 };
+use gateway_native_authority_wire::renewal_response::NativeRenewalAuthorityResponse as RenewalResponse;
 use gateway_source::error::GatewayError;
 use gateway_worker_http_body::body::request_bytes;
 use gateway_worker_platform::cancellation::Cancellation;

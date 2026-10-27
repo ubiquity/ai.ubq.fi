@@ -2,6 +2,7 @@
 use gateway_auth::store::key;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::{query::*, state::*};
+use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_migration::native_capture::NativeRevision;
 use gateway_migration::{

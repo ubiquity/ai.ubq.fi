@@ -1,14 +1,10 @@
 //! Safe fixed-role Child/bootstrap channel. Neither an accepted socket nor JSON is custody.
-use super::{
-    exclusive_owner::PinnedExecutable,
-    import_endpoints::{ImportEndpointData, ResolvedImportEndpoints},
-};
-use crate::import_custody_protocol::{
-    self as wire, Frame, Header, HeaderView, Stopped, unavailable,
-};
-use gateway_auth::crypto::sha256_hex;
-use gateway_core::error::GatewayError;
-use serde::{Deserialize, Serialize};
+use super::{exclusive_owner::PinnedExecutable, import_endpoints::ResolvedImportEndpoints};
+use crate::import_custody_protocol::{self as wire, unavailable};
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_native_custody_wire::bootstrap::{Bootstrap, ImportEndpointData};
+use gateway_native_custody_wire::wire::{Frame, Header, HeaderView, Stopped};
+use gateway_source::error::GatewayError;
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
@@ -17,42 +13,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     time::{Duration, Instant},
 };
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Bootstrap {
-    v: u8,
-    session_ref: String,
-    client_local: SocketAddr,
-    client_peer: SocketAddr,
-    custody_local: SocketAddr,
-    custody_peer: SocketAddr,
-    endpoints: ImportEndpointData,
-    native_owner_id: String,
-    account_id_hash: String,
-}
-impl Bootstrap {
-    fn validate(&self) -> Result<(), GatewayError> {
-        if self.native_owner_id.trim().is_empty()
-            || self.native_owner_id.len() > 4096
-            || !wire::hash(&self.account_id_hash)
-            || self.v != 1
-            || !wire::hash(&self.session_ref)
-            || [
-                self.client_local,
-                self.client_peer,
-                self.custody_local,
-                self.custody_peer,
-            ]
-            .iter()
-            .any(|a| !a.ip().is_loopback() || a.port() == 0)
-            || self.custody_local == self.custody_peer
-        {
-            return Err(unavailable());
-        }
-        self.endpoints.validate()
-    }
-}
-fn bootstrap_max_bytes() -> usize {
+fn bootstrap_max_bytes() -> Result<usize, GatewayError> {
     use std::net::{Ipv6Addr, SocketAddrV6};
     let local = SocketAddr::V6(SocketAddrV6::new(
         Ipv6Addr::LOCALHOST,
@@ -83,8 +44,8 @@ fn bootstrap_max_bytes() -> usize {
             oauth: remote,
         },
     })
-    .expect("Finite fixed TCP bootstrap shape")
-    .len()
+    .map(|bytes| bytes.len())
+    .map_err(|_| unavailable())
 }
 /// A command obtained only by a live actual Child's retained opposite channel.
 /// It is deliberately not a wire-deserializable authorization.
@@ -179,7 +140,7 @@ impl OwnedImportChildChannel {
             account_id_hash: account_id_hash.into(),
         };
         boot.validate()?;
-        let profile = crate::connector_policy::import_actor(
+        let profile = gateway_native_connector::connector_policy::import_actor(
             actor.path(),
             owner_root,
             replay_directory,
@@ -247,7 +208,7 @@ impl OwnedImportChildChannel {
             challenge: None,
         };
         let bootstrap = serde_json::to_vec(&this.boot).map_err(|_| unavailable())?;
-        if bootstrap.len() > bootstrap_max_bytes() {
+        if bootstrap.len() > bootstrap_max_bytes()? {
             return Err(unavailable());
         }
         let input = this.input.as_mut().ok_or_else(unavailable)?;
@@ -427,7 +388,8 @@ pub(super) struct ActorBootstrap {
 impl ActorBootstrap {
     // Only the fixed parameterless import role calls this, before any thread or FD clone.
     pub(super) fn from_stdio() -> Result<Self, GatewayError> {
-        crate::connector_policy::inherited_only_stdio().map_err(|_| unavailable())?;
+        gateway_native_connector::connector_policy::inherited_only_stdio()
+            .map_err(|_| unavailable())?;
         let stdin = std::io::stdin();
         if rustix::fs::FileType::from_raw_mode(
             rustix::fs::fstat(&stdin)
@@ -440,7 +402,7 @@ impl ActorBootstrap {
         let mut input = stdin.lock();
         let config = bootstrap_part(&mut input, 65_536)?;
         let boot: Bootstrap =
-            serde_json::from_slice(&bootstrap_part(&mut input, bootstrap_max_bytes())?)
+            serde_json::from_slice(&bootstrap_part(&mut input, bootstrap_max_bytes()?)?)
                 .map_err(|_| unavailable())?;
         boot.validate()?;
         let stdout = std::io::stdout();
@@ -499,9 +461,12 @@ fn bootstrap_part(input: &mut impl Read, maximum: usize) -> Result<Vec<u8>, Gate
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{bootstrap_max_bytes, bootstrap_part};
+    use gateway_native_custody_wire::bootstrap::{Bootstrap, ImportEndpointData};
+    use gateway_source::error::GatewayError;
+    use std::net::SocketAddr;
     #[test]
-    fn bootstrap_bound_is_derived_and_unknown_peer_data_refuses() {
+    fn bootstrap_bound_is_derived_and_unknown_peer_data_refuses() -> Result<(), GatewayError> {
         use std::net::{Ipv6Addr, SocketAddrV6};
         let local = SocketAddr::V6(SocketAddrV6::new(
             Ipv6Addr::LOCALHOST,
@@ -534,20 +499,22 @@ mod tests {
                 oauth: remote,
             },
         };
-        boot.validate().unwrap();
-        let encoded = serde_json::to_vec(&boot).unwrap();
-        assert_eq!(encoded.len(), bootstrap_max_bytes());
-        let round_trip: Bootstrap = serde_json::from_slice(&encoded).unwrap();
-        round_trip.validate().unwrap();
-        let mut extra: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        boot.validate()?;
+        let encoded = serde_json::to_vec(&boot).map_err(|_| unavailable())?;
+        assert_eq!(encoded.len(), bootstrap_max_bytes()?);
+        let round_trip: Bootstrap = serde_json::from_slice(&encoded).map_err(|_| unavailable())?;
+        round_trip.validate()?;
+        let mut extra: serde_json::Value =
+            serde_json::from_slice(&encoded).map_err(|_| unavailable())?;
         extra["caller_destination"] = serde_json::json!("https://forbidden.invalid");
         assert!(serde_json::from_value::<Bootstrap>(extra).is_err());
         let mut over = std::io::Cursor::new(
-            u32::try_from(bootstrap_max_bytes() + 1)
-                .unwrap()
+            u32::try_from(bootstrap_max_bytes()? + 1)
+                .map_err(|_| unavailable())?
                 .to_be_bytes(),
         );
-        assert!(bootstrap_part(&mut over, bootstrap_max_bytes()).is_err());
+        assert!(bootstrap_part(&mut over, bootstrap_max_bytes()?).is_err());
         assert_eq!(over.position(), 4);
+        Ok(())
     }
 }

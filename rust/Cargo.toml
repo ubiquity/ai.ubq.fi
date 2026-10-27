@@ -108,6 +108,23 @@ members = [
   "crates/gateway-publication-transport",
   "crates/gateway-publication-test-support",
   "crates/gateway-native",
+  "crates/gateway-native-authority-wire",
+  "crates/gateway-native-confinement",
+  "crates/gateway-native-connector",
+  "crates/gateway-native-connected-io",
+  "crates/gateway-native-custody-wire",
+  "crates/gateway-native-http-framing",
+  "crates/gateway-native-https-test-support",
+  "crates/gateway-native-import-client",
+  "crates/gateway-native-import-source",
+  "crates/gateway-native-import-test-support",
+  "crates/gateway-native-live-buffer",
+  "crates/gateway-native-local-transport",
+  "crates/gateway-native-publication",
+  "crates/gateway-native-replay",
+  "crates/gateway-native-supervisor",
+  "crates/gateway-native-supervisor-data",
+  "crates/gateway-native-supervisor-http",
   "crates/gateway-native-supervisor-read",
   "crates/gateway-live-runtime",
   "crates/gateway-wait-observation",
@@ -136,6 +153,7 @@ rust-version = "1.98.1"
 publish = false
 
 [workspace.dependencies]
+gateway-authority-actor-records = { path = "crates/gateway-authority-actor-records" }
 gateway-authority-routing-signal = { path = "crates/gateway-authority-routing-signal" }
 gateway-authority-reset-authorization = { path = "crates/gateway-authority-reset-authorization" }
 gateway-authority-reset-recovery = { path = "crates/gateway-authority-reset-recovery" }
@@ -242,6 +260,23 @@ gateway-publication-policy = { path = "crates/gateway-publication-policy" }
 gateway-publication-transport = { path = "crates/gateway-publication-transport" }
 gateway-publication-test-support = { path = "crates/gateway-publication-test-support" }
 gateway-native = { path = "crates/gateway-native" }
+gateway-native-authority-wire = { path = "crates/gateway-native-authority-wire" }
+gateway-native-confinement = { path = "crates/gateway-native-confinement" }
+gateway-native-connector = { path = "crates/gateway-native-connector" }
+gateway-native-connected-io = { path = "crates/gateway-native-connected-io" }
+gateway-native-custody-wire = { path = "crates/gateway-native-custody-wire" }
+gateway-native-http-framing = { path = "crates/gateway-native-http-framing" }
+gateway-native-https-test-support = { path = "crates/gateway-native-https-test-support" }
+gateway-native-import-client = { path = "crates/gateway-native-import-client" }
+gateway-native-import-source = { path = "crates/gateway-native-import-source" }
+gateway-native-import-test-support = { path = "crates/gateway-native-import-test-support" }
+gateway-native-live-buffer = { path = "crates/gateway-native-live-buffer" }
+gateway-native-local-transport = { path = "crates/gateway-native-local-transport" }
+gateway-native-publication = { path = "crates/gateway-native-publication" }
+gateway-native-replay = { path = "crates/gateway-native-replay" }
+gateway-native-supervisor = { path = "crates/gateway-native-supervisor" }
+gateway-native-supervisor-data = { path = "crates/gateway-native-supervisor-data" }
+gateway-native-supervisor-http = { path = "crates/gateway-native-supervisor-http" }
 gateway-native-supervisor-read = { path = "crates/gateway-native-supervisor-read" }
 gateway-live-runtime = { path = "crates/gateway-live-runtime" }
 gateway-wait-observation = { path = "crates/gateway-wait-observation" }
