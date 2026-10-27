@@ -1172,6 +1172,7 @@ dependencies = [
  "gateway-auth-native-wire",
  "gateway-authority",
  "gateway-core",
+ "serde",
  "serde_json",
 ]
 
