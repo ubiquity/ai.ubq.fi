@@ -497,8 +497,7 @@ enum TerminalRoute {
     Inference(bool),
 }
 fn terminal_target(path: &str, request: &Request) -> Result<Option<TerminalRoute>, GatewayError> {
-    if let Some(route) = gateway_extras_contract::route::route(path, &request.method().to_string())?
-    {
+    if let Some(route) = gateway_extras_contract::route::route(path, request.method().as_ref())? {
         return Ok(Some(TerminalRoute::Extras(route)));
     }
     if !["/v1/responses", "/v1/chat/completions"].contains(&path) {
