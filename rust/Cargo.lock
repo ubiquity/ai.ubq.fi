@@ -938,6 +938,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
  "gateway-auth",
+ "gateway-auth-attestation",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
