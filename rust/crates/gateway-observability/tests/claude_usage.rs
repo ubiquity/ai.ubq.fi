@@ -257,58 +257,74 @@ fn member(v: &SourceJson, n: &str) -> Result<SourceJson, GatewayError> {
     source::member(v, n).ok_or_else(missing)
 }
 #[test]
-fn automatic_capture_visits_unused_and_guarded_accounts_then_returns_updated_roster_history_health_and_rollups()
+fn passive_capacity_uses_explicit_headers_and_never_collects_unused_or_guarded_accounts()
 -> TestResult {
     let host = Fixture::new();
     let a = account(1);
     let b = account(2);
     host.seed(vec![a.clone(), b.clone()])?;
-    let key = gateway_claude_policy::quota::quota_key(&b);
-    host.store.rows.borrow_mut().insert(key.0,StoredRecord::json("guard",json!({"updated_at_ms":NOW,"windows":{},"standard":{},"last_error":{"kind":"workspace","status":403,"message":"existing guard","at_ms":NOW},"cooldown_until_ms":NOW+600_000}),None));
     let runtime = ObservabilityRuntime::new(host.store.clone(), host.clone());
-    let body = document(run(runtime.capacity_response(false, context()))?)?;
-    assert_eq!(host.calls.get(), 2);
-    let rows = member(&body, "claude_accounts")?.array_items()?;
-    assert_eq!(rows.len(), 2);
-    for row in &rows {
-        assert_eq!(member(&member(row, "usage")?, "state")?.as_str(), "\"ok\"");
-        assert_eq!(
-            member(&member(row, "usage_snapshot")?, "meters")?
-                .array_items()?
-                .len(),
-            2
+    for (account, used) in [(&a, "0.42"), (&b, "0.61")] {
+        // Retain a genuine legacy direct snapshot, then seed only the new meter DATA.
+        run(collect::refresh(&host.store, &host, account))?;
+        if account.account_id == a.account_id {
+            let cached = document(run(runtime.capacity_response(false, context()))?)?;
+            assert_eq!(
+                member(&member(&cached, "claude")?, "source_observed_at_ms")?.as_str(),
+                "null"
+            );
+        }
+        let mut state = run(collect::load(&host.store, account, NOW))?.ok_or("quota absent")?;
+        let mut headers = Default::default();
+        std::collections::BTreeMap::insert(
+            &mut headers,
+            "anthropic-ratelimit-unified-5h-utilization".into(),
+            used.into(),
+        );
+        let observation = gateway_claude_policy::response::observe_headers(&headers, NOW)
+            .ok_or("header data absent")?;
+        state.response_headers =
+            gateway_claude_usage_quota::headers::merge(None, Some(&observation));
+        if let Some(usage) = state.usage.as_mut() {
+            usage.state = "scope_missing".into();
+        }
+        let key = gateway_claude_policy::quota::quota_key(account);
+        host.store.rows.borrow_mut().insert(
+            key.0,
+            gateway_claude_usage_quota::stored_state(&state, "header-data".into())?,
         );
     }
-    assert_eq!(member(&rows[1], "state")?.as_str(), "\"unavailable\"");
-    assert_eq!(
-        member(&member(&body, "claude_history")?, "points")?
-            .array_items()?
-            .len(),
-        2
-    );
-    let health = document(run(runtime.passive_provider_response(true, context()))?)?;
-    let health = member(&health, "claude_code")?;
-    assert!(member(&member(&health, "quota")?, "usage_snapshot").is_ok());
-    let rollup = document(run(runtime.capacity_rollups_response(90))?)?;
-    assert_eq!(
-        member(&member(&rollup, "claude_usage_rollups")?, "points")?
-            .array_items()?
-            .len(),
-        4
-    );
-    assert!(member(&rollup, "claude_rollups")?.array_items()?.is_empty());
-    let commits = host.store.commits.get();
-    run(runtime.capacity_response(false, context()))?;
-    assert_eq!(host.calls.get(), 2);
-    assert_eq!(host.store.commits.get(), commits);
+    host.calls.set(0);
+    for live in [false, false, true] {
+        let body = document(run(runtime.capacity_response(live, context()))?)?;
+        let active = member(&body, "claude")?;
+        assert_eq!(
+            member(&active, "account_id")?.as_str(),
+            SourceJson::from_serializable(&a.account_id)?.as_str()
+        );
+        assert_eq!(
+            source::number(&member(
+                &member(&member(&active, "windows")?, "five_hour")?,
+                "used_percent"
+            )?),
+            Some(42.0)
+        );
+        assert_eq!(member(&active, "usage")?.as_str(), "null");
+        assert!(source::member(&active, "usage_snapshot").is_none());
+        assert_eq!(member(&active, "state")?.as_str(), "\"available\"");
+    }
     host.base.at.set(NOW + 30_000);
     run(runtime.capacity_response(false, context()))?;
-    assert_eq!(host.calls.get(), 4);
-    let text = body.as_str();
-    assert!(!text.contains("fixture-secret"));
-    assert!(!text.contains("credential_fingerprint"));
-    assert!(!text.contains("pool_proofs"));
-    assert!(text.contains("\\ud800"));
+    assert_eq!(host.calls.get(), 0);
+    host.seed(vec![b.clone(), a])?;
+    let switched = document(run(runtime.capacity_response(false, context()))?)?;
+    assert_eq!(
+        member(&member(&switched, "claude")?, "account_id")?.as_str(),
+        SourceJson::from_serializable(&b.account_id)?.as_str()
+    );
+    let quota = run(collect::load(&host.store, &b, NOW + 30_000))?.ok_or("stored state absent")?;
+    assert!(quota.usage_snapshot.is_some());
+    assert!(quota.response_headers.is_some());
     Ok(())
 }
 #[test]
@@ -437,6 +453,7 @@ fn corrupt_usage_rollup_refuses_entire_bucket_transaction_and_read_scan_reports_
     )
     .ok_or("snapshot absent")?;
     let event = ClaudeAcceptedObservation {
+        source: None,
         v: 1,
         observation_id: "new".into(),
         account_id: a.account_id,
@@ -565,7 +582,7 @@ impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for Admi
         else {
             return Err(missing());
         };
-        let result = gateway_claude_usage_runtime::admin::refresh(
+        let result = gateway_claude_usage_runtime::admin::passive_read(
             &self.0.store,
             self.0,
             &claude::Bootstrap::default(),
@@ -578,12 +595,11 @@ impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for Admi
             &SourceJson::parse_bytes(&block.body.to_bytes()?)?,
             "claude_code",
         )?;
-        gateway_claude_usage_runtime::admin::response(result, data)
+        gateway_claude_usage_runtime::admin::passive_response(result, data)
     }
 }
 #[test]
-fn authenticated_admin_service_dispatch_executes_real_account_fenced_collector_and_updated_block()
--> TestResult {
+fn authenticated_admin_service_dispatch_is_passive_and_preserves_target_checks() -> TestResult {
     use gateway_auth_contracts::{types::AuthConfig, types::AuthRequest};
     use gateway_auth_primitives::crypto::Secret;
     let host = Fixture::new();
@@ -653,20 +669,14 @@ fn authenticated_admin_service_dispatch_executes_real_account_fenced_collector_a
     let response = run(service.handle_route(&request, "accepted"))?.ok_or("route absent")?;
     assert_eq!(response.status, 200);
     let response = document(response)?;
-    assert_eq!(member(&response, "refreshed")?.as_str(), "true");
-    let quota = member(&member(&response, "data")?, "quota")?;
+    assert_eq!(member(&response, "refreshed")?.as_str(), "false");
     assert_eq!(
-        member(&member(&quota, "usage")?, "state")?.as_str(),
-        "\"ok\""
+        member(&response, "reason")?.as_str(),
+        "\"response_headers\""
     );
-    assert_eq!(
-        member(&member(&quota, "usage_snapshot")?, "meters")?
-            .array_items()?
-            .len(),
-        2
-    );
-    let fresh = document(run(service.handle_route(&request, "fresh"))?.ok_or("route absent")?)?;
-    assert_eq!(member(&fresh, "reason")?.as_str(), "\"fresh\"");
-    assert_eq!(host.calls.get(), 1);
+    assert_eq!(member(&response, "observed_at_ms")?.as_str(), "null");
+    let cached = document(run(service.handle_route(&request, "cached"))?.ok_or("route absent")?)?;
+    assert_eq!(member(&cached, "refreshed")?.as_str(), "false");
+    assert_eq!(host.calls.get(), 0);
     Ok(())
 }

@@ -170,7 +170,11 @@ pub(crate) async fn persist<S: AuthorityStore, H: ClaudePoolHost>(
             config_retry_ms: classification.retry_after_ms,
             served: classification.kind == ResponseKind::Ok,
         };
-        let state = quota::merge(previous.as_ref(), binding, &input, now);
+        let mut state = quota::merge(previous.as_ref(), binding, &input, now);
+        state.response_headers = gateway_claude_usage_quota::headers::merge(
+            state.response_headers.as_ref(),
+            observation,
+        );
         if commit(
             store,
             vec![roster_check, quota_check],

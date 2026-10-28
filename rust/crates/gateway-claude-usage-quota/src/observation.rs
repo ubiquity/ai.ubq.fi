@@ -18,6 +18,8 @@ pub struct AcceptedObservation {
     pub response_status: Option<u16>,
     pub state: String,
     pub observation: QuotaObservation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 impl AcceptedObservation {
     /// Source JSON number spelling also supports m19's integer timestamp DTO.
@@ -89,6 +91,7 @@ mod producer_order_tests {
             response_status: Some(200),
             state: "available".into(),
             observation: quota,
+            source: None,
         };
         let document = event.source_value()?;
         let observation = source::member(&document, "observation").ok_or("observation absent")?;

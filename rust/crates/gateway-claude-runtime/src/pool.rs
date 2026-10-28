@@ -463,6 +463,7 @@ impl ClaudePoolSession {
                 }
                 .into(),
                 observation: observation.clone(),
+                source: Some("response_headers".into()),
             };
             let _ = host.accepted_observation(&event).await;
         }

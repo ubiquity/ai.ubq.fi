@@ -26,6 +26,66 @@ use std::{
     task::{Context, Poll, Waker},
 };
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+#[test]
+fn passive_admin_uses_only_auth_host_and_never_collects_or_renews_evidence() -> TestResult {
+    use gateway_claude_runtime::pool::ClaudePoolSession;
+    use gateway_claude_runtime_test_support::fixture::{apply, raw, selected};
+    let store = Store::new();
+    let account = account(1);
+    let config = seed(&store, vec![account.clone()]);
+    let host = Host::new(&store);
+    let body = SourceJson::from_serializable(
+        &json!({"account_id":account.account_id,"account_cohort_id":account.account_cohort_id}),
+    )?;
+    let empty = run(admin::passive_read(
+        &store,
+        &host,
+        &claude::Bootstrap::default(),
+        &body,
+    ))?;
+    assert_eq!(empty.observed_at_ms, None);
+    let session = ClaudePoolSession::new(config);
+    let raw = raw();
+    let selected = selected(&session, &store, &host, &raw);
+    let headers = [(
+        "anthropic-ratelimit-unified-5h-utilization".into(),
+        "0.4".into(),
+    )]
+    .into_iter()
+    .collect();
+    apply(&session, &store, &host, &selected, 200, headers, NOW);
+    let key = gateway_claude_policy::quota::quota_key(&account);
+    let before = store.get(&key);
+    let calls = (host.catalog_calls.get(), host.workspace_calls.get());
+    let read = run(admin::passive_read(
+        &store,
+        &host,
+        &claude::Bootstrap::default(),
+        &body,
+    ))?;
+    assert_eq!(read.observed_at_ms, Some(NOW as f64));
+    let reply = admin::passive_response(read, SourceJson::parse("{}")?)?;
+    let document = SourceJson::parse_bytes(&reply.body.to_bytes()?)?;
+    assert_eq!(
+        source::member(&document, "reason")
+            .as_ref()
+            .and_then(source::string),
+        Some("response_headers".into())
+    );
+    assert_eq!(
+        source::member(&document, "usage")
+            .ok_or("usage field absent")?
+            .as_str(),
+        "null"
+    );
+    assert_eq!(store.get(&key), before);
+    assert_eq!(
+        (host.catalog_calls.get(), host.workspace_calls.get()),
+        calls
+    );
+    Ok(())
+}
 struct Fixture {
     base: Host,
     calls: Cell<usize>,

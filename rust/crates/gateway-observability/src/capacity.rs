@@ -52,7 +52,7 @@ pub fn claude_source(
     account: &ClaudeAccountReadback,
     health: &Value,
     at: i64,
-    dates: &impl Fn(&gateway_source::js_string::JsString16) -> Option<i64>,
+    _dates: &impl Fn(&gateway_source::js_string::JsString16) -> Option<i64>,
 ) -> Result<SourceJson, GatewayError> {
     let empty = SourceJson::parse("{}")?;
     let quota = SourceObject::parse(account.quota.as_ref().unwrap_or(&empty))?;
@@ -71,8 +71,30 @@ pub fn claude_source(
         None
     };
     let failing = blocked || cooling || error_fields.is_some();
-    let windows = field("windows");
-    let standard = field("standard");
+    let headers = quota.get("response_headers").and_then(|raw| {
+        let fields = SourceObject::parse(raw).ok()?;
+        let marker = fields.get("source").and_then(source::string);
+        let valid_clock = fields
+            .get("observed_at_ms")
+            .and_then(integer)
+            .is_some_and(|at| at > 0.0);
+        (marker
+            == Some(gateway_source::js_string::JsString16::from_utf8(
+                "response_headers",
+            ))
+            && valid_clock
+            && fields.get("usage_snapshot").is_none())
+        .then_some(fields)
+    });
+    let measured = |name: &str| {
+        headers
+            .as_ref()
+            .and_then(|h| h.get(name))
+            .cloned()
+            .unwrap_or_else(|| null.clone())
+    };
+    let windows = measured("windows");
+    let standard = measured("standard");
     let mut observed = Vec::new();
     for document in [&windows, &standard] {
         if document.as_str().trim_start().starts_with('{') {
@@ -89,27 +111,10 @@ pub fn claude_source(
             }
         }
     }
-    let projected = quota
-        .get("usage_snapshot")
-        .and_then(|s| gateway_claude_usage_protocol::snapshot::read(s, dates))
-        .map(|s| gateway_claude_usage_protocol::snapshot::serialize(&s))
-        .transpose()?;
-    let snapshot = projected.as_ref();
-    let usage = quota
-        .get("usage")
-        .and_then(gateway_claude_usage_protocol::state::read);
-    let usage_stale = snapshot.is_some_and(|s| {
-        usage.as_ref().is_none_or(|u| u.state != "ok")
-            || gateway_claude_usage_protocol::snapshot::provenance(s)
-                .is_some_and(|(_, t)| at - t >= 30_000)
-    });
-    let observed = snapshot
-        .and_then(gateway_claude_usage_protocol::snapshot::provenance)
-        .map(|(_, t)| t as f64)
-        .or_else(|| observed.into_iter().reduce(f64::max));
+    let observed = observed.into_iter().reduce(f64::max);
     let state = if failing {
         "unavailable"
-    } else if usage_stale || observed.is_some_and(|t| at as f64 - t > shape::STALE_MS as f64) {
+    } else if observed.is_some_and(|t| at as f64 - t > shape::STALE_MS as f64) {
         "stale"
     } else {
         "available"
@@ -131,13 +136,14 @@ pub fn claude_source(
     let window = |name| gateway_claude_usage_history_records::window_source(&windows, name);
     let mut standard_rows = Vec::new();
     if standard.as_str().trim_start().starts_with('{') {
-        for (family, value) in source::entries(&standard)
-            .ok_or_else(|| store::error("Invalid Claude standard metadata"))?
-        {
+        for family in ["requests", "input-tokens", "output-tokens"] {
+            let Some(value) = source::member(&standard, family) else {
+                continue;
+            };
             let value = SourceObject::parse(&value)?;
             let leaf = |name| value.get(name).cloned().unwrap_or_else(|| null.clone());
             standard_rows.push(source::object(vec![
-                ("family", family.to_source_json()?),
+                ("family", SourceJson::from_serializable(&family)?),
                 ("limit", leaf("limit")),
                 ("remaining", leaf("remaining")),
                 ("reset_at_ms", leaf("reset_at_ms")),
@@ -156,11 +162,7 @@ pub fn claude_source(
         ])?,
     )?;
     document.set("standard", &standard_rows)?;
-    document.set("usage", &usage)?;
-    if let Some(snapshot) = snapshot {
-        document.set("usage_snapshot", snapshot)?;
-        document.set("usage_stale", &usage_stale)?;
-    }
+    document.set("usage", &null)?;
     document.set("blocked_until_ms", &field("blocked_until_ms"))?;
     document.set("cooldown_until_ms", &field("cooldown_until_ms"))?;
     document.set("last_error", &error)?;
@@ -263,12 +265,9 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
             self.slot_capacity(accounts.iter().find(|a| a.slot == 1), 1, fence.as_ref(), at),
             self.slot_capacity(accounts.iter().find(|a| a.slot == 2), 2, fence.as_ref(), at),
         );
-        let (((one, two), metered), _usage) = futures_util::future::join(
-            futures_util::future::join(
-                codex,
-                self.host.metered_quota_snapshot(force_metered, at + 8000),
-            ),
-            self.host.collect_claude_usage(),
+        let ((one, two), metered) = futures_util::future::join(
+            codex,
+            self.host.metered_quota_snapshot(force_metered, at + 8000),
         )
         .await;
         let one = one?;
@@ -467,20 +466,12 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         let at = store::now(self.host.as_ref())?;
-        let inventory = self.host.provider_inventory(&context).await?;
+        let _inventory = self.host.provider_inventory(&context).await?;
         let cached = self.persisted_capacity_view().await?;
-        let usage_fresh = inventory.claude.accounts.iter().all(|a| {
-            a.quota
-                .as_ref()
-                .and_then(|q| source::member(q, "usage"))
-                .as_ref()
-                .and_then(gateway_claude_usage_protocol::state::read)
-                .is_some_and(|u| u.fresh(at))
-        });
         let fresh = cached["cache_state"] != "unavailable"
             && gateway_capacity_projection::scalars::safe_i64(&cached["snapshot_at_ms"])
                 .is_some_and(|t| at - t < 30000);
-        let mut body = if !live && fresh && usage_fresh {
+        let mut body = if !live && fresh {
             cached
         } else {
             match self.refresh_capacity_view(live).await {
@@ -493,7 +484,7 @@ impl<S: QueryStore, H: ObservabilityHost> ObservabilityRuntime<S, H> {
                 Err(_) => cached,
             }
         };
-        // Rebuild after collection; the same response includes the newly accepted evidence.
+        // Reproject current account/header evidence on cached and refreshed reads.
         let inventory = self.host.provider_inventory(&context).await?;
         let at = store::now(self.host.as_ref())?;
         let mut source_accounts = Vec::new();

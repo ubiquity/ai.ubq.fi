@@ -130,6 +130,12 @@ pub struct Point {
     pub workspace_id: Option<JsString16>,
     pub state: ClaudeObservationState,
     pub response_status: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::types::header_source"
+    )]
+    pub source: Option<String>,
     pub windows: Windows,
     #[serde(
         default,
@@ -149,10 +155,14 @@ impl Point {
         self.source_observed_at_ms.unwrap_or(self.sampled_at_ms)
     }
     pub fn valid(&self) -> bool {
-        self.usage_snapshot.as_ref().is_none_or(|s| {
-            gateway_claude_usage_protocol::snapshot::provenance(s)
-                .is_some_and(|(_, at)| at as f64 <= self.sampled_at_ms)
-        }) && self.v == 1.0
+        self.source
+            .as_deref()
+            .is_none_or(|s| s == "response_headers")
+            && self.usage_snapshot.as_ref().is_none_or(|s| {
+                gateway_claude_usage_protocol::snapshot::provenance(s)
+                    .is_some_and(|(_, at)| at as f64 <= self.sampled_at_ms)
+            })
+            && self.v == 1.0
             && identity(&self.point_id)
             && identity(&self.account_id)
             && identity(&self.account_cohort_id)
@@ -501,6 +511,13 @@ fn safe_observation(event: &ClaudeAcceptedObservation) -> Result<SourceJson, Gat
 pub fn point_for_observation(
     event: &ClaudeAcceptedObservation,
 ) -> Result<Option<SourceJson>, GatewayError> {
+    if event
+        .source
+        .as_deref()
+        .is_some_and(|s| s != "response_headers")
+    {
+        return Err(error("Invalid Claude header source marker"));
+    }
     let observation = safe_observation(event)?;
     let parsed: Observation = observation.deserialize()?;
     if source::member(&observation, "usage_snapshot").is_none()
@@ -517,7 +534,7 @@ pub fn point_for_observation(
     .into_iter()
     .map(|(name, _)| name.try_utf8())
     .collect::<Result<Vec<_>, _>>()?;
-    let digest = source::object(vec![
+    let mut digest_fields = vec![
         ("account", SourceJson::from_serializable(&event.account_id)?),
         (
             "cohort",
@@ -537,7 +554,11 @@ pub fn point_for_observation(
             SourceJson::from_serializable(&event.response_status)?,
         ),
         ("observation", observation.clone()),
-    ])?;
+    ];
+    if let Some(marker) = &event.source {
+        digest_fields.push(("source", SourceJson::from_serializable(marker)?));
+    }
+    let digest = source::object(digest_fields)?;
     let window = |name: &str| {
         parsed.windows.get(name).map(|w| Window {
             status: w.status.clone(),
@@ -565,6 +586,7 @@ pub fn point_for_observation(
         workspace_id: event.workspace_id.clone(),
         state: event.state,
         response_status: event.response_status.map(f64::from),
+        source: event.source.clone(),
         windows: Windows {
             five_hour: window("5h"),
             seven_day: window("7d"),
