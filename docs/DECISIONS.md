@@ -6,6 +6,14 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Ordinary Rust journal v3 retains the source principal domain - 2026-10-28
+
+Fresh ordinary routing journals use their existing logical v3 and the defining `RequestContext::to_source_json` / `from_source_json` codec for their explicitly annotated context field. The lower `gateway-local-journal::context` DATA reader selects that codec only from the actual stored integer `v`; historical v1 and local-origin v2 retain scalar context decoding, and unknown, missing or fractional versions refuse without fallback. General `RequestContext` and `PrincipalId` serde stays scalar. The complete Journal writer and decoder retain full shape equality before the original session/pending CAS; legacy non-scalar writes still fail at their original encoding step after the same token and expiry observations.
+
+Custody and paid original-currentness read the same exact context and preserve all original request, API, kernel, lease, revision and pending bindings. The principal non-whitespace observation keeps Rust scalar `trim` behavior while preserving source UTF16 units. Scalar context and original-admission preimage bytes retain their field order and escaping. The existing physical Json/ProfileV2 choice, schema version, key recipes, absolute retention and lifetime are unchanged; decoded DATA grants no authentication, currentness, admission or effect authority. Authority's source-facts/digest owner and the Worker's typed principal producer adopt the frozen defining API separately.
+
+Reason: source-valid Passport subjects can contain lone UTF16 units, but the ordinary v3 writer and readers previously passed their principal through historical scalar serde. This bounded decision covers that ordinary-v3 seam. Generated Extras v1 non-scalar parity and dormant local-completion v2 remain distinct open port domains requiring their own version/codec decision; no new version or activation is approved here. Source fixtures and structural checks do not establish final native/WASM, Worker, client, private migration or deployment acceptance.
+
 ## Capacity projection has one finite defining crate - 2026-10-27
 
 The structural capacity leaf moves the existing finite JSON capacity validation, chart/history projection and folding into `gateway-capacity-projection`. It defines the five existing scalar data helpers and depends only on `gateway-core` and `serde_json`. Observability retains event identity, privacy selection, storage, currentness, authority acceptance and all effects; recovery and Worker consumers import the defining data functions directly. Bodies, thresholds, ordering, comparator errors and wire shapes remain source-compatible.
