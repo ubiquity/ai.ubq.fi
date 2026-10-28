@@ -17,7 +17,7 @@ pub fn forward(row: &mut Row) -> Result<(), GatewayError> {
     }
     let p = &row.parts;
     if starts(p, &["uos_ai", "codex_reset_shadow_decision"]) {
-        gateway_authority::full_pool_reset::types::FullPoolShadowDecision::validate_record(
+        gateway_authority_reset_records::full_pool::FullPoolShadowDecision::validate_record(
             &row.key,
             &row.record,
         )?;
@@ -78,11 +78,11 @@ pub fn forward(row: &mut Row) -> Result<(), GatewayError> {
     } else if starts(p, &["uos_ai", "codex_active_account"]) {
         let _: gateway_contracts::identity::ActiveSelection = decode(&v)?;
     } else if starts(p, &["uos_ai", "codex_account_routing"]) {
-        gateway_authority::routing_codec::parse_routing_state(&v)?;
+        gateway_authority_routing_records::codec::parse_routing_state(&v)?;
     } else if starts(p, &["uos_ai", "codex_capacity_routing"]) {
-        gateway_authority::capacity_rules::parse_capacity_store(&v)?;
+        gateway_authority_routing_evidence::capacity::parse_capacity_store(&v)?;
     } else if starts(p, &["uos_ai", "codex_manual_reset"]) {
-        let intent = gateway_authority::manual_reset::parse_manual_intent(&v)?;
+        let intent = gateway_authority_reset_records::manual::parse_manual_intent(&v)?;
         if p.len() != 4
             || p[2] != "v1"
             || p[3] != intent.account_id_hash
@@ -97,19 +97,19 @@ pub fn forward(row: &mut Row) -> Result<(), GatewayError> {
     } else if starts(p, &["uos_ai", "claude_code_accounts"]) {
         gateway_claude_roster::claude::parse_roster(&v)?;
     } else if starts(p, &["uos_ai", "auth", "users"]) {
-        let user: gateway_auth_passkeys::passkeys::PasskeyUser = decode(&v)?;
+        let user: gateway_auth_contracts::passkeys::PasskeyUser = decode(&v)?;
         if p.len() != 4 || p[3] != user.id {
             return Err(invalid("Passkey user identity conflicts"));
         }
     } else if starts(p, &["uos_ai", "auth", "credentials"]) {
-        let credential: gateway_auth_passkeys::passkeys::PasskeyCredential = decode(&v)?;
+        let credential: gateway_auth_contracts::passkeys::PasskeyCredential = decode(&v)?;
         if p.len() != 4 || p[3] != credential.credential_id {
             return Err(invalid("Passkey credential identity conflicts"));
         }
     } else if starts(p, &["uos_ai", "auth", "sessions"]) {
-        let _: gateway_auth_passkeys::passkeys::PasskeySession = decode(&v)?;
+        let _: gateway_auth_contracts::passkeys::PasskeySession = decode(&v)?;
     } else if starts(p, &["uos_ai", "auth", "challenges"]) {
-        let _: gateway_auth_passkeys::passkeys::PasskeyChallenge = decode(&v)?;
+        let _: gateway_auth_contracts::passkeys::PasskeyChallenge = decode(&v)?;
     } else if starts(p, &["ubq_ai", "codex_catalog"]) {
         let metadata: gateway_schema::catalog_cache::CatalogMetadata = decode(&v)?;
         if !metadata.valid() || p.get(2) != Some(&json!(metadata.client_version)) {
