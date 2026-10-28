@@ -1,9 +1,9 @@
-use crate::{RowData as Row, digest, invalid, json, key};
+use crate::{RowData as Row, digest, invalid, json};
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -18,17 +18,26 @@ pub struct Manifest {
     pub native_revision: Option<crate::native_capture::NativeRevision>,
 }
 pub fn manifest_key() -> RecordKey {
-    key(json!(["uos_ai", "migration", "v3", "manifest"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migration"),
+        ScalarKeyPart::String("v3"),
+        ScalarKeyPart::String("manifest"),
+    ])
+    .to_record_key()
 }
 pub fn mapping_key(id: &str, source: &str) -> RecordKey {
-    key(json!([
-        "uos_ai",
-        "migration",
-        "v3",
-        "row",
-        id,
-        gateway_auth_primitives::crypto::sha256_hex(source.as_bytes())
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migration"),
+        ScalarKeyPart::String("v3"),
+        ScalarKeyPart::String("row"),
+        ScalarKeyPart::String(id),
+        ScalarKeyPart::String(&gateway_auth_primitives::crypto::sha256_hex(
+            source.as_bytes(),
+        )),
+    ])
+    .to_record_key()
 }
 
 pub fn mapping_record(row: &Row, capture_id: &str) -> Result<StoredRecord, GatewayError> {
