@@ -4812,6 +4812,7 @@ dependencies = [
  "gateway-schema-values",
  "gateway-source",
  "gateway-wait-observation",
+ "gateway-worker-agent-messages",
  "gateway-worker-authority-binding",
  "gateway-worker-http-body",
  "gateway-worker-platform",
@@ -4821,6 +4822,25 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "worker",
+]
+
+[[package]]
+name = "gateway-worker-agent-messages"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-request-normalization",
+ "gateway-schema-values",
+ "gateway-source",
+ "gateway-worker-authority-binding",
+ "gateway-worker-http-body",
+ "gateway-worker-platform",
+ "gateway-worker-storage",
+ "serde",
+ "serde_json",
  "worker",
 ]
 
