@@ -1,9 +1,10 @@
 use gateway_chat_normalization::scalar::*;
+use gateway_prompt_cache::compat::validate_known_unsupported;
 use gateway_request_normalization::scalar::{parse_effort, validate_prompt_cache_controls, *};
 use gateway_responses_normalization::scalar::{
     normalize_response_content, normalize_responses_input,
 };
-use gateway_schema::{prompt_cache::*, reasoning::*};
+use gateway_schema::reasoning::*;
 use gateway_schema_values::{
     allowlists::*,
     request::{RequestExtensions, RequestSurface},

@@ -371,7 +371,7 @@ pub fn normalized_codex_capability(
         "reasoning_source",
         c::json(&resolved.reasoning_source),
     );
-    if let Some(cache) = crate::prompt_cache::normalize_capabilities_source(
+    if let Some(cache) = gateway_prompt_cache::metadata::normalize_capabilities_source(
         gateway_source::source_serialization::member(record, "prompt_cache").as_ref(),
     ) {
         c::set(&mut row, "prompt_cache", cache);
