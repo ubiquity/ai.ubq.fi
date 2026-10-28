@@ -1,0 +1,17 @@
+[package]
+name = "gateway-native-authority-request"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-wire = { path = "../gateway-auth-native-wire" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-source = { path = "../gateway-source" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

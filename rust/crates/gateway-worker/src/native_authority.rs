@@ -13,9 +13,9 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_authority::native_control::receiver::NativeRenewalAuthority;
-use gateway_authority::native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest;
 use gateway_authority::{native_control::NativeRenewalControl, store::Authority};
 use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_native_authority_request::NativeRenewalAuthorityRequest as RenewalRequest;
 use gateway_native_authority_wire::renewal_response::NativeRenewalAuthorityResponse as RenewalResponse;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;

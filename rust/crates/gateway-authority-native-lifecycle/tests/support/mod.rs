@@ -1,4 +1,4 @@
-//! Actual C source actors and complete private action CAS; no native effect/provider/network.
+//! Actual C source actors, complete action CAS and signed same-store native lifecycle; no external provider/network.
 use gateway_auth_contracts::{
     types::{AuthConfig, AuthHost},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
@@ -9,26 +9,21 @@ use gateway_auth_credentials::provider_credentials::{
 };
 use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
 use gateway_auth_passport_contracts::session::PassportDate;
-use gateway_auth_passport_sessions::sessions::{PassportSessions, session_key};
+use gateway_auth_passport_sessions::sessions::PassportSessions;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_actor_currentness::{
     app::ActorService, source_actor::SourceNativeRenewalActor,
 };
 use gateway_authority_contracts::{AuthorityClock, NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
-use gateway_authority_native_preparation::{
-    SourceNativePreparationContext, SourceNativeRenewalService,
-};
-use gateway_authority_native_records::{
-    live::mapping_key, owner::RegisteredRenewalOwner, rows, source_rows::SourceRenewalActionRowV3,
-};
+use gateway_authority_native_records::live::mapping_key;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::identity::{PoolVersionstamp, PrincipalId, RequestContext, RequestId};
 use gateway_core::{
-    source_control::{decode_source_control_record, encode_source_control_record},
+    source_control::encode_source_control_record,
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
@@ -39,18 +34,26 @@ use std::{
     future::Future,
     task::{Context, Poll, Waker},
 };
-const NOW: i64 = 1_793_059_200_000;
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+pub(super) const NOW: i64 = 1_793_059_200_000;
+pub(super) type TestResult = Result<(), Box<dyn std::error::Error>>;
 #[derive(Default)]
-struct Store(
-    RefCell<BTreeMap<String, StoredRecord>>,
-    RefCell<Option<RecordKey>>,
+pub(super) struct Store(
+    pub(super) RefCell<BTreeMap<String, StoredRecord>>,
+    pub(super) RefCell<Option<RecordKey>>,
 );
 impl AuthorityStore for Store {
     async fn read(&self, key: &RecordKey) -> Result<Option<StoredRecord>, GatewayError> {
         Ok(self.0.borrow().get(&key.0).cloned())
     }
     async fn commit(&self, tx: AtomicTransition) -> Result<CommitOutcome, GatewayError> {
+        if tx
+            .checks
+            .iter()
+            .any(|check| check.key == mapping_key("call", false))
+            && let Some(key) = self.1.borrow_mut().take()
+        {
+            self.0.borrow_mut().remove(&key.0);
+        }
         let mut rows = self.0.borrow_mut();
         if tx
             .checks
@@ -72,12 +75,12 @@ impl AuthorityStore for Store {
         Ok(CommitOutcome::Committed)
     }
 }
-struct Host {
-    status: Cell<u16>,
-    hold: Cell<bool>,
-    admin: Cell<bool>,
-    calls: Cell<usize>,
-    now: Cell<i64>,
+pub(super) struct Host {
+    pub(super) status: Cell<u16>,
+    pub(super) hold: Cell<bool>,
+    pub(super) admin: Cell<bool>,
+    pub(super) calls: Cell<usize>,
+    pub(super) now: Cell<i64>,
 }
 impl Default for Host {
     fn default() -> Self {
@@ -90,7 +93,7 @@ impl Default for Host {
         }
     }
 }
-fn unavailable() -> GatewayError {
+pub(super) fn unavailable() -> GatewayError {
     GatewayError::unavailable("Fixture unavailable", "fixture_unavailable")
 }
 impl PassportDate for Host {
@@ -156,7 +159,7 @@ impl AuthHost for Host {
         })
     }
 }
-fn run<F: Future>(future: F) -> F::Output {
+pub(super) fn run<F: Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
     let mut cx = Context::from_waker(Waker::noop());
     loop {
@@ -166,7 +169,7 @@ fn run<F: Future>(future: F) -> F::Output {
         std::thread::yield_now();
     }
 }
-async fn create(store: &Store, host: &Host) -> Result<String, GatewayError> {
+pub(super) async fn create(store: &Store, host: &Host) -> Result<String, GatewayError> {
     let grant = SourceJson::parse(&format!(
         r#"{{"subject":"\ud800\u0000","clientId":"ai","audience":"ai","origin":"https://ai.ubq.fi","redirectUri":"https://ai.ubq.fi/auth/callback","createdAt":"10/27/2026","token":"uos_app_session_{}"}}"#,
         "A".repeat(43)
@@ -176,7 +179,7 @@ async fn create(store: &Store, host: &Host) -> Result<String, GatewayError> {
         .await
 }
 
-fn seed(
+pub(super) fn seed(
     store: &Store,
     key: RecordKey,
     revision: &str,
@@ -192,7 +195,7 @@ fn seed(
     );
     Ok(())
 }
-fn identity() -> Result<NativeTransportIdentity, GatewayError> {
+pub(super) fn identity() -> Result<NativeTransportIdentity, GatewayError> {
     NativeTransportIdentity::new(
         "key".into(),
         "owner".into(),
@@ -201,7 +204,7 @@ fn identity() -> Result<NativeTransportIdentity, GatewayError> {
         std::collections::BTreeSet::from([NativeCapability::OwnerRenewal]),
     )
 }
-fn fixture(
+pub(super) fn fixture(
     store: &Store,
     id: &NativeTransportIdentity,
     expiry: Option<i64>,
@@ -289,14 +292,14 @@ impl AuthorityClock for Host {
         Ok(self.now.get())
     }
 }
-struct Cancel(bool);
+pub(super) struct Cancel(pub(super) bool);
 impl NativeRenewalCancellation for Cancel {
     fn cancelled(&self) -> bool {
         self.0
     }
 }
 #[derive(Default)]
-struct Tokens(Cell<u64>);
+pub(super) struct Tokens(Cell<u64>);
 impl TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
         let n = self.0.get() + 1;
@@ -304,7 +307,7 @@ impl TokenSource for Tokens {
         Ok(format!("source-action-{n}"))
     }
 }
-async fn actor<'a>(
+pub(super) async fn actor<'a>(
     store: &'a Store,
     host: &'a Host,
     config: &'a AuthConfig,
@@ -336,167 +339,54 @@ async fn actor<'a>(
         token,
     ))
 }
-#[test]
-fn actual_source_actor_and_complete_cas_mint_one_bound_v3_action_with_original_context()
--> TestResult {
-    run(async {
-        let store = Store::default();
-        let host = Host::default();
-        let config = AuthConfig::default();
-        let tokens = Tokens::default();
-        let id = identity()?;
-        fixture(&store, &id, None)?;
-        let (actor, _) = actor(&store, &host, &config).await?;
-        let owner =
-            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
-        let cancel = Cancel(false);
-        let service = SourceNativeRenewalService::new(
-            &store,
-            &tokens,
-            Some(&host),
-            &host,
-            &config,
-            SourceNativePreparationContext::configured(&id, &owner, &cancel),
-        );
-        let action = service
-            .prepare_source_live_mapped_renewal(&actor, "call")
-            .await?;
-        assert_eq!(action.fence().v, 3);
-        assert_eq!(&action.fence().principal, actor.principal().as_source());
-        let raw = store
-            .read(&rows::key("action", action.action_ref()))
-            .await?
-            .ok_or("action")?;
-        let row = SourceRenewalActionRowV3::from_source_json(&decode_source_control_record(&raw)?)?;
-        assert_eq!(&row.context, actor.context());
-        assert_eq!(row.fence, *action.fence());
-        assert!(row.operation_id.is_none());
-        let repeated = service
-            .prepare_source_live_mapped_renewal(&actor, "call")
-            .await?;
-        assert_eq!(repeated.action_ref(), action.action_ref());
-        assert_eq!(
-            store
-                .0
-                .borrow()
-                .keys()
-                .filter(|key| key.starts_with(&rows::prefix().0))
-                .count(),
-            1
-        );
-        Ok(())
-    })
+#[derive(Default)]
+pub(super) struct Nonces(RefCell<std::collections::BTreeSet<String>>);
+impl gateway_auth_native_contracts::nonce::NativeNonceAuthority for Nonces {
+    async fn consume_nonce(
+        &self,
+        _: &str,
+        nonce: &str,
+        _: i64,
+        _: i64,
+    ) -> Result<(), GatewayError> {
+        if self.0.borrow_mut().insert(nonce.into()) {
+            Ok(())
+        } else {
+            Err(unavailable())
+        }
+    }
 }
-#[test]
-fn logout_at_mapping_revision_cas_never_mints_or_publishes_a_source_action() -> TestResult {
-    run(async {
-        let store = Store::default();
-        let host = Host::default();
-        let config = AuthConfig::default();
-        let tokens = Tokens::default();
-        let id = identity()?;
-        fixture(&store, &id, None)?;
-        let (actor, token) = actor(&store, &host, &config).await?;
-        let owner =
-            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
-        let cancel = Cancel(false);
-        let service = SourceNativeRenewalService::new(
-            &store,
-            &tokens,
-            Some(&host),
-            &host,
-            &config,
-            SourceNativePreparationContext::configured(&id, &owner, &cancel),
-        );
-        *store.1.borrow_mut() = Some(session_key(&token));
-        assert!(
-            service
-                .prepare_source_live_mapped_renewal(&actor, "call")
-                .await
-                .is_err()
-        );
-        assert!(
-            !store
-                .0
-                .borrow()
-                .keys()
-                .any(|key| key.starts_with(&rows::prefix().0))
-        );
-        Ok(())
+pub(super) fn control_body(action: &str, operation: &str) -> Result<Vec<u8>, GatewayError> {
+    serde_json::to_vec(&gateway_auth_native_wire::control::NativeControlEnvelope {
+        v: 1,
+        operation_id: operation.into(),
+        request: gateway_auth_native_wire::control::NativeControlRequest::CodexRenewAccess {
+            action_ref: action.into(),
+        },
     })
+    .map_err(|_| unavailable())
 }
-#[test]
-fn opaque_actor_from_same_typed_foreign_store_cannot_prepare_here() -> TestResult {
-    run(async {
-        let store = Store::default();
-        let foreign = Store::default();
-        let host = Host::default();
-        let config = AuthConfig::default();
-        let tokens = Tokens::default();
-        let id = identity()?;
-        fixture(&store, &id, None)?;
-        let (actor, _) = actor(&foreign, &host, &config).await?;
-        let owner =
-            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
-        let cancel = Cancel(false);
-        let service = SourceNativeRenewalService::new(
-            &store,
-            &tokens,
-            Some(&host),
-            &host,
-            &config,
-            SourceNativePreparationContext::configured(&id, &owner, &cancel),
-        );
-        assert!(
-            service
-                .prepare_source_live_mapped_renewal(&actor, "call")
-                .await
-                .is_err()
-        );
-        assert!(
-            !store
-                .0
-                .borrow()
-                .keys()
-                .any(|key| key.starts_with(&rows::prefix().0))
-        );
-        Ok(())
-    })
-}
-#[test]
-fn cancellation_keeps_the_original_499_before_new_action_effects() -> TestResult {
-    run(async {
-        let store = Store::default();
-        let host = Host::default();
-        let config = AuthConfig::default();
-        let tokens = Tokens::default();
-        let id = identity()?;
-        fixture(&store, &id, None)?;
-        let (actor, _) = actor(&store, &host, &config).await?;
-        let owner =
-            RegisteredRenewalOwner::configured("native".into(), "/tmp/native-source".into())?;
-        let cancel = Cancel(true);
-        let service = SourceNativeRenewalService::new(
-            &store,
-            &tokens,
-            Some(&host),
-            &host,
-            &config,
-            SourceNativePreparationContext::configured(&id, &owner, &cancel),
-        );
-        let error = service
-            .prepare_source_live_mapped_renewal(&actor, "call")
-            .await
-            .err()
-            .ok_or("cancel accepted")?;
-        assert_eq!(error.status, 499);
-        assert!(
-            !store
-                .0
-                .borrow()
-                .keys()
-                .any(|key| key.starts_with(&rows::prefix().0))
-        );
-        Ok(())
-    })
+pub(super) async fn signed_owner(
+    identity: &NativeTransportIdentity,
+    body: &[u8],
+    n: u8,
+) -> Result<gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner, GatewayError> {
+    use gateway_auth_native_proof::native_auth::{NativeAuthHeaders, NativeAuthenticator};
+    let path = gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
+    let nonce = gateway_auth_primitives::crypto::base64url(&[n; 32]);
+    let mac = identity.sign(path, NOW, &nonce, body)?;
+    NativeAuthenticator::new(identity, &Nonces::default())
+        .authenticate(
+            path,
+            NativeAuthHeaders {
+                version: "1",
+                key_id: identity.key_id(),
+                time_ms: &NOW.to_string(),
+                nonce: &nonce,
+                mac: &mac,
+            },
+            body,
+            NOW,
+        )
+        .await
 }
