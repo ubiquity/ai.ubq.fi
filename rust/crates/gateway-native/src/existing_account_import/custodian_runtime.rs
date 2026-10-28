@@ -143,7 +143,7 @@ impl CustodianRuntime {
         }
         let request = peer.consume_first_quiesce(command)?;
         self.match_observation(&request, &fresh)?;
-        let now = gateway_native_http_framing::response::now_ms()?;
+        let now = gateway_auth_native_proof::native_context::now_ms()?;
         let remaining = fresh
             .deadline_ms()
             .checked_sub(now)
@@ -180,8 +180,8 @@ impl CustodianRuntime {
                 &request.binding.native_owner_id,
                 &request.binding.account_id_hash,
             )
-            || fresh.verified_at_ms() > gateway_native_http_framing::response::now_ms()?
-            || fresh.deadline_ms() <= gateway_native_http_framing::response::now_ms()?
+            || fresh.verified_at_ms() > gateway_auth_native_proof::native_context::now_ms()?
+            || fresh.deadline_ms() <= gateway_auth_native_proof::native_context::now_ms()?
         {
             return Err(unavailable());
         }
@@ -202,7 +202,7 @@ impl CustodianRuntime {
             || header.challenge != session.challenge
             || header.binding.canonical_bytes()? != session.binding
             || fresh.request().canonical_bytes()? != session.binding
-            || fresh.deadline_ms() <= gateway_native_http_framing::response::now_ms()?
+            || fresh.deadline_ms() <= gateway_auth_native_proof::native_context::now_ms()?
         {
             return Err(unavailable());
         }
@@ -225,7 +225,7 @@ impl CustodianRuntime {
         peer.require_pending(command)?;
         let header = command.header();
         let session = self.session.as_ref().ok_or_else(unavailable)?;
-        let now = gateway_native_http_framing::response::now_ms()?;
+        let now = gateway_auth_native_proof::native_context::now_ms()?;
         if !session.stopped
             || session.released
             || Instant::now() >= session.deadline

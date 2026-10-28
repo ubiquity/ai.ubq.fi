@@ -24,9 +24,10 @@ fn frozen_bun_source_fixtures_share_one_engine() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 #[test]
-fn provenance_never_invents_present_cache_write_or_buyer_charge() {
+fn provenance_never_invents_present_cache_write_or_buyer_charge()
+-> Result<(), Box<dyn std::error::Error>> {
     let usage = json!({"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cached_tokens":0}});
-    let absent = extract_usage_tokens(Some(&usage)).unwrap();
+    let absent = extract_usage_tokens(Some(&usage)).ok_or("missing reported usage fixture")?;
     assert_eq!(absent.status, UsageStatus::Reported);
     assert!(!absent.cache_write_tokens_present());
     assert_eq!(absent.cache_write_input_tokens, None);
@@ -34,17 +35,20 @@ fn provenance_never_invents_present_cache_write_or_buyer_charge() {
     let mut present = usage;
     present["input_tokens_details"]["cache_write_tokens"] = Value::Null;
     present["buyer_cost_micro"] = json!("invalid");
-    let present = extract_usage_tokens(Some(&present)).unwrap();
+    let present = extract_usage_tokens(Some(&present)).ok_or("missing invalid usage fixture")?;
     assert_eq!(present.status, UsageStatus::Invalid);
     assert!(present.cache_write_tokens_present());
     assert_eq!(present.cache_write_input_tokens, None);
     assert_eq!(present.buyer_cost_micro, Some(None));
+    Ok(())
 }
 #[test]
-fn invalid_buyer_charge_does_not_reclassify_reported_usage() {
+fn invalid_buyer_charge_does_not_reclassify_reported_usage()
+-> Result<(), Box<dyn std::error::Error>> {
     let usage = json!({"input_tokens":10,"output_tokens":2,"total_tokens":12,"input_tokens_details":{"cached_tokens":0},"buyer_cost_micro":-1});
-    let actual = extract_usage_tokens(Some(&usage)).unwrap();
+    let actual = extract_usage_tokens(Some(&usage)).ok_or("missing reported buyer-cost fixture")?;
     assert_eq!(actual.status, UsageStatus::Reported);
     assert_eq!(actual.buyer_cost_micro, Some(None));
     assert_eq!(actual.status.as_str(), "reported");
+    Ok(())
 }

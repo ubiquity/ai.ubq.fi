@@ -1,11 +1,11 @@
 //! Source-observed discovery only; no guessed model capabilities or reasoning tiers.
 use crate::host::{CatalogProvider, unavailable};
+use gateway_contracts::model::ModelId;
+use gateway_schema_values::{scalar::js_trim, source_view::js_trim_source};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_contracts::model::ModelId;
-use gateway_schema::{reasoning::js_trim_source, util::js_trim};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 fn json<T: Serialize + ?Sized>(value: &T) -> SourceJson {

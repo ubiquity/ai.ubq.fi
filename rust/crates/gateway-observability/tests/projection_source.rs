@@ -1,16 +1,13 @@
 mod support;
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
-};
+use gateway_contracts::source_usage::extract_usage_tokens;
 use gateway_core::{
     query::QueryStore, source_control::encode_source_control_record, state::StoredRecord,
 };
-use gateway_contracts::source_usage::extract_usage_tokens;
 use gateway_kv_codec::{
     key::RecordKey, tuple_key::KeyPart, tuple_key::TupleKey, value::PortableValue,
     value::ValueEncoding,
 };
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_observability::{
     ObservabilityRuntime, ledger::terminal_rollup::TerminalUsageRollup,
     records::usage_rollup_record_source, types::ObservabilityHost,
@@ -18,7 +15,10 @@ use gateway_observability::{
 use gateway_observability_test_support::source_fixture::{
     CapturedCollator, assert_source_eq, fixture,
 };
-use gateway_schema::aliases::SourceStringCollator;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use support::{Host, Memory, run};
@@ -70,7 +70,7 @@ fn units(row: &SourceJson, name: &str) -> Vec<u16> {
         .into_units()
 }
 fn response_source(
-    response: &gateway_auth::types::AuthResponse,
+    response: &gateway_auth_contracts::types::AuthResponse,
 ) -> Result<SourceJson, GatewayError> {
     SourceJson::parse_bytes(&response.body.to_bytes()?)
 }

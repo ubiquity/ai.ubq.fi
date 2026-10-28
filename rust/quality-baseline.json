@@ -1,30 +1,20 @@
 {
   "crates": {
-    "gateway-admin-runtime": 5483,
-    "gateway-auth": 8509,
-    "gateway-authority": 32269,
-    "gateway-catalog-runtime": 3357,
-    "gateway-claude-runtime": 1730,
+    "gateway-admin-runtime": 5479,
+    "gateway-authority": 32264,
+    "gateway-claude-runtime": 1727,
     "gateway-compaction": 3177,
-    "gateway-core": 4791,
-    "gateway-extras-runtime": 2440,
-    "gateway-migration": 9753,
-    "gateway-native": 22320,
-    "gateway-observability": 11430,
+    "gateway-extras-runtime": 2434,
+    "gateway-native": 22313,
+    "gateway-observability": 11187,
     "gateway-providers": 9739,
     "gateway-routing-runtime": 7943,
     "gateway-schema": 7618,
-    "gateway-worker": 18838
+    "gateway-worker": 18538
   },
   "targets": {
-    "gateway-authority/test/conformance": 5558,
-    "gateway-catalog-runtime/test/admin": 1018,
-    "gateway-catalog-runtime/test/control": 1306,
-    "gateway-catalog-runtime/test/runtime": 1520,
-    "gateway-migration/example/worker-custody-fixture": 1922,
-    "gateway-migration/test/copied_store_inverse": 1075,
-    "gateway-migration/test/runtime": 1183,
-    "gateway-routing-runtime/test/source_contracts": 1462
+    "gateway-authority/test/conformance": 5554,
+    "gateway-routing-runtime/test/source_contracts": 1461
   },
   "violations": {
     "include": {},

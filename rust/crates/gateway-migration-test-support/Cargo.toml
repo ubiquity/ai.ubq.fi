@@ -6,13 +6,28 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-admin-contracts = { path = "../gateway-admin-contracts" }
+gateway-admin-runtime = { path = "../gateway-admin-runtime" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-profile-source = { path = "../gateway-profile-source" }
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true
+gateway-migration-data.workspace = true
 gateway-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+gateway-admin-contracts.workspace = true
+gateway-admin-runtime.workspace = true
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-migration.workspace = true
+gateway-profile-source.workspace = true
+gateway-profile-values.workspace = true
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 
 [lints]

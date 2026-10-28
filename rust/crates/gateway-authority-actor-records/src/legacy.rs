@@ -110,3 +110,22 @@ pub fn source_expiry(value: &SourceActor) -> Option<i64> {
         SourceActor::ApiKey { expires_at_ms, .. } => *expires_at_ms,
     }
 }
+
+/// Historical scalar JWT provenance DATA only. Actual AuthService authentication remains mandatory.
+pub fn passport_source(
+    identity: &gateway_auth_passport_contracts::actor_data::PassportSessionData,
+) -> Result<SourceActor, GatewayError> {
+    use gateway_auth_passport_contracts::actor_data::PassportSessionData;
+    let PassportSessionData::Jwt(claims) = identity else {
+        return Err(fail());
+    };
+    if !claims.is_admin || claims.agent_token_id.is_some() {
+        return Err(fail());
+    }
+    let legacy = claims.try_legacy_scalar().map_err(|_| fail())?;
+    Ok(SourceActor::Passport {
+        sub: legacy.sub,
+        jti: legacy.jti,
+        expires_at_ms: legacy.exp.checked_mul(1000).ok_or_else(fail)?,
+    })
+}

@@ -1,6 +1,7 @@
 //! Source OpenLux metadata decoding and pure pricing projection; no I/O or authority.
-use gateway_admin_runtime::capabilities::PricingSnapshot;
+use gateway_admin_runtime_contracts::capabilities::PricingSnapshot;
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -42,9 +43,8 @@ fn keyed(value: Option<&SourceJson>, key: &JsString16) -> Option<SourceJson> {
 }
 fn trim(value: &JsString16) -> JsString16 {
     let units = value.as_units();
-    let whitespace = |unit: &&u16| {
-        char::from_u32(u32::from(**unit)).is_some_and(gateway_schema::util::js_whitespace)
-    };
+    let whitespace =
+        |unit: &&u16| char::from_u32(u32::from(**unit)).is_some_and(schema_scalar::js_whitespace);
     let start = units.iter().take_while(whitespace).count();
     let end = units.len() - units[start..].iter().rev().take_while(whitespace).count();
     JsString16::from_units(units[start..end].to_vec())

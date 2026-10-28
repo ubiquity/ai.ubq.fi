@@ -1,5 +1,7 @@
 use crate::access_publication::PreparedAccessPublication;
-use gateway_auth::native_credentials::{NativeCredentials, parse_native_document};
+use gateway_auth_credentials::{
+    native_credentials::NativeCredentials, native_credentials::parse_native_document,
+};
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_publication_policy::control_publication::PreparedConfigurationPublication;
 use gateway_publication_policy::protocol::{invalid, valid_revision};

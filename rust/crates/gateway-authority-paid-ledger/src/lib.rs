@@ -15,6 +15,7 @@ use gateway_contracts::{
 };
 use gateway_contracts::{lifecycle::PaidTerminalState, provider::PaidProvider};
 use gateway_core::state::AuthorityStore;
+use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::error::GatewayError;
 async fn read_gate<S: AuthorityStore, I: TokenSource>(
     tx: &mut Transaction<'_, S, I>,
@@ -377,9 +378,9 @@ pub trait PaidLedgerOperations: PaidLedgerFactory {
                     keys::paid_window(&reservation.key_id.0, reservation.window_reset_at_ms);
                 let window: Option<PaidWindow> = tx.read(&window_key).await?;
                 let bucket = reservation.created_at_ms / 3_600_000 * 3_600_000;
-                let model = gateway_contracts::model::ModelId::from_source(
-                    gateway_schema::reasoning::js_trim_source(row.model.as_js_string()),
-                );
+                let model = gateway_contracts::model::ModelId::from_source(js_trim_source(
+                    row.model.as_js_string(),
+                ));
                 let rollup_key = keys::paid_rollup_model(
                     bucket,
                     &model,

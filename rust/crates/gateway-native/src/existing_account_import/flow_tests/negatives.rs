@@ -1,6 +1,7 @@
 //! Required negatives use the same real actors, authority, TLS and native writer.
 //! The pause controls only server scheduling; it issues no proof or outcome.
 use super::*;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use std::{net::Shutdown, sync::Condvar};
 
 pub(super) struct PhasePause {

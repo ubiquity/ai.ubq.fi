@@ -1,21 +1,23 @@
 //! Recognize only the exact already-published group owned by this original import.
 //! This private issuer never accepts arbitrary revisions, flags or ignored keys.
-use super::super::actor;
-use super::super::receiver::NativeRenewalAuthority;
-use super::super::rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication};
-use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
-use super::{action::ImportActionRow, effects, unavailable};
+use super::{
+    super::{OWNER_RENEWAL_MAX_MS, actor, receiver::NativeRenewalAuthority},
+    effects, unavailable,
+};
 use crate::store::Transaction;
-use gateway_auth::provider_credentials::{
+use gateway_auth_credentials::provider_credentials::{
     MANAGED_NATIVE_SOURCE_VERSION, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_auth_native_wire::publication_data::{
     ImportCatalogDisposition, ImportPublicationDataV1,
 };
-use gateway_authority_actor_records::legacy::StoredNativeActor;
-use gateway_authority_actor_records::scope::NativeActorScope;
-use gateway_authority_contracts::TokenSource;
+use gateway_authority_actor_records::{legacy::StoredNativeActor, scope::NativeActorScope};
+use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::{
+    import_action::ImportActionRow,
+    rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication},
+};
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::AuthorityStore;
@@ -271,7 +273,7 @@ pub(super) async fn verify<S: AuthorityStore, I: TokenSource, C: NativeRenewalCa
         || identity.credential_version.0 != publication.credential_version
         || identity.native_generation_hash != publication.access_generation
         || native.generation_hash != publication.access_generation
-        || native.codex_home != control.registered.home
+        || native.codex_home != control.registered.registered_home()
         || native.external_user_id.is_some()
         || !account.refresh_token.expose().is_empty()
         || native.managed_source.as_ref().is_none_or(|value| {

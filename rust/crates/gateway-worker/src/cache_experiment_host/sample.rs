@@ -1,8 +1,8 @@
 //! Raw terminal fields share the core source parser; unrelated UTF16 remains untouched.
 use gateway_cache_experiment_records::{model::Reason, model::STEPS, model::Sample, model::Usage};
-use gateway_cache_experiment_runner::io::ReadSample;
 use gateway_contracts::{source_usage::UsageStatus, source_usage::extract_source_usage_tokens};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use {gateway_cache_experiment_runner::io::ReadSample, gateway_schema_values::scalar as util};
 pub(super) fn member(value: &SourceJson, name: &str) -> Result<Option<SourceJson>, GatewayError> {
     let mut found = None;
     for (key, value) in value.object_entries()? {
@@ -27,7 +27,7 @@ pub(super) fn event_type(event: &SourceJson) -> Result<Option<String>, GatewayEr
         .filter(|value| {
             value.as_units().iter().any(|&unit| {
                 char::from_u32(u32::from(unit))
-                    .is_none_or(|character| !gateway_schema::util::js_whitespace(character))
+                    .is_none_or(|character| !util::js_whitespace(character))
             })
         })
         .ok_or_else(|| gateway_cache_experiment_records::model::failed(
@@ -36,7 +36,7 @@ pub(super) fn event_type(event: &SourceJson) -> Result<Option<String>, GatewayEr
     Ok(kind
         .try_utf8()
         .ok()
-        .map(|value| gateway_schema::util::js_trim(&value).to_owned()))
+        .map(|value| util::js_trim(&value).to_owned()))
 }
 pub(super) fn completed(
     response: &SourceJson,
@@ -50,7 +50,7 @@ pub(super) fn completed(
         completed: true,
     };
     let actual = member(response, "model")?.as_ref().and_then(string);
-    if actual.as_deref().map(gateway_schema::util::js_trim) != Some(model) {
+    if actual.as_deref().map(util::js_trim) != Some(model) {
         return Ok(inconclusive(Reason::EffectiveModelDrift));
     }
     let raw = member(response, "usage")?;

@@ -2,10 +2,9 @@
 //! No socket, refresh, provider effect or publication implementation.
 use crate::owner_control::NativeControlContext;
 use gateway_auth_native_contracts::native_import::{NativeImportKind, NativeImportMetadata};
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
-    native_control::receiver::NativeRenewalAuthority,
-};
+use gateway_authority::native_control::import::AuthenticatedNativeImport;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_native_import_source::{body as import_body, result::NativeImportResult};

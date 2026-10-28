@@ -4,18 +4,16 @@ use crate::{
         CredentialFence, PreparedWireRequest, PublishedCredential, RoutingInput, RoutingResult,
     },
 };
+use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_provider_claude_body::{
+    types::OrdinaryPhaseOptions, types::PreparedClaudeBody, types::PreparedClaudeOrdinary,
+};
+use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
+use gateway_providers::source_request::prepare_source_request;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_contracts::{model::ModelId, provider::UpstreamProvider};
-use gateway_providers::{
-    source_request::prepare_source_request,
-    types::{
-        ClientSurface, OrdinaryPhaseOptions, OrdinaryPreparationContext, PreparedClaudeBody,
-        PreparedClaudeOrdinary,
-    },
-};
-use gateway_schema::source_request::error::SourceRequestError;
 /// A derived per-hop object, never a mutation of the authoritative original request.
 pub(crate) fn set(
     raw: &mut SourceJson,
@@ -62,7 +60,8 @@ pub(crate) fn prepare(
             options.auth = material.clone();
             options.client_version = input.client_version.clone();
             options.native_session_id = input.native_session_id.clone();
-            options.response_id = gateway_providers::response::translated_response_id(nonce);
+            options.response_id =
+                gateway_provider_protocol::response::translated_response_id(nonce);
             options.conversation_id = Some(conversation_id.to_owned());
             options.created_at = now / 1000;
             options.allowed_models = policy::provider_ids(input, provider);
@@ -152,7 +151,7 @@ pub(crate) fn finalize_claude(
         .into());
     };
     let mut options = body_options.clone();
-    options.response_id = gateway_providers::response::translated_response_id(nonce);
+    options.response_id = gateway_provider_protocol::response::translated_response_id(nonce);
     options.created_at = now / 1000;
     // The factory's requested/canonical association and already-normalized controls stay captured.
     let canonical = phase.model().clone();

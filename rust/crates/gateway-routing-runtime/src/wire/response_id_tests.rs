@@ -1,15 +1,15 @@
 use super::*;
 use crate::types::direct_credential;
-use gateway_auth::{
-    crypto::Secret,
-    types::{AuthMethod, AuthPrincipal},
+use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
+use gateway_auth_primitives::crypto::Secret;
+use gateway_contracts::{identity::PrincipalId, identity::RequestContext, identity::RequestId};
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::ClaudeCredentialKind};
+use gateway_provider_protocol::{
+    response::response_plan, response::translated_response_id, types::Headers,
+    types::PrepareOptions, types::ResponseDecode,
 };
-use gateway_contracts::identity::{PrincipalId, RequestContext, RequestId};
-use gateway_providers::{
-    response::{decode_response, response_plan, translated_response_id},
-    sse::StreamDecoder,
-    types::{ClaudeBodyOptions, ClaudeCredentialKind, Headers, PrepareOptions, ResponseDecode},
-};
+use gateway_provider_response::response::decode_response;
+use gateway_provider_stream::sse::StreamDecoder;
 use gateway_schema::catalog::CatalogInput;
 use serde_json::{Value, json};
 
@@ -78,7 +78,7 @@ fn decode(
     request: &PreparedWireRequest,
     response_headers: &Headers,
     value: &Value,
-) -> TestResult<gateway_providers::types::DecodedResponse> {
+) -> TestResult<gateway_provider_protocol::types::DecodedResponse> {
     Ok(decode_response(
         request.decode(),
         200,
@@ -104,7 +104,7 @@ fn codex_replay(output: &Value) -> TestResult<Value> {
         &original,
         &"gpt-test".into(),
         &PrepareOptions {
-            auth: gateway_providers::types::AuthMaterial {
+            auth: gateway_provider_protocol::types::AuthMaterial {
                 secret: "synthetic-only".into(),
                 account_id: Some("synthetic-account".into()),
                 ..Default::default()

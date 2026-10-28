@@ -159,7 +159,7 @@ impl QueryRequest {
             let encoded = token
                 .strip_prefix(CURSOR_PREFIX)
                 .ok_or_else(invalid_cursor)?;
-            let bytes = decode_hex(encoded).map_err(|()| invalid_cursor())?;
+            let bytes = decode_hex(encoded).map_err(|_| invalid_cursor())?;
             let cursor: Cursor = serde_json::from_slice(&bytes).map_err(|_| invalid_cursor())?;
             if cursor.version != 1
                 || cursor.reverse != self.reverse

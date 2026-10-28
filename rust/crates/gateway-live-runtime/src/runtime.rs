@@ -3,7 +3,7 @@ use crate::{
     protocol::{call_id_from_location, create_headers, encode_call_id, parse_create, principal_id},
     types::*,
 };
-use gateway_auth::types::AuthPrincipal;
+use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;

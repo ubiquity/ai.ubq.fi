@@ -3,11 +3,10 @@
 use crate::live_bridge::{NativeLiveHandler, NativeLiveUpgradeRequest};
 use crate::owner_control::{NativeControlContext, NativeOwnerRenewalHandler};
 use gateway_auth_native_contracts::native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_PATH};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_context::now_ms;
 use gateway_auth_native_proof::{
-    native_auth::{
-        AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-        NativeTransportIdentity,
-    },
+    native_auth::{AuthenticatedNativeOwner, NativeAuthenticator, NativeTransportIdentity},
     native_live::NativeLiveAuthenticator,
 };
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
@@ -24,7 +23,7 @@ use gateway_auth_native_wire::{
 };
 use gateway_native_http_framing::{
     request::{HttpRequest, IncomingRequest, read_request, validate_live_upgrade},
-    response::{disconnected, now_ms, write_error},
+    response::{disconnected, write_error},
 };
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_native_supervisor_data::data::SupervisorData;
@@ -74,7 +73,7 @@ impl NativeHttpService {
     pub fn with_imports<S, I, H>(
         mut self,
         authority: gateway_authority::store::Authority<S, I>,
-        owner: gateway_authority::native_control::receiver::RegisteredRenewalOwner,
+        owner: gateway_authority_native_records::owner::RegisteredRenewalOwner,
         current_config: gateway_auth_contracts::types::AuthConfig,
         handler: H,
     ) -> Self

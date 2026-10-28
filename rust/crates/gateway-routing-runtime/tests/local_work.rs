@@ -1,4 +1,4 @@
-use gateway_auth::types::AuthMethod;
+use gateway_auth_contracts::types::AuthMethod;
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiReservation;
 use gateway_authority_api_release::ApiReleaseOperations;
@@ -18,6 +18,7 @@ use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::Tupl
 use gateway_local_journal::{
     local_work::LocalSemanticOutcome, local_work::LocalTerminalObservation,
 };
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime::{
     custody,
     local_work::{
@@ -30,7 +31,6 @@ use gateway_routing_runtime::{
     types::RoutingHost,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_schema::source_request::SourceRequestDocument;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::sync::{

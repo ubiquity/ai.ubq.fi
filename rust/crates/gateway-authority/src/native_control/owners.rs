@@ -1,24 +1,24 @@
 //! Constructor-owned fixed profile registry. Picking a resource is not renewal authorization.
 use super::actor;
 use super::actor::NativeRenewalActor;
-use super::receiver::RegisteredRenewalOwner;
-use super::rows;
-use super::rows::ActionRow;
-use super::rows::fail;
 use crate::store::{Authority, Transaction};
-use gateway_auth::crypto::sha256_hex;
-use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_auth::types::AuthConfig;
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::live::mapping_key;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::ActionRow;
+use gateway_authority_native_records::rows::fail;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_contracts::identity::AccountBinding;
 use gateway_core::state::AuthorityStore;
-use gateway_kv_codec::key::RecordKey;
-use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 
@@ -59,7 +59,8 @@ impl RegisteredRenewalOwners {
         }
         for (index, owner) in owners.iter().enumerate() {
             if owners[..index].iter().any(|prior| {
-                prior.native_owner_id() == owner.native_owner_id() || prior.home == owner.home
+                prior.native_owner_id() == owner.native_owner_id()
+                    || prior.registered_home() == owner.registered_home()
             }) {
                 return Err(fail());
             }
@@ -108,7 +109,7 @@ impl RegisteredRenewalOwners {
         let owner = self
             .owners
             .iter()
-            .find(|o| o.home == native.codex_home)
+            .find(|o| o.registered_home() == native.codex_home)
             .ok_or_else(fail)?;
         if required_owner.is_some_and(|id| id != owner.native_owner_id()) {
             return Err(fail());
@@ -308,16 +309,4 @@ impl RegisteredRenewalOwners {
         }
         Err(fail())
     }
-}
-fn mapping_key(call: &str, pending: bool) -> RecordKey {
-    let mut parts = vec![
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("codex_live_calls"),
-        ScalarKeyPart::String("v1"),
-    ];
-    if pending {
-        parts.push(ScalarKeyPart::String("pending_retirement"));
-    }
-    parts.push(ScalarKeyPart::String(call));
-    TupleKey::from_scalar_parts(&parts).to_record_key()
 }

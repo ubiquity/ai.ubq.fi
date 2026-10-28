@@ -2,19 +2,20 @@ use crate::{
     History, HistoryHost,
     store::{error, scan_selector},
 };
-use gateway_auth::{crypto::sha256_hex, store};
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_claude_usage_history_records::{HOUR_MS, LIMIT, Point, object::SourceObject};
 use gateway_claude_usage_protocol::snapshot::{Meter, read_meter, safe_time};
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_core::{
     query::QuerySelector, query::QueryStore, source_control::decode_source_control_record,
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+
 #[derive(Clone, Deserialize, Serialize)]
 struct Rollup {
     v: u8,
@@ -80,17 +81,18 @@ fn key_parts(account: &str, cohort: &str, meter: &Meter) -> Result<RecordKey, Ga
         meter.id.clone(),
         meter.resets_at.clone(),
     ))?)?;
-    Ok(store::key(json!([
-        "uos_ai",
-        "provider_capacity",
-        "claude",
-        "v1",
-        "usage_rollup",
-        meter.observed_at_ms / HOUR_MS * HOUR_MS,
-        account,
-        cohort,
-        sha256_hex(tuple.as_bytes())
-    ])))
+    Ok(TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("provider_capacity"),
+        ScalarKeyPart::String("claude"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("usage_rollup"),
+        ScalarKeyPart::Number(meter.observed_at_ms / HOUR_MS * HOUR_MS),
+        ScalarKeyPart::String(account),
+        ScalarKeyPart::String(cohort),
+        ScalarKeyPart::String(&sha256_hex(tuple.as_bytes())),
+    ])
+    .to_record_key())
 }
 pub(crate) fn record(key: &RecordKey, row: &StoredRecord) -> Result<SourceJson, GatewayError> {
     let value = decode_source_control_record(row)?;
@@ -158,14 +160,15 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
             .unwrap_or_else(|_| unreachable!("fixed source rollup literal"));
         let read: Result<SourceJson, GatewayError> = async {
             let prefix = |hour| {
-                store::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "usage_rollup",
-                    hour
-                ]))
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("provider_capacity"),
+                    ScalarKeyPart::String("claude"),
+                    ScalarKeyPart::String("v1"),
+                    ScalarKeyPart::String("usage_rollup"),
+                    ScalarKeyPart::Number(hour),
+                ])
+                .to_record_key()
             };
             let rows = scan_selector(
                 self.store,

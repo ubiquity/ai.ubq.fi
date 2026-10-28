@@ -5,19 +5,20 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as body,
 };
-use gateway_admin_runtime::{AdminRuntime, RuntimeConfig, capabilities::UnboundCapabilities};
-use gateway_auth::{
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{RuntimeConfig, capabilities::UnboundCapabilities};
+use gateway_auth_contracts::{
     types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
     webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
-use gateway_authority_kernel::KernelOperations;
 use gateway_core::{
     query::*, source_control::decode_source_control_record,
     source_control::encode_source_control_record, state::*,
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -378,7 +379,7 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
     let live = store.rows.borrow()[&key.0].clone();
     assert_eq!(
         live.expires_at_ms,
-        Some(NOW + 60000 + gateway_authority_contracts::QUOTA_RETENTION_MS)
+        Some(NOW + 60000 + gateway_authority::QUOTA_RETENTION_MS)
     );
     let index = live.value["reservations"].clone();
     let mut change = selector(&label, "repo", false);
@@ -417,7 +418,7 @@ fn nonreset_admin_preserves_actual_index_and_cas_while_live_retention_remains_or
     ))?;
     assert_eq!(
         store.rows.borrow()[&key.0].expires_at_ms,
-        Some(NOW + 60000 + gateway_authority_contracts::QUOTA_RETENTION_MS)
+        Some(NOW + 60000 + gateway_authority::QUOTA_RETENTION_MS)
     );
     Ok(())
 }
@@ -510,7 +511,11 @@ fn queue_keeps_original_broader_labels_and_actual_source_presence_filter() {
         capabilities: &UnboundCapabilities,
         config: &config,
     };
-    let key = gateway_auth::store::key(json!(["uos_ai", "kernel_policy_queue"]));
+    let key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("kernel_policy_queue"),
+    ])
+    .to_record_key();
     store.rows.borrow_mut().insert(
         key.0,
         encode_source_control_record("actual-queue-input", &fixture.input_rows, None).unwrap(),

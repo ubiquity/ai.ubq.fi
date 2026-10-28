@@ -3,6 +3,7 @@ use gateway_authority_contracts::{
     DAY_MS, REQUEST_LEASE_MS, add, invalid, nonnegative, positive, text,
 };
 use gateway_contracts::identity::RequestId;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -142,7 +143,7 @@ fn source_numeric(value: &SourceJson) -> Option<f64> {
         return Some(n);
     }
     let text = source::string(value)?.try_utf8().ok()?;
-    let text = gateway_schema::util::js_trim(&text);
+    let text = schema_scalar::js_trim(&text);
     if text.is_empty() {
         return Some(0.0);
     }

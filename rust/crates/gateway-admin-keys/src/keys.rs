@@ -4,11 +4,11 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as input,
 };
-use gateway_auth::{
-    api_keys::{self, ApiKeyHashRecord, WEEK_MS},
-    crypto::{Secret, sha256_base64url, uuid_from_random},
-    store,
-    types::{AuthHost, AuthPrincipal, AuthResponse, conflict, invalid},
+use gateway_auth_contracts::{types::AuthHost, types::AuthPrincipal, types::AuthResponse};
+use gateway_auth_primitives::error::{conflict, invalid};
+use gateway_auth_primitives::{
+    api_keys, api_keys::ApiKeyHashRecord, api_keys::WEEK_MS, crypto::Secret,
+    crypto::sha256_base64url, crypto::uuid_from_random, store,
 };
 use gateway_authority_api_protocol::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindow};
 use gateway_contracts::{identity::ApiKeyId, model::ModelId};
@@ -17,10 +17,11 @@ use gateway_core::{
     state::AuthorityStore, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_profile_values::coercion::js_number;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ApiKeyRecord {
@@ -566,10 +567,22 @@ impl<'a, S: AuthorityStore, H: AuthHost, A: AdminHost> KeyService<'a, S, H, A> {
                     RecordMutation::Delete { key: hk.clone() },
                     RecordMutation::Delete { key: pk.clone() },
                     RecordMutation::Delete {
-                        key: store::key(json!(["ubq_ai", "api_keys", "usage", id])),
+                        key: TupleKey::from_scalar_parts(&[
+                            ScalarKeyPart::String("ubq_ai"),
+                            ScalarKeyPart::String("api_keys"),
+                            ScalarKeyPart::String("usage"),
+                            ScalarKeyPart::String(id),
+                        ])
+                        .to_record_key(),
                     },
                     RecordMutation::Delete {
-                        key: store::key(json!(["ubq_ai", "api_keys", "usage_daily", id])),
+                        key: TupleKey::from_scalar_parts(&[
+                            ScalarKeyPart::String("ubq_ai"),
+                            ScalarKeyPart::String("api_keys"),
+                            ScalarKeyPart::String("usage_daily"),
+                            ScalarKeyPart::String(id),
+                        ])
+                        .to_record_key(),
                     },
                 ]);
                 "delete"

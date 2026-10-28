@@ -14,6 +14,7 @@ use gateway_contracts::identity::RoutingAccountHash;
 use gateway_contracts::provider::CodexQuotaClass;
 use gateway_contracts::{identity::AccountBinding, identity::ActiveSelection};
 use gateway_core::state::AuthorityStore;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;
@@ -122,13 +123,13 @@ pub(crate) async fn validate_cohort<S: AuthorityStore, I: TokenSource>(
 pub struct SignalService<'a, S, I> {
     store: &'a S,
     tokens: &'a I,
-    collator: &'a dyn gateway_schema::aliases::SourceStringCollator,
+    collator: &'a dyn model_aliases::SourceStringCollator,
 }
 impl<'a, S: AuthorityStore, I: TokenSource> SignalService<'a, S, I> {
     pub fn new(
         store: &'a S,
         tokens: &'a I,
-        collator: &'a dyn gateway_schema::aliases::SourceStringCollator,
+        collator: &'a dyn model_aliases::SourceStringCollator,
     ) -> Self {
         Self {
             store,
@@ -139,7 +140,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> SignalService<'a, S, I> {
     fn transaction(&self, now: i64) -> Result<Transaction<'_, S, I>, GatewayError> {
         Transaction::new(self.store, self.tokens, now)
     }
-    fn source_string_collator(&self) -> &dyn gateway_schema::aliases::SourceStringCollator {
+    fn source_string_collator(&self) -> &dyn model_aliases::SourceStringCollator {
         self.collator
     }
 }

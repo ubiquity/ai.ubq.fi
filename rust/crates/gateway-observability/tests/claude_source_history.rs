@@ -4,8 +4,9 @@ use gateway_claude_usage_history_records::{
     types::{ClaudeAcceptedObservation, ClaudeObservationState, CredentialKind},
     *,
 };
+use gateway_model_selection::aliases as model_aliases;
 mod support;
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_capacity_projection::{
     shapes::BUCKET_MS, shapes::RETENTION_MS, shapes::unavailable_snapshot,
 };
@@ -84,7 +85,9 @@ fn replace(value: &SourceJson, name: &str, replacement: SourceJson) -> SourceJso
 fn rows(value: &SourceJson) -> Vec<SourceJson> {
     member(value, "points").array_items().unwrap()
 }
-fn response(value: gateway_auth::types::AuthResponse) -> Result<SourceJson, GatewayError> {
+fn response(
+    value: gateway_auth_contracts::types::AuthResponse,
+) -> Result<SourceJson, GatewayError> {
     assert_eq!(value.status, 200);
     assert_eq!(value.headers["cache-control"], "no-store");
     SourceJson::parse_bytes(&value.body.to_bytes()?)
@@ -499,9 +502,7 @@ struct InventoryHost {
     inventory: ProviderInventory,
 }
 impl ObservabilityHost for InventoryHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {
@@ -545,7 +546,7 @@ fn inventory(memory: &Memory, current: bool) -> InventoryHost {
     let base = Host::default();
     base.at.set(AT);
     let source=SourceJson::parse(r#"{"kind":"api_key","secret":"sk-ant-api-ab\ud83d\ude00synthetic-hidden-middle-tail","label":"label\udc00","updated_at_ms":1}"#).unwrap();
-    let credential = gateway_admin_runtime::claude::parse_source_credential(&source, "kv").unwrap();
+    let credential = gateway_claude_roster::claude::parse_source_credential(&source, "kv").unwrap();
     let bound = key(json!(["synthetic-binding"]));
     memory.rows.borrow_mut().insert(
         bound.0.clone(),

@@ -1,5 +1,5 @@
+use gateway_model_selection::aliases::SourceStringCollator;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use gateway_schema::aliases::SourceStringCollator;
 use serde::{Deserialize, Serialize};
 
 pub fn json<T: Serialize + ?Sized>(value: &T) -> SourceJson {

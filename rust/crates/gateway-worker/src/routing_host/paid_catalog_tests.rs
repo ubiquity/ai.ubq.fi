@@ -1,8 +1,11 @@
 use super::prepare_credential_catalog;
-use gateway_auth::{crypto::Secret, crypto::base64url, native_auth::NativeAuthHeaders};
-use gateway_auth::{native_auth::NativeAuthenticator, native_auth::NativeCapability};
-use gateway_auth::{native_auth::NativeTransportIdentity, native_replay::StoreNonceAuthority};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeAuthenticator;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority::store::Authority;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
@@ -14,7 +17,6 @@ use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, identity::RequestId};
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::{
@@ -23,6 +25,7 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,
     fixture_owner_statement, runtime_config_key,
@@ -32,6 +35,7 @@ use gateway_publication_policy::protocol::{
 };
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_routing_runtime_test_support::source_catalog;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{cell::Cell, cell::RefCell, collections::BTreeMap, collections::BTreeSet};
 use std::{future::Future, rc::Rc, sync::Arc, task::Context, task::Poll, task::Waker};
@@ -200,7 +204,7 @@ impl Host {
     }
 }
 impl CatalogHost for Host {
-    fn source_string_collator(&self) -> Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> Arc<dyn model_aliases::SourceStringCollator> {
         Arc::new(source_catalog::Collator::captured())
     }
     fn now_ms(&self) -> i64 {
@@ -259,7 +263,7 @@ fn request() -> Result<(PaidRequest, PaidRequestContext), GatewayError> {
         PaidRequestContext {
             original_model: "gpt-known".into(),
             body: SourceJson::parse(r#"{"model":"gpt-known","input":"test"}"#)?,
-            surface: gateway_providers::types::ClientSurface::Responses,
+            surface: gateway_provider_protocol::types::ClientSurface::Responses,
             synthetic_hop: None,
         },
     ))

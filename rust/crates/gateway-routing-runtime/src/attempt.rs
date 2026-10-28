@@ -1,8 +1,9 @@
-use crate::{journal, journal::AttemptRecord, journal::Journal, journal::Phase};
-use crate::{journal::unavailable, policy::RouteHop, session::RoutingSession, settlement};
-use crate::{types::ClaudeSelection, types::CodexRecovery, types::CredentialFence};
-use crate::{types::PreparedAttempt, types::PublishedCredential, types::RoutingError};
-use crate::{types::RoutingHost, types::RoutingResult, types::SourceRefusalBody};
+use crate::{
+    journal, journal::AttemptRecord, journal::Journal, journal::Phase, journal::unavailable,
+    policy::RouteHop, session::RoutingSession, settlement, types::ClaudeSelection,
+    types::CodexRecovery, types::CredentialFence, types::PreparedAttempt,
+    types::PublishedCredential, types::RoutingHost, types::RoutingResult,
+};
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_ledger::PaidLedgerOperations;
@@ -10,12 +11,13 @@ use gateway_authority_paid_records::{PaidAdmission, PaidRequest, PaidReservation
 use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
 use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
 use gateway_authority_routing_signal::SignalOperations;
-use gateway_contracts::{identity::PaidAttemptId, provider::UpstreamProvider};
-use gateway_contracts::{model::ModelId, provider::UpstreamProvider::ChatgptCodex};
-use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider::ClaudeCode};
+use gateway_contracts::provider::UpstreamProvider::{ChatgptCodex, ClaudeCode};
+use gateway_contracts::{identity::PaidAttemptId, model::ModelId};
+use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::query::QueryStore;
-use gateway_providers::types::ClientSurface;
-use gateway_schema::source_request::error::SourceRequestError;
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_source::error::GatewayError;
 
 type SelectedHop = (
@@ -66,7 +68,11 @@ impl<
                     .release_paid_before_transport(paid, self.now()?)
                     .await?;
             }
-            return retained.map(Some);
+            // A local aggregate refusal has no attempt capability and must never enter provider/paid classification.
+            return match retained {
+                Err(error) if error.is_local_aggregate_context_overflow() => Err(error),
+                result => result.map(Some),
+            };
         }
         Err(unavailable("Provider/account selection did not settle.").into())
     }
@@ -156,25 +162,25 @@ impl<
                         headers,
                         body,
                     } => {
-                        return Err(RoutingError {
-                            error: Box::new(GatewayError::new(
+                        return Err(RoutingError::new(
+                            Box::new(GatewayError::new(
                                 status,
                                 "Claude subscription request was refused.",
                                 Some("claude_code_refused"),
                             )),
                             headers,
-                            source_body: Some(SourceRefusalBody::Json(body)),
-                        });
+                            Some(SourceRefusalBody::Json(body)),
+                        ));
                     }
                     ClaudeSelection::InternalServerError => {
-                        return Err(RoutingError {
-                            error: Box::new(GatewayError::new(500, "Internal Server Error", None)),
-                            headers: gateway_providers::types::Headers::from([(
+                        return Err(RoutingError::new(
+                            Box::new(GatewayError::new(500, "Internal Server Error", None)),
+                            gateway_provider_protocol::types::Headers::from([(
                                 "Content-Type".into(),
                                 "text/plain; charset=utf-8".into(),
                             )]),
-                            source_body: Some(SourceRefusalBody::InternalServerError),
-                        });
+                            Some(SourceRefusalBody::InternalServerError),
+                        ));
                     }
                     ClaudeSelection::Unavailable => {
                         self.change(|j| {
@@ -333,7 +339,7 @@ impl<
             )
         })?;
         let attempt_id = if synthetic {
-            gateway_providers::policy::paid_hop_identity(self.id(), provider)
+            gateway_provider_policy::policy::paid_hop_identity(self.id(), provider)
         } else {
             format!("{}:paid:{label}:{}", self.id(), self.tokens.next_token()?)
         };

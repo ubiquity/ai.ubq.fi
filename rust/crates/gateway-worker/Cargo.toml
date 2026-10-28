@@ -13,13 +13,37 @@ default = ["entrypoint"]
 entrypoint = []
 fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 
+[lints]
+workspace = true
+
 [dependencies]
-gateway-worker-authority-binding.workspace = true
-gateway-native-authority-wire.workspace = true
-gateway-source.workspace = true
+gateway-catalog-admin = { path = "../gateway-catalog-admin" }
+gateway-catalog-control = { path = "../gateway-catalog-control" }
+gateway-catalog-inputs = { path = "../gateway-catalog-inputs" }
+gateway-catalog-versioned = { path = "../gateway-catalog-versioned" }
+gateway-request-normalization.workspace = true
+gateway-model-selection.workspace = true
+gateway-admin-diagnostics-runtime = { path = "../gateway-admin-diagnostics-runtime" }
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-admin-runtime-records = { path = "../gateway-admin-runtime-records" }
+gateway-claude-policy = { path = "../gateway-claude-policy" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
+gateway-schema-values.workspace = true
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-native-authority-request = { path = "../gateway-native-authority-request" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-auth-passport = { path = "../gateway-auth-passport" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-provider-services = { path = "../gateway-provider-services" }
+gateway-worker-authority-binding = { workspace = true }
+gateway-native-authority-wire = { workspace = true }
+gateway-source = { workspace = true }
 gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
 gateway-cache-experiment-runner = { path = "../gateway-cache-experiment-runner" }
-gateway-auth-contracts.workspace = true
+gateway-auth-contracts = { workspace = true }
 gateway-cache-experiment-dispatch = { path = "../gateway-cache-experiment-dispatch" }
 gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
 gateway-authority-reset-recovery = { path = "../gateway-authority-reset-recovery" }
@@ -43,57 +67,68 @@ gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" 
 gateway-cache-experiment-records = { path = "../gateway-cache-experiment-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
-gateway-claude-usage-protocol.workspace = true
-gateway-claude-usage-runtime.workspace = true
-gateway-claude-usage-admin.workspace = true
-gateway-claude-usage-history-records.workspace = true
-gateway-claude-usage-quota.workspace = true
-gateway-admin-contracts.workspace = true
-gateway-admin-kernel.workspace = true
-gateway-wait-observation.workspace = true
-gateway-worker-http-body.workspace = true
-gateway-worker-web.workspace = true
-gateway-worker-platform.workspace = true
-gateway-worker-storage.workspace = true
-gateway-decision-protocol.workspace = true
-gateway-extras-contract.workspace = true
-gateway-catalog-provider.workspace = true
-gateway-worker-stream.workspace = true
-gateway-auth-native-wire.workspace = true
-gateway-capacity-projection.workspace = true
-gateway-compaction.workspace = true
-gateway-compaction-source.workspace = true
-gateway-core.workspace = true
-gateway-auth.workspace = true
-gateway-authority.workspace = true
-gateway-schema.workspace = true
-gateway-providers.workspace = true
-gateway-admin.workspace = true
-gateway-profile-values.workspace = true
-gateway-admission.workspace = true
-gateway-catalog-runtime.workspace = true
-gateway-capacity-recovery.workspace = true
-gateway-claude-runtime.workspace = true
-gateway-admin-runtime.workspace = true
-gateway-routing-runtime.workspace = true
-gateway-extras-runtime.workspace = true
-gateway-publication.workspace = true
-gateway-publication-policy.workspace = true
-gateway-publication-transport.workspace = true
-gateway-observability.workspace = true
-gateway-live-runtime.workspace = true
-gateway-migration.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-claude-usage-protocol = { workspace = true }
+gateway-claude-usage-runtime = { workspace = true }
+gateway-claude-usage-admin = { workspace = true }
+gateway-claude-usage-history-records = { workspace = true }
+gateway-claude-usage-quota = { workspace = true }
+gateway-migration-protocol = { workspace = true }
+gateway-migration-profile = { workspace = true }
+gateway-migration-prepare = { workspace = true }
+gateway-migration-data = { workspace = true }
+gateway-admin-contracts = { workspace = true }
+gateway-admin-kernel = { workspace = true }
+gateway-wait-observation = { workspace = true }
+gateway-worker-http-body = { workspace = true }
+gateway-worker-web = { workspace = true }
+gateway-worker-platform = { workspace = true }
+gateway-worker-storage = { workspace = true }
+gateway-decision-protocol = { workspace = true }
+gateway-extras-contract = { workspace = true }
+gateway-catalog-provider = { workspace = true }
+gateway-worker-stream = { workspace = true }
+gateway-auth-native-wire = { workspace = true }
+gateway-capacity-projection = { workspace = true }
+gateway-compaction = { workspace = true }
+gateway-compaction-source = { workspace = true }
+gateway-core = { workspace = true }
+gateway-auth = { workspace = true }
+gateway-authority = { workspace = true }
+gateway-schema = { workspace = true }
+gateway-providers = { workspace = true }
+gateway-admin = { workspace = true }
+gateway-profile-values = { workspace = true }
+gateway-admission = { workspace = true }
+gateway-catalog-runtime = { workspace = true }
+gateway-capacity-recovery = { workspace = true }
+gateway-claude-runtime = { workspace = true }
+gateway-admin-runtime = { workspace = true }
+gateway-routing-runtime = { workspace = true }
+gateway-extras-runtime = { workspace = true }
+gateway-publication = { workspace = true }
+gateway-publication-policy = { workspace = true }
+gateway-publication-transport = { workspace = true }
+gateway-observability = { workspace = true }
+gateway-live-runtime = { workspace = true }
+gateway-migration = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
-worker.workspace = true
-wasm-bindgen.workspace = true
+worker = { workspace = true }
+wasm-bindgen = { workspace = true }
+gateway-provider-events = { workspace = true }
+gateway-provider-stream = { workspace = true }
+gateway-provider-source = { workspace = true }
+gateway-provider-response = { workspace = true }
+gateway-provider-replay = { workspace = true }
+gateway-provider-protocol = { workspace = true }
+gateway-provider-policy = { workspace = true }
+gateway-provider-images = { workspace = true }
+gateway-provider-claude-body = { workspace = true }
+gateway-local-refusal = { workspace = true }
 
 [dev-dependencies]
-gateway-observability-test-support.workspace = true
-gateway-routing-runtime-test-support.workspace = true
-
-[lints]
-workspace = true
+gateway-observability-test-support = { workspace = true }
+gateway-routing-runtime-test-support = { workspace = true }

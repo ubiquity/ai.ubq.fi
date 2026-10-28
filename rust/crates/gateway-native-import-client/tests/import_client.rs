@@ -9,6 +9,9 @@ use gateway_auth_credentials::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
     ManagedNativeSource, codex_source_pool_key,
 };
+use gateway_auth_native_contracts::transport::{
+    NativeAuthHeaders, NativeCapability, NativeImportAuthHeaders,
+};
 use gateway_auth_native_contracts::{
     native_import::{
         NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
@@ -16,25 +19,20 @@ use gateway_auth_native_contracts::{
     },
     nonce::NativeNonceAuthority,
 };
-use gateway_auth_native_proof::{
-    native_auth::{
-        NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-    },
-    native_import::NativeImportAuthHeaders,
-};
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
     NATIVE_VERSION_HEADER,
 };
 use gateway_auth_passkeys::{passkeys, session_index};
 use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::actor,
-    native_control::receiver::NativeRenewalAuthority,
-    native_control::receiver::RegisteredRenewalOwner, store::Authority,
-};
+use gateway_authority::native_control::actor;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
@@ -48,6 +46,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_native_import_client::client::{ClientError, NativeImportClient};
 use gateway_source::error::GatewayError;
 use serde::Serialize;
@@ -232,11 +231,12 @@ impl Fixture {
                 openlux_discovery_binding: None,
                 openlux_binding: None,
                 source_checks: vec![PaidSourceCheck {
-                    key: gateway_auth_primitives::store::key(json!([
-                        "uos_ai",
-                        "runtime_config",
-                        "v2"
-                    ]))
+                    key: TupleKey::from_scalar_parts(&[
+                        ScalarKeyPart::String("uos_ai"),
+                        ScalarKeyPart::String("runtime_config"),
+                        ScalarKeyPart::String("v2"),
+                    ])
+                    .to_record_key()
                     .0,
                     expected_revision: None,
                 }],
@@ -350,7 +350,7 @@ impl Fixture {
             },
             &RequestContext {
                 request_id: RequestId("native-client-original".into()),
-                principal: PrincipalId("passkey-user:user-fixture".into()),
+                principal: PrincipalId::from_scalar("passkey-user:user-fixture".into()),
                 key_id: None,
                 route: "native-client-preparation".into(),
                 started_at_ms: NOW,
@@ -679,4 +679,11 @@ fn revoked_actual_admin_actor_cannot_prepare_a_native_request() {
             Err(ClientError::Native(_))
         ));
     });
+}
+
+// Synthetic legacy/passkey fixture has no app-session date capability; unknown dates refuse.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _value: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

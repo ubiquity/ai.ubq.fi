@@ -3,7 +3,7 @@
 use super::exclusive_owner::ExclusiveManagedOwner;
 use super::{acl_inspector, exclusive_owner::PinnedExecutable, *};
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_authority::native_control::receiver::RegisteredRenewalOwner;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_native_confinement::file_observation::Facts;
 use std::{
     fs,

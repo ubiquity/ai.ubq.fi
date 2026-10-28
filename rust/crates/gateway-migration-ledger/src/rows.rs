@@ -1,7 +1,7 @@
 //! Observed data and finite source predicates; no live authority or custody.
-use gateway_source::error::GatewayError;
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_core::state::StoredRecord;
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 #[derive(Clone, Debug)]

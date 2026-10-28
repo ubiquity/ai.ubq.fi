@@ -1,0 +1,34 @@
+[package]
+name = "gateway-authority-native-inference-facts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }
+gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-routing-policy = { path = "../gateway-authority-routing-policy" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-core = { path = "../gateway-core" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-local-journal = { path = "../gateway-local-journal" }
+gateway-native-authority-wire = { path = "../gateway-native-authority-wire" }
+gateway-schema = { path = "../gateway-schema" }
+gateway-source = { path = "../gateway-source" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

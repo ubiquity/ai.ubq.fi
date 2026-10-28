@@ -1,7 +1,7 @@
 use gateway_admin_contracts::{operations::AdminHost, routes::AdminOperation};
-use gateway_admin_runtime::RuntimeConfig;
-use gateway_admin_runtime::{
-    AdminRuntime,
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig,
     capabilities::{
         CaptureRequest, Context, RuntimeCapabilities, SupervisorBriefTarget, UnboundCapabilities,
     },
@@ -11,8 +11,9 @@ use gateway_admin_test_support::{
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::AuthResponse;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_native_wire::native_read::NativeReadRequest;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -22,12 +23,12 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn migration_and_replay_preserve_raw_source_modes() {
     let mut request = input(json!("{\"v\":1}\n"));
     request.query.insert("profile".into(), vec!["local".into()]);
-    let plan = gateway_admin_runtime::parse::migration(&request).unwrap();
+    let plan = gateway_admin_runtime_contracts::parse::migration(&request).unwrap();
     assert!(plan.dry_run && plan.include_legacy);
     request.query.insert("write".into(), vec!["true".into()]);
     request.query.insert("dry_run".into(), vec!["true".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::migration(&request)
+        gateway_admin_runtime_contracts::parse::migration(&request)
             .unwrap_err()
             .status,
         400
@@ -40,7 +41,7 @@ fn migration_and_replay_preserve_raw_source_modes() {
         .query
         .insert("before_ms".into(), vec!["garbage".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false).unwrap(),
+        gateway_admin_runtime_contracts::parse::capture(&request, false).unwrap(),
         CaptureRequest::Request {
             request_id: "request-1".into()
         }
@@ -50,7 +51,7 @@ fn migration_and_replay_preserve_raw_source_modes() {
         vec!["provider-12345678-1234-4123-8123-123456789abc".into()],
     );
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false)
+        gateway_admin_runtime_contracts::parse::capture(&request, false)
             .unwrap_err()
             .status,
         400
@@ -100,7 +101,7 @@ fn errors_limit_does_not_truncate_five_xx_buckets() {
     let config = RuntimeConfig::default();
     let service = runtime(&store, &host, &config);
     for i in 0..205 {
-        store.put(json!(["uos_ai","admin_error_log","v1",900000+i,format!("req-{i}")]),json!({"version":1,"request_id":format!("req-{i}"),"route":"/v1/responses","status":502,"provider":"codex","model":null,"reasoning":null,"stream":true,"terminal_type":"error","failure_kind":"upstream","delivery_outcome":"unobserved","created_at_ms":900000+i,"latency_ms":100,"git_sha":null,"deno_revision":null}));
+        store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("uos_ai"),ScalarKeyPart::String("admin_error_log"),ScalarKeyPart::String("v1"),ScalarKeyPart::Number(900000+i),ScalarKeyPart::String(&format!("req-{i}"))]).to_record_key(),json!({"version":1,"request_id":format!("req-{i}"),"route":"/v1/responses","status":502,"provider":"codex","model":null,"reasoning":null,"stream":true,"terminal_type":"error","failure_kind":"upstream","delivery_outcome":"unobserved","created_at_ms":900000+i,"latency_ms":100,"git_sha":null,"deno_revision":null}));
     }
     let mut request = input(Value::Null);
     request.query.insert("limit".into(), vec!["1".into()]);
@@ -122,10 +123,16 @@ fn kernel_usage_daily_series_uses_source_thirty_day_utc_window() {
     let config = RuntimeConfig::default();
     let service = runtime(&store, &host, &config);
     store.put(
-        json!(["ubq_ai", "kernel_auth", "org_usage", "owner"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("kernel_auth"),
+            ScalarKeyPart::String("org_usage"),
+            ScalarKeyPart::String("owner"),
+        ])
+        .to_record_key(),
         json!({"owner":"owner","total_requests":5,"last_seen_at_ms":900000}),
     );
-    store.put(json!(["ubq_ai","kernel_auth","org_usage_daily","owner"]),json!({"owner":"owner","days":[{"day":"1970-01-01","request_count":5}],"updated_at_ms":900000}));
+    store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("ubq_ai"),ScalarKeyPart::String("kernel_auth"),ScalarKeyPart::String("org_usage_daily"),ScalarKeyPart::String("owner")]).to_record_key(),json!({"owner":"owner","days":[{"day":"1970-01-01","request_count":5}],"updated_at_ms":900000}));
     let mut request = input(Value::Null);
     request.query.insert("scope".into(), vec!["org".into()]);
     request.query.insert("owner".into(), vec!["owner".into()]);

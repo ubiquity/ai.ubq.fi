@@ -1,15 +1,7 @@
 //! One fixed source/normalized/claim publication in the existing authority CAS.
-use super::{
-    NativeRenewalCancellation, facts,
-    receiver::NativeRenewalAuthority,
-    rows::{
-        self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, conflict, fail,
-    },
-};
+use super::{facts, receiver::NativeRenewalAuthority};
 use crate::{store::Transaction, text};
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_auth::{AuthenticatedNativeOwner, NativeCapability},
+use gateway_auth_credentials::{
     native_credentials::native_refresh_time_ns,
     provider_credentials::{
         CodexNativeOwner, CodexSourceAccount, MANAGED_NATIVE_SOURCE_VERSION, ManagedNativeSource,
@@ -17,14 +9,19 @@ use gateway_auth::{
         parse_codex_source_pool, valid_native_generation,
     },
 };
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_wire::native_read::NATIVE_PUBLICATION_PATH;
-use gateway_authority_contracts::TokenSource;
+use gateway_auth_primitives::crypto::{Secret, sha256_hex};
+use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::rows::{
+    self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, conflict, fail,
+};
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::identity::PoolVersionstamp;
-use gateway_core::{
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
-    state::StoredRecord,
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
 use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_source::error::GatewayError;
@@ -64,29 +61,8 @@ struct Wire {
     document: Document,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeManagedPublicationDisposition {
-    Applied,
-    AlreadyCurrent,
-}
-pub struct NativeManagedPublication {
-    pub disposition: NativeManagedPublicationDisposition,
-    pub owner_id: String,
-    pub owner_epoch: String,
-    pub action_ref: String,
-    pub operation_id: String,
-    pub native_owner_id: String,
-    pub owner_revision: String,
-    pub source_revision: String,
-    pub normalized_revision: String,
-    pub publication_revision: String,
-    pub current_source_revision: String,
-    pub current_normalized_revision: String,
-    pub previous_native_source_generation: String,
-    pub native_source_generation: String,
-    pub access_generation: String,
-}
-
+use gateway_authority_native_records::managed::NativeManagedPublication;
+use gateway_authority_native_records::managed::NativeManagedPublicationDisposition;
 impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     NativeRenewalAuthority<'_, S, I, C>
 {
@@ -153,7 +129,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
         super::actor::validate_current_time(&action.actor, tx.now)?;
         if tx.now >= action.deadline_ms
             || expiry <= tx.now.saturating_add(120_000) as f64
-            || native.codex_home != self.registered.home
+            || native.codex_home != self.registered.registered_home()
             || native.external_user_id.is_some()
             || !account.refresh_token.expose().is_empty()
             || id.routing_account_hash.0 != action.fence.account_id_hash
@@ -278,7 +254,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             // Full managed credentials are normalized only under separately approved offline native custody.
             if !previous.refresh_token.expose().is_empty()
                 || native.external_user_id.is_some()
-                || native.codex_home != self.registered.home
+                || native.codex_home != self.registered.registered_home()
                 || previous_physical.generation_hash != w.previous_native_source_generation
                 || previous.account_id != w.document.account_id
             {
@@ -355,7 +331,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                     refresh_token: Secret::new(String::new()),
                     updated_at_ms: tx.now as f64,
                     native_owner: Some(CodexNativeOwner {
-                        codex_home: self.registered.home.clone(),
+                        codex_home: self.registered.registered_home().to_owned(),
                         generation_hash: w.access_generation.clone(),
                         native_refreshed_at: w.document.native_refreshed_at.clone(),
                         external_user_id: None,

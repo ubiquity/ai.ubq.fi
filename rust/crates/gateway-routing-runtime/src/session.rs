@@ -1,10 +1,10 @@
 use crate::{
-    journal::{self, Journal, unavailable},
+    journal::{self, Journal},
     policy::{self, RoutePlan},
     settlement,
     types::*,
 };
-use gateway_auth::types::AuthMethod;
+use gateway_auth_contracts::types::AuthMethod;
 use gateway_authority::store::Authority;
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_api_release::ApiReleaseOperations;
@@ -14,14 +14,16 @@ use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
 use gateway_authority_paid_route::{PaidRoutingReceipt, authorization::PaidAuthorization};
-use gateway_authority_routing_selection::types::AdmittedAccount;
-use gateway_authority_routing_selection::{SelectionOperations, types::RouteSelection};
-use gateway_contracts::provider::UpstreamProvider;
-use gateway_contracts::{identity::ApiKeyId, model::ModelId};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_selection::types::{AdmittedAccount, RouteSelection};
+use gateway_contracts::{identity::ApiKeyId, model::ModelId, provider::UpstreamProvider};
 use gateway_core::query::QueryStore;
-use gateway_providers::{policy::LithosWindows, policy::WaitBudget, types::PreparedClaudeOrdinary};
+use gateway_model_selection::aliases as model_aliases;
+use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
+use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
 use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};
+use {crate::journal::unavailable, gateway_schema_values::request::RequestSurface};
 
 pub struct RoutingSession<S, I, C, H> {
     pub(crate) admission: crate::currentness::OriginalRoutingAdmission,
@@ -38,7 +40,7 @@ pub struct RoutingSession<S, I, C, H> {
     pub(crate) waits: RefCell<WaitBudget>,
     conversation_id: String,
     pub(crate) elapsed_wait_ms: std::cell::Cell<i64>,
-    pub(crate) source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    pub(crate) source_collator: std::sync::Arc<dyn model_aliases::SourceStringCollator>,
     pub(crate) extra_lock: std::rc::Rc<futures_util::lock::Mutex<()>>,
 }
 impl<
@@ -121,7 +123,7 @@ impl<
             if family.is_some() { 1 } else { 3 },
             input.context.clone(),
             if family.is_some() {
-                gateway_auth::crypto::sha256_hex(input.original_source().as_bytes())
+                gateway_auth_primitives::crypto::sha256_hex(input.original_source().as_bytes())
             } else {
                 crate::local_work::original_source_digest(input.original_source())?
             },
@@ -212,7 +214,7 @@ impl<
                 .original
                 .input
                 .original
-                .for_surface(gateway_schema::request::RequestSurface::Responses),
+                .for_surface(RequestSurface::Responses),
         );
         let source_collator = admission.original.host.source_string_collator();
         let planned: RoutingResult<(RoutePlan, String)> = (|| {
@@ -473,7 +475,7 @@ pub(crate) async fn reserve_original<
     I: TokenSource + Clone,
     C: AuthorityClock + Clone + 'static,
 >(
-    principal: &gateway_auth::types::AuthPrincipal,
+    principal: &gateway_auth_contracts::types::AuthPrincipal,
     context: &gateway_contracts::identity::RequestContext,
     row: &mut Journal,
     store: &S,

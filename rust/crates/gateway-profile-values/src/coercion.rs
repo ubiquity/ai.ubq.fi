@@ -1,7 +1,7 @@
 use crate::scalar::error;
 
+use gateway_schema_values::scalar::js_trim;
 use gateway_source::error::GatewayError;
-use gateway_schema::util::js_trim;
 use serde_json::Value;
 
 pub fn js_string(value: &Value) -> String {

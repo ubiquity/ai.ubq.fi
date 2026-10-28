@@ -1,16 +1,13 @@
 use crate::fetch::{self, ResultData, UsageHost};
-use gateway_admin_runtime::claude::{self, AccountBinding};
-use gateway_auth::{
-    crypto::uuid_from_random,
-    store::{check, commit, key},
-};
+use gateway_auth_primitives::{crypto::uuid_from_random, store::check, store::commit};
+use gateway_claude_roster::{claude, claude::AccountBinding};
 use gateway_claude_usage_protocol::state::UsageState;
 use gateway_claude_usage_quota::QuotaState;
-use gateway_source::error::GatewayError;
 use gateway_core::state::{AuthorityStore, RecordMutation, StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Lease {
@@ -27,14 +24,15 @@ pub enum Refresh {
     },
 }
 pub fn lease_key(account: &AccountBinding) -> RecordKey {
-    key(json!([
-        "uos_ai",
-        "claude_code_usage",
-        "v1",
-        "lease",
-        account.account_id,
-        account.account_cohort_id
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("claude_code_usage"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("lease"),
+        ScalarKeyPart::String(&account.account_id),
+        ScalarKeyPart::String(&account.account_cohort_id),
+    ])
+    .to_record_key()
 }
 pub async fn load<S: AuthorityStore>(
     store: &S,
@@ -48,7 +46,7 @@ pub async fn load<S: AuthorityStore>(
         return Ok(None);
     }
     store
-        .read(&gateway_claude_runtime::persistence::quota_key(account))
+        .read(&gateway_claude_policy::quota::quota_key(account))
         .await?
         .as_ref()
         .map(|r| gateway_claude_usage_quota::parse_record(r, now))
@@ -73,7 +71,7 @@ pub async fn refresh<S: AuthorityStore, H: UsageHost>(
     }
     let key = lease_key(account);
     let row = store.read(&key).await?;
-    let lease = gateway_auth::store::decode::<Lease>(row.as_ref(), now)?;
+    let lease = gateway_auth_primitives::store::decode::<Lease>(row.as_ref(), now)?;
     if lease.is_some_and(|v| v.until_ms > now) {
         return Ok(Refresh::Busy);
     }
@@ -102,7 +100,7 @@ pub async fn refresh<S: AuthorityStore, H: UsageHost>(
     let result = collect_claimed(store, host, account).await;
     let cleanup = async {
         let row = store.read(&key).await?;
-        if gateway_auth::store::decode::<Lease>(row.as_ref(), host.now_ms())?
+        if gateway_auth_primitives::store::decode::<Lease>(row.as_ref(), host.now_ms())?
             .is_some_and(|l| l.owner == owner)
         {
             let _ = commit(
@@ -145,7 +143,7 @@ async fn collect_claimed<S: AuthorityStore, H: UsageHost>(
     }
     let result = fetch::fetch(host, account).await?;
     let usage = result.usage();
-    let Some(state) = gateway_claude_runtime::quota::record_usage(
+    let Some(state) = gateway_claude_policy::quota::record_usage(
         store,
         host,
         account,
@@ -171,8 +169,8 @@ async fn collect_claimed<S: AuthorityStore, H: UsageHost>(
             source_observed_at_ms: usage.observed_at_ms,
             sampled_at_ms: usage.attempted_at_ms,
             response_status: usage.status,
-            state: if gateway_claude_runtime::quota::blocked(Some(&state), usage.attempted_at_ms)
-                || gateway_claude_runtime::quota::cooling_down(Some(&state), usage.attempted_at_ms)
+            state: if gateway_claude_policy::quota::blocked(Some(&state), usage.attempted_at_ms)
+                || gateway_claude_policy::quota::cooling_down(Some(&state), usage.attempted_at_ms)
             {
                 "unavailable"
             } else {

@@ -1,0 +1,32 @@
+[package]
+name = "gateway-migration-copied-store-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+gateway-kv-codec.workspace = true
+gateway-source.workspace = true
+gateway-migration-protocol.workspace = true
+gateway-migration-native-custody.workspace = true
+gateway-migration-latest.workspace = true
+gateway-migration-data.workspace = true
+gateway-auth.workspace = true
+gateway-core.workspace = true
+gateway-migration.workspace = true
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "=0.10.9"
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-migration-data = { path = "../gateway-migration-data" }
+gateway-migration-latest = { path = "../gateway-migration-latest" }
+gateway-migration-native-custody = { path = "../gateway-migration-native-custody" }
+gateway-migration-protocol = { path = "../gateway-migration-protocol" }

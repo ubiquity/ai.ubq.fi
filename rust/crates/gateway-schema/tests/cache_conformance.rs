@@ -1,15 +1,15 @@
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_core::{
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     source_control::{decode_source_control_record, encode_source_control_record},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_model_selection::selection::ProviderSelection;
 use gateway_schema::{
     catalog::CatalogInput, catalog_cache::*, catalog_store::*, metadata::MetadataHint,
-    selection::ProviderSelection,
+};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde_json::{Value, json};
 use std::{

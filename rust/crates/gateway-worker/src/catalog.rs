@@ -1,14 +1,14 @@
 //! Source catalog runtime over one strong authority and credential-owner publication.
-use crate::catalog_host::Host;
-use crate::host::PlatformHost;
-use gateway_catalog_provider::host::CatalogHost;
-use gateway_catalog_runtime::CatalogRuntime;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use crate::{catalog_host::Host, host::PlatformHost};
+use gateway_catalog_admin::admin::CatalogAdmin;
+use gateway_catalog_versioned::VersionedCatalog;
 use gateway_schema::{catalog::CatalogInput, catalog_cache::CatalogResponse};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use std::rc::Rc;
 use worker::{Context, Env, Request};
+use {gateway_catalog_provider::host::CatalogHost, gateway_catalog_runtime::CatalogRuntime};
 
 pub const DIRECT_PROVIDERS: &[(&str, &str)] = &[
     ("deepseek", "DEEPSEEK_API_KEY"),
@@ -32,14 +32,14 @@ pub async fn public_response(
     env: &Env,
     platform: &PlatformHost,
     context: Rc<Context>,
-) -> Result<gateway_auth::types::AuthResponse, GatewayError> {
+) -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
     let host = Host {
         store: store.clone(),
         env: env.clone(),
         platform: platform.clone(),
         context,
     };
-    Ok(gateway_catalog_provider::response::into_auth_response(
+    Ok(gateway_catalog_admin::response::into_auth_response(
         service().public_catalog(store, &host).await,
     ))
 }
@@ -97,7 +97,7 @@ pub struct CatalogState {
 impl CatalogState {
     pub async fn resolve_inference(
         mut self,
-        document: &gateway_schema::source_request::SourceRequestDocument,
+        document: &gateway_request_normalization::document::SourceRequestDocument,
     ) -> Result<Self, GatewayError> {
         self.service
             .resolve_inference_catalog(&self.host.store, &self.host, &mut self.input, document)

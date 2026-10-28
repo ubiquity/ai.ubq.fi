@@ -8,10 +8,9 @@ use gateway_auth_native_contracts::native_import::{
     NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
     NativeImportKind, NativeImportMetadata,
 };
-use gateway_auth_native_proof::{
-    native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeTransportIdentity},
-    native_import::NativeImportAuthHeaders,
-};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeImportAuthHeaders};
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
+use gateway_auth_native_proof::native_context::now_ms;
 use gateway_auth_native_protocol::native_replay::StoreNonceAuthority;
 use gateway_auth_native_wire::{
     control::NATIVE_RENEWAL_MAX_MS,
@@ -20,17 +19,16 @@ use gateway_auth_native_wire::{
         NATIVE_VERSION_HEADER,
     },
 };
-use gateway_authority::native_control::{
-    NativeRenewalCancellation,
-    receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
-};
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority::store::Authority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_core::state::AuthorityStore;
 use gateway_native_http_framing::{
     import_body::{RawImportDocument, read_import_body},
     import_head::ImportHead,
-    response::{disconnected, now_ms, write_import_response},
+    response::{disconnected, write_import_response},
 };
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_source::error::GatewayError;

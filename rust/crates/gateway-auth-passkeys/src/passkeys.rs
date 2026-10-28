@@ -14,11 +14,18 @@ use gateway_auth_primitives::{
 };
 use gateway_core::state::{AuthorityStore, RecordMutation};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 pub fn key(kind: &str, id: &str) -> RecordKey {
-    store::key(json!(["uos_ai", "auth", kind, id]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("auth"),
+        ScalarKeyPart::String(kind),
+        ScalarKeyPart::String(id),
+    ])
+    .to_record_key()
 }
 pub fn user_wire(user: &PasskeyUser) -> Value {
     json!({"id":user.id,"handle":user.handle,"is_admin":user.is_admin,"credential_count":user.credential_ids.len(),"created_at_ms":user.created_at_ms,"updated_at_ms":user.updated_at_ms})
@@ -279,7 +286,13 @@ impl<'a, S: AuthorityStore, H: AuthHost> PasskeyService<'a, S, H> {
         };
         let now = self.host.now_ms();
         let window = now.div_euclid(60_000) * 60_000;
-        let k = store::key(json!(["uos_ai", "auth", "login-start-throttle", window]));
+        let k = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("auth"),
+            ScalarKeyPart::String("login-start-throttle"),
+            ScalarKeyPart::Number(window),
+        ])
+        .to_record_key();
         let mut allowed = false;
         for _ in 0..10 {
             let row = self.store.read(&k).await?;

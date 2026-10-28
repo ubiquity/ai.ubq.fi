@@ -1,5 +1,7 @@
 //! Complete checked paid operations; every existing effect retains one atomic transition.
 use gateway_authority_paid_control_records::PaidRoutingPolicy;
+use gateway_model_selection::aliases as model_aliases;
+use gateway_schema_values::source_view::js_trim_source;
 mod backend;
 use backend::Transaction;
 use gateway_authority_api_protocol::ApiKeyPolicy;
@@ -67,14 +69,14 @@ pub struct PaidAdmissionService<'a, S, I> {
     store: &'a S,
     tokens: &'a I,
     clock: Option<&'a dyn AuthorityClock>,
-    collator: &'a dyn gateway_schema::aliases::SourceStringCollator,
+    collator: &'a dyn model_aliases::SourceStringCollator,
 }
 impl<'a, S: AuthorityStore, I: TokenSource> PaidAdmissionService<'a, S, I> {
     pub fn new(
         store: &'a S,
         tokens: &'a I,
         clock: Option<&'a dyn AuthorityClock>,
-        collator: &'a dyn gateway_schema::aliases::SourceStringCollator,
+        collator: &'a dyn model_aliases::SourceStringCollator,
     ) -> Self {
         Self {
             store,
@@ -86,7 +88,7 @@ impl<'a, S: AuthorityStore, I: TokenSource> PaidAdmissionService<'a, S, I> {
     fn transaction(&self, now: i64) -> Result<Transaction<'_, S, I>, GatewayError> {
         Transaction::new(self.store, self.tokens, now)
     }
-    fn source_string_collator(&self) -> &dyn gateway_schema::aliases::SourceStringCollator {
+    fn source_string_collator(&self) -> &dyn model_aliases::SourceStringCollator {
         self.collator
     }
     fn fresh_time(&self, started_at: i64) -> Result<i64, GatewayError> {
@@ -473,7 +475,7 @@ pub trait PaidAdmissionOperations: PaidAdmissionFactory {
             text(&input.key_id.0)?;
             text(&input.request_id.0)?;
             text(&input.attempt_id.0)?;
-            if gateway_schema::reasoning::js_trim_source(input.model.as_js_string())
+            if js_trim_source(input.model.as_js_string())
                 .as_units()
                 .is_empty()
             {

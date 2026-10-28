@@ -14,6 +14,7 @@ use gateway_auth_primitives::{
     error::unauthorized,
 };
 use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
@@ -633,15 +634,16 @@ impl<'a, S: AuthorityStore, H: AuthHost + gateway_auth_passport_contracts::sessi
                 if let Some(row) = self.store.read(&api_keys::id_key(key_id)).await? {
                     row.validate_version()?;
                     let record = row.json_value()?.clone();
-                    let wk = gateway_auth_primitives::store::key(json!([
-                        "uos_ai",
-                        "api_key_usage",
-                        "v3",
-                        "window",
-                        key_id,
-                        policy.policy_version,
-                        policy.window_start_ms
-                    ]));
+                    let wk = TupleKey::from_scalar_parts(&[
+                        ScalarKeyPart::String("uos_ai"),
+                        ScalarKeyPart::String("api_key_usage"),
+                        ScalarKeyPart::String("v3"),
+                        ScalarKeyPart::String("window"),
+                        ScalarKeyPart::String(key_id),
+                        ScalarKeyPart::String(&policy.policy_version),
+                        ScalarKeyPart::Number(policy.window_start_ms),
+                    ])
+                    .to_record_key();
                     let usage = match self.store.read(&wk).await? {
                         None => 0,
                         Some(row) => {

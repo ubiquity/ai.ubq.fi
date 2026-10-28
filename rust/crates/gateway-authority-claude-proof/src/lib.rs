@@ -5,6 +5,7 @@ use gateway_authority_keys as keys;
 use gateway_contracts::model::ModelId;
 use gateway_core::{state::AuthorityStore, state::RevisionCheck};
 use gateway_kv_codec::value::PortableValue;
+use gateway_schema_values::{scalar as schema_scalar, source_view::js_trim_source};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -59,7 +60,7 @@ struct View {
 fn source_trim(value: JsString16) -> JsString16 {
     let units = value.as_units();
     let whitespace =
-        |u: &u16| char::from_u32(u32::from(*u)).is_some_and(gateway_schema::util::js_whitespace);
+        |u: &u16| char::from_u32(u32::from(*u)).is_some_and(schema_scalar::js_whitespace);
     let start = units
         .iter()
         .position(|u| !whitespace(u))
@@ -460,10 +461,7 @@ pub trait ClaudeProofOperations: ClaudeProofFactory {
     ) -> impl std::future::Future<Output = Result<Option<ClaudeCohortProof>, GatewayError>> {
         async move {
             let context = self.claude_proof();
-            if gateway_schema::reasoning::js_trim_source(model.as_js_string())
-                .as_units()
-                .is_empty()
-            {
+            if js_trim_source(model.as_js_string()).as_units().is_empty() {
                 return Err(invalid("Missing authority model."));
             }
             for _ in 0..128 {

@@ -11,22 +11,20 @@ use gateway_auth_credentials::provider_credentials::{
 };
 use gateway_auth_native_contracts::native_import::catalog_seed::ImportCatalogSeedRequestData;
 use gateway_auth_native_contracts::native_import::{NativeImportMetadata, NativeImportTarget};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
 use gateway_auth_native_import_data::native_import::authority::ImportAuthorityRequestData;
-use gateway_auth_native_proof::native_auth::{
-    NativeAuthHeaders, NativeCapability, NativeTransportIdentity,
-};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_MAX_BODY_BYTES, NATIVE_NONCE_HEADER,
     NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_auth_passkeys::{passkeys, session_index};
 use gateway_auth_primitives::crypto::{Secret, base64url, sha256_hex};
-use gateway_authority::native_control::{
-    actor,
-    receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
-};
+use gateway_authority::native_control::actor;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority::store::Authority;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::{types::PoolAccount, types::SubscriptionPool};
 use gateway_contracts::{
@@ -87,7 +85,7 @@ fn key(parts: &[&str]) -> gateway_kv_codec::key::RecordKey {
 const OLD: &[u8] = br#"{"tokens":{"access_token":"SYNTHETIC_OLD_ACCESS","refresh_token":"SYNTHETIC_OLD_REFRESH","account_id":"synthetic-account"},"OPENAI_API_KEY":"SYNTHETIC_INDEPENDENT","unrelated":"\ud800"}"#;
 const NEW: &[u8] = br#"{"auth":{"tokens":{"access_token":"SYNTHETIC_NEW_ACCESS","refresh_token":"SYNTHETIC_NEW_REFRESH","account_id":"synthetic-account"}},"models":{"client_version":"0.163.0"}}"#;
 fn now() -> i64 {
-    gateway_native_http_framing::response::now_ms().unwrap()
+    gateway_auth_native_proof::native_context::now_ms().unwrap()
 }
 fn id() -> NativeTransportIdentity {
     NativeTransportIdentity::new(

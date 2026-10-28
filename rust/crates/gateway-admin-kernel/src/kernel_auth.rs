@@ -1,11 +1,13 @@
 //! Source kernel auth projection and missing-policy queue, on the common authority.
-use gateway_auth::{crypto::base64url, store, types::AuthHost};
+use gateway_auth_contracts::types::AuthHost;
+use gateway_auth_primitives::{crypto::base64url, store};
 use gateway_authority_keys as keys;
 use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_migration_ledger::kernel::normalize_policy;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,7 +137,11 @@ impl<S: AuthorityStore, H: AuthHost> KernelAuthService<'_, S, H> {
         }
         let route = route.trim();
         let route = (!route.is_empty()).then(|| route.to_owned());
-        let key = store::key(json!(["uos_ai", "kernel_policy_queue"]));
+        let key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("kernel_policy_queue"),
+        ])
+        .to_record_key();
         for _ in 0..3 {
             let row = self.store.read(&key).await?;
             let value: Option<Value> = store::decode(row.as_ref(), now)?;

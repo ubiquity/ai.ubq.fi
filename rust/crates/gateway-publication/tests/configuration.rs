@@ -1,6 +1,7 @@
-use gateway_auth::crypto::Secret;
-use gateway_auth::native_auth::{NativeCapability, NativeTransportIdentity};
-use gateway_auth::store;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_auth_primitives::store;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{PaidControlConfig, PaidControlOwner};
 use gateway_contracts::provider::PaidProvider;

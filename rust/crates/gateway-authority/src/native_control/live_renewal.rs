@@ -1,25 +1,19 @@
 //! Explicit non-inference native renewal facts. No manufactured session, attempt or admission.
-use super::NativeRenewalAction;
-use super::NativeRenewalCancellation;
-use super::OWNER_RENEWAL_MAX_MS;
-use super::actor;
 use super::actor::NativeRenewalActor;
-use super::facts;
 use super::receiver::NativeRenewalAuthority;
-use super::rows;
-use super::rows::ActionRow;
-use super::rows::conflict;
-use super::rows::fail;
-use crate::native_live::mapping_key;
+use super::{NativeRenewalAction, OWNER_RENEWAL_MAX_MS, actor, facts};
 use crate::store::Transaction;
-use gateway_auth::crypto::sha256_hex;
-use gateway_auth::provider_credentials::{
+use gateway_auth_credentials::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
-use gateway_authority_contracts::TokenSource;
+use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::live::mapping_key;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::{ActionRow, conflict, fail};
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
@@ -27,9 +21,9 @@ use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_contracts::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
+use gateway_model_selection::selection as model_selection;
 use gateway_native_authority_wire::context::NativeRenewalContext;
-use gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION;
-use gateway_native_authority_wire::renewal::NativeRenewalFence;
+use gateway_native_authority_wire::renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence};
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_source::error::GatewayError;
 use serde_json::Value;
@@ -280,8 +274,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 }
                 let selection: Option<Value> = tx.read(&keys::provider_selection()).await?;
                 if selection.as_ref().is_some_and(|v| {
-                    !v.is_null()
-                        && gateway_schema::selection::ProviderSelection::normalize(v).is_none()
+                    !v.is_null() && model_selection::ProviderSelection::normalize(v).is_none()
                 }) {
                     return Err(fail());
                 }
@@ -377,7 +370,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
                 .as_ref()
                 .filter(|v| !v.is_null())
                 .is_some_and(|v| {
-                    gateway_schema::selection::ProviderSelection::normalize(v)
+                    model_selection::ProviderSelection::normalize(v)
                         .is_none_or(|s| !s.account_eligible(&id.administrative_account_hash.0))
                 })
             {
@@ -385,7 +378,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             }
         }
         let native = account.native_owner.as_ref().ok_or_else(fail)?;
-        if native.codex_home != self.registered.home
+        if native.codex_home != self.registered.registered_home()
             || native.generation_hash != id.native_generation_hash
             || (native.external_user_id.is_none()
                 && (native.managed_source.is_none() || !account.refresh_token.expose().is_empty()))

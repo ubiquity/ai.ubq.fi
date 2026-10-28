@@ -1,7 +1,16 @@
-use gateway_source::{js_string::JsString16, source_json::SourceJson};
-use gateway_schema::{
-    allowlists::*, content::*, prompt_cache::*, reasoning::*, request::*, util::*,
+use gateway_chat_normalization::scalar::*;
+use gateway_prompt_cache::compat::validate_known_unsupported;
+use gateway_request_normalization::scalar::{parse_effort, validate_prompt_cache_controls, *};
+use gateway_responses_normalization::scalar::{
+    normalize_response_content, normalize_responses_input,
 };
+use gateway_schema::reasoning::*;
+use gateway_schema_values::{
+    allowlists::*,
+    request::{RequestExtensions, RequestSurface},
+    scalar::*,
+};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 #[test]
 fn official_surfaces_match_immutable_pin_and_extensions_stay_separate() {

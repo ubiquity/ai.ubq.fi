@@ -1,13 +1,13 @@
 type FixtureResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use super::*;
 use crate::live_bridge::socket::{LiveDialContext, NativeLiveConnector};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
 use gateway_auth_native_contracts::{
     native_live::{NATIVE_LIVE_ACTION_HEADER, NATIVE_LIVE_AUTHORITY_PATH},
     nonce::NativeNonceAuthority,
 };
 use gateway_auth_native_proof::{
-    native_auth::{NativeAuthHeaders, NativeTransportIdentity},
-    native_live::NativeLiveAuthenticator,
+    native_auth::NativeTransportIdentity, native_live::NativeLiveAuthenticator,
 };
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RESPONSE_MAC_HEADER,
@@ -125,7 +125,7 @@ fn authority_peer(
         let count = if mode == "lost" { 1 } else { 4 };
         for index in 0..count {
             let (headers, body) = request(&mut tls);
-            let now = gateway_native_http_framing::response::now_ms()?;
+            let now = gateway_auth_native_proof::native_context::now_ms()?;
             let proof = futures_executor::block_on(
                 NativeLiveAuthenticator::new(&identity, &Nonces).authenticate_authority(
                     NativeAuthHeaders {
@@ -259,7 +259,7 @@ fn actual_startup_composer_reuses_reverse_tls_for_currentness_and_native_101_fra
             Ok(())
         });
         let mut request = format!("ws://{address}/v1/native/live").into_client_request()?;
-        let now = gateway_native_http_framing::response::now_ms()?;
+        let now = gateway_auth_native_proof::native_context::now_ms()?;
         let nonce = base64url(&[7; 32]);
         let mac = identity.sign_live_request(now, &nonce, "fixture-action")?;
         for (key, value) in [

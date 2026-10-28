@@ -7,6 +7,7 @@ use gateway_authority_test_support::TestResult;
 use gateway_contracts::model::ModelId;
 use gateway_core::source_control::decode_source_control_record;
 use gateway_kv_codec::value::ValueEncoding;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::source_json::SourceJson;
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, js_string::JsString16};
@@ -255,7 +256,7 @@ struct FixtureOnlyCollator {
     data: CapturedCollation,
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
-impl gateway_schema::aliases::SourceStringCollator for FixtureOnlyCollator {
+impl model_aliases::SourceStringCollator for FixtureOnlyCollator {
     fn compare(
         &self,
         left: &JsString16,
@@ -313,7 +314,7 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
     let mut input = paid_request("source-alias-tie", PaidProvider::Metered);
     input.model = logical(&data.ids[winner]);
     let mut context = context(&input);
-    context.original_model = gateway_schema::aliases::SYNTHETIC_MODEL.into();
+    context.original_model = model_aliases::SYNTHETIC_MODEL.into();
     context.body = source::object(vec![("model", context.original_model.to_source_json()?)])?;
     context.synthetic_hop = Some(PaidSyntheticHop::Openlux);
     let missing_collator = gateway_authority::store::Authority::with_clock(
@@ -335,7 +336,7 @@ fn paid_alias_tie_uses_one_constructor_collator_and_missing_or_unknown_pairs_fai
         calls: calls.clone(),
     });
     assert!(
-        gateway_schema::aliases::SourceStringCollator::compare(
+        model_aliases::SourceStringCollator::compare(
             &*collator,
             &JsString16::from_utf8("unknown"),
             &JsString16::from_utf8("unknown")

@@ -1,14 +1,16 @@
 //! Routing credentials use the owner-derived current source and routing fences.
 use crate::host::PlatformHost;
-use gateway_auth::crypto::Secret;
-use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
-use gateway_auth::types::AuthPrincipal;
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_credentials::{
+    provider_credentials::codex_source_pool_key, provider_credentials::read_codex_source_pool,
+};
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
-use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::key::RecordKey;
-use gateway_providers::types::{AuthMaterial, PrepareOptions};
+use gateway_model_selection::aliases as model_aliases;
+use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
@@ -18,6 +20,7 @@ use gateway_wait_observation::outcome::WaitOutcome;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use worker::Env;
+use {gateway_catalog_control::control::publish_paid_routing, gateway_core::state::AuthorityStore};
 
 #[derive(Clone)]
 pub struct Host {
@@ -41,9 +44,7 @@ fn provider_name(provider: UpstreamProvider) -> Option<&'static str> {
 
 impl RoutingHost for Host {
     type ClaudeHead = crate::claude_host::Head;
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
     fn cancelled(&self) -> bool {
@@ -324,7 +325,7 @@ impl Host {
         attempt: &gateway_routing_runtime::types::PreparedAttempt,
     ) -> Result<
         crate::transport::outbound::ConstructedRequest,
-        gateway_routing_runtime::types::RoutingError,
+        gateway_local_refusal::routing_error::RoutingError,
     > {
         if attempt.original_request_id != self.original.request_id.0 {
             return Err(GatewayError::new(

@@ -1,13 +1,16 @@
-use gateway_auth::crypto::{Secret, base64url};
-use gateway_auth::native_auth::{
-    AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-    NativeNonceAuthority, NativeTransportIdentity,
+use gateway_auth_credentials::{
+    native_credentials::NativeCredentials, native_credentials::NativeOwnerId,
 };
-use gateway_auth::native_credentials::{NativeCredentials, NativeOwnerId};
-use gateway_auth::provider_credentials::{
-    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
+use gateway_auth_credentials::{
+    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
+    provider_credentials::CodexSourcePool, provider_credentials::codex_source_pool_key,
+};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
+use gateway_auth_native_proof::native_auth::{
+    AuthenticatedNativeOwner, NativeAuthenticator, NativeNonceAuthority, NativeTransportIdentity,
 };
 use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::identity::PoolVersionstamp;

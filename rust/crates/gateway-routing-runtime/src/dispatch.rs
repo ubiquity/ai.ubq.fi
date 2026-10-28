@@ -1,24 +1,27 @@
-use crate::{classify, journal, settlement, types::RoutingHost, types::RoutingResult};
-use crate::{journal::AttemptRecord, journal::BillingUsage, journal::Journal, journal::Phase};
-use crate::{journal::unavailable, session::RoutingSession, types::AttemptFailure};
-use crate::{types::AttemptUsage, types::CredentialFence, types::FailureOrigin};
-use crate::{types::PreparedAttempt, types::RecoveredSession, types::TransportState};
-use crate::{types::RefreshOutcome, types::RefusalDecision, types::RevisionCheckWire};
+use crate::{
+    classify,
+    journal::{self, AttemptRecord, BillingUsage, Journal, Phase, unavailable},
+    session::RoutingSession,
+    settlement,
+    types::{
+        AttemptFailure, AttemptUsage, CredentialFence, FailureOrigin, PreparedAttempt,
+        RecoveredSession, RefreshOutcome, RefusalDecision, RevisionCheckWire, RoutingHost,
+        RoutingResult, TransportState,
+    },
+};
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_authority_paid_admission::PaidAdmissionOperations;
 use gateway_authority_paid_ledger::PaidLedgerOperations;
-use gateway_authority_paid_route::PaidRouteOperations;
-use gateway_authority_routing_selection::{SelectionOperations, types::AdmittedAccount};
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_signal::SignalOperations;
+use gateway_contracts::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
 use gateway_contracts::provider::UpstreamProvider;
-use gateway_contracts::{
-    lifecycle::PaidTerminalState, lifecycle::SemanticTerminal, lifecycle::TransportObservation,
-};
 use gateway_core::query::QueryStore;
-use gateway_providers::{policy::HopDecision, policy::HopFailure};
+use gateway_provider_policy::{policy::HopDecision, policy::HopFailure};
 use gateway_source::error::GatewayError;
 
 impl<
@@ -151,12 +154,13 @@ impl<
                 provider: reservation.provider,
                 model: record.model.clone(),
                 route: self.input.context.route.clone(),
-                path: if self.input.surface == gateway_providers::types::ClientSurface::Chat {
-                    "/v1/chat/completions"
-                } else {
-                    "/v1/responses"
-                }
-                .into(),
+                path:
+                    if self.input.surface == gateway_provider_protocol::types::ClientSurface::Chat {
+                        "/v1/chat/completions"
+                    } else {
+                        "/v1/responses"
+                    }
+                    .into(),
                 stream: self.input.streamed(),
                 reasoning: self.input.requested_reasoning(),
                 created_at_ms: self.input.context.started_at_ms,
@@ -177,7 +181,7 @@ impl<
                 .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
-                gateway_authority_paid_route::authorization::PaidAuthorization::DirectPaidModel
+                PaidAuthorization::DirectPaidModel
             } else {
                 self.paid_authorization(row).await?
             };
@@ -353,14 +357,15 @@ impl<
         let mut decision = RefusalDecision::Return;
         let mut cursor = record.cursor;
         if self.plan.synthetic && record.paid.is_none() {
-            decision = match gateway_providers::policy::deepseek_decision(failure.failure, false) {
-                HopDecision::Advance => {
-                    cursor += 1;
-                    RefusalDecision::Continue
-                }
-                HopDecision::Abort => RefusalDecision::Abort,
-                HopDecision::Deliver => RefusalDecision::Return,
-            };
+            decision =
+                match gateway_provider_policy::policy::deepseek_decision(failure.failure, false) {
+                    HopDecision::Advance => {
+                        cursor += 1;
+                        RefusalDecision::Continue
+                    }
+                    HopDecision::Abort => RefusalDecision::Abort,
+                    HopDecision::Deliver => RefusalDecision::Return,
+                };
         } else if let CredentialFence::Codex { admission, .. } = &record.fence
             && failure.origin == FailureOrigin::Provider
         {
@@ -368,7 +373,7 @@ impl<
                 decision = RefusalDecision::Continue;
             }
         } else if record.paid.is_some() && failure.origin == FailureOrigin::Provider {
-            if gateway_providers::policy::paid_should_advance(
+            if gateway_provider_policy::policy::paid_should_advance(
                 failure.status,
                 self.plan.hops.get(cursor + 1).is_some(),
             ) {
@@ -413,7 +418,7 @@ impl<
         &self,
         row: &Journal,
         record: &AttemptRecord,
-        admission: &AdmittedAccount,
+        admission: &gateway_authority_routing_selection::types::AdmittedAccount,
         failure: &AttemptFailure,
     ) -> RoutingResult<bool> {
         if let Some(block) = classify::codex_quota(
@@ -472,9 +477,10 @@ impl<
         failure: &AttemptFailure,
     ) -> RoutingResult<RefusalDecision> {
         let now = self.now()?;
-        let response_prohibited = gateway_providers::lithos::retry_prohibited(&failure.headers);
+        let response_prohibited =
+            gateway_provider_policy::lithos::retry_prohibited(&failure.headers);
         let wait = lithos_wait_ms(&failure.headers, now);
-        let rung = gateway_providers::policy::lithos_canonical(model);
+        let rung = gateway_provider_policy::policy::lithos_canonical(model);
         self.lithos_attempted.borrow_mut().insert(rung.clone());
         if response_prohibited {
             self.lithos_no_retry.borrow_mut().insert(rung);
@@ -555,8 +561,8 @@ fn paid_terminal(terminal: SemanticTerminal) -> PaidTerminalState {
         SemanticTerminal::Failed | SemanticTerminal::Error => PaidTerminalState::Failed,
     }
 }
-fn lithos_wait_ms(headers: &gateway_providers::types::Headers, now: i64) -> Option<i64> {
-    let wait = gateway_providers::lithos::rate_limit_wait(headers, now as f64, |raw| {
+fn lithos_wait_ms(headers: &gateway_provider_protocol::types::Headers, now: i64) -> Option<i64> {
+    let wait = gateway_provider_policy::lithos::rate_limit_wait(headers, now as f64, |raw| {
         chrono::DateTime::parse_from_rfc2822(raw)
             .ok()
             .map(|date| date.timestamp_millis() as f64)

@@ -1,20 +1,17 @@
 //! Finite administrative host bindings. Missing external owners remain explicit.
-use gateway_admin_runtime::{
-    RuntimeConfig,
-    capabilities::{
-        AnalyticsRequest, CatalogRequest, Context, ProviderRequest, RuntimeCapabilities,
-    },
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig, capabilities::AnalyticsRequest, capabilities::CatalogRequest,
+    capabilities::Context, capabilities::ProviderRequest, capabilities::RuntimeCapabilities,
 };
-use gateway_auth::types::AuthResponse;
-use gateway_source::error::GatewayError;
 use gateway_contracts::identity::RequestId;
-use gateway_schema::util::js_trim;
-use std::cmp::Ordering;
+use gateway_source::error::GatewayError;
 use worker::{
     Env,
     js_sys::{Function, Reflect},
     wasm_bindgen::{JsCast, JsValue},
 };
+use {gateway_auth_contracts::types::AuthResponse, gateway_catalog_admin::admin::CatalogAdmin};
+use {gateway_schema_values::scalar::js_trim, std::cmp::Ordering};
 
 pub fn config(env: &Env) -> RuntimeConfig {
     let raw = crate::host::setting(env, "CLAUDE_CODE_ALLOWED_KEY_IDS").unwrap_or_default();
@@ -39,8 +36,8 @@ pub struct Capabilities {
     catalog_host: crate::catalog_host::Host,
     observations: crate::observability_host::Runtime,
     support: crate::admin_support_host::Binding,
-    original: gateway_auth::types::AuthRequest,
-    auth_config: gateway_auth::types::AuthConfig,
+    original: gateway_auth_contracts::types::AuthRequest,
+    auth_config: gateway_auth_contracts::types::AuthConfig,
     actor: std::rc::Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
 }
 
@@ -48,7 +45,7 @@ impl Capabilities {
     pub fn new(
         request_id: &RequestId,
         original_body: &[u8],
-        original_request: &gateway_auth::types::AuthRequest,
+        original_request: &gateway_auth_contracts::types::AuthRequest,
         store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
         platform: &crate::host::PlatformHost,
         context: std::rc::Rc<worker::Context>,
@@ -72,7 +69,7 @@ impl Capabilities {
             crate::admin_support_host::Binding::new(catalog_host.clone(), observations.clone());
         // AuthService consumes the exact original authentication metadata. Its
         // raw body stays in the separately measured request receipt, not a second copy.
-        let original = gateway_auth::types::AuthRequest {
+        let original = gateway_auth_contracts::types::AuthRequest {
             method: original_request.method.clone(),
             url: original_request.url.clone(),
             headers: original_request.headers.clone(),
@@ -105,7 +102,7 @@ impl Capabilities {
 impl RuntimeCapabilities for Capabilities {
     async fn migration(
         &self,
-        request: gateway_admin_runtime::capabilities::MigrationRequest,
+        request: gateway_admin_runtime_contracts::capabilities::MigrationRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -116,11 +113,11 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn capture(
         &self,
-        request: gateway_admin_runtime::capabilities::CaptureRequest,
+        request: gateway_admin_runtime_contracts::capabilities::CaptureRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
-        use gateway_admin_runtime::capabilities::CaptureRequest;
+        use gateway_admin_runtime_contracts::capabilities::CaptureRequest;
         match request {
             CaptureRequest::Request { request_id } => {
                 self.observations.export_capture_request(&request_id).await
@@ -155,7 +152,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn codex(
         &self,
-        request: gateway_admin_runtime::capabilities::CodexRequest,
+        request: gateway_admin_runtime_contracts::capabilities::CodexRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -183,19 +180,19 @@ impl RuntimeCapabilities for Capabilities {
     async fn pricing(
         &self,
         models: &[gateway_contracts::model::ModelId],
-    ) -> Result<gateway_admin_runtime::capabilities::PricingSnapshot, GatewayError> {
+    ) -> Result<gateway_admin_runtime_contracts::capabilities::PricingSnapshot, GatewayError> {
         self.support.pricing(models).await
     }
     async fn error_diagnostics(
         &self,
         context: Context,
-    ) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
+    ) -> Result<gateway_admin_runtime_contracts::capabilities::ErrorDiagnostics, GatewayError> {
         self.measured_body_bytes(&context)?;
         self.support.error_diagnostics(context).await
     }
     async fn supervisor_brief(
         &self,
-        target: gateway_admin_runtime::capabilities::SupervisorBriefTarget,
+        target: gateway_admin_runtime_contracts::capabilities::SupervisorBriefTarget,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -203,7 +200,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn claude(
         &self,
-        request: gateway_admin_runtime::capabilities::ClaudeRequest,
+        request: gateway_admin_runtime_contracts::capabilities::ClaudeRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -231,7 +228,7 @@ impl RuntimeCapabilities for Capabilities {
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
-        use gateway_catalog_runtime::admin::AdminCatalogOperation as Operation;
+        use gateway_catalog_admin::admin::AdminCatalogOperation as Operation;
         let operation = match request {
             CatalogRequest::CodexModelsGet => Operation::CodexModelsGet,
             CatalogRequest::CodexModelsSet { document } => Operation::CodexModelsSet { document },
@@ -240,7 +237,7 @@ impl RuntimeCapabilities for Capabilities {
             CatalogRequest::Catalog => Operation::Catalog,
             CatalogRequest::Refresh => Operation::Refresh,
         };
-        Ok(gateway_catalog_provider::response::into_auth_response(
+        Ok(gateway_catalog_admin::response::into_auth_response(
             self.catalog_service
                 .admin_catalog(&self.catalog_host.store, &self.catalog_host, operation)
                 .await,

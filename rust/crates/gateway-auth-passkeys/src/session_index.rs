@@ -1,11 +1,11 @@
 // Private source-session revision metadata, never a bearer or authorization proof.
 use gateway_auth_contracts::passkeys::PasskeySession;
-use gateway_auth_primitives::{crypto::sha256_hex, store};
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::state::{AuthorityStore, StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 pub const SESSION_DIGEST_DOMAIN: &[u8] = b"uos_ai:auth:session_revision_index:v1\0";
 
@@ -26,13 +26,14 @@ pub fn index_key(session_digest: &str) -> Result<RecordKey, GatewayError> {
     {
         return Err(invalid());
     }
-    Ok(store::key(json!([
-        "uos_ai",
-        "auth",
-        "session_revision_index",
-        "v1",
-        session_digest
-    ])))
+    Ok(TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("auth"),
+        ScalarKeyPart::String("session_revision_index"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String(session_digest),
+    ])
+    .to_record_key())
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

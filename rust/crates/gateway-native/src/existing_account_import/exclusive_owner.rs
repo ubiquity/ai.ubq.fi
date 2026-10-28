@@ -1,7 +1,7 @@
 //! Kernel facts are observations, never permission reconstructed from JSON or caller booleans.
 use super::{ExistingAccountImportStore, acl_inspector, owner_runtime};
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_authority::native_control::receiver::RegisteredRenewalOwner;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_native_confinement::file_observation::Facts;
 use gateway_source::error::GatewayError;
 use rustix::fs::{AtFlags, Mode, OFlags, fstat, openat, statat};

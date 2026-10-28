@@ -1,7 +1,8 @@
 use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
+use gateway_model_selection::aliases as model_aliases;
 mod support;
-use gateway_admin_runtime::capabilities::{Context, ProviderRequest};
-use gateway_auth::crypto::sha256_hex;
+use gateway_admin_runtime_contracts::{capabilities::Context, capabilities::ProviderRequest};
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_observability::{
@@ -33,9 +34,7 @@ struct AdminHost {
     raw: Vec<u8>,
 }
 impl ObservabilityHost for AdminHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

@@ -1,5 +1,6 @@
 //! Fixed synthetic source -> one persisted authority -> latest native inverse.
 use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 #[cfg(not(target_arch = "wasm32"))]
 use gateway_migration_test_support::fixture;
 #[cfg(not(target_arch = "wasm32"))]
@@ -13,13 +14,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "The fixture accepts no source, credential or target arguments"
     );
     use fixture::{Directory, run};
-    use gateway_auth::store::key;
+
     use gateway_core::state::*;
-    use gateway_migration::{
-        engine::adopt_empty,
-        native_capture::{NativeCapture, prepare_native},
-        native_inverse::export_native_latest,
-    };
+    use gateway_migration_data::native_capture::NativeCapture;
+    use gateway_migration_inverse::native_inverse::export_native_latest;
+    use gateway_migration_prepare::engine::adopt_empty;
+    use gateway_migration_prepare::engine::prepare_native;
     use gateway_source_graph::graph::GraphNode;
     use sqlite_store::SqliteStore;
     struct Tokens(std::sync::atomic::AtomicU64);
@@ -47,7 +47,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let store = SqliteStore::open(&path);
     let token = format!("u_{}", "1".repeat(64));
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?.key_id,
+        run(gateway_auth_primitives::api_keys::authenticate(
+            &store, &token, 2300
+        ))?
+        .key_id,
         "offline-key"
     );
     let authority = gateway_authority::store::Authority::with_clock(
@@ -62,7 +65,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         2300,
     ))?;
     drop(authority);
-    let key = key(serde_json::json!(["default", "native-graph", 0]));
+    let key = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("native-graph"),
+        ScalarKeyPart::Number(0),
+    ])
+    .to_record_key();
     let original = run(store.read(&key))?.ok_or("Expected retained fixture row")?;
     let mut graph = original.source_graph_value()?;
     for node in &mut graph.nodes {

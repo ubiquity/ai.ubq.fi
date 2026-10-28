@@ -1,4 +1,3 @@
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_contracts::lifecycle::SemanticTerminal;
 use gateway_core::query::QueryStore;
 use gateway_extras_contract::types::{
@@ -6,9 +5,10 @@ use gateway_extras_contract::types::{
     ExtrasRequest, ExtrasResponse, ExtrasRoute, HealthKind, HealthObservation, PreparedCall,
     UpstreamResponse,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 mod state;
-use gateway_providers::extras;
-use gateway_schema::selection::ProviderSelection;
+use gateway_model_selection::selection::ProviderSelection;
+use gateway_provider_services::extras;
 use state::{now, selection};
 fn health(provider: ExtrasProvider, status: Option<u16>, kind: HealthKind) -> HealthObservation {
     HealthObservation {
@@ -63,7 +63,10 @@ pub async fn handle<S: QueryStore, H: ExtrasHost>(
             Err(error) => return Ok(ExtrasResponse::source_json(error.status, error.body()?)),
         }
     } else {
-        if let Err(error) = extras::prepare_source_systemone(&request.body, &Default::default()) {
+        if let Err(error) = gateway_provider_services::extras::prepare_source_systemone(
+            &request.body,
+            &Default::default(),
+        ) {
             return Ok(ExtrasResponse::source_error(error));
         }
         None
@@ -190,7 +193,7 @@ fn finish<H: ExtrasHost>(
                     if decisions {
                         gateway_decision_protocol::response::decode(body)
                     } else {
-                        extras::decode_source_systemone(body)
+                        gateway_provider_services::extras::decode_source_systemone(body)
                     }
                 });
             match decoded {
@@ -206,7 +209,7 @@ fn finish<H: ExtrasHost>(
                     } else {
                         gateway_source::source_serialization::member(&payload, "usage")
                             .as_ref()
-                            .and_then(extras::source_systemone_usage)
+                            .and_then(gateway_provider_services::extras::source_systemone_usage)
                     };
                     let mut r = ExtrasResponse::source_json(200, payload);
                     if decisions {

@@ -1,7 +1,8 @@
 mod support;
-use gateway_source::error::GatewayError;
 use gateway_core::state::StoredRecord;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::{metered, types::ObservabilityHost};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::{cell::Cell, rc::Rc};
 use support::{Host, Memory, run};
@@ -12,9 +13,7 @@ struct Monitoring {
     invalidate: bool,
 }
 impl ObservabilityHost for Monitoring {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.clock.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

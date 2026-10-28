@@ -1,16 +1,16 @@
 //! Fixed authenticated sanitized import publication. The constructor inputs and
 //! original authority own the decision; wire DATA never supplies config or KV.
 use crate::transport::{PublicationReceiver, borrowed_headers};
-use gateway_auth::native_import::publication::{
-    NativeImportPublication, NativeImportPublicationDisposition,
+use gateway_auth_native_protocol::{
+    native_import::publication::NativeImportPublication,
+    native_import::publication::NativeImportPublicationDisposition,
 };
 use gateway_auth_native_wire::{
     native_read::{NATIVE_PUBLICATION_PATH, NATIVE_RESPONSE_MAC_HEADER},
     publication_command::{ImportPublicationCommandData, import_publication_max_bytes},
 };
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::receiver::NativeRenewalAuthority,
-};
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_publication_policy::protocol::{
@@ -80,7 +80,7 @@ impl PublicationReceiver {
     pub async fn apply_import<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>(
         &self,
         control: &NativeRenewalAuthority<'_, S, I, C>,
-        peer: &gateway_auth::native_auth::AuthenticatedNativeOwner,
+        peer: &gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner,
         body: &[u8],
     ) -> Result<NativeImportPublication, GatewayError> {
         for _ in 0..5 {

@@ -1,6 +1,8 @@
-use gateway_auth::types::AuthHost;
-use gateway_auth::upstream::{AuthUpstreamRequest, AuthUpstreamResponse};
-use gateway_auth::webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto};
+use gateway_auth_contracts::{
+    types::AuthHost,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
+};
 use gateway_source::error::GatewayError;
 use std::{
     cell::Cell,

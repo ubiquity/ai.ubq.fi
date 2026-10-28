@@ -1,5 +1,8 @@
 use gateway_contracts::provider::UpstreamProvider;
-use gateway_providers::{request::prepare_request, types::*};
+use gateway_provider_protocol::types::AuthMaterial;
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_provider_protocol::types::PrepareOptions;
+use gateway_providers::request::prepare_request;
 use serde_json::json;
 
 fn options() -> PrepareOptions {

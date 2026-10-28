@@ -1,11 +1,12 @@
-use gateway_auth::crypto::uuid_from_random;
-use gateway_auth::store;
-use gateway_auth::types::{AuthHost, AuthMethod, AuthPrincipal};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use gateway_kv_codec::{key::RecordKey, value::PortableValue};
+use gateway_auth_contracts::{types::AuthHost, types::AuthMethod, types::AuthPrincipal};
+use gateway_auth_primitives::crypto::uuid_from_random;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+
 use gateway_core::state::{RecordMutation, StoredRecord};
+use gateway_kv_codec::{key::RecordKey, value::PortableValue};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub const RETENTION_MS: i64 = 7_776_000_000;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -103,13 +104,14 @@ pub fn safe_changed_source(value: &SourceJson) -> Result<SourceJson, GatewayErro
     SourceJson::parse(&format!("{{{}}}", result.join(",")))
 }
 pub fn event_key(event: &KeyChange) -> RecordKey {
-    store::key(json!([
-        "uos_ai",
-        "api_keys",
-        "change",
-        gateway_contracts::identity::MAX_SAFE_INTEGER - event.at_ms,
-        event.id
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("api_keys"),
+        ScalarKeyPart::String("change"),
+        ScalarKeyPart::Number(gateway_contracts::identity::MAX_SAFE_INTEGER - event.at_ms),
+        ScalarKeyPart::String(&event.id),
+    ])
+    .to_record_key()
 }
 pub struct ChangeInput<'a> {
     pub principal: &'a AuthPrincipal,

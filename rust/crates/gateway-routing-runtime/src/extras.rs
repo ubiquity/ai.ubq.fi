@@ -13,10 +13,10 @@ use gateway_contracts::{
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
 };
 use gateway_core::query::QueryStore;
-use gateway_source::source_json::SourceJson;
-use gateway_source::{error::GatewayError, source_serialization as source};
+use gateway_source::source_serialization as source;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
-use std::rc::Rc;
+use {gateway_model_selection::aliases as model_aliases, std::rc::Rc};
 
 use gateway_extras_contract::family::ExtrasFamily;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -68,7 +68,7 @@ pub struct DispatchTicket {
 #[derive(Clone, Debug)]
 pub struct ImageChildAttempt {
     scope: ChildScope,
-    pub request: gateway_providers::types::PreparedRequest,
+    pub request: gateway_provider_protocol::types::PreparedRequest,
     pub credential: CredentialFence,
 }
 impl ImageChildAttempt {
@@ -85,7 +85,7 @@ pub struct AdmissionHandle<S, I, C, H> {
     parent: String,
     lock: Rc<Mutex<()>>,
     input: RoutingInput,
-    source_collator: std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator>,
+    source_collator: std::sync::Arc<dyn model_aliases::SourceStringCollator>,
 }
 impl<
     S: QueryStore + Clone,
@@ -148,7 +148,7 @@ impl<
                 journal::unavailable("This scope cannot prepare a Codex image child.").into(),
             );
         }
-        let model = ModelId::from_source(gateway_schema::source_request::resolve_model(
+        let model = ModelId::from_source(gateway_request_normalization::syntax::resolve_model(
             source::member(&body, "model").as_ref(),
             None,
         )?);
@@ -191,7 +191,7 @@ impl<
                 .await?;
             let mut input = self.input.clone();
             input.raw = body.clone();
-            input.surface = gateway_providers::types::ClientSurface::Responses;
+            input.surface = gateway_provider_protocol::types::ClientSurface::Responses;
             let request = crate::wire::prepare(
                 &input,
                 &child.nonce,
@@ -340,8 +340,8 @@ impl<
             || self.host.cancelled()
             || matches!(
                 failure.failure,
-                gateway_providers::policy::HopFailure::Cancelled
-                    | gateway_providers::policy::HopFailure::Deadline
+                gateway_provider_policy::policy::HopFailure::Cancelled
+                    | gateway_provider_policy::policy::HopFailure::Deadline
             )
         {
             return Ok(RefusalDecision::Abort);

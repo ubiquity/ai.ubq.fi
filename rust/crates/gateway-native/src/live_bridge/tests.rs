@@ -1,12 +1,12 @@
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 use super::socket::LiveDialContext;
 use super::{authority::LiveAuthorization, *};
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
 use gateway_auth_native_contracts::{
     native_live::NATIVE_LIVE_ACTION_HEADER, nonce::NativeNonceAuthority,
 };
 use gateway_auth_native_proof::{
-    native_auth::{NativeAuthHeaders, NativeCapability, NativeTransportIdentity},
-    native_live::NativeLiveAuthenticator,
+    native_auth::NativeTransportIdentity, native_live::NativeLiveAuthenticator,
 };
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
@@ -166,7 +166,7 @@ fn start(
                     mac: one(NATIVE_MAC_HEADER)?,
                 },
                 &action_ref,
-                gateway_native_http_framing::response::now_ms()?,
+                gateway_auth_native_proof::native_context::now_ms()?,
             ),
         )?;
         assert!(
@@ -188,7 +188,7 @@ fn start(
 }
 fn request(address: SocketAddr) -> TestResult<tungstenite::handshake::client::Request> {
     let mut request = format!("ws://{address}/v1/native/live").into_client_request()?;
-    let now = gateway_native_http_framing::response::now_ms()?;
+    let now = gateway_auth_native_proof::native_context::now_ms()?;
     let nonce = base64url(&[19; 32]);
     let identity = identity()?;
     let mac = identity.sign_live_request(now, &nonce, "action-ref")?;

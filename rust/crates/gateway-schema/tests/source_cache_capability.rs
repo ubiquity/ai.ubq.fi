@@ -1,14 +1,10 @@
 //! Selected metadata and request/model/error strings remain UTF16 SourceJson.
+use gateway_chat_normalization::normalized::normalize_chat_messages;
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_prompt_cache::capability::validate_known_unsupported_prompt_cache;
+use gateway_responses_normalization::normalized::normalize_responses_input;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
-use gateway_schema::{
-    prompt_cache,
-    source_request::{
-        cache_capability::validate_known_unsupported_prompt_cache,
-        error::SourceRequestError,
-        normalized::{normalize_chat_messages, normalize_responses_input},
-    },
 };
 use serde_json::{Value, json};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -173,9 +169,14 @@ fn block_type_and_function_output_paths_use_the_same_source_policy() -> TestResu
 fn legacy_scalar_wrapper_delegates_without_error_envelope_change() {
     let record = json!({"prompt_cache":capabilities(json!({"implicit":false}))});
     let body = json!({"input":"original","prompt_cache_options":{"mode":"implicit"}});
-    let scalar =
-        prompt_cache::validate_known_unsupported("model", Some(&record), &body, &[], "input")
-            .unwrap_err();
+    let scalar = gateway_prompt_cache::compat::validate_known_unsupported(
+        "model",
+        Some(&record),
+        &body,
+        &[],
+        "input",
+    )
+    .unwrap_err();
     let source = check(
         &JsString16::from_utf8("model"),
         record.get("prompt_cache"),
@@ -195,8 +196,8 @@ fn opaque_other_provider_does_not_hide_current_provider_capabilities() -> TestRe
     let cap = raw(
         r#"{"version":1,"providers":[{"id":"\ud800","controls":{"source":"catalog","verified_at_ms":1,"key":true}},{"id":"codex_chatgpt","controls":{"source":"catalog","verified_at_ms":1,"key":false}}]}"#,
     );
-    let normalized =
-        prompt_cache::normalize_capabilities_source(Some(&cap)).ok_or("missing fixture value")?;
+    let normalized = gateway_prompt_cache::metadata::normalize_capabilities_source(Some(&cap))
+        .ok_or("missing fixture value")?;
     let providers =
         source::array(&source::member(&normalized, "providers").ok_or("missing fixture value")?)
             .ok_or("missing fixture value")?;

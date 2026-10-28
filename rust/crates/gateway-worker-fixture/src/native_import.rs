@@ -1,25 +1,24 @@
 //! Synthetic constructors only. All HTTP protocol handlers stay in gateway-worker.
 use super::*;
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    passkeys::{self, PasskeySession, PasskeyUser},
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_credential_identity,
-        codex_source_pool_key,
-    },
-    session_index,
-    types::{AuthConfig, AuthHost, AuthRequest},
-    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
-    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
-};
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::actor::authenticate_admin_actor,
-    native_control::owners::RegisteredRenewalOwners,
-    native_control::receiver::NativeRenewalAuthority,
-    native_control::receiver::RegisteredRenewalOwner, store::Authority,
-};
+use gateway_auth_contracts::{passkeys::PasskeySession, passkeys::PasskeyUser, types::AuthConfig};
+use gateway_auth_contracts::{types::AuthHost, types::AuthRequest, upstream::AuthUpstreamRequest};
+use gateway_auth_contracts::{upstream::AuthUpstreamResponse, webauthn::CosePublicKey};
+use gateway_auth_contracts::{webauthn::SignatureInput, webauthn::WebAuthnCrypto};
+use gateway_auth_credentials::provider_credentials::CodexNativeOwner;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::codex_credential_identity;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_passkeys::{passkeys, session_index};
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex};
+use gateway_authority::native_control::actor::authenticate_admin_actor;
+use gateway_authority::native_control::owners::RegisteredRenewalOwners;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority::store::Authority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::{
     identity::PoolVersionstamp, identity::PrincipalId, identity::RequestContext,
@@ -156,8 +155,8 @@ pub(super) async fn initialize(
             generation_hash: sha256_hex(b"physical-before-import"),
             native_refreshed_at: None,
             external_user_id: None,
-            managed_source: Some(gateway_auth::provider_credentials::ManagedNativeSource {
-                v: gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+            managed_source: Some(gateway_auth_credentials::provider_credentials::ManagedNativeSource {
+                v: gateway_auth_credentials::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
                 generation_hash: sha256_hex(b"physical-before-import"),
             }),
         }),
@@ -260,7 +259,7 @@ pub(super) async fn initialize(
     );
     let context = RequestContext {
         request_id: RequestId("fixture-import-original-request".into()),
-        principal: PrincipalId(format!("passkey-user:{USER}")),
+        principal: PrincipalId::from_scalar(format!("passkey-user:{USER}")),
         key_id: None,
         route: "responses".into(),
         started_at_ms: time,
@@ -290,7 +289,7 @@ pub(super) async fn initialize(
     let prepared = control
         .prepare_import(
             &actor,
-            gateway_auth::native_import::NativeImportTarget::ExistingAccount {
+            gateway_auth_native_contracts::native_import::NativeImportTarget::ExistingAccount {
                 account_id_hash: credential.routing_account_hash.0,
             },
         )
@@ -306,7 +305,7 @@ pub(super) async fn initialize(
         "parent_refused": RegisteredRenewalOwner::configured("parent-control".into(), "../profile".into()).is_err()
     });
     let meta = serde_json::json!({"path_controls":path_controls,"metadata":prepared.metadata(),"account_id":account_id,"access_token":"fixture-import-new-access","access_generation":next.native_generation_hash,"native_source_generation":sha256_hex(b"physical-after-import"),"updated_at_ms":time});
-    Ok(Some(gateway_auth::crypto::base64url(
+    Ok(Some(gateway_auth_primitives::crypto::base64url(
         &serde_json::to_vec(&meta).map_err(|_| invalid())?,
     )))
 }
@@ -338,4 +337,11 @@ pub(super) async fn fetch(
             .set("x-uos-fixture-import-metadata", &metadata)?;
     }
     Ok(response)
+}
+
+// Synthetic legacy/passkey fixture has no app-session date capability; unknown dates refuse.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _value: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

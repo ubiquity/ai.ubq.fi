@@ -1,9 +1,9 @@
 //! Complete trusted capacity producer/source fence and ordered durable acceptance operations.
 mod backend;
 use backend::Transaction;
-use gateway_auth::provider_credentials::{
-    CodexNativeOwner, codex_source_pool_key, read_codex_source_pool,
-};
+use gateway_auth_credentials::provider_credentials::CodexNativeOwner;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::read_codex_source_pool;
 use gateway_authority_capacity_policy::{apply_capacity_observation, merge_capacity};
 use gateway_authority_contracts::{
     AuthorityClock, TokenSource, invalid, text, unavailable, validate_time,

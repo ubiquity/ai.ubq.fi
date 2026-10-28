@@ -1,5 +1,6 @@
 use super::*;
-use gateway_auth::native_auth::{NativeAuthHeaders, NativeAuthenticator, NativeNonceAuthority};
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeNonceAuthority};
 use gateway_auth_native_wire::native_read::NATIVE_RPC_PATH;
 use serde_json::{Value, json};
 use std::{
@@ -112,7 +113,7 @@ fn readonly_role_never_grants_publication_renewal_or_import() {
 
 fn seal(identity: &NativeTransportIdentity) -> Value {
     json!({
-        "v":1,"payload_sha256":gateway_auth::crypto::sha256_hex(b"approved-private-payload"),
+        "v":1,"payload_sha256":gateway_auth_primitives::crypto::sha256_hex(b"approved-private-payload"),
         "expected_readonly_owner":{
             "owner_id":identity.owner_id(),"owner_epoch":identity.owner_epoch(),
             "key_fingerprint":identity.key_fingerprint()

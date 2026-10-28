@@ -2,11 +2,6 @@
 use crate::host::PlatformHost;
 use crate::observability_host;
 use crate::observability_host::CaptureInput;
-use futures_util::Stream;
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
-};
 use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
@@ -15,8 +10,11 @@ use gateway_observability::{
     replay_producer::{ClientFailureObservation, FailureObservation, should_persist},
     replay_trace::{AttemptTrace, TraceProvider, TraceRecorder, TraceTerminal},
 };
-use gateway_providers::sse::{
-    MAX_CHAT_EVENT_BYTES, MAX_RESPONSES_EVENT_BYTES, SseFrame, SseParser,
+use gateway_provider_events::{framing::SseFrame, framing::SseParser};
+use gateway_provider_stream::{sse::MAX_CHAT_EVENT_BYTES, sse::MAX_RESPONSES_EVENT_BYTES};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
@@ -28,6 +26,7 @@ use std::{
     task::{Context, Poll},
 };
 use worker::{Request, Response, ResponseBody};
+use {futures_util::Stream, gateway_schema_values::scalar as util};
 
 pub struct Capture {
     runtime: observability_host::Runtime,
@@ -148,10 +147,9 @@ impl Capture {
         let prompt_cache_key_present = source::member(raw, "prompt_cache_key")
             .and_then(|value| source::string(&value))
             .is_some_and(|key| {
-                key.as_units().iter().any(|unit| {
-                    !char::from_u32(u32::from(*unit))
-                        .is_some_and(gateway_schema::util::js_whitespace)
-                })
+                key.as_units()
+                    .iter()
+                    .any(|unit| !char::from_u32(u32::from(*unit)).is_some_and(util::js_whitespace))
             });
         *self.terminal_request.borrow_mut() = Some(TerminalRequest {
             context: context.clone(),
@@ -396,7 +394,7 @@ impl Capture {
     }
     pub fn start(&self, provider: UpstreamProvider) -> Option<AttemptTrace> {
         self.client.borrow_mut().provider =
-            gateway_providers::policy::direct_provider_label(provider).into();
+            gateway_provider_source::policy::direct_provider_label(provider).into();
         let provider = match provider {
             UpstreamProvider::ChatgptCodex => TraceProvider::ChatgptCodex,
             UpstreamProvider::Surplus => TraceProvider::Surplus,
@@ -452,7 +450,7 @@ impl Capture {
         let mut client = self.client.borrow_mut();
         client.status = if provisional { 200 } else { status };
         client.stream = stream;
-        client.provider = gateway_providers::policy::direct_provider_label(provider).into();
+        client.provider = gateway_provider_source::policy::direct_provider_label(provider).into();
         client.parser = stream.then(|| {
             SseParser::new(if responses {
                 MAX_RESPONSES_EVENT_BYTES

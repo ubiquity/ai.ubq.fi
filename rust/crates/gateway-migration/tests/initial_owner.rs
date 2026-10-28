@@ -1,24 +1,32 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_auth::{NativeCapability, NativeTransportIdentity},
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_initial_owner::*;
-use gateway_core::{query::*, state::*};
+use gateway_core::query::*;
+use gateway_core::state::*;
 use gateway_kv_codec::key::RecordKey;
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-use gateway_migration::{
-    engine::{PreparedAdoption, adopt_empty, adopt_empty_with_initial_control_owner},
-    graph_transport,
-    initial_owner::InitialControlOwnerAdoptionReceipt,
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-};
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_prepare::engine::PreparedAdoption;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::adopt_empty_with_initial_control_owner;
+use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_prepare::initial_owner::InitialControlOwnerAdoptionReceipt;
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
-use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_source::error::GatewayError;
+use gateway_source::js_string::JsString16;
 use gateway_source_graph::graph::*;
-use serde_json::{Value, json};
-use std::{cell::Cell, collections::BTreeSet};
+use serde_json::Value;
+use serde_json::json;
+use std::cell::Cell;
+use std::collections::BTreeSet;
 
 fn graph(value: &Value) -> SourceGraph {
     fn atom(value: &Value, nodes: &mut Vec<GraphNode>) -> GraphAtom {
@@ -65,7 +73,7 @@ struct Fixture {
 }
 impl Fixture {
     fn new(access: &str, bad_projection: bool) -> Self {
-        let identity = gateway_auth::provider_credentials::codex_credential_identity(
+        let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
             "initial-account",
             &Secret::new(access.into()),
             &Secret::new(String::new()),
@@ -81,7 +89,7 @@ impl Fixture {
         let pool = json!({"accounts":[{"account_id":"initial-account","access_token":access,"refresh_token":"","updated_at_ms":2200,"native_owner":{"codex_home":"/synthetic/initial-owner","generation_hash":marker,"native_refreshed_at":"2026-10-19T00:00:00.000000000Z","managed_source":{"v":2,"generation_hash":"8".repeat(64)}}}],"updated_at_ms":2200});
         capture.entries.push(NativeEntry {
             raw_key: TupleKey::from_record_key(
-                &gateway_auth::provider_credentials::codex_source_pool_key(),
+                &gateway_auth_credentials::provider_credentials::codex_source_pool_key(),
             )
             .unwrap()
             .sort_bytes()
@@ -240,7 +248,7 @@ fn installation_is_one_complete_atomic_commit_and_exact_retry_does_not_rewrite()
         ))
         .is_err()
     );
-    let key = gateway_auth::provider_credentials::codex_source_pool_key();
+    let key = gateway_auth_credentials::provider_credentials::codex_source_pool_key();
     let mut current = run(store.read(&key)).unwrap().unwrap();
     current.revision = "new-live-source".into();
     store.inner.put(key.clone(), current.clone());
@@ -365,7 +373,7 @@ fn occupied_conflicting_and_failed_targets_never_gain_partial_adoption() {
             .is_none()
     );
     assert!(
-        run(store.read(&gateway_auth::api_keys::id_key("offline-key")))
+        run(store.read(&gateway_auth_primitives::api_keys::id_key("offline-key")))
             .unwrap()
             .is_none()
     );
@@ -402,7 +410,7 @@ fn occupied_conflicting_and_failed_targets_never_gain_partial_adoption() {
     );
     assert_eq!(store.commits.get(), 1);
     assert!(
-        run(store.read(&gateway_auth::api_keys::id_key("offline-key")))
+        run(store.read(&gateway_auth_primitives::api_keys::id_key("offline-key")))
             .unwrap()
             .is_none()
     );

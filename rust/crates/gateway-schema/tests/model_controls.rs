@@ -1,16 +1,18 @@
 //! Model/effort controls and pinned Bun ordering evidence; not a host Intl or runtime substitute.
+use gateway_contracts::model::ModelId;
+use gateway_core::source_control;
+use gateway_model_selection::{
+    aliases::SourceStringCollator,
+    selection::{AccountModelCatalog, AccountModelsStore, ModelWhitelist},
+};
+use gateway_schema::{
+    catalog::{CatalogInput, request_model_metadata, validate_model_available},
+    reasoning::{ModelReasoning, effort_for_codex, resolve_reasoning},
+    snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot},
+};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
-};
-use gateway_contracts::model::ModelId;
-use gateway_core::source_control;
-use gateway_schema::{
-    aliases::SourceStringCollator,
-    catalog::{CatalogInput, request_model_metadata, validate_model_available},
-    reasoning::{ModelReasoning, effort_for_codex, resolve_reasoning},
-    selection::{AccountModelCatalog, AccountModelsStore, ModelWhitelist},
-    snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot},
 };
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -82,7 +84,8 @@ fn unsupported_survivor_order_matches_pinned_bun_including_equal_collation_and_n
                 &collator,
             )
             .unwrap()
-            .to_source_json();
+            .to_source_json()
+            .unwrap();
         assert_eq!(
             canonical(&updated),
             canonical(&case.expected),
@@ -206,7 +209,7 @@ fn model_map_record_codec_preserves_distinct_lone_keys_and_source_revision_expir
     let store = AccountModelsStore::parse(&row).unwrap();
     assert_eq!(store.accounts["a"].slugs.len(), 4);
     assert_eq!(store.unsupported["a"].len(), 4);
-    let document = store.to_source_json();
+    let document = store.to_source_json().unwrap();
     let encoded = source_control::encode_source_control_record(
         "same-source-revision",
         &document,

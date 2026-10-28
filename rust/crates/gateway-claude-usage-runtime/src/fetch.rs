@@ -1,5 +1,5 @@
-use gateway_admin_runtime::claude::{AccountBinding, CredentialKind};
-use gateway_auth::types::AuthHost;
+use gateway_auth_contracts::types::AuthHost;
+use gateway_claude_roster::{claude::AccountBinding, claude::CredentialKind};
 use gateway_claude_usage_protocol::{snapshot, state::UsageState};
 use gateway_claude_usage_quota::{QuotaObservation, QuotaWindow};
 use gateway_source::{

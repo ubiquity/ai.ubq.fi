@@ -3,19 +3,18 @@ use gateway_admin_contracts::{
     source_input as input,
 };
 use gateway_admin_keys::keys::{ApiKeyRecord, public_record};
-use gateway_auth::{
-    api_keys,
-    passkeys::{PasskeyUser, user_wire},
-    store,
-    types::{AuthResponse, invalid},
-};
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
+use gateway_auth_contracts::{passkeys::PasskeyUser, types::AuthResponse};
+use gateway_auth_passkeys::passkeys::user_wire;
+use gateway_auth_primitives::api_keys;
+use gateway_auth_primitives::error::invalid;
 use gateway_core::{
     query::QueryRequest, query::QuerySelector, query::QueryStore, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::json;
 
 /// Each storage call is bounded; source list endpoints exhaust the cursor rather than truncate silently.
@@ -64,7 +63,17 @@ pub async fn passkey_users<S: QueryStore>(
     store: &S,
     now: i64,
 ) -> Result<AuthResponse, GatewayError> {
-    let rows = prefix_rows(store, store::key(json!(["uos_ai", "auth", "users"])), now).await?;
+    let rows = prefix_rows(
+        store,
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("auth"),
+            ScalarKeyPart::String("users"),
+        ])
+        .to_record_key(),
+        now,
+    )
+    .await?;
     let mut users = Vec::new();
     for (_, row) in rows {
         let user: PasskeyUser =
@@ -264,7 +273,17 @@ pub async fn api_keys_with_usage<S: QueryStore>(
     now: i64,
     include_usage: bool,
 ) -> Result<AuthResponse, GatewayError> {
-    let rows = prefix_rows(store, store::key(json!(["ubq_ai", "api_keys", "id"])), now).await?;
+    let rows = prefix_rows(
+        store,
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("api_keys"),
+            ScalarKeyPart::String("id"),
+        ])
+        .to_record_key(),
+        now,
+    )
+    .await?;
     let mut records = Vec::new();
     for (key, row) in rows {
         let record = gateway_admin_keys::keys::decode_id_record(&key, &row)?;
@@ -321,7 +340,12 @@ pub async fn key_changes<S: QueryStore>(
     let page = store
         .query(QueryRequest {
             selector: QuerySelector::Prefix {
-                prefix: store::key(json!(["uos_ai", "api_keys", "change"])),
+                prefix: TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("api_keys"),
+                    ScalarKeyPart::String("change"),
+                ])
+                .to_record_key(),
                 start: None,
                 end: None,
             },

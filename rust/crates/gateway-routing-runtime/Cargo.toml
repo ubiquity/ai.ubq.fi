@@ -5,7 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
+gateway-auth-primitives = { workspace = true }
+gateway-request-normalization.workspace = true
+gateway-model-selection.workspace = true
+gateway-schema-values.workspace = true
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-authority-routing-signal = { path = "../gateway-authority-routing-signal" }
 gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
 gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
@@ -24,26 +33,33 @@ gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
 gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
-gateway-local-journal.workspace = true
-gateway-source.workspace = true
-gateway-wait-observation.workspace = true
-gateway-decision-protocol.workspace = true
-gateway-extras-contract.workspace = true
-gateway-core.workspace = true
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-local-journal = { workspace = true }
+gateway-source = { workspace = true }
+gateway-wait-observation = { workspace = true }
+gateway-decision-protocol = { workspace = true }
+gateway-extras-contract = { workspace = true }
+gateway-core = { workspace = true }
 gateway-authority = { path = "../gateway-authority" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-providers = { path = "../gateway-providers" }
 gateway-schema = { path = "../gateway-schema" }
-serde.workspace = true
+serde = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+gateway-provider-stream = { workspace = true }
+gateway-provider-response = { workspace = true }
+gateway-provider-protocol = { workspace = true }
+gateway-provider-policy = { workspace = true }
+gateway-provider-claude-body = { workspace = true }
+gateway-local-refusal = { workspace = true }
 
 [dev-dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
-gateway-routing-runtime-test-support.workspace = true
-
-[lints]
-workspace = true
+gateway-routing-runtime-test-support = { workspace = true }
+gateway-source = { workspace = true }

@@ -2,13 +2,12 @@
 use gateway_cache_experiment_dispatch::CacheDispatchOperations;
 use gateway_cache_experiment_runner::io::{ExperimentIo, ReadSample};
 use gateway_cache_experiment_runner::{CacheRunOperations, PreparedTarget};
+use gateway_model_selection::aliases as model_aliases;
+use {futures_util::StreamExt, gateway_schema_values::scalar as util};
 mod sample;
-use crate::host::PlatformClock;
-use crate::host::PlatformHost;
-use crate::host::PlatformTokens;
+use crate::host::{PlatformClock, PlatformHost, PlatformTokens};
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use futures_util::StreamExt;
 use gateway_authority::{native_control::actor::NativeRenewalActor, store::Authority};
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
@@ -18,7 +17,8 @@ use gateway_observability::{
     ObservabilityRuntime,
     types::{HealthEvent, HealthTarget, ObservabilityHost},
 };
-use gateway_providers::sse::{MAX_RESPONSES_EVENT_BYTES, SseParser};
+use gateway_provider_events::framing::SseParser;
+use gateway_provider_stream::sse::MAX_RESPONSES_EVENT_BYTES;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
@@ -108,9 +108,7 @@ impl Drop for Host<'_> {
 }
 struct ClockHost;
 impl ObservabilityHost for ClockHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         gateway_worker_platform::source_collator::shared()
     }
 
@@ -145,7 +143,7 @@ fn request_id(response: &Response) -> Option<String> {
 }
 fn client_version(value: Option<&str>) -> &str {
     let version = value
-        .map(gateway_schema::util::js_trim)
+        .map(util::js_trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("0.100.0");
     let parts = version
@@ -268,9 +266,10 @@ impl ExperimentIo for Host<'_> {
         let status = raw.status_code();
         let id = request_id(raw);
         let observed_at = now_ms()?;
-        let expired =
-            gateway_auth::provider_credentials::codex_access_expiry_ms(dispatch.access_token())
-                .is_some_and(|exp| exp <= observed_at as f64);
+        let expired = gateway_auth_credentials::provider_credentials::codex_access_expiry_ms(
+            dispatch.access_token(),
+        )
+        .is_some_and(|exp| exp <= observed_at as f64);
         let event = if status == 401 || (status == 403 && expired) {
             Some(HealthEvent::AuthInvalid)
         } else if status == 429 {

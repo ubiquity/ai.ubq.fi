@@ -1,6 +1,6 @@
 use crate::HistoryHost;
-use gateway_source::error::GatewayError;
 use gateway_core::query::{QueryEntry, QueryRequest, QuerySelector, QueryStore};
+use gateway_source::error::GatewayError;
 pub(crate) fn error(message: &str) -> GatewayError {
     GatewayError::unavailable(message, "observability_state_invalid")
 }
@@ -13,7 +13,7 @@ pub(crate) fn now<H: HistoryHost>(host: &H) -> Result<i64, GatewayError> {
     }
 }
 pub(crate) fn uuid<H: HistoryHost>(host: &H) -> Result<String, GatewayError> {
-    gateway_auth::crypto::uuid_from_random(&host.random_bytes(16)?)
+    gateway_auth_primitives::crypto::uuid_from_random(&host.random_bytes(16)?)
 }
 pub(crate) async fn scan_selector<S: QueryStore>(
     store: &S,

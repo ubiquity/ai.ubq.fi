@@ -2,7 +2,7 @@
 pub mod model_map;
 use gateway_contracts::{model::ModelId, provider::PaidProvider};
 use gateway_core::state::RevisionCheck;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

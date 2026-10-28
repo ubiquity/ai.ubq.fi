@@ -1,9 +1,7 @@
 //! Original bounded import framing and zeroizing raw DATA; no authentication or custody.
-use crate::{
-    error::{control_interrupted, invalid},
-    import_head::ImportHead,
-};
-use gateway_authority::native_control::NativeRenewalCancellation;
+use crate::{error::invalid, import_head::ImportHead};
+use gateway_auth_native_proof::native_context::control_interrupted;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_source::error::GatewayError;
 use std::{io::Read, net::TcpStream, time::Instant};
 

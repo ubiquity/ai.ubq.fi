@@ -1,5 +1,8 @@
 //! Credential-bound subscription reads and private email decoding remain request-owned.
-use serde_json::{Value, json};
+use {
+    gateway_schema_values::scalar as util,
+    serde_json::{Value, json},
+};
 
 pub(super) async fn subscriptions(
     store: &gateway_worker_authority_binding::authority::RemoteAuthorityStore,
@@ -8,23 +11,23 @@ pub(super) async fn subscriptions(
         return Vec::new();
     };
     let Ok(Some(pool)) =
-        gateway_auth::provider_credentials::read_codex_source_pool(store, at).await
+        gateway_auth_credentials::provider_credentials::read_codex_source_pool(store, at).await
     else {
         return Vec::new();
     };
     pool.pool.accounts.iter().enumerate().map(|(index, account)| {
         let email = account_email(account.access_token.expose());
         let slot = (index + 1) as u8;
-        json!({"id":format!("codex:{}",gateway_auth::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_observability::capacity_shapes::codex_label(slot,email.as_deref()),"slot":slot})
+        json!({"id":format!("codex:{}",gateway_auth_primitives::crypto::sha256_hex(account.account_id.as_bytes())),"label":gateway_observability::capacity_shapes::codex_label(slot,email.as_deref()),"slot":slot})
     }).collect()
 }
 
 fn account_email(token: &str) -> Option<String> {
     let encoded = token.split('.').nth(1)?.replace('-', "+").replace('_', "/");
-    let bytes = gateway_auth::provider_credentials::decode_source_base64(&encoded)?;
+    let bytes = gateway_auth_credentials::provider_credentials::decode_source_base64(&encoded)?;
     let payload: Value = serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?;
     let normalize = |value: &Value| {
-        let text = gateway_schema::util::js_trim(value.as_str()?);
+        let text = util::js_trim(value.as_str()?);
         (!text.is_empty()
             && text.encode_utf16().count() <= 320
             && text.contains('@')

@@ -1,5 +1,5 @@
 use crate::types::*;
-use gateway_auth::types::{AuthMethod, AuthPrincipal};
+use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use std::collections::BTreeMap;
 
@@ -91,7 +91,7 @@ pub fn principal_id(principal: &AuthPrincipal) -> gateway_contracts::identity::P
             .map(|t| {
                 format!(
                     "bearer-sha256:{}",
-                    gateway_auth::crypto::sha256_hex(t.expose().as_bytes())
+                    gateway_auth_primitives::crypto::sha256_hex(t.expose().as_bytes())
                 )
             })
             .unwrap_or_else(|| "local-auth-disabled".into()),

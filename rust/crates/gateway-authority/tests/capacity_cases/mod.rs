@@ -1,8 +1,8 @@
-use gateway_auth::{
-    crypto::Secret, crypto::base64url, provider_credentials::CodexNativeOwner,
-    provider_credentials::CodexSourcePool, provider_credentials::ManagedNativeSource,
-    provider_credentials::codex_source_pool_key,
-};
+use gateway_auth_credentials::provider_credentials::CodexNativeOwner;
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::ManagedNativeSource;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority::store::Authority;
 use gateway_authority_capacity::{
     CapacityOperations, CapacityReconciliation, CodexCapacityAccountRef, CodexCapacitySample,
@@ -123,12 +123,12 @@ fn source_pool() -> CodexSourcePool {
     }
 }
 
-fn external_source(id: &str) -> gateway_auth::provider_credentials::CodexSourceAccount {
+fn external_source(id: &str) -> gateway_auth_credentials::provider_credentials::CodexSourceAccount {
     let access = format!(
         "e30.{}.synthetic",
         base64url(json!({"exp":(NOW + 3_600_000) / 1000,"https://api.openai.com/auth":{"chatgpt_user_id":"fixture-user","chatgpt_account_id":id}}).to_string().as_bytes())
     );
-    let mut source = gateway_auth::provider_credentials::CodexSourceAccount {
+    let mut source = gateway_auth_credentials::provider_credentials::CodexSourceAccount {
         account_id: id.into(),
         access_token: Secret::new(access),
         refresh_token: Secret::new(String::new()),
@@ -146,7 +146,7 @@ fn external_source(id: &str) -> gateway_auth::provider_credentials::CodexSourceA
 }
 
 fn setup_access_pool(
-    accounts: Vec<gateway_auth::provider_credentials::CodexSourceAccount>,
+    accounts: Vec<gateway_auth_credentials::provider_credentials::CodexSourceAccount>,
 ) -> (CapturedStore, Authority<CapturedStore, Tokens>) {
     let store = CapturedStore::default();
     let source = CodexSourcePool {

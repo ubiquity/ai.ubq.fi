@@ -2,14 +2,20 @@
 use gateway_core::{
     source_control::decode_source_control_record, state::AuthorityStore, state::StoredRecord,
 };
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::{ArtifactContext, export_rollback_bundle},
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-    native_inverse::{export_native_latest, export_native_rollback_bundle},
-};
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_inverse::inverse::export_rollback_bundle;
+use gateway_migration_inverse::native_inverse::export_native_latest;
+use gateway_migration_inverse::native_inverse::export_native_rollback_bundle;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
+use gateway_migration_prepare::engine::prepare_native;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
@@ -18,14 +24,15 @@ use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 
 fn key(kind: &str, reference: &str) -> RecordKey {
-    gateway_auth::store::key(json!([
-        "uos_ai",
-        "authority",
-        "native_owner_renewal",
-        "v1",
-        kind,
-        reference
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("authority"),
+        ScalarKeyPart::String("native_owner_renewal"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String(kind),
+        ScalarKeyPart::String(reference),
+    ])
+    .to_record_key()
 }
 fn context() -> ArtifactContext {
     ArtifactContext {
@@ -72,7 +79,7 @@ fn action(version: u8) -> Value {
     row
 }
 fn generation(action: &Value) -> RecordKey {
-    let hash = gateway_auth::crypto::sha256_hex(
+    let hash = gateway_auth_primitives::crypto::sha256_hex(
         &serde_json::to_vec(&(
             "uos-native-renewal-generation-v1",
             &action["facts"]["native_owner_id"],
@@ -437,7 +444,7 @@ fn valid_legacy_renewal_utf16_models_are_untouched_by_v3_terminal_dispatch()
                 slot: 0,
             },
         };
-        let reference = gateway_auth::crypto::sha256_hex(&serde_json::to_vec(&(
+        let reference = gateway_auth_primitives::crypto::sha256_hex(&serde_json::to_vec(&(
             "uos-native-renewal-action-v2",
             &fence.original_request_id,
             &fence.context,

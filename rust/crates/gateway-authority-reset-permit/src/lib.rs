@@ -3,8 +3,8 @@ mod backend;
 mod facts;
 pub mod types;
 use backend::Transaction;
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_auth::provider_credentials::parse_codex_source_pool;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
 use gateway_authority_contracts::{AuthorityClock, TokenSource, unavailable, validate_time};
 use gateway_authority_keys as keys;
 use gateway_authority_reset_records::full_pool::FullPoolShadowDecision;
@@ -14,8 +14,9 @@ use gateway_authority_reset_records::{full_pool::SourceCreditCollation, full_poo
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::identity::RequestContext;
 use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_kv_codec::value::ValueEncoding;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use types::{AutomaticResetPermit, FullPoolEvaluation, FullPoolPreparation, FullPoolResetPlan};
 fn invalid() -> GatewayError {
@@ -35,14 +36,20 @@ fn reason(error: GatewayError) -> String {
         .unwrap_or_else(|| "configuration_unavailable".into())
 }
 fn marker_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth::store::key(json!([
-        "uos_ai",
-        "migrations",
-        "codex_reset_usage_legacy_global_v1"
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migrations"),
+        ScalarKeyPart::String("codex_reset_usage_legacy_global_v1"),
+    ])
+    .to_record_key()
 }
 fn legacy_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth::store::key(json!(["uos_ai", "codex_banked_reset_usage", "v1"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("codex_banked_reset_usage"),
+        ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key()
 }
 fn opt_out(value: Option<&Value>) -> bool {
     value.is_some_and(|value| *value == false || (!value.is_null() && !value.is_boolean()))
@@ -57,9 +64,7 @@ async fn read_audit<S: AuthorityStore, I: TokenSource>(
         None => false,
         Some(row) => match row.value_encoding {
             ValueEncoding::Json => !row.json_value()?.is_null(),
-            ValueEncoding::ProfileV2 => {
-                SourceJson::from_portable_json(&row.profile_v2_value()?)?.as_str() != "null"
-            }
+            ValueEncoding::ProfileV2 => row.profile_v2_source_json()?.as_str() != "null",
             _ => true,
         },
     };
@@ -366,7 +371,9 @@ pub trait ResetPermitOperations: ResetPermitFactory {
                 let preserved = opt_out(legacy.as_ref());
                 if preserved {
                     for account in pool.accounts {
-                        let hash = gateway_auth::crypto::sha256_hex(account.account_id.as_bytes());
+                        let hash = gateway_auth_primitives::crypto::sha256_hex(
+                            account.account_id.as_bytes(),
+                        );
                         let key = keys::reset_usage(&hash);
                         if tx
                             .read::<Value>(&key)

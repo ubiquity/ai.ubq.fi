@@ -1,16 +1,17 @@
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use gateway_contracts::model::ModelId;
+use gateway_model_selection::{aliases::*, selection::*};
+use gateway_prompt_cache::{compat::concrete_scope, profile::SCOPE_PROFILE};
 use gateway_schema::{
-    aliases::*,
     catalog::{CatalogInput, ProviderCatalog},
     catalog_views::{capabilities, ordinary_models, public_catalog},
     metadata::*,
     native_catalog::native_catalog,
-    prompt_cache::*,
     runtime_config::*,
-    selection::*,
     snapshot::*,
 };
+
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+
 use serde_json::{Value, json};
 // Scalar-only legacy fixtures use explicit views; opaque controls have separate source tests.
 fn source_value(value: Value) -> SourceJson {

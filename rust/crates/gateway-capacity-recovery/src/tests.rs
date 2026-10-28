@@ -1,8 +1,9 @@
 use super::*;
-use gateway_auth::provider_credentials::CodexSourceAccount;
-use gateway_auth::provider_credentials::CodexSourcePool;
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_auth::{crypto::Secret, crypto::base64url, provider_credentials::CodexNativeOwner};
+use gateway_auth_credentials::provider_credentials::CodexNativeOwner;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority_capacity::CodexCapacitySample;
 use gateway_authority_capacity::{AcceptedCodexCapacityObservations, CapacityOperations};
 use gateway_authority_capacity::{CodexCapacityAccountRef, CodexCapacityObservationFence};
@@ -18,6 +19,7 @@ use gateway_authority_routing_selection::{SelectionOperations, types::CohortProo
 use gateway_authority_routing_signal::SignalOperations;
 use gateway_contracts::{identity::PoolVersionstamp, provider::CodexQuotaClass};
 use gateway_core::state::StoredRecord;
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::host_types::*;
 use gateway_observability_test_support::{runtime::Host, runtime::Memory, runtime::run};
 use serde_json::{Value, json};
@@ -34,7 +36,7 @@ impl AuthorityClock for Clock {
 struct Tokens(Host);
 impl TokenSource for Tokens {
     fn next_token(&self) -> Result<String, GatewayError> {
-        gateway_auth::crypto::uuid_from_random(&self.0.random_bytes(16)?)
+        gateway_auth_primitives::crypto::uuid_from_random(&self.0.random_bytes(16)?)
     }
 }
 #[derive(Clone, Copy)]
@@ -77,9 +79,7 @@ impl Probe {
     }
 }
 impl ObservabilityHost for Probe {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

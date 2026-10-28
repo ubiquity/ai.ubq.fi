@@ -167,7 +167,8 @@ fn gate_baseline_uses_original_u64_ratio_and_never_accepts_malformed_json_counte
     let memory = Memory::default();
     let host = Host::default();
     let r = ObservabilityRuntime::new(memory.clone(), host);
-    let model = gateway_auth::crypto::sha256_hex(b"uos-prompt-cache-telemetry-model-v1\0m");
+    let model =
+        gateway_auth_primitives::crypto::sha256_hex(b"uos-prompt-cache-telemetry-model-v1\0m");
     for (route, completed) in [("responses", 9000), ("chat.completions", 1000)] {
         for (counter, n) in [
             ("completed", completed),

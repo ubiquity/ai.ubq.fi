@@ -10,15 +10,16 @@ use gateway_auth_credentials::provider_credentials::{
     ManagedNativeSource, codex_source_pool_key,
 };
 use gateway_auth_native_contracts::native_import::NativeImportTarget;
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_passkeys::{passkeys, session_index};
 use gateway_auth_primitives::crypto::{Secret, sha256_hex};
-use gateway_authority::native_control::{
-    NativeRenewalCancellation, actor, receiver::RegisteredRenewalOwner,
-};
+use gateway_authority::native_control::actor;
 use gateway_authority::store::Authority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
@@ -32,6 +33,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::json;
@@ -266,11 +268,12 @@ impl Fixture {
                 openlux_discovery_binding: None,
                 openlux_binding: None,
                 source_checks: vec![PaidSourceCheck {
-                    key: gateway_auth_primitives::store::key(json!([
-                        "uos_ai",
-                        "runtime_config",
-                        "v2"
-                    ]))
+                    key: TupleKey::from_scalar_parts(&[
+                        ScalarKeyPart::String("uos_ai"),
+                        ScalarKeyPart::String("runtime_config"),
+                        ScalarKeyPart::String("v2"),
+                    ])
+                    .to_record_key()
                     .0,
                     expected_revision: None,
                 }],
@@ -318,7 +321,7 @@ impl Fixture {
             },
             &RequestContext {
                 request_id: RequestId("native-client-original".into()),
-                principal: PrincipalId("passkey-user:user-fixture".into()),
+                principal: PrincipalId::from_scalar("passkey-user:user-fixture".into()),
                 key_id: None,
                 route: "native-client-preparation".into(),
                 started_at_ms: now_ms()?,
@@ -468,4 +471,11 @@ pub fn config() -> AuthConfig {
 }
 pub fn authority(store: &Store) -> Authority<Store, Tokens> {
     Authority::with_clock(store.clone(), Tokens::default(), store.clone())
+}
+
+// Synthetic legacy/passkey fixture has no app-session date capability; unknown dates refuse.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _value: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

@@ -1,5 +1,4 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_source::error::GatewayError;
 use gateway_core::{
     query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
@@ -7,15 +6,18 @@ use gateway_core::{
 use gateway_kv_codec::{
     key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey, value::PortableValue,
 };
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::{ArtifactContext, export_latest, export_rollback_bundle},
-};
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_inverse::inverse::export_rollback_bundle;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::CanonicalDates;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -143,7 +145,8 @@ fn actual_writer_v1_v2_pairs_and_finished_rows_survive_restart_and_latest_invers
 }
 
 #[test]
-fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal() {
+fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal()
+-> Result<(), Box<dyn std::error::Error>> {
     for case in fixtures() {
         let original = rows(&case);
         let session = original
@@ -199,7 +202,11 @@ fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal()
         ] {
             let mut invalid = original.clone();
             invalid.push(FixtureRow {
-                key: gateway_auth::store::key(parts).0,
+                key: TupleKey::from_json_parts(
+                    parts.as_array().ok_or("fixture tuple must be an array")?,
+                )?
+                .to_record_key()
+                .0,
                 record: original[session].record.clone(),
             });
             assert_refusal(&invalid, "complete prefix includes malformed exact keys");
@@ -235,6 +242,7 @@ fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal()
             assert_refusal(&invalid, "v1 cannot mix in v2 local work");
         }
     }
+    Ok(())
 }
 
 #[test]

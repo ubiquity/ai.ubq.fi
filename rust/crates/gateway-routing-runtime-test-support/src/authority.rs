@@ -1,5 +1,5 @@
 //! Deterministic conformance store, not a Worker/runtime acceptance substitute.
-use gateway_auth::crypto::Secret;
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiKeyPolicy;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
@@ -204,7 +204,7 @@ impl TokenSource for Tokens {
 }
 pub type TestAuthority = Authority<MemoryStore, Tokens>;
 struct FixtureCollator;
-impl gateway_schema::aliases::SourceStringCollator for FixtureCollator {
+impl gateway_model_selection::aliases::SourceStringCollator for FixtureCollator {
     fn compare(
         &self,
         left: &gateway_source::js_string::JsString16,
@@ -252,8 +252,8 @@ pub fn pool() -> SubscriptionPool {
 pub fn source_account(
     id: &str,
     refreshed: bool,
-) -> gateway_auth::provider_credentials::CodexSourceAccount {
-    gateway_auth::provider_credentials::CodexSourceAccount {
+) -> gateway_auth_credentials::provider_credentials::CodexSourceAccount {
+    gateway_auth_credentials::provider_credentials::CodexSourceAccount {
         access_token: Secret::new(format!("fixture-access-{id}-{}", u8::from(refreshed))),
         refresh_token: Secret::new(format!("fixture-refresh-{id}")),
         account_id: id.into(),
@@ -293,12 +293,12 @@ pub fn seed_pool(store: &MemoryStore, pool: &SubscriptionPool) {
                 .clone()
         })
         .collect();
-    let source = gateway_auth::provider_credentials::CodexSourcePool {
+    let source = gateway_auth_credentials::provider_credentials::CodexSourcePool {
         accounts,
         updated_at_ms: NOW as f64,
     };
     store.seed_with_revision(
-        gateway_auth::provider_credentials::codex_source_pool_key(),
+        gateway_auth_credentials::provider_credentials::codex_source_pool_key(),
         &source.private_source_value(),
         &pool.pool_versionstamp.0,
     );

@@ -1,0 +1,24 @@
+[package]
+name = "gateway-provider-response"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-source = { path = "../gateway-source" }
+gateway-core.workspace = true
+gateway-decision-protocol.workspace = true
+gateway-provider-collector.workspace = true
+gateway-provider-events.workspace = true
+gateway-provider-protocol.workspace = true
+gateway-provider-services.workspace = true
+gateway-provider-source.workspace = true
+gateway-provider-stream.workspace = true
+gateway-provider-tool-grammar.workspace = true
+gateway-provider-writer.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

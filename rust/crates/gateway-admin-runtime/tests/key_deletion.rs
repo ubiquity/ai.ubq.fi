@@ -1,14 +1,14 @@
 use gateway_admin_contracts::operations::AdminHost;
-use gateway_admin_runtime::RuntimeConfig;
-use gateway_admin_test_support::runtime_fixtures::seed_catalog;
+use gateway_admin_runtime_contracts::RuntimeConfig;
 use gateway_admin_test_support::{
-    runtime_fixtures::{WireBody, input, runtime},
+    runtime_fixtures::{WireBody, input, runtime, seed_catalog},
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::{AuthConfig, AuthRequest};
+use gateway_auth_contracts::types::{AuthConfig, AuthRequest};
 use gateway_contracts::model::ModelId;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use serde_json::json;
 use std::collections::BTreeMap;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -46,11 +46,19 @@ fn deletion_refuses_pending_markers_and_returns_actual_guard_fences() {
     let config = RuntimeConfig::default();
     let service = runtime(&store, &host, &config);
     store.put(
-        json!(["ubq_ai", "api_keys", "id", "key"]),
+        TupleKey::from_scalar_parts(&[ScalarKeyPart::String("ubq_ai"),ScalarKeyPart::String("api_keys"),ScalarKeyPart::String("id"),ScalarKeyPart::String("key")]).to_record_key(),
         json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
-        json!(["uos_ai", "paid_fallback", "v3", "pending", "key", "attempt"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("pending"),
+            ScalarKeyPart::String("key"),
+            ScalarKeyPart::String("attempt"),
+        ])
+        .to_record_key(),
         json!({"created_at_ms":900000}),
     );
     assert_eq!(
@@ -59,24 +67,28 @@ fn deletion_refuses_pending_markers_and_returns_actual_guard_fences() {
     );
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "paid_fallback",
-                "v3",
-                "deletion_guard",
-                "key"
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("paid_fallback"),
+                    ScalarKeyPart::String("v3"),
+                    ScalarKeyPart::String("deletion_guard"),
+                    ScalarKeyPart::String("key")
+                ])
+                .to_record_key()
+            )
             .is_some()
     );
     store.rows.borrow_mut().remove(
-        &gateway_auth::store::key(json!([
-            "uos_ai",
-            "paid_fallback",
-            "v3",
-            "pending",
-            "key",
-            "attempt"
-        ]))
+        &TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("pending"),
+            ScalarKeyPart::String("key"),
+            ScalarKeyPart::String("attempt"),
+        ])
+        .to_record_key()
         .0,
     );
     let fences = run(service.prepare_key_deletion("key")).unwrap();
@@ -96,132 +108,178 @@ fn deletion_cleans_settled_state_then_owned_history_and_retains_ordinary_guard()
     let config = RuntimeConfig::default();
     let service = runtime(&store, &host, &config);
     store.put(
-        json!(["ubq_ai", "api_keys", "id", "key"]),
+        TupleKey::from_scalar_parts(&[ScalarKeyPart::String("ubq_ai"),ScalarKeyPart::String("api_keys"),ScalarKeyPart::String("id"),ScalarKeyPart::String("key")]).to_record_key(),
         json!({"id":"key","name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
-    store.put(json!(["uos_ai","paid_fallback","v3","request","key","attempt"]),json!({"v":3,"reservation":{"key_id":"key","request_id":"original","attempt_id":"attempt","provider":"metered","window_reset_at_ms":2000000,"created_at_ms":900000,"reserved_microcredits":20},"policy_version":"v3:week","model":"gpt-source","route":"responses","path":"/v1/responses","stream":true,"reasoning":null,"quota_per_credit":1000,"provider_request_id":"provider-request","dispatch_state":"dispatched","terminal_state":"completed","billing_state":"settled","provider_quota":1.0,"input_tokens":10,"cached_input_tokens":null,"output_tokens":1,"spend_microcredits":10,"transport_started":true,"reconciliation_attempts":0,"last_reconciliation_at_ms":null,"dispatched_at_ms":900000,"terminal_at_ms":900100,"settled_at_ms":900200,"updated_at_ms":900200,"usage_rollup_at_ms":900200}));
-    store.put(json!(["uos_ai","paid_fallback","v3","window","key",2000000]),json!({"v":3,"key_id":"key","policy_version":"v3:week","window_reset_at_ms":2000000,"limit_microcredits":100,"settled_microcredits":10,"reserved_microcredits":0,"pending_count":0,"updated_at_ms":900200}));
+    store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("uos_ai"),ScalarKeyPart::String("paid_fallback"),ScalarKeyPart::String("v3"),ScalarKeyPart::String("request"),ScalarKeyPart::String("key"),ScalarKeyPart::String("attempt")]).to_record_key(),json!({"v":3,"reservation":{"key_id":"key","request_id":"original","attempt_id":"attempt","provider":"metered","window_reset_at_ms":2000000,"created_at_ms":900000,"reserved_microcredits":20},"policy_version":"v3:week","model":"gpt-source","route":"responses","path":"/v1/responses","stream":true,"reasoning":null,"quota_per_credit":1000,"provider_request_id":"provider-request","dispatch_state":"dispatched","terminal_state":"completed","billing_state":"settled","provider_quota":1.0,"input_tokens":10,"cached_input_tokens":null,"output_tokens":1,"spend_microcredits":10,"transport_started":true,"reconciliation_attempts":0,"last_reconciliation_at_ms":null,"dispatched_at_ms":900000,"terminal_at_ms":900100,"settled_at_ms":900200,"updated_at_ms":900200,"usage_rollup_at_ms":900200}));
+    store.put(TupleKey::from_scalar_parts(&[ScalarKeyPart::String("uos_ai"),ScalarKeyPart::String("paid_fallback"),ScalarKeyPart::String("v3"),ScalarKeyPart::String("window"),ScalarKeyPart::String("key"),ScalarKeyPart::Number(2000000)]).to_record_key(),json!({"v":3,"key_id":"key","policy_version":"v3:week","window_reset_at_ms":2000000,"limit_microcredits":100,"settled_microcredits":10,"reserved_microcredits":0,"pending_count":0,"updated_at_ms":900200}));
     store.put(
-        json!([
-            "uos_ai",
-            "paid_fallback",
-            "v3",
-            "reconciliation_lease",
-            "key"
-        ]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("reconciliation_lease"),
+            ScalarKeyPart::String("key"),
+        ])
+        .to_record_key(),
         json!({"token":"lease","expires_at_ms":900001}),
     );
     for key in [
-        json!(["ubq_ai", "api_keys", "usage", "key"]),
-        json!(["ubq_ai", "api_keys", "usage_daily", "key"]),
-        json!([
-            "uos_ai",
-            "paid_fallback",
-            "ledger",
-            "key",
-            900000,
-            "original"
-        ]),
-        json!(["ubq_ai", "api_keys", "request_log", "key", 900000, "legacy"]),
-        json!(["uos_ai", "api_key_usage", "v2", "key", "bucket"]),
-        json!([
-            "uos_ai",
-            "api_key_usage",
-            "v3",
-            "request",
-            "key",
-            "policy",
-            1,
-            "original"
-        ]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("api_keys"),
+            ScalarKeyPart::String("usage"),
+            ScalarKeyPart::String("key"),
+        ])
+        .to_record_key(),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("api_keys"),
+            ScalarKeyPart::String("usage_daily"),
+            ScalarKeyPart::String("key"),
+        ])
+        .to_record_key(),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("ledger"),
+            ScalarKeyPart::String("key"),
+            ScalarKeyPart::Number(900000),
+            ScalarKeyPart::String("original"),
+        ])
+        .to_record_key(),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("api_keys"),
+            ScalarKeyPart::String("request_log"),
+            ScalarKeyPart::String("key"),
+            ScalarKeyPart::Number(900000),
+            ScalarKeyPart::String("legacy"),
+        ])
+        .to_record_key(),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("api_key_usage"),
+            ScalarKeyPart::String("v2"),
+            ScalarKeyPart::String("key"),
+            ScalarKeyPart::String("bucket"),
+        ])
+        .to_record_key(),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("api_key_usage"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("request"),
+            ScalarKeyPart::String("key"),
+            ScalarKeyPart::String("policy"),
+            ScalarKeyPart::Number(1),
+            ScalarKeyPart::String("original"),
+        ])
+        .to_record_key(),
     ] {
         store.put(key, json!({"retained":true}));
     }
     store.put(
-        json!([
-            "uos_ai",
-            "api_key_usage",
-            "v3",
-            "request",
-            "foreign",
-            "policy",
-            1,
-            "keep"
-        ]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("api_key_usage"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("request"),
+            ScalarKeyPart::String("foreign"),
+            ScalarKeyPart::String("policy"),
+            ScalarKeyPart::Number(1),
+            ScalarKeyPart::String("keep"),
+        ])
+        .to_record_key(),
         json!({"keep":true}),
     );
     let fences = run(service.prepare_key_deletion("key")).unwrap();
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "paid_fallback",
-                "v3",
-                "request",
-                "key",
-                "attempt"
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("paid_fallback"),
+                    ScalarKeyPart::String("v3"),
+                    ScalarKeyPart::String("request"),
+                    ScalarKeyPart::String("key"),
+                    ScalarKeyPart::String("attempt")
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "paid_fallback",
-                "v3",
-                "window",
-                "key",
-                2000000
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("paid_fallback"),
+                    ScalarKeyPart::String("v3"),
+                    ScalarKeyPart::String("window"),
+                    ScalarKeyPart::String("key"),
+                    ScalarKeyPart::Number(2000000)
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
     let outcome = run(store.commit(AtomicTransition {
         checks: fences.clone(),
         mutations: vec![RecordMutation::Delete {
-            key: gateway_auth::api_keys::id_key("key"),
+            key: gateway_auth_primitives::api_keys::id_key("key"),
         }],
     }))
     .unwrap();
     assert_eq!(outcome, CommitOutcome::Committed);
-    run(service.finish_deletion("key", &fences)).unwrap();
+    run(service.finish_key_deletion("key", &fences)).unwrap();
     assert_eq!(
         store
-            .get(json!([
-                "uos_ai",
-                "paid_fallback",
-                "v3",
-                "deletion_guard",
-                "key"
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("paid_fallback"),
+                    ScalarKeyPart::String("v3"),
+                    ScalarKeyPart::String("deletion_guard"),
+                    ScalarKeyPart::String("key")
+                ])
+                .to_record_key()
+            )
             .unwrap(),
         json!({"created_at_ms":1000000})
     );
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "api_key_usage",
-                "v3",
-                "request",
-                "key",
-                "policy",
-                1,
-                "original"
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("api_key_usage"),
+                    ScalarKeyPart::String("v3"),
+                    ScalarKeyPart::String("request"),
+                    ScalarKeyPart::String("key"),
+                    ScalarKeyPart::String("policy"),
+                    ScalarKeyPart::Number(1),
+                    ScalarKeyPart::String("original")
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "api_key_usage",
-                "v3",
-                "request",
-                "foreign",
-                "policy",
-                1,
-                "keep"
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("api_key_usage"),
+                    ScalarKeyPart::String("v3"),
+                    ScalarKeyPart::String("request"),
+                    ScalarKeyPart::String("foreign"),
+                    ScalarKeyPart::String("policy"),
+                    ScalarKeyPart::Number(1),
+                    ScalarKeyPart::String("keep")
+                ])
+                .to_record_key()
+            )
             .is_some()
     );
     assert_eq!(
@@ -238,11 +296,19 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     let service = runtime(&store, &host, &config);
     let id = "local-development";
     store.put(
-        json!(["ubq_ai", "api_keys", "id", id]),
+        TupleKey::from_scalar_parts(&[ScalarKeyPart::String("ubq_ai"),ScalarKeyPart::String("api_keys"),ScalarKeyPart::String("id"),ScalarKeyPart::String(id)]).to_record_key(),
         json!({"id":id,"name":"deletion fixture","prefix":"u_0000000000","hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","created_at_ms":800000,"expires_at_ms":-1,"revoked_at_ms":900000,"usage_limit_requests":-1,"usage_requests":0,"usage_reset_at_ms":2000000,"window_ms":604800000,"usage_quota_version":3,"paid_fallback_enabled":false,"paid_fallback_limit_microcredits":0,"paid_fallback_spent_microcredits":0,"paid_fallback_reserved_microcredits":0,"paid_fallback_reservation_request_id":null,"paid_fallback_model_ids":[],"paid_fallback_quota_per_credit":0,"paid_fallback_max_exposure_microcredits":{},"paid_fallback_pricing_checked_at_ms":null}),
     );
     store.put(
-        json!(["uos_ai", "paid_fallback", "v3", "pending", id, "attempt"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("pending"),
+            ScalarKeyPart::String(id),
+            ScalarKeyPart::String("attempt"),
+        ])
+        .to_record_key(),
         json!({"created_at_ms":900000}),
     );
     assert_eq!(
@@ -254,14 +320,15 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
     assert!(guard["local_deletion"]["owner"].is_null());
     assert!(guard["local_deletion"]["completed_at_ms"].is_null());
     store.rows.borrow_mut().remove(
-        &gateway_auth::store::key(json!([
-            "uos_ai",
-            "paid_fallback",
-            "v3",
-            "pending",
-            id,
-            "attempt"
-        ]))
+        &TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("v3"),
+            ScalarKeyPart::String("pending"),
+            ScalarKeyPart::String(id),
+            ScalarKeyPart::String("attempt"),
+        ])
+        .to_record_key()
         .0,
     );
     let first = run(service.prepare_key_deletion(id)).unwrap();
@@ -269,21 +336,23 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
         run(service.prepare_key_deletion(id)).unwrap_err().status,
         409
     );
-    run(service.abort_deletion(id, &first)).unwrap();
+    run(service.abort_key_deletion(id, &first)).unwrap();
     assert!(store.get(guard_key.clone()).unwrap()["local_deletion"]["owner"].is_null());
     let next = run(service.prepare_key_deletion(id)).unwrap();
     assert_eq!(
-        run(service.finish_deletion(id, &next)).unwrap_err().status,
+        run(service.finish_key_deletion(id, &next))
+            .unwrap_err()
+            .status,
         409
     );
     run(store.commit(AtomicTransition {
         checks: next.clone(),
         mutations: vec![RecordMutation::Delete {
-            key: gateway_auth::api_keys::id_key(id),
+            key: gateway_auth_primitives::api_keys::id_key(id),
         }],
     }))
     .unwrap();
-    run(service.finish_deletion(id, &next)).unwrap();
+    run(service.finish_key_deletion(id, &next)).unwrap();
     let complete = store.get(guard_key).unwrap();
     assert_eq!(complete["local_deletion"]["completed_at_ms"], 1000000);
     assert!(complete["local_deletion"]["owner"].is_string());
@@ -296,7 +365,9 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() -> TestR
     let config = RuntimeConfig::default();
     let runtime = runtime(&store, &host, &config);
     let auth = AuthConfig {
-        admin_tokens: vec![gateway_auth::crypto::Secret::new("fixture-admin".into())],
+        admin_tokens: vec![gateway_auth_primitives::crypto::Secret::new(
+            "fixture-admin".into(),
+        )],
         ..AuthConfig::default()
     };
     let admin = gateway_admin::service::AdminService {
@@ -326,7 +397,15 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() -> TestR
     request.body = serde_json::to_vec(&json!({"id":id}))?;
     run(admin.handle_route(&request, "revoke-key"))?.ok_or("expected matched admin route")?;
     store.put(
-        json!(["uos_ai", "paid_fallback", "ledger", id, 900000, "record"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("paid_fallback"),
+            ScalarKeyPart::String("ledger"),
+            ScalarKeyPart::String(&id),
+            ScalarKeyPart::Number(900000),
+            ScalarKeyPart::String("record"),
+        ])
+        .to_record_key(),
         json!({"retained":true}),
     );
     request.method = "DELETE".into();
@@ -334,28 +413,46 @@ fn authenticated_admin_service_uses_runtime_deletion_completion_hooks() -> TestR
     let deleted =
         run(admin.handle_route(&request, "delete-key"))?.ok_or("expected matched admin route")?;
     assert_eq!(deleted.status, 200);
-    assert!(store.get(json!(["ubq_ai", "api_keys", "id", id])).is_none());
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "paid_fallback",
-                "ledger",
-                id,
-                900000,
-                "record"
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("ubq_ai"),
+                    ScalarKeyPart::String("api_keys"),
+                    ScalarKeyPart::String("id"),
+                    ScalarKeyPart::String(&id)
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
     assert!(
         store
-            .get(json!([
-                "uos_ai",
-                "paid_fallback",
-                "v3",
-                "deletion_guard",
-                id
-            ]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("paid_fallback"),
+                    ScalarKeyPart::String("ledger"),
+                    ScalarKeyPart::String(&id),
+                    ScalarKeyPart::Number(900000),
+                    ScalarKeyPart::String("record")
+                ])
+                .to_record_key()
+            )
+            .is_none()
+    );
+    assert!(
+        store
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("paid_fallback"),
+                    ScalarKeyPart::String("v3"),
+                    ScalarKeyPart::String("deletion_guard"),
+                    ScalarKeyPart::String(&id)
+                ])
+                .to_record_key()
+            )
             .is_some()
     );
     let before = store.rows.borrow().clone();

@@ -1,19 +1,26 @@
 //! Fake-only paid boundary derived from source_contracts.rs:63-171,321-373 at 08431133.
 use gateway_authority_keys as keys;
-use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
-use gateway_authority_paid_control_records::{PaidControlOwner, PaidProjectionProvenance};
-use gateway_authority_paid_control_records::{PaidProviderObservation, PaidRoutingPolicy};
-use gateway_authority_paid_control_records::{PaidRoutingProjection, PaidSourceCheck};
-use gateway_authority_paid_evidence::paid_projection_source_keys;
-use gateway_contracts::provider::UpstreamProvider;
-use gateway_contracts::{lifecycle::TransportObservation, provider::PaidProvider};
+use gateway_authority_paid_control_records::{
+    PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
+    PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck, paid_projection_source_keys,
+};
+use gateway_authority_paid_records::PaidRoutingPolicy;
+use gateway_contracts::{
+    lifecycle::TransportObservation, provider::PaidProvider, provider::UpstreamProvider,
+};
 use gateway_core::state::AuthorityStore;
-use gateway_providers::{policy::HopFailure, policy::paid_hop_identity};
-use gateway_routing_runtime::{session::RoutingSession, types::TransportState};
-use gateway_routing_runtime::{types::AttemptFailure, types::FailureOrigin};
-use gateway_routing_runtime::{types::RefusalDecision, types::RoutingInput};
-use gateway_routing_runtime_test_support::{exec::run, host::Host, input::NOW, input::input};
-use gateway_routing_runtime_test_support::{seed::seed_key, seed::window, store::Store};
+use gateway_provider_policy::{policy::HopFailure, policy::paid_hop_identity};
+use gateway_routing_runtime::{
+    session::RoutingSession,
+    types::{AttemptFailure, FailureOrigin, RefusalDecision, RoutingInput, TransportState},
+};
+use gateway_routing_runtime_test_support::{
+    exec::run,
+    host::Host,
+    input::{NOW, input},
+    seed::{seed_key, window},
+    store::Store,
+};
 use gateway_source::source_json::SourceJson;
 use serde_json::json;
 use std::collections::BTreeMap;

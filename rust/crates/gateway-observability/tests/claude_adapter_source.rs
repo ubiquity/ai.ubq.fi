@@ -1,11 +1,12 @@
 //! Only the exact request-bound SourceJson and finite settings-selector adapters.
 use gateway_capacity_projection::shapes::{history_point, unavailable_snapshot};
+use gateway_model_selection::aliases as model_aliases;
 mod support;
-use gateway_admin_runtime::capabilities::{CodexRequest, Context, ProviderRequest};
-use gateway_auth::crypto::sha256_hex;
+use gateway_admin_runtime_contracts::capabilities::{CodexRequest, Context, ProviderRequest};
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::{
-    query::QueryPage, query::QueryRequest, query::QueryStore, state::AtomicTransition,
-    state::AuthorityStore, state::CommitOutcome, state::StoredRecord,
+    query::{QueryPage, QueryRequest, QueryStore},
+    state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_observability::{
@@ -27,9 +28,7 @@ struct AdapterHost {
     raw: Vec<u8>,
 }
 impl ObservabilityHost for AdapterHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.base.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

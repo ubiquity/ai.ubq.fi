@@ -3,15 +3,12 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
-};
 use gateway_core::{
     query::{QueryPage, QueryRequest, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use gateway_model_selection::aliases as model_aliases;
 use gateway_observability::{
     ObservabilityRuntime,
     host_types::BuildIdentity,
@@ -22,6 +19,10 @@ use gateway_observability::{
     replay_retention_schema::RetentionLimits,
     replay_trace::UpstreamTrace,
     types::ObservabilityHost,
+};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
 };
 use serde_json::Value;
 use std::{
@@ -36,9 +37,7 @@ struct CaptureHost {
     revision: Rc<RefCell<String>>,
 }
 impl ObservabilityHost for CaptureHost {
-    fn source_string_collator(
-        &self,
-    ) -> std::sync::Arc<dyn gateway_schema::aliases::SourceStringCollator> {
+    fn source_string_collator(&self) -> std::sync::Arc<dyn model_aliases::SourceStringCollator> {
         self.clock.source_string_collator()
     }
     fn now_ms(&self) -> i64 {

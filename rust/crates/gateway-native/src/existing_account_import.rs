@@ -2,12 +2,11 @@
 //! The production mutation boundary fails closed; a recovered durability receipt is not publication.
 use gateway_auth_native_contracts::native_import::NativeImportMetadata;
 use gateway_auth_primitives::crypto::sha256_hex;
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
-    native_control::import::effects::NativeImportBinding,
-    native_control::import::effects::NativeImportClaim,
-    native_control::receiver::NativeRenewalAuthority,
-};
+use gateway_authority::native_control::import::AuthenticatedNativeImport;
+use gateway_authority::native_control::import::effects::NativeImportBinding;
+use gateway_authority::native_control::import::effects::NativeImportClaim;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
@@ -104,7 +103,7 @@ pub struct ExistingAccountImportStore {
 }
 impl ExistingAccountImportStore {
     pub fn configured(
-        registered: &gateway_authority::native_control::receiver::RegisteredRenewalOwner,
+        registered: &gateway_authority_native_records::owner::RegisteredRenewalOwner,
         account_id_hash: String,
     ) -> Result<Self, GatewayError> {
         let native_owner_id = registered.native_owner_id().to_owned();
@@ -126,7 +125,7 @@ impl ExistingAccountImportStore {
     /// Verify trusted bootstrap DATA against actual kernel custody; this does not grant mutation.
     pub fn prepare_exclusive_owner(
         &self,
-        registered: &gateway_authority::native_control::receiver::RegisteredRenewalOwner,
+        registered: &gateway_authority_native_records::owner::RegisteredRenewalOwner,
         writer_uid: u32,
         native_client_uids: &[u32],
         inspector: &Path,

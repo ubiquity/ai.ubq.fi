@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-auth-native-contracts.workspace = true
 gateway-auth-native-proof.workspace = true
 gateway-auth-native-wire.workspace = true
 gateway-source.workspace = true

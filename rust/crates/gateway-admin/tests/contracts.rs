@@ -4,12 +4,10 @@ use gateway_admin_contracts::{
     routes::{AdminOperation, match_route},
 };
 use gateway_admin_test_support::{contract_host::Host, runtime_host::run, source_store::Store};
-use gateway_auth::{
-    crypto::Secret,
-    types::{AuthConfig, AuthRequest, AuthResponse},
-};
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_auth_contracts::{types::AuthConfig, types::AuthRequest, types::AuthResponse};
+use gateway_auth_primitives::crypto::Secret;
 use gateway_core::state::RevisionCheck;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 

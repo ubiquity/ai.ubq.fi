@@ -1,12 +1,13 @@
 //! Source kernel public-key administration; these are verification keys, never private credentials.
 use gateway_admin_contracts::source_input as input;
-use gateway_auth::crypto::uuid_from_random;
-use gateway_auth::store;
-use gateway_auth::types::{AuthHost, AuthResponse, conflict, invalid};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_auth_contracts::{types::AuthHost, types::AuthResponse};
+use gateway_auth_primitives::crypto::uuid_from_random;
+use gateway_auth_primitives::error::{conflict, invalid};
+use gateway_auth_primitives::store;
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
 use gateway_core::{state::AuthorityStore, state::RecordMutation, state::StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -19,7 +20,7 @@ pub struct KernelPublicKey {
 }
 
 pub fn key() -> RecordKey {
-    gateway_auth::upstream::kernel_public_keys_key()
+    gateway_auth_attestation::upstream::kernel_public_keys_key()
 }
 
 /// The one existing kernel public-key family, decoded as a complete named DTO.

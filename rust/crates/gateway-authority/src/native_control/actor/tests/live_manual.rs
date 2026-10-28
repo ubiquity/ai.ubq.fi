@@ -2,10 +2,14 @@ use super::*;
 use crate::manual_reset::*;
 use crate::native_live::wire::*;
 use crate::native_live::*;
-use gateway_auth::{native_auth::NativeAuthHeaders, provider_credentials::CodexSourcePool};
-use gateway_auth::{native_auth::NativeCapability, provider_credentials::codex_source_pool_key};
-use gateway_auth::{native_auth::NativeNonceAuthority, provider_credentials::CodexSourceAccount};
-use gateway_auth::{native_auth::NativeTransportIdentity, native_live::NativeLiveAuthenticator};
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_live::NativeLiveAuthenticator;
 use gateway_authority_reset_records::{AccountDayBudget, ResetState, manual::parse_manual_intent};
 use gateway_authority_reset_records::{ResetClaim, ResetConfig, ResetMode};
 use gateway_authority_reset_spend::ResetSpendOperations;
@@ -143,8 +147,8 @@ async fn proof(
     identity: &NativeTransportIdentity,
     body: &[u8],
     n: u8,
-) -> gateway_auth::native_live::AuthenticatedNativeLive {
-    let nonce = gateway_auth::crypto::base64url(&[n; 32]);
+) -> gateway_auth_native_proof::native_live::AuthenticatedNativeLive {
+    let nonce = gateway_auth_primitives::crypto::base64url(&[n; 32]);
     let mac = identity
         .sign_live_authority_request(1_000_000, &nonce, body)
         .unwrap();

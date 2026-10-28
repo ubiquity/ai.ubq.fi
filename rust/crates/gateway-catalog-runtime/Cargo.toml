@@ -6,23 +6,40 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
-gateway-authority-keys = { path = "../gateway-authority-keys" }
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
-gateway-source.workspace = true
+gateway-catalog-inputs.workspace = true
 gateway-catalog-provider.workspace = true
 gateway-core.workspace = true
-gateway-authority.workspace = true
-gateway-providers.workspace = true
 gateway-schema.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 
+gateway-request-normalization.workspace = true
+gateway-model-selection.workspace = true
+gateway-auth-native-contracts.workspace = true
+gateway-schema-values.workspace = true
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-source = { workspace = true }
+gateway-authority = { workspace = true }
+serde = { workspace = true }
+gateway-provider-protocol = { workspace = true }
+gateway-provider-policy = { workspace = true }
+gateway-local-refusal = { workspace = true }
+
 [dev-dependencies]
-gateway-auth.workspace = true
-gateway-publication-policy.workspace = true
-gateway-routing-runtime-test-support.workspace = true
+gateway-authority.workspace = true
+gateway-providers.workspace = true
+gateway-catalog-admin.workspace = true
+gateway-catalog-control.workspace = true
+gateway-catalog-versioned.workspace = true
+gateway-admin-test-support.workspace = true
+
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-auth = { workspace = true }
+gateway-publication-policy = { workspace = true }
+gateway-routing-runtime-test-support = { workspace = true }
 gateway-authority-paid-admission = { path = "../gateway-authority-paid-admission" }
 gateway-authority-paid-route = { path = "../gateway-authority-paid-route" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
@@ -30,9 +47,7 @@ gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
-gateway-auth-native-wire.workspace = true
-gateway-admin-test-support.workspace = true
-
+gateway-auth-native-wire = { workspace = true }
 [lints]
 workspace = true
 
@@ -41,3 +56,31 @@ gateway-auth.workspace = true
 gateway-native.workspace = true
 gateway-publication-policy.workspace = true
 gateway-routing-runtime-test-support.workspace = true
+
+[[test]]
+name = "admin"
+path = "tests/admin/main.rs"
+
+[[test]]
+name = "admin_discovery"
+path = "tests/admin_discovery/main.rs"
+
+[[test]]
+name = "control"
+path = "tests/control/main.rs"
+
+[[test]]
+name = "control_authority"
+path = "tests/control_authority/main.rs"
+
+[[test]]
+name = "runtime"
+path = "tests/runtime/main.rs"
+
+[[test]]
+name = "runtime_fences"
+path = "tests/runtime_fences/main.rs"
+
+[[test]]
+name = "runtime_providers"
+path = "tests/runtime_providers/main.rs"

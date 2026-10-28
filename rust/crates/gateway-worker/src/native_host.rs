@@ -4,10 +4,9 @@ use crate::{
     host::{PlatformHost, response_bytes},
     native_transport::{NativeTransport, unavailable},
 };
-use gateway_auth::{
-    crypto::base64url, crypto::decode_base64url, native_auth::NativeCapability,
-    native_auth::NativeTransportIdentity, types::AuthResponse,
-};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::{
     control::NATIVE_CONTROL_MAX_BYTES, control::NATIVE_RENEWAL_MAX_MS,
     control::NativeControlDisposition, control::NativeControlEnvelope,
@@ -17,6 +16,7 @@ use gateway_auth_native_wire::{
     native_read::NATIVE_RPC_PATH, native_read::NATIVE_WIRE_VERSION, native_read::NativeReadRequest,
     native_read::NativeRpcEnvelope, native_read::NativeRpcResponse,
 };
+use gateway_auth_primitives::{crypto::base64url, crypto::decode_base64url};
 use gateway_authority::{native_control::receiver::NativeRenewalAuthority, store::Authority};
 use gateway_source::error::GatewayError;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
@@ -176,7 +176,7 @@ impl NativeBindings {
         actor: &gateway_authority::native_control::actor::NativeRenewalActor,
         selected: &gateway_authority_routing_selection::types::LiveAccountSelection,
         platform: &PlatformHost,
-        config: &gateway_auth::types::AuthConfig,
+        config: &gateway_auth_contracts::types::AuthConfig,
     ) -> Result<(), GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::store::Authority::with_clock(
@@ -208,7 +208,7 @@ impl NativeBindings {
         actor: &gateway_authority::native_control::actor::NativeRenewalActor,
         call_id: &str,
         platform: &PlatformHost,
-        config: &gateway_auth::types::AuthConfig,
+        config: &gateway_auth_contracts::types::AuthConfig,
     ) -> Result<(), GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::store::Authority::with_clock(
@@ -238,7 +238,7 @@ impl NativeBindings {
         actor: &gateway_authority::native_control::actor::NativeRenewalActor,
         permit: &gateway_cache_experiment_dispatch::RefreshPermit,
         platform: &PlatformHost,
-        config: &gateway_auth::types::AuthConfig,
+        config: &gateway_auth_contracts::types::AuthConfig,
     ) -> Result<gateway_contracts::identity::PoolVersionstamp, GatewayError> {
         let transport = self.transport()?;
         let authority = gateway_authority::store::Authority::with_clock(

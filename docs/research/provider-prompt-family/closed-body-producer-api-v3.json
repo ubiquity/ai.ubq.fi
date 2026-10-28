@@ -1,0 +1,726 @@
+{
+  "classification": "PROVISIONAL_PRODUCER_API_SOURCE_FREEZE_NOT_COMPILER_OR_RUNTIME_ACCEPTANCE",
+  "leaseSha256": "ff7f1fd71fee4f2a3c8b9e94a4ae3252acd40ce2f03868a451d8cfdffdd7b01c",
+  "featureParent": "8ef3f598fa77e6d7970ee8ea56d68f27fb4fb4cc",
+  "canonicalAdoption": {
+    "event": "ACTUAL_CANONICAL_ANCESTRY_ADOPTED",
+    "head": "53079eb23c47835b208b9683151b2f5213626d38",
+    "tree": "af39b188e49db6ef5d2286aff8be5e6622d17ade",
+    "parents": [
+      "b7d6e8a3e037c0354db31c191b7fac24091f9e30",
+      "bc8a5969f9d5f8b99f66a92e0c6386352eefa355"
+    ],
+    "trackedClean": true,
+    "all16DRepairPostimagesExact": true,
+    "diffCheckExit": 0,
+    "compilerRuns": 0
+  },
+  "causalSuccessor": {
+    "event": "APPROVED_CAUSAL_SUCCESSOR",
+    "head": "8ef3f598fa77e6d7970ee8ea56d68f27fb4fb4cc",
+    "tree": "e545818afe6d395f3990689e1803b4a2ab0ff5c4",
+    "parents": [
+      "53079eb23c47835b208b9683151b2f5213626d38"
+    ],
+    "path": "rust/crates/gateway-worker/src/inference.rs",
+    "patchBytes": 338,
+    "patchSha256": "bbf08fcddc2f2f88523079a836b1dbf9cd0d1b14cea9e03d0b7f5484c7e6e196",
+    "sourceSpecificPreSha256": "4e9155b762ad564b37b10d324c5b3ed01eaafb39e002c8c33357060563fd41c7",
+    "sourceSpecificPostSha256": "0ee5e4b6374bc5236284e844e2798880b0fb42079911233fa8bd6f5b7f7abf63",
+    "onlyExactApprovedHunk": true,
+    "trackedClean": true,
+    "compilerRuns": 0
+  },
+  "definingType": "gateway_local_refusal::closed_error_body::ClosedErrorBody",
+  "privateFields": {
+    "message": "gateway_source::js_string::JsString16",
+    "error_type": "String, supplied untrimmed wire type",
+    "code": "Option<String>, None omitted",
+    "param": "Option<Option<JsString16>>, absent/null/text distinct",
+    "wire": "String, private immutable original complete JSON envelope"
+  },
+  "singleEncoder": {
+    "path": "gateway_source::js_string::JsString16::json_token(&self) -> String",
+    "sourceFile": "rust/crates/gateway-source/src/js_string.rs",
+    "sourceSha256": "a195bcc036b9f184bc562e89fa27b862c2238345a79d2a400a1b435f469b9c81",
+    "sourceUnchanged": true
+  },
+  "finiteTotalOperations": [
+    "SourceRequestError::new(...) -> Self",
+    "SourceRequestError::from_scalar(GatewayError) -> Self (crate-visible; from_gateway and From delegate)",
+    "RoutingError::with_cleanup_diagnostic(self, &RoutingError) -> Self"
+  ],
+  "publicObservations": [
+    "ClosedErrorBody::as_str(&self) -> &str",
+    "ClosedErrorBody::as_bytes(&self) -> &[u8]",
+    "ClosedErrorBody::message(&self) -> &JsString16",
+    "ClosedErrorBody::error_type(&self) -> &str",
+    "ClosedErrorBody::code(&self) -> Option<&str>",
+    "ClosedErrorBody::param(&self) -> Option<Option<&JsString16>>",
+    "SourceRequestError::body(&self) -> &ClosedErrorBody",
+    "SourceRefusalBody::content_type(&self) -> &'static str",
+    "SourceRefusalBody::as_bytes(&self) -> &[u8]"
+  ],
+  "noPublicRawOrArbitraryJsonFactory": true,
+  "noSerializeDeserializeOrMutableFieldApi": true,
+  "wireOrder": [
+    "error",
+    "message",
+    "type",
+    "code if present",
+    "param if present"
+  ],
+  "ordinaryTagAlwaysFalse": true,
+  "aggregateTagPrivateAndNonserialized": true,
+  "cleanupSnapshotBeforeDiagnosticMutation": true,
+  "scalarAdapter": "Existing nonscalar message/param returns the original diagnostic; representable fields retain old type normalization and omit/null behavior without reparsing closed JSON.",
+  "sourceJsonConversion": "Not part of the total producer. A real consumer may explicitly parse as_str only at its existing Result boundary with original failure disposition; Self response carriers use finite closed DATA/bytes.",
+  "symbols": [
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 5,
+      "declaration": "pub struct ClosedErrorBody {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 21,
+      "declaration": "pub(crate) fn new("
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 51,
+      "declaration": "pub(crate) fn from_scalar(error: &GatewayError) -> Self {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 63,
+      "declaration": "pub fn as_str(&self) -> &str {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 66,
+      "declaration": "pub fn as_bytes(&self) -> &[u8] {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 69,
+      "declaration": "pub fn message(&self) -> &JsString16 {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 72,
+      "declaration": "pub fn error_type(&self) -> &str {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 75,
+      "declaration": "pub fn code(&self) -> Option<&str> {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "line": 79,
+      "declaration": "pub fn param(&self) -> Option<Option<&JsString16>> {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 6,
+      "declaration": "pub struct SourceRequestError {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 13,
+      "declaration": "pub fn new("
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 31,
+      "declaration": "pub fn aggregate_context_overflow(message: impl Into<JsString16>) -> Self {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 42,
+      "declaration": "pub fn is_local_aggregate_context_overflow(&self) -> bool {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 45,
+      "declaration": "pub fn invalid(message: impl Into<JsString16>, param: Option<JsString16>) -> Self {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 55,
+      "declaration": "pub fn from_gateway(error: GatewayError) -> Self {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 58,
+      "declaration": "pub(crate) fn from_scalar(error: GatewayError) -> Self {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 67,
+      "declaration": "pub fn body(&self) -> &ClosedErrorBody {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 70,
+      "declaration": "pub fn diagnostic(&self) -> &GatewayError {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 73,
+      "declaration": "pub fn scalar(message: &str, param: Option<&str>) -> Self {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "line": 80,
+      "declaration": "pub fn into_scalar(self) -> GatewayError {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 6,
+      "declaration": "pub struct RoutingError {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 14,
+      "declaration": "pub enum SourceRefusalBody {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 21,
+      "declaration": "pub fn content_type(&self) -> &'static str {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 27,
+      "declaration": "pub fn as_bytes(&self) -> &[u8] {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 43,
+      "declaration": "pub fn new("
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 55,
+      "declaration": "pub fn is_local_aggregate_context_overflow(&self) -> bool {"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 60,
+      "declaration": "pub fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {"
+    }
+  ],
+  "producerPostimages": [
+    {
+      "path": "rust/crates/gateway-local-refusal/src/closed_error_body.rs",
+      "bytes": 2568,
+      "sha256": "f15934e8243d7f7778cf283a11452567069b868ff95368006912777b1e050b15",
+      "physicalLines": 82
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/source_error.rs",
+      "bytes": 3576,
+      "sha256": "6c2f6e449effe15dc346d684ae0225194f5c6fbee1ebbe6eb22ecb2fa7241992",
+      "physicalLines": 106
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "bytes": 3494,
+      "sha256": "4e65ddef4172327a8f2c88cca5d421e90244d3143a3d9c5a511037f7a94c073d",
+      "physicalLines": 102
+    }
+  ],
+  "consumers": [
+    {
+      "path": "rust/crates/gateway-schema/src/source_request/reasoning.rs",
+      "symbol": "parse_reasoning",
+      "currentReturnType": "Result<Option<SourceJson>, SourceRequestError>",
+      "phase": "pretransport/no-effect syntax validation",
+      "currentLines": [
+        40,
+        45
+      ],
+      "sourceSha256": "b9d86d66695d596ece7722b17fa26cff1b4ca3cf0525ea797b977702223c1eb9",
+      "nextNarrowConsumerAction": "Read body().message().clone(); preserve parent reasoning param and validation order.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/src/admin.rs",
+      "symbol": "runtime_error",
+      "currentReturnType": "SourceRequestError",
+      "phase": "no-effect projection after failed runtime-config validation",
+      "currentLines": [
+        62,
+        63,
+        80
+      ],
+      "sourceSha256": "fc20f17f72de26691d0cecaa7c9f326d424b73d5ff3cbd4f340dcb4505fd1ec5",
+      "nextNarrowConsumerAction": "Read exact message units; preserve the existing too-large/4-KiB 413 versus other 409 classification and runtime_config_invalid code.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-catalog-provider/src/response.rs",
+      "symbol": "into_auth_response",
+      "currentReturnType": "gateway_auth::types::AuthResponse (current spelling; actual defining owner gateway_auth_contracts::types)",
+      "phase": "no-effect rendering after the chosen catalog operation; prior operation effects remain owned",
+      "currentLines": [
+        25,
+        36
+      ],
+      "sourceSha256": "b6b853775705401900f4b5e6b3fcfd39a745acde714a8e25a3552071b748286b",
+      "nextNarrowConsumerAction": "Use the finite AuthResponse closed-error carrier; retain Self, status, headers and defaults.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/types.rs",
+      "symbol": "ExtrasResponse::source_error",
+      "currentReturnType": "Self",
+      "phase": "pure response DATA; caller validation/completion phases differ",
+      "currentLines": [
+        207,
+        208
+      ],
+      "sourceSha256": "6cd8d6b0cf6d72fe6adf5b4f3679aef2bae02f5505b1ad69576f4fd0da6acb5f",
+      "nextNarrowConsumerAction": "Retain Self with a finite ClosedError body and direct bytes; no image, dispatch, refund or child-settlement policy change.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/src/defaults.rs",
+      "symbol": "validate_defaults_fields",
+      "currentReturnType": "Result<Option<AuthResponse>, GatewayError>",
+      "phase": "unknown opaque-field rejection before defaults mutation reads/CAS",
+      "currentLines": [
+        225,
+        244,
+        253
+      ],
+      "sourceSha256": "a992fe75dc09a5803faec86ba4c4eae1d4d10395fea4cd54bd80814cdc75d2c2",
+      "nextNarrowConsumerAction": "Keep original message and early response using the finite AuthResponse carrier.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/src/defaults.rs",
+      "symbol": "defaults_runtime",
+      "currentReturnType": "Result<ControlFlow<AuthResponse, (ModelId, JsString16, Option<SourceJson>)>, GatewayError>",
+      "phase": "after existing runtime/default reads, before writes",
+      "currentLines": [
+        263,
+        328,
+        333
+      ],
+      "sourceSha256": "a992fe75dc09a5803faec86ba4c4eae1d4d10395fea4cd54bd80814cdc75d2c2",
+      "nextNarrowConsumerAction": "Preserve scalar-diagnostic versus opaque-response branch and exact byte comparison at the same Result point.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/src/state.rs",
+      "symbol": "AdminRuntime::selection",
+      "currentReturnType": "Result<AuthResponse, GatewayError>",
+      "phase": "authenticated unknown-ID rejection before selection read/CAS",
+      "currentLines": [
+        173,
+        230,
+        239
+      ],
+      "sourceSha256": "181c8cc38b46ff168d989cc2abfd3c5b1d1e1510d602a5373e4f12c626563a87",
+      "nextNarrowConsumerAction": "Keep unknown-ID order, exact units and early response; only change the closed response carrier.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/inference_source.rs",
+      "symbol": "error_response",
+      "currentReturnType": "Result<worker::Response, GatewayError>",
+      "phase": "before chosen body delivery; can follow prior attempts and original cleanup",
+      "currentLines": [
+        8,
+        15,
+        19,
+        30,
+        36
+      ],
+      "sourceSha256": "ad677525dc5f8cf8823600106440d776f669f2bea63431da58a64bd231ad24b5",
+      "nextNarrowConsumerAction": "Use content_type/as_bytes directly; preserve status, no-store, header override order and awaited capture; keep actual platform errors.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/inference_local_lifecycle.rs",
+      "symbol": "response_error",
+      "currentReturnType": "Result<worker::Response, RoutingError>",
+      "phase": "after existing selected local QuotaReplacement decision, before wrapper/delivery",
+      "currentLines": [
+        148,
+        154,
+        159,
+        177
+      ],
+      "sourceSha256": "2a06c13dbe7ce312971187712a4fcd2684663f846be89b76cfc909c278f9c075",
+      "nextNarrowConsumerAction": "Only MIME/byte observation changes; keep wrapper failure, original lifetime and stock local_compaction=false.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/src/session.rs",
+      "symbol": "RoutingSession::from_local_admission",
+      "currentReturnType": "RoutingResult<Self>",
+      "phase": "pretransport planning after the SAME original admission",
+      "currentLines": [
+        207,
+        225,
+        232
+      ],
+      "sourceSha256": "4ef98e820650c45a8edd5ae8670ecfd0ae5e477d401f7137dd464180cc642eb9",
+      "nextNarrowConsumerAction": "Keep original error then fail_planning order and one cleanup. Total cleanup API needs no Result port.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-auth-contracts/src/types.rs",
+      "symbol": "AuthResponseBody / AuthResponse",
+      "currentReturnType": "to_bytes -> Result<Vec<u8>, GatewayError>; source_json -> Self; Serialize -> Result<S::Ok,S::Error>",
+      "phase": "no-effect actual DATA/byte boundary",
+      "currentLines": [
+        70,
+        83,
+        96,
+        117,
+        140
+      ],
+      "sourceSha256": "40b8f24c7a24ba817d1c7b97743cb5215f958534f8cd75b9a1276a3d7caad0e0",
+      "nextNarrowConsumerAction": "A later finite ClosedError carrier returns direct bytes and preserves defaults; generic Serialize stays fallible using finite fields at its existing trait boundary, without unchecked RawValue or an assertion.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/runtime.rs",
+      "symbol": "auth_response",
+      "currentReturnType": "Result<worker::Response, GatewayError>",
+      "phase": "physical response construction after selected operation, before delivery",
+      "currentLines": [
+        153,
+        154
+      ],
+      "sourceSha256": "1472360ccf18d2a918e90bb338eea79c3042a1ae9f940d4efeceb3098030e6df",
+      "nextNarrowConsumerAction": "Retain body.to_bytes()? and separate Set-Cookie append semantics, status, headers and actual platform failures.",
+      "editedInProducerFeature": false
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/admin_support_host.rs",
+      "symbol": "catalogue_error; catalogue_tests::catalogue_lift_preserves_the_exact_original_gateway_error",
+      "currentReturnType": "GatewayError; test Result<(), Box<dyn Error>>",
+      "phase": "production diagnostic lift only; byte observation is test-only",
+      "currentLines": [
+        178,
+        187,
+        194
+      ],
+      "sourceSha256": "d4ceb8175d4419034ed9e3cdc5ef3464d2ed85b2ee354f5f7df612c7381c60ea",
+      "nextNarrowConsumerAction": "Production already returns diagnostic().clone() for two exact scalar catalog errors. No metadata-fetch mutation is needed.",
+      "editedInProducerFeature": false
+    }
+  ],
+  "rawBodyConsumerIndex": [
+    {
+      "path": "rust/crates/gateway-admin-runtime/src/defaults.rs",
+      "line": 253,
+      "source": "error.body().clone(),"
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/src/defaults.rs",
+      "line": 328,
+      "source": "if SourceJson::from_serializable(&error.diagnostic().envelope)? == *error.body() {"
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/src/defaults.rs",
+      "line": 333,
+      "source": "error.body().clone(),"
+    },
+    {
+      "path": "rust/crates/gateway-admin-runtime/src/state.rs",
+      "line": 239,
+      "source": "error.body().clone(),"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-provider/src/response.rs",
+      "line": 36,
+      "source": "gateway_auth::types::AuthResponse::source_json(error.status, error.body().clone())"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-provider/tests/response.rs",
+      "line": 27,
+      "source": "let expected = error.body().as_bytes().to_vec();"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/src/admin.rs",
+      "line": 63,
+      "source": "let message = source::member(error.body(), \"error\")"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/src/admin.rs",
+      "line": 477,
+      "source": "source::string(&member(&member(error.body(), \"error\"), \"message\")),"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/src/admin.rs",
+      "line": 481,
+      "source": "member(&member(error.body(), \"error\"), \"code\"),"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/src/admin.rs",
+      "line": 484,
+      "source": "assert!(error.body().deserialize::<Value>().is_err());"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/tests/admin.rs",
+      "line": 386,
+      "source": ".body()"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/tests/admin.rs",
+      "line": 413,
+      "source": "Err(error) => json!({\"status\":error.status,\"body\":scalar(error.body())}),"
+    },
+    {
+      "path": "rust/crates/gateway-catalog-runtime/tests/admin.rs",
+      "line": 644,
+      "source": ".body()"
+    },
+    {
+      "path": "rust/crates/gateway-extras-contract/src/types.rs",
+      "line": 208,
+      "source": "Self::source_json(error.status, error.body().clone())"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/src/routing_error.rs",
+      "line": 91,
+      "source": "source_body: Some(SourceRefusalBody::Json(error.body().clone())),"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+      "line": 11,
+      "source": "error.body().as_str(),"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+      "line": 26,
+      "source": "assert_eq!(aggregate.body().as_bytes(), ordinary.body().as_bytes());"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+      "line": 42,
+      "source": "Some(source.body().as_bytes())"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+      "line": 50,
+      "source": "let original = source.body().as_bytes().to_vec();"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+      "line": 103,
+      "source": "assert!(source.body().as_str().contains(\"\\\\ud800\\\\n\\\\udc00\"));"
+    },
+    {
+      "path": "rust/crates/gateway-local-refusal/tests/local_refusal.rs",
+      "line": 107,
+      "source": "Some(source.body().as_bytes())"
+    },
+    {
+      "path": "rust/crates/gateway-providers/tests/ordinary_preparation.rs",
+      "line": 58,
+      "source": "error.body(),"
+    },
+    {
+      "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+      "line": 108,
+      "source": "let body: Value = error.body().deserialize()?;"
+    },
+    {
+      "path": "rust/crates/gateway-providers/tests/prompt_policy.rs",
+      "line": 233,
+      "source": "error.body().as_bytes()"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/src/types.rs",
+      "line": 188,
+      "source": "Self::Claude(body) => body.body(),"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/src/types.rs",
+      "line": 448,
+      "source": "let body = source.body().clone();"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+      "line": 969,
+      "source": "source::member(first.request.body(), \"reasoning\")"
+    },
+    {
+      "path": "rust/crates/gateway-routing-runtime/tests/source_contracts.rs",
+      "line": 1206,
+      "source": "source::member(attempt.request.body(), \"reasoning_effort\")"
+    },
+    {
+      "path": "rust/crates/gateway-schema/src/source_request/reasoning.rs",
+      "line": 40,
+      "source": "let message = source::member(error.body(), \"error\")"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_cache_capability.rs",
+      "line": 25,
+      "source": "&source::member(&source::member(error.body(), \"error\").unwrap(), \"param\").unwrap(),"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_cache_capability.rs",
+      "line": 56,
+      "source": "let actual = source::member(error.body(), \"error\").ok_or(\"missing fixture value\")?;"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_cache_capability.rs",
+      "line": 186,
+      "source": "source.body(),"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_normalization.rs",
+      "line": 84,
+      "source": "let error = source::member(error.body(), \"error\").ok_or(\"missing fixture value\")?;"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_normalization.rs",
+      "line": 145,
+      "source": "let body = source::member(error.body(), \"error\").unwrap();"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_normalization.rs",
+      "line": 184,
+      "source": "error.body(),"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_normalization.rs",
+      "line": 199,
+      "source": "error.body(),"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_normalization.rs",
+      "line": 204,
+      "source": "null.body(),"
+    },
+    {
+      "path": "rust/crates/gateway-schema/tests/source_normalization.rs",
+      "line": 213,
+      "source": "assert_eq!(lifted.body(), &expected);"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/admin_support_host.rs",
+      "line": 194,
+      "source": "let expected = source.body().as_bytes().to_vec();"
+    },
+    {
+      "path": "rust/crates/gateway-worker/src/inference.rs",
+      "line": 331,
+      "source": "None => attempt.request.body().as_bytes().to_vec(),"
+    }
+  ],
+  "tests": {
+    "classification": "physical source observation, not an AST/parser/compiler gate",
+    "familyCrates": {
+      "gateway-provider-protocol": 612,
+      "gateway-provider-policy": 687,
+      "gateway-provider-collector": 709,
+      "gateway-provider-input": 493,
+      "gateway-provider-replay": 635,
+      "gateway-provider-services": 814,
+      "gateway-prompt-policy": 501,
+      "gateway-provider-chat-controls": 195,
+      "gateway-provider-stream": 718,
+      "gateway-provider-claude-body": 811,
+      "gateway-provider-source": 579,
+      "gateway-provider-writer": 658,
+      "gateway-local-refusal": 294,
+      "gateway-provider-tool-grammar": 389,
+      "gateway-provider-images": 723,
+      "gateway-provider-response": 642,
+      "gateway-provider-history": 637,
+      "gateway-providers": 620,
+      "gateway-provider-chat": 841,
+      "gateway-provider-events": 246
+    },
+    "ownedTestRoots": {
+      "rust/crates/gateway-local-refusal/tests/closed_error_body.rs": 256,
+      "rust/crates/gateway-local-refusal/tests/local_refusal.rs": 109
+    },
+    "originalProviderCases": 109,
+    "priorAddedCasesRetained": 15,
+    "fixtures": [
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/forwarding-unicode-source-v1.json",
+        "bytes": 6649,
+        "sha256": "50d51dadfbb45c9a8e2a69be52211a7109ae4d66de0802975d60b2a4f632475a",
+        "exactM60BytesPreserved": true,
+        "caseRows": 5
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/paid-lookup-golden.json",
+        "bytes": 14958,
+        "sha256": "c9a098b4d3773573e2e0897a628ef67cc7059dc9d7613aa454411c31d38bf0c9",
+        "exactM60BytesPreserved": true,
+        "caseRows": null
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/paid-lookup-oracle.json",
+        "bytes": 1426,
+        "sha256": "7b9dbaf0b7edebdb1c00f65e0c667b737862b588681f7fc5c8709df2e848377e",
+        "exactM60BytesPreserved": true,
+        "caseRows": null
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/source-currency-golden.json",
+        "bytes": 10929,
+        "sha256": "6e4ea94ae6fb4b003b1cc0de6894b228b23d0b86c53584a2c78ca7b61d731f0d",
+        "exactM60BytesPreserved": true,
+        "caseRows": 15
+      },
+      {
+        "path": "rust/crates/gateway-providers/tests/fixtures/source-currency-oracle.json",
+        "bytes": 2349,
+        "sha256": "74332e04c70073583a740b06a2e50457644433618ef2f3c06f988e4ad4b7fefa",
+        "exactM60BytesPreserved": true,
+        "caseRows": null
+      }
+    ],
+    "originalProducerCases": [
+      "aggregate_constructor_sets_only_the_internal_identity",
+      "ordinary_same_wire_envelope_does_not_get_aggregate_identity",
+      "aggregate_source_clone_and_routing_conversion_preserve_exact_body",
+      "cleanup_keeps_aggregate_body_status_and_identity",
+      "scalar_context_code_stays_ordinary_through_clone_and_cleanup",
+      "invalid_constructor_and_client_text_cannot_supply_internal_kind",
+      "aggregate_refusal_preserves_lone_surrogates_in_message"
+    ],
+    "newAuthoredCases": [
+      "closed_error_preserves_untrimmed_type_and_all_optional_field_forms",
+      "closed_error_wire_preserves_control_quotes_and_surrogate_units",
+      "scalar_snapshot_matches_original_wire_and_retains_null_or_omission",
+      "cleanup_snapshots_original_scalar_before_each_diagnostic_mutation",
+      "scalar_adapter_keeps_original_nonscalar_diagnostic_disposition",
+      "ordinary_closed_carrier_cannot_forge_the_private_aggregate_kind",
+      "upstream_json_and_plain_failure_carriers_keep_original_bytes",
+      "every_utf16_unit_survives_closed_wire_through_the_defining_source_parser",
+      "empty_wire_type_and_code_remain_verbatim_while_diagnostic_type_defaults"
+    ],
+    "allNewCasesNotExecuted": true
+  },
+  "remainingHeldPolicies": [
+    "Replay canonical/depth64/bytes and publication",
+    "ProviderEvent<Value>/failure_event",
+    "resolve_paid_route billing consumers",
+    "image preparation/extraction/completed-child policy",
+    "actual native_catalog declaration/casing",
+    "typed aggregate native stream/client mapping",
+    "non-JSON raw refusal versus legacy null"
+  ],
+  "knownIntegrationState": "Other carriers remain unedited. Their direct defining imports, ClosedError variant match coverage, typed message observations and original tests need the next leased cut. Bare whole-workspace source is not claimed to compile.",
+  "compilerParserTestsRuntimeExecuted": false,
+  "runtimeModel": "unknown from trusted metadata available to D",
+  "requestedModel": "gpt-6.1-sol",
+  "requestedEffort": "max",
+  "runtimeEffort": "unknown"
+}

@@ -106,9 +106,7 @@ impl FullPoolShadowDecision {
         }
         let decision = match row.value_encoding {
             ValueEncoding::Json => Self::parse_value(row.json_value()?)?,
-            ValueEncoding::ProfileV2 => {
-                Self::parse_source_json(&SourceJson::from_portable_json(&row.profile_v2_value()?)?)?
-            }
+            ValueEncoding::ProfileV2 => Self::parse_source_json(&row.profile_v2_source_json()?)?,
             _ => return Err(invalid()),
         };
         if *key != gateway_authority_keys::reset_shadow(&decision.episode_hash) {

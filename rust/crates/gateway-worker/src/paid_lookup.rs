@@ -5,8 +5,9 @@ use crate::transport::outbound::send_http;
 use gateway_authority_paid_records::{PaidAttempt, PaidCorrelation, PaidReservation, PaidUsage};
 use gateway_contracts::provider::PaidProvider;
 use gateway_core::state::AuthorityStore;
-use gateway_providers::paid_lookup::{
-    LookupPlan, LookupStep, OVERALL_TIMEOUT_MS, TokenLog, plan_lookup,
+use gateway_provider_services::{
+    paid_lookup::LookupPlan, paid_lookup::LookupStep, paid_lookup::OVERALL_TIMEOUT_MS,
+    paid_lookup::TokenLog, paid_lookup::plan_lookup,
 };
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;

@@ -2,16 +2,17 @@ use crate::access_publication::{
     AccessCredentialSource, PreparedAccessPublication, RegisteredAccessOwner,
 };
 use crate::wire::{ConfigWire, PublicationDisposition, PublicationReceipt, WireCommand};
-use gateway_auth::native_auth::{
-    AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity,
+use gateway_auth_credentials::{
+    native_credentials::NativeCredentials, native_credentials::NativeOwnerId,
 };
-use gateway_auth::native_credentials::{NativeCredentials, NativeOwnerId};
-use gateway_source::error::GatewayError;
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
 use gateway_core::state::AuthorityStore;
 use gateway_publication_policy::control_publication::{
     ConfiguredPaidInputs, PreparedConfigurationPublication, conflict,
 };
 use gateway_publication_policy::protocol::invalid;
+use gateway_source::error::GatewayError;
 
 struct ApplyContext<'a> {
     identity: &'a NativeTransportIdentity,

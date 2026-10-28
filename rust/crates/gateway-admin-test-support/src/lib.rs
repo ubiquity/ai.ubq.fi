@@ -1,4 +1,5 @@
 //! Dev-only fixtures retaining the original admin transport, clock and rank contracts.
+pub mod claude_source_fixtures;
 pub mod contract_host;
 pub mod key_fixtures;
 pub mod ranked_collator;

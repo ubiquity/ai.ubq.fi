@@ -1,17 +1,16 @@
 //! Fixed same-authority control publication by an authenticated configuration
 //! owner. Constructor inputs are trusted runtime configuration, never HTTP JSON.
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
-    store,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeTransportIdentity};
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex, store};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
-use gateway_source::error::GatewayError;
 use gateway_contracts::provider::PaidProvider;
 use gateway_core::state::{AuthorityStore, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 /// Dedicated constructor state; neither the keys nor their raw configuration are
@@ -160,7 +159,12 @@ pub fn configured_paid_binding(provider: PaidProvider, key: &Secret) -> String {
 }
 
 pub fn runtime_config_key() -> gateway_kv_codec::key::RecordKey {
-    store::key(json!(["uos_ai", "runtime_config", "v2"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("runtime_config"),
+        ScalarKeyPart::String("v2"),
+    ])
+    .to_record_key()
 }
 
 fn owner(identity: &NativeTransportIdentity) -> PaidControlOwner {

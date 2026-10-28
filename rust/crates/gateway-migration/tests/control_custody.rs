@@ -1,16 +1,22 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_core::state::StoredRecord;
-use gateway_kv_codec::{key::RecordKey, value::PortableValue};
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::{ArtifactContext, export_latest, export_rollback_bundle},
-};
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_core::state::*;
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_kv_codec::value::PortableValue;
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_inverse::inverse::export_rollback_bundle;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::CanonicalDates;
-use serde_json::{Value, json};
+use serde_json::Value;
+use serde_json::json;
 
 fn source(parts: Value, value: Value) -> SourceEntry {
     SourceEntry {
@@ -69,7 +75,8 @@ fn permanent_manual_source_intent_survives_restart_and_latest_inverse() {
 }
 
 #[test]
-fn native_live_connection_is_private_no_ttl_custody_and_cannot_be_adopted_as_source() {
+fn native_live_connection_is_private_no_ttl_custody_and_cannot_be_adopted_as_source()
+-> Result<(), Box<dyn std::error::Error>> {
     let directory = Directory::new();
     let store = SqliteStore::open(&directory.file("live-custody.sqlite3"));
     let capture: PrivateCapture =
@@ -81,7 +88,8 @@ fn native_live_connection_is_private_no_ttl_custody_and_cannot_be_adopted_as_sou
     .unwrap();
     let reference = "a".repeat(64);
     let parts = json!(["uos_ai", "native_live", "v1", "connection", reference]);
-    let key = gateway_auth::store::key(parts.clone());
+    let key = TupleKey::from_json_parts(parts.as_array().ok_or("fixture tuple must be an array")?)?
+        .to_record_key();
     let value = json!({"v":1,"action_ref":"b".repeat(64),"connection_id":reference,"authorization_ref":"c".repeat(64),"owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_fingerprint":"d".repeat(64),"call_id":"fixture-call","created_at_ms":2200,"upstream_status":null,"retired":false});
     store.put(
         key.clone(),
@@ -110,6 +118,7 @@ fn native_live_connection_is_private_no_ttl_custody_and_cannot_be_adopted_as_sou
         StoredRecord::json("live-connection-expiring", value, Some(9000)),
     );
     assert!(run(export_rollback_bundle(&store, 2400, context())).is_err());
+    Ok(())
 }
 
 #[test]
@@ -124,22 +133,24 @@ fn native_generation_and_unknown_operation_remain_private_across_restart() {
         &prepare(&capture, &CanonicalDates).unwrap(),
     ))
     .unwrap();
-    let generation = gateway_auth::store::key(json!([
-        "uos_ai",
-        "authority",
-        "native_owner_renewal",
-        "v1",
-        "generation",
-        "a".repeat(64)
-    ]));
-    let operation = gateway_auth::store::key(json!([
-        "uos_ai",
-        "authority",
-        "native_owner_renewal",
-        "v1",
-        "operation",
-        "fixture-operation"
-    ]));
+    let generation = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("authority"),
+        ScalarKeyPart::String("native_owner_renewal"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("generation"),
+        ScalarKeyPart::String("a".repeat(64)),
+    ])
+    .to_record_key();
+    let operation = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("authority"),
+        ScalarKeyPart::String("native_owner_renewal"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("operation"),
+        ScalarKeyPart::String("fixture-operation"),
+    ])
+    .to_record_key();
     let rows = [
         (
             generation.clone(),
@@ -245,7 +256,7 @@ fn session_index_custody_is_validated_before_private_inverse() {
     ))
     .unwrap();
     let digest = "a".repeat(64);
-    let session_key = gateway_auth::session_index::index_key(&digest).unwrap();
+    let session_key = gateway_auth_passkeys::session_index::index_key(&digest).unwrap();
     let session = StoredRecord::json(
         "source-session",
         json!({"v":1,"session_digest":digest,"user_id":"fixture-user","session_revision":"source-session","expires_at_ms":9000}),

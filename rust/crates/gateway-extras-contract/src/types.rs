@@ -1,11 +1,10 @@
-use gateway_auth::types::AuthPrincipal;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use crate::response_body::ExtrasResponseBody;
+use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_contracts::{identity::RequestContext, lifecycle::SemanticTerminal, model::ModelId};
-use gateway_providers::{
-    extras::MultipartFile,
-    types::{PrepareOptions, PreparedRequest},
-};
-use gateway_schema::source_request::error::SourceRequestError;
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_provider_images::extras::MultipartFile;
+use gateway_provider_protocol::{types::PrepareOptions, types::PreparedRequest};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
 
@@ -77,13 +76,13 @@ impl PreparedCall {
     ) -> Result<Self, SourceRequestError> {
         let prepared = match provider {
             ExtrasProvider::Voyage => {
-                gateway_providers::extras::prepare_source_embeddings(body, options)?
+                gateway_provider_services::extras::prepare_source_embeddings(body, options)?
             }
             ExtrasProvider::SystemOne => {
-                gateway_providers::extras::prepare_source_systemone(body, options)?
+                gateway_provider_services::extras::prepare_source_systemone(body, options)?
             }
             ExtrasProvider::Decisions => {
-                gateway_providers::extras::prepare_source_decisions(body, options)?
+                gateway_provider_services::extras::prepare_source_decisions(body, options)?
             }
         };
         Ok(Self {
@@ -188,7 +187,7 @@ pub struct HealthObservation {
 pub struct ExtrasResponse {
     pub status: u16,
     pub headers: Headers,
-    pub body: SourceJson,
+    pub body: ExtrasResponseBody,
     pub semantic_terminal: Option<SemanticTerminal>,
     pub usage: Option<Value>,
     pub kernel: KernelDisposition,
@@ -205,9 +204,15 @@ impl ExtrasResponse {
         )
     }
     pub fn source_error(error: SourceRequestError) -> Self {
-        Self::source_json(error.status, error.body().clone())
+        Self::with_body(
+            error.status,
+            ExtrasResponseBody::ClosedError(error.body().clone()),
+        )
     }
     pub fn source_json(status: u16, body: SourceJson) -> Self {
+        Self::with_body(status, ExtrasResponseBody::Json(body))
+    }
+    fn with_body(status: u16, body: ExtrasResponseBody) -> Self {
         Self {
             status,
             body,

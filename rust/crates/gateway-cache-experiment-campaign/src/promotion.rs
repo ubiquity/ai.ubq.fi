@@ -1,6 +1,6 @@
 //! One source catalog/runtime publication CAS and the original awaited final evidence transition.
 use crate::{CacheCampaignFactory, CacheCampaignOperations, CyclePermit};
-use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
 use gateway_authority_contracts::add;
 use gateway_cache_experiment_records::{
     model::{LEASE_MS, Outcome, PROVIDER, Reason, Scope, TargetBinding, failed},
@@ -13,6 +13,7 @@ use gateway_schema::{
     },
     snapshot::ModelSnapshot,
 };
+use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 pub trait CachePromotionOperations: CacheCampaignFactory {
@@ -58,10 +59,7 @@ pub trait CachePromotionOperations: CacheCampaignFactory {
                 {
                     Some(Reason::AuthPoolDrift)
                 } else if snapshot.as_ref().is_none_or(|s| {
-                    gateway_schema::reasoning::js_trim_source(&s.source)
-                        .as_units()
-                        .is_empty()
-                        || s.updated_at_ms <= 0
+                    js_trim_source(&s.source).as_units().is_empty() || s.updated_at_ms <= 0
                 }) {
                     Some(Reason::PromotionConflict)
                 } else if tx.revision(&catalog_key).as_deref()

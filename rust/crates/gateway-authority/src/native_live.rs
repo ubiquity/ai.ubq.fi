@@ -1,84 +1,30 @@
 //! Same-authority live custody. No admission, quota proof, refresh or paid authorization.
-use crate::native_control::actor;
-use crate::native_control::actor::NativeRenewalActor;
-use crate::store::Authority;
-use crate::store::Transaction;
-use gateway_auth::{
-    native_auth::NativeTransportIdentity,
-    native_live::AuthenticatedNativeLive,
-    provider_credentials::{
-        codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
-    },
-    types::AuthConfig,
+use crate::native_control::actor::{self, NativeRenewalActor};
+use crate::store::{Authority, Transaction};
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_credentials::provider_credentials::{
+    codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
-use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_live::AuthenticatedNativeLive;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::live::{ActionRow, ConnectionRow, custody_key, mapping_key};
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::SubscriptionPool;
-use gateway_core::{
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,
-};
-use gateway_kv_codec::{
-    key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::ScalarKeyPart::String as Text,
-    tuple_key::TupleKey,
+use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
+use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart::String as Text, TupleKey};
+use gateway_native_authority_wire::live::{
+    NativeLiveAuthorityResponse, NativeLiveFence, NativeLiveRetirement,
 };
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub mod wire;
-use gateway_native_authority_wire::live::{
-    NativeLiveAuthorityResponse, NativeLiveFence, NativeLiveRetirement,
-};
 use wire::{NativeLiveAccess, NativeLiveAuthorityRequest};
+pub mod wire;
 
-/// Nonexpiring secretless control custody, NOT a second routing/accounting ledger.
-pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
-    TupleKey::from_scalar_parts(&[
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("native_live"),
-        ScalarKeyPart::String("v1"),
-        ScalarKeyPart::String(kind),
-        ScalarKeyPart::String(reference),
-    ])
-    .to_record_key()
-}
-pub(crate) fn mapping_key(call: &str, pending: bool) -> RecordKey {
-    let mut parts = vec![Text("uos_ai"), Text("codex_live_calls"), Text("v1")];
-    if pending {
-        parts.push(Text("pending_retirement"));
-    }
-    parts.push(Text(call));
-    TupleKey::from_scalar_parts(&parts).to_record_key()
-}
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ActionRow {
-    v: u8,
-    action_ref: String,
-    request_id: String,
-    actor: StoredNativeActor,
-    call_id: String,
-    account_id: String,
-    mapping_revision: String,
-    created_at_ms: i64,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ConnectionRow {
-    v: u8,
-    action_ref: String,
-    connection_id: String,
-    authorization_ref: String,
-    owner_id: String,
-    owner_epoch: String,
-    key_fingerprint: String,
-    call_id: String,
-    created_at_ms: i64,
-    upstream_status: Option<u16>,
-    retired: bool,
-}
 /// Server-created selector, deliberately neither Serialize nor Deserialize.
 pub struct NativeLiveAction {
     action_ref: String,
