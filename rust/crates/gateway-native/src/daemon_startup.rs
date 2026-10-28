@@ -1,6 +1,6 @@
 //! Existing source assembly shared by the prelaunch request worker and policy.
-use crate::daemon_config::PreparedNativeDaemonConfig;
 use gateway_native_confinement::confinement::NativeConfinement;
+use gateway_native_daemon_config::config::PreparedNativeDaemonConfig;
 use gateway_native_http_admission::http_server::NativeHttpService;
 use gateway_native_replay::nonce_sqlite::SqliteNonceStore;
 use gateway_native_supervisor::supervisor::SourceId;

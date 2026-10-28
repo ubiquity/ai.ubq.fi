@@ -169,9 +169,7 @@ impl NativeDaemonConfig {
         Self::read_for_role(input, NativeDaemonRole::Ordinary)
     }
     /// Fixed first-party import Child only. No wire flag or caller-selected capability.
-    pub(crate) fn read_import_stdin(
-        input: impl Read,
-    ) -> Result<PreparedNativeDaemonConfig, GatewayError> {
+    pub fn read_import_stdin(input: impl Read) -> Result<PreparedNativeDaemonConfig, GatewayError> {
         Self::read_for_role(input, NativeDaemonRole::Import)
     }
     fn read_for_role(

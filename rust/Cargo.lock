@@ -3657,6 +3657,7 @@ dependencies = [
  "gateway-native-connected-io",
  "gateway-native-connector",
  "gateway-native-custody-wire",
+ "gateway-native-daemon-config",
  "gateway-native-http-admission",
  "gateway-native-http-framing",
  "gateway-native-https-test-support",
@@ -3757,6 +3758,22 @@ dependencies = [
  "gateway-source",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-native-daemon-config"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-native-supervisor",
+ "gateway-source",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

@@ -10,6 +10,7 @@ default = []
 native-import-fixture = ["gateway-authority/native-import-fixture", "gateway-native-http-admission/native-import-fixture"]
 
 [dependencies]
+gateway-native-daemon-config.workspace = true
 gateway-native-http-admission.workspace = true
 gateway-authority-actor-records.workspace = true
 gateway-native-authority-request = { path = "../gateway-native-authority-request" }

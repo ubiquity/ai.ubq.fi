@@ -210,8 +210,9 @@ fn actual_startup_composer_reuses_reverse_tls_for_currentness_and_native_101_fra
         ));
         std::fs::create_dir(&directory)?;
         let config = serde_json::json!({"v":3,"listen":"127.0.0.1:0","identity":{"key_id":"fixture-key","owner_id":"fixture-owner","owner_epoch":"fixture-epoch","key_base64url":base64url(&[73;32])},"nonce_database":directory.join("nonces.sqlite3"),"sources":[],"live_sideband":{"authority_origin":"https://rust-candidate.ai.ubq.fi"}});
-        let config =
-            crate::daemon_config::NativeDaemonConfig::read_stdin(config.to_string().as_bytes())?;
+        let config = gateway_native_daemon_config::config::NativeDaemonConfig::read_stdin(
+            config.to_string().as_bytes(),
+        )?;
         let identity = config.identity.clone();
         let authority_listener = TcpListener::bind("127.0.0.1:0")?;
         let reverse = TcpStream::connect(authority_listener.local_addr()?)?;

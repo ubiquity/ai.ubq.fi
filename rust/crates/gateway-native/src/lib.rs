@@ -3,7 +3,6 @@
 pub mod authority_http;
 #[cfg(unix)]
 pub mod connector_supervisor;
-pub mod daemon_config;
 #[cfg(unix)]
 mod daemon_startup;
 #[cfg(unix)]

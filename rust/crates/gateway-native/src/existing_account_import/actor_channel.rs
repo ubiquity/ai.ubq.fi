@@ -107,7 +107,9 @@ impl OwnedImportChildChannel {
         if !cfg!(target_os = "macos") || daemon_config.is_empty() || daemon_config.len() > 65_536 {
             return Err(unavailable());
         }
-        let config = crate::daemon_config::NativeDaemonConfig::read_import_stdin(daemon_config)?;
+        let config = gateway_native_daemon_config::config::NativeDaemonConfig::read_import_stdin(
+            daemon_config,
+        )?;
         let registry = config.owner_renewal.as_ref().ok_or_else(unavailable)?;
         if config.nonce_database.parent() != Some(replay_directory) {
             return Err(unavailable());

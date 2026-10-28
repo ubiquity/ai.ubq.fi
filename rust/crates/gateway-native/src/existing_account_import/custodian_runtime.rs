@@ -52,7 +52,8 @@ impl CustodianRuntime {
         config: &[u8],
     ) -> Result<(), GatewayError> {
         gateway_native_connector::artifact::require_production_artifact()?;
-        let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
+        let prepared =
+            gateway_native_daemon_config::config::NativeDaemonConfig::read_import_stdin(config)?;
         let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
         let endpoints =
             super::import_endpoints::ResolvedImportEndpoints::resolve(registry.authority_origin())?;
@@ -74,7 +75,8 @@ impl CustodianRuntime {
         digest: &str,
         endpoints: super::import_endpoints::ResolvedImportEndpoints,
     ) -> Result<(), GatewayError> {
-        let prepared = crate::daemon_config::NativeDaemonConfig::read_import_stdin(config)?;
+        let prepared =
+            gateway_native_daemon_config::config::NativeDaemonConfig::read_import_stdin(config)?;
         let registry = prepared.owner_renewal.as_ref().ok_or_else(unavailable)?;
         endpoints.require_origin(registry.authority_origin())?;
         let authority_socket = std::net::TcpStream::connect_timeout(
