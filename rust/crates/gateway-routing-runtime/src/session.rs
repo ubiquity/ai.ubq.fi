@@ -5,15 +5,14 @@ use crate::{
     types::*,
 };
 use gateway_auth_contracts::types::AuthMethod;
-use gateway_authority::{
-    routing_types::AdmittedAccount, routing_types::RouteSelection, store::Authority,
-};
+use gateway_authority::store::Authority;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_kernel_protocol::KernelTerminal;
 use gateway_authority_paid_control_records::{
     PaidRequestContext, PaidRoutingReceipt, PaidSyntheticHop,
 };
 use gateway_authority_paid_records::PaidAuthorization;
+use gateway_authority_routing_selection::types::{AdmittedAccount, RouteSelection};
 use gateway_contracts::{identity::ApiKeyId, model::ModelId, provider::UpstreamProvider};
 use gateway_core::query::QueryStore;
 use gateway_model_selection::aliases as model_aliases;
@@ -125,7 +124,7 @@ impl<
             } else {
                 crate::local_work::original_source_digest(input.original_source())?
             },
-            now.checked_add(gateway_authority::REQUEST_LEASE_MS)
+            now.checked_add(gateway_authority_contracts::REQUEST_LEASE_MS)
                 .ok_or_else(|| unavailable("Lease overflow."))?,
             now,
         );

@@ -1,6 +1,7 @@
-//! Complete fixed non-inference native context observations. DATA never grants a native effect.
+//! Complete fixed native context observations. DATA never grants a native effect.
 mod account;
 mod cache;
+mod inference;
 pub mod terminal;
 use cache::ReadCache;
 use gateway_auth_credentials::provider_credentials::{
@@ -133,9 +134,6 @@ impl<'a, S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFac
         phase: &SourceActorCurrentData,
         context: &NativeRenewalContext,
     ) -> Result<SourceNativeControlFactsData, GatewayError> {
-        if matches!(context, NativeRenewalContext::Inference { .. }) {
-            return Err(fail());
-        }
         let control = self.live_control(actor, original, phase, context).await?;
         Ok(SourceNativeControlFactsData {
             principal: control.principal,
@@ -154,7 +152,9 @@ impl<'a, S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFac
         context: &NativeRenewalContext,
     ) -> Result<SourceNativeContextFactsData, GatewayError> {
         if matches!(context, NativeRenewalContext::Inference { .. }) {
-            return Err(fail());
+            return self
+                .inference_context(actor, original, phase, Some(context))
+                .await;
         }
         let request_id = original.request_id.0.as_str();
         let control = self.live_control(actor, original, phase, context).await?;
@@ -313,6 +313,12 @@ impl<'a, S: AuthorityStore, C: NativeRenewalCancellation> SourceNativeContextFac
         phase: &SourceActorCurrentData,
         context: &NativeRenewalContext,
     ) -> Result<Control, GatewayError> {
+        if matches!(context, NativeRenewalContext::Inference { .. }) {
+            return self
+                .inference_control(actor, original, phase, context)
+                .await;
+        }
+
         let owner: PaidControlOwner = self
             .cache
             .read(&keys::paid_control_owner())

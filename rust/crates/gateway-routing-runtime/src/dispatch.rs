@@ -413,7 +413,7 @@ impl<
         &self,
         row: &Journal,
         record: &AttemptRecord,
-        admission: &gateway_authority::routing_types::AdmittedAccount,
+        admission: &gateway_authority_routing_selection::types::AdmittedAccount,
         failure: &AttemptFailure,
     ) -> RoutingResult<bool> {
         if let Some(block) = classify::codex_quota(

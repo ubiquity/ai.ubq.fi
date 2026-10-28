@@ -1,6 +1,6 @@
 //! Owned local semantic choice, separate from durable acknowledgement and transport.
 use super::*;
-use gateway_authority::local_completion::LocalCompletedIntentOutcome;
+use gateway_authority_local_completion::LocalCompletedIntentOutcome;
 use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
 };

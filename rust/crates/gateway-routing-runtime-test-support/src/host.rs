@@ -1,7 +1,7 @@
 use crate::{seed::source_key, source_catalog::Collator, store::Store};
 use gateway_auth_contracts::types::AuthPrincipal;
 use gateway_auth_primitives::crypto::Secret;
-use gateway_authority::routing_types::CohortProof;
+use gateway_authority_routing_selection::types::CohortProof;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_model_selection::aliases as model_aliases;
 use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};

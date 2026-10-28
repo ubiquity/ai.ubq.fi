@@ -175,13 +175,28 @@ impl<
         )
         .await
     }
+    pub async fn prepare_source_inference_renewal(
+        &self,
+        actor: &SourceNativeRenewalActor<'_, S>,
+    ) -> Result<SourceNativeRenewalAction, GatewayError> {
+        self.prepare_context_inner(actor, None, None).await
+    }
     async fn prepare_context(
         &self,
         actor: &SourceNativeRenewalActor<'_, S>,
         context: NativeRenewalContext,
         expected: Option<&AccountBinding>,
     ) -> Result<SourceNativeRenewalAction, GatewayError> {
-        let scope = if matches!(context, NativeRenewalContext::CacheExperiment { .. }) {
+        self.prepare_context_inner(actor, Some(context), expected)
+            .await
+    }
+    async fn prepare_context_inner(
+        &self,
+        actor: &SourceNativeRenewalActor<'_, S>,
+        context: Option<NativeRenewalContext>,
+        expected: Option<&AccountBinding>,
+    ) -> Result<SourceNativeRenewalAction, GatewayError> {
+        let scope = if matches!(context, Some(NativeRenewalContext::CacheExperiment { .. })) {
             NativeActorScope::Admin
         } else {
             NativeActorScope::Client
@@ -196,7 +211,8 @@ impl<
                 .await?;
             let now = self.time(0)?;
             let mut tx = self.transaction(now)?;
-            let facts = self.read_facts(&mut tx, &phase, &context).await?;
+            let facts = self.read_facts(&mut tx, &phase, context.as_ref()).await?;
+            let resolved_context = facts.fence().context.clone();
             if expected.is_some_and(|binding| {
                 binding.slot != 0
                     || binding.account_id_hash.0 != facts.fence().account_id_hash
@@ -211,7 +227,7 @@ impl<
             let reference = action_reference(
                 phase.context(),
                 phase.current_data().policy_digest(),
-                &context,
+                &resolved_context,
                 &facts.fence().source_native_generation,
             )?;
             let key = rows::key("action", &reference);
@@ -245,7 +261,9 @@ impl<
             };
             tx.now = self.time(now)?;
             self.require_row_time(&row, tx.now)?;
-            let current = self.read_facts(&mut tx, &phase, &row.fence.context).await?;
+            let current = self
+                .read_facts(&mut tx, &phase, Some(&row.fence.context))
+                .await?;
             if current.fence() != &row.fence
                 || current.checks_digest() != row.checks_digest
                 || current.control_checks_digest() != row.control_checks_digest
@@ -273,26 +291,36 @@ impl<
         &self,
         tx: &mut Transaction<'_, S, I>,
         phase: &SourceActorPreparationData,
-        context: &NativeRenewalContext,
+        context: Option<&NativeRenewalContext>,
     ) -> Result<SourceNativeContextFactsData, GatewayError> {
         let now = tx.now;
         let data = {
             let snapshot = tx.routing_read_store();
-            SourceNativeContextFactsReader::new(
+            let reader = SourceNativeContextFactsReader::new(
                 &snapshot,
                 self.context.identity,
                 self.context.registered,
                 self.clock,
                 self.context.cancellation,
                 now,
-            )?
-            .read_context(
-                phase.actor_data(),
-                phase.context(),
-                phase.current_data(),
-                context,
-            )
-            .await?
+            )?;
+            match context {
+                Some(context) => {
+                    reader
+                        .read_context(
+                            phase.actor_data(),
+                            phase.context(),
+                            phase.current_data(),
+                            context,
+                        )
+                        .await?
+                }
+                None => {
+                    reader
+                        .read_inference(phase.actor_data(), phase.context(), phase.current_data())
+                        .await?
+                }
+            }
         };
         for check in data.revision_checks() {
             if !tx.expect(&check.key, &check.expected_revision) {

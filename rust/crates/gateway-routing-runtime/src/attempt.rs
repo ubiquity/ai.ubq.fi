@@ -4,11 +4,11 @@ use crate::{
     types::CodexRecovery, types::CredentialFence, types::PreparedAttempt,
     types::PublishedCredential, types::RoutingHost, types::RoutingResult,
 };
-use gateway_authority::routing_types::RouteSelection;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_authority_paid_records::{
     PaidAdmission, PaidAuthorization, PaidRequest, PaidReservation,
 };
+use gateway_authority_routing_selection::types::RouteSelection;
 use gateway_contracts::{identity::PaidAttemptId, model::ModelId};
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_contracts::{
