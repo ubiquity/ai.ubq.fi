@@ -1,8 +1,13 @@
-use crate::{AdminRuntime, capabilities::RuntimeCapabilities, store};
+use crate::PaidAdmin;
 use gateway_admin_contracts::{operations::PaidKeyFields, source_input as input};
 use gateway_admin_keys::keys::current_record;
-use gateway_auth_contracts::{types::AuthHost, types::conflict, types::invalid};
-use gateway_auth_primitives::{store::check, store::commit, store::put};
+use gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities;
+use gateway_admin_runtime_records::store;
+use gateway_auth_contracts::types::AuthHost;
+use gateway_auth_primitives::{
+    error::{conflict, invalid},
+    store::{check, commit, put},
+};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidAttempt, PaidWindow, ReconciliationGate};
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, lifecycle::BillingState, model::ModelId};
@@ -26,11 +31,8 @@ fn outstanding() -> GatewayError {
     )
 }
 
-impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    pub(crate) async fn paid_policy(
-        &self,
-        body: &SourceJson,
-    ) -> Result<PaidKeyFields, GatewayError> {
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> PaidAdmin<'_, S, H, C> {
+    pub async fn paid_policy(&self, body: &SourceJson) -> Result<PaidKeyFields, GatewayError> {
         if input::member(body, "paid_fallback_enabled")
             .as_ref()
             .is_some_and(|value| input::boolean(value).is_none())
@@ -162,10 +164,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             pricing_checked_at_ms: Some(pricing.checked_at_ms),
         })
     }
-    pub(crate) async fn prepare_deletion(
-        &self,
-        id: &str,
-    ) -> Result<Vec<RevisionCheck>, GatewayError> {
+    pub async fn prepare_deletion(&self, id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
         let now = self.host.now_ms();
         let id_key = gateway_auth_primitives::api_keys::id_key(id);
         let id_row = self.store.read(&id_key).await?;

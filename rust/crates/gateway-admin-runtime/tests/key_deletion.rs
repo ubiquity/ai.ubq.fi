@@ -1,12 +1,11 @@
 use gateway_admin_contracts::operations::AdminHost;
-use gateway_admin_runtime::RuntimeConfig;
-use gateway_admin_test_support::runtime_fixtures::seed_catalog;
+use gateway_admin_runtime_contracts::RuntimeConfig;
 use gateway_admin_test_support::{
-    runtime_fixtures::{WireBody, input, runtime},
+    runtime_fixtures::{WireBody, input, runtime, seed_catalog},
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth_contracts::{types::AuthConfig, types::AuthRequest};
+use gateway_auth_contracts::types::{AuthConfig, AuthRequest};
 use gateway_contracts::model::ModelId;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
 use serde_json::json;
@@ -183,7 +182,7 @@ fn deletion_cleans_settled_state_then_owned_history_and_retains_ordinary_guard()
     }))
     .unwrap();
     assert_eq!(outcome, CommitOutcome::Committed);
-    run(service.finish_deletion("key", &fences)).unwrap();
+    run(service.finish_key_deletion("key", &fences)).unwrap();
     assert_eq!(
         store
             .get(json!([
@@ -269,11 +268,13 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
         run(service.prepare_key_deletion(id)).unwrap_err().status,
         409
     );
-    run(service.abort_deletion(id, &first)).unwrap();
+    run(service.abort_key_deletion(id, &first)).unwrap();
     assert!(store.get(guard_key.clone()).unwrap()["local_deletion"]["owner"].is_null());
     let next = run(service.prepare_key_deletion(id)).unwrap();
     assert_eq!(
-        run(service.finish_deletion(id, &next)).unwrap_err().status,
+        run(service.finish_key_deletion(id, &next))
+            .unwrap_err()
+            .status,
         409
     );
     run(store.commit(AtomicTransition {
@@ -283,7 +284,7 @@ fn local_development_deletion_releases_only_owner_marker_and_completes_after_abs
         }],
     }))
     .unwrap();
-    run(service.finish_deletion(id, &next)).unwrap();
+    run(service.finish_key_deletion(id, &next)).unwrap();
     let complete = store.get(guard_key).unwrap();
     assert_eq!(complete["local_deletion"]["completed_at_ms"], 1000000);
     assert!(complete["local_deletion"]["owner"].is_string());

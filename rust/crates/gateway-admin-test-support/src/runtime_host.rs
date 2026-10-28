@@ -1,7 +1,7 @@
-use gateway_auth_contracts::types::AuthHost;
-use gateway_auth_contracts::{upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse};
 use gateway_auth_contracts::{
-    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
+    types::AuthHost,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_source::error::GatewayError;
 use std::{

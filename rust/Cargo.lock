@@ -913,6 +913,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-admin-diagnostics-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-runtime-contracts",
+ "gateway-admin-runtime-records",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-profile-values",
+ "gateway-redaction",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-admin-kernel"
 version = "0.1.0"
 dependencies = [
@@ -926,6 +944,25 @@ dependencies = [
  "gateway-migration-ledger",
  "gateway-source",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-admin-kernel-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-runtime-contracts",
+ "gateway-admin-runtime-records",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-kernel-protocol",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
  "serde_json",
 ]
 
@@ -952,14 +989,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-admin-paid-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-keys",
+ "gateway-admin-runtime-contracts",
+ "gateway-admin-runtime-records",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-paid-records",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-schema",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-admin-runtime"
 version = "0.1.0"
 dependencies = [
  "gateway-admin",
  "gateway-admin-contracts",
+ "gateway-admin-diagnostics-runtime",
+ "gateway-admin-kernel-runtime",
  "gateway-admin-keys",
+ "gateway-admin-paid-runtime",
+ "gateway-admin-runtime-contracts",
+ "gateway-admin-runtime-records",
+ "gateway-admin-settings-runtime",
  "gateway-admin-test-support",
- "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-native-wire",
  "gateway-auth-primitives",
@@ -969,6 +1031,7 @@ dependencies = [
  "gateway-authority-kernel-protocol",
  "gateway-authority-keys",
  "gateway-authority-paid-records",
+ "gateway-claude-roster",
  "gateway-claude-usage-protocol",
  "gateway-contracts",
  "gateway-core",
@@ -984,6 +1047,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-admin-runtime-contracts"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-auth-contracts",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-claude-roster",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-profile-values",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-admin-runtime-records"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-kernel-protocol",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-profile-values",
+ "gateway-schema",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-admin-settings-runtime"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-contracts",
+ "gateway-admin-kernel-runtime",
+ "gateway-admin-runtime-contracts",
+ "gateway-admin-runtime-records",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-authority",
+ "gateway-authority-kernel-protocol",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-local-refusal",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-admin-test-support"
 version = "0.1.0"
 dependencies = [
@@ -991,12 +1113,14 @@ dependencies = [
  "gateway-admin-contracts",
  "gateway-admin-keys",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-authority-keys",
+ "gateway-claude-roster",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
@@ -2222,15 +2346,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-claude-policy"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-catalog-provider",
+ "gateway-claude-roster",
+ "gateway-claude-usage-protocol",
+ "gateway-claude-usage-quota",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-profile-values",
+ "gateway-provider-protocol",
+ "gateway-providers",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "gateway-claude-roster"
+version = "0.1.0"
+dependencies = [
+ "gateway-admin-runtime-records",
+ "gateway-admin-test-support",
+ "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-contracts",
+ "gateway-core",
+ "gateway-kv-codec",
+ "gateway-schema",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-claude-runtime"
 version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
+ "gateway-admin-runtime-records",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
+ "gateway-claude-policy",
+ "gateway-claude-roster",
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-protocol",
  "gateway-claude-usage-quota",
@@ -2240,6 +2408,7 @@ dependencies = [
  "gateway-profile-values",
  "gateway-provider-protocol",
  "gateway-provider-source",
+ "gateway-providers",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -2253,17 +2422,21 @@ name = "gateway-claude-runtime-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
+ "gateway-admin-runtime-records",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
+ "gateway-claude-policy",
+ "gateway-claude-roster",
  "gateway-claude-runtime",
  "gateway-claude-usage-quota",
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
  "gateway-provider-protocol",
+ "gateway-providers",
  "gateway-schema",
  "gateway-source",
  "rusqlite",
@@ -2277,6 +2450,8 @@ dependencies = [
  "gateway-admin-runtime",
  "gateway-auth",
  "gateway-auth-contracts",
+ "gateway-auth-primitives",
+ "gateway-claude-roster",
  "gateway-core",
  "gateway-local-refusal",
  "gateway-source",
@@ -2346,6 +2521,8 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
+ "gateway-claude-policy",
+ "gateway-claude-roster",
  "gateway-claude-runtime",
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-protocol",
@@ -2598,6 +2775,7 @@ dependencies = [
  "gateway-admin-data",
  "gateway-admin-keys",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
@@ -2966,6 +3144,7 @@ dependencies = [
  "gateway-admin-data",
  "gateway-admin-keys",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-passkeys",
@@ -3087,6 +3266,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-admin-contracts",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-primitives",
@@ -3477,6 +3657,7 @@ dependencies = [
  "futures-util",
  "gateway-admin",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
@@ -3491,6 +3672,8 @@ dependencies = [
  "gateway-authority-routing-evidence",
  "gateway-authority-routing-records",
  "gateway-capacity-projection",
+ "gateway-claude-policy",
+ "gateway-claude-roster",
  "gateway-claude-runtime",
  "gateway-claude-runtime-test-support",
  "gateway-claude-usage-history",
@@ -4131,8 +4314,11 @@ dependencies = [
  "futures-util",
  "gateway-admin",
  "gateway-admin-contracts",
+ "gateway-admin-diagnostics-runtime",
  "gateway-admin-kernel",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
+ "gateway-admin-runtime-records",
  "gateway-admission",
  "gateway-auth",
  "gateway-auth-contracts",
@@ -4173,6 +4359,8 @@ dependencies = [
  "gateway-capacity-recovery",
  "gateway-catalog-provider",
  "gateway-catalog-runtime",
+ "gateway-claude-policy",
+ "gateway-claude-roster",
  "gateway-claude-runtime",
  "gateway-claude-usage-admin",
  "gateway-claude-usage-history-records",
@@ -4236,8 +4424,10 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-auth-contracts",
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-migration",
  "gateway-migration-data",
  "gateway-migration-profile",
@@ -4371,6 +4561,7 @@ name = "gateway-worker-web"
 version = "0.1.0"
 dependencies = [
  "gateway-admin-runtime",
+ "gateway-admin-runtime-contracts",
  "gateway-contracts",
  "gateway-core",
  "gateway-schema",

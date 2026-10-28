@@ -2,8 +2,8 @@ use crate::{
     collect::{self, Refresh},
     fetch::{ResultData, UsageHost},
 };
-use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap};
 use gateway_auth_contracts::{types::AuthHost, types::AuthResponse};
+use gateway_claude_roster::{claude, claude::AccountBinding, claude::Bootstrap};
 use gateway_core::state::AuthorityStore;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -34,11 +34,11 @@ pub fn parse(body: &SourceJson) -> Result<Target, GatewayError> {
     let account_id = source::member(body, "account_id")
         .as_ref()
         .and_then(source::string)
-        .ok_or_else(|| gateway_auth_contracts::types::invalid("account_id is required"))?;
+        .ok_or_else(|| gateway_auth_primitives::error::invalid("account_id is required"))?;
     let cohort_id = source::member(body, "account_cohort_id")
         .map(|v| {
             source::string(&v).ok_or_else(|| {
-                gateway_auth_contracts::types::invalid("account_cohort_id must be a string")
+                gateway_auth_primitives::error::invalid("account_cohort_id must be a string")
             })
         })
         .transpose()?;

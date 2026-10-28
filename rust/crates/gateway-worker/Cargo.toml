@@ -17,6 +17,11 @@ fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 workspace = true
 
 [dependencies]
+gateway-admin-diagnostics-runtime = { path = "../gateway-admin-diagnostics-runtime" }
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-admin-runtime-records = { path = "../gateway-admin-runtime-records" }
+gateway-claude-policy = { path = "../gateway-claude-policy" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
 gateway-schema-values.workspace = true
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }

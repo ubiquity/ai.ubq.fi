@@ -1,5 +1,5 @@
 //! Real platform primitives for request-owned observational reads and writes.
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::{Context, ErrorDiagnostics};
 use gateway_authority_capacity::CapacityOperations;
 use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_contracts::identity::RequestId;
@@ -179,14 +179,14 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
 pub async fn error_diagnostics(
     runtime: &Runtime,
     context: &Context,
-) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
+) -> Result<ErrorDiagnostics, GatewayError> {
     if context.request_id != runtime.host().request_id {
         return Err(GatewayError::unavailable(
             "The administrative diagnostic receipt does not match this request.",
             "admin_body_receipt_mismatch",
         ));
     }
-    Ok(gateway_admin_runtime::capabilities::ErrorDiagnostics {
+    Ok(ErrorDiagnostics {
         retention: runtime.error_retention_diagnostics().await,
         // Source leaves unmeasured host text logs unknown, including platforms without paths.
         log_files: serde_json::json!({
@@ -242,7 +242,7 @@ impl ObservabilityHost for RequestHost {
         let seed =
             crate::claude_host::platform::bootstrap_for_source(&self.store, &self.platform).await?;
         let roster =
-            gateway_admin_runtime::claude::load_roster(&self.store, &self.platform, &seed).await?;
+            gateway_claude_roster::claude::load_roster(&self.store, &self.platform, &seed).await?;
         let host = crate::claude_host::platform::Host {
             store: self.store.clone(),
             platform: self.platform.clone(),

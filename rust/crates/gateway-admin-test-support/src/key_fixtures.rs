@@ -5,9 +5,8 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
 };
 use gateway_admin_keys::keys::{ApiKeyRecord, decode_record, deletion_key};
-use gateway_auth_contracts::{
-    types::AuthHost, types::AuthMethod, types::AuthPrincipal, types::AuthResponse,
-    types::AuthResponseBody,
+use gateway_auth_contracts::types::{
+    AuthHost, AuthMethod, AuthPrincipal, AuthResponse, AuthResponseBody,
 };
 use gateway_auth_primitives::crypto::Secret;
 use gateway_core::state::{
@@ -177,7 +176,7 @@ impl AdminHost for ClaimedDeletion<'_> {
             })
             .await?;
         if result != CommitOutcome::Committed {
-            return Err(gateway_auth_contracts::types::conflict(
+            return Err(gateway_auth_primitives::error::conflict(
                 "Fixture cleanup ownership changed",
             ));
         }

@@ -1,20 +1,21 @@
 //! Existing public profile import, distinct from stopped complete-state adoption.
 use gateway_admin_data::policy::{self as migration, ImportOptions, Profile};
-use gateway_admin_runtime::capabilities::{Context, MigrationProfile, MigrationRequest};
+use gateway_admin_runtime_contracts::capabilities::{Context, MigrationProfile, MigrationRequest};
 use gateway_auth_contracts::types::AuthResponse;
-use gateway_core::query::QueryStore;
-use gateway_core::state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck};
+use gateway_core::{
+    query::QueryStore,
+    state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck},
+};
 use gateway_kv_codec::value::PortableValue;
-use gateway_migration_data::invalid;
-use gateway_migration_data::starts;
-use gateway_profile_source::codec::normalize_source_import_line_with_host;
-use gateway_profile_source::line::NormalizedEntry;
+use gateway_migration_data::{invalid, starts};
+use gateway_profile_source::{
+    codec::normalize_source_import_line_with_host, line::NormalizedEntry,
+};
 use gateway_profile_values::date::SourceDateHost;
 use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde::Serialize;
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub trait ProfileHost: SourceDateHost {

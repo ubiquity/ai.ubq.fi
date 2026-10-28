@@ -1,11 +1,14 @@
 //! Source Claude principal policy. Parsing data never mints a routing/cohort capability.
 use crate::store;
 use gateway_admin_contracts::source_input::{trim, whitespace};
-use gateway_auth_contracts::{types::AuthHost, types::conflict, types::invalid};
-use gateway_auth_primitives::{store::check, store::commit};
+use gateway_auth_contracts::types::AuthHost;
+use gateway_auth_primitives::{
+    error::{conflict, invalid},
+    store::{check, commit},
+};
 use gateway_core::{
-    source_control::{decode_source_control_record, encode_source_control_record},
-    state::{AuthorityStore, RevisionCheck, StoredRecord},
+    source_control::decode_source_control_record, source_control::encode_source_control_record,
+    state::AuthorityStore, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_source::{

@@ -1,44 +1,15 @@
-use super::*;
-use gateway_kv_codec::value::ValueEncoding;
+use gateway_admin_test_support::claude_source_fixtures::*;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_claude_roster::claude::{source_secret::ClaudeSourceSecret, *};
+use gateway_core::{source_control::decode_source_control_record, state::*};
+use gateway_kv_codec::{key::RecordKey, value::ValueEncoding};
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
+use serde_json::json;
+use std::sync::Arc;
 
-fn units(values: &[u16]) -> JsString16 {
-    JsString16::from_units(values.to_vec())
-}
-fn credential(secret: JsString16) -> Credential {
-    submitted_credential(
-        Arc::new(ClaudeSourceSecret::from_source(secret)),
-        Some(units(&[0xdc00])),
-        100,
-    )
-    .unwrap()
-}
-fn workspace(id: JsString16) -> Workspace {
-    Workspace {
-        id,
-        name: Some(units(&[0xd800])),
-        source: "kv".into(),
-        discovered_at_ms: None,
-        verified_at_ms: None,
-        last_error: None,
-    }
-}
-fn roster(credential: Credential, workspace: Option<Workspace>) -> AccountStore {
-    let fingerprint = fingerprint(&credential, workspace.as_ref());
-    AccountStore {
-        v: 1,
-        accounts: vec![AccountBinding {
-            account_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into(),
-            account_cohort_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb".into(),
-            evidence_generation: "cccccccc-cccc-cccc-cccc-cccccccccccc".into(),
-            credential_fingerprint: fingerprint,
-            credential,
-            workspace,
-        }],
-        active_account_id: Some("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa".into()),
-        active_reason: JsString16::from_utf8("admin_selection"),
-        updated_at_ms: 100,
-    }
-}
 #[test]
 fn scalar_fingerprint_and_roster_remain_source_compatible() {
     let mut value = credential(JsString16::from_utf8("sk-ant-api-synthetic-example-long"));
@@ -121,19 +92,6 @@ fn source_hint_slices_utf16_units_even_when_the_slice_splits_a_pair() {
     expected.extend_from_slice(&secret[secret.len() - 4..]);
     assert_eq!(credential.hint, JsString16::from_units(expected));
 }
-#[test]
-fn finite_stored_ids_and_empty_tombstones_are_unchanged() {
-    let value = roster(credential(JsString16::from_utf8("sk-ant-synthetic")), None);
-    let document = roster_source(&value);
-    let altered = document
-        .as_str()
-        .replace("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", r"\ud800");
-    assert!(parse_source_roster(&SourceJson::parse(&altered).unwrap()).is_err());
-    let empty = empty(100);
-    let record = encode_roster_record("tombstone", &empty, None).unwrap();
-    assert_eq!(decode_roster_record(&record, 100).unwrap(), Some(empty));
-}
-
 #[test]
 fn original_revision_and_generation_fences_survive_source_records() {
     use gateway_core::state::{AtomicTransition, CommitOutcome};

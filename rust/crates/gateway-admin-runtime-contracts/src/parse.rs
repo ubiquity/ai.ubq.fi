@@ -1,12 +1,12 @@
 use crate::capabilities::*;
-use gateway_admin_contracts::fields::{
-    boolean, bounded_positive, cursor, digits, first, truth, uuid,
+use gateway_admin_contracts::{
+    fields::{boolean, bounded_positive, cursor, digits, first, truth, uuid},
+    operations::AdminInput,
+    source_input as source_body,
 };
-use gateway_admin_contracts::{operations::AdminInput, source_input as source_body};
-use gateway_auth_contracts::types::invalid;
+use gateway_auth_primitives::error::invalid;
 use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_profile_values::coercion::js_number;
-use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -47,10 +47,10 @@ pub fn capture(input: &AdminInput, incidents: bool) -> Result<CaptureRequest, Ga
         });
     }
     let incident = first(q, "incident_id")
-        .map(schema_scalar::js_trim)
+        .map(gateway_schema_values::scalar::js_trim)
         .filter(|s| !s.is_empty());
     let request = first(q, "request_id")
-        .map(schema_scalar::js_trim)
+        .map(gateway_schema_values::scalar::js_trim)
         .filter(|s| !s.is_empty());
     if let Some(request) = request {
         if incident.is_some()
@@ -116,7 +116,7 @@ pub fn migration(input: &AdminInput) -> Result<MigrationImport, GatewayError> {
     let q = &input.query;
     let profile = match first(q, "profile")
         .unwrap_or("")
-        .trim_matches(schema_scalar::js_whitespace)
+        .trim_matches(gateway_schema_values::scalar::js_whitespace)
     {
         "" | "prod" => MigrationProfile::Prod,
         "local" => MigrationProfile::Local,
@@ -239,7 +239,9 @@ pub fn claude_source(body: &SourceJson) -> Result<ClaudeSubmission, GatewayError
     }
     Ok(ClaudeSubmission {
         credential: credential.map(|text| {
-            std::sync::Arc::new(crate::claude::source_secret::ClaudeSourceSecret::from_source(text))
+            std::sync::Arc::new(
+                gateway_claude_roster::claude::source_secret::ClaudeSourceSecret::from_source(text),
+            )
         }),
         label,
         workspace_id,
@@ -264,7 +266,10 @@ pub fn prompt_groups(input: &AdminInput) -> Result<Vec<String>, GatewayError> {
     let groups: Vec<String> = first(&input.query, "group_by")
         .unwrap_or("key_presence")
         .split(',')
-        .map(|s| s.trim_matches(schema_scalar::js_whitespace).into())
+        .map(|s| {
+            s.trim_matches(gateway_schema_values::scalar::js_whitespace)
+                .into()
+        })
         .collect();
     let allowed = [
         "provider",

@@ -3,7 +3,7 @@ use crate::host_types::{CapacityAccountRef, CapacityProbe, ClaudeAccountReadback
 use crate::{
     ObservabilityRuntime, health, replay_values::SourceObject, store, types::ObservabilityHost,
 };
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_capacity::CapacityOperations;

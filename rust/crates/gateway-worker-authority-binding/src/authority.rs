@@ -3,9 +3,11 @@
 
 use futures_util::StreamExt;
 use gateway_core::{
-    query::QueryEntry, query::QueryPage, query::QueryRequest, query::QuerySelector,
-    query::QueryStore, state::AtomicTransition, state::AuthorityStore, state::CommitOutcome,
-    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
+    query::{QueryEntry, QueryPage, QueryRequest, QuerySelector, QueryStore},
+    state::{
+        AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck,
+        StoredRecord,
+    },
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
@@ -67,9 +69,9 @@ enum ProfileKind {
     Local,
     Prod,
 }
-impl From<gateway_admin_runtime::capabilities::MigrationRequest> for ProfileMigration {
-    fn from(request: gateway_admin_runtime::capabilities::MigrationRequest) -> Self {
-        use gateway_admin_runtime::capabilities::{MigrationProfile, MigrationRequest};
+impl From<gateway_admin_runtime_contracts::capabilities::MigrationRequest> for ProfileMigration {
+    fn from(request: gateway_admin_runtime_contracts::capabilities::MigrationRequest) -> Self {
+        use gateway_admin_runtime_contracts::capabilities::{MigrationProfile, MigrationRequest};
         match request {
             MigrationRequest::Validate => Self::Validate,
             MigrationRequest::Import(value) => Self::Import {
@@ -86,9 +88,9 @@ impl From<gateway_admin_runtime::capabilities::MigrationRequest> for ProfileMigr
         }
     }
 }
-impl From<ProfileMigration> for gateway_admin_runtime::capabilities::MigrationRequest {
+impl From<ProfileMigration> for gateway_admin_runtime_contracts::capabilities::MigrationRequest {
     fn from(request: ProfileMigration) -> Self {
-        use gateway_admin_runtime::capabilities::{
+        use gateway_admin_runtime_contracts::capabilities::{
             MigrationImport, MigrationProfile, MigrationRequest,
         };
         match request {
@@ -239,7 +241,10 @@ impl DurableObject for GatewayAuthority {
                     let result = crate::migration_host::execute_profile(
                         &store,
                         request.into(),
-                        gateway_admin_runtime::capabilities::Context { request_id, now_ms },
+                        gateway_admin_runtime_contracts::capabilities::Context {
+                            request_id,
+                            now_ms,
+                        },
                     )
                     .await?;
                     if result.stream.is_some() {
@@ -348,8 +353,8 @@ impl RemoteAuthorityStore {
 
     pub async fn profile_migration(
         &self,
-        request: gateway_admin_runtime::capabilities::MigrationRequest,
-        context: gateway_admin_runtime::capabilities::Context,
+        request: gateway_admin_runtime_contracts::capabilities::MigrationRequest,
+        context: gateway_admin_runtime_contracts::capabilities::Context,
     ) -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
         match self
             .exchange(StoreRequest::ProfileMigration {

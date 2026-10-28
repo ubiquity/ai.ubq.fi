@@ -151,10 +151,10 @@ fn observational_codex_runtime_never_redeems_a_manual_reset() {
     host.at.set(1000);
     let runtime = ObservabilityRuntime::new(store.clone(), host);
     let error = run(runtime.codex(
-        gateway_admin_runtime::capabilities::CodexRequest::ConsumeReset {
+        gateway_admin_runtime_contracts::capabilities::CodexRequest::ConsumeReset {
             account_id_hash: "a".repeat(64),
         },
-        gateway_admin_runtime::capabilities::Context {
+        gateway_admin_runtime_contracts::capabilities::Context {
             request_id: "read-only-diagnostics".into(),
             now_ms: 1000,
         },

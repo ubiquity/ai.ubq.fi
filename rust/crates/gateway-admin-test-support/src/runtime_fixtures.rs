@@ -1,11 +1,12 @@
 //! Composition helpers for the original admin-runtime contract cases.
 use crate::{runtime_host::Host, runtime_store::Store};
 use gateway_admin_contracts::operations::AdminInput;
-use gateway_admin_runtime::{
-    AdminRuntime, RuntimeConfig,
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig,
     capabilities::{Context, ErrorDiagnostics, PricingSnapshot, RuntimeCapabilities},
 };
-use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal, types::AuthResponseBody};
+use gateway_auth_contracts::types::{AuthMethod, AuthPrincipal, AuthResponseBody};
 use gateway_contracts::model::ModelId;
 use gateway_core::{source_control::encode_source_control_record, state::StoredRecord};
 use gateway_schema::{

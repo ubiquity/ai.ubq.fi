@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
 gateway-migration-data = { path = "../gateway-migration-data" }
 gateway-migration-profile = { path = "../gateway-migration-profile" }
 gateway-migration-protocol = { path = "../gateway-migration-protocol" }

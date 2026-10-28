@@ -1,6 +1,5 @@
 mod support;
-use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context};
-use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_admin_runtime_contracts::{capabilities::AnalyticsRequest, capabilities::Context};
 use gateway_contracts::lifecycle::DeliveryOutcome;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::{
@@ -9,6 +8,7 @@ use gateway_kv_codec::{
 use gateway_observability::{
     ObservabilityRuntime, ledger::ErrorObservation, records::record_source_json,
 };
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use support::{Host, Memory, run};
 fn field(value: &SourceJson, name: &str) -> SourceJson {

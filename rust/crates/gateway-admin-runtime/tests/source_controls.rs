@@ -3,18 +3,19 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as input,
 };
-use gateway_admin_runtime::{
-    AdminRuntime, RuntimeConfig, capabilities::RuntimeCapabilities, claude_access, parse,
-};
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{RuntimeConfig, capabilities::RuntimeCapabilities, parse};
+use gateway_admin_runtime_records::claude_access;
 use gateway_auth_contracts::{
-    types::AuthHost, types::AuthMethod, types::AuthPrincipal, types::AuthResponse, upstream::*,
+    types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse},
+    upstream::*,
 };
 use gateway_contracts::model::ModelId;
 use gateway_core::{
-    query::{QueryPage, QueryRequest, QueryStore},
-    source_control::{decode_source_control_record, encode_source_control_record},
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
+    query::*, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::*,
 };
+use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{key::RecordKey, value::ValueEncoding};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -476,11 +477,13 @@ struct ClearProbe {
 impl RuntimeCapabilities for ClearProbe {
     async fn claude(
         &self,
-        request: gateway_admin_runtime::capabilities::ClaudeRequest,
-        _: gateway_admin_runtime::capabilities::Context,
+        request: gateway_admin_runtime_contracts::capabilities::ClaudeRequest,
+        _: gateway_admin_runtime_contracts::capabilities::Context,
     ) -> Result<AuthResponse, GatewayError> {
-        let gateway_admin_runtime::capabilities::ClaudeRequest::ClearQuota { cohort_id, .. } =
-            request
+        let gateway_admin_runtime_contracts::capabilities::ClaudeRequest::ClearQuota {
+            cohort_id,
+            ..
+        } = request
         else {
             return Err(GatewayError::unavailable(
                 "Unexpected probe request",

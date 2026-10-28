@@ -1,11 +1,12 @@
-use crate::{
-    AdminRuntime,
-    capabilities::RuntimeCapabilities,
-    kernel::{default_limit_key, default_window_key},
-    store,
-};
+use crate::SettingsAdmin;
 use gateway_admin_contracts::{
     fields, operations::AdminInput, routes::AdminOperation, source_input as source_body,
+};
+use gateway_admin_kernel_runtime::KernelAdmin;
+use gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities;
+use gateway_admin_runtime_records::{
+    kernel_data::{default_limit_key, default_window_key},
+    store,
 };
 use gateway_auth_contracts::types::{AuthHost, AuthResponse};
 use gateway_auth_primitives::{
@@ -15,16 +16,19 @@ use gateway_auth_primitives::{
 use gateway_authority_kernel_protocol::KernelDefaults;
 use gateway_authority_keys as keys;
 use gateway_contracts::model::ModelId;
-use gateway_core::query::QueryStore;
-use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::{state::RecordMutation, state::StoredRecord};
-use gateway_kv_codec::key::RecordKey;
-use gateway_schema::catalog_store::runtime_config_key;
-use gateway_schema::reasoning::ModelReasoning;
-use gateway_schema::runtime_config::{
-    build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+use gateway_core::{
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::RecordMutation, state::StoredRecord,
 };
-use gateway_schema::snapshot::ModelSnapshot;
+use gateway_kv_codec::key::RecordKey;
+use gateway_schema::{
+    catalog_store::runtime_config_key,
+    reasoning::ModelReasoning,
+    runtime_config::{
+        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+    },
+    snapshot::ModelSnapshot,
+};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::json;
 
@@ -55,8 +59,8 @@ fn runtime_value(row: Option<&StoredRecord>, now: i64) -> Result<Option<SourceJs
         row,
     )?))
 }
-impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    pub(crate) async fn defaults(
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H, C> {
+    pub async fn defaults(
         &self,
         op: AdminOperation,
         input: &AdminInput,
@@ -64,7 +68,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         if op == AdminOperation::DefaultsGet {
             let row = self.store.read(&runtime_config_key()).await?;
             let runtime = runtime_value(row.as_ref(), input.now_ms)?;
-            let defaults = self.kernel_defaults(input.now_ms).await?;
+            let defaults = (KernelAdmin {
+                store: self.store,
+                host: self.host,
+                capabilities: self.capabilities,
+            })
+            .kernel_defaults(input.now_ms)
+            .await?;
             let (model, effort) = model_defaults(runtime.as_ref());
             let mut body = response(&model, &effort, &defaults);
             source_body::set(
@@ -96,7 +106,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             let dk = keys::kernel_defaults();
             let dr = self.store.read(&dk).await?;
             let runtime = runtime_value(rr.as_ref(), input.now_ms)?;
-            let old = self.kernel_defaults(input.now_ms).await?;
+            let old = (KernelAdmin {
+                store: self.store,
+                host: self.host,
+                capabilities: self.capabilities,
+            })
+            .kernel_defaults(input.now_ms)
+            .await?;
             let defaults = KernelDefaults {
                 usage_limit_requests: limit.unwrap_or(old.usage_limit_requests),
                 window_ms: window.unwrap_or(old.window_ms),
@@ -160,7 +176,13 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 Ok(true) => return Ok(AuthResponse::source_json(200, response)),
                 other => {
                     if let Some(guard) = &guard {
-                        self.release_cutover(&cutover_key, guard).await?;
+                        (KernelAdmin {
+                            store: self.store,
+                            host: self.host,
+                            capabilities: self.capabilities,
+                        })
+                        .release_cutover(&cutover_key, guard)
+                        .await?;
                     }
                     other?;
                 }
@@ -210,10 +232,23 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 "Kernel default-window cutover guard changed",
             ));
         }
-        match self.live_default_reservations(now).await {
+        match (KernelAdmin {
+            store: self.store,
+            host: self.host,
+            capabilities: self.capabilities,
+        })
+        .live_default_reservations(now)
+        .await
+        {
             Ok(false) => Ok(Some(row)),
             result => {
-                self.release_cutover(cutover_key, &row).await?;
+                (KernelAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                })
+                .release_cutover(cutover_key, &row)
+                .await?;
                 Err(match result {
                     Ok(_) => conflict(
                         "Active Kernel quota reservations must settle before changing the default window",
@@ -251,9 +286,10 @@ fn validate_defaults_fields(body: &SourceJson) -> Result<Option<AuthResponse>, G
                 Some("invalid_request_error"),
                 None,
             );
-            let status = error.status;
-            let body = error.body().clone();
-            return Ok(Some(AuthResponse::closed_error(status, body)));
+            return Ok(Some(AuthResponse::source_json(
+                error.status,
+                error.body().clone(),
+            )));
         }
     }
     Ok(None)
@@ -327,11 +363,10 @@ fn defaults_runtime(
                 // The original scalar error path remains unchanged;
                 // only an actual source-reflected opaque message needs
                 // the existing lossless source response rail.
-                let scalar_body = SourceJson::from_serializable(&error.diagnostic().envelope)?;
-                if scalar_body.as_bytes() == error.body().as_bytes() {
+                if SourceJson::from_serializable(&error.diagnostic().envelope)? == *error.body() {
                     return Err(error.diagnostic().clone());
                 }
-                return Ok(DefaultRuntime::Break(AuthResponse::closed_error(
+                return Ok(DefaultRuntime::Break(AuthResponse::source_json(
                     error.status,
                     error.body().clone(),
                 )));

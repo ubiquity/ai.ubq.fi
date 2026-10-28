@@ -89,6 +89,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }

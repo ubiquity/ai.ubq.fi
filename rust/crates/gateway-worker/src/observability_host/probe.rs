@@ -1,22 +1,20 @@
 //! Fixed free provider GETs with one actual request cancellation and absolute deadline.
 use super::{RequestHost, unavailable};
-use crate::transport::outbound::PinnedDestination;
-use crate::transport::outbound::send_constructed;
-use crate::transport::outbound::send_http;
-use gateway_admin_runtime::claude;
-use gateway_auth_credentials::{
-    provider_credentials as codex, provider_credentials::CodexSourceAccount,
-};
+use crate::transport::outbound::{PinnedDestination, send_constructed, send_http};
+use gateway_auth_credentials::provider_credentials::{self as codex, CodexSourceAccount};
+use gateway_claude_roster::claude;
 use gateway_observability::{
     host_types::*,
     types::{HealthEvent, HealthTarget},
 };
-use gateway_source::source_serialization as source;
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use gateway_worker_platform::cancellation::Cancellation;
-use gateway_worker_platform::cancellation::Deadline;
+use gateway_schema_values::scalar as util;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
+use gateway_worker_platform::cancellation::{Cancellation, Deadline};
+use std::collections::BTreeMap;
 use worker::{Method, Response};
-use {gateway_schema_values::scalar as util, std::collections::BTreeMap};
 
 pub(super) struct Reply {
     pub response: Response,

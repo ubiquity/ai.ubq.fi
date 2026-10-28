@@ -2,7 +2,7 @@
 //! No reservation/index permission, new namespace, or generic storage interpretation.
 use crate::store;
 use gateway_admin_contracts::{fields, source_input as body};
-use gateway_auth_contracts::types::invalid;
+use gateway_auth_primitives::error::invalid;
 use gateway_authority_kernel_protocol::{KernelPolicy, KernelWindow};
 use gateway_core::{
     source_control::decode_source_control_record, source_control::encode_source_control_record,
@@ -17,9 +17,9 @@ use gateway_source::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub(crate) type SourcePolicy = KernelPolicy<JsString16, f64>;
-pub(crate) type SourceWindow = KernelWindow<JsString16>;
-pub(crate) fn part(value: Option<&SourceJson>) -> Option<JsString16> {
+pub type SourcePolicy = KernelPolicy<JsString16, f64>;
+pub type SourceWindow = KernelWindow<JsString16>;
+pub fn part(value: Option<&SourceJson>) -> Option<JsString16> {
     value
         .and_then(body::text)
         .map(|v| body::trim(&v))
@@ -39,7 +39,7 @@ fn scope(value: Option<&SourceJson>) -> bool {
         .and_then(|s| s.try_utf8().ok())
         .is_some_and(|s| s.eq_ignore_ascii_case("org"))
 }
-pub(crate) fn target(value: &SourceJson) -> Result<(JsString16, Option<JsString16>), GatewayError> {
+pub fn target(value: &SourceJson) -> Result<(JsString16, Option<JsString16>), GatewayError> {
     let owner =
         part(body::member(value, "owner").as_ref()).ok_or_else(|| invalid("owner is required"))?;
     let repo = part(body::member(value, "repo").as_ref());
@@ -53,7 +53,7 @@ pub(crate) fn target(value: &SourceJson) -> Result<(JsString16, Option<JsString1
     }
     Ok((owner, repo))
 }
-pub(crate) fn data_value(
+pub fn data_value(
     row: Option<&StoredRecord>,
     now: i64,
 ) -> Result<Option<SourceJson>, GatewayError> {
@@ -64,14 +64,14 @@ pub(crate) fn data_value(
     }
     decode_source_control_record(row).map(Some)
 }
-pub(crate) async fn data_read<S: gateway_core::state::AuthorityStore>(
+pub async fn data_read<S: gateway_core::state::AuthorityStore>(
     store: &S,
     key: &RecordKey,
     now: i64,
 ) -> Result<Option<SourceJson>, GatewayError> {
     data_value(store.read(key).await?.as_ref(), now)
 }
-pub(crate) fn data_put(
+pub fn data_put(
     key: RecordKey,
     document: &SourceJson,
     expiry: Option<i64>,
@@ -85,13 +85,13 @@ pub(crate) fn data_put(
 fn scalar(value: &SourceJson) -> Option<Value> {
     value.deserialize().ok()
 }
-pub(crate) fn limit(value: &SourceJson) -> Option<i64> {
+pub fn limit(value: &SourceJson) -> Option<i64> {
     scalar(value).as_ref().and_then(fields::limit)
 }
-pub(crate) fn positive(value: &SourceJson) -> Option<i64> {
+pub fn positive(value: &SourceJson) -> Option<i64> {
     scalar(value).as_ref().and_then(fields::positive)
 }
-pub(crate) fn expiry(value: &SourceJson, now: i64) -> Option<f64> {
+pub fn expiry(value: &SourceJson, now: i64) -> Option<f64> {
     let value = scalar(value)?;
     if !value.is_number() && !value.is_string() {
         return None;
@@ -99,7 +99,7 @@ pub(crate) fn expiry(value: &SourceJson, now: i64) -> Option<f64> {
     let n = js_number(&value).trunc();
     (n.is_finite() && (n == -1.0 || n > now as f64)).then_some(n)
 }
-pub(crate) fn decode_policy(
+pub fn decode_policy(
     value: SourceJson,
     owner: &JsString16,
     repo: Option<&JsString16>,
@@ -125,7 +125,7 @@ pub(crate) fn decode_policy(
     }
     Ok(policy)
 }
-pub(crate) fn validate_window(
+pub fn validate_window(
     value: SourceJson,
     owner: &JsString16,
     repo: Option<&JsString16>,
@@ -147,7 +147,7 @@ pub(crate) fn validate_window(
     }
     Ok(window)
 }
-pub(crate) fn new_window(
+pub fn new_window(
     owner: &JsString16,
     repo: Option<&JsString16>,
     window_ms: i64,
@@ -166,10 +166,10 @@ pub(crate) fn new_window(
         reservations: BTreeMap::new(),
     }
 }
-pub(crate) fn canonical(document: SourceJson) -> SourceJson {
+pub fn canonical(document: SourceJson) -> SourceJson {
     source::canonical(&document).expect("typed finite kernel data")
 }
-pub(crate) fn identity_fields(
+pub fn identity_fields(
     owner: &JsString16,
     repo: Option<&JsString16>,
 ) -> Vec<(&'static str, SourceJson)> {
@@ -179,7 +179,7 @@ pub(crate) fn identity_fields(
     }
     fields
 }
-pub(crate) fn window_document(window: &SourceWindow) -> SourceJson {
+pub fn window_document(window: &SourceWindow) -> SourceJson {
     let mut fields = vec![
         ("v", body::json(&2)),
         (
@@ -201,10 +201,10 @@ pub(crate) fn window_document(window: &SourceWindow) -> SourceJson {
     }
     canonical(body::object(fields))
 }
-pub(crate) fn summary(policy: &SourcePolicy, window: &SourceWindow, now: i64) -> SourceJson {
+pub fn summary(policy: &SourcePolicy, window: &SourceWindow, now: i64) -> SourceJson {
     summary_document(policy, &window_document(window), now)
 }
-pub(crate) fn summary_document(policy: &SourcePolicy, window: &SourceJson, now: i64) -> SourceJson {
+pub fn summary_document(policy: &SourcePolicy, window: &SourceJson, now: i64) -> SourceJson {
     let number = |name| body::member(window, name).expect("normalized source window number");
     let created = number("created_at_ms");
     let updated = number("updated_at_ms");
@@ -233,12 +233,12 @@ pub(crate) fn summary_document(policy: &SourcePolicy, window: &SourceJson, now: 
     ]);
     canonical(body::object(fields))
 }
-pub(crate) fn source_truth(value: &SourceJson) -> bool {
+pub fn source_truth(value: &SourceJson) -> bool {
     !matches!(value.as_str(), "null" | "false")
         && body::number(value).is_none_or(|n| n != 0.0 && !n.is_nan())
         && body::text(value).is_none_or(|s| !s.as_units().is_empty())
 }
-pub(crate) fn physical_labels(
+pub fn physical_labels(
     key: &RecordKey,
     org: bool,
 ) -> Result<Option<(JsString16, Option<JsString16>)>, GatewayError> {
@@ -263,4 +263,14 @@ pub(crate) fn physical_labels(
         Some(repo)
     };
     Ok(Some((owner, repo)))
+}
+
+pub fn default_limit_key() -> RecordKey {
+    store::key(serde_json::json!([
+        "default",
+        "kernel_policy_limit_requests"
+    ]))
+}
+pub fn default_window_key() -> RecordKey {
+    store::key(serde_json::json!(["default", "kernel_policy_window_ms"]))
 }

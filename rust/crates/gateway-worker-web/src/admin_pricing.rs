@@ -1,5 +1,5 @@
 //! Source OpenLux metadata decoding and pure pricing projection; no I/O or authority.
-use gateway_admin_runtime::capabilities::PricingSnapshot;
+use gateway_admin_runtime_contracts::capabilities::PricingSnapshot;
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
 use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{

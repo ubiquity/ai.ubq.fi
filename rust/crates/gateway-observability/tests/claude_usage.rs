@@ -1,11 +1,9 @@
-use gateway_admin_runtime::{
-    capabilities::Context,
-    claude::{self, AccountBinding},
-};
+use gateway_admin_runtime_contracts::capabilities::Context;
 use gateway_auth_contracts::{
     types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
     webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
 };
+use gateway_claude_roster::{claude, claude::AccountBinding};
 use gateway_claude_runtime_test_support::fixture::{NOW, account};
 use gateway_claude_usage_history::{History, HistoryHost};
 use gateway_claude_usage_history_records::types::{ClaudeAcceptedObservation, CredentialKind};
@@ -180,7 +178,7 @@ impl ObservabilityHost for Fixture {
         for a in &roster.roster.accounts {
             let row = self
                 .store
-                .read(&gateway_claude_runtime::persistence::quota_key(a))
+                .read(&gateway_claude_policy::quota::quota_key(a))
                 .await?;
             let quota = row
                 .as_ref()
@@ -264,7 +262,7 @@ fn automatic_capture_visits_unused_and_guarded_accounts_then_returns_updated_ros
     let a = account(1);
     let b = account(2);
     host.seed(vec![a.clone(), b.clone()])?;
-    let key = gateway_claude_runtime::persistence::quota_key(&b);
+    let key = gateway_claude_policy::quota::quota_key(&b);
     host.store.rows.borrow_mut().insert(key.0,StoredRecord::json("guard",json!({"updated_at_ms":NOW,"windows":{},"standard":{},"last_error":{"kind":"workspace","status":403,"message":"existing guard","at_ms":NOW},"cooldown_until_ms":NOW+600_000}),None));
     let runtime = ObservabilityRuntime::new(host.store.clone(), host.clone());
     let body = document(run(runtime.capacity_response(false, context()))?)?;
@@ -555,13 +553,14 @@ fn frozen_b592_usage_history_atomic_rows_retention_keys_and_rollup_readbacks_mat
 }
 
 struct AdminComposition<'a>(&'a Fixture);
-impl gateway_admin_runtime::capabilities::RuntimeCapabilities for AdminComposition<'_> {
+impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for AdminComposition<'_> {
     async fn claude(
         &self,
-        request: gateway_admin_runtime::capabilities::ClaudeRequest,
+        request: gateway_admin_runtime_contracts::capabilities::ClaudeRequest,
         context: Context,
     ) -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
-        let gateway_admin_runtime::capabilities::ClaudeRequest::RefreshUsage { document } = request
+        let gateway_admin_runtime_contracts::capabilities::ClaudeRequest::RefreshUsage { document } =
+            request
         else {
             return Err(missing());
         };
@@ -594,7 +593,7 @@ fn authenticated_admin_service_dispatch_executes_real_account_fenced_collector_a
         store: &host.store,
         host: &host,
         capabilities: &capabilities,
-        config: &gateway_admin_runtime::RuntimeConfig::default(),
+        config: &gateway_admin_runtime_contracts::RuntimeConfig::default(),
     };
     let config = AuthConfig {
         admin_tokens: vec![Secret::new("public-fixture-admin".into())],

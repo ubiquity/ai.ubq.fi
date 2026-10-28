@@ -1,8 +1,6 @@
 //! Fixed administrator read/summary operations over the current request's hosts.
-use gateway_admin_runtime::{
-    brief,
-    capabilities::{Context, ErrorDiagnostics, PricingSnapshot, SupervisorBriefTarget},
-};
+use gateway_admin_diagnostics_runtime::brief;
+use gateway_admin_runtime_contracts::{capabilities::Context, capabilities::ErrorDiagnostics, capabilities::PricingSnapshot, capabilities::SupervisorBriefTarget};
 use gateway_catalog_runtime::admin::AdminCatalogOperation;
 use gateway_source::error::GatewayError;
 use serde_json::Value;

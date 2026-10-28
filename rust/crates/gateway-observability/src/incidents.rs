@@ -5,7 +5,7 @@ use crate::{
     store,
     types::ObservabilityHost,
 };
-use gateway_admin_runtime::capabilities::{CaptureRequest, Context};
+use gateway_admin_runtime_contracts::{capabilities::CaptureRequest, capabilities::Context};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};

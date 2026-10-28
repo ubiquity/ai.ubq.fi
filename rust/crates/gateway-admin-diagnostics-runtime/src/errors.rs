@@ -1,12 +1,11 @@
-use crate::{
-    AdminRuntime,
-    capabilities::{Context, RuntimeCapabilities},
-    store,
-};
+use crate::DiagnosticsAdmin;
 use gateway_admin_contracts::{fields, operations::AdminInput};
-use gateway_auth_contracts::{types::AuthHost, types::AuthResponse, types::invalid};
+use gateway_admin_runtime_contracts::capabilities::{Context, RuntimeCapabilities};
+use gateway_admin_runtime_records::store;
+use gateway_auth_contracts::types::{AuthHost, AuthResponse};
+use gateway_auth_primitives::error::invalid;
 use gateway_core::{query::QueryStore, state::StoredRecord};
-use gateway_kv_codec::value::{PortableValue, ValueEncoding};
+use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use gateway_profile_values::coercion::js_number;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
@@ -149,8 +148,8 @@ fn wire_value(value: &PortableValue) -> Result<PortableValue, GatewayError> {
         }
     })
 }
-impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    pub(crate) async fn errors(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> DiagnosticsAdmin<'_, S, H, C> {
+    pub async fn errors(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
         let limit = match fields::first(&input.query, "limit") {
             None => 100,
             Some(s) => {

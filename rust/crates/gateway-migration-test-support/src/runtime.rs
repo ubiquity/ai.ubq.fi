@@ -247,7 +247,7 @@ impl gateway_auth_contracts::types::AuthHost for AdminHost {
     }
 }
 pub struct Capabilities;
-impl gateway_admin_runtime::capabilities::RuntimeCapabilities for Capabilities {}
+impl gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities for Capabilities {}
 pub fn admin_input(body: Value) -> Result<AdminInput, GatewayError> {
     Ok(AdminInput {
         parameter: None,

@@ -1,7 +1,5 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_admin_runtime::capabilities::{
-    Context, MigrationImport, MigrationProfile, MigrationRequest,
-};
+use gateway_admin_runtime_contracts::{capabilities::Context, capabilities::MigrationImport, capabilities::MigrationProfile, capabilities::MigrationRequest};
 use gateway_auth_contracts::types::{AuthResponse, AuthResponseBody};
 use gateway_core::state::*;
 use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};

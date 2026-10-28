@@ -4,11 +4,11 @@ pub(crate) mod catalog;
 pub(crate) mod platform;
 
 use crate::host::PlatformHost;
-use gateway_admin_runtime::claude_generation::StateGeneration;
 use gateway_auth_contracts::{types::AuthMethod, types::AuthPrincipal};
+use gateway_claude_policy::{host::PoolConfig, host::SelectionInput};
+use gateway_claude_roster::claude_generation::StateGeneration;
 use gateway_claude_runtime::{
-    host::{OutcomeDecision, PoolConfig, PoolSelection, SelectedAccount, SelectionInput},
-    pool::ClaudePoolSession,
+    host::OutcomeDecision, host::PoolSelection, host::SelectedAccount, pool::ClaudePoolSession,
 };
 use gateway_contracts::{claude::ClaudeErrorEvidence, model::ModelId};
 use gateway_provider_protocol::replay::ReplayTransport;
@@ -125,7 +125,7 @@ impl Binding {
         }
         let allowed_key_ids =
             crate::admin_host::config(&self.host.platform.env).claude_allowed_key_ids;
-        let access = gateway_admin_runtime::claude_access::load_policy(
+        let access = gateway_admin_runtime_records::claude_access::load_policy(
             &self.store,
             &self.host.platform,
             &allowed_key_ids,
@@ -271,7 +271,7 @@ impl Binding {
                 &self.store,
                 &self.host,
                 &selected,
-                gateway_claude_runtime::host::ResponseObservation {
+                gateway_claude_policy::host::ResponseObservation {
                     status: response.status,
                     headers: response.headers,
                     provider_request_id: response.provider_request_id,
@@ -423,7 +423,7 @@ fn invalid(message: &str) -> GatewayError {
 
 /// Closed observational models target using the exact caller's read binding.
 pub(crate) fn models_probe_request(
-    account: &gateway_admin_runtime::claude::AccountBinding,
+    account: &gateway_claude_roster::claude::AccountBinding,
 ) -> Result<crate::transport::outbound::ConstructedRequest, GatewayError> {
     let headers = platform::headers(account, true)
         .map_err(|_| *crate::inference_local_lifecycle::wrapper_error().error)?;

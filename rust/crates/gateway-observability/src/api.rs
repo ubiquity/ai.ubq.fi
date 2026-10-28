@@ -1,12 +1,11 @@
 //! Finite admin adapters. Pure projections read the one source-compatible QueryStore.
 use crate::{ObservabilityRuntime, store, types::ObservabilityHost};
-use gateway_admin_runtime::capabilities::{AnalyticsRequest, Context, ProviderRequest};
+use gateway_admin_runtime_contracts::capabilities::{AnalyticsRequest, Context, ProviderRequest};
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_authority_paid_backfill::PaidBackfillOperations;
 use gateway_capacity_projection::scalars::{DAY, safe_i64};
 use gateway_core::query::{QuerySelector, QueryStore};
-use gateway_source::error::GatewayError;
-use gateway_source::source_json::SourceJson;
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 const HOUR: i64 = 3_600_000;

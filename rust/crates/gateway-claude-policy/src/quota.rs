@@ -1,6 +1,6 @@
 //! Current-account quota outcome authority; codecs are defined in the data owner.
-use gateway_admin_runtime::claude::AccountBinding;
 use gateway_auth_contracts::types::AuthHost;
+use gateway_claude_roster::claude::AccountBinding;
 use gateway_claude_usage_quota::{
     AUTH_INVALID_PROOF_TTL_MS, CONFIG_COOLDOWN_MS, Exhaustion, MIN_BLOCK_MS, PoolProof, QuotaError,
     QuotaObservation, QuotaState, RESET_MARGIN_MS, TRANSIENT_COOLDOWN_MS,
@@ -14,7 +14,9 @@ fn safe_integer(n: f64) -> bool {
         && n.fract() == 0.0
         && n.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64
 }
-pub(crate) struct Outcome<'a> {
+/// Plain transition input DATA. This does not establish credential validity, currentness,
+/// exhaustion authority, admission or paid permission; the execution owner still fences its CAS.
+pub struct Outcome<'a> {
     pub model: &'a ModelId,
     pub observed_at_ms: i64,
     pub observation: Option<&'a QuotaObservation>,
@@ -54,7 +56,7 @@ pub fn cooling_down(state: Option<&QuotaState>, now: i64) -> bool {
         .and_then(|s| s.cooldown_until_ms)
         .is_some_and(|at| at > now as f64)
 }
-pub(crate) fn merge(
+pub fn merge(
     previous: Option<&QuotaState>,
     binding: &AccountBinding,
     input: &Outcome<'_>,
@@ -163,7 +165,7 @@ pub(crate) fn merge(
     next.updated_at_ms = now as f64;
     next
 }
-pub(crate) fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
+pub fn clear(previous: Option<&QuotaState>, now: i64) -> QuotaState {
     let mut next = previous.cloned().unwrap_or(QuotaState {
         usage: None,
         usage_snapshot: None,
@@ -195,16 +197,16 @@ pub async fn record_usage<S: AuthorityStore, H: AuthHost>(
     observation: Option<&QuotaObservation>,
     usage: &gateway_claude_usage_protocol::state::UsageState,
 ) -> Result<Option<QuotaState>, gateway_source::error::GatewayError> {
-    use gateway_auth_primitives::{store::check, store::commit};
+    use gateway_auth_primitives::store::{check, commit};
     use gateway_core::state::RecordMutation;
     let now = usage.attempted_at_ms;
     for _ in 0..9 {
         let Some(current) =
-            gateway_admin_runtime::claude::current_binding(store, binding, now).await?
+            gateway_claude_roster::claude::current_binding(store, binding, now).await?
         else {
             return Ok(None);
         };
-        let key = crate::persistence::quota_key(binding);
+        let key = quota_key(binding);
         let row = store.read(&key).await?;
         let previous = row
             .as_ref()
@@ -292,3 +294,17 @@ fn merge_observation(next: &mut QuotaState, observation: &QuotaObservation) {
         next.representative_claim = observation.representative_claim.clone();
     }
 }
+
+pub fn quota_key(binding: &AccountBinding) -> RecordKey {
+    key(json!([
+        "uos_ai",
+        "claude_code_quota",
+        "v1",
+        binding.account_id,
+        binding.account_cohort_id
+    ]))
+}
+
+use gateway_auth_primitives::store::key;
+use gateway_kv_codec::key::RecordKey;
+use serde_json::json;

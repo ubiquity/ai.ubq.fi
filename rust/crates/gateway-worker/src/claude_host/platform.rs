@@ -2,13 +2,14 @@ use crate::{
     host::{PlatformHost, provider_secret},
     observability_host,
 };
-use gateway_admin_runtime::claude::{self, AccountBinding, Bootstrap, CredentialKind};
 use gateway_auth_contracts::{
-    types::AuthHost, upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse,
-    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
+    types::AuthHost,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_claude_runtime::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
+use gateway_claude_policy::host::{ClaudePoolHost, HealthObservation, WorkspaceResponse};
+use gateway_claude_roster::claude::{self, AccountBinding, Bootstrap, CredentialKind};
 use gateway_claude_usage_quota::observation::AcceptedObservation;
 use gateway_core::state::RevisionCheck;
 use gateway_observability::{
@@ -16,10 +17,11 @@ use gateway_observability::{
     types::{HealthEvent, HealthProvider, HealthTarget},
 };
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_schema_values::scalar as util;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
+use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};
-use {gateway_schema_values::scalar as util, serde_json::json};
 
 #[derive(Clone)]
 pub(crate) struct Host {
@@ -361,11 +363,11 @@ mod physical_tests {
     #[test]
     fn actual_prepared_body_kind_rejects_wrong_binding_before_any_host_header()
     -> Result<(), Box<dyn std::error::Error>> {
-        use gateway_admin_runtime::claude::{
+        use gateway_claude_roster::claude::{
             AccountBinding, Credential, CredentialKind, source_secret::ClaudeSourceSecret,
         };
-        use gateway_provider_claude_body::{
-            types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody,
+        use gateway_provider_claude_body::types::{
+            ClaudeBodyOptions, ClaudeCredentialKind, PreparedClaudeBody,
         };
         use gateway_provider_protocol::types::ClientSurface;
         use gateway_source::source_json::SourceJson;

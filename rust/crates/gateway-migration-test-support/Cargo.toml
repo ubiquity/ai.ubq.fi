@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
 gateway-admin-contracts = { path = "../gateway-admin-contracts" }
 gateway-admin-runtime = { path = "../gateway-admin-runtime" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }

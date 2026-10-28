@@ -1,8 +1,8 @@
 //! Source account selectors, generation checks and submitted-workspace projection.
 //! Inputs remain data; account mutations stay with their existing authority.
 pub mod readback;
-use gateway_admin_runtime::claude::{self, AccountBinding, Workspace};
 use gateway_auth_contracts::types::AuthHost;
+use gateway_claude_roster::{claude, claude::AccountBinding, claude::Workspace};
 use gateway_core::state::AuthorityStore;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
@@ -15,7 +15,7 @@ pub fn check_target_cohort(
 ) -> Result<(), GatewayError> {
     let cohort = original_leaf.and_then(source::string);
     if targeted && cohort.is_none() {
-        return Err(gateway_auth_contracts::types::invalid(
+        return Err(gateway_auth_primitives::error::invalid(
             "account_cohort_id is required for a targeted clear",
         ));
     }

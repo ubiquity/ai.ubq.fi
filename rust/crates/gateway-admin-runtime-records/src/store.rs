@@ -1,8 +1,8 @@
 use gateway_auth_contracts::types::AuthHost;
 use gateway_auth_primitives::crypto::uuid_from_random;
 use gateway_core::{
-    query::{QueryEntry, QueryRequest, QuerySelector, QueryStore},
-    state::{AuthorityStore, StoredRecord},
+    query::QueryEntry, query::QueryRequest, query::QuerySelector, query::QueryStore,
+    state::AuthorityStore, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;

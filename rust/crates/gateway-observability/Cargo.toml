@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
 gateway-schema-values.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
@@ -43,6 +44,9 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-claude-policy = { path = "../gateway-claude-policy" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }

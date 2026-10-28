@@ -1,9 +1,7 @@
 //! Finite administrative host bindings. Missing external owners remain explicit.
-use gateway_admin_runtime::{
-    RuntimeConfig,
-    capabilities::{
-        AnalyticsRequest, CatalogRequest, Context, ProviderRequest, RuntimeCapabilities,
-    },
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig, capabilities::AnalyticsRequest, capabilities::CatalogRequest,
+    capabilities::Context, capabilities::ProviderRequest, capabilities::RuntimeCapabilities,
 };
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_contracts::identity::RequestId;
@@ -104,7 +102,7 @@ impl Capabilities {
 impl RuntimeCapabilities for Capabilities {
     async fn migration(
         &self,
-        request: gateway_admin_runtime::capabilities::MigrationRequest,
+        request: gateway_admin_runtime_contracts::capabilities::MigrationRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -115,11 +113,11 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn capture(
         &self,
-        request: gateway_admin_runtime::capabilities::CaptureRequest,
+        request: gateway_admin_runtime_contracts::capabilities::CaptureRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
-        use gateway_admin_runtime::capabilities::CaptureRequest;
+        use gateway_admin_runtime_contracts::capabilities::CaptureRequest;
         match request {
             CaptureRequest::Request { request_id } => {
                 self.observations.export_capture_request(&request_id).await
@@ -154,7 +152,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn codex(
         &self,
-        request: gateway_admin_runtime::capabilities::CodexRequest,
+        request: gateway_admin_runtime_contracts::capabilities::CodexRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -182,19 +180,19 @@ impl RuntimeCapabilities for Capabilities {
     async fn pricing(
         &self,
         models: &[gateway_contracts::model::ModelId],
-    ) -> Result<gateway_admin_runtime::capabilities::PricingSnapshot, GatewayError> {
+    ) -> Result<gateway_admin_runtime_contracts::capabilities::PricingSnapshot, GatewayError> {
         self.support.pricing(models).await
     }
     async fn error_diagnostics(
         &self,
         context: Context,
-    ) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
+    ) -> Result<gateway_admin_runtime_contracts::capabilities::ErrorDiagnostics, GatewayError> {
         self.measured_body_bytes(&context)?;
         self.support.error_diagnostics(context).await
     }
     async fn supervisor_brief(
         &self,
-        target: gateway_admin_runtime::capabilities::SupervisorBriefTarget,
+        target: gateway_admin_runtime_contracts::capabilities::SupervisorBriefTarget,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;
@@ -202,7 +200,7 @@ impl RuntimeCapabilities for Capabilities {
     }
     async fn claude(
         &self,
-        request: gateway_admin_runtime::capabilities::ClaudeRequest,
+        request: gateway_admin_runtime_contracts::capabilities::ClaudeRequest,
         context: Context,
     ) -> Result<AuthResponse, GatewayError> {
         self.measured_body_bytes(&context)?;

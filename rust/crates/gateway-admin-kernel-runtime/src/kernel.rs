@@ -1,44 +1,39 @@
-use crate::{
-    AdminRuntime,
-    capabilities::RuntimeCapabilities,
+use crate::KernelAdmin;
+use gateway_admin_contracts::{
+    fields, operations::AdminInput, routes::AdminOperation, source_input as body,
+};
+use gateway_admin_runtime_contracts::capabilities::RuntimeCapabilities;
+use gateway_admin_runtime_records::{
     kernel_data::{
         SourcePolicy, SourceWindow, canonical, data_put, data_read, data_value, decode_policy,
-        expiry, identity_fields, limit, new_window, part, physical_labels, positive, source_truth,
-        summary, summary_document, target, validate_window, window_document,
+        default_limit_key, default_window_key, expiry, identity_fields, limit, new_window, part,
+        physical_labels, positive, source_truth, summary, summary_document, target,
+        validate_window, window_document,
     },
     store,
 };
-use gateway_admin_contracts::fields;
-use gateway_admin_contracts::{
-    operations::AdminInput, routes::AdminOperation, source_input as body,
+use gateway_auth_contracts::types::{AuthHost, AuthResponse};
+use gateway_auth_primitives::{
+    error::{conflict, invalid},
+    store::{check, commit, put},
 };
-use gateway_auth_contracts::{
-    types::AuthHost, types::AuthResponse, types::conflict, types::invalid,
-};
-use gateway_auth_primitives::{store::check, store::commit, store::put};
 use gateway_authority_kernel_protocol::{KernelDefaults, KernelReservation, KernelTerminal};
 use gateway_authority_keys as keys;
-use gateway_core::query::QueryStore;
-use gateway_core::source_control::decode_source_control_record;
-use gateway_core::{state::RecordMutation, state::StoredRecord};
+use gateway_core::{
+    query::QueryStore, source_control::decode_source_control_record, state::RecordMutation,
+    state::StoredRecord,
+};
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema_values::scalar as schema_scalar;
-use gateway_source::error::GatewayError;
-use gateway_source::js_string::JsString16;
-use gateway_source::source_json::SourceJson;
-use gateway_source::source_serialization as source;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const WEEK: i64 = 604800000;
-pub(crate) fn default_limit_key() -> RecordKey {
-    store::key(json!(["default", "kernel_policy_limit_requests"]))
-}
-pub(crate) fn default_window_key() -> RecordKey {
-    store::key(json!(["default", "kernel_policy_window_ms"]))
-}
-impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
-    pub(crate) async fn kernel_defaults(&self, now: i64) -> Result<KernelDefaults, GatewayError> {
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> KernelAdmin<'_, S, H, C> {
+    pub async fn kernel_defaults(&self, now: i64) -> Result<KernelDefaults, GatewayError> {
         let combined = store::read(self.store, &keys::kernel_defaults(), now).await?;
         let mut defaults: KernelDefaults = combined
             .map(|v| {
@@ -155,7 +150,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         }
         Err(conflict("Kernel reservations changed concurrently; retry"))
     }
-    pub(crate) async fn live_default_reservations(&self, now: i64) -> Result<bool, GatewayError> {
+    pub async fn live_default_reservations(&self, now: i64) -> Result<bool, GatewayError> {
         for (name, repo_scope) in [("repo_window", true), ("org_window", false)] {
             let prefix = store::key(json!(["uos_ai", "kernel_quota", "v2", name]));
             for entry in store::scan(self.store, prefix, false, now).await? {
@@ -266,7 +261,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         body::set(&mut result, "source", body::json(selected));
         Ok(result)
     }
-    pub(crate) async fn kernel(
+    pub async fn kernel(
         &self,
         op: AdminOperation,
         input: &AdminInput,
@@ -560,7 +555,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     }
     async fn kernel_get(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
         let org = fields::first(&input.query, "scope").is_some_and(|s| {
-            s.trim_matches(schema_scalar::js_whitespace)
+            s.trim_matches(gateway_schema_values::scalar::js_whitespace)
                 .eq_ignore_ascii_case("org")
         });
         let include = fields::truth(fields::first(&input.query, "include_usage"));
@@ -752,12 +747,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let Some(raw) = store::read(self.store, &key, now).await? else {
             return Ok(Value::Null);
         };
-        let mut row = json!({"owner":raw.get("owner").and_then(Value::as_str).map(schema_scalar::js_trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
+        let mut row = json!({"owner":raw.get("owner").and_then(Value::as_str).map(gateway_schema_values::scalar::js_trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
         if let Some(repo) = repo {
             row["repo"] = json!(
                 raw.get("repo")
                     .and_then(Value::as_str)
-                    .map(schema_scalar::js_trim)
+                    .map(gateway_schema_values::scalar::js_trim)
                     .filter(|s| !s.is_empty())
                     .unwrap_or(repo)
             );
@@ -810,7 +805,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     continue;
                 };
                 counts.insert(
-                    label.trim_matches(schema_scalar::js_whitespace).to_owned(),
+                    label
+                        .trim_matches(gateway_schema_values::scalar::js_whitespace)
+                        .to_owned(),
                     day.get("request_count")
                         .and_then(Value::as_f64)
                         .map(|n| (n.trunc() as i64).max(0))
@@ -830,7 +827,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         }
         Ok(row)
     }
-    pub(crate) async fn release_cutover(
+    pub async fn release_cutover(
         &self,
         key: &RecordKey,
         row: &StoredRecord,

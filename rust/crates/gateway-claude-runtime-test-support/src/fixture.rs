@@ -1,32 +1,34 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_admin_runtime::{
-    claude::{self, AccountBinding, AccountStore, Credential, CredentialKind},
-    claude_access,
-};
-use gateway_auth_contracts::types::AuthHost;
-use gateway_auth_contracts::{upstream::AuthUpstreamRequest, upstream::AuthUpstreamResponse};
+use gateway_admin_runtime_records::claude_access;
 use gateway_auth_contracts::{
-    webauthn::CosePublicKey, webauthn::SignatureInput, webauthn::WebAuthnCrypto,
+    types::AuthHost,
+    upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
+    webauthn::{CosePublicKey, SignatureInput, WebAuthnCrypto},
 };
 use gateway_catalog_provider::host::ProviderBinding;
-use gateway_claude_runtime::host::{
-    ClaudePoolHost, HealthObservation, OutcomeDecision, PoolConfig, PoolSelection,
-    ResponseObservation, SelectedAccount, SelectionInput, WorkspaceResponse,
+use gateway_claude_policy::{
+    host::{
+        ClaudePoolHost, HealthObservation, PoolConfig, ResponseObservation, SelectionInput,
+        WorkspaceResponse,
+    },
+    quota::quota_key,
 };
-use gateway_claude_runtime::persistence::quota_key;
-use gateway_claude_runtime::pool::ClaudePoolSession;
-use gateway_claude_usage_quota as quota;
-use gateway_claude_usage_quota::observation::AcceptedObservation;
+use gateway_claude_roster::claude::{
+    self, AccountBinding, AccountStore, Credential, CredentialKind,
+};
+use gateway_claude_runtime::{
+    host::{OutcomeDecision, PoolSelection, SelectedAccount},
+    pool::ClaudePoolSession,
+};
+use gateway_claude_usage_quota::{self as quota, observation::AcceptedObservation};
 use gateway_contracts::claude::ClaudeErrorEvidence as ErrorEvidence;
-use gateway_core::{
-    state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RevisionCheck,
-    state::StoredRecord,
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RevisionCheck, StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_provider_protocol::types::Headers;
 use gateway_schema::catalog::ProviderCatalog;
-use gateway_source::error::GatewayError;
-use gateway_source::js_string::JsString16;
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use std::{

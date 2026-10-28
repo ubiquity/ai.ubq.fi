@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-claude-policy = { path = "../gateway-claude-policy" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-contracts.workspace = true
@@ -26,6 +28,8 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-claude-policy = { path = "../gateway-claude-policy" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-claude-runtime-test-support.workspace = true

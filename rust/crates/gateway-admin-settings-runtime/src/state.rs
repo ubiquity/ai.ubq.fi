@@ -1,19 +1,15 @@
-use crate::{
-    AdminRuntime,
-    capabilities::{Context, RuntimeCapabilities},
-    store,
-};
-use gateway_admin_contracts::fields;
+use crate::SettingsAdmin;
 use gateway_admin_contracts::{
-    operations::AdminInput, routes::AdminOperation, source_input as source_body,
+    fields, operations::AdminInput, routes::AdminOperation, source_input as source_body,
 };
+use gateway_admin_runtime_contracts::capabilities::{Context, RuntimeCapabilities};
+use gateway_admin_runtime_records::store;
 use gateway_auth_contracts::types::{AuthHost, AuthResponse};
 use gateway_auth_primitives::{
     error::{conflict, invalid},
     store::{check, commit, put},
 };
 use gateway_core::query::QueryStore;
-use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -42,7 +38,7 @@ fn provider_id(id: &str) -> bool {
 fn normalize_ids(ids: &[String]) -> Vec<String> {
     let set: BTreeSet<_> = ids
         .iter()
-        .map(|s| s.trim_matches(schema_scalar::js_whitespace))
+        .map(|s| s.trim_matches(gateway_schema_values::scalar::js_whitespace))
         .collect();
     let mut result: Vec<String> = PROVIDER_IDS
         .into_iter()
@@ -73,13 +69,13 @@ fn selection(value: Option<&Value>) -> Option<Value> {
     Some(json!({"provider_ids":normalize_ids(&ids),"updated_at_ms":time}))
 }
 
-impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, C> {
+impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H, C> {
     fn sorted_principals(&self, value: &SourceJson) -> Result<Vec<JsString16>, GatewayError> {
-        crate::claude_access::parse_source_ids(value, &|a, b| {
+        gateway_admin_runtime_records::claude_access::parse_source_ids(value, &|a, b| {
             self.capabilities.compare_admin_labels(a, b)
         })
     }
-    pub(crate) async fn debug(
+    pub async fn debug(
         &self,
         operation: AdminOperation,
         input: &AdminInput,
@@ -106,7 +102,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     let scenario = v
                         .get("scenario")?
                         .as_str()?
-                        .trim_matches(schema_scalar::js_whitespace);
+                        .trim_matches(gateway_schema_values::scalar::js_whitespace);
                     let updated = v.get("updated_at_ms")?.as_i64().filter(|n| *n > 0)?;
                     if !SCENARIOS.contains(&scenario) {
                         return None;
@@ -171,7 +167,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         }
         Ok(AuthResponse::json(200, json!({"routing":value})))
     }
-    pub(crate) async fn selection(
+    pub async fn selection(
         &self,
         operation: AdminOperation,
         input: &AdminInput,
@@ -235,9 +231,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 Some("invalid_request_error"),
                 None,
             );
-            let status = error.status;
-            let body = error.body().clone();
-            return Ok(AuthResponse::closed_error(status, body));
+            return Ok(AuthResponse::source_json(
+                error.status,
+                error.body().clone(),
+            ));
         }
         // Every accepted provider label has the independently closed ASCII
         // roster/hash grammar above; only that proven field becomes scalar.
@@ -263,7 +260,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             json!({"stored":true,"provider_ids":ids,"updated_at_ms":input.now_ms}),
         ))
     }
-    pub(crate) async fn claude_access(
+    pub async fn claude_access(
         &self,
         operation: AdminOperation,
         input: &AdminInput,
@@ -274,9 +271,9 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 &source_body::member(&input.body, "allowed_key_ids")
                     .unwrap_or_else(|| source_body::json(&())),
             )?;
-            let policy = crate::claude_access::ClaudeAccessPolicy {
+            let policy = gateway_admin_runtime_records::claude_access::ClaudeAccessPolicy {
                 v: 1,
-                source: crate::claude_access::PolicySource::Kv,
+                source: gateway_admin_runtime_records::claude_access::PolicySource::Kv,
                 allowed_key_ids: ids,
                 updated_at_ms: input.now_ms,
             };
@@ -286,7 +283,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 vec![check(&key, row.as_ref())],
                 vec![gateway_core::state::RecordMutation::Put {
                     key: key.clone(),
-                    record: crate::claude_access::encode_policy_record(
+                    record: gateway_admin_runtime_records::claude_access::encode_policy_record(
                         &store::revision(self.host)?,
                         &policy,
                         None,
@@ -299,7 +296,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             }
             policy
         } else {
-            crate::claude_access::load_policy(
+            gateway_admin_runtime_records::claude_access::load_policy(
                 self.store,
                 self.host,
                 &self.config.claude_allowed_key_ids,

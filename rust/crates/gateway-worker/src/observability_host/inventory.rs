@@ -1,10 +1,10 @@
 //! Passive provider metadata over the same request-owned authority; never refreshes credentials.
 use super::RequestHost;
-use gateway_admin_runtime::{capabilities::Context, claude, claude_access};
-use gateway_auth_credentials::{
-    provider_credentials as codex, provider_credentials::CodexSourceAccount,
-};
+use gateway_admin_runtime_contracts::capabilities::Context;
+use gateway_admin_runtime_records::claude_access;
+use gateway_auth_credentials::provider_credentials::{self as codex, CodexSourceAccount};
 use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_claude_roster::claude;
 use gateway_claude_usage_history_records::types::CredentialKind;
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_observability::{
@@ -12,9 +12,10 @@ use gateway_observability::{
     types::{HealthProvider, HealthTarget},
 };
 use gateway_schema::selection::ProviderSelection;
+use gateway_schema_values::scalar as util;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
+use serde_json::json;
 use std::collections::BTreeSet;
-use {gateway_schema_values::scalar as util, serde_json::json};
 
 fn stamp(value: f64) -> Option<i64> {
     (value.is_finite() && value.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)

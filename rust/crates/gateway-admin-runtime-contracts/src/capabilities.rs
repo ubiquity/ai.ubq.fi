@@ -1,12 +1,10 @@
 //! Finite native/provider capabilities. No URL, process, path, SQL, or Bun relay interface.
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_contracts::model::ModelId;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::Value;
 use std::{collections::BTreeMap, future::Future};
-use {
-    gateway_auth_contracts::types::AuthResponse,
-    gateway_auth_native_wire::native_read::NativeReadRequest,
-};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SupervisorBriefTarget {
@@ -71,7 +69,8 @@ pub enum ProviderRequest {
 }
 
 pub struct ClaudeSubmission {
-    pub credential: Option<std::sync::Arc<crate::claude::source_secret::ClaudeSourceSecret>>,
+    pub credential:
+        Option<std::sync::Arc<gateway_claude_roster::claude::source_secret::ClaudeSourceSecret>>,
     pub label: Option<gateway_source::js_string::JsString16>,
     /// None means unchanged; Some(None) explicitly removes the workspace pin.
     pub workspace_id: Option<Option<gateway_source::js_string::JsString16>>,

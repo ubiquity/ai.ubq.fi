@@ -1,37 +1,22 @@
 //! Source administrative runtime over the common authority. External effects are finite injected capabilities.
-pub mod brief;
-pub mod capabilities;
-pub mod claude;
-pub mod claude_access;
-pub mod claude_generation;
-mod defaults;
-mod errors;
-mod kernel;
-mod kernel_data;
-mod paid;
-pub mod parse;
-mod state;
-mod store;
-
-use capabilities::*;
-use gateway_admin_contracts::fields;
 use gateway_admin_contracts::{
+    fields,
     operations::{AdminHost, AdminInput, PaidKeyFields, missing_capability},
     routes::AdminOperation,
     source_input as source_body,
 };
-use gateway_auth_contracts::{types::AuthHost, types::AuthResponse, types::invalid};
+use gateway_admin_diagnostics_runtime::DiagnosticsAdmin;
+use gateway_admin_kernel_runtime::KernelAdmin;
+use gateway_admin_paid_runtime::PaidAdmin;
+use gateway_admin_runtime_contracts::{RuntimeConfig, capabilities::*, parse};
+use gateway_admin_runtime_records::store;
+use gateway_admin_settings_runtime::SettingsAdmin;
+use gateway_auth_contracts::types::{AuthHost, AuthResponse};
 use gateway_auth_native_wire::native_read::NativeReadRequest;
+use gateway_auth_primitives::error::invalid;
 use gateway_core::{query::QueryStore, state::RevisionCheck};
-use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-
-#[derive(Clone, Debug, Default)]
-pub struct RuntimeConfig {
-    /// Explicit existing source configuration passed at bootstrap, never discovered by this crate.
-    pub claude_allowed_key_ids: Vec<String>,
-}
 
 pub struct AdminRuntime<'a, S, H, C> {
     pub store: &'a S,
@@ -48,7 +33,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
     ) -> Result<AuthResponse, GatewayError> {
         // Defense in depth for callers outside AdminService. There is deliberately no super-admin tier.
         if !input.actor.is_admin {
-            return Err(gateway_auth_contracts::types::unauthorized());
+            return Err(gateway_auth_primitives::error::unauthorized());
         }
         if !(0..=gateway_contracts::identity::MAX_SAFE_INTEGER).contains(&input.now_ms) {
             return Err(invalid("Admin request clock is invalid"));
@@ -59,14 +44,64 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
         };
         use AdminOperation::*;
         match operation {
-            DefaultsGet | DefaultsSet => self.defaults(operation, &input).await,
-            DebugGet | DebugSet | DebugDelete => self.debug(operation, &input).await,
-            ProviderSelectionGet | ProviderSelectionSet => self.selection(operation, &input).await,
-            ClaudeAccessGet | ClaudeAccessSet => self.claude_access(operation, &input).await,
-            KernelUsageGet | KernelUsageSet | KernelUsageDelete | KernelQueue => {
-                self.kernel(operation, &input).await
+            DefaultsGet | DefaultsSet => {
+                SettingsAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                    config: self.config,
+                }
+                .defaults(operation, &input)
+                .await
             }
-            Errors => self.errors(&input).await,
+            DebugGet | DebugSet | DebugDelete => {
+                SettingsAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                    config: self.config,
+                }
+                .debug(operation, &input)
+                .await
+            }
+            ProviderSelectionGet | ProviderSelectionSet => {
+                SettingsAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                    config: self.config,
+                }
+                .selection(operation, &input)
+                .await
+            }
+            ClaudeAccessGet | ClaudeAccessSet => {
+                SettingsAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                    config: self.config,
+                }
+                .claude_access(operation, &input)
+                .await
+            }
+            KernelUsageGet | KernelUsageSet | KernelUsageDelete | KernelQueue => {
+                KernelAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                }
+                .kernel(operation, &input)
+                .await
+            }
+            Errors => {
+                DiagnosticsAdmin {
+                    store: self.store,
+                    host: self.host,
+                    capabilities: self.capabilities,
+                }
+                .errors(&input)
+                .await
+            }
             PromptsPurge => self.purge_prompts(input.now_ms).await,
             CodexModelsGet | CodexModelsSet | ModelsWhitelistGet | ModelsWhitelistSet
             | ModelsCatalog | ModelsRefresh => {
@@ -160,27 +195,51 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminHost for AdminRunt
         }
     }
     async fn prepare_key_deletion(&self, key_id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
-        self.prepare_deletion(key_id).await
+        PaidAdmin {
+            store: self.store,
+            host: self.host,
+            capabilities: self.capabilities,
+        }
+        .prepare_deletion(key_id)
+        .await
     }
     async fn finish_key_deletion(
         &self,
         key_id: &str,
         prepared_checks: &[RevisionCheck],
     ) -> Result<(), GatewayError> {
-        self.finish_deletion(key_id, prepared_checks).await
+        PaidAdmin {
+            store: self.store,
+            host: self.host,
+            capabilities: self.capabilities,
+        }
+        .finish_deletion(key_id, prepared_checks)
+        .await
     }
     async fn abort_key_deletion(
         &self,
         key_id: &str,
         prepared_checks: &[RevisionCheck],
     ) -> Result<(), GatewayError> {
-        self.abort_deletion(key_id, prepared_checks).await
+        PaidAdmin {
+            store: self.store,
+            host: self.host,
+            capabilities: self.capabilities,
+        }
+        .abort_deletion(key_id, prepared_checks)
+        .await
     }
     async fn paid_key_policy(
         &self,
         body: &gateway_source::source_json::SourceJson,
     ) -> Result<PaidKeyFields, GatewayError> {
-        self.paid_policy(body).await
+        PaidAdmin {
+            store: self.store,
+            host: self.host,
+            capabilities: self.capabilities,
+        }
+        .paid_policy(body)
+        .await
     }
 }
 
@@ -193,11 +252,11 @@ fn supervisor_target(
         (
             fields::first(&input.query, "source")
                 .unwrap_or("")
-                .trim_matches(schema_scalar::js_whitespace)
+                .trim_matches(gateway_schema_values::scalar::js_whitespace)
                 .to_owned(),
             fields::first(&input.query, "id")
                 .unwrap_or("")
-                .trim_matches(schema_scalar::js_whitespace)
+                .trim_matches(gateway_schema_values::scalar::js_whitespace)
                 .to_owned(),
         )
     } else {
@@ -241,7 +300,7 @@ fn supervisor_target(
 }
 
 fn parse_int_prefix(value: Option<&str>) -> Option<i64> {
-    let value = value?.trim_start_matches(schema_scalar::js_whitespace);
+    let value = value?.trim_start_matches(gateway_schema_values::scalar::js_whitespace);
     let end = value
         .char_indices()
         .take_while(|(i, c)| c.is_ascii_digit() || *i == 0 && (*c == '-' || *c == '+'))
@@ -332,7 +391,10 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                         "admin_raw_body_unavailable",
                     )
                 })?;
-                if !body.trim_matches(schema_scalar::js_whitespace).is_empty() {
+                if !body
+                    .trim_matches(gateway_schema_values::scalar::js_whitespace)
+                    .is_empty()
+                {
                     return Err(invalid(
                         "Prompt-cache scope experiment does not accept request fields",
                     ));
@@ -386,7 +448,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     .unwrap_or(30);
                 let balance = fields::first(&input.query, "balance_window_days")
                     .and_then(|s| {
-                        s.trim_matches(schema_scalar::js_whitespace)
+                        s.trim_matches(gateway_schema_values::scalar::js_whitespace)
                             .parse::<f64>()
                             .ok()
                     })
@@ -415,7 +477,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 let id = input
                     .parameter
                     .as_deref()
-                    .map(schema_scalar::js_trim)
+                    .map(gateway_schema_values::scalar::js_trim)
                     .filter(|s| !s.is_empty() && s.encode_utf16().count() <= 200)
                     .ok_or_else(|| invalid("Invalid API key id"))?;
                 if store::read(
@@ -463,7 +525,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 let request = {
                     let cursor: String = fields::first(&input.query, "cursor")
                         .unwrap_or("")
-                        .trim_matches(schema_scalar::js_whitespace)
+                        .trim_matches(gateway_schema_values::scalar::js_whitespace)
                         .chars()
                         .take(240)
                         .collect();
@@ -522,7 +584,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             && ["machine", "about", "status"].into_iter().all(|name| {
                 body.get(name)
                     .and_then(Value::as_str)
-                    .is_some_and(|s| !schema_scalar::js_trim(s).is_empty())
+                    .is_some_and(|s| !gateway_schema_values::scalar::js_trim(s).is_empty())
             })
             && ["model", "effort", "state"].into_iter().all(nullable)
             && ["sampledAtMs", "generatedAtMs"].into_iter().all(|name| {
@@ -585,7 +647,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         Ok(response)
     }
     async fn purge_prompts(&self, now: i64) -> Result<AuthResponse, GatewayError> {
-        use gateway_auth_primitives::{store::check, store::commit};
+        use gateway_auth_primitives::store::{check, commit};
         use gateway_core::state::RecordMutation;
         let key = store::key(json!(["uos_ai", "codex_instructions"]));
         let row = self.store.read(&key).await?;
@@ -598,7 +660,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             )
             .await?
             {
-                return Err(gateway_auth_contracts::types::conflict(
+                return Err(gateway_auth_primitives::error::conflict(
                     "Prompt instructions changed concurrently; retry",
                 ));
             }
@@ -619,7 +681,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             )
             .await?
             {
-                return Err(gateway_auth_contracts::types::conflict(
+                return Err(gateway_auth_primitives::error::conflict(
                     "Prompt instructions changed concurrently; retry",
                 ));
             }
