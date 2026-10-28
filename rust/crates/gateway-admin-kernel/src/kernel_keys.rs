@@ -20,7 +20,7 @@ pub struct KernelPublicKey {
 }
 
 pub fn key() -> RecordKey {
-    gateway_auth_contracts::upstream::kernel_public_keys_key()
+    gateway_auth_attestation::upstream::kernel_public_keys_key()
 }
 
 /// The one existing kernel public-key family, decoded as a complete named DTO.
