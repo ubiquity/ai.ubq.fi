@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-auth-primitives = { workspace = true }
 gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
 gateway-schema-values.workspace = true
@@ -62,4 +63,3 @@ gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
 gateway-authority-paid-evidence = { path = "../gateway-authority-paid-evidence" }
 gateway-routing-runtime-test-support = { workspace = true }
 gateway-source = { workspace = true }
-gateway-auth-primitives = { workspace = true }

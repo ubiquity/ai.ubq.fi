@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-authority-reset-records.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-kv-codec = { path = "../gateway-kv-codec" }
 gateway-source = { path = "../gateway-source" }
