@@ -2336,6 +2336,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-prompt-cache",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -4081,6 +4082,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-prompt-cache"
+version = "0.1.0"
+dependencies = [
+ "gateway-local-refusal",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-prompt-policy"
 version = "0.1.0"
 dependencies = [
@@ -4193,6 +4204,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-local-refusal",
+ "gateway-prompt-cache",
  "gateway-provider-chat-controls",
  "gateway-provider-policy",
  "gateway-provider-protocol",
@@ -4617,6 +4629,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-local-refusal",
  "gateway-model-selection",
+ "gateway-prompt-cache",
  "gateway-request-normalization",
  "gateway-responses-normalization",
  "gateway-schema-values",

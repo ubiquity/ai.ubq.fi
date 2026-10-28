@@ -1,6 +1,6 @@
 //! Lossless prompt-cache metadata policy shared by source and actual-scalar entrypoints.
-use crate::prompt_cache::SCOPE_PROFILE;
-use gateway_schema_values::value::{Value, normalized_string, unknown_key};
+use crate::profile::SCOPE_PROFILE;
+use gateway_schema_values::value::{Text, Value, normalized_string, unknown_key};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 #[derive(Default)]
 struct Map(Vec<(JsString16, Value)>);
@@ -142,11 +142,14 @@ fn normalize_controls(value: &Value) -> Option<Value> {
     if let Some(v) = value.get("breakpoint_block_types") {
         result.insert("breakpoint_block_types".into(), normalize_block_types(v)?);
     }
-    result.insert("source".into(), json!(source));
-    result.insert("verified_at_ms".into(), json!(time));
+    result.insert(
+        "source".into(),
+        Value::String(Text::new(JsString16::from_utf8(source))),
+    );
+    result.insert("verified_at_ms".into(), Value::Integer(time));
     Some(Value::object(result.0))
 }
-pub(super) fn normalize_scope(value: &Value) -> Option<Value> {
+pub(crate) fn normalize_scope(value: &Value) -> Option<Value> {
     if !value.is_object()
         || unknown_key(
             value,
@@ -191,16 +194,24 @@ pub(super) fn normalize_scope(value: &Value) -> Option<Value> {
         return None;
     }
     let time = timestamp(value.get("verified_at_ms"))?;
-    let mut next = json!({"probe_profile":SCOPE_PROFILE,"account_slots":value["account_slots"],"token_refresh":value["token_refresh"],"conversation_id":value["conversation_id"]});
+    let mut next = Value::object(vec![
+        (
+            "probe_profile".into(),
+            Value::String(Text::new(JsString16::from_utf8(SCOPE_PROFILE))),
+        ),
+        ("account_slots".into(), value["account_slots"].clone()),
+        ("token_refresh".into(), value["token_refresh"].clone()),
+        ("conversation_id".into(), value["conversation_id"].clone()),
+    ]);
     if value.get("effective_model").is_some() {
         next["effective_model"] = Value::String(normalized_string(value.get("effective_model"))?);
     }
-    next["reproducible_cycles"] = json!(cycles);
-    next["source"] = json!("live_probe");
-    next["verified_at_ms"] = json!(time);
+    next["reproducible_cycles"] = Value::Integer(cycles);
+    next["source"] = Value::String(Text::new(JsString16::from_utf8("live_probe")));
+    next["verified_at_ms"] = Value::Integer(time);
     Some(next)
 }
-pub(super) fn normalize_capabilities(value: Option<&Value>) -> Option<Value> {
+pub(crate) fn normalize_capabilities(value: Option<&Value>) -> Option<Value> {
     let value = value?;
     if value == &Value::Bool(false) {
         return Some(Value::Bool(false));
@@ -226,7 +237,7 @@ pub(super) fn normalize_capabilities(value: Option<&Value>) -> Option<Value> {
             return None;
         }
         seen.push(id.clone());
-        let mut item = json!({"id":id});
+        let mut item = Value::object(vec![("id".into(), Value::String(id))]);
         if let Some(v) = provider.get("controls") {
             item["controls"] = normalize_controls(v)?;
         }
@@ -235,9 +246,12 @@ pub(super) fn normalize_capabilities(value: Option<&Value>) -> Option<Value> {
         }
         result.push(item);
     }
-    Some(json!({"version":1,"providers":result}))
+    Some(Value::object(vec![
+        ("version".into(), Value::Integer(1)),
+        ("providers".into(), Value::Array(result)),
+    ]))
 }
-pub(super) fn compact_capabilities(value: Option<&Value>) -> Option<Value> {
+pub(crate) fn compact_capabilities(value: Option<&Value>) -> Option<Value> {
     let normalized = normalize_capabilities(value)?;
     if normalized == Value::Bool(false) {
         return Some(normalized);
@@ -246,13 +260,22 @@ pub(super) fn compact_capabilities(value: Option<&Value>) -> Option<Value> {
         .as_array()?
         .iter()
         .filter_map(|p| {
-            p.get("controls")
-                .map(|c| json!({"id":p["id"],"controls":c}))
+            p.get("controls").map(|c| {
+                Value::object(vec![
+                    ("id".into(), p["id"].clone()),
+                    ("controls".into(), c.clone()),
+                ])
+            })
         })
         .collect();
-    (!providers.is_empty()).then(|| json!({"version":1,"providers":providers}))
+    (!providers.is_empty()).then(|| {
+        Value::object(vec![
+            ("version".into(), Value::Integer(1)),
+            ("providers".into(), Value::Array(providers)),
+        ])
+    })
 }
-pub(super) fn merge_capabilities(previous: Option<&Value>, next: Option<&Value>) -> Option<Value> {
+pub(crate) fn merge_capabilities(previous: Option<&Value>, next: Option<&Value>) -> Option<Value> {
     let previous = normalize_capabilities(previous);
     let next = normalize_capabilities(next);
     let Some(next) = next else { return previous };
@@ -266,7 +289,7 @@ pub(super) fn merge_capabilities(previous: Option<&Value>, next: Option<&Value>)
     let mut providers = Vec::new();
     for provider in next["providers"].as_array()? {
         let prior = old.iter().find(|p| p["id"] == provider["id"]);
-        let mut merged = json!({"id":provider["id"]});
+        let mut merged = Value::object(vec![("id".into(), provider["id"].clone())]);
         for key in ["controls", "scope"] {
             if let Some(v) = provider.get(key).or_else(|| prior.and_then(|p| p.get(key))) {
                 merged[key] = v.clone();
@@ -279,9 +302,12 @@ pub(super) fn merge_capabilities(previous: Option<&Value>, next: Option<&Value>)
             providers.push(provider.clone());
         }
     }
-    Some(json!({"version":1,"providers":providers}))
+    Some(Value::object(vec![
+        ("version".into(), Value::Integer(1)),
+        ("providers".into(), Value::Array(providers)),
+    ]))
 }
-pub(super) fn concrete_scope(scope: &Value, reproducible_cycles: i64) -> bool {
+pub(crate) fn concrete_scope(scope: &Value, reproducible_cycles: i64) -> bool {
     scope.get("probe_profile").and_then(Value::as_str) == Some(SCOPE_PROFILE)
         && scope.get("source").and_then(Value::as_str) == Some("live_probe")
         && ["account_slots", "token_refresh", "conversation_id"]
@@ -296,20 +322,20 @@ pub(super) fn concrete_scope(scope: &Value, reproducible_cycles: i64) -> bool {
         && normalized_string(scope.get("effective_model")).is_some()
 }
 
-pub(crate) fn normalize_capabilities_source(value: Option<&SourceJson>) -> Option<SourceJson> {
+pub fn normalize_capabilities_source(value: Option<&SourceJson>) -> Option<SourceJson> {
     let value = value.map(|value| Value::from_source(value.clone()));
     normalize_capabilities(value.as_ref())?.source().ok()
 }
-pub(crate) fn normalize_scope_source(value: &SourceJson) -> Option<SourceJson> {
+pub fn normalize_scope_source(value: &SourceJson) -> Option<SourceJson> {
     normalize_scope(&Value::from_source(value.clone()))?
         .source()
         .ok()
 }
-pub(crate) fn compact_capabilities_source(value: Option<&SourceJson>) -> Option<SourceJson> {
+pub fn compact_capabilities_source(value: Option<&SourceJson>) -> Option<SourceJson> {
     let value = value.map(|value| Value::from_source(value.clone()));
     compact_capabilities(value.as_ref())?.source().ok()
 }
-pub(crate) fn merge_capabilities_source(
+pub fn merge_capabilities_source(
     previous: Option<&SourceJson>,
     next: Option<&SourceJson>,
 ) -> Option<SourceJson> {
@@ -319,6 +345,6 @@ pub(crate) fn merge_capabilities_source(
         .source()
         .ok()
 }
-pub(crate) fn concrete_scope_source(value: &SourceJson, cycles: i64) -> bool {
+pub fn concrete_scope_source(value: &SourceJson, cycles: i64) -> bool {
     concrete_scope(&Value::from_source(value.clone()), cycles)
 }

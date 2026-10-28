@@ -223,7 +223,7 @@ fn append_target(
         source::member(records[0], "prompt_cache")
             .as_ref()
             .and_then(|cache| {
-                gateway_schema::prompt_cache::normalize_capabilities_source(Some(cache))
+                gateway_prompt_cache::metadata::normalize_capabilities_source(Some(cache))
             })
             .and_then(|cache| {
                 source::member(&cache, "providers")

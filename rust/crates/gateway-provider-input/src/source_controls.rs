@@ -241,7 +241,7 @@ fn validate_cache(
     input_key: &str,
 ) -> s::Result<()> {
     if let Some(context) = context {
-        gateway_schema::source_request::cache_capability::validate_known_unsupported_prompt_cache(
+        gateway_prompt_cache::capability::validate_known_unsupported_prompt_cache(
             model,
             context.prompt_cache(),
             raw,

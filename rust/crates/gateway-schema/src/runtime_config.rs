@@ -1,10 +1,8 @@
 //! Small runtime catalog projection; source model/effort controls never pass through Value.
-use crate::{
-    model_control as c, prompt_cache::compact_capabilities_source, reasoning::ModelReasoning,
-    snapshot::ModelSnapshot,
-};
+use crate::{model_control as c, reasoning::ModelReasoning, snapshot::ModelSnapshot};
 use gateway_contracts::model::ModelId;
 use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_prompt_cache::metadata::compact_capabilities_source;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

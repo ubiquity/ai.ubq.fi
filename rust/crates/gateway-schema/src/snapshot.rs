@@ -1,5 +1,5 @@
 //! Full uploaded snapshot normalization and evidence-preserving refresh projection.
-use crate::{model_control as c, prompt_cache, reasoning::advertised_effort};
+use crate::{model_control as c, reasoning::advertised_effort};
 use gateway_contracts::model::ModelId;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
@@ -191,7 +191,7 @@ pub fn normalize_snapshot(
                 );
             }
         }
-        if let Some(cache) = prompt_cache::normalize_capabilities_source(
+        if let Some(cache) = gateway_prompt_cache::metadata::normalize_capabilities_source(
             gateway_source::source_serialization::member(item, "prompt_cache").as_ref(),
         ) {
             c::set(&mut model, "prompt_cache", cache);
@@ -291,9 +291,10 @@ impl ModelSnapshot {
             let prior =
                 prior.and_then(|p| gateway_source::source_serialization::member(p, "prompt_cache"));
             let current = gateway_source::source_serialization::member(model, "prompt_cache");
-            if let Some(cache) =
-                prompt_cache::merge_capabilities_source(prior.as_ref(), current.as_ref())
-            {
+            if let Some(cache) = gateway_prompt_cache::metadata::merge_capabilities_source(
+                prior.as_ref(),
+                current.as_ref(),
+            ) {
                 c::set(model, "prompt_cache", cache);
             }
         }
@@ -306,8 +307,8 @@ impl ModelSnapshot {
         scope: &SourceJson,
     ) -> Option<Self> {
         let model = self.unique(slug)?;
-        let scope = prompt_cache::normalize_scope_source(scope)?;
-        let mut cache = prompt_cache::normalize_capabilities_source(
+        let scope = gateway_prompt_cache::metadata::normalize_scope_source(scope)?;
+        let mut cache = gateway_prompt_cache::metadata::normalize_capabilities_source(
             gateway_source::source_serialization::member(model, "prompt_cache").as_ref(),
         )?;
         let mut providers = gateway_source::source_serialization::member(&cache, "providers")
@@ -334,7 +335,7 @@ impl ModelSnapshot {
     }
     pub fn scope_experiment_eligible(&self, slug: &ModelId) -> bool {
         let cache = self.unique(slug).and_then(|m| {
-            prompt_cache::normalize_capabilities_source(
+            gateway_prompt_cache::metadata::normalize_capabilities_source(
                 gateway_source::source_serialization::member(m, "prompt_cache").as_ref(),
             )
         });
@@ -351,7 +352,7 @@ impl ModelSnapshot {
                         .is_some_and(|id| {
                             gateway_schema_values::source_view::matches(
                                 &id,
-                                prompt_cache::CODEX_PROVIDER,
+                                gateway_prompt_cache::profile::CODEX_PROVIDER,
                             )
                         })
                 })

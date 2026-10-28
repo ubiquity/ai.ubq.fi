@@ -197,7 +197,7 @@ fn finite_integer_data_keeps_legacy_numeric_bytes_and_metadata_roundtrip() {
             (
                 "probe_profile".into(),
                 Value::String(Text::new(
-                    gateway_schema::prompt_cache::SCOPE_PROFILE.into(),
+                    gateway_prompt_cache::profile::SCOPE_PROFILE.into(),
                 )),
             ),
             (
@@ -221,11 +221,11 @@ fn finite_integer_data_keeps_legacy_numeric_bytes_and_metadata_roundtrip() {
         ])
         .source()
         .unwrap();
-        let normalized = gateway_schema::prompt_cache::normalize_scope_source(&scope);
+        let normalized = gateway_prompt_cache::metadata::normalize_scope_source(&scope);
         assert_eq!(normalized.is_some(), accepted);
         if let Some(normalized) = normalized {
             assert_eq!(
-                gateway_schema::prompt_cache::normalize_scope_source(&normalized),
+                gateway_prompt_cache::metadata::normalize_scope_source(&normalized),
                 Some(normalized)
             );
         }

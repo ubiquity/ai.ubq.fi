@@ -1,5 +1,5 @@
 //! One source-aware selected-model cache capability policy; payloads never enter scalar Value.
-use crate::prompt_cache::CODEX_PROVIDER;
+use crate::profile::CODEX_PROVIDER;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema_values::value::Value as View;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
@@ -89,13 +89,6 @@ pub fn validate_known_unsupported_prompt_cache(
     } else {
         Vec::new()
     };
-    let unsupported = |param: &str| {
-        refusal(
-            model,
-            &format!("Prompt cache control '{param}' is not supported for model '"),
-            param,
-        )
-    };
     if prompt_cache.as_ref() == Some(&View::Bool(false)) {
         let param = [
             "prompt_cache_key",
@@ -115,7 +108,7 @@ pub fn validate_known_unsupported_prompt_cache(
         }
         return Ok(());
     }
-    let capabilities = super::cache_metadata::normalize_capabilities(prompt_cache.as_ref());
+    let capabilities = crate::metadata::normalize_capabilities(prompt_cache.as_ref());
     let Some(controls) = capabilities
         .as_ref()
         .and_then(|v| v.get("providers"))
@@ -127,6 +120,23 @@ pub fn validate_known_unsupported_prompt_cache(
         .and_then(|p| p.get("controls"))
     else {
         return Ok(());
+    };
+    validate_controls(model, controls, &body, markers, input_key)
+}
+
+fn validate_controls(
+    model: &JsString16,
+    controls: &View,
+    body: &View,
+    markers: Vec<(String, Option<JsString16>)>,
+    input_key: &str,
+) -> Result<(), SourceRequestError> {
+    let unsupported = |param: &str| {
+        refusal(
+            model,
+            &format!("Prompt cache control '{param}' is not supported for model '"),
+            param,
+        )
     };
     let mode_unsupported = |mode: &str| {
         controls
