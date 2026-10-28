@@ -24,8 +24,8 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_model_selection::aliases as model_aliases;
 use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_model_selection::aliases as model_aliases;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
