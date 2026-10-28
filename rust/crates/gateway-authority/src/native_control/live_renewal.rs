@@ -2,7 +2,6 @@
 use super::actor::NativeRenewalActor;
 use super::receiver::NativeRenewalAuthority;
 use super::{NativeRenewalAction, OWNER_RENEWAL_MAX_MS, actor, facts};
-use crate::native_live::mapping_key;
 use crate::store::Transaction;
 use gateway_auth_credentials::provider_credentials::{
     codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
@@ -12,6 +11,7 @@ use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::live::mapping_key;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::{ActionRow, conflict, fail};
 use gateway_authority_paid_control_records::{

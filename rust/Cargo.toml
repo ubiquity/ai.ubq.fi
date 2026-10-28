@@ -1,5 +1,7 @@
 [workspace]
 members = [
+  "crates/gateway-authority-native-preparation",
+  "crates/gateway-authority-native-context-facts",
   "crates/gateway-authority-native-records",
   "crates/gateway-authority-manual-reset",
   "crates/gateway-authority-actor-currentness",

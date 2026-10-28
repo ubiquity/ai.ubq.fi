@@ -10,7 +10,7 @@ use gateway_auth_native_proof::native_live::AuthenticatedNativeLive;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
-use gateway_authority_native_records::live::{ActionRow, ConnectionRow};
+use gateway_authority_native_records::live::{ActionRow, ConnectionRow, mapping_key};
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation};
@@ -38,14 +38,6 @@ pub fn custody_key(kind: &str, reference: &str) -> RecordKey {
         ScalarKeyPart::String(reference),
     ])
     .to_record_key()
-}
-pub(crate) fn mapping_key(call: &str, pending: bool) -> RecordKey {
-    let mut parts = vec![Text("uos_ai"), Text("codex_live_calls"), Text("v1")];
-    if pending {
-        parts.push(Text("pending_retirement"));
-    }
-    parts.push(Text(call));
-    TupleKey::from_scalar_parts(&parts).to_record_key()
 }
 /// Server-created selector, deliberately neither Serialize nor Deserialize.
 pub struct NativeLiveAction {
