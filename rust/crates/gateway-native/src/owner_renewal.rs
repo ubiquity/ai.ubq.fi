@@ -203,7 +203,7 @@ impl<P: NativeAccessPublisher> NativeOwnerRenewalHandler for NativeOwnerRenewalS
         context: &NativeControlContext<'_>,
     ) -> Result<NativeControlResponse, GatewayError> {
         proof.require_request(
-            gateway_auth_native_proof::native_auth::NativeCapability::OwnerRenewal,
+            gateway_auth_native_contracts::transport::NativeCapability::OwnerRenewal,
             gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH,
             raw,
             context.now_ms()?,

@@ -1,11 +1,7 @@
 //! Raw framed native response data and connection observation, never delivery/accounting proof.
-use crate::error::unavailable;
+use gateway_auth_native_proof::native_context::unavailable;
 use gateway_source::error::GatewayError;
-use std::{
-    io::Write,
-    net::TcpStream,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{io::Write, net::TcpStream};
 
 pub fn disconnected(stream: &TcpStream) -> bool {
     if stream.set_nonblocking(true).is_err() {
@@ -30,13 +26,6 @@ pub fn write_json(stream: &mut TcpStream, status: u16, body: &[u8]) -> Result<()
 pub fn write_error(stream: &mut TcpStream, error: GatewayError) -> Result<(), GatewayError> {
     let body = serde_json::to_vec(&error.envelope).map_err(|_| unavailable())?;
     write_json(stream, error.status, &body)
-}
-pub fn now_ms() -> Result<i64, GatewayError> {
-    let value = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| unavailable())?
-        .as_millis();
-    i64::try_from(value).map_err(|_| unavailable())
 }
 
 pub fn write_import_response(

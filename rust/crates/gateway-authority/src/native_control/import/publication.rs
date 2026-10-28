@@ -7,7 +7,8 @@ use super::{
 use crate::store::Transaction;
 use gateway_auth_credentials::provider_credentials::codex_credential_identity;
 use gateway_auth_native_contracts::native_import::NativeImportKind;
-use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeCapability};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
 use gateway_auth_native_protocol::native_import::publication::{
     NativeImportPublication, NativeImportPublicationDisposition,
 };
@@ -299,7 +300,7 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     /// route, capability or raw credential/body relay is exposed.
     pub async fn authenticate_import_publication(
         &self,
-        headers: gateway_auth_native_proof::native_auth::NativeAuthHeaders<'_>,
+        headers: gateway_auth_native_contracts::transport::NativeAuthHeaders<'_>,
         body: &[u8],
     ) -> Result<AuthenticatedNativeOwner, GatewayError> {
         if body.len() > import_publication_max_bytes() {

@@ -1,8 +1,7 @@
 //! Fixed controlled HTTPS composition of the shipping native transport. The
 //! runner maps this origin to a local TLS endpoint with the synthetic native CA.
-use gateway_auth_native_proof::{
-    native_auth::NativeCapability, native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_publication_transport::transport::PublicationReceiver;
 use gateway_source::error::GatewayError;
 use gateway_worker_fixture_setup::initialize;

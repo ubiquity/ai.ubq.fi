@@ -8,6 +8,7 @@ use super::{effects, publication, publication_current, remote_state, unavailable
 use gateway_auth_native_contracts::native_import::{
     NativeImportKind, NativeImportMetadata, state::ImportAuthorityStateData as State,
 };
+use gateway_auth_native_contracts::transport::{NativeAuthHeaders, NativeCapability};
 use gateway_auth_native_import_data::native_import::authority::{
     IMPORT_STARTED_OPERATION, ImportAuthorityClaimMode, ImportAuthorityCommand as Command,
     ImportAuthorityRequestData as Request, ImportAuthorityTerminalData,
@@ -15,9 +16,7 @@ use gateway_auth_native_import_data::native_import::authority::{
     completion::{ImportCompletionData, ImportCompletionModelsData},
     result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
 };
-use gateway_auth_native_proof::native_auth::{
-    AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-};
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeAuthenticator};
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
 use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_native_records::import_action::ImportActionRow;

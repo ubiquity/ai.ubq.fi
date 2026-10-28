@@ -7,7 +7,8 @@ use gateway_auth_contracts::{
 use gateway_auth_credentials::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
 };
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_auth_passport_sessions::sessions::{PassportSessions, session_key};
 use gateway_auth_primitives::crypto::Secret;

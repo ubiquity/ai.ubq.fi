@@ -1,6 +1,7 @@
 mod support;
 use gateway_auth_contracts::types::AuthConfig;
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_passport_sessions::sessions::session_key;
 use gateway_authority_native_preparation::{
     SourceNativePreparationContext, SourceNativeRenewalService,
@@ -29,7 +30,8 @@ async fn signed_unknown(
     nonce_byte: u8,
     now: i64,
 ) -> Result<gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner, GatewayError> {
-    use gateway_auth_native_proof::native_auth::{NativeAuthHeaders, NativeAuthenticator};
+    use gateway_auth_native_contracts::transport::NativeAuthHeaders;
+    use gateway_auth_native_proof::native_auth::NativeAuthenticator;
     let path = gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
     let nonce = gateway_auth_primitives::crypto::base64url(&[nonce_byte; 32]);
     let mac = identity.sign(path, now, &nonce, body)?;

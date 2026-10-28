@@ -1,8 +1,7 @@
 //! Trusted candidate composition. These values are never read from a request.
 //! Secret metadata is verified by deployment receipts; no variable fallback exists.
-use gateway_auth_native_proof::{
-    native_auth::NativeCapability, native_auth::NativeTransportIdentity,
-};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_primitives::{crypto::base64url, crypto::decode_base64url};
 use gateway_authority_initial_owner::{
     InitialAdoptionBinding, InitialControlOwnerDeployment, InitialNativeCustodyBinding,

@@ -349,10 +349,8 @@ fn context(model: &str) -> Result<PaidRequestContext, GatewayError> {
 mod native_configuration {
     use super::*;
     use gateway_auth::native::NATIVE_RPC_PATH;
-    use gateway_auth_native_proof::native_auth::{
-        AuthenticatedNativeOwner, NativeAuthHeaders, NativeAuthenticator, NativeCapability,
-        NativeNonceAuthority, NativeTransportIdentity,
-    };
+    use gateway_auth_native_proof::{native_auth::AuthenticatedNativeOwner, native_auth::NativeAuthenticator, native_auth::NativeNonceAuthority, native_auth::NativeTransportIdentity};
+    use gateway_auth_native_contracts::{transport::NativeAuthHeaders, transport::NativeCapability};
     use gateway_auth_primitives::crypto::{Secret, base64url};
     use gateway_publication_policy::control_publication::{
         ConfiguredPaidInputs, PreparedConfigurationPublication, bootstrap_fixture_owner,

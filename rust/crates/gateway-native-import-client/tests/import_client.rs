@@ -9,6 +9,9 @@ use gateway_auth_credentials::provider_credentials::{
     CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
     ManagedNativeSource, codex_source_pool_key,
 };
+use gateway_auth_native_contracts::transport::{
+    NativeAuthHeaders, NativeCapability, NativeImportAuthHeaders,
+};
 use gateway_auth_native_contracts::{
     native_import::{
         NATIVE_IMPORT_ACTION_HEADER, NATIVE_IMPORT_BODY_HEADER, NATIVE_IMPORT_OPERATION_HEADER,
@@ -16,12 +19,7 @@ use gateway_auth_native_contracts::{
     },
     nonce::NativeNonceAuthority,
 };
-use gateway_auth_native_proof::{
-    native_auth::{
-        NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
-    },
-    native_import::NativeImportAuthHeaders,
-};
+use gateway_auth_native_proof::native_auth::{NativeAuthenticator, NativeTransportIdentity};
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_TIME_HEADER,
     NATIVE_VERSION_HEADER,

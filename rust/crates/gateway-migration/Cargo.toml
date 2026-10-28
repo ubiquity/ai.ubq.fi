@@ -42,6 +42,7 @@ path = "tests/support/worker-custody-fixture.rs"
 workspace = true
 
 [dependencies]
+gateway-auth-native-contracts.workspace = true
 gateway-native-authority-wire = { workspace = true }
 gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }

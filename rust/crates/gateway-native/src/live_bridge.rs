@@ -89,7 +89,7 @@ impl NativeLiveHandler for NativeLiveService {
     ) -> Result<NativeLiveOutcome, GatewayError> {
         proof.require_upgrade(
             &request.action_ref,
-            gateway_native_http_framing::response::now_ms()?,
+            gateway_auth_native_proof::native_context::now_ms()?,
         )?;
         let mut random = [0; 32];
         getrandom::fill(&mut random).map_err(|_| unavailable())?;

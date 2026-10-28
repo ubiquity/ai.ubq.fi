@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 gateway-model-selection.workspace = true
 gateway-authority-native-inference-facts = { path = "../gateway-authority-native-inference-facts" }
+gateway-auth-native-contracts.workspace = true
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }

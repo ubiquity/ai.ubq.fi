@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-auth-native-contracts.workspace = true
 gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
 gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }

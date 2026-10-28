@@ -1,5 +1,6 @@
 use super::*;
-use gateway_auth_native_proof::native_auth::{NativeCapability, NativeTransportIdentity};
+use gateway_auth_native_contracts::transport::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::NATIVE_RESPONSE_MAC_HEADER;
 use gateway_authority_paid_control_records::{PAID_CONTROL_CONFIG_VERSION, PaidControlConfig};
 use gateway_publication::sender::NativePublicationSender;
@@ -219,7 +220,7 @@ fn real_https_transport_verifies_peer_and_signed_publication_receipts()
             NativePublicationSender::configured(&identity, &carrier).send(
                 &command,
                 [9; 32],
-                gateway_native_http_framing::response::now_ms()?,
+                gateway_auth_native_proof::native_context::now_ms()?,
             ),
         );
         let reached_http = peer.finish();
