@@ -6,7 +6,7 @@ import { runInNewContext } from "node:vm";
 const AT = 1_800_000_000_000;
 const script = readFileSync(new URL("../static/admin.js", import.meta.url), "utf8");
 const chart = runInNewContext(
-  script.slice(script.indexOf("const CLAUDE_CAPACITY_CHART_SERIES ="), script.indexOf("const renderClaudeHistorySelector =")) +
+  script.slice(script.indexOf("const CLAUDE_CAPACITY_CHART_SERIES ="), script.indexOf("const claudeHistoryAccountId =")) +
     "\n({series:claudeCapacityChartSeries,points:claudeCapacityChartPoints})",
   { CAPACITY_CHART_BUCKET_MS: 900_000, clampCapacityChartPercent: (value: number) => Math.min(100, Math.max(0, value)) }
 ) as {
@@ -84,6 +84,80 @@ class MeterElement {
 }
 const elementText = (element: MeterElement): string => [element.textContent, ...element.children.map(elementText)].join(" ");
 const descendants = (element: MeterElement): MeterElement[] => [element, ...element.children.flatMap(descendants)];
+const historyContext = {
+  CAPACITY_CHART_BUCKET_MS: 900_000,
+  clampCapacityChartPercent: (value: number) => Math.min(100, Math.max(0, value)),
+  latestClaudeSubscription: null as { active_account_id: string; accounts: { account_id: string; account_cohort_id: string }[] } | null,
+  formatCapacityTimestamp: (value: number) => String(value),
+  quotaPercentFormatter: new Intl.NumberFormat("en-US"),
+  capacityChartPath: () => "",
+  capacityChartSvgElement: (tag: string, attributes: Record<string, string | number> = {}) => {
+    const element = new MeterElement(tag);
+    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+    return element;
+  },
+};
+const history = runInNewContext(
+  script.slice(script.indexOf("const CLAUDE_CAPACITY_CHART_SERIES ="), script.indexOf("const capacityChartFailureIsDowntime =")) +
+    "\n({account:claudeHistoryAccountId,render:renderClaudeHistoryPaths,summary:claudeHistorySummary})",
+  historyContext
+) as {
+  account: (snapshot: unknown) => string;
+  render: (element: MeterElement, snapshot: unknown, interval: unknown, plot: unknown) => void;
+  summary: (snapshot: unknown, now: number) => string;
+};
+const historyAccount = (id: string, cohort = "cohort") => ({ account_id: id, account_cohort_id: cohort });
+const renderHistory = (snapshot: unknown) => {
+  const svg = new MeterElement("svg");
+  history.render(svg, snapshot, interval, { left: 0, top: 0, width: 100, height: 100 });
+  return elementText(svg);
+};
+
+test("shipped Claude history follows each snapshot's active account without a selector or pinned manual choice", () => {
+  const a = historyAccount("a");
+  const b = historyAccount("b");
+  historyContext.latestClaudeSubscription = { active_account_id: "b", accounts: [a, b] };
+  const snapshot = {
+    claude: a,
+    claude_accounts: [a, b],
+    claude_history: { scan: "ok", points: [headerPoint(0), headerPoint(1, { account_id: "b" })] },
+  };
+  const before = structuredClone(snapshot);
+  assert.equal(history.account(snapshot), "a", "current capacity metadata wins over independently loaded subscription status");
+  assert.match(renderHistory(snapshot), / · a · cohort/);
+  assert.doesNotMatch(renderHistory(snapshot), / · b · cohort/);
+  const switched = { ...snapshot, claude: b };
+  assert.equal(history.account(switched), "b");
+  assert.match(renderHistory(switched), / · b · cohort/);
+  assert.doesNotMatch(renderHistory(switched), / · a · cohort/);
+  assert.deepEqual(snapshot, before, "view rendering preserves all retained account history");
+  assert.doesNotMatch(script, /Claude history account|capacityClaudeFilter|selectedClaudeHistoryAccountId|renderClaudeHistorySelector/);
+});
+
+test("shipped Claude history refuses stale or mismatched active metadata instead of borrowing retained history", () => {
+  const a = historyAccount("a");
+  const b = historyAccount("b");
+  historyContext.latestClaudeSubscription = { active_account_id: "b", accounts: [a, b] };
+  const retained = { scan: "ok", points: [headerPoint(0), headerPoint(1, { account_id: "b" })] };
+  for (const snapshot of [
+    { claude: null, claude_accounts: [a, b] },
+    { claude: a, claude_accounts: [] },
+    { claude: a, claude_accounts: [b] },
+    { claude: historyAccount("a", "replacement"), claude_accounts: [a] },
+  ]) {
+    const current = { ...snapshot, claude_history: retained };
+    assert.equal(history.account(current), "");
+    assert.equal(renderHistory(current), "");
+    assert.match(history.summary(current, AT), /waiting for actual upstream quota observations/);
+  }
+  assert.equal(history.account({ claude_accounts: [b] }), "b", "legacy snapshots may use matching verified subscription metadata");
+  assert.equal(history.account({ claude_accounts: [historyAccount("b", "replacement")] }), "");
+  historyContext.latestClaudeSubscription = { active_account_id: "retired", accounts: [a, b] };
+  assert.equal(history.account({ claude_history: retained }), "");
+  historyContext.latestClaudeSubscription = null;
+  assert.equal(history.account({ claude_history: retained }), "");
+});
+
 const render = runInNewContext(
   script.slice(script.indexOf("const appendProviderFact ="), script.indexOf("const capacityAdditionalLimitLabel =")) +
     script.slice(script.indexOf("const claudeCapacityWindowForDisplay ="), script.indexOf("const claudeCapacitySourcesForDisplay =")) +

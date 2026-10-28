@@ -1695,8 +1695,6 @@ const claudeCapacityChartSeries = (snapshot, accountId) => {
   for (const row of snapshot?.claude_accounts ?? [snapshot?.claude]) add(row);
   return Array.from(series.values());
 };
-let selectedClaudeHistoryAccountId = null;
-
 /** Raw observed points only: never reuse a live value at browser-now. */
 const claudeCapacityChartPoints = (view, accountId, windowId, interval) => {
   const samples = (Array.isArray(view?.points) ? view.points : [])
@@ -1747,57 +1745,34 @@ const claudeCapacityChartPoints = (view, accountId, windowId, interval) => {
   return points;
 };
 
-const renderClaudeHistorySelector = (header, snapshot) => {
-  const view = snapshot?.claude_history;
-  const accounts = new Map(
-    (latestClaudeSubscription?.accounts ?? []).map((account) => [
-      account.account_id,
-      account.label || account.account_id,
-    ])
-  );
-  for (const point of Array.isArray(view?.points) ? view.points : [])
-    if (isClaudeHeaderCapacityPoint(point) && typeof point.account_id === "string" && !accounts.has(point.account_id))
-      accounts.set(point.account_id, `Retained account ${point.account_id}`);
-  if (selectedClaudeHistoryAccountId === null || (selectedClaudeHistoryAccountId === "" && accounts.size))
-    selectedClaudeHistoryAccountId = latestClaudeSubscription?.active_account_id ?? accounts.keys().next().value ?? "";
-  if (selectedClaudeHistoryAccountId && !accounts.has(selectedClaudeHistoryAccountId))
-    accounts.set(selectedClaudeHistoryAccountId, `Retained account ${selectedClaudeHistoryAccountId}`);
-  const label = document.createElement("label");
-  label.dataset.capacityClaudeFilter = "";
-  const text = document.createElement("span");
-  text.textContent = "Claude history account";
-  const select = document.createElement("select");
-  select.setAttribute("aria-label", "Claude history account (view only)");
-  if (!accounts.size) {
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = "Waiting for account observations";
-    select.appendChild(empty);
+const claudeHistoryAccountId = (snapshot) => {
+  // The capacity snapshot's compatibility row is the exact current active account.
+  const active = snapshot?.claude;
+  if (active !== undefined) {
+    if (typeof active?.account_id !== "string" || !active.account_id) return "";
+    return !Array.isArray(snapshot.claude_accounts) ||
+      snapshot.claude_accounts.some(
+        (account) => account.account_id === active.account_id && account.account_cohort_id === active.account_cohort_id
+      )
+      ? active.account_id
+      : "";
   }
-  for (const [id, name] of accounts) {
-    const option = document.createElement("option");
-    option.value = id;
-    option.textContent = name;
-    select.appendChild(option);
-  }
-  select.value = selectedClaudeHistoryAccountId;
-  select.addEventListener("change", () => {
-    selectedClaudeHistoryAccountId = select.value;
-    const state = latestProviderCapacityChartState;
-    if (state) renderProviderCapacityChart(state.snapshot, state.sources, state.fiveXxBuckets);
-  });
-  label.append(text, select);
-  header.appendChild(label);
+  const activeId = latestClaudeSubscription?.active_account_id;
+  if (typeof activeId !== "string" || !activeId) return "";
+  const account = latestClaudeSubscription.accounts?.find((entry) => entry.account_id === activeId);
+  if (!account) return "";
+  return !Array.isArray(snapshot?.claude_accounts) ||
+    snapshot.claude_accounts.some(
+      (entry) => entry.account_id === activeId && entry.account_cohort_id === account.account_cohort_id
+    )
+    ? activeId
+    : "";
 };
 
 const renderClaudeHistoryPaths = (svg, snapshot, interval, plot) => {
-  for (const series of claudeCapacityChartSeries(snapshot, selectedClaudeHistoryAccountId)) {
-    const points = claudeCapacityChartPoints(
-      snapshot?.claude_history,
-      selectedClaudeHistoryAccountId,
-      series.window,
-      interval
-    );
+  const accountId = claudeHistoryAccountId(snapshot);
+  for (const series of claudeCapacityChartSeries(snapshot, accountId)) {
+    const points = claudeCapacityChartPoints(snapshot?.claude_history, accountId, series.window, interval);
     const path = capacityChartSvgElement("path", {
       d: capacityChartPath(points, plot, { anchorStart: false, anchorEnd: false }),
       fill: "none",
@@ -1826,8 +1801,9 @@ const renderClaudeHistoryPaths = (svg, snapshot, interval, plot) => {
 const claudeHistorySummary = (snapshot, nowMs) => {
   const view = snapshot?.claude_history;
   if (!view || view.scan !== "ok") return "Claude history unavailable; no capacity inferred.";
+  const accountId = claudeHistoryAccountId(snapshot);
   const points = (Array.isArray(view.points) ? view.points : []).filter(
-    (point) => point.account_id === selectedClaudeHistoryAccountId && isClaudeHeaderCapacityPoint(point)
+    (point) => point.account_id === accountId && isClaudeHeaderCapacityPoint(point)
   );
   if (!points.length)
     return `Claude history: waiting for actual upstream quota observations; no backfill.${view.truncated ? " INCOMPLETE: scan truncated." : ""}`;
@@ -2767,7 +2743,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   range.dataset.capacityChartRange = "";
   range.textContent = "7 days";
   chartHeader.append(title, range);
-  renderClaudeHistorySelector(chartHeader, snapshot);
   figure.appendChild(chartHeader);
 
   const legend = document.createElement("div");
@@ -2776,7 +2751,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   for (const series of [
     { key: "cached-input", label: "Cached input share" },
     ...CAPACITY_CHART_SERIES,
-    ...claudeCapacityChartSeries(snapshot, selectedClaudeHistoryAccountId),
+    ...claudeCapacityChartSeries(snapshot, claudeHistoryAccountId(snapshot)),
     { key: "rate-limit-reset", label: "Reset" },
     { key: "openai-downtime", label: "Downtime" },
     { key: "inference-error", label: "Errors (5xx)" },
@@ -10197,7 +10172,6 @@ const invalidateProviderSelection = (message) => {
   providerSelectionSaveError = "";
   latestClaudeSubscription = null;
   selectedClaudeAccountId = null;
-  selectedClaudeHistoryAccountId = null;
   claudeAccountDrafts.clear();
   claudeAccessDirty = false;
   claudeAccessInput.value = "";
