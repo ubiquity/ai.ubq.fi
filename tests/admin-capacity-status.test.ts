@@ -288,12 +288,12 @@ test("shipped Claude rows never reuse another account or replacement cohort's ma
   assert.equal(rendered[1], null, "a poll racing credential replacement displays unknown metadata, never the replacement's provenance");
 });
 
-test("the restored Claude meter exposes an explicit refresh control", () => {
-  assert.match(sourceText, /dataset\.capacityRefresh/);
-  assert.match(sourceText, /Refresh usage/);
-  assert.match(sourceText, /\/admin\/providers\/claude-code\/quota\/refresh/);
-  assert.match(sourceText, /Usage read/);
-  assert.match(sourceText, /user:profile scope missing/);
+test("the Claude meter displays observed response headers without a direct refresh action", () => {
+  assert.match(sourceText, /"Quota source", "Claude response headers"/);
+  assert.match(sourceText, /"Last observed"/);
+  assert.match(sourceText, /"Awaiting response headers"/);
+  assert.doesNotMatch(sourceText, /dataset\.capacityRefresh|Refresh usage|refreshClaudeUsage/);
+  assert.doesNotMatch(sourceText, /\/admin\/providers\/claude-code\/quota\/refresh|OAuth usage API|user:profile scope missing/);
   assert.doesNotMatch(sourceText, /minimal streaming Claude request/);
   assert.doesNotMatch(sourceText, /claudeUsageAutoRefreshAttempted/);
   assert.match(sourceText, /refreshAnalyticsView\(\);\s*}, 30_000\)/);
