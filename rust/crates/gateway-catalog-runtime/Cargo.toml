@@ -15,6 +15,7 @@ gateway-publication-policy.workspace = true
 gateway-routing-runtime-test-support.workspace = true
 
 [dependencies]
+gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
 gateway-schema-values.workspace = true
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }

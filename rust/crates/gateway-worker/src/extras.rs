@@ -245,7 +245,7 @@ async fn request_body(
             None,
         )
     } else {
-        let raw = match gateway_schema::source_request::parse_http_body(&bytes) {
+        let raw = match gateway_request_normalization::syntax::parse_http_body(&bytes) {
             Ok(raw) => raw,
             Err(error) => {
                 return Ok(ExtrasBody::Rejected(

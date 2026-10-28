@@ -1,4 +1,4 @@
-use gateway_schema::source_request::reasoning::parse_reasoning;
+use gateway_request_normalization::syntax::parse_reasoning;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

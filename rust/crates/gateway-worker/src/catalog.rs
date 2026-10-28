@@ -97,7 +97,7 @@ pub struct CatalogState {
 impl CatalogState {
     pub async fn resolve_inference(
         mut self,
-        document: &gateway_schema::source_request::SourceRequestDocument,
+        document: &gateway_request_normalization::document::SourceRequestDocument,
     ) -> Result<Self, GatewayError> {
         self.service
             .resolve_inference_catalog(&self.host.store, &self.host, &mut self.input, document)

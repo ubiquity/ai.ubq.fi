@@ -5,10 +5,11 @@ use gateway_catalog_provider::host::{
 use gateway_catalog_runtime::{CatalogRuntime, state};
 use gateway_contracts::model::ModelId;
 use gateway_model_selection::aliases as model_aliases;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime_test_support::{
     exec::run, input::NOW, source_catalog::Collator, store::Store,
 };
-use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
+use gateway_schema::catalog::CatalogInput;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{

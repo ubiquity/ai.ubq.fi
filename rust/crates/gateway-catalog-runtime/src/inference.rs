@@ -4,7 +4,7 @@ use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
 use gateway_catalog_provider::model::uses_openrouter;
 use gateway_contracts::model::ModelId;
 use gateway_core::query::QueryStore;
-use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_schema_values::{request::SourceModelRequest, source_view::js_trim_source};
 use gateway_source::error::GatewayError;
 
@@ -16,7 +16,7 @@ impl CatalogRuntime {
         &self,
         store: &S,
         host: &H,
-        input: &mut CatalogInput,
+        input: &mut gateway_schema::catalog::CatalogInput,
         document: &SourceRequestDocument,
     ) -> Result<(), GatewayError> {
         let Ok(SourceModelRequest::Named(name)) = document.model_request() else {

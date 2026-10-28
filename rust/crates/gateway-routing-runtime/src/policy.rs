@@ -10,7 +10,7 @@ use gateway_provider_policy::{
     policy, policy::DeepseekHop, policy::PaidRoutingInput, policy::PaidRoutingPlan,
 };
 use gateway_provider_protocol::types::ClientSurface;
-use gateway_schema::source_request::SourceRequestDocument;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_schema_values::request::{RequestExtensions, RequestSurface, SourceModelRequest};
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};

@@ -2,7 +2,7 @@ use gateway_contracts::model::ModelId;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_protocol::types::OrdinaryPreparationContext;
 use gateway_provider_source::source as s;
-use gateway_schema::source_request::SourceRequestDocument;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_schema_values::request::SourceField;
 use gateway_schema_values::request::{RequestSurface, SourceModelRequest};
 use gateway_source::js_string::JsString16;

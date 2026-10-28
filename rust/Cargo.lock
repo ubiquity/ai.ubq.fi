@@ -2413,6 +2413,7 @@ dependencies = [
  "gateway-provider-policy",
  "gateway-provider-protocol",
  "gateway-publication-policy",
+ "gateway-request-normalization",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-schema-values",
@@ -4055,6 +4056,7 @@ dependencies = [
  "gateway-provider-policy",
  "gateway-provider-protocol",
  "gateway-provider-source",
+ "gateway-request-normalization",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -4223,6 +4225,7 @@ dependencies = [
  "gateway-provider-stream",
  "gateway-provider-tool-grammar",
  "gateway-provider-writer",
+ "gateway-request-normalization",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -4352,6 +4355,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-request-normalization"
+version = "0.1.0"
+dependencies = [
+ "gateway-chat-normalization",
+ "gateway-local-refusal",
+ "gateway-responses-normalization",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde_json",
+]
+
+[[package]]
 name = "gateway-responses-normalization"
 version = "0.1.0"
 dependencies = [
@@ -4407,6 +4422,7 @@ dependencies = [
  "gateway-provider-response",
  "gateway-provider-stream",
  "gateway-providers",
+ "gateway-request-normalization",
  "gateway-routing-runtime-test-support",
  "gateway-schema",
  "gateway-schema-values",
@@ -4456,6 +4472,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-local-refusal",
  "gateway-model-selection",
+ "gateway-request-normalization",
  "gateway-responses-normalization",
  "gateway-schema-values",
  "gateway-source",
@@ -4611,6 +4628,7 @@ dependencies = [
  "gateway-publication",
  "gateway-publication-policy",
  "gateway-publication-transport",
+ "gateway-request-normalization",
  "gateway-routing-runtime",
  "gateway-routing-runtime-test-support",
  "gateway-schema",

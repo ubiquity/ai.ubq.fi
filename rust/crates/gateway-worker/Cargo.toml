@@ -17,6 +17,7 @@ fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 workspace = true
 
 [dependencies]
+gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
 gateway-admin-diagnostics-runtime = { path = "../gateway-admin-diagnostics-runtime" }
 gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
