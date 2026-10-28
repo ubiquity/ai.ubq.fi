@@ -11,46 +11,6 @@ fn scalar(
 ) -> Result<Value, gateway_source::error::GatewayError> {
     value.deserialize()
 }
-pub fn normalize_response_content(
-    value: &Value,
-    param: &str,
-    role: &str,
-) -> Result<Value, gateway_source::error::GatewayError> {
-    source::normalized::normalize_response_content(&raw(value)?, param, role)
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
-        .and_then(scalar)
-}
-pub fn normalize_response_message(
-    value: &Value,
-    param: &str,
-) -> Result<Value, gateway_source::error::GatewayError> {
-    source::normalized::normalize_response_message(&raw(value)?, param)
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
-        .and_then(scalar)
-}
-pub fn is_gateway_failover_warning(value: &Value) -> bool {
-    raw(value)
-        .ok()
-        .is_some_and(|value| source::normalized::is_gateway_failover_warning(&value))
-}
-pub fn normalize_function_output(
-    value: &Value,
-    param: &str,
-) -> Result<Value, gateway_source::error::GatewayError> {
-    source::normalized::normalize_function_output(&raw(value)?, param)
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
-        .and_then(scalar)
-}
-pub fn normalize_responses_input(
-    value: Option<&Value>,
-) -> Result<Vec<Value>, gateway_source::error::GatewayError> {
-    let value = value.map(raw).transpose()?;
-    source::normalized::normalize_responses_input(value.as_ref())
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
-        .into_iter()
-        .map(scalar)
-        .collect()
-}
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChatMessage {
     pub instruction: Option<String>,

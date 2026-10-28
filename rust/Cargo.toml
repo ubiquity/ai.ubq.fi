@@ -107,6 +107,7 @@ members = [
   "crates/gateway-compaction-test-support",
   "crates/gateway-prompt-policy",
   "crates/gateway-schema",
+  "crates/gateway-responses-normalization",
   "crates/gateway-schema-values",
   "crates/gateway-providers",
   "crates/gateway-authority",
@@ -306,6 +307,7 @@ gateway-compaction-render = { path = "crates/gateway-compaction-render" }
 gateway-compaction-test-support = { path = "crates/gateway-compaction-test-support" }
 gateway-prompt-policy = { path = "crates/gateway-prompt-policy" }
 gateway-schema = { path = "crates/gateway-schema" }
+gateway-responses-normalization = { path = "crates/gateway-responses-normalization" }
 gateway-schema-values = { path = "crates/gateway-schema-values" }
 gateway-providers = { path = "crates/gateway-providers" }
 gateway-authority = { path = "crates/gateway-authority" }

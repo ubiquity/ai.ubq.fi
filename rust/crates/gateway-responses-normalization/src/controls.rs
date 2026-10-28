@@ -1,10 +1,11 @@
 //! Request controls share the same source string view as content validation.
 use gateway_local_refusal::source_error::SourceRequestError;
-use gateway_schema_values::value::{Value, keyed_error, unknown_key};
+use gateway_schema_values::value::{Text, Value, keyed_error, unknown_key};
+use gateway_source::js_string::JsString16;
 fn invalid(message: impl AsRef<str>, param: Option<&str>) -> SourceRequestError {
     SourceRequestError::scalar(message.as_ref(), param)
 }
-pub(super) fn normalize_breakpoint(
+pub(crate) fn normalize_breakpoint(
     value: Option<&Value>,
     param: &str,
 ) -> Result<Option<Value>, SourceRequestError> {
@@ -25,5 +26,8 @@ pub(super) fn normalize_breakpoint(
             Some(&format!("{param}.mode")),
         ));
     }
-    Ok(Some(json!({"mode":"explicit"})))
+    Ok(Some(Value::object(vec![(
+        "mode".into(),
+        Value::String(Text::new(JsString16::from_utf8("explicit"))),
+    )])))
 }
