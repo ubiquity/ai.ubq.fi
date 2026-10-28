@@ -1056,7 +1056,7 @@ const capacityProgressTone = (remainingPercent) => {
   return "healthy";
 };
 
-const renderCapacityWindow = (container, label, window) => {
+const renderCapacityWindow = (container, label, window, observedAtMs) => {
   const card = document.createElement("section");
   card.dataset.capacityWindow = "";
   const title = document.createElement("h4");
@@ -1097,6 +1097,7 @@ const renderCapacityWindow = (container, label, window) => {
       : "Not reported"
   );
   appendProviderFact(facts, "Reset", formatCapacityTimestamp(window?.reset_at_ms));
+  if (observedAtMs !== undefined) appendProviderFact(facts, "Observed", formatCapacityTimestamp(observedAtMs));
   card.append(title, usage, facts);
   container.appendChild(card);
 };
@@ -1310,7 +1311,7 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
     appendProviderFact(facts, "Last event", health?.last_event ?? "Not observed");
     appendProviderFact(facts, "Blocked until", formatCapacityTimestamp(source.blocked_until_ms, "Not blocked"));
     appendProviderFact(facts, "Cooldown until", formatCapacityTimestamp(source.cooldown_until_ms, "No cooldown"));
-    appendProviderFact(facts, "Usage read", claudeUsageReadLabel(source.usage));
+    appendProviderFact(facts, "Quota source", "Claude response headers");
     appendProviderFact(
       facts,
       "Last upstream error",
@@ -1526,16 +1527,6 @@ const claudeCapacityCredentialLabel = (source) => {
   return "Not configured";
 };
 
-const claudeUsageReadLabel = (usage) => {
-  if (!usage || typeof usage !== "object") return "Not attempted · gateway headers only";
-  const attempted = formatDate(usage.attempted_at_ms);
-  if (usage.state === "ok") return `OAuth usage API · succeeded ${attempted}`;
-  if (usage.state === "scope_missing") return `OAuth usage API · user:profile scope missing · ${attempted}`;
-  if (usage.state === "unsupported_credential") return "OAuth usage API · unavailable for Console API keys";
-  const status = typeof usage.status === "number" ? ` · HTTP ${usage.status}` : "";
-  return `OAuth usage API · ${usage.state || "unknown"}${status} · ${attempted}${usage.message ? ` — ${usage.message}` : ""}`;
-};
-
 const claudeCapacityWindowForDisplay = (window) => {
   if (!window) return null;
   return {
@@ -1544,49 +1535,9 @@ const claudeCapacityWindowForDisplay = (window) => {
   };
 };
 
-/** Read one account's usage directly from Anthropic's OAuth endpoint, then reload the meter. */
-const refreshClaudeUsage = async (source, button, options = {}) => {
-  if (!adminAccessState.isAdmin || !hasAdminCredential() || typeof source.account_id !== "string") return;
-  const target = apiUrl("/admin/providers/claude-code/quota/refresh");
-  const token = getAdminToken();
-  button.disabled = true;
-  button.textContent = "Refreshing...";
-  try {
-    const response = await fetch(target, {
-      method: "POST",
-      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify({ account_id: source.account_id, account_cohort_id: source.account_cohort_id }),
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.error?.message || "Claude usage refresh failed");
-    if (options.automatic !== true) {
-      if (payload?.refreshed === false && payload?.reason !== "fresh") {
-        toast.info("Claude usage source unavailable", {
-          description: payload?.message || "The direct usage read did not return subscription windows.",
-        });
-      } else {
-        toast.success(payload?.refreshed === false ? "Claude usage is current" : "Claude usage refreshed", {
-          description:
-            payload?.refreshed === false
-              ? "The last usage attempt is less than 30 seconds old."
-              : `Observed ${formatCapacityTimestamp(payload?.observed_at_ms)}.`,
-        });
-      }
-    }
-    await loadProviderCapacity();
-    void loadClaudeSubscription();
-  } catch (error) {
-    if (options.automatic !== true) toast.error("Claude usage refresh failed", { description: error.message });
-  } finally {
-    button.disabled = false;
-    button.textContent = "Refresh usage";
-  }
-};
-
 /**
- * The Claude subscription row mirrors the Codex rows: a live/stale/unavailable
- * badge, the observed subscription windows as remaining capacity, and the
+ * The Claude subscription row keeps the Codex layout with a last-observed
+ * badge, the response-header windows as remaining capacity, and the
  * diagnostics the tier itself recorded (credential direction, workspace,
  * guards, last upstream outcome, and Console API-key limits when present).
  */
@@ -1618,50 +1569,33 @@ const renderClaudeCapacitySource = (source) => {
     title.textContent += ` · ${account?.label || source.account_id.slice(0, 8)}${account?.active ? " · Active" : ""}`;
   const badge = document.createElement("span");
   badge.dataset.badge = "";
-  setBadge(badge, capacityBadgeState(source.state), capacityStateLabel(source.state));
-  const refresh = document.createElement("button");
-  refresh.type = "button";
-  refresh.dataset.capacityRefresh = "";
-  refresh.textContent = "Refresh usage";
-  refresh.title = "Reads Anthropic's OAuth usage endpoint without sending an inference request.";
-  refresh.disabled = !source.account_id;
-  refresh.addEventListener("click", () => void refreshClaudeUsage(source, refresh));
-  header.append(title, badge, refresh);
+  const observed = typeof source.source_observed_at_ms === "number" && Number.isFinite(source.source_observed_at_ms);
+  const label =
+    source.state === "unavailable"
+      ? capacityStateLabel(source.state)
+      : !observed
+        ? "Awaiting response headers"
+        : source.state === "stale"
+          ? "Last observed · stale"
+          : "Last observed";
+  setBadge(badge, observed || source.state === "unavailable" ? capacityBadgeState(source.state) : "unknown", label);
+  header.append(title, badge);
   row.append(header);
 
   const windows = document.createElement("div");
   windows.dataset.capacityWindows = "";
-  if (source.usage_snapshot) {
-    const observed = document.createElement("p");
-    observed.textContent = `${source.usage_stale ? "Last known usage · stale" : "Direct usage"} · observed ${formatCapacityTimestamp(source.usage_snapshot.observed_at_ms)}`;
-    windows.appendChild(observed);
-    for (const meter of source.usage_snapshot.meters ?? []) {
-      const group = document.createElement("section");
-      group.dataset.usageGroup = meter.group;
-      group.dataset.usageSeverity = meter.severity ?? "";
-      group.dataset.usageActive = String(meter.is_active);
-      renderCapacityWindow(group, `${meter.label}${meter.is_active ? " · Headline" : ""}`, meter);
-      const detail = document.createElement("p");
-      detail.textContent = `${meter.used_percent === null ? "Usage not reported" : `${meter.used_percent}% used`} · ${meter.severity ?? "severity not reported"} · reset ${meter.resets_at ?? "not reported"}`;
-      group.appendChild(detail);
-      windows.appendChild(group);
-    }
-    if (!source.usage_snapshot.meters?.length) {
-      const empty = document.createElement("p");
-      empty.textContent = "No subscription meters reported.";
-      windows.appendChild(empty);
-    }
-    const payload = source.usage_snapshot.payload ?? {};
-    for (const key of ["extra_usage", "cinder_cove", "wattle_ember"]) {
-      if (payload[key] === undefined || payload[key] === null) continue;
-      const diagnostic = document.createElement("p");
-      diagnostic.textContent = `${key} (${key === "extra_usage" ? "amounts in minor currency units" : "separate credit evidence"}): ${JSON.stringify(payload[key])}`;
-      windows.appendChild(diagnostic);
-    }
-  } else {
-    renderCapacityWindow(windows, "5-hour window", claudeCapacityWindowForDisplay(source.windows?.five_hour));
-    renderCapacityWindow(windows, "Weekly window", claudeCapacityWindowForDisplay(source.windows?.seven_day));
-  }
+  renderCapacityWindow(
+    windows,
+    "5-hour window",
+    claudeCapacityWindowForDisplay(source.windows?.five_hour),
+    source.windows?.five_hour?.observed_at_ms ?? null
+  );
+  renderCapacityWindow(
+    windows,
+    "Weekly window",
+    claudeCapacityWindowForDisplay(source.windows?.seven_day),
+    source.windows?.seven_day?.observed_at_ms ?? null
+  );
   row.append(windows);
 
   appendCapacitySourceMeta(row, source, provider);
@@ -1746,19 +1680,18 @@ const CLAUDE_CAPACITY_CHART_SERIES = [
   { key: "claude-five-hour", label: "Claude 5-hour", window: "five_hour" },
   { key: "claude-seven-day", label: "Claude weekly", window: "seven_day" },
 ];
+const isClaudeHeaderCapacityPoint = (point) =>
+  point !== null &&
+  typeof point === "object" &&
+  (point.source === "response_headers" || (point.source === undefined && !point.usage_snapshot));
 const claudeCapacityChartSeries = (snapshot, accountId) => {
   const series = new Map();
   const add = (point) => {
     if (point?.account_id !== accountId) return;
-    if (point.usage_snapshot) {
-      for (const meter of point.usage_snapshot.meters ?? [])
-        series.set(meter.id, { key: `claude-meter-${meter.id}`, label: meter.label, window: meter.id });
-    } else {
-      for (const entry of CLAUDE_CAPACITY_CHART_SERIES)
-        if (point.windows?.[entry.window]) series.set(entry.window, entry);
-    }
+    for (const entry of CLAUDE_CAPACITY_CHART_SERIES)
+      if (point.windows?.[entry.window]) series.set(entry.window, entry);
   };
-  for (const point of snapshot?.claude_history?.points ?? []) add(point);
+  for (const point of snapshot?.claude_history?.points ?? []) if (isClaudeHeaderCapacityPoint(point)) add(point);
   for (const row of snapshot?.claude_accounts ?? [snapshot?.claude]) add(row);
   return Array.from(series.values());
 };
@@ -1767,7 +1700,7 @@ let selectedClaudeHistoryAccountId = null;
 /** Raw observed points only: never reuse a live value at browser-now. */
 const claudeCapacityChartPoints = (view, accountId, windowId, interval) => {
   const samples = (Array.isArray(view?.points) ? view.points : [])
-    .filter((point) => point?.account_id === accountId)
+    .filter((point) => point?.account_id === accountId && isClaudeHeaderCapacityPoint(point))
     .sort(
       (left, right) =>
         (left.source_observed_at_ms ?? left.sampled_at_ms) - (right.source_observed_at_ms ?? right.sampled_at_ms)
@@ -1775,9 +1708,7 @@ const claudeCapacityChartPoints = (view, accountId, windowId, interval) => {
   const points = [];
   let previous = null;
   for (const sample of samples) {
-    const window = sample.usage_snapshot
-      ? sample.usage_snapshot.meters?.find((meter) => meter.id === windowId)
-      : sample.windows?.[windowId];
+    const window = sample.windows?.[windowId];
     const observedAt = window?.observed_at_ms;
     if (
       typeof observedAt !== "number" ||
@@ -1825,7 +1756,7 @@ const renderClaudeHistorySelector = (header, snapshot) => {
     ])
   );
   for (const point of Array.isArray(view?.points) ? view.points : [])
-    if (typeof point?.account_id === "string" && !accounts.has(point.account_id))
+    if (isClaudeHeaderCapacityPoint(point) && typeof point.account_id === "string" && !accounts.has(point.account_id))
       accounts.set(point.account_id, `Retained account ${point.account_id}`);
   if (selectedClaudeHistoryAccountId === null || (selectedClaudeHistoryAccountId === "" && accounts.size))
     selectedClaudeHistoryAccountId = latestClaudeSubscription?.active_account_id ?? accounts.keys().next().value ?? "";
@@ -1896,7 +1827,7 @@ const claudeHistorySummary = (snapshot, nowMs) => {
   const view = snapshot?.claude_history;
   if (!view || view.scan !== "ok") return "Claude history unavailable; no capacity inferred.";
   const points = (Array.isArray(view.points) ? view.points : []).filter(
-    (point) => point.account_id === selectedClaudeHistoryAccountId
+    (point) => point.account_id === selectedClaudeHistoryAccountId && isClaudeHeaderCapacityPoint(point)
   );
   if (!points.length)
     return `Claude history: waiting for actual upstream quota observations; no backfill.${view.truncated ? " INCOMPLETE: scan truncated." : ""}`;
@@ -1904,7 +1835,7 @@ const claudeHistorySummary = (snapshot, nowMs) => {
     .map((point) => point.source_observed_at_ms)
     .filter((time) => typeof time === "number" && Number.isFinite(time));
   const last = times.length ? Math.max(...times) : null;
-  return `Claude: ${points.length} retained observations · upstream last observed ${formatCapacityTimestamp(last)}${last === null ? " · observation time unknown" : nowMs - last > view.stale_after_ms ? " · stale" : ""}${view.truncated ? " · INCOMPLETE: scan truncated" : ""} · downsampled to at most 6 events per 15-minute account/cohort bucket; latest 200 markers per window. Observed is gateway usage/header receipt, not the provider clock. Gaps and reset/cohort changes are not interpolated.`;
+  return `Claude: ${points.length} retained header observations · last observed ${formatCapacityTimestamp(last)}${last === null ? " · observation time unknown" : nowMs - last > view.stale_after_ms ? " · stale" : ""}${view.truncated ? " · INCOMPLETE: scan truncated" : ""} · downsampled to at most 6 events per 15-minute account/cohort bucket; latest 200 markers per window. Observed is gateway response-header receipt, not the provider clock. Gaps and reset/cohort changes are not interpolated.`;
 };
 
 const capacityChartFailureIsDowntime = (source) =>
