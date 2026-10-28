@@ -3266,9 +3266,11 @@ name = "gateway-migration-graph"
 version = "0.1.0"
 dependencies = [
  "gateway-core",
+ "gateway-kv-codec",
  "gateway-profile-source",
  "gateway-profile-values",
  "gateway-source",
+ "gateway-source-graph",
  "serde_json",
 ]
 

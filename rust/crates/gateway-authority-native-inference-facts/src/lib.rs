@@ -322,7 +322,7 @@ impl<'a, S: AuthorityStore> SourceNativeInferenceFactsReader<'a, S> {
         let Some(key_id) = session.context.key_id.as_ref().map(|k| &k.0) else {
             return Ok(());
         };
-        if principal.as_source() != &JsString16::from_utf8(format!("api-key:{key_id}")) {
+        if principal.as_source() != &JsString16::from_utf8(&format!("api-key:{key_id}")) {
             return Err(fail());
         }
         let api = session.fields.api.as_ref().ok_or_else(fail)?;

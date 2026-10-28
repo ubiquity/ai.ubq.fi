@@ -17,8 +17,6 @@ gateway-authority-keys = { path = "../gateway-authority-keys" }
 gateway-auth = { path = "../gateway-auth" }
 gateway-core = { path = "../gateway-core" }
 serde.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
 
 [lints]

@@ -1,6 +1,6 @@
 //! Source-compatible scalar and query field parsers; decoded values carry no authority.
 use crate::source_input as source_body;
-use gateway_auth_contracts::types::invalid;
+use gateway_auth_primitives::error::invalid;
 use gateway_contracts::identity::MAX_SAFE_INTEGER;
 use gateway_profile_values::coercion::js_number;
 use gateway_schema_values::scalar as schema_scalar;
