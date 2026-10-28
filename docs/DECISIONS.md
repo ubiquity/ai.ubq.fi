@@ -6,6 +6,12 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Direct Claude usage honors the provider retry deadline - 2026-10-27
+
+A direct usage HTTP 429 with a valid `Retry-After` stores an absolute retry deadline in that account cohort's usage metadata. Automatic capacity collection and manual usage refresh share the deadline across KV reopen and process restart. A suppressed manual refresh returns HTTP 429 with the remaining `Retry-After`; a successful read clears the deadline. Missing or malformed deadlines retain the existing 30-second attempt freshness, and an expired deadline does not extend that freshness. Failed reads preserve the last successful meter snapshot and never set an inference quota block or cooldown.
+
+Reason: the HTTP reader parsed `Retry-After` but the collector discarded it, allowing another usage request after 30 seconds even when the provider requested a longer pause. Reversal risk: discarding this usage-only deadline restores early retries; placing it in the inference cooldown would incorrectly deny otherwise eligible model requests.
+
 ## Passport browser sign-in uses revocable permanent app sessions - 2026-10-27
 
 The Bun gateway requests an explicitly opted-in persistent Passport app grant only through a fresh browser SSO code exchange, using PKCE S256 and the existing fixed issuer, client, audience, origin and callback. Its host-only HttpOnly/Secure/SameSite cookie contains a random local session identifier; existing private KV stores its SHA-256 key and the app-scoped upstream grant without a time-based expiry or a saved administrator-role authority. Every authenticated request introspects the grant against Passport's current user. Demotion denies admin access, deletion or authoritative revocation removes local authority, and temporary verification failures return 503 while retaining the saved session. Legacy JWT cookies remain verification-only until their normal expiry and cannot create permanent grants.

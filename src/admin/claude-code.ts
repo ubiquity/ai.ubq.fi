@@ -227,7 +227,12 @@ const runClaudeUsageRefresh = async (kv: Kv, account: ClaudeCodeAccountBinding, 
       reason: "refresh_in_progress",
       message: "A usage refresh is already in progress.",
     });
-  if (refreshed.kind === "fresh")
+  if (refreshed.kind === "fresh") {
+    const retryAfterMs = (refreshed.usage.retry_at_ms ?? 0) - Math.trunc((options.now ?? Date.now)());
+    if (refreshed.usage.state === "rate_limited" && retryAfterMs > 0)
+      return openaiError(429, refreshed.usage.message ?? "Claude usage is temporarily rate limited", "claude_usage_unavailable", {
+        headers: { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1_000))) },
+      });
     return json(200, {
       data: await claudeSubscriptionBlock(),
       refreshed: false,
@@ -235,6 +240,7 @@ const runClaudeUsageRefresh = async (kv: Kv, account: ClaudeCodeAccountBinding, 
       observed_at_ms: refreshed.usage.attempted_at_ms,
       usage: refreshed.usage,
     });
+  }
   const { result, usage } = refreshed;
   const data = await claudeSubscriptionBlock();
   if (result.ok) {
@@ -255,9 +261,14 @@ const runClaudeUsageRefresh = async (kv: Kv, account: ClaudeCodeAccountBinding, 
       usage,
     });
   }
-  return openaiError(502, result.message ?? "Claude usage could not be read from the upstream service", "claude_usage_unavailable", {
-    headers: result.retry_after_ms === null ? undefined : { "Retry-After": String(Math.max(1, Math.ceil(result.retry_after_ms / 1_000))) },
-  });
+  return openaiError(
+    result.kind === "rate_limited" ? 429 : 502,
+    result.message ?? "Claude usage could not be read from the upstream service",
+    "claude_usage_unavailable",
+    {
+      headers: result.retry_after_ms === null ? undefined : { "Retry-After": String(Math.max(1, Math.ceil(result.retry_after_ms / 1_000))) },
+    }
+  );
 };
 
 /**

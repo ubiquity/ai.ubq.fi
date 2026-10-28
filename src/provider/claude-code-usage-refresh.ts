@@ -14,11 +14,21 @@ export type ClaudeCodeUsageRefresh =
   | Readonly<{ kind: "fresh"; usage: ClaudeCodeUsageState }>
   | Readonly<{ kind: "completed"; result: ClaudeCodeUsageResult; usage: ClaudeCodeUsageState }>;
 
-export const claudeCodeUsageIsFresh = (quota: ClaudeCodeQuotaState | null, nowMs: number): boolean =>
-  quota?.usage !== null &&
-  quota?.usage !== undefined &&
-  nowMs >= quota.usage.attempted_at_ms &&
-  nowMs - quota.usage.attempted_at_ms < CLAUDE_CODE_USAGE_FRESH_MS;
+const usageRetryDeadline = (result: ClaudeCodeUsageResult): Pick<ClaudeCodeUsageState, "retry_at_ms"> => {
+  if (result.ok || result.kind !== "rate_limited" || result.retry_after_ms === null) return {};
+  const atMs = result.observed_at_ms + result.retry_after_ms;
+  return Number.isSafeInteger(atMs) && atMs > result.observed_at_ms ? { retry_at_ms: atMs } : {};
+};
+
+export const claudeCodeUsageIsFresh = (quota: ClaudeCodeQuotaState | null, nowMs: number): boolean => {
+  const usage = quota?.usage;
+  return (
+    usage !== null &&
+    usage !== undefined &&
+    nowMs >= usage.attempted_at_ms &&
+    (nowMs - usage.attempted_at_ms < CLAUDE_CODE_USAGE_FRESH_MS || (usage.state === "rate_limited" && (usage.retry_at_ms ?? 0) > nowMs))
+  );
+};
 
 /** Shared by automatic capacity capture and the targeted manual action. No credential mutation occurs here. */
 export const refreshClaudeCodeUsage = async (
@@ -55,6 +65,7 @@ export const refreshClaudeCodeUsage = async (
       message: result.ok ? null : result.message,
       attempted_at_ms: result.observed_at_ms,
       observed_at_ms: result.ok ? result.observed_at_ms : null,
+      ...usageRetryDeadline(result),
     };
     const recorded = await recordClaudeCodeQuotaOutcome(kv, {
       binding,
