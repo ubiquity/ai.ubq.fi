@@ -1,9 +1,8 @@
 //! Source kernel public-key administration; these are verification keys, never private credentials.
 use gateway_admin_contracts::source_input as input;
-use gateway_auth_contracts::{
-    types::AuthHost, types::AuthResponse, types::conflict, types::invalid,
-};
+use gateway_auth_contracts::{types::AuthHost, types::AuthResponse};
 use gateway_auth_primitives::crypto::uuid_from_random;
+use gateway_auth_primitives::error::{conflict, invalid};
 use gateway_auth_primitives::store;
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
 use gateway_core::{state::AuthorityStore, state::RecordMutation, state::StoredRecord};

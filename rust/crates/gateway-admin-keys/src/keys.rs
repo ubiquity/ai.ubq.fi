@@ -4,9 +4,8 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as input,
 };
-use gateway_auth_contracts::{
-    types::AuthHost, types::AuthPrincipal, types::AuthResponse, types::conflict, types::invalid,
-};
+use gateway_auth_contracts::{types::AuthHost, types::AuthPrincipal, types::AuthResponse};
+use gateway_auth_primitives::error::{conflict, invalid};
 use gateway_auth_primitives::{
     api_keys, api_keys::ApiKeyHashRecord, api_keys::WEEK_MS, crypto::Secret,
     crypto::sha256_base64url, crypto::uuid_from_random, store,
