@@ -12,11 +12,12 @@ use gateway_core::{
     state::RecordMutation,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use serde_json::json;
+
 use store::{error, now, scan_selector, uuid};
 pub trait HistoryHost {
     fn now_ms(&self) -> i64;
@@ -57,7 +58,7 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
             return Ok(false);
         };
         let p: Point = point.deserialize()?;
-        let key = p.history_key();
+        let key = p.history_key()?;
         let at = now(self.host)?;
         for _ in 0..4 {
             let row = self.store.read(&key).await?;
@@ -123,22 +124,24 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
             let first = cutoff / BUCKET_MS * BUCKET_MS;
             let end = at / BUCKET_MS * BUCKET_MS + BUCKET_MS;
             let selector = QuerySelector::Range {
-                start: atomic::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "history",
-                    first
-                ])),
-                end: atomic::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "history",
-                    end
-                ])),
+                start: TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("provider_capacity"),
+                    ScalarKeyPart::String("claude"),
+                    ScalarKeyPart::String("v1"),
+                    ScalarKeyPart::String("history"),
+                    ScalarKeyPart::Number(first),
+                ])
+                .to_record_key(),
+                end: TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("provider_capacity"),
+                    ScalarKeyPart::String("claude"),
+                    ScalarKeyPart::String("v1"),
+                    ScalarKeyPart::String("history"),
+                    ScalarKeyPart::Number(end),
+                ])
+                .to_record_key(),
             };
             let rows = scan_selector(self.store, selector, true, at, LIMIT + 1).await?;
             let mut points = Vec::new();
@@ -173,22 +176,24 @@ impl<S: QueryStore, H: HistoryHost> History<'_, S, H> {
             let first = since / HOUR_MS * HOUR_MS;
             let last = at / HOUR_MS * HOUR_MS;
             let selector = QuerySelector::Range {
-                start: atomic::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "rollup",
-                    first
-                ])),
-                end: atomic::key(json!([
-                    "uos_ai",
-                    "provider_capacity",
-                    "claude",
-                    "v1",
-                    "rollup",
-                    last + HOUR_MS
-                ])),
+                start: TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("provider_capacity"),
+                    ScalarKeyPart::String("claude"),
+                    ScalarKeyPart::String("v1"),
+                    ScalarKeyPart::String("rollup"),
+                    ScalarKeyPart::Number(first),
+                ])
+                .to_record_key(),
+                end: TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("provider_capacity"),
+                    ScalarKeyPart::String("claude"),
+                    ScalarKeyPart::String("v1"),
+                    ScalarKeyPart::String("rollup"),
+                    ScalarKeyPart::Number(last + HOUR_MS),
+                ])
+                .to_record_key(),
             };
             let rows = scan_selector(self.store, selector, true, at, LIMIT + 1).await?;
             let truncated = rows.len() > LIMIT;

@@ -2,6 +2,7 @@
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
 use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration_data::MappingData as Mapping;
 use gateway_migration_data::custody::ArtifactContext;
@@ -10,7 +11,6 @@ use gateway_migration_data::decode;
 use gateway_migration_data::digest;
 use gateway_migration_data::error::MigrationError;
 use gateway_migration_data::invalid;
-use gateway_migration_data::key;
 use gateway_migration_data::manifest::Manifest;
 use gateway_migration_data::manifest::manifest_key;
 use gateway_migration_data::manifest::mapping_key;
@@ -205,14 +205,24 @@ fn authority_control(
     if *key == gateway_authority_keys::kernel_defaults() {
         let mut expected = gateway_authority_kernel_protocol::KernelDefaults::default();
         if let Some(source) = all.get(
-            &gateway_migration_data::key(json!(["default", "kernel_policy_limit_requests"])).0,
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("kernel_policy_limit_requests"),
+            ])
+            .to_record_key()
+            .0,
         )? {
             expected.usage_limit_requests =
                 gateway_admin_contracts::fields::limit(source.json_value()?).unwrap_or(-1);
         }
-        if let Some(source) =
-            all.get(&gateway_migration_data::key(json!(["default", "kernel_policy_window_ms"])).0)?
-        {
+        if let Some(source) = all.get(
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("kernel_policy_window_ms"),
+            ])
+            .to_record_key()
+            .0,
+        )? {
             expected.window_ms = gateway_admin_contracts::fields::positive(source.json_value()?)
                 .unwrap_or(604800000);
         }
@@ -282,13 +292,14 @@ fn validate_mappings(
     all: &DiskMap,
     manifest: &Manifest,
 ) -> Result<Vec<(String, String)>, GatewayError> {
-    let mapping_prefix = key(json!([
-        "uos_ai",
-        "migration",
-        "v3",
-        "row",
-        manifest.capture_id
-    ]));
+    let mapping_prefix = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migration"),
+        ScalarKeyPart::String("v3"),
+        ScalarKeyPart::String("row"),
+        ScalarKeyPart::String(&manifest.capture_id),
+    ])
+    .to_record_key();
     let prefix = TupleKey::from_record_key(&mapping_prefix)?;
     let mut mapping_digests = Vec::new();
     for name in all.index.keys() {
@@ -325,13 +336,15 @@ fn validate(
         if p.len() == 4
             && starts(&p, &["uos_ai", "codex_live_calls", "v1"])
             && all.index.contains_key(
-                &gateway_migration_data::key(json!([
-                    "uos_ai",
-                    "codex_live_calls",
-                    "v1",
-                    "pending_retirement",
-                    p[3]
-                ]))
+                &TupleKey::from_json_parts(&[
+                    json!("uos_ai"),
+                    json!("codex_live_calls"),
+                    json!("v1"),
+                    json!("pending_retirement"),
+                    p[3].clone(),
+                ])
+                .map_err(|_| invalid("Native live retirement key is invalid"))?
+                .to_record_key()
                 .0,
             )
         {

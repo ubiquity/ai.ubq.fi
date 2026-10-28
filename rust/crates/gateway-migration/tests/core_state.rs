@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth_primitives::store::key;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
+
 use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::tuple_key::TupleKey;
@@ -466,7 +467,16 @@ fn selected_core_adopts_restarts_reads_quota_and_round_trips_current_accounting(
         .key_id,
         "core-key"
     );
-    assert!(run(inverse.read(&key(json!(["uos_ai", "admin_error_log"]))))?.is_none());
+    assert!(
+        run(inverse.read(
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("admin_error_log")
+            ])
+            .to_record_key()
+        ))?
+        .is_none()
+    );
     Ok(())
 }
 

@@ -15,6 +15,7 @@ use gateway_core::{
     query::QueryStore, source_control::decode_source_control_record, state::RecordMutation,
     state::RevisionCheck,
 };
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_schema::{catalog_store::codex_snapshot_key, snapshot::ModelSnapshot};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -257,7 +258,14 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> PaidAdmin<'_, S, H, C> 
         }
         let pending = store::scan(
             self.store,
-            store::key(json!(["uos_ai", "paid_fallback", "v3", "pending", id])),
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("paid_fallback"),
+                ScalarKeyPart::String("v3"),
+                ScalarKeyPart::String("pending"),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key(),
             false,
             now,
         )
@@ -267,14 +275,28 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> PaidAdmin<'_, S, H, C> 
         }
         let attempts = store::scan(
             self.store,
-            store::key(json!(["uos_ai", "paid_fallback", "v3", "request", id])),
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("paid_fallback"),
+                ScalarKeyPart::String("v3"),
+                ScalarKeyPart::String("request"),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key(),
             false,
             now,
         )
         .await?;
         let windows = store::scan(
             self.store,
-            store::key(json!(["uos_ai", "paid_fallback", "v3", "window", id])),
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("paid_fallback"),
+                ScalarKeyPart::String("v3"),
+                ScalarKeyPart::String("window"),
+                ScalarKeyPart::String(id),
+            ])
+            .to_record_key(),
             false,
             now,
         )
@@ -358,10 +380,20 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> PaidAdmin<'_, S, H, C> 
             return Err(conflict("API key deletion ownership changed"));
         }
         for parts in [
-            json!(["ubq_ai", "api_keys", "usage", id]),
-            json!(["ubq_ai", "api_keys", "usage_daily", id]),
+            vec![
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("usage"),
+                ScalarKeyPart::String(id),
+            ],
+            vec![
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("usage_daily"),
+                ScalarKeyPart::String(id),
+            ],
         ] {
-            let key = store::key(parts);
+            let key = TupleKey::from_scalar_parts(&parts).to_record_key();
             let row = self.store.read(&key).await?;
             if row.is_some()
                 && !commit(
@@ -379,14 +411,45 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> PaidAdmin<'_, S, H, C> 
             }
         }
         for prefix in [
-            json!(["uos_ai", "paid_fallback", "ledger", id]),
-            json!(["ubq_ai", "api_keys", "request_log", id]),
-            json!(["uos_ai", "api_key_usage", "v2", id]),
-            json!(["uos_ai", "api_key_usage", "v3", "window", id]),
-            json!(["uos_ai", "api_key_usage", "v3", "request", id]),
+            vec![
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("paid_fallback"),
+                ScalarKeyPart::String("ledger"),
+                ScalarKeyPart::String(id),
+            ],
+            vec![
+                ScalarKeyPart::String("ubq_ai"),
+                ScalarKeyPart::String("api_keys"),
+                ScalarKeyPart::String("request_log"),
+                ScalarKeyPart::String(id),
+            ],
+            vec![
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("api_key_usage"),
+                ScalarKeyPart::String("v2"),
+                ScalarKeyPart::String(id),
+            ],
+            vec![
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("api_key_usage"),
+                ScalarKeyPart::String("v3"),
+                ScalarKeyPart::String("window"),
+                ScalarKeyPart::String(id),
+            ],
+            vec![
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("api_key_usage"),
+                ScalarKeyPart::String("v3"),
+                ScalarKeyPart::String("request"),
+                ScalarKeyPart::String(id),
+            ],
         ] {
-            self.delete_history_prefix(id, store::key(prefix), &guard)
-                .await?;
+            self.delete_history_prefix(
+                id,
+                TupleKey::from_scalar_parts(&prefix).to_record_key(),
+                &guard,
+            )
+            .await?;
         }
         if id == "local-development" {
             let key = keys::paid_deletion(id);

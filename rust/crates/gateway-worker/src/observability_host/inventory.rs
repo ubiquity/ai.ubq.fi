@@ -14,7 +14,7 @@ use gateway_observability::{
 };
 use gateway_schema_values::scalar as util;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
-use serde_json::json;
+
 use std::collections::BTreeSet;
 
 fn stamp(value: f64) -> Option<i64> {
@@ -106,8 +106,7 @@ impl RequestHost {
         {
             configured.insert(HealthProvider::Metered);
         }
-        let selection_key =
-            gateway_auth_primitives::store::key(json!(["uos_ai", "provider_selection", "v1"]));
+        let selection_key = gateway_catalog_runtime::state::selection_key();
         let selection = self
             .store
             .read(&selection_key)

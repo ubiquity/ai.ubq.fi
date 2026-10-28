@@ -7,13 +7,19 @@ use gateway_auth_primitives::{
     store,
 };
 use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+
 use std::collections::BTreeMap;
 
 pub fn native_nonce_key() -> gateway_kv_codec::key::RecordKey {
-    store::key(json!(["uos_ai", "native_nonce_registry", "v1"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("native_nonce_registry"),
+        ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key()
 }
 
 #[derive(Deserialize, Serialize)]

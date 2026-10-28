@@ -145,7 +145,8 @@ fn actual_writer_v1_v2_pairs_and_finished_rows_survive_restart_and_latest_invers
 }
 
 #[test]
-fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal() {
+fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal()
+-> Result<(), Box<dyn std::error::Error>> {
     for case in fixtures() {
         let original = rows(&case);
         let session = original
@@ -201,7 +202,11 @@ fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal()
         ] {
             let mut invalid = original.clone();
             invalid.push(FixtureRow {
-                key: gateway_auth_primitives::store::key(parts).0,
+                key: TupleKey::from_json_parts(
+                    parts.as_array().ok_or("fixture tuple must be an array")?,
+                )?
+                .to_record_key()
+                .0,
                 record: original[session].record.clone(),
             });
             assert_refusal(&invalid, "complete prefix includes malformed exact keys");
@@ -237,6 +242,7 @@ fn malformed_or_unpaired_actual_journals_refuse_without_changing_sqlite_or_wal()
             assert_refusal(&invalid, "v1 cannot mix in v2 local work");
         }
     }
+    Ok(())
 }
 
 #[test]

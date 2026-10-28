@@ -2,6 +2,7 @@
 use gateway_core::query::*;
 use gateway_core::state::*;
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
 use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
@@ -85,7 +86,13 @@ fn fixture() -> NativeCapture {
 }
 
 fn manifest_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth_primitives::store::key(json!(["uos_ai", "migration", "v3", "manifest"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migration"),
+        ScalarKeyPart::String("v3"),
+        ScalarKeyPart::String("manifest"),
+    ])
+    .to_record_key()
 }
 
 struct Target {

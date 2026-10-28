@@ -7,6 +7,7 @@ use gateway_claude_usage_quota::{
 };
 use gateway_contracts::model::ModelId;
 use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;
 fn safe_integer(n: f64) -> bool {
@@ -296,15 +297,14 @@ fn merge_observation(next: &mut QuotaState, observation: &QuotaObservation) {
 }
 
 pub fn quota_key(binding: &AccountBinding) -> RecordKey {
-    key(json!([
-        "uos_ai",
-        "claude_code_quota",
-        "v1",
-        binding.account_id,
-        binding.account_cohort_id
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("claude_code_quota"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String(&binding.account_id),
+        ScalarKeyPart::String(&binding.account_cohort_id),
+    ])
+    .to_record_key()
 }
 
-use gateway_auth_primitives::store::key;
 use gateway_kv_codec::key::RecordKey;
-use serde_json::json;

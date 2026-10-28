@@ -26,6 +26,7 @@ use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RevisionCheck, StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_provider_protocol::types::Headers;
 use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::{error::GatewayError, js_string::JsString16};
@@ -223,7 +224,11 @@ pub fn seed(store: &Store, accounts: Vec<AccountBinding>) -> PoolConfig {
     }
 }
 pub fn native_key() -> RecordKey {
-    gateway_auth_primitives::store::key(json!(["uos_ai", "fixture_claude_native_owner"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("fixture_claude_native_owner"),
+    ])
+    .to_record_key()
 }
 pub struct Host {
     pub store: Store,

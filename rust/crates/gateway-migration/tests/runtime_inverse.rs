@@ -1,6 +1,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
-use gateway_auth_primitives::store::key;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+
 use gateway_core::state::AtomicTransition;
 use gateway_core::state::AuthorityStore;
 use gateway_core::state::RecordMutation;
@@ -50,7 +51,13 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
         )?,
     ]);
     run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
-    let session = key(json!(["uos_ai", "auth", "sessions", token]));
+    let session = TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("auth"),
+        ScalarKeyPart::String("sessions"),
+        ScalarKeyPart::String(token),
+    ])
+    .to_record_key();
     let fence = run(gateway_auth_passkeys::session_index::read_current(
         &store,
         &gateway_auth_passkeys::session_index::digest(token),
@@ -75,7 +82,11 @@ fn identity_sidecars_retain_neither_deleted_session_token_nor_provider_secret() 
     }))?;
     let metadata = run(store.query(gateway_core::query::QueryRequest {
         selector: gateway_core::query::QuerySelector::Prefix {
-            prefix: key(json!(["uos_ai", "migration"])),
+            prefix: TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("migration"),
+            ])
+            .to_record_key(),
             start: None,
             end: None,
         },
@@ -211,7 +222,13 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() -> FixtureResul
     run(adopt_empty(&store, &prepare(&input, &CanonicalDates)?))?;
     let page = run(store.query(QueryRequest {
         selector: QuerySelector::Prefix {
-            prefix: key(json!(["uos_ai", "migration", "v3", "row"])),
+            prefix: TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("migration"),
+                ScalarKeyPart::String("v3"),
+                ScalarKeyPart::String("row"),
+            ])
+            .to_record_key(),
             start: None,
             end: None,
         },
@@ -241,9 +258,15 @@ fn inverse_refuses_changed_or_missing_private_mapping_metadata() -> FixtureResul
     }))?;
     assert!(run(export_latest(&store, 2300)).is_err());
     assert_eq!(
-        run(store.read(&key(json!(["default", "fixture"]))))?
-            .ok_or("Required fixture row missing")?
-            .value,
+        run(store.read(
+            &TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("fixture")
+            ])
+            .to_record_key()
+        ))?
+        .ok_or("Required fixture row missing")?
+        .value,
         "retained current data"
     );
     Ok(())

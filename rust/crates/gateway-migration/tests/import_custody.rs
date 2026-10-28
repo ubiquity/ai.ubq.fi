@@ -2,6 +2,7 @@
 use gateway_core::{
     source_control::decode_source_control_record, state::AuthorityStore, state::StoredRecord,
 };
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
 use gateway_migration_data::capture::PrivateCapture;
 use gateway_migration_data::capture::SourceEntry;
@@ -23,14 +24,15 @@ use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 
 fn key(kind: &str, reference: &str) -> RecordKey {
-    gateway_auth_primitives::store::key(json!([
-        "uos_ai",
-        "authority",
-        "native_owner_renewal",
-        "v1",
-        kind,
-        reference
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("authority"),
+        ScalarKeyPart::String("native_owner_renewal"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String(kind),
+        ScalarKeyPart::String(reference),
+    ])
+    .to_record_key()
 }
 fn context() -> ArtifactContext {
     ArtifactContext {

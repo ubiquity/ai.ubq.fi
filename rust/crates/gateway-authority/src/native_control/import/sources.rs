@@ -36,8 +36,7 @@ pub(super) async fn read<
         .read(&keys::paid_control_config())
         .await?
         .ok_or_else(unavailable)?;
-    let runtime =
-        gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime = gateway_schema::catalog_store::runtime_config_key();
     tx.observe_revision(&runtime).await?;
     if config.v != PAID_CONTROL_CONFIG_VERSION
         || config.owner_id != owner.owner_id
@@ -132,8 +131,7 @@ pub(super) fn control_digest(
 ) -> Result<String, GatewayError> {
     let source = codex_source_pool_key();
     let pool = keys::pool();
-    let runtime =
-        gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime = gateway_schema::catalog_store::runtime_config_key();
     super::super::facts::checks_digest(
         &checks
             .iter()

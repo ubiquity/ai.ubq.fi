@@ -11,6 +11,7 @@ use gateway_authority_paid_control_records::{
 };
 use gateway_contracts::provider::PaidProvider;
 use gateway_core::state::{AuthorityStore, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
@@ -160,7 +161,12 @@ pub fn configured_paid_binding(provider: PaidProvider, key: &Secret) -> String {
 }
 
 pub fn runtime_config_key() -> gateway_kv_codec::key::RecordKey {
-    store::key(json!(["uos_ai", "runtime_config", "v2"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("runtime_config"),
+        ScalarKeyPart::String("v2"),
+    ])
+    .to_record_key()
 }
 
 fn owner(identity: &NativeTransportIdentity) -> PaidControlOwner {

@@ -5,6 +5,7 @@ use gateway_admin_runtime_records::store;
 use gateway_auth_contracts::types::{AuthHost, AuthResponse};
 use gateway_auth_primitives::error::invalid;
 use gateway_core::{query::QueryStore, state::StoredRecord};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_kv_codec::{value::PortableValue, value::ValueEncoding};
 use gateway_profile_values::coercion::js_number;
 use gateway_source::error::GatewayError;
@@ -164,7 +165,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> DiagnosticsAdmin<'_, S,
         let mut buckets = BTreeMap::<i64, u64>::new();
         store::visit(
             self.store,
-            store::key(json!(["uos_ai", "admin_error_log", "v1"])),
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("admin_error_log"),
+                ScalarKeyPart::String("v1"),
+            ])
+            .to_record_key(),
             true,
             input.now_ms,
             |entry| {

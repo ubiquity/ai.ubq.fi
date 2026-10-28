@@ -8,11 +8,11 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck},
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
 use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration_data::decode;
 use gateway_migration_data::invalid;
 use gateway_migration_data::json;
-use gateway_migration_data::key;
 use gateway_migration_data::staged::{
     STAGED_BATCH_MAX_BYTES, StageHeader, StageOwnerBinding, StageReceipt, StageRequest, bounded,
     extend, initial,
@@ -32,7 +32,13 @@ struct Progress {
     last_key: Option<String>,
 }
 fn progress_key() -> RecordKey {
-    key(serde_json::json!(["uos_ai", "migration", "v3", "staged"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migration"),
+        ScalarKeyPart::String("v3"),
+        ScalarKeyPart::String("staged"),
+    ])
+    .to_record_key()
 }
 pub fn decode_stage_request(bytes: &[u8]) -> Result<StageRequest, GatewayError> {
     if bytes.len() > STAGED_BATCH_MAX_BYTES {

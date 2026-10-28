@@ -112,7 +112,7 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> Result<String, GatewayEr
             key_fingerprint: id.key_fingerprint().into(),
         },
     )?;
-    let runtime = gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime = gateway_schema::catalog_store::runtime_config_key();
     store.seed(
         keys::paid_control_config(),
         "config-1",
@@ -244,15 +244,9 @@ fn prepare(
     .map_err(|_| fail())?
     .metadata()
     .clone();
-    *store.action_key.lock().map_err(|_| fail())? =
-        Some(gateway_auth_primitives::store::key(json!([
-            "uos_ai",
-            "authority",
-            "native_owner_renewal",
-            "v1",
-            "action",
-            prepared.action_ref
-        ])));
+    *store.action_key.lock().map_err(|_| fail())? = Some(
+        gateway_authority_native_records::rows::key("action", &prepared.action_ref),
+    );
     Ok(prepared)
 }
 struct Fixture {

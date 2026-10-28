@@ -379,7 +379,7 @@ fn stored_derived_meter_tampering_cannot_create_a_retained_usage_transition() ->
     let mut points = member(&view, "points")?.array_items()?;
     assert_eq!(points.len(), 2);
     let latest: Point = points[1].deserialize()?;
-    let key = latest.history_key();
+    let key = latest.history_key()?;
     let row = run(host.store.read(&key))?.ok_or("history row absent")?;
     let mut snapshot = SourceObject::parse(&member(&points[1], "usage_snapshot")?)?;
     snapshot.set("meters", &Vec::<SourceJson>::new())?;

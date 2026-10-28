@@ -9,9 +9,8 @@ use gateway_authority_paid_records::{
 use gateway_contracts::{identity::ApiKeyId, lifecycle::BillingState};
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::key::RecordKey;
-use gateway_migration_data::{
-    RowData as Row, Transform, decode, invalid, json, key, parts, starts,
-};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_migration_data::{RowData as Row, Transform, decode, invalid, json, parts, starts};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 use serde_json::json;
@@ -99,12 +98,24 @@ fn derive_basics<'a>(
 ) -> Result<(), GatewayError> {
     let mut defaults = KernelDefaults::default();
     let mut explicit_defaults = false;
-    if let Some(row) = get(&key(json!(["default", "kernel_policy_limit_requests"])).0)? {
+    if let Some(row) = get(&TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("kernel_policy_limit_requests"),
+    ])
+    .to_record_key()
+    .0)?
+    {
         defaults.usage_limit_requests =
             gateway_admin_contracts::fields::limit(row.json_value()?).unwrap_or(-1);
         explicit_defaults = true;
     }
-    if let Some(row) = get(&key(json!(["default", "kernel_policy_window_ms"])).0)? {
+    if let Some(row) = get(&TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("default"),
+        ScalarKeyPart::String("kernel_policy_window_ms"),
+    ])
+    .to_record_key()
+    .0)?
+    {
         defaults.window_ms =
             gateway_admin_contracts::fields::positive(row.json_value()?).unwrap_or(604800000);
         explicit_defaults = true;

@@ -1,12 +1,9 @@
-use crate::{
-    crypto::{Secret, sha256_base64url},
-    error::unauthorized,
-    store,
-};
+use crate::crypto::{Secret, sha256_base64url};
+use crate::error::unauthorized;
 use gateway_core::state::AuthorityStore;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 pub const NO_LIMIT: i64 = -1;
 pub const WEEK_MS: i64 = 604_800_000;
@@ -67,10 +64,22 @@ pub fn generate_token(bytes: &[u8]) -> Result<Secret, GatewayError> {
 }
 
 pub fn hash_key(hash: &str) -> gateway_kv_codec::key::RecordKey {
-    store::key(json!(["ubq_ai", "api_keys", "hash", hash]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("ubq_ai"),
+        ScalarKeyPart::String("api_keys"),
+        ScalarKeyPart::String("hash"),
+        ScalarKeyPart::String(hash),
+    ])
+    .to_record_key()
 }
 pub fn id_key(id: &str) -> gateway_kv_codec::key::RecordKey {
-    store::key(json!(["ubq_ai", "api_keys", "id", id]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("ubq_ai"),
+        ScalarKeyPart::String("api_keys"),
+        ScalarKeyPart::String("id"),
+        ScalarKeyPart::String(id),
+    ])
+    .to_record_key()
 }
 
 pub fn current_window(reset: i64, window: i64, now: i64) -> Result<(i64, i64), GatewayError> {

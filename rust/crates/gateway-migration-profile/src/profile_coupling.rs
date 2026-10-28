@@ -4,8 +4,8 @@ use gateway_core::{
     state::AtomicTransition, state::CommitOutcome, state::RecordMutation, state::RevisionCheck,
     state::StoredRecord,
 };
-use gateway_kv_codec::key::RecordKey;
-use gateway_migration_data::{Transform, invalid, key, parts, starts};
+use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+use gateway_migration_data::{Transform, invalid, parts, starts};
 use gateway_migration_ledger::{kernel, rows::ObservedRow};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
@@ -14,10 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) async fn scan<S: QueryStore>(
     store: &S,
-    prefix: Value,
+    prefix: RecordKey,
     now: i64,
 ) -> Result<Vec<QueryEntry>, GatewayError> {
-    let prefix = key(prefix);
     let mut cursor = None;
     let mut cursors = BTreeSet::new();
     let mut rows = BTreeMap::new();
@@ -104,7 +103,9 @@ async fn bind_api_rows<S: QueryStore>(
         p[5].clone(),
         p[6].clone(),
     ];
-    let window_key = key(json!(window_parts));
+    let window_key = TupleKey::from_json_parts(&window_parts)
+        .map_err(|_| invalid("Profile derived window key is invalid"))?
+        .to_record_key();
     let observed = store.read(&window_key).await?;
     let current = if window_key == *input.key {
         Some(input.record.clone())
@@ -191,7 +192,9 @@ async fn bind_kernel_rows<S: QueryStore>(
         }
         window_parts.push(p[5].clone());
     }
-    let window_key = key(json!(window_parts));
+    let window_key = TupleKey::from_json_parts(&window_parts)
+        .map_err(|_| invalid("Profile derived window key is invalid"))?
+        .to_record_key();
     let observed = store.read(&window_key).await?;
     let current = if window_key == *input.key {
         Some(input.record.clone())
@@ -223,7 +226,14 @@ async fn bind_kernel_rows<S: QueryStore>(
             prefix.push(json!(repo));
         }
         prefix.push(source["created_at_ms"].clone());
-        let mut rows = scan(store, json!(prefix), input.now).await?;
+        let mut rows = scan(
+            store,
+            TupleKey::from_json_parts(&prefix)
+                .map_err(|_| invalid("Profile index prefix is invalid"))?
+                .to_record_key(),
+            input.now,
+        )
+        .await?;
         for row in &rows {
             check(transition, &row.key, Some(&row.record));
         }
@@ -390,7 +400,15 @@ pub(crate) async fn finish_kernel<S: QueryStore, H: crate::profile_runtime::Prof
             prefix.push(json!(repo));
         }
         let mut reservations = Vec::new();
-        for entry in scan(store, json!(prefix), now).await? {
+        for entry in scan(
+            store,
+            TupleKey::from_json_parts(&prefix)
+                .map_err(|_| invalid("Profile index prefix is invalid"))?
+                .to_record_key(),
+            now,
+        )
+        .await?
+        {
             let parts = parts(&entry.key)?;
             let source = gateway_migration_values::inverse::inverse_value(
                 Transform::KernelRequest,

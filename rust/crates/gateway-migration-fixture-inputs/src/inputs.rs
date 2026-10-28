@@ -3,7 +3,8 @@
 use gateway_auth_credentials::{
     native_credentials::parse_native_document, provider_credentials::codex_source_pool_key,
 };
-use gateway_auth_primitives::{crypto::base64url, store::key};
+use gateway_auth_primitives::crypto::base64url;
+use gateway_kv_codec::tuple_key::ScalarKeyPart;
 use gateway_kv_codec::tuple_key::TupleKey;
 use gateway_migration_data::native_capture::NativeCapture;
 use gateway_migration_data::native_capture::NativeEntry;
@@ -117,18 +118,51 @@ fn rebase(mut capture: NativeCapture, time: FixtureTime) -> Result<NativeCapture
         })
         .ok_or_else(|| error("Original fixture key hash differs"))??;
     let mut expected = vec![
-        key(json!(["ubq_ai", "api_keys", "id", "offline-key"])),
-        key(json!(["ubq_ai", "api_keys", "hash", hash])),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("api_keys"),
+            ScalarKeyPart::String("id"),
+            ScalarKeyPart::String("offline-key"),
+        ])
+        .to_record_key(),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("api_keys"),
+            ScalarKeyPart::String("hash"),
+            ScalarKeyPart::String(&hash),
+        ])
+        .to_record_key(),
         gateway_authority_keys::api_window("offline-key", "v3:1000", 2000),
     ];
     for index in 0..4 {
-        expected.push(key(json!(["default", "native-graph", index])));
+        expected.push(
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String("native-graph"),
+                ScalarKeyPart::Number(index),
+            ])
+            .to_record_key(),
+        );
     }
-    expected.push(key(json!(["default", "native-counter"])));
-    expected.push(key(json!(["default", "native-bytes"])));
-    let mut opaque = TupleKey::from_record_key(&key(json!(["default"])))?
-        .sort_bytes()
-        .to_vec();
+    expected.push(
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("default"),
+            ScalarKeyPart::String("native-counter"),
+        ])
+        .to_record_key(),
+    );
+    expected.push(
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("default"),
+            ScalarKeyPart::String("native-bytes"),
+        ])
+        .to_record_key(),
+    );
+    let mut opaque = TupleKey::from_record_key(
+        &TupleKey::from_scalar_parts(&[ScalarKeyPart::String("default")]).to_record_key(),
+    )?
+    .sort_bytes()
+    .to_vec();
     opaque.extend_from_slice(&[2, 255, 254, 0]);
     let expiries = [-1, -1, 10000, 9000, 9000, 9000, 9000, -1, 9000, 9000];
     for (index, entry) in capture.entries.iter_mut().enumerate() {
@@ -314,7 +348,12 @@ pub fn prepare(directory: &str, now_ms: i64) -> Result<Prepared, GatewayError> {
             -1,
         ),
         (
-            key(json!(["uos_ai", "debug_routing", "v1"])),
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("debug_routing"),
+                ScalarKeyPart::String("v1"),
+            ])
+            .to_record_key(),
             json!({"scenario":"codex_429","expires_at_ms":time.deadline,"updated_at_ms":time.origin-200}),
             "15",
             time.deadline,

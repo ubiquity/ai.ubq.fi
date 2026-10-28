@@ -1,5 +1,6 @@
 //! Closed reset source observations. DATA is never permission and every fence joins the actual effect CAS.
 use gateway_authority_contracts::unavailable;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 mod backend;
 pub mod types;
 use backend::ReadTransaction;
@@ -14,7 +15,7 @@ use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, identity::RequestContext};
 use gateway_core::{state::AuthorityStore, state::RevisionCheck};
 use gateway_source::error::GatewayError;
-use serde_json::{Value, json};
+use serde_json::Value;
 use types::{Facts, Member, ResetCandidate};
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
@@ -26,11 +27,12 @@ fn declined(reason: &str) -> GatewayError {
     GatewayError::unavailable("Automatic banked reset is not authorized.", reason)
 }
 fn marker_key() -> gateway_kv_codec::key::RecordKey {
-    gateway_auth_primitives::store::key(json!([
-        "uos_ai",
-        "migrations",
-        "codex_reset_usage_legacy_global_v1"
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("migrations"),
+        ScalarKeyPart::String("codex_reset_usage_legacy_global_v1"),
+    ])
+    .to_record_key()
 }
 async fn validate_cohort<S: AuthorityStore>(
     tx: &mut ReadTransaction<'_, S>,

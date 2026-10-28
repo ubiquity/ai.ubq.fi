@@ -18,17 +18,13 @@ pub struct Store {
     pub conflicts: Cell<u32>,
 }
 impl Store {
-    pub fn put(&self, parts: Value, value: Value) {
-        let key = gateway_auth_primitives::store::key(parts);
+    pub fn put(&self, key: RecordKey, value: Value) {
         self.rows
             .borrow_mut()
             .insert(key.0, StoredRecord::json("fixture", value, None));
     }
-    pub fn get(&self, parts: Value) -> Option<Value> {
-        self.rows
-            .borrow()
-            .get(&gateway_auth_primitives::store::key(parts).0)
-            .map(|r| r.value.clone())
+    pub fn get(&self, key: RecordKey) -> Option<Value> {
+        self.rows.borrow().get(&key.0).map(|r| r.value.clone())
     }
 }
 impl AuthorityStore for Store {

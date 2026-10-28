@@ -1,13 +1,13 @@
 use crate::fetch::{self, ResultData, UsageHost};
-use gateway_auth_primitives::{crypto::uuid_from_random, store::check, store::commit, store::key};
+use gateway_auth_primitives::{crypto::uuid_from_random, store::check, store::commit};
 use gateway_claude_roster::{claude, claude::AccountBinding};
 use gateway_claude_usage_protocol::state::UsageState;
 use gateway_claude_usage_quota::QuotaState;
 use gateway_core::state::{AuthorityStore, RecordMutation, StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Lease {
@@ -24,14 +24,15 @@ pub enum Refresh {
     },
 }
 pub fn lease_key(account: &AccountBinding) -> RecordKey {
-    key(json!([
-        "uos_ai",
-        "claude_code_usage",
-        "v1",
-        "lease",
-        account.account_id,
-        account.account_cohort_id
-    ]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("claude_code_usage"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("lease"),
+        ScalarKeyPart::String(&account.account_id),
+        ScalarKeyPart::String(&account.account_cohort_id),
+    ])
+    .to_record_key()
 }
 pub async fn load<S: AuthorityStore>(
     store: &S,

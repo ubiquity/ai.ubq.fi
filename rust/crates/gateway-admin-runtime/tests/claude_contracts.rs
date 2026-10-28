@@ -7,6 +7,7 @@ use gateway_admin_test_support::{
 };
 use gateway_auth_contracts::types::AuthHost;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde_json::{Value, json};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -32,7 +33,12 @@ fn claude_empty_access_is_authoritative_and_corruption_never_seeds() {
         json!([])
     );
     store.put(
-        json!(["uos_ai", "claude_code_access", "v1"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("claude_code_access"),
+            ScalarKeyPart::String("v1"),
+        ])
+        .to_record_key(),
         json!({"v":2}),
     );
     assert_eq!(
@@ -127,7 +133,12 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
     )
     .unwrap();
     store.rows.borrow_mut().insert(
-        gateway_auth_primitives::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("ubq_ai"),
+            ScalarKeyPart::String("claude_code_auth"),
+        ])
+        .to_record_key()
+        .0,
         gateway_claude_roster::claude::encode_credential_record("fixture", &credential, None)
             .unwrap(),
     );
@@ -150,9 +161,24 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
     let after = run(load_roster(&store, &host, &seed)).unwrap();
     assert!(after.roster.accounts.is_empty());
     assert!(after.roster.active_account_id.is_none());
-    assert!(store.get(json!(["ubq_ai", "claude_code_auth"])).is_some());
+    assert!(
+        store
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("ubq_ai"),
+                    ScalarKeyPart::String("claude_code_auth")
+                ])
+                .to_record_key()
+            )
+            .is_some()
+    );
     store.put(
-        json!(["uos_ai", "claude_code_accounts", "v1"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("claude_code_accounts"),
+            ScalarKeyPart::String("v1"),
+        ])
+        .to_record_key(),
         json!({"v":99}),
     );
     assert_eq!(
@@ -201,7 +227,12 @@ fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_
     let actual = run(store.read(&policy_key())).unwrap().unwrap();
     assert_eq!(loaded.check.expected_revision, Some(actual.revision));
     store.put(
-        json!(["uos_ai", "claude_code_access", "v1"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("claude_code_access"),
+            ScalarKeyPart::String("v1"),
+        ])
+        .to_record_key(),
         json!({"v":1,"source":"kv","allowed_key_ids":[],"updated_at_ms":100}),
     );
     let denied = run(load_policy(
@@ -222,7 +253,12 @@ fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_
         CommitOutcome::Conflict
     );
     store.put(
-        json!(["uos_ai", "claude_code_access", "v1"]),
+        TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("claude_code_access"),
+            ScalarKeyPart::String("v1"),
+        ])
+        .to_record_key(),
         json!({"v":1,"source":"kv","allowed_key_ids":null,"updated_at_ms":100}),
     );
     assert!(
@@ -276,7 +312,14 @@ fn shared_claude_access_parser_preserves_stable_locale_ties_and_missing_host_ref
     );
     assert!(
         store
-            .get(json!(["uos_ai", "claude_code_access", "v1"]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("claude_code_access"),
+                    ScalarKeyPart::String("v1")
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
     store.conflicts.set(8);
@@ -288,7 +331,14 @@ fn shared_claude_access_parser_preserves_stable_locale_ties_and_missing_host_ref
     );
     assert!(
         store
-            .get(json!(["uos_ai", "claude_code_access", "v1"]))
+            .get(
+                TupleKey::from_scalar_parts(&[
+                    ScalarKeyPart::String("uos_ai"),
+                    ScalarKeyPart::String("claude_code_access"),
+                    ScalarKeyPart::String("v1")
+                ])
+                .to_record_key()
+            )
             .is_none()
     );
 }

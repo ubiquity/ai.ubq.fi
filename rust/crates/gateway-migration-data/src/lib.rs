@@ -55,9 +55,6 @@ pub fn invalid(message: impl Into<String>) -> GatewayError {
 pub fn unavailable(message: impl Into<String>) -> GatewayError {
     GatewayError::unavailable(message, "migration_schema_unavailable")
 }
-pub fn key(parts: Value) -> RecordKey {
-    gateway_auth_primitives::store::key(parts)
-}
 pub fn starts(parts: &[Value], prefix: &[&str]) -> bool {
     parts.len() >= prefix.len()
         && parts

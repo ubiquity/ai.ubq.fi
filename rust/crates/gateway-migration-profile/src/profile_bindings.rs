@@ -5,7 +5,8 @@ use gateway_core::{
     state::{AtomicTransition, RecordMutation, RevisionCheck},
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_migration_data::{invalid, key, starts};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_migration_data::{invalid, starts};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 use serde_json::json;
@@ -129,7 +130,11 @@ pub(crate) async fn bind<S: QueryStore>(
     {
         let mut defaults = gateway_authority_kernel_protocol::KernelDefaults::default();
         for name in ["kernel_policy_limit_requests", "kernel_policy_window_ms"] {
-            let key = key(json!(["default", name]));
+            let key = TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("default"),
+                ScalarKeyPart::String(name),
+            ])
+            .to_record_key();
             if let Some(row) =
                 prospective(store, written, record, &key, &mut transition.checks).await?
                 && let Ok(value) = row.json_value()

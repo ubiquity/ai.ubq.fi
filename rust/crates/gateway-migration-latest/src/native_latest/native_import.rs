@@ -5,7 +5,8 @@ use gateway_auth_native_protocol::native_import::publication::data::ImportPublic
 use gateway_core::source_control::decode_source_control_record;
 use gateway_core::state::StoredRecord;
 use gateway_kv_codec::key::RecordKey;
-use gateway_migration_data::{invalid, key, parts};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
+use gateway_migration_data::{invalid, parts};
 use gateway_source::error::GatewayError;
 use gateway_source::source_serialization as source;
 use serde_json::{Value, json};
@@ -16,14 +17,15 @@ fn value(row: &StoredRecord) -> Result<Value, GatewayError> {
 
 fn row(all: &DiskMap, kind: &str, reference: &str) -> Result<StoredRecord, GatewayError> {
     all.get(
-        &key(json!([
-            "uos_ai",
-            "authority",
-            "native_owner_renewal",
-            "v1",
-            kind,
-            reference
-        ]))
+        &TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("authority"),
+            ScalarKeyPart::String("native_owner_renewal"),
+            ScalarKeyPart::String("v1"),
+            ScalarKeyPart::String(kind),
+            ScalarKeyPart::String(reference),
+        ])
+        .to_record_key()
         .0,
     )?
     .ok_or_else(|| invalid("Retained v3 import terminal is missing a matching control row"))
@@ -38,14 +40,15 @@ fn generation_key(action: &Value) -> Result<RecordKey, GatewayError> {
         ))
         .map_err(|_| invalid("Native generation binding cannot be encoded"))?,
     );
-    Ok(key(json!([
-        "uos_ai",
-        "authority",
-        "native_owner_renewal",
-        "v1",
-        "generation",
-        reference
-    ])))
+    Ok(TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("authority"),
+        ScalarKeyPart::String("native_owner_renewal"),
+        ScalarKeyPart::String("v1"),
+        ScalarKeyPart::String("generation"),
+        ScalarKeyPart::String(&reference),
+    ])
+    .to_record_key())
 }
 
 pub(super) fn validate(all: &DiskMap) -> Result<(), GatewayError> {

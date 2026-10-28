@@ -12,6 +12,7 @@ use gateway_core::{
     state::AuthorityStore, state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -83,13 +84,26 @@ pub struct Bootstrap {
 }
 
 pub fn account_store_key() -> RecordKey {
-    store::key(json!(["uos_ai", "claude_code_accounts", "v1"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("uos_ai"),
+        ScalarKeyPart::String("claude_code_accounts"),
+        ScalarKeyPart::String("v1"),
+    ])
+    .to_record_key()
 }
 fn legacy_credential_key() -> RecordKey {
-    store::key(json!(["ubq_ai", "claude_code_auth"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("ubq_ai"),
+        ScalarKeyPart::String("claude_code_auth"),
+    ])
+    .to_record_key()
 }
 fn legacy_workspace_key() -> RecordKey {
-    store::key(json!(["ubq_ai", "claude_code_workspace"]))
+    TupleKey::from_scalar_parts(&[
+        ScalarKeyPart::String("ubq_ai"),
+        ScalarKeyPart::String("claude_code_workspace"),
+    ])
+    .to_record_key()
 }
 fn opaque(value: &str) -> bool {
     value.len() == 36

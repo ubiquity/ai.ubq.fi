@@ -15,6 +15,7 @@ use gateway_auth_contracts::types::{AuthHost, AuthResponse};
 use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_auth_primitives::error::invalid;
 use gateway_core::{query::QueryStore, state::RevisionCheck};
+use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
@@ -649,7 +650,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     async fn purge_prompts(&self, now: i64) -> Result<AuthResponse, GatewayError> {
         use gateway_auth_primitives::store::{check, commit};
         use gateway_core::state::RecordMutation;
-        let key = store::key(json!(["uos_ai", "codex_instructions"]));
+        let key = TupleKey::from_scalar_parts(&[
+            ScalarKeyPart::String("uos_ai"),
+            ScalarKeyPart::String("codex_instructions"),
+        ])
+        .to_record_key();
         let row = self.store.read(&key).await?;
         let mut deleted = 0;
         if store::value(row.as_ref(), now)?.is_some() {
@@ -668,7 +673,11 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         }
         for entry in store::scan(
             self.store,
-            store::key(json!(["uos_ai", "codex_instructions_chunk"])),
+            TupleKey::from_scalar_parts(&[
+                ScalarKeyPart::String("uos_ai"),
+                ScalarKeyPart::String("codex_instructions_chunk"),
+            ])
+            .to_record_key(),
             false,
             now,
         )

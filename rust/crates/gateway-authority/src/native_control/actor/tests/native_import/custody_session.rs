@@ -458,11 +458,7 @@ fn current_admin_session_owner_source_config_time_cancellation_and_cas_races_ref
                         "owner" => keys::paid_control_owner(),
                         "source" => codex_source_pool_key(),
                         "config" => keys::paid_control_config(),
-                        _ => gateway_auth_primitives::store::key(json!([
-                            "uos_ai",
-                            "runtime_config",
-                            "v2"
-                        ])),
+                        _ => gateway_schema::catalog_store::runtime_config_key(),
                     };
                     let mut rows = f.store.rows.lock().unwrap();
                     if let Some(row) = rows.get_mut(&key.0) {
