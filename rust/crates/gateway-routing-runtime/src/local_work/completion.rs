@@ -1,9 +1,7 @@
 //! Owned local semantic choice, separate from durable acknowledgement and transport.
 use super::*;
-use gateway_authority_local_completion::LocalCompletedIntentOutcome;
-use gateway_contracts::{
-    lifecycle::BodyOutcome, lifecycle::DeliveryOutcome, lifecycle::ReaderTermination,
-};
+use gateway_authority_local_completion::{LocalCompletedIntentOutcome, LocalCompletionOperations};
+use gateway_contracts::lifecycle::{BodyOutcome, DeliveryOutcome, ReaderTermination};
 use gateway_core::{state::AtomicTransition, state::CommitOutcome, state::RevisionCheck};
 use gateway_local_journal::local_completion::LocalCompletedJournalPlan;
 use gateway_local_refusal::routing_error::RoutingError;

@@ -6,12 +6,15 @@ use crate::{
 };
 use gateway_auth_contracts::types::AuthMethod;
 use gateway_authority::store::Authority;
+use gateway_authority_api_quota::ApiQuotaOperations;
+use gateway_authority_api_release::ApiReleaseOperations;
+use gateway_authority_claude_proof::ClaudeProofOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
-use gateway_authority_paid_control_records::{
-    PaidRequestContext, PaidRoutingReceipt, PaidSyntheticHop,
-};
-use gateway_authority_paid_records::PaidAuthorization;
+use gateway_authority_paid_control_records::{PaidRequestContext, PaidSyntheticHop};
+use gateway_authority_paid_route::{PaidRoutingReceipt, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::{AdmittedAccount, RouteSelection};
 use gateway_contracts::{identity::ApiKeyId, model::ModelId, provider::UpstreamProvider};
 use gateway_core::query::QueryStore;

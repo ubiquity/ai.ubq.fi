@@ -9,12 +9,17 @@ use crate::{
         RoutingResult, TransportState,
     },
 };
+use gateway_authority_api_quota::ApiQuotaOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
+use gateway_authority_kernel::KernelOperations;
 use gateway_authority_kernel_protocol::KernelTerminal;
+use gateway_authority_paid_admission::PaidAdmissionOperations;
+use gateway_authority_paid_ledger::PaidLedgerOperations;
+use gateway_authority_paid_route::{PaidRouteOperations, authorization::PaidAuthorization};
+use gateway_authority_routing_selection::SelectionOperations;
+use gateway_authority_routing_signal::SignalOperations;
+use gateway_contracts::lifecycle::{PaidTerminalState, SemanticTerminal, TransportObservation};
 use gateway_contracts::provider::UpstreamProvider;
-use gateway_contracts::{
-    lifecycle::PaidTerminalState, lifecycle::SemanticTerminal, lifecycle::TransportObservation,
-};
 use gateway_core::query::QueryStore;
 use gateway_provider_policy::{policy::HopDecision, policy::HopFailure};
 use gateway_source::error::GatewayError;
@@ -176,7 +181,7 @@ impl<
                 .await?;
             Self::check_paid_credential(&record.fence, &receipt)?;
             let authorization = if synthetic {
-                gateway_authority_paid_records::PaidAuthorization::DirectPaidModel
+                PaidAuthorization::DirectPaidModel
             } else {
                 self.paid_authorization(row).await?
             };
