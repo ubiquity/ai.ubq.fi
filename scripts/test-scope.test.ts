@@ -55,15 +55,23 @@ const sourceSelection: TestSelection = {
   runAll: false,
   reason: "selected",
 };
-const ciContext = (event: string, base = "", author = ""): NodeJS.ProcessEnv => ({
-  GITHUB_EVENT_NAME: event,
-  GITHUB_BASE_REF: base,
-  GITHUB_PR_AUTHOR: author,
-});
+let dispatchEventCount = 0;
+const ciContext = (event: string, base = "", author = ""): NodeJS.ProcessEnv => {
+  const context: NodeJS.ProcessEnv = { GITHUB_EVENT_NAME: event, GITHUB_BASE_REF: base, GITHUB_PR_AUTHOR: author };
+  if (event === "workflow_dispatch") {
+    const eventPath = join(fixture, `workflow-dispatch-${dispatchEventCount++}.json`);
+    writeFileSync(eventPath, JSON.stringify({ inputs: { base_ref: base, sentinel_pr_author: author } }));
+    context.GITHUB_EVENT_PATH = eventPath;
+    context.GITHUB_BASE_REF = "";
+    context.GITHUB_PR_AUTHOR = "";
+  }
+  return context;
+};
 const protectedContexts = [
   ciContext("merge_group"),
   ciContext("pull_request", "queue-canary", "owner"),
   ciContext("pull_request", "development", "ubiquity-sentinel[bot]"),
+  ciContext("workflow_dispatch", "development", "ubiquity-sentinel[bot]"),
   { ...ciContext("push"), GITHUB_REF: "refs/heads/development" },
 ];
 const scopeCommand = (args: readonly string[], context: NodeJS.ProcessEnv, paths = "AGENTS.md") =>
@@ -136,6 +144,13 @@ describe("Sentinel complete CI check set", () => {
       { ...ciContext("push"), GITHUB_REF: "development" },
       { ...ciContext("workflow_dispatch"), GITHUB_REF: "refs/heads/development" },
       ciContext("workflow_dispatch", "queue-canary", "ubiquity-sentinel[bot]"),
+      ciContext("workflow_dispatch", "development", ""),
+      ciContext("workflow_dispatch", "", "ubiquity-sentinel[bot]"),
+      ciContext("workflow_dispatch", "development", "owner"),
+      ciContext("workflow_dispatch", "development-extra", "ubiquity-sentinel[bot]"),
+      ciContext("workflow_dispatch", "development", "ubiquity-sentinel"),
+      ciContext("workflow_dispatch", "development", "ubiquity-sentinel[bot]-extra"),
+      { ...ciContext("workflow_dispatch", "development", "owner"), GITHUB_ACTOR: "ubiquity-sentinel[bot]" },
       ciContext("pull_request_target", "queue-canary", "ubiquity-sentinel[bot]"),
       ciContext("pull_request", "queue-canary-extra", "owner"),
       ciContext("pull_request", "development", "ubiquity-sentinel"),
@@ -154,6 +169,40 @@ describe("Sentinel complete CI check set", () => {
       ciScopeForSelection(sourceSelection, ROOT, { ...ciContext("pull_request", "development", "ubiquity-sentinel[bot]"), GITHUB_ACTOR: "owner" })
         .completeCheckSet
     ).toBe(true);
+  });
+
+  test("manual CI JSON reads real event inputs with reserved environment fields empty", () => {
+    const context = ciContext("workflow_dispatch", "development", "ubiquity-sentinel[bot]");
+    expect(context.GITHUB_BASE_REF).toBe("");
+    expect(context.GITHUB_PR_AUTHOR).toBe("");
+    for (const paths of ["AGENTS.md", "scripts/test-scope.test.ts", "rust/crates/gateway-native/src/lib.rs"]) {
+      const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], context, paths);
+      expect(ci.status).toBe(0);
+      expect(JSON.parse(ci.stdout)).toMatchObject({ completeCheckSet: true, needsDocs: true, needsArtifact: true, needsRustNative: true, needsRustWasm: true });
+    }
+    const eventPath = join(fixture, "invalid-dispatch.json");
+    const spoofed = { ...context, GITHUB_BASE_REF: "development", GITHUB_PR_AUTHOR: "ubiquity-sentinel[bot]", GITHUB_ACTOR: "ubiquity-sentinel[bot]" };
+    for (const payload of [
+      "not JSON",
+      "null",
+      "[]",
+      "{}",
+      '{"inputs":null}',
+      '{"inputs":[]}',
+      '{"inputs":{}}',
+      '{"inputs":{"base_ref":"development"}}',
+      '{"inputs":{"sentinel_pr_author":"ubiquity-sentinel[bot]"}}',
+    ]) {
+      writeFileSync(eventPath, payload);
+      const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], { ...spoofed, GITHUB_EVENT_PATH: eventPath });
+      expect(ci.status).toBe(0);
+      expect(JSON.parse(ci.stdout).completeCheckSet).toBe(false);
+    }
+    for (const path of ["", join(fixture, "missing-dispatch.json")]) {
+      const ci = scopeCommand(["scripts/test-scope.ts", "--ci-json"], { ...spoofed, GITHUB_EVENT_PATH: path });
+      expect(ci.status).toBe(0);
+      expect(JSON.parse(ci.stdout).completeCheckSet).toBe(false);
+    }
   });
 
   test("still builds artifacts for protected no-base and no-changes selections", () => {
@@ -698,15 +747,17 @@ describe("Rust changed-path CI selection", () => {
     expect(JSON.parse(ci.stdout).affectedTests).toEqual(["scripts/test-scope.test.ts"]);
   });
 
-  test("complete contexts schedule real Rust jobs without changing documentation test selection", () => {
+  test("complete contexts schedule real Rust jobs without widening selected tests", () => {
     for (const context of protectedContexts) {
-      expect(ciScopeForSelection(docsSelection, ROOT, context)).toMatchObject({
-        completeCheckSet: true,
-        affectedTests: [],
-        needsRustNative: true,
-        needsRustWasm: true,
-        needsRustBuild: true,
-      });
+      for (const selection of [docsSelection, { ...sourceSelection, paths: ["rust/crates/gateway-native/src/lib.rs"], affectedTests: [] }]) {
+        expect(ciScopeForSelection(selection, ROOT, context)).toMatchObject({
+          ...selection,
+          completeCheckSet: true,
+          needsRustNative: true,
+          needsRustWasm: true,
+          needsRustBuild: true,
+        });
+      }
     }
   });
 });

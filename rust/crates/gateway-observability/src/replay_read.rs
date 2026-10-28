@@ -7,13 +7,13 @@ use crate::{
     types::ObservabilityHost,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use gateway_auth::types::AuthResponse;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_core::{
     query::{QueryRequest, QuerySelector, QueryStore},
     state::{RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::{key::RecordKey, value::PortableValue, value::ValueEncoding};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde::Serialize;
 const MANIFEST_FIELDS: &[&str] = &[
     "version",
@@ -46,7 +46,12 @@ fn manifest_from_row(row: &StoredRecord) -> Result<Option<Manifest>, GatewayErro
         PortableValue::Object(entries) => entries
             .into_iter()
             .filter(|(key, _)| MANIFEST_FIELDS.contains(&key.as_str()))
-            .map(|(key, value)| (gateway_source::js_string::JsString16::from_utf8(&key), value))
+            .map(|(key, value)| {
+                (
+                    gateway_source::js_string::JsString16::from_utf8(&key),
+                    value,
+                )
+            })
             .collect(),
         PortableValue::ObjectUtf16(entries) => entries
             .into_iter()

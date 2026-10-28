@@ -2,17 +2,17 @@ use crate::{
     History, HistoryHost,
     store::{error, scan_selector},
 };
-use gateway_auth::{crypto::sha256_hex, store};
+use gateway_auth_primitives::{crypto::sha256_hex, store};
 use gateway_claude_usage_history_records::{HOUR_MS, LIMIT, Point, object::SourceObject};
 use gateway_claude_usage_protocol::snapshot::{Meter, read_meter, safe_time};
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_core::{
     query::QuerySelector, query::QueryStore, source_control::decode_source_control_record,
     state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 #[derive(Clone, Deserialize, Serialize)]

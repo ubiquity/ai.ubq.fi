@@ -1,7 +1,7 @@
 use gateway_admin_contracts::{operations::AdminHost, routes::AdminOperation};
-use gateway_admin_runtime::RuntimeConfig;
-use gateway_admin_runtime::{
-    AdminRuntime,
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig,
     capabilities::{
         CaptureRequest, Context, RuntimeCapabilities, SupervisorBriefTarget, UnboundCapabilities,
     },
@@ -11,7 +11,7 @@ use gateway_admin_test_support::{
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::AuthResponse;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
@@ -22,12 +22,12 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn migration_and_replay_preserve_raw_source_modes() {
     let mut request = input(json!("{\"v\":1}\n"));
     request.query.insert("profile".into(), vec!["local".into()]);
-    let plan = gateway_admin_runtime::parse::migration(&request).unwrap();
+    let plan = gateway_admin_runtime_contracts::parse::migration(&request).unwrap();
     assert!(plan.dry_run && plan.include_legacy);
     request.query.insert("write".into(), vec!["true".into()]);
     request.query.insert("dry_run".into(), vec!["true".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::migration(&request)
+        gateway_admin_runtime_contracts::parse::migration(&request)
             .unwrap_err()
             .status,
         400
@@ -40,7 +40,7 @@ fn migration_and_replay_preserve_raw_source_modes() {
         .query
         .insert("before_ms".into(), vec!["garbage".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false).unwrap(),
+        gateway_admin_runtime_contracts::parse::capture(&request, false).unwrap(),
         CaptureRequest::Request {
             request_id: "request-1".into()
         }
@@ -50,7 +50,7 @@ fn migration_and_replay_preserve_raw_source_modes() {
         vec!["provider-12345678-1234-4123-8123-123456789abc".into()],
     );
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false)
+        gateway_admin_runtime_contracts::parse::capture(&request, false)
             .unwrap_err()
             .status,
         400

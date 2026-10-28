@@ -1,10 +1,10 @@
 //! Source read-only reset-credit and overage displays. These GETs never authorize a redemption.
 use super::{RequestHost, unavailable};
-use gateway_auth::provider_credentials::CodexSourceAccount;
+use gateway_auth_credentials::provider_credentials::CodexSourceAccount;
 use gateway_observability::host_types::{CapacityAccountRef, ResetCreditDiagnostic};
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use {gateway_schema_values::scalar as util, serde_json::Value};
 fn field(value: &SourceJson, name: &str) -> Option<SourceJson> {
     value
         .object_entries()
@@ -29,10 +29,10 @@ fn nonblank(value: &JsString16) -> bool {
     value
         .as_units()
         .iter()
-        .any(|u| !char::from_u32(u32::from(*u)).is_some_and(gateway_schema::util::js_whitespace))
+        .any(|u| !char::from_u32(u32::from(*u)).is_some_and(util::js_whitespace))
 }
 fn inventory_url(base: &str) -> Result<worker::Url, GatewayError> {
-    let mut url = worker::Url::parse(base.trim_matches(gateway_schema::util::js_whitespace))
+    let mut url = worker::Url::parse(base.trim_matches(util::js_whitespace))
         .map_err(|_| unavailable("Reset-credit base URL is invalid."))?;
     if url.scheme() != "https"
         || !url.username().is_empty()
@@ -166,10 +166,11 @@ impl RequestHost {
             let expiry = if expiry.as_str() == "null" {
                 None
             } else {
-                let Some(text) = expiry.deserialize::<String>().ok().filter(|s| {
-                    !s.trim_matches(gateway_schema::util::js_whitespace)
-                        .is_empty()
-                }) else {
+                let Some(text) = expiry
+                    .deserialize::<String>()
+                    .ok()
+                    .filter(|s| !s.trim_matches(util::js_whitespace).is_empty())
+                else {
                     return Ok(None);
                 };
                 let parsed = worker::js_sys::Date::parse(&text);

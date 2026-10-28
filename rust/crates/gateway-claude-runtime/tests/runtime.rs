@@ -5,12 +5,17 @@ use gateway_claude_runtime_test_support::fixture::{
 };
 mod support;
 use crate::support::{TestResult, required};
-use gateway_admin_runtime::claude::{self, AccountUpdate};
-use gateway_claude_runtime::host::{OutcomeDecision, PoolSelection, SelectionInput};
-use gateway_claude_runtime::persistence::{clear_guards, quota_key};
-use gateway_claude_runtime::pool::ClaudePoolSession;
-use gateway_claude_runtime::quota;
-use gateway_providers::types::Headers;
+use gateway_claude_policy::{
+    host::SelectionInput,
+    quota::{self, quota_key},
+};
+use gateway_claude_roster::claude::{self, AccountUpdate};
+use gateway_claude_runtime::{
+    host::{OutcomeDecision, PoolSelection},
+    persistence::clear_guards,
+    pool::ClaudePoolSession,
+};
+use gateway_provider_protocol::types::Headers;
 use serde_json::{Value, json};
 
 #[test]
@@ -166,7 +171,7 @@ fn principal_revocation_and_current_catalog_generation_change_refuse_before_disp
     store.allow(json!([KEY]));
     config
         .generation
-        .record_success(gateway_admin_runtime::claude_generation::StateChange::CredentialStored);
+        .record_success(gateway_claude_roster::claude_generation::StateChange::CredentialStored);
     assert_eq!(
         run(session.ensure_current(&store, &host, &first, KEY, &MODEL.into(), &raw))
             .unwrap_err()
@@ -657,8 +662,9 @@ fn real_sqlite_close_reopen_retains_global_active_and_quota() {
 
 #[test]
 fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
-    use gateway_source::{js_string::JsString16, source_json::SourceJson};
     use gateway_contracts::model::ModelId;
+    use gateway_source::js_string::JsString16;
+    use gateway_source::source_json::SourceJson;
     let store = Store::new();
     let account = account(1);
     let config = seed(&store, vec![account.clone()]);
@@ -715,8 +721,9 @@ fn real_claude_selection_and_quota_cas_retain_opaque_model_units() {
 #[test]
 fn source_binding_snapshot_named_rotation_and_clear_preserve_units_without_scalar_grant()
 -> TestResult {
-    use gateway_source::{js_string::JsString16, source_serialization as source};
     use gateway_kv_codec::value::ValueEncoding;
+    use gateway_source::js_string::JsString16;
+    use gateway_source::source_serialization as source;
     use std::sync::Arc;
     let store = Store::new();
     let mut a = account(1);
@@ -838,8 +845,8 @@ fn source_capability_options_preserve_actual_same_binding_scalar_auth() -> TestR
     let first = selected(&session, &store, &host, &raw);
     let binding = first.binding();
     let secret = binding.credential.secret.try_scalar_secret()?;
-    let base = gateway_providers::types::PrepareOptions {
-        auth: gateway_providers::types::AuthMaterial {
+    let base = gateway_provider_protocol::types::PrepareOptions {
+        auth: gateway_provider_protocol::types::AuthMaterial {
             secret: secret.expose().into(),
             api_key: binding.credential.kind == claude::CredentialKind::ApiKey,
             account_id: Some(binding.account_id.clone()),

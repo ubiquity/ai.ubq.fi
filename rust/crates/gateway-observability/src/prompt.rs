@@ -1,6 +1,6 @@
 //! Source cache/prompt-analytics-{core,read}.ts v2 hard namespace.
 use crate::{ObservabilityRuntime, counters, store, types::ObservabilityHost};
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_capacity_projection::scalars::{DAY, safe_i64, trim};
 use gateway_core::{query::QueryStore, state::RecordMutation};
 use gateway_kv_codec::key::RecordKey;

@@ -1,0 +1,207 @@
+//! Local read-only custody assembled from an existing trusted owner registration.
+//! No wire decoder, home discovery, refresh, network, service or restore operation.
+use crate::native_custody::{NativeCustody, OwnedNativeSnapshot};
+use gateway_auth_credentials::{
+    native_credentials::NativeGeneration, native_credentials::OwnerFence,
+};
+use gateway_contracts::identity::MAX_SAFE_INTEGER;
+use gateway_native_local_transport::transport::NativeOwnerTransport;
+use gateway_native_local_transport::{unix::NativeOwnerLocation, unix::UnixOwnerTransport};
+use gateway_source::error::GatewayError;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+/// Constructor input from the existing local owner configuration and its current
+/// source/generation fence. A source capture cannot deserialize this registration.
+pub struct NativeCustodyRegistration {
+    home: PathBuf,
+    fence: OwnerFence,
+}
+impl NativeCustodyRegistration {
+    pub fn existing(home: PathBuf, fence: OwnerFence) -> Result<Self, GatewayError> {
+        if !home.is_absolute()
+            || home.to_str().is_none()
+            || home
+                .components()
+                .any(|p| matches!(p, std::path::Component::ParentDir))
+            || fence.owner.0.is_empty()
+            || fence.account_id.is_empty()
+            || fence.account_id.trim() != fence.account_id
+            || fence.generation_hash.is_empty()
+            || fence.authority_revision.is_empty()
+        {
+            return Err(invalid());
+        }
+        Ok(Self { home, fence })
+    }
+}
+
+/// Holds only fixed path/fence configuration. Credentials are read at observation
+/// time and verified by the existing OwnerFence family, not a renewal-v2 request.
+pub struct ConfiguredNativeCustody {
+    transport: UnixOwnerTransport,
+    registrations: BTreeMap<String, NativeCustodyRegistration>,
+}
+impl ConfiguredNativeCustody {
+    pub fn new(registrations: Vec<NativeCustodyRegistration>) -> Result<Self, GatewayError> {
+        if !(1..=2).contains(&registrations.len()) {
+            return Err(invalid());
+        }
+        let mut locations = Vec::new();
+        let mut by_account = BTreeMap::new();
+        let mut homes = BTreeSet::new();
+        for registration in registrations {
+            if !homes.insert(registration.home.clone()) {
+                return Err(invalid());
+            }
+            locations.push(NativeOwnerLocation::configured(
+                registration.fence.owner.clone(),
+                registration.home.clone(),
+            )?);
+            if by_account
+                .insert(registration.fence.account_id.clone(), registration)
+                .is_some()
+            {
+                return Err(invalid());
+            }
+        }
+        // The native constructor independently refuses duplicate fixed owners.
+        Ok(Self {
+            transport: UnixOwnerTransport::new(locations)?,
+            registrations: by_account,
+        })
+    }
+}
+impl NativeCustody for ConfiguredNativeCustody {
+    async fn observe(&self, account_id: &str) -> Result<OwnedNativeSnapshot, GatewayError> {
+        let registration = self.registrations.get(account_id).ok_or_else(invalid)?;
+        let credentials = self
+            .transport
+            .read_credentials(&registration.fence.owner)
+            .await?;
+        let observed_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| invalid())?
+            .as_millis();
+        let observed_at_ms = i64::try_from(observed_at_ms).map_err(|_| invalid())?;
+        if !(0..=MAX_SAFE_INTEGER).contains(&observed_at_ms) {
+            return Err(invalid());
+        }
+        OwnedNativeSnapshot::verify(
+            registration.home.to_str().ok_or_else(invalid)?,
+            &registration.fence,
+            NativeGeneration {
+                fence: registration.fence.clone(),
+                credentials,
+                observed_at_ms,
+            },
+        )
+    }
+}
+fn invalid() -> GatewayError {
+    GatewayError::unavailable(
+        "The configured local native custody registration is missing or stale",
+        "migration_native_custody_required",
+    )
+}
+
+/// Compose only the existing real native custody and candidate validators.
+/// The host supplies the capture and registrations through independent private
+/// operator inputs. This creates no native writer, renewal or ownership grant.
+pub async fn prepare_local_bootstrap(
+    capture: &gateway_migration_data::native_capture::NativeCapture,
+    registrations: Vec<NativeCustodyRegistration>,
+) -> Result<
+    gateway_migration_data::native_capture::NativeCapture,
+    gateway_migration_data::error::MigrationError,
+> {
+    let custody = ConfiguredNativeCustody::new(registrations)?;
+    custody.verify_existing_access_only(capture).await?;
+    crate::native_custody::sanitize_native_capture(capture, &custody).await
+}
+
+impl ConfiguredNativeCustody {
+    // The existing sanitizer handles refresh-bearing source rows. Existing
+    // access-only rows still require actual observation; this returns unit only,
+    // never an OwnedNativeSnapshot/managed grant for an external account.
+    pub async fn verify_existing_access_only(
+        &self,
+        capture: &gateway_migration_data::native_capture::NativeCapture,
+    ) -> Result<(), gateway_migration_data::error::MigrationError> {
+        for entry in &capture.entries {
+            self.verify_access_only_entry(entry).await?;
+        }
+        Ok(())
+    }
+
+    // One entry at a time so a stopped-file preparation can verify access-only
+    // accounts without cloning the complete capture or constructing tiny headers.
+    pub async fn verify_access_only_entry(
+        &self,
+        entry: &gateway_migration_data::native_capture::NativeEntry,
+    ) -> Result<(), gateway_migration_data::error::MigrationError> {
+        if !crate::native_custody::codex_key(&entry.raw_key)? {
+            return Ok(());
+        }
+        let pool = crate::native_custody::source_pool(&entry.value)?;
+        for account in pool
+            .accounts
+            .iter()
+            .filter(|a| a.refresh_token.expose().is_empty())
+        {
+            let registration = self
+                .registrations
+                .get(&account.account_id)
+                .ok_or_else(invalid)?;
+            let credentials = self
+                .transport
+                .read_credentials(&registration.fence.owner)
+                .await?;
+            let at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| invalid())?
+                .as_millis();
+            let at = i64::try_from(at).map_err(|_| invalid())?;
+            let owner = account.native_owner.as_ref().ok_or_else(invalid)?;
+            if registration.fence.authority_revision != entry.revision.record_revision()?
+                || registration.fence.account_id != credentials.account_id
+                || registration.fence.generation_hash != credentials.generation_hash()
+                || account.account_id != credentials.account_id
+                || account.access_token != credentials.access_token
+                || owner.codex_home != registration.home.to_str().ok_or_else(invalid)?
+                || owner.native_refreshed_at != credentials.native_refreshed_at
+                || credentials
+                    .access_expires_at_ms()
+                    .is_none_or(|expiry| expiry <= at.saturating_add(120_000))
+            {
+                return Err(invalid().into());
+            }
+            if let Some(managed) = &owner.managed_source {
+                let projection =
+                    gateway_auth_credentials::managed_access::ManagedAccessProjection::from_native(
+                        &NativeGeneration {
+                            fence: registration.fence.clone(),
+                            credentials,
+                            observed_at_ms: at,
+                        },
+                    )?;
+                if owner.external_user_id.is_some()
+                    || owner.generation_hash != projection.access_generation()
+                    || managed.generation_hash != projection.native_source_generation()
+                {
+                    return Err(invalid().into());
+                }
+            } else if owner.external_user_id.is_none()
+                || owner.external_user_id != credentials.external_user_id
+                || !credentials.refresh_token.expose().is_empty()
+                || owner.generation_hash != credentials.generation_hash()
+            {
+                return Err(invalid().into());
+            }
+        }
+        Ok(())
+    }
+}

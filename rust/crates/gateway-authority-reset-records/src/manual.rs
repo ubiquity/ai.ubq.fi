@@ -60,7 +60,7 @@ pub struct ManualResetPromotion {
     pub active_account_id_hash: String,
 }
 
-fn error(status: u16, code: &str) -> GatewayError {
+pub fn error(status: u16, code: &str) -> GatewayError {
     GatewayError::new(
         status,
         "Manual reset requires current account, policy and verified quota state.",

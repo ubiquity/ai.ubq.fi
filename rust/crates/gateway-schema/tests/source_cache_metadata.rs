@@ -1,7 +1,8 @@
+use gateway_schema::prompt_cache::*;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_schema::prompt_cache::*;
+
 fn raw(value: &str) -> SourceJson {
     SourceJson::parse(value).unwrap()
 }

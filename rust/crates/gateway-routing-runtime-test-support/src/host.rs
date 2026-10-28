@@ -1,10 +1,11 @@
 use crate::{seed::source_key, source_catalog::Collator, store::Store};
-use gateway_auth::{crypto::Secret, types::AuthPrincipal};
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_authority::routing_types::CohortProof;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
-use gateway_authority_routing_selection::types::CohortProof;
 use gateway_core::state::AuthorityStore;
-use gateway_providers::types::{AuthMaterial, PrepareOptions};
+use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeOutcome, ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest,
     PublishedCredential, RefreshOutcome, ResponseHead, RoutingHost, direct_credential,
@@ -12,8 +13,11 @@ use gateway_routing_runtime::types::{
 use gateway_source::error::GatewayError;
 use gateway_wait_observation::outcome::WaitOutcome;
 use std::{
-    collections::BTreeMap, collections::BTreeSet, collections::VecDeque, sync::Arc, sync::Mutex,
-    sync::atomic::AtomicBool, sync::atomic::AtomicU64, sync::atomic::Ordering,
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
 };
 #[derive(Clone)]
 pub struct Host {

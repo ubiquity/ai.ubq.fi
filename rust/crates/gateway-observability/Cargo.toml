@@ -6,6 +6,11 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-schema-values.workspace = true
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-source.workspace = true
 gateway-authority-paid-backfill = { path = "../gateway-authority-paid-backfill" }
 gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
@@ -39,6 +44,12 @@ zeroize = "=1.9.1"
 workspace = true
 
 [dev-dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-claude-policy = { path = "../gateway-claude-policy" }
+gateway-claude-roster = { path = "../gateway-claude-roster" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }

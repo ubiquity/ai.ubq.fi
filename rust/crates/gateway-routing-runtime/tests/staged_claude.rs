@@ -8,13 +8,11 @@ use gateway_core::{
 use gateway_kv_codec::{
     key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey, value::ValueEncoding,
 };
-use gateway_providers::{
-    source_request::prepare_source_request,
-    types::{
-        ClaudeBodyOptions, ClaudeCredentialKind, ClientSurface, OrdinaryPreparationContext,
-        PreparedClaudeBody,
-    },
+use gateway_provider_claude_body::{
+    types::ClaudeBodyOptions, types::ClaudeCredentialKind, types::PreparedClaudeBody,
 };
+use gateway_provider_protocol::{types::ClientSurface, types::OrdinaryPreparationContext};
+use gateway_providers::source_request::prepare_source_request;
 use gateway_routing_runtime::{currentness::*, custody, policy, session::*, types::*};
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
 use gateway_source::{
@@ -271,7 +269,7 @@ fn invalid_claude_body_wins_before_hypothetical_physical_headers_without_fallbac
         assert_eq!(error.error.status, 400);
         assert!(matches!(
             error.source_body,
-            Some(SourceRefusalBody::Json(_))
+            Some(SourceRefusalBody::ClosedError(_))
         ));
         assert_eq!(window(&store)["committed_requests"], 0);
         let row = decode_source_control_record(
@@ -373,7 +371,7 @@ fn named_journal_preserves_scalar_null_and_utf16_workspace_and_exact_owner_fence
             custody::validate_journal_row(&key, &final_row).unwrap();
             assert_eq!(
                 final_row.expires_at_ms,
-                Some(NOW + gateway_authority_contracts::PAID_RETENTION_MS)
+                Some(NOW + gateway_authority::PAID_RETENTION_MS)
             );
         }
     });
@@ -485,7 +483,7 @@ fn crossed_publication_variants_and_fences_fail_closed_without_a_ready_request()
             crossed,
             direct_credential(
                 UpstreamProvider::ClaudeCode,
-                &gateway_auth::crypto::Secret::new("fixture-real-scalar".into()),
+                &gateway_auth_primitives::crypto::Secret::new("fixture-real-scalar".into()),
             ),
         ] {
             let store = Store::new();

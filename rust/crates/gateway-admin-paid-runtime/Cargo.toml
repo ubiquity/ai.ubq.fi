@@ -1,0 +1,25 @@
+[package]
+name = "gateway-admin-paid-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+serde_json.workspace = true
+gateway-source.workspace = true
+gateway-schema.workspace = true
+gateway-core.workspace = true
+gateway-authority.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-admin-runtime-records.workspace = true
+gateway-admin-runtime-contracts.workspace = true
+gateway-admin-keys.workspace = true
+gateway-admin-contracts.workspace = true
+
+[lints]
+workspace = true

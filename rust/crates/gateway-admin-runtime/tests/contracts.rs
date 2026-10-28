@@ -1,18 +1,17 @@
 use gateway_admin_contracts::{operations::AdminHost, routes::AdminOperation};
-use gateway_admin_runtime::RuntimeConfig;
-use gateway_admin_runtime::{
-    AdminRuntime,
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig,
     capabilities::{CaptureRequest, CodexRequest, Context, RuntimeCapabilities},
 };
-use gateway_admin_test_support::runtime_fixtures::seed_catalog;
 use gateway_admin_test_support::{
-    runtime_fixtures::{WireBody, input, runtime},
+    runtime_fixtures::{WireBody, input, runtime, seed_catalog},
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::AuthResponse;
-use gateway_source::error::GatewayError;
+use gateway_auth_contracts::types::AuthResponse;
 use gateway_schema::catalog_store::codex_snapshot_key;
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -264,7 +263,7 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
         .insert("before_ms".into(), vec!["0x20".into()]);
     request.query.insert("limit".into(), vec!["0b1".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false).unwrap(),
+        gateway_admin_runtime_contracts::parse::capture(&request, false).unwrap(),
         CaptureRequest::Interval {
             after_ms: 16,
             before_ms: 32,
@@ -275,7 +274,7 @@ fn admin_inputs_use_source_number_coercion_and_ecmascript_whitespace() {
         .query
         .insert("after_ms".into(), vec!["\u{0085}16\u{0085}".into()]);
     assert_eq!(
-        gateway_admin_runtime::parse::capture(&request, false)
+        gateway_admin_runtime_contracts::parse::capture(&request, false)
             .unwrap_err()
             .status,
         400

@@ -5,47 +5,19 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[dependencies]
-gateway-native-authority-wire.workspace = true
-gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
-gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
-gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
-gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
-gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
-gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
-gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
-gateway-authority-keys = { path = "../gateway-authority-keys" }
-gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
-gateway-source.workspace = true
-gateway-source-graph.workspace = true
-gateway-source-audit.workspace = true
-gateway-profile-source.workspace = true
-gateway-migration-ledger.workspace = true
-gateway-claude-usage-quota.workspace = true
-gateway-admin-contracts.workspace = true
-gateway-admin-keys.workspace = true
-gateway-auth-native-wire.workspace = true
-gateway-core = { path = "../gateway-core" }
-gateway-observability.workspace = true
-gateway-claude-runtime = { path = "../gateway-claude-runtime" }
-gateway-auth = { path = "../gateway-auth" }
-gateway-admin = { path = "../gateway-admin" }
-gateway-admin-data = { path = "../gateway-admin-data" }
-gateway-profile-values.workspace = true
-gateway-admin-runtime = { path = "../gateway-admin-runtime" }
-gateway-authority = { path = "../gateway-authority" }
-gateway-schema = { path = "../gateway-schema" }
-gateway-routing-runtime = { path = "../gateway-routing-runtime" }
-serde.workspace = true
-serde_json.workspace = true
-
 [target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
 gateway-native-local-transport.workspace = true
+gateway-migration-latest.workspace = true
+gateway-migration-core-state.workspace = true
+gateway-migration-spool.workspace = true
+gateway-native = { path = "../gateway-native" }
 sha2 = "=0.10.9"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+gateway-migration-fixture-port.workspace = true
+gateway-migration-fixture-inputs.workspace = true
+gateway-migration-fixture-custody.workspace = true
+gateway-migration-copied-store-support.workspace = true
 gateway-migration-test-support.workspace = true
 gateway-native-local-transport.workspace = true
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
@@ -66,15 +38,78 @@ path = "tests/support/offline-fixture.rs"
 name = "worker-custody-fixture"
 path = "tests/support/worker-custody-fixture.rs"
 
-[dev-dependencies]
-gateway-native-local-transport.workspace = true
-gateway-migration-test-support.workspace = true
+[lints]
+workspace = true
 
+[dependencies]
+gateway-native-authority-wire = { workspace = true }
+gateway-authority-reset-records = { path = "../gateway-authority-reset-records" }
+gateway-authority-paid-records = { path = "../gateway-authority-paid-records" }
+gateway-authority-routing-evidence = { path = "../gateway-authority-routing-evidence" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-paid-control-records = { path = "../gateway-authority-paid-control-records" }
+gateway-authority-initial-owner = { path = "../gateway-authority-initial-owner" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-source = { workspace = true }
+gateway-source-graph = { workspace = true }
+gateway-migration-stage = { workspace = true }
+gateway-migration-protocol = { workspace = true }
+gateway-migration-native-custody = { workspace = true }
+gateway-migration-inverse = { workspace = true }
+gateway-migration-profile = { workspace = true }
+gateway-migration-prepare = { workspace = true }
+gateway-migration-indexes = { workspace = true }
+gateway-migration-values = { workspace = true }
+gateway-migration-projection = { workspace = true }
+gateway-migration-data = { workspace = true }
+gateway-migration-graph = { workspace = true }
+gateway-source-audit = { workspace = true }
+gateway-profile-source = { workspace = true }
+gateway-migration-ledger = { workspace = true }
+gateway-claude-usage-quota = { workspace = true }
+gateway-admin-contracts = { workspace = true }
+gateway-admin-keys = { workspace = true }
+gateway-auth-native-wire = { workspace = true }
+gateway-core = { path = "../gateway-core" }
+gateway-observability = { workspace = true }
+gateway-claude-runtime = { path = "../gateway-claude-runtime" }
+gateway-auth = { path = "../gateway-auth" }
+gateway-admin = { path = "../gateway-admin" }
+gateway-admin-data = { path = "../gateway-admin-data" }
+gateway-profile-values = { workspace = true }
+gateway-admin-runtime = { path = "../gateway-admin-runtime" }
+gateway-authority = { path = "../gateway-authority" }
+gateway-schema = { path = "../gateway-schema" }
+gateway-routing-runtime = { path = "../gateway-routing-runtime" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-migration-copied-store-support = { path = "../gateway-migration-copied-store-support" }
+gateway-migration-core-state = { path = "../gateway-migration-core-state" }
+gateway-migration-fixture-custody = { path = "../gateway-migration-fixture-custody" }
+gateway-migration-fixture-inputs = { path = "../gateway-migration-fixture-inputs" }
+gateway-migration-fixture-port = { path = "../gateway-migration-fixture-port" }
+gateway-migration-latest = { path = "../gateway-migration-latest" }
+gateway-migration-spool = { path = "../gateway-migration-spool" }
+gateway-native-local-transport = { workspace = true }
+gateway-migration-test-support = { workspace = true }
 gateway-authority-paid-ledger = { path = "../gateway-authority-paid-ledger" }
 gateway-authority-routing-selection = { path = "../gateway-authority-routing-selection" }
 gateway-authority-kernel = { path = "../gateway-authority-kernel" }
 gateway-authority-api-release = { path = "../gateway-authority-api-release" }
 gateway-authority-api-quota = { path = "../gateway-authority-api-quota" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
-[lints]
-workspace = true
+gateway-source = { workspace = true }
+gateway-local-refusal = { workspace = true }

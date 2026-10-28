@@ -1,18 +1,23 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth::store::key;
+use gateway_auth_primitives::store::key;
 use gateway_authority_api_quota::ApiQuotaOperations;
-use gateway_core::{query::*, state::*};
+use gateway_core::query::*;
+use gateway_core::state::*;
 use gateway_kv_codec::key::RecordKey;
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-use gateway_migration::native_capture::NativeRevision;
-use gateway_migration::{
-    engine::adopt_empty,
-    graph_transport,
-    inverse::{ArtifactContext, export_latest},
-    native_capture::{NativeCapture, NativeEntry, NativeValue, prepare_native},
-    native_inverse::{export_native_latest, export_native_rollback_bundle},
-};
-use gateway_migration_test_support::fixture::{Directory, run};
+use gateway_kv_codec::tuple_key::TupleKey;
+use gateway_migration_data::custody::ArtifactContext;
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_data::native_capture::NativeEntry;
+use gateway_migration_data::native_capture::NativeRevision;
+use gateway_migration_data::native_capture::NativeValue;
+use gateway_migration_graph::transport as graph_transport;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_inverse::native_inverse::export_native_latest;
+use gateway_migration_inverse::native_inverse::export_native_rollback_bundle;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare_native;
+use gateway_migration_test_support::fixture::Directory;
+use gateway_migration_test_support::fixture::run;
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_source_graph::graph::GraphNode;
 use serde_json::json;
@@ -52,7 +57,10 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
     let store = SqliteStore::open(&path);
     let token = format!("u_{}", "1".repeat(64));
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&store, &token, 2300))?.key_id,
+        run(gateway_auth_primitives::api_keys::authenticate(
+            &store, &token, 2300
+        ))?
+        .key_id,
         "offline-key"
     );
     let authority = gateway_authority::store::Authority::with_clock(
@@ -143,7 +151,10 @@ fn source_complete_graphs_share_the_persisted_auth_store_and_latest_inverse()
     );
     assert!(run(inverse.read(&graph_key(1)))?.is_none());
     assert_eq!(
-        run(gateway_auth::api_keys::authenticate(&inverse, &token, 2400))?.key_id,
+        run(gateway_auth_primitives::api_keys::authenticate(
+            &inverse, &token, 2400
+        ))?
+        .key_id,
         "offline-key"
     );
     Ok(())

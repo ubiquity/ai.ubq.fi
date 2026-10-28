@@ -1,18 +1,16 @@
 #![cfg(unix)]
 //! Actual path-module transport checks, not production registration or private proof tests.
 mod remote_tls;
-use gateway_auth::crypto::base64url;
 use gateway_auth_native_wire::native_read::*;
+use gateway_auth_primitives::crypto::base64url;
 use remote_tls::{ImportAuthorityTls, Roots};
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
-use std::{
-    collections::BTreeMap,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 const CA: &[u8] = include_bytes!("../../gateway-native/tests/fixtures/import-tls/ca.der");
 const CERT: &[u8] = include_bytes!("../../gateway-native/tests/fixtures/import-tls/leaf.der");
 const KEY: &[u8] = include_bytes!("../../gateway-native/tests/fixtures/import-tls/leaf.pk8.der");

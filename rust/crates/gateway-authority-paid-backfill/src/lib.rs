@@ -8,6 +8,7 @@ use gateway_core::{query::QueryPage, query::QueryRequest};
 use gateway_core::{query::QuerySelector, query::QueryStore};
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -207,9 +208,9 @@ impl<'a, S: QueryStore, I: TokenSource> PaidBackfillService<'a, S, I> {
         if !may_fold {
             return Ok(RequestStep::Budget);
         }
-        let model = gateway_contracts::model::ModelId::from_source(
-            gateway_schema::reasoning::js_trim_source(row.model.as_js_string()),
-        );
+        let model = gateway_contracts::model::ModelId::from_source(js_trim_source(
+            row.model.as_js_string(),
+        ));
         let eligible = row.billing_state == gateway_contracts::lifecycle::BillingState::Settled
             && row.provider_quota.is_some()
             && row.spend_microcredits.is_some()

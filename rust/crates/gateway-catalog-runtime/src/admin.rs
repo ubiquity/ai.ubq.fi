@@ -2,13 +2,12 @@
 use crate::{CatalogRuntime, state};
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
 use gateway_catalog_provider::response::AdminCatalogResponse;
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_core::{
-    query::QueryStore, source_control::encode_source_control_record, state::AtomicTransition,
-    state::CommitOutcome, state::RecordMutation,
+    query::QueryStore,
+    source_control::encode_source_control_record,
+    state::{AtomicTransition, CommitOutcome, RecordMutation},
 };
+use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema::{
     catalog::ProviderCatalog,
     catalog_store,
@@ -18,8 +17,10 @@ use gateway_schema::{
     },
     selection::{ModelWhitelist, normalize_whitelist_ids},
     snapshot::{SnapshotOverrides, normalize_snapshot},
-    source_request::error::SourceRequestError,
-    util,
+};
+use gateway_schema_values::scalar as util;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -62,11 +63,7 @@ fn member(value: &SourceJson, key: &str) -> SourceJson {
     source::member(value, key).unwrap_or_else(|| json_source(&()))
 }
 fn runtime_error(error: SourceRequestError) -> SourceRequestError {
-    let message = source::member(error.body(), "error")
-        .and_then(|v| source::member(&v, "message"))
-        .as_ref()
-        .and_then(source::string)
-        .expect("source error message");
+    let message = error.body().message().clone();
     let includes = |text: &str| {
         let pattern = text.encode_utf16().collect::<Vec<_>>();
         message
@@ -475,15 +472,9 @@ mod source_error_tests {
             None,
         ));
         assert_eq!(error.status, 409);
-        assert_eq!(
-            source::string(&member(&member(error.body(), "error"), "message")),
-            Some(message)
-        );
-        assert_eq!(
-            member(&member(error.body(), "error"), "code"),
-            json_source("runtime_config_invalid")
-        );
-        assert!(error.body().deserialize::<Value>().is_err());
+        assert_eq!(error.body().message(), &message);
+        assert_eq!(error.body().code(), Some("runtime_config_invalid"));
+        assert!(serde_json::from_slice::<Value>(error.body().as_bytes()).is_err());
         let large = runtime_error(lift(GatewayError::new(
             503,
             "runtime config is too large",

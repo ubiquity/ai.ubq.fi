@@ -11,6 +11,8 @@ native-import-fixture = ["gateway-authority/native-import-fixture"]
 
 [dependencies]
 gateway-authority-actor-records.workspace = true
+gateway-native-authority-request = { path = "../gateway-native-authority-request" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-native-authority-wire.workspace = true

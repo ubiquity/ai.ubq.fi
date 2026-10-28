@@ -3,9 +3,10 @@
 use crate::native_control::actor;
 use crate::native_control::actor::NativeRenewalActor;
 use crate::{routing, routing::RoutingView, store::Authority, store::Transaction};
-use gateway_auth::provider_credentials::codex_access_expiry_ms;
-use gateway_auth::provider_credentials::codex_source_pool_key;
-use gateway_auth::{provider_credentials::parse_codex_source_pool, types::AuthConfig};
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_credentials::provider_credentials::codex_access_expiry_ms;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_capacity_policy as capacity_rules;
@@ -14,8 +15,10 @@ use gateway_authority_keys as keys;
 use gateway_authority_reset_records::{AccountDayBudget, ResetClaim, ResetConfig, ResetInvocation};
 use gateway_authority_reset_records::{ResetMode, ResetRecord, ResetState};
 use gateway_authority_reset_records::{manual::ManualIntent, manual::ManualResetPromotion};
-use gateway_authority_reset_records::{manual::intent_key, manual::parse_manual_intent};
-use gateway_authority_routing_evidence::{capacity::CapacityObservation, capacity::CapacityState};
+use gateway_authority_reset_records::{
+    manual::error, manual::intent_key, manual::parse_manual_intent,
+};
+use gateway_authority_routing_evidence::capacity::CapacityObservation;
 use gateway_contracts::identity::ActiveTransitionReason;
 use gateway_contracts::{identity::AccountBinding, identity::ActiveSelection};
 use gateway_core::state::AuthorityStore;
@@ -168,31 +171,13 @@ fn observation(
     target: &ManualResetTarget,
     now: i64,
 ) -> Result<(), GatewayError> {
-    if row.account_id_hash != target.binding.account_id_hash
-        || u64::from(row.slot) != target.binding.slot
-        || row.state != CapacityState::Available
-        || row.source_observed_at_ms != Some(row.snapshot_at_ms)
-        || row.snapshot_at_ms > now
-        || row.snapshot_at_ms < 0
-        || row.snapshot_at_ms < now.saturating_sub(30_000)
-        || (row.windows.primary.is_none() && row.windows.secondary.is_none())
-    {
+    if !capacity_rules::manual::manual_observation_is_current(row, &target.binding, now) {
         return Err(error(409, "codex_quota_unavailable"));
     }
     Ok(())
 }
 fn deadline(row: &CapacityObservation, now: i64) -> Result<i64, GatewayError> {
-    let windows = [row.windows.primary.as_ref(), row.windows.secondary.as_ref()]
-        .into_iter()
-        .flatten()
-        .filter(|w| w.reset_at_ms.is_some_and(|at| at > now))
-        .collect::<Vec<_>>();
-    let exhausted = windows.iter().any(|w| w.used_percent == Some(100.0));
-    windows
-        .into_iter()
-        .filter(|w| !exhausted || w.used_percent == Some(100.0))
-        .filter_map(|w| w.reset_at_ms)
-        .max()
+    capacity_rules::manual::manual_reset_deadline(row, now)
         .ok_or_else(|| error(409, "codex_quota_identity_unavailable"))
 }
 impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
@@ -479,23 +464,7 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
             if row.state != ResetState::Verified || row.identity != invocation.identity {
                 return Err(error(409, "codex_reset_unverified"));
             }
-            let mut models = Vec::new();
-            if capacity_rules::capacity_headroom_for_observation(usage, None).unwrap_or(0.0) > 0.0 {
-                models.push(gateway_contracts::model::ModelId::from_scalar("standard"));
-            }
-            for limit in &usage.additional_rate_limits {
-                let model = gateway_contracts::model::ModelId::from_scalar(&limit.limit_name);
-                if !matches!(
-                    gateway_authority_routing_evidence::models::model_quota_class(&model),
-                    gateway_contracts::provider::CodexQuotaClass::Standard
-                        | gateway_contracts::provider::CodexQuotaClass::Unknown
-                ) && capacity_rules::capacity_headroom_for_observation(usage, Some(&model))
-                    .unwrap_or(0.0)
-                    > 0.0
-                {
-                    models.push(model);
-                }
-            }
+            let models = capacity_rules::manual::manual_recovered_models(usage);
             if models.is_empty() {
                 return Err(error(409, "codex_reset_propagation_pending"));
             }
@@ -588,11 +557,4 @@ async fn manual_budget<S: AuthorityStore, I: TokenSource>(
         return Err(error(429, "account_day_limit_reached"));
     }
     Ok(budget)
-}
-fn error(status: u16, code: &str) -> GatewayError {
-    GatewayError::new(
-        status,
-        "Manual reset requires current account, policy and verified quota state.",
-        Some(code),
-    )
 }

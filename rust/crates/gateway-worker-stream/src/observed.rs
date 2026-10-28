@@ -253,10 +253,6 @@ impl<S, C: StreamControl> Drop for ObservedStream<S, C> {
 #[cfg(test)]
 mod tests {
     use super::{FinishSignal, ObservationHandle, constructor_result};
-    use futures_util::task::AtomicWaker;
-    use gateway_contracts::lifecycle::{
-        BodyOutcome, DeliveryOutcome, ReaderTermination, SemanticTerminal, TransportObservation,
-    };
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},

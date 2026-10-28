@@ -1,8 +1,8 @@
 //! Exact source Codex429 and entitlement proofs; an HTTP status alone is not quota.
 use chrono::{DateTime, Utc};
-use gateway_authority_routing_records::types::{QuotaBlock, QuotaBlockSource};
+use gateway_authority::routing_types::{QuotaBlock, QuotaBlockSource};
 use gateway_contracts::model::ModelId;
-use gateway_providers::types::Headers;
+use gateway_provider_protocol::types::Headers;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
@@ -201,8 +201,8 @@ pub fn unsupported_model(
 }
 pub(crate) fn model_unavailable_error(
     model: &ModelId,
-) -> gateway_schema::source_request::error::SourceRequestError {
-    gateway_schema::source_request::error::SourceRequestError::new(
+) -> gateway_local_refusal::source_error::SourceRequestError {
+    gateway_local_refusal::source_error::SourceRequestError::new(
         404,
         source_message(
             "The model '",

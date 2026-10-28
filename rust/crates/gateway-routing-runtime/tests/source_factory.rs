@@ -1,19 +1,22 @@
 use gateway_authority::store::Authority;
 use gateway_authority_api_protocol::ApiReservation;
-use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::{AuthorityClock, TokenSource};
 use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_local_refusal::routing_error::SourceRefusalBody;
 use gateway_routing_runtime::{
-    local_work::{LocalAdmissionInput, LocalProviderAdmission, LocalRequestMetadata},
-    session::RoutingSession,
-    types::{RoutingInput, SourceRefusalBody},
+    local_work::LocalAdmissionInput, local_work::LocalProviderAdmission,
+    local_work::LocalRequestMetadata, session::RoutingSession, types::RoutingInput,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_schema::{request::RequestSurface, source_request::SourceRequestDocument};
+use gateway_schema::source_request::SourceRequestDocument;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
-use std::sync::{Arc, Mutex};
+use {
+    gateway_schema_values::request::RequestSurface,
+    std::sync::{Arc, Mutex},
+};
+
 fn metadata(input: RoutingInput) -> LocalRequestMetadata {
     LocalRequestMetadata {
         context: input.context,
@@ -127,11 +130,10 @@ fn local_factory_source_failure_cleans_original_without_provider_exposure() {
         Err(error) => error,
     };
     assert_eq!(error.error.status, 400);
-    let Some(SourceRefusalBody::Json(body)) = error.source_body else {
+    let Some(SourceRefusalBody::ClosedError(body)) = error.source_body else {
         panic!("source error body discarded")
     };
-    let error = source::member(&body, "error").unwrap();
-    let message = source::string(&source::member(&error, "message").unwrap()).unwrap();
+    let message = body.message();
     assert_eq!(message.as_units().last(), Some(&0xd800));
     assert_eq!(window(&store)["reserved_requests"], 0);
     assert_eq!(window(&store)["committed_requests"], 0);
@@ -216,7 +218,7 @@ fn failed_planning_cleans_expired_original_without_provider_terminal_or_new_admi
         "factory-owner",
         r#"{"model":"unavailable-model","input":"source fixture","reasoning":{"effort":"none"}}"#,
     );
-    store.advance(gateway_authority_contracts::REQUEST_LEASE_MS + 1);
+    store.advance(gateway_authority::REQUEST_LEASE_MS + 1);
     assert!(run(RoutingSession::from_local_admission(admission)).is_err());
     let row = store.value(session_key("factory-owner"));
     assert_eq!(row["local_work"]["terminal"]["semantic"], "incomplete");

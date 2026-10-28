@@ -4,27 +4,30 @@ use crate::{CatalogRuntime, state};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidProjectionProvenance,
-    PaidProviderObservation, PaidRoutingPolicy, PaidRoutingProjection, PaidSourceCheck,
+    PaidProviderObservation, PaidRoutingProjection, PaidSourceCheck,
 };
+use gateway_authority_paid_records::PaidRoutingPolicy;
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider, CredentialPublication};
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId, provider::PaidProvider};
 use gateway_core::{
-    query::QueryStore,
-    source_control::{decode_source_control_record, encode_source_control_record},
-    state::{AtomicTransition, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord},
+    query::QueryStore, source_control::decode_source_control_record,
+    source_control::encode_source_control_record, state::AtomicTransition, state::CommitOutcome,
+    state::RecordMutation, state::RevisionCheck, state::StoredRecord,
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-use gateway_providers::policy::{DeepseekHop, PaidRoutingInput, paid_order, resolve_paid_route};
+use gateway_provider_policy::{
+    policy::DeepseekHop, policy::PaidRoutingInput, policy::paid_order, policy::resolve_paid_route,
+};
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_store,
-    reasoning::js_trim_source,
     runtime_config::normalize_runtime_config,
     selection::ProviderSelection,
     snapshot::ModelSnapshot,
+};
+use gateway_schema_values::source_view::js_trim_source;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;

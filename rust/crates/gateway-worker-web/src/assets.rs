@@ -1,6 +1,6 @@
 //! Immutable source assets and the existing homepage content negotiation.
+use gateway_schema_values::scalar::js_trim;
 use gateway_source::error::GatewayError;
-use gateway_schema::util::js_trim;
 use serde_json::json;
 use worker::{Env, Method, Request, RequestInit, Response};
 

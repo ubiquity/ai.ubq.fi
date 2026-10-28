@@ -1,15 +1,15 @@
 use crate::wire::{PreparedPublicationCommand, PublicationReceipt};
-use gateway_auth::crypto::base64url;
-use gateway_auth::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_PUBLICATION_PATH,
     NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_source::error::GatewayError;
+use gateway_auth_primitives::crypto::base64url;
 use gateway_publication_policy::protocol::{
     OwnedNativeAuthHeaders, PublicationCarrier, PublicationRequest, decode_response_error,
     unverified,
 };
+use gateway_source::error::GatewayError;
 
 pub struct NativePublicationSender<'a, C> {
     pub(crate) identity: &'a NativeTransportIdentity,

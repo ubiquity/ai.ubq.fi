@@ -4,11 +4,12 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
     source_input as input,
 };
-use gateway_auth::{
-    api_keys::{self, ApiKeyHashRecord, WEEK_MS},
-    crypto::{Secret, sha256_base64url, uuid_from_random},
-    store,
-    types::{AuthHost, AuthPrincipal, AuthResponse, conflict, invalid},
+use gateway_auth_contracts::{
+    types::AuthHost, types::AuthPrincipal, types::AuthResponse, types::conflict, types::invalid,
+};
+use gateway_auth_primitives::{
+    api_keys, api_keys::ApiKeyHashRecord, api_keys::WEEK_MS, crypto::Secret,
+    crypto::sha256_base64url, crypto::uuid_from_random, store,
 };
 use gateway_authority_api_protocol::{ApiKeyPolicy as AuthorityKeyPolicy, ApiUsageWindow};
 use gateway_contracts::{identity::ApiKeyId, model::ModelId};

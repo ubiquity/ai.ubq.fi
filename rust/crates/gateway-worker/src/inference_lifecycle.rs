@@ -1,14 +1,14 @@
 //! One durable request lifetime and source-derived terminal billing; telemetry never mints authority.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformTokens},
     routing_host,
 };
-use gateway_source::error::GatewayError;
 use gateway_routing_runtime::{
     session::RoutingSession,
     types::{AttemptUsage, PreparedAttempt},
 };
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_stream::observed::FinishHook;
 use serde_json::Value;
 use std::{cell::RefCell, rc::Rc};
@@ -21,7 +21,7 @@ pub(crate) struct Lifecycle {
     pub(crate) session: Rc<Session>,
     pub(crate) currentness: crate::inference_currentness::CurrentnessGuard,
     pub(crate) attempt: PreparedAttempt,
-    pub(crate) principal: gateway_auth::types::AuthPrincipal,
+    pub(crate) principal: gateway_auth_contracts::types::AuthPrincipal,
     pub(crate) provider_request_id: Option<String>,
     pub(crate) status: u16,
     pub(crate) store: RemoteAuthorityStore,

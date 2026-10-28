@@ -1,12 +1,16 @@
-use crate::{types::RoutingInput, types::RoutingResult};
+use crate::types::{RoutingInput, RoutingResult};
 use chrono::{DateTime, Datelike, Utc};
-use gateway_contracts::{model::ModelId, provider::CodexQuotaClass};
-use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
-use gateway_providers::{policy, policy::DeepseekHop, policy::PaidRoutingInput};
-use gateway_providers::{policy::PaidRoutingPlan, types::ClientSurface};
-use gateway_schema::source_request::error::SourceRequestError;
-use gateway_schema::{aliases, request::RequestExtensions, request::RequestSurface};
-use gateway_schema::{source_request::SourceModelRequest, source_request::SourceRequestDocument};
+use gateway_contracts::model::ModelId;
+use gateway_contracts::{
+    provider::CodexQuotaClass, provider::PaidProvider, provider::UpstreamProvider,
+};
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_provider_policy::{
+    policy, policy::DeepseekHop, policy::PaidRoutingInput, policy::PaidRoutingPlan,
+};
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_schema::{aliases, source_request::SourceRequestDocument};
+use gateway_schema_values::request::{RequestExtensions, RequestSurface, SourceModelRequest};
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
 use gateway_source::source_serialization as source;
@@ -54,7 +58,7 @@ pub(crate) fn admission_plan(input: &RoutingInput) -> RoutePlan {
     }
 }
 pub fn class(model: &ModelId) -> CodexQuotaClass {
-    gateway_authority_routing_evidence::models::model_quota_class(model)
+    gateway_authority::routing::model_quota_class(model)
 }
 fn ids(rows: &[SourceJson]) -> Vec<ModelId> {
     rows.iter()
@@ -130,8 +134,12 @@ pub fn plan(
         SourceModelRequest::Default => None,
     });
     let deepseek_requested = requested.as_ref().is_some_and(|model| {
-        gateway_providers::request::canonical_source_model(UpstreamProvider::Deepseek, model, &[])
-            .is_some()
+        gateway_provider_policy::request::canonical_source_model(
+            UpstreamProvider::Deepseek,
+            model,
+            &[],
+        )
+        .is_some()
     });
     if input.surface == ClientSurface::Chat
         && input.source_member("thinking").is_some()
@@ -146,7 +154,7 @@ pub fn plan(
             let units = model.as_js_string().as_units();
             (units.starts_with(&"anthropic/claude-".encode_utf16().collect::<Vec<_>>())
                 || units.starts_with(&"~anthropic/claude-".encode_utf16().collect::<Vec<_>>()))
-                && gateway_providers::request::canonical_source_model(
+                && gateway_provider_policy::request::canonical_source_model(
                     UpstreamProvider::Openrouter,
                     model,
                     &provider_ids(input, UpstreamProvider::Openrouter),
@@ -170,7 +178,7 @@ pub fn plan(
             .iter()
             .any(|(name, provider)| {
                 input.catalog.enabled(name)
-                    && gateway_providers::request::canonical_source_model(
+                    && gateway_provider_policy::request::canonical_source_model(
                         *provider,
                         model,
                         &provider_ids(input, *provider),
@@ -197,7 +205,7 @@ pub fn plan(
             .catalog
             .codex()
             .is_some_and(|s| s.find(&model).is_some());
-    let paid = policy::resolve_paid_route(&PaidRoutingInput {
+    let paid = gateway_provider_policy::policy::resolve_paid_route(&PaidRoutingInput {
         model: model.clone(),
         endpoint_type: endpoint(input.surface).into(),
         request_uses_tools: input
@@ -228,7 +236,7 @@ pub fn plan(
     let synthetic = input.surface == ClientSurface::Responses
         && requested.as_ref().is_some_and(aliases::is_synthetic);
     if synthetic {
-        policy::validate_source_flash_effort(&input.raw)?;
+        gateway_provider_policy::policy::validate_source_flash_effort(&input.raw)?;
         let year = DateTime::<Utc>::from_timestamp_millis(now)
             .map(|date| date.year())
             .filter(|year| *year >= 0)
@@ -254,7 +262,10 @@ pub fn plan(
         .filter(|(name, _)| input.catalog.configured(name))
         .map(|(_, hop)| hop)
         .collect();
-        for hop in policy::deepseek_plan(&configured, input.catalog.enabled("ubiquity")) {
+        for hop in gateway_provider_policy::policy::deepseek_plan(
+            &configured,
+            input.catalog.enabled("ubiquity"),
+        ) {
             hops.push(match hop {
                 DeepseekHop::Lithos => RouteHop::Direct {
                     provider: UpstreamProvider::Lithos,
@@ -299,7 +310,7 @@ pub fn plan(
         for (name, provider) in providers {
             if (input.surface == ClientSurface::Chat || requested.is_some())
                 && input.catalog.enabled(name)
-                && let Some(served) = gateway_providers::request::canonical_source_model(
+                && let Some(served) = gateway_provider_policy::request::canonical_source_model(
                     provider,
                     &model,
                     &provider_ids(input, provider),
@@ -321,7 +332,10 @@ pub fn plan(
         if hops.is_empty() {
             validate_model(input, &model, now)?;
             hops.push(RouteHop::Claude);
-            if matches!(policy::paid_entry(&paid), policy::PaidEntry::CodexPrimary) {
+            if matches!(
+                gateway_provider_policy::policy::paid_entry(&paid),
+                gateway_provider_policy::policy::PaidEntry::CodexPrimary
+            ) {
                 hops.push(RouteHop::Codex);
             }
             for provider in &paid.providers {

@@ -1,6 +1,7 @@
 //! Exact-version cache values, real portable gzip and deterministic refresh decisions.
-use crate::{metadata::MetadataHint, model_control as c, util::sha256};
+use crate::{metadata::MetadataHint, model_control as c};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use gateway_schema_values::scalar::sha256;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
@@ -78,11 +79,17 @@ pub struct PreparedCatalog {
 }
 pub fn parse_catalog(body: &str) -> Option<SourceJson> {
     let parsed = SourceJson::parse(body).ok()?;
-    let models = c::get(&parsed, "models").as_ref().and_then(c::array)?;
+    let models = gateway_source::source_serialization::member(&parsed, "models")
+        .as_ref()
+        .and_then(gateway_source::source_serialization::array)?;
     if models.is_empty()
         || !models.iter().all(|model| {
             c::is_record(model)
-                && c::identifier(model).is_some_and(|id| !c::trim(&id).as_units().is_empty())
+                && gateway_schema_values::source_view::identifier(model).is_some_and(|id| {
+                    !gateway_schema_values::source_view::js_trim_source(&id)
+                        .as_units()
+                        .is_empty()
+                })
         })
     {
         return None;
@@ -135,16 +142,22 @@ pub fn widen_catalog_windows(
 ) -> Option<String> {
     let mut parsed = parse_catalog(body)?;
     let mut changed = false;
-    let mut models = c::get(&parsed, "models").as_ref().and_then(c::array)?;
+    let mut models = gateway_source::source_serialization::member(&parsed, "models")
+        .as_ref()
+        .and_then(gateway_source::source_serialization::array)?;
     for model in &mut models {
-        let Some(id) = c::model(model) else {
+        let Some(id) = gateway_schema_values::source_view::model(model) else {
             continue;
         };
         let Some(hint) = enrichment.get(&id) else {
             continue;
         };
-        let endpoint = c::positive(c::get(model, "context_window").as_ref());
-        let ceiling = c::positive(c::get(model, "max_context_window").as_ref());
+        let endpoint = gateway_schema_values::source_view::positive(
+            gateway_source::source_serialization::member(model, "context_window").as_ref(),
+        );
+        let ceiling = gateway_schema_values::source_view::positive(
+            gateway_source::source_serialization::member(model, "max_context_window").as_ref(),
+        );
         let widest = [
             endpoint,
             ceiling,
@@ -209,7 +222,7 @@ pub fn prepare_catalog(
         .map(<[u8]>::to_vec)
         .collect::<Vec<_>>();
     let header = |v: Option<&str>| {
-        v.map(crate::util::js_trim)
+        v.map(gateway_schema_values::scalar::js_trim)
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
     };
@@ -242,8 +255,10 @@ pub fn client_etag(body: &str) -> String {
 pub fn conditional_matches(request: Option<&str>, etag: &str) -> bool {
     request.is_some_and(|r| {
         r.split(',').any(|token| {
-            matches!(token.trim_matches(crate::util::js_whitespace), "*")
-                || token.trim_matches(crate::util::js_whitespace) == etag
+            matches!(
+                token.trim_matches(gateway_schema_values::scalar::js_whitespace),
+                "*"
+            ) || token.trim_matches(gateway_schema_values::scalar::js_whitespace) == etag
         })
     })
 }
@@ -255,7 +270,7 @@ pub fn requested_client_version<'a>(values: &'a [&str]) -> Option<&'a str> {
     }
 }
 pub fn validate_client_version(raw: &str) -> Result<String, GatewayError> {
-    let version = raw.trim_matches(crate::util::js_whitespace);
+    let version = raw.trim_matches(gateway_schema_values::scalar::js_whitespace);
     if crate::snapshot::parse_client_version(version).is_none() {
         return Err(GatewayError::new(
             400,

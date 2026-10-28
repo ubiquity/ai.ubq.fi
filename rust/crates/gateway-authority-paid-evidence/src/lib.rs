@@ -13,8 +13,10 @@ use gateway_core::state::AuthorityStore;
 use gateway_core::state::RevisionCheck;
 use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
-use gateway_providers::policy::PaidRoutingInput;
-use gateway_providers::{policy, policy::DeepseekHop, types::ClientSurface};
+use gateway_provider_policy::policy::DeepseekHop;
+use gateway_provider_policy::policy::PaidRoutingInput;
+use gateway_provider_protocol::types::ClientSurface;
+use gateway_providers::policy;
 use gateway_schema::{catalog_store, selection::ProviderSelection};
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
@@ -44,7 +46,7 @@ pub fn paid_projection_source_keys() -> Vec<RecordKey> {
         catalog_store::codex_snapshot_key(),
         source_key(&["uos_ai", "provider_selection", "v1"]),
         catalog_store::auth_generation_key(),
-        gateway_auth::provider_credentials::codex_source_pool_key(),
+        gateway_auth_credentials::provider_credentials::codex_source_pool_key(),
         keys::pool(),
     ]
 }

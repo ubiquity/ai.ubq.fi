@@ -15,7 +15,7 @@ use gateway_auth_native_wire::{
     },
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_control::wire::NativeRenewalAuthorityRequest as Request;
+use gateway_native_authority_request::NativeRenewalAuthorityRequest as Request;
 use gateway_authority_actor_records::versions::{AUTHORITY_RESPONSE_V2, RENEWAL_FENCE_V3};
 use gateway_native_authority_wire::{
     renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalMode},

@@ -1,39 +1,19 @@
 use super::*;
 use crate::store::Transaction;
-use gateway_auth::{
-    native_import::NativeImportTarget,
-    provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
-};
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
+use gateway_auth_native_contracts::native_import::NativeImportTarget;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::import_facts::ImportFacts;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
 use serde_json::Value;
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ImportFacts {
-    pub owner_id: String,
-    pub owner_epoch: String,
-    pub native_owner_id: String,
-    pub slot: u64,
-    pub account_id_hash: String,
-    pub credential_version: String,
-    pub access_generation: String,
-    pub source_native_generation: String,
-    pub owner_revision: String,
-    pub source_revision: String,
-    pub normalized_revision: String,
-    #[serde(deserialize_with = "required_nullable")]
-    pub runtime_revision: Option<String>,
-    pub control_checks_digest: String,
-    pub account_digests: Vec<String>,
-    pub checks_digest: String,
-}
 pub(super) async fn read<
     S: AuthorityStore,
     I: TokenSource,
-    C: super::super::NativeRenewalCancellation,
+    C: gateway_authority_contracts::NativeRenewalCancellation,
 >(
     control: &NativeRenewalAuthority<'_, S, I, C>,
     tx: &mut Transaction<'_, S, I>,
@@ -56,7 +36,8 @@ pub(super) async fn read<
         .read(&keys::paid_control_config())
         .await?
         .ok_or_else(unavailable)?;
-    let runtime = gateway_auth::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime =
+        gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
     tx.observe_revision(&runtime).await?;
     if config.v != PAID_CONTROL_CONFIG_VERSION
         || config.owner_id != owner.owner_id
@@ -97,7 +78,7 @@ pub(super) async fn read<
         }
         if identity.routing_account_hash.0 == *account_id_hash {
             let native = account.native_owner.as_ref().ok_or_else(unavailable)?;
-            if native.codex_home != control.registered.home
+            if native.codex_home != control.registered.registered_home()
                 || native.generation_hash != identity.native_generation_hash
                 || native.external_user_id.is_none()
                     && (native.managed_source.is_none()
@@ -109,7 +90,7 @@ pub(super) async fn read<
                 .managed_source
                 .as_ref()
                 .filter(|source| {
-                    source.v == gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION
+                    source.v == gateway_auth_credentials::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION
                 })
                 .ok_or_else(unavailable)?;
             if native.external_user_id.is_some() || !account.refresh_token.expose().is_empty() {
@@ -151,7 +132,8 @@ pub(super) fn control_digest(
 ) -> Result<String, GatewayError> {
     let source = codex_source_pool_key();
     let pool = keys::pool();
-    let runtime = gateway_auth::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime =
+        gateway_auth_primitives::store::key(serde_json::json!(["uos_ai", "runtime_config", "v2"]));
     super::super::facts::checks_digest(
         &checks
             .iter()

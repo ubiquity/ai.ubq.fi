@@ -1,17 +1,10 @@
 //! Source request syntax. Provider-specific interpretation remains outside official allowlists.
-use crate::util::*;
+use gateway_schema_values::{
+    request::{RequestExtensions, RequestSurface},
+    scalar::*,
+};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestSurface {
-    ChatCompletions,
-    Responses,
-}
-#[derive(Clone, Debug, Default)]
-pub struct RequestExtensions {
-    pub deepseek_thinking: bool,
-    pub openrouter_cache_control: bool,
-}
 pub fn validate_request_fields(
     body: &Value,
     surface: RequestSurface,
@@ -22,41 +15,40 @@ pub fn validate_request_fields(
         surface,
         extensions,
     )
-    .map_err(crate::source_request::error::SourceRequestError::into_scalar)
+    .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 
 pub fn parse_stream(value: Option<&Value>) -> Result<bool, GatewayError> {
     let value = crate::source_request::scalar_value(value)?;
     crate::source_request::parse_stream(value.as_ref())
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 
 pub fn parse_chat_stream_options(value: Option<&Value>) -> Result<bool, GatewayError> {
     let value = crate::source_request::scalar_value(value)?;
     crate::source_request::fields::parse_chat_stream_options(value.as_ref())
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 pub fn parse_max_completion_tokens(value: Option<&Value>) -> Result<Option<i64>, GatewayError> {
     let value = crate::source_request::scalar_value(value)?;
     crate::source_request::fields::parse_max_completion_tokens(value.as_ref())
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 
 pub fn resolve_model(value: Option<&Value>, default: Option<&str>) -> Result<String, GatewayError> {
     let value = crate::source_request::scalar_value(value)?;
     crate::source_request::resolve_model(value.as_ref(), default)
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)?
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
         .try_utf8()
 }
 pub fn parse_instructions(value: Option<&Value>) -> Result<Option<String>, GatewayError> {
     let value = crate::source_request::scalar_value(value)?;
     match crate::source_request::parse_instructions(value.as_ref())
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)?
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
     {
-        crate::source_request::SourceField::Missing | crate::source_request::SourceField::Null => {
-            Ok(None)
-        }
-        crate::source_request::SourceField::Value(value) => value.try_utf8().map(Some),
+        gateway_schema_values::request::SourceField::Missing
+        | gateway_schema_values::request::SourceField::Null => Ok(None),
+        gateway_schema_values::request::SourceField::Value(value) => value.try_utf8().map(Some),
     }
 }
 
@@ -64,7 +56,7 @@ pub fn validate_cache_control(control: &Value) -> Result<(), GatewayError> {
     crate::source_request::fields::validate_cache_control(
         &gateway_source::source_json::SourceJson::from_serializable(control)?,
     )
-    .map_err(crate::source_request::error::SourceRequestError::into_scalar)
+    .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 
 pub fn ignored_warnings(body: &Value, handled: &[&str]) -> Vec<String> {
@@ -89,7 +81,7 @@ pub fn merge_warnings(existing: Option<&str>, warnings: &[String]) -> Option<Str
     for value in existing
         .unwrap_or("")
         .split(',')
-        .map(crate::util::js_trim)
+        .map(gateway_schema_values::scalar::js_trim)
         .filter(|v| !v.is_empty())
     {
         push_unique(&mut values, value.to_owned());
@@ -239,7 +231,7 @@ pub fn normalize_tool_choice_for_codex(value: &Value) -> Value {
 /// arbitrary_precision carries exponent overflow until JS numeric checks/stringification handle it.
 pub fn parse_json_body(bytes: &[u8]) -> Result<Value, GatewayError> {
     crate::source_request::parse_http_body(bytes)
-        .map_err(crate::source_request::error::SourceRequestError::into_scalar)?
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
         .deserialize()
         .map_err(|_| invalid("Invalid JSON body", None))
 }

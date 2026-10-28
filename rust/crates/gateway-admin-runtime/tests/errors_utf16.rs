@@ -2,21 +2,20 @@ use gateway_admin_contracts::{
     operations::{AdminHost, AdminInput},
     routes::AdminOperation,
 };
-use gateway_admin_runtime::{
-    AdminRuntime, RuntimeConfig,
+use gateway_admin_runtime::AdminRuntime;
+use gateway_admin_runtime_contracts::{
+    RuntimeConfig,
     capabilities::{Context, ErrorDiagnostics, RuntimeCapabilities},
 };
-use gateway_auth::{
+use gateway_auth_contracts::{
     types::{AuthHost, AuthMethod, AuthPrincipal},
     upstream::*,
     webauthn::*,
 };
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use gateway_core::{
-    query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
-    state::{AtomicTransition, AuthorityStore, CommitOutcome, StoredRecord},
-};
+use gateway_core::{query::*, state::*};
+use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey, value::PortableValue};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::Cell,
@@ -42,7 +41,14 @@ struct Store {
 impl Store {
     fn put(&mut self, time: i64, id: &str, record: StoredRecord) {
         self.rows.insert(
-            gateway_auth::store::key(json!(["uos_ai", "admin_error_log", "v1", time, id])).0,
+            gateway_auth_primitives::store::key(json!([
+                "uos_ai",
+                "admin_error_log",
+                "v1",
+                time,
+                id
+            ]))
+            .0,
             record,
         );
     }

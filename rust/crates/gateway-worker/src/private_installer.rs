@@ -4,8 +4,9 @@ use gateway_authority_initial_owner::{
     INITIAL_AUTHORITY_BINDING, INITIAL_AUTHORITY_OBJECT, InitialControlOwnerDeployment,
     PreparedInitialControlOwner,
 };
+use gateway_migration_data::native_capture::NativeCapture;
+use gateway_migration_prepare::engine::PreparedAdoption;
 use gateway_source::error::GatewayError;
-use gateway_migration::{engine::PreparedAdoption, native_capture::NativeCapture};
 use serde::Deserialize;
 use worker::{
     Env, js_sys,
@@ -51,7 +52,9 @@ impl RustInitialControlInstaller {
     pub fn install_initial_control_owner(&self, input: js_sys::Uint8Array) -> js_sys::Promise {
         let env = self.env.clone();
         worker::wasm_bindgen_futures::future_to_promise(async move {
-            if input.length() as usize > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
+            if input.length() as usize
+                > gateway_migration_protocol::operational::PRIVATE_WIRE_MAX_BYTES
+            {
                 return Err(rejected());
             }
             let deployment =
@@ -65,15 +68,17 @@ impl RustInitialControlInstaller {
             )
             .map_err(|_| rejected())?;
             let store =
-                crate::authority::RemoteAuthorityStore::from_env(&env).map_err(|_| rejected())?;
-            let receipt = gateway_migration::engine::adopt_empty_with_initial_control_owner(
-                &store,
-                &prepared.adoption,
-                &prepared.owner,
-                gateway_worker_storage::store::now_ms().map_err(|_| rejected())?,
-            )
-            .await
-            .map_err(|_| rejected())?;
+                gateway_worker_authority_binding::authority::RemoteAuthorityStore::from_env(&env)
+                    .map_err(|_| rejected())?;
+            let receipt =
+                gateway_migration_prepare::engine::adopt_empty_with_initial_control_owner(
+                    &store,
+                    &prepared.adoption,
+                    &prepared.owner,
+                    gateway_worker_storage::store::now_ms().map_err(|_| rejected())?,
+                )
+                .await
+                .map_err(|_| rejected())?;
             // Preserve Installed versus read-only Reconciled without claiming
             // that a lost-response readback performed a new atomic commit.
             let encoded = serde_json::to_string(&receipt).map_err(|_| rejected())?;
@@ -109,7 +114,7 @@ pub(crate) fn prepare(
     actual_build_tree: &str,
     now_ms: i64,
 ) -> Result<PreparedPrivateInstallation, GatewayError> {
-    if exact_input.len() > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
+    if exact_input.len() > gateway_migration_protocol::operational::PRIVATE_WIRE_MAX_BYTES {
         return Err(refused());
     }
     let namespace = env
@@ -130,12 +135,12 @@ pub(crate) fn prepare(
     // Migration independently derives capture/source/native/pool/projection
     // facts and compares them through the opaque owner's finite facts method.
     let adoption =
-        gateway_migration::native_capture::prepare_native(&capture).map_err(|_| refused())?;
+        gateway_migration_data::native_capture::prepare_native(&capture).map_err(|_| refused())?;
     Ok(PreparedPrivateInstallation { adoption, owner })
 }
 
 fn decode_capture(exact_input: &[u8]) -> Result<NativeCapture, GatewayError> {
-    if exact_input.len() > gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES {
+    if exact_input.len() > gateway_migration_protocol::operational::PRIVATE_WIRE_MAX_BYTES {
         return Err(refused());
     }
     let InitialInstallation::InstallInitialControlOwner { v, capture } =
@@ -205,7 +210,7 @@ mod tests {
         assert!(
             decode_capture(&vec![
                 0;
-                gateway_migration::operational::PRIVATE_WIRE_MAX_BYTES
+                gateway_migration_protocol::operational::PRIVATE_WIRE_MAX_BYTES
                     + 1
             ])
             .is_err()

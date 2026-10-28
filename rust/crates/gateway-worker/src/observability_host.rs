@@ -1,12 +1,12 @@
 //! Real platform primitives for request-owned observational reads and writes.
-use gateway_admin_runtime::capabilities::Context;
+use gateway_admin_runtime_contracts::capabilities::{Context, ErrorDiagnostics};
 use gateway_authority_capacity::CapacityOperations;
 use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_contracts::identity::RequestId;
 use gateway_observability::{ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity};
 use gateway_observability::{replay_crypto::ReplayBody, types::ObservabilityHost};
-use gateway_source::error::GatewayError;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
+use {gateway_schema_values::scalar as util, gateway_source::error::GatewayError};
 mod admin;
 mod diagnostics;
 mod inventory;
@@ -16,7 +16,10 @@ thread_local! {static STATE:ObservabilityState=ObservabilityState::default();}
 pub fn shared_state() -> ObservabilityState {
     STATE.with(Clone::clone)
 }
-pub type Runtime = ObservabilityRuntime<crate::authority::RemoteAuthorityStore, RequestHost>;
+pub type Runtime = ObservabilityRuntime<
+    gateway_worker_authority_binding::authority::RemoteAuthorityStore,
+    RequestHost,
+>;
 pub enum CaptureInput {
     Ready(gateway_observability::replay_producer::ReplayInput),
     Omitted(&'static str),
@@ -70,7 +73,7 @@ pub async fn persist_failure(
     let key =
         crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
             gateway_observability::replay_crypto::ReplayKey::decode(
-                raw.trim_matches(gateway_schema::util::js_whitespace),
+                raw.trim_matches(util::js_whitespace),
             )
             .ok()
         });
@@ -79,7 +82,7 @@ pub async fn persist_failure(
         .await
 }
 pub struct RequestHost {
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: crate::host::PlatformHost,
     request_id: String,
     original_body: ReplayBody,
@@ -90,7 +93,7 @@ pub struct RequestHost {
 pub fn bind(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
 ) -> Runtime {
@@ -100,7 +103,7 @@ pub fn bind(
 pub fn bind_admin(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     _context: Rc<worker::Context>,
     actor: Rc<gateway_authority::native_control::actor::NativeRenewalActor>,
@@ -121,7 +124,7 @@ pub fn bind_admin(
 fn bind_request(
     request_id: &RequestId,
     original_body: &[u8],
-    store: crate::authority::RemoteAuthorityStore,
+    store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     admin_actor: Option<Rc<gateway_authority::native_control::actor::NativeRenewalActor>>,
 ) -> Runtime {
@@ -137,9 +140,9 @@ fn bind_request(
     ObservabilityRuntime::with_state(store, host, shared_state())
 }
 /// Source /health is release liveness and does no provider or authority I/O.
-pub fn health_response() -> Result<gateway_auth::types::AuthResponse, GatewayError> {
+pub fn health_response() -> Result<gateway_auth_contracts::types::AuthResponse, GatewayError> {
     let identity = Host.build_identity()?;
-    let mut response = gateway_auth::types::AuthResponse::json(
+    let mut response = gateway_auth_contracts::types::AuthResponse::json(
         200,
         serde_json::json!({"status":"available","release":{"git_sha":identity.git_sha,"deployment_id":identity.deployment_id}}),
     );
@@ -176,14 +179,14 @@ pub async fn metered_diagnostics(runtime: &Runtime) -> Result<serde_json::Value,
 pub async fn error_diagnostics(
     runtime: &Runtime,
     context: &Context,
-) -> Result<gateway_admin_runtime::capabilities::ErrorDiagnostics, GatewayError> {
+) -> Result<ErrorDiagnostics, GatewayError> {
     if context.request_id != runtime.host().request_id {
         return Err(GatewayError::unavailable(
             "The administrative diagnostic receipt does not match this request.",
             "admin_body_receipt_mismatch",
         ));
     }
-    Ok(gateway_admin_runtime::capabilities::ErrorDiagnostics {
+    Ok(ErrorDiagnostics {
         retention: runtime.error_retention_diagnostics().await,
         // Source leaves unmeasured host text logs unknown, including platforms without paths.
         log_files: serde_json::json!({
@@ -239,7 +242,7 @@ impl ObservabilityHost for RequestHost {
         let seed =
             crate::claude_host::platform::bootstrap_for_source(&self.store, &self.platform).await?;
         let roster =
-            gateway_admin_runtime::claude::load_roster(&self.store, &self.platform, &seed).await?;
+            gateway_claude_roster::claude::load_roster(&self.store, &self.platform, &seed).await?;
         let host = crate::claude_host::platform::Host {
             store: self.store.clone(),
             platform: self.platform.clone(),
@@ -335,8 +338,9 @@ impl ObservabilityHost for RequestHost {
         self.inventory(context).await
     }
     async fn metered_balance_fingerprint(&self) -> Result<Option<String>, GatewayError> {
-        Ok(inventory::monitoring_key(&self.platform.env)
-            .map(|key| gateway_auth::crypto::sha256_hex(key.as_bytes())[..16].to_owned()))
+        Ok(inventory::monitoring_key(&self.platform.env).map(|key| {
+            gateway_auth_primitives::crypto::sha256_hex(key.as_bytes())[..16].to_owned()
+        }))
     }
     async fn metered_quota_snapshot(
         &self,

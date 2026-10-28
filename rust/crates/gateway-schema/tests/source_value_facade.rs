@@ -1,7 +1,7 @@
+use gateway_schema_values::value::{Text, Value};
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_schema::source_request::value::{Text, Value};
 
 fn parse(raw: &str) -> Value {
     Value::from_source(SourceJson::parse(raw).unwrap())
@@ -164,4 +164,70 @@ fn new_views_never_coerce_or_change_wrong_container_kinds() {
     assert_eq!(parse("true").as_bool(), Some(true));
     assert_eq!(parse("false").as_bool(), Some(false));
     assert!(parse(r#""true""#).as_bool().is_none());
+}
+
+#[test]
+fn finite_integer_data_keeps_legacy_numeric_bytes_and_metadata_roundtrip() {
+    for number in [
+        i64::MIN,
+        -9_007_199_254_740_991,
+        -1,
+        0,
+        1,
+        9_007_199_254_740_991,
+        i64::MAX,
+    ] {
+        let data = Value::Integer(number);
+        let legacy = Value::from_serializable(&number).unwrap();
+        let expected = SourceJson::from_serializable(&number).unwrap();
+        assert!(data.is_number());
+        assert_eq!(data.as_i64(), Some(number));
+        assert_eq!(data.as_f64(), legacy.as_f64());
+        assert_eq!(data.source().unwrap(), expected);
+        assert_eq!(SourceJson::from_serializable(&data).unwrap(), expected);
+        assert_eq!(Value::from_source(expected).as_i64(), Some(number));
+    }
+    for raw in ["-0", "1e309", "9007199254740993"] {
+        let parsed = parse(raw);
+        assert!(matches!(parsed, Value::Number(_)));
+        assert_eq!(parsed.source().unwrap().as_str(), raw);
+    }
+    for (time, accepted) in [(0, true), (9_007_199_254_740_991, true), (-1, false)] {
+        let scope = Value::object(vec![
+            (
+                "probe_profile".into(),
+                Value::String(Text::new(
+                    gateway_schema::prompt_cache::SCOPE_PROFILE.into(),
+                )),
+            ),
+            (
+                "account_slots".into(),
+                Value::String(Text::new("shared".into())),
+            ),
+            (
+                "token_refresh".into(),
+                Value::String(Text::new("preserved".into())),
+            ),
+            (
+                "conversation_id".into(),
+                Value::String(Text::new("independent".into())),
+            ),
+            (
+                "source".into(),
+                Value::String(Text::new("live_probe".into())),
+            ),
+            ("reproducible_cycles".into(), Value::Integer(3)),
+            ("verified_at_ms".into(), Value::Integer(time)),
+        ])
+        .source()
+        .unwrap();
+        let normalized = gateway_schema::prompt_cache::normalize_scope_source(&scope);
+        assert_eq!(normalized.is_some(), accepted);
+        if let Some(normalized) = normalized {
+            assert_eq!(
+                gateway_schema::prompt_cache::normalize_scope_source(&normalized),
+                Some(normalized)
+            );
+        }
+    }
 }

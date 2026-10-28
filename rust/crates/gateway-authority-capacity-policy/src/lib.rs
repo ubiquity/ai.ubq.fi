@@ -184,3 +184,5 @@ pub fn apply_capacity_observation(
     next.updated_at_ms = updated_at_ms;
     Ok(Some(next))
 }
+
+pub mod manual;

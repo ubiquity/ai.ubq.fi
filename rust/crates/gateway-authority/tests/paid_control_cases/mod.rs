@@ -14,7 +14,7 @@ use gateway_contracts::{identity::ApiKeyId, identity::PaidAttemptId, identity::R
 use gateway_core::state::AtomicTransition;
 use gateway_core::{state::RecordMutation, state::RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
-use gateway_providers::types::ClientSurface;
+use gateway_provider_protocol::types::ClientSurface;
 use gateway_routing_runtime_test_support::{authority::MemoryStore, authority::authority};
 use gateway_routing_runtime_test_support::{authority::NOW, authority::policy, authority::run};
 use gateway_routing_runtime_test_support::{authority::TestAuthority, authority::Tokens};

@@ -6,11 +6,15 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-authority-contracts.workspace = true
 gateway-authority-keys.workspace = true
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true
+gateway-claude-roster.workspace = true
+gateway-admin-runtime-contracts.workspace = true
 gateway-admin-contracts.workspace = true
 gateway-admin-keys.workspace = true
 gateway-admin.workspace = true

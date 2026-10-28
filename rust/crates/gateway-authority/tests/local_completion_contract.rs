@@ -5,26 +5,21 @@ use gateway_authority_api_release::ApiReleaseOperations;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_kernel_protocol::{KernelReservation, KernelTerminal, KernelWindow};
 use gateway_authority_keys as keys;
-use gateway_authority_local_completion::LocalCompletedIntentOutcome;
-use gateway_authority_local_completion::LocalCompletionOperations;
-use gateway_contracts::{
-    identity::ApiKeyId, identity::PrincipalId, identity::RequestContext, identity::RequestId,
-};
+use gateway_authority_local_completion::{LocalCompletedIntentOutcome, LocalCompletionOperations};
+use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
 use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
-use gateway_core::state::AuthorityStore;
-use gateway_core::{
-    state::AtomicTransition, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
+use gateway_core::state::{
+    AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_local_journal::local_completion::LocalCompletedJournalPlan;
-use gateway_source::{error::GatewayError, source_json::SourceJson};
-use std::{
-    cell::{Cell, RefCell},
-    collections::BTreeMap,
-    future::Future,
-    rc::Rc,
-    task::{Context, Poll, Waker},
-};
+use gateway_source::error::GatewayError;
+use gateway_source::source_json::SourceJson;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::rc::Rc;
+use std::task::{Context, Poll, Waker};
 
 #[derive(Clone, Default)]
 struct Store {
@@ -98,7 +93,7 @@ fn fixture(with_api: bool, with_kernel: bool) -> Fixture {
     let store = Store::default();
     let context = RequestContext {
         request_id: RequestId("local-original".into()),
-        principal: PrincipalId("principal".into()),
+        principal: PrincipalId::from_scalar("principal".into()),
         key_id: with_api.then(|| ApiKeyId("key".into())),
         route: "responses".into(),
         started_at_ms: 100,

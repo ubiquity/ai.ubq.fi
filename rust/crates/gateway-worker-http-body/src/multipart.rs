@@ -1,9 +1,9 @@
 //! Source image-edit parsing using bounded original bytes and real FormData.
+use gateway_provider_images::extras::MultipartFile;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use gateway_providers::extras::MultipartFile;
 use worker::{
     FormData, Method, Request, RequestInit,
     js_sys::{Array, Reflect, Uint8Array, try_iter},

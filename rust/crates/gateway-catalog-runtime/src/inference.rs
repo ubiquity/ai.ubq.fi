@@ -2,14 +2,11 @@
 use crate::CatalogRuntime;
 use gateway_catalog_provider::host::{CatalogHost, CatalogProvider};
 use gateway_catalog_provider::model::uses_openrouter;
-use gateway_source::error::GatewayError;
 use gateway_contracts::model::ModelId;
 use gateway_core::query::QueryStore;
-use gateway_schema::{
-    catalog::CatalogInput,
-    reasoning::js_trim_source,
-    source_request::{SourceModelRequest, SourceRequestDocument},
-};
+use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
+use gateway_schema_values::{request::SourceModelRequest, source_view::js_trim_source};
+use gateway_source::error::GatewayError;
 
 impl CatalogRuntime {
     /// A warm snapshot, including an empty one, remains authoritative. Cold

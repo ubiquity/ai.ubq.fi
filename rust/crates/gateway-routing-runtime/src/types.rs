@@ -1,22 +1,24 @@
-use gateway_auth::{crypto::Secret, types::AuthPrincipal};
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_primitives::crypto::Secret;
+use gateway_authority::{routing_types::AdmittedAccount, routing_types::CohortProof};
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
-use gateway_authority_routing_selection::{types::AdmittedAccount, types::CohortProof};
-use gateway_contracts::identity::RequestContext;
 use gateway_contracts::{
-    lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
+    identity::RequestContext, lifecycle::TransportObservation, model::ModelId,
+    provider::UpstreamProvider,
 };
 use gateway_core::state::RevisionCheck;
-use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
-use gateway_providers::{types::AuthMaterial, types::ClaudeBodyOptions, types::ClientSurface};
-use gateway_providers::{types::DecodePlan, types::Headers, types::PrepareOptions};
-use gateway_providers::{types::PreparedClaudeBody, types::PreparedRequest};
+use gateway_kv_codec::key::RecordKey;
+use gateway_provider_claude_body::{types::ClaudeBodyOptions, types::PreparedClaudeBody};
+use gateway_provider_protocol::{
+    types::AuthMaterial, types::ClientSurface, types::DecodePlan, types::Headers,
+    types::PrepareOptions, types::PreparedRequest,
+};
 use gateway_schema::catalog::CatalogInput;
-use gateway_source::source_json::SourceJson;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_wait_observation::outcome::WaitOutcome;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::{collections::BTreeMap, future::Future};
+use std::future::Future;
+use {gateway_schema_values::request::RequestSurface, serde_json::Value};
 
 #[derive(Clone, Debug)]
 pub struct RoutingInput {
@@ -43,8 +45,8 @@ impl RoutingInput {
             principal: metadata.principal,
             raw: request.original_source().clone(),
             surface: match request.surface() {
-                gateway_schema::request::RequestSurface::Responses => ClientSurface::Responses,
-                gateway_schema::request::RequestSurface::ChatCompletions => ClientSurface::Chat,
+                RequestSurface::Responses => ClientSurface::Responses,
+                RequestSurface::ChatCompletions => ClientSurface::Chat,
             },
             catalog: metadata.catalog,
             runtime: metadata.runtime,
@@ -73,78 +75,7 @@ impl RoutingInput {
             })
     }
 }
-
-#[derive(Clone, Debug)]
-pub struct RoutingError {
-    pub error: Box<GatewayError>,
-    pub headers: Headers,
-    pub source_body: Option<SourceRefusalBody>,
-}
-
-#[derive(Clone, Debug)]
-pub enum SourceRefusalBody {
-    Json(gateway_source::source_json::SourceJson),
-    /// Exact source HTTP-constructor failure; never a quota or paid proof.
-    InternalServerError,
-}
-impl SourceRefusalBody {
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            Self::Json(body) => body.as_bytes(),
-            Self::InternalServerError => b"Internal Server Error",
-        }
-    }
-}
-impl std::fmt::Display for RoutingError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self.error.as_ref(), formatter)
-    }
-}
-impl std::error::Error for RoutingError {}
-impl RoutingError {
-    /// Cleanup is an internal diagnostic; the original wire status/body remain authoritative.
-    pub(crate) fn with_cleanup_diagnostic(mut self, cleanup: &RoutingError) -> Self {
-        if self.source_body.is_none() {
-            self.source_body = Some(SourceRefusalBody::Json(
-                gateway_source::source_json::SourceJson::from_serializable(&self.error.envelope)
-                    .expect("A scalar error envelope is valid source JSON"),
-            ));
-        }
-        let code = cleanup
-            .error
-            .envelope
-            .error
-            .code
-            .as_deref()
-            .unwrap_or("unknown")
-            .chars()
-            .take(48)
-            .collect::<String>();
-        self.error.envelope.error.message = format!(
-            "Original request failure; original-lifetime cleanup also failed (status {}, code {}).",
-            cleanup.error.status, code,
-        );
-        self
-    }
-}
-impl From<GatewayError> for RoutingError {
-    fn from(error: GatewayError) -> Self {
-        Self {
-            error: Box::new(error),
-            headers: BTreeMap::new(),
-            source_body: None,
-        }
-    }
-}
-impl From<gateway_schema::source_request::error::SourceRequestError> for RoutingError {
-    fn from(error: gateway_schema::source_request::error::SourceRequestError) -> Self {
-        Self {
-            error: Box::new(error.diagnostic().clone()),
-            headers: BTreeMap::new(),
-            source_body: Some(SourceRefusalBody::Json(error.body().clone())),
-        }
-    }
-}
+use gateway_local_refusal::routing_error::RoutingError;
 pub type RoutingResult<T> = Result<T, RoutingError>;
 
 /// No credentials or request bodies are serialized in the recoverable journal.
@@ -436,7 +367,7 @@ pub struct AttemptFailure {
     pub headers: Headers,
     pub body: Vec<u8>,
     pub body_complete: bool,
-    pub failure: gateway_providers::policy::HopFailure,
+    pub failure: gateway_provider_policy::policy::HopFailure,
     pub transport: TransportState,
     pub semantic_committed: bool,
     pub cancelled: bool,
@@ -483,6 +414,8 @@ pub struct RecoveredSession {
 }
 
 mod record_key {
+    use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::Error as _};
     pub fn serialize<S: Serializer>(key: &RecordKey, serializer: S) -> Result<S::Ok, S::Error> {
         TupleKey::from_record_key(key)
             .and_then(|key| key.validate_stored_key())
@@ -501,9 +434,10 @@ mod record_key {
 #[cfg(test)]
 mod source_cleanup_tests {
     use super::*;
+    use gateway_source::{js_string::JsString16, source_json::SourceJson};
     #[test]
     fn cleanup_diagnostic_never_overwrites_original_source_wire_truth() {
-        let source = gateway_schema::source_request::error::SourceRequestError::new(
+        let source = gateway_local_refusal::source_error::SourceRequestError::new(
             400,
             JsString16::from_units(vec![0xd800]),
             "invalid_request_error",

@@ -53,11 +53,8 @@ impl<F: Future<Output = ()>> Future for RelayDelay<F> {
 #[cfg(test)]
 mod tests {
     use super::RelayDelay;
-    use std::future::Future;
-    use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::task::{Context, Poll, Wake, Waker};
 
     #[derive(Default)]
     struct Counter(AtomicUsize);

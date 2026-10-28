@@ -1,14 +1,15 @@
 //! Fixed administrator read/summary operations over the current request's hosts.
-use gateway_admin_runtime::{
-    brief,
-    capabilities::{Context, ErrorDiagnostics, PricingSnapshot, SupervisorBriefTarget},
-};
+use gateway_admin_diagnostics_runtime::brief;
+use gateway_admin_runtime_contracts::{capabilities::Context, capabilities::ErrorDiagnostics, capabilities::PricingSnapshot, capabilities::SupervisorBriefTarget};
 use gateway_catalog_runtime::admin::AdminCatalogOperation;
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use worker::Method;
-use {gateway_auth::types::AuthResponse, gateway_auth_native_wire::native_read::NativeReadRequest};
+use {
+    gateway_auth_contracts::types::AuthResponse,
+    gateway_auth_native_wire::native_read::NativeReadRequest,
+};
 
 mod picker;
 mod pricing;
@@ -37,7 +38,7 @@ impl Binding {
             .await
             .map_err(catalogue_error)?;
         let subscriptions = picker::subscriptions(&self.catalog.store).await;
-        picker::project(
+        gateway_worker_web::admin_picker::project(
             &gateway_source::source_serialization::member(&response.body, "data").unwrap_or_else(
                 || {
                     gateway_source::source_json::SourceJson::parse("null")
@@ -57,7 +58,7 @@ impl Binding {
     ) -> Result<PricingSnapshot, GatewayError> {
         let ratios = pricing::fetch(self, pricing::Metadata::Ratios).await?;
         let status = pricing::fetch(self, pricing::Metadata::Status).await?;
-        pricing::project(
+        gateway_worker_web::admin_pricing::project(
             models,
             &ratios,
             &status,
@@ -175,15 +176,12 @@ fn unavailable(message: &str) -> GatewayError {
 // Only AdminCatalogOperation::Catalog reaches this helper. Its exact two errors
 // are admin.rs213/216 map_err(lift), lift73 = SourceRequestError::from_gateway.
 // Clone therefore preserves the actual original error body/status, not a fallback diagnostic.
-fn catalogue_error(
-    error: gateway_schema::source_request::error::SourceRequestError,
-) -> GatewayError {
+fn catalogue_error(error: gateway_local_refusal::source_error::SourceRequestError) -> GatewayError {
     error.diagnostic().clone()
 }
 
 #[cfg(test)]
 mod catalogue_tests {
-    use gateway_source::error::GatewayError;
 
     #[test]
     fn catalogue_lift_preserves_the_exact_original_gateway_error()
@@ -191,14 +189,14 @@ mod catalogue_tests {
         let original = GatewayError::new(409, "original catalog error", Some("catalog_fixture"))
             .with_type("server_error")
             .with_param(None);
-        let source = gateway_schema::source_request::error::SourceRequestError::from_gateway(
-            original.clone(),
-        );
+        let source =
+            gateway_local_refusal::source_error::SourceRequestError::from_gateway(original.clone());
         let expected = source.body().as_bytes().to_vec();
         let actual = super::catalogue_error(source);
         assert_eq!(actual, original);
         assert_eq!(
-            gateway_source::source_json::SourceJson::from_serializable(&actual.envelope)?.as_bytes(),
+            gateway_source::source_json::SourceJson::from_serializable(&actual.envelope)?
+                .as_bytes(),
             expected
         );
         Ok(())

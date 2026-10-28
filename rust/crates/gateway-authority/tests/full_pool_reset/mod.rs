@@ -49,7 +49,7 @@ fn config(mode: ResetMode) -> ResetConfig {
 fn original() -> RequestContext {
     RequestContext {
         request_id: RequestId("source-original".into()),
-        principal: PrincipalId("fixture-principal".into()),
+        principal: PrincipalId::from_scalar("fixture-principal".into()),
         key_id: None,
         route: "/v1/responses".into(),
         started_at_ms: NOW,
@@ -83,7 +83,7 @@ fn setup_with_config(mode: Option<ResetMode>) -> TestResult<ResetSetup> {
         store.seed(keys::reset_config(), &config(mode));
     }
     store.seed(
-        gateway_auth::store::key(json!([
+        gateway_auth_primitives::store::key(json!([
             "uos_ai",
             "migrations",
             "codex_reset_usage_legacy_global_v1"

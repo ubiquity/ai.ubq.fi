@@ -1,0 +1,49 @@
+[package]
+name = "gateway-migration-latest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+gateway-migration-stage.workspace = true
+gateway-admin-contracts.workspace = true
+gateway-admin-keys.workspace = true
+gateway-auth.workspace = true
+gateway-authority.workspace = true
+gateway-core.workspace = true
+gateway-migration-data.workspace = true
+gateway-migration-inverse.workspace = true
+gateway-migration-native-custody.workspace = true
+gateway-migration-projection.workspace = true
+gateway-migration-spool.workspace = true
+gateway-migration-values.workspace = true
+gateway-routing-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gateway-admin-contracts = { path = "../gateway-admin-contracts" }
+gateway-admin-keys = { path = "../gateway-admin-keys" }
+gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority = { path = "../gateway-authority" }
+gateway-authority-api-protocol = { path = "../gateway-authority-api-protocol" }
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-core = { path = "../gateway-core" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-migration-data = { path = "../gateway-migration-data" }
+gateway-migration-inverse = { path = "../gateway-migration-inverse" }
+gateway-migration-native-custody = { path = "../gateway-migration-native-custody" }
+gateway-migration-projection = { path = "../gateway-migration-projection" }
+gateway-migration-spool = { path = "../gateway-migration-spool" }
+gateway-migration-stage = { path = "../gateway-migration-stage" }
+gateway-routing-runtime = { path = "../gateway-routing-runtime" }
+gateway-source = { path = "../gateway-source" }

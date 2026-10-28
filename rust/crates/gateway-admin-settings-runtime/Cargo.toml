@@ -1,0 +1,27 @@
+[package]
+name = "gateway-admin-settings-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-authority-kernel-protocol = { path = "../gateway-authority-kernel-protocol" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-local-refusal = { path = "../gateway-local-refusal" }
+gateway-schema-values = { path = "../gateway-schema-values" }
+serde_json.workspace = true
+gateway-source.workspace = true
+gateway-schema.workspace = true
+gateway-core.workspace = true
+gateway-authority.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-admin-runtime-records.workspace = true
+gateway-admin-runtime-contracts.workspace = true
+gateway-admin-kernel-runtime.workspace = true
+gateway-admin-contracts.workspace = true
+
+[lints]
+workspace = true

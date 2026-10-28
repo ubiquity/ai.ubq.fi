@@ -1,15 +1,12 @@
 //! One real local selected owner; wire availability is independent of accounting.
-use crate::{
-    authority::RemoteAuthorityStore,
-    host::{PlatformClock, PlatformTokens},
-    routing_host,
-};
+use crate::{host::PlatformClock, host::PlatformTokens, routing_host};
 use futures_util::task::AtomicWaker;
-use gateway_source::error::GatewayError;
 use gateway_contracts::lifecycle::TransportObservation;
 use gateway_routing_runtime::local_work::completion::response::{
     LocalAccountingProgress, LocalObservationSink, LocalSelectedResponse,
 };
+use gateway_source::error::GatewayError;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use std::{
     cell::{Cell, RefCell},
     future::poll_fn,
@@ -147,31 +144,21 @@ impl LocalLifecycle {
 }
 
 pub(crate) fn response_error(
-    error: &gateway_routing_runtime::types::RoutingError,
-) -> Result<worker::Response, gateway_routing_runtime::types::RoutingError> {
+    error: &gateway_local_refusal::routing_error::RoutingError,
+) -> Result<worker::Response, gateway_local_refusal::routing_error::RoutingError> {
     let mut response = if let Some(body) = &error.source_body {
         let mut wire = worker::Response::from_bytes(body.as_bytes().to_vec())
             .map_err(|_| wrapper_error())?
             .with_status(error.error.status);
         wire.headers_mut()
-            .set(
-                "content-type",
-                match body {
-                    gateway_routing_runtime::types::SourceRefusalBody::Json(_) => {
-                        "application/json"
-                    }
-                    gateway_routing_runtime::types::SourceRefusalBody::InternalServerError => {
-                        "text/plain; charset=utf-8"
-                    }
-                },
-            )
+            .set("content-type", body.content_type())
             .map_err(|_| wrapper_error())?;
         wire.headers_mut()
             .set("cache-control", "no-store")
             .map_err(|_| wrapper_error())?;
         wire
     } else {
-        crate::runtime::auth_response(gateway_auth::types::AuthResponse::error(
+        crate::runtime::auth_response(gateway_auth_contracts::types::AuthResponse::error(
             (*error.error).clone(),
         ))?
     };
@@ -183,14 +170,13 @@ pub(crate) fn response_error(
     }
     Ok(response)
 }
-pub(super) fn wrapper_error() -> gateway_routing_runtime::types::RoutingError {
-    gateway_routing_runtime::types::RoutingError {
-        error: Box::new(
-            GatewayError::new(500, "Internal Server Error", None).with_type("server_error"),
-        ),
-        source_body: Some(gateway_routing_runtime::types::SourceRefusalBody::InternalServerError),
-        headers: Default::default(),
-    }
+pub(super) fn wrapper_error() -> gateway_local_refusal::routing_error::RoutingError {
+    let error =
+        Box::new(GatewayError::new(500, "Internal Server Error", None).with_type("server_error"));
+    let source_body =
+        Some(gateway_local_refusal::routing_error::SourceRefusalBody::InternalServerError);
+    let headers = Default::default();
+    gateway_local_refusal::routing_error::RoutingError::new(error, headers, source_body)
 }
 
 #[cfg(test)]
@@ -200,6 +186,7 @@ mod tests {
         let error = super::wrapper_error();
         assert_eq!(error.error.status, 500);
         assert_eq!(error.error.envelope.error.code, None);
+        assert!(!error.is_local_aggregate_context_overflow());
         assert_eq!(
             error.source_body.unwrap().as_bytes(),
             b"Internal Server Error"

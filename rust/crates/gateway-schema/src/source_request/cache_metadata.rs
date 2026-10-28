@@ -1,9 +1,7 @@
 //! Lossless prompt-cache metadata policy shared by source and actual-scalar entrypoints.
-use super::value::{Value, normalized_string, unknown_key};
 use crate::prompt_cache::SCOPE_PROFILE;
-use gateway_source::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
+use gateway_schema_values::value::{Value, normalized_string, unknown_key};
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 #[derive(Default)]
 struct Map(Vec<(JsString16, Value)>);
 impl Map {
@@ -23,11 +21,10 @@ impl Map {
     }
 }
 fn safe_integer(value: &Value) -> Option<i64> {
-    let Value::Number(raw) = value else {
-        return None;
-    };
-    let number = source::number(raw)?;
-    (number.is_finite() && number.fract() == 0.0 && number.abs() <= crate::util::MAX_SAFE_INTEGER)
+    let number = value.as_f64()?;
+    (number.is_finite()
+        && number.fract() == 0.0
+        && number.abs() <= gateway_schema_values::scalar::MAX_SAFE_INTEGER)
         .then_some(number as i64)
 }
 fn enum_list(value: &Value, allowed: Option<&[&str]>, filter: bool) -> Option<Vec<Value>> {
@@ -35,7 +32,9 @@ fn enum_list(value: &Value, allowed: Option<&[&str]>, filter: bool) -> Option<Ve
     let mut result = Vec::new();
     for value in values {
         let text = if filter {
-            value.as_text()?.trim_matches(crate::util::js_whitespace)
+            value
+                .as_text()?
+                .trim_matches(gateway_schema_values::scalar::js_whitespace)
         } else {
             value.as_text()?.clone()
         };

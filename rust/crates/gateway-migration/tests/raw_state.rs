@@ -1,18 +1,18 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_auth::store::key;
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
-use gateway_core::state::{AtomicTransition, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_auth_primitives::store::key;
+use gateway_core::state::*;
 use gateway_kv_codec::value::PortableValue;
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::export_latest,
-};
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::from_source_profile_with_host;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::{CanonicalDates, SourceDateHost};
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 struct OracleDate;
 impl SourceDateHost for OracleDate {

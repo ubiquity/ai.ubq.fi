@@ -6,9 +6,12 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-gateway-contracts.workspace = true
-gateway-kv-codec.workspace = true
 gateway-source.workspace = true
+gateway-claude-roster.workspace = true
+gateway-claude-policy.workspace = true
+gateway-auth-primitives.workspace = true
+gateway-auth-contracts.workspace = true
+gateway-admin-runtime-records.workspace = true
 gateway-claude-usage-quota.workspace = true
 gateway-catalog-provider.workspace = true
 gateway-admin-runtime.workspace = true
@@ -20,6 +23,9 @@ gateway-providers.workspace = true
 gateway-schema.workspace = true
 serde_json.workspace = true
 
+gateway-contracts = { workspace = true }
+gateway-kv-codec = { workspace = true }
+gateway-provider-protocol = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 

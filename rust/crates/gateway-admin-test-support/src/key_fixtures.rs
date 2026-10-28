@@ -5,14 +5,14 @@ use gateway_admin_contracts::{
     routes::AdminOperation,
 };
 use gateway_admin_keys::keys::{ApiKeyRecord, decode_record, deletion_key};
-use gateway_auth::{
-    crypto::Secret,
-    types::{AuthHost, AuthMethod, AuthPrincipal, AuthResponse, AuthResponseBody},
+use gateway_auth_contracts::types::{
+    AuthHost, AuthMethod, AuthPrincipal, AuthResponse, AuthResponseBody,
 };
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_auth_primitives::crypto::Secret;
 use gateway_core::state::{
     AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, RevisionCheck, StoredRecord,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 
@@ -121,10 +121,11 @@ impl AdminHost for ClaimedDeletion<'_> {
     async fn prepare_key_deletion(&self, id: &str) -> Result<Vec<RevisionCheck>, GatewayError> {
         let key = deletion_key(id);
         let before = self.store.read(&key).await?;
-        let revision = gateway_auth::crypto::uuid_from_random(&self.host.random_bytes(16)?)?;
+        let revision =
+            gateway_auth_primitives::crypto::uuid_from_random(&self.host.random_bytes(16)?)?;
         let guard = StoredRecord::json(&revision, json!({"created_at_ms":1_000_000}), None);
         let transition = AtomicTransition {
-            checks: vec![gateway_auth::store::check(&key, before.as_ref())],
+            checks: vec![gateway_auth_primitives::store::check(&key, before.as_ref())],
             mutations: vec![RecordMutation::Put {
                 key: key.clone(),
                 record: guard,
@@ -151,15 +152,15 @@ impl AdminHost for ClaimedDeletion<'_> {
         id: &str,
         prepared: &[RevisionCheck],
     ) -> Result<(), GatewayError> {
-        let key = gateway_auth::api_keys::id_key(id);
+        let key = gateway_auth_primitives::api_keys::id_key(id);
         let row = self.store.read(&key).await?;
         assert!(
             row.is_none(),
             "Finish must run only after the committed ID deletion"
         );
         let mut checks = prepared.to_vec();
-        checks.push(gateway_auth::store::check(&key, row.as_ref()));
-        let history = gateway_auth::store::key(json!([
+        checks.push(gateway_auth_primitives::store::check(&key, row.as_ref()));
+        let history = gateway_auth_primitives::store::key(json!([
             "uos_ai",
             "paid_fallback",
             "ledger",
@@ -175,7 +176,7 @@ impl AdminHost for ClaimedDeletion<'_> {
             })
             .await?;
         if result != CommitOutcome::Committed {
-            return Err(gateway_auth::types::conflict(
+            return Err(gateway_auth_primitives::error::conflict(
                 "Fixture cleanup ownership changed",
             ));
         }
@@ -186,7 +187,11 @@ impl AdminHost for ClaimedDeletion<'_> {
         id: &str,
         prepared: &[RevisionCheck],
     ) -> Result<(), GatewayError> {
-        let Some(row) = self.store.read(&gateway_auth::api_keys::id_key(id)).await? else {
+        let Some(row) = self
+            .store
+            .read(&gateway_auth_primitives::api_keys::id_key(id))
+            .await?
+        else {
             panic!("Fixture deletion requires its retained revoked key");
         };
         let record: ApiKeyRecord = decode_record(&row)?;

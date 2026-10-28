@@ -1,15 +1,12 @@
 //! Public routing. Private authority protocol paths are never forwarded here.
-use crate::authority::RemoteAuthorityStore;
 use crate::catalog::CatalogState;
 use crate::host::PlatformHost;
 use crate::host::auth_config;
 use crate::inference;
 use gateway_admin::service::AdminService;
-use gateway_auth::{
-    resolve::AuthService,
-    types::{AuthConfig, AuthPrincipal, AuthRequest, AuthResponse},
-};
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_contracts::{types::AuthConfig, types::AuthPrincipal, types::AuthRequest};
 use gateway_contracts::identity::RequestId;
 use gateway_core::state::AuthorityStore;
 use gateway_live_runtime::{
@@ -20,6 +17,8 @@ use gateway_schema::{
     catalog_cache::{CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_platform::headers::HeaderLimits;
@@ -94,7 +93,7 @@ pub async fn route(
         None
     };
     if let Some(route) = live_route(&auth_request.method, &path) {
-        let principal = principal.ok_or_else(gateway_auth::types::unauthorized)?;
+        let principal = principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?;
         return live_response(
             request,
             route,
@@ -117,14 +116,14 @@ pub async fn route(
     if path == "/uos/agent-messages" {
         return crate::agent_messages::handle(
             request,
-            &principal.ok_or_else(gateway_auth::types::unauthorized)?,
+            &principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?,
             &store,
         )
         .await
         .map(Into::into);
     }
     if let Some(target) = terminal_target(&path, &request)? {
-        let principal = principal.ok_or_else(gateway_auth::types::unauthorized)?;
+        let principal = principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?;
         return terminal_response(
             request,
             principal,
@@ -290,11 +289,9 @@ async fn administrative_route(
     let principal = auth.authenticate_admin(auth_request).await?;
     let original_context = gateway_contracts::identity::RequestContext {
         request_id: request_id.clone(),
-        principal: gateway_contracts::identity::PrincipalId(
-            gateway_authority::native_control::actor::principal_id(&principal),
-        ),
+        principal: gateway_authority::native_control::actor::principal_id(&principal),
         key_id: match &principal.method {
-            gateway_auth::types::AuthMethod::KvApiKey { key_id, .. } => {
+            gateway_auth_contracts::types::AuthMethod::KvApiKey { key_id, .. } => {
                 Some(gateway_contracts::identity::ApiKeyId(key_id.clone()))
             }
             _ => None,
@@ -376,15 +373,15 @@ async fn provider_health(
         Rc::clone(context),
     );
     let operation = if path == "/health/providers" {
-        gateway_admin_runtime::capabilities::ProviderRequest::PassiveHealth
+        gateway_admin_runtime_contracts::capabilities::ProviderRequest::PassiveHealth
     } else {
-        gateway_admin_runtime::capabilities::ProviderRequest::UpstreamHealth
+        gateway_admin_runtime_contracts::capabilities::ProviderRequest::UpstreamHealth
     };
     auth_response(
         observations
             .provider(
                 operation,
-                gateway_admin_runtime::capabilities::Context {
+                gateway_admin_runtime_contracts::capabilities::Context {
                     request_id: request_id.0.clone(),
                     now_ms: now_ms()?,
                 },
@@ -595,7 +592,7 @@ fn decorate_api_policy(
     response: &mut Response,
     principal: &AuthPrincipal,
 ) -> Result<(), GatewayError> {
-    if let gateway_auth::types::AuthMethod::KvApiKey { policy, .. } = &principal.method
+    if let gateway_auth_contracts::types::AuthMethod::KvApiKey { policy, .. } = &principal.method
         && policy.usage_limit_requests != -1
     {
         response

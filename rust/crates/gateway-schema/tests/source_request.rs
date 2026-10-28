@@ -1,8 +1,7 @@
 //! Source string controls: these remain data until the separately owned runtime cutover.
+use gateway_schema::source_request::{self, SourceRequestDocument};
+use gateway_schema_values::request::{SourceField, SourceModelRequest};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
-use gateway_schema::source_request::{
-    self, SourceField, SourceModelRequest, SourceRequestDocument,
-};
 
 fn doc(raw: &str) -> SourceRequestDocument {
     SourceRequestDocument::new(SourceJson::parse(raw).unwrap()).unwrap()
@@ -38,9 +37,11 @@ fn source_model_defaults_and_nonempty_lone_identity_stay_distinct() {
     for raw in [r#"{"model":5}"#, r#"{"model":false}"#] {
         let error = doc(raw).model_request().unwrap_err();
         assert_eq!(error.status, 400);
-        let value: serde_json::Value = error.body().deserialize().unwrap();
-        assert_eq!(value["error"]["message"], "model must be a string");
-        assert!(value["error"].get("param").is_none());
+        assert_eq!(
+            error.body().message(),
+            &JsString16::from_utf8("model must be a string")
+        );
+        assert!(error.body().param().is_none());
     }
 }
 #[test]
@@ -75,9 +76,14 @@ fn stream_rejects_null_and_strings_not_just_truthiness() {
         r#"{"stream":1}"#,
     ] {
         let error = doc(raw).stream().unwrap_err();
-        let value: serde_json::Value = error.body().deserialize().unwrap();
-        assert_eq!(value["error"]["message"], "stream must be a boolean");
-        assert_eq!(value["error"]["param"], "stream");
+        assert_eq!(
+            error.body().message(),
+            &JsString16::from_utf8("stream must be a boolean")
+        );
+        assert_eq!(
+            error.body().param(),
+            Some(Some(&JsString16::from_utf8("stream")))
+        );
     }
 }
 #[test]

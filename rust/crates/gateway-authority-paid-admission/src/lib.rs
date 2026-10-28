@@ -1,5 +1,6 @@
 //! Complete checked paid operations; every existing effect retains one atomic transition.
 use gateway_authority_paid_control_records::PaidRoutingPolicy;
+use gateway_schema_values::source_view::js_trim_source;
 mod backend;
 use backend::Transaction;
 use gateway_authority_api_protocol::ApiKeyPolicy;
@@ -473,7 +474,7 @@ pub trait PaidAdmissionOperations: PaidAdmissionFactory {
             text(&input.key_id.0)?;
             text(&input.request_id.0)?;
             text(&input.attempt_id.0)?;
-            if gateway_schema::reasoning::js_trim_source(input.model.as_js_string())
+            if js_trim_source(input.model.as_js_string())
                 .as_units()
                 .is_empty()
             {

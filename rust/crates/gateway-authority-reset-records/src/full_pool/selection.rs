@@ -1,6 +1,7 @@
 use super::SourceResetInventory;
 use super::{CreditCandidateData, SourceCreditCollation, SourceResetCredit, declined};
 use gateway_contracts::identity::MAX_SAFE_INTEGER;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use std::{cmp::Ordering, collections::BTreeSet};
 
@@ -17,9 +18,10 @@ fn is(value: &JsString16, text: &str) -> bool {
     value.as_units().iter().copied().eq(text.encode_utf16())
 }
 fn nonblank(value: &JsString16) -> bool {
-    value.as_units().iter().any(|unit| {
-        !char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
-    })
+    value
+        .as_units()
+        .iter()
+        .any(|unit| !char::from_u32(u32::from(*unit)).is_some_and(schema_scalar::js_whitespace))
 }
 pub fn select<H: SourceCreditCollation>(
     members: &[CreditCandidateData],

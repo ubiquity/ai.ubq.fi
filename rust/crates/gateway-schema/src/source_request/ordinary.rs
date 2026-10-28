@@ -1,12 +1,14 @@
 //! Neutral retained request data; named validation phases remain explicit at callers.
 use super::{
-    SourceField, SourceModelRequest, SourceRequestDocument,
-    error::SourceRequestError,
+    SourceRequestDocument,
     fields::{parse_chat_stream_options, parse_max_completion_tokens},
-    normalized::SourceChatInput,
     reasoning::parse_effort,
 };
-use crate::request::{RequestExtensions, RequestSurface};
+use gateway_chat_normalization::normalized::SourceChatInput;
+use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_schema_values::request::{
+    RequestExtensions, RequestSurface, SourceField, SourceModelRequest,
+};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 #[derive(Clone, Debug)]
 pub struct OrdinarySourceRequest {

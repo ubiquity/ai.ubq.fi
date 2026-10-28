@@ -1,6 +1,6 @@
 //! Request-owned observation only. The existing journal owns the single recovery
 //! attempt; this module cannot reset, refresh credentials or select paid hops.
-use gateway_auth::{
+use gateway_auth_credentials::{
     provider_credentials::CodexSourceSnapshot, provider_credentials::read_codex_source_pool,
 };
 use gateway_authority::store::Authority;

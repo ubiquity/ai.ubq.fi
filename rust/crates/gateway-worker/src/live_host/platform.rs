@@ -5,10 +5,11 @@ use super::{
     body::{self, Body},
     health,
 };
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformClock;
 use crate::host::PlatformTokens;
-use gateway_auth::provider_credentials::{codex_access_expiry_ms, read_codex_source_pool};
+use gateway_auth_credentials::{
+    provider_credentials::codex_access_expiry_ms, provider_credentials::read_codex_source_pool,
+};
 use gateway_authority::store::Authority;
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::{types::LiveAccountSelection, types::LiveRouteSelection};
@@ -18,6 +19,7 @@ use gateway_live_runtime::{
     types::{LiveAccount, LiveCreateRequest, LiveDispatchFailure, LiveHost, LiveResponse},
 };
 use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use std::collections::BTreeMap;

@@ -5,12 +5,13 @@ use crate::{
     store,
     types::ObservabilityHost,
 };
-use gateway_admin_runtime::capabilities::{CaptureRequest, Context};
-use gateway_auth::{crypto::sha256_hex, types::AuthResponse};
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_admin_runtime_contracts::{capabilities::CaptureRequest, capabilities::Context};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::query::{QueryRequest, QuerySelector, QueryStore};
-use gateway_kv_codec::key::RecordKey;
 use gateway_core::state::StoredRecord;
+use gateway_kv_codec::key::RecordKey;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 

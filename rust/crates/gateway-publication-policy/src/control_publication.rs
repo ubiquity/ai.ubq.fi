@@ -1,17 +1,17 @@
 //! Fixed same-authority control publication by an authenticated configuration
 //! owner. Constructor inputs are trusted runtime configuration, never HTTP JSON.
-use gateway_auth::{
-    crypto::{Secret, sha256_hex},
-    native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
-    store,
+use gateway_auth_native_proof::{
+    native_auth::AuthenticatedNativeOwner, native_auth::NativeCapability,
+    native_auth::NativeTransportIdentity,
 };
+use gateway_auth_primitives::{crypto::Secret, crypto::sha256_hex, store};
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
-use gateway_source::error::GatewayError;
 use gateway_contracts::provider::PaidProvider;
 use gateway_core::state::{AuthorityStore, RecordMutation, RevisionCheck, StoredRecord};
+use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
 /// Dedicated constructor state; neither the keys nor their raw configuration are

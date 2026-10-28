@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-schema-values.workspace = true
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true
@@ -22,6 +24,7 @@ serde_json.workspace = true
 workspace = true
 
 [dev-dependencies]
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true

@@ -1,9 +1,7 @@
 //! Named administrative Codex operations, always authenticated from the original request.
-use gateway_admin_runtime::capabilities::{CodexRequest, Context};
-use gateway_auth::{
-    resolve::AuthService,
-    types::{AuthConfig, AuthRequest, AuthResponse},
-};
+use gateway_admin_runtime_contracts::{capabilities::CodexRequest, capabilities::Context};
+use gateway_auth::resolve::AuthService;
+use gateway_auth_contracts::{types::AuthConfig, types::AuthRequest, types::AuthResponse};
 use gateway_authority::native_control::actor::NativeRenewalActor;
 use gateway_source::error::GatewayError;
 
@@ -19,7 +17,7 @@ pub struct OriginalAdmin<'a> {
 }
 
 pub async fn execute(
-    store: &crate::authority::RemoteAuthorityStore,
+    store: &gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     platform: &crate::host::PlatformHost,
     owner: OriginalAdmin<'_>,
     request: CodexRequest,

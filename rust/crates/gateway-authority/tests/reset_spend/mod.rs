@@ -61,7 +61,7 @@ fn setup() -> (MemoryStore, TestAuthority) {
     }
     store.seed(keys::reset_config(), &config());
     store.seed(
-        gateway_auth::store::key(json!([
+        gateway_auth_primitives::store::key(json!([
             "uos_ai",
             "migrations",
             "codex_reset_usage_legacy_global_v1"
@@ -73,7 +73,7 @@ fn setup() -> (MemoryStore, TestAuthority) {
 fn original() -> RequestContext {
     RequestContext {
         request_id: RequestId("actual-original-reset-request".into()),
-        principal: PrincipalId("fixture-principal".into()),
+        principal: PrincipalId::from_scalar("fixture-principal".into()),
         key_id: None,
         route: "/v1/responses".into(),
         started_at_ms: NOW,

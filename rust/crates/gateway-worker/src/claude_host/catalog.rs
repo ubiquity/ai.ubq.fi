@@ -1,22 +1,19 @@
 use super::platform::{self, Host};
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformHost, response_bytes},
     transport::outbound::{PinnedDestination, construct_request, send_constructed},
 };
-use gateway_admin_runtime::{
-    claude::{self, AccountBinding},
-    claude_generation::StateSnapshot,
-};
-use gateway_auth::types::AuthHost;
+use gateway_auth_contracts::types::AuthHost;
 use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogProvider, CredentialPublication,
     ProviderBinding,
 };
-use gateway_claude_runtime::host::ClaudePoolHost;
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_claude_policy::host::ClaudePoolHost;
+use gateway_claude_roster::{claude, claude::AccountBinding, claude_generation::StateSnapshot};
 use gateway_core::state::RevisionCheck;
 use gateway_schema::catalog::ProviderCatalog;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use std::collections::BTreeMap;
 
 pub struct Publication {

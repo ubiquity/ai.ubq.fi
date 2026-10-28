@@ -1,4 +1,5 @@
 //! Exact source v5 campaign vocabulary; these records contain no credentials.
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -41,18 +42,11 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Optio
     T::deserialize(d).map(Some)
 }
 fn nullable<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    Option::<String>::deserialize(d).map(|s| {
-        s.map(|s| {
-            s.trim_matches(gateway_schema::util::js_whitespace)
-                .to_owned()
-        })
-    })
+    Option::<String>::deserialize(d)
+        .map(|s| s.map(|s| s.trim_matches(schema_scalar::js_whitespace).to_owned()))
 }
 fn trimmed<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    String::deserialize(d).map(|s| {
-        s.trim_matches(gateway_schema::util::js_whitespace)
-            .to_owned()
-    })
+    String::deserialize(d).map(|s| s.trim_matches(schema_scalar::js_whitespace).to_owned())
 }
 fn nonnegative<'de, D: Deserializer<'de>, T: TryFrom<u64>>(d: D) -> Result<T, D::Error> {
     let value = serde_json::Value::deserialize(d)?;
@@ -106,14 +100,13 @@ impl TargetBinding {
             || self.telemetry_provider != TELEMETRY_PROVIDER
             || self.topology_kind != "codex_account_pool"
             || self.probe_profile != PROFILE
-            || fields.iter().any(|s| {
-                s.trim_matches(gateway_schema::util::js_whitespace)
-                    .is_empty()
-            })
-            || self.catalog_client_version.as_ref().is_some_and(|s| {
-                s.trim_matches(gateway_schema::util::js_whitespace)
-                    .is_empty()
-            })
+            || fields
+                .iter()
+                .any(|s| s.trim_matches(schema_scalar::js_whitespace).is_empty())
+            || self
+                .catalog_client_version
+                .as_ref()
+                .is_some_and(|s| s.trim_matches(schema_scalar::js_whitespace).is_empty())
         {
             return Err(unavailable(
                 "Prompt-cache scope experiment target binding is malformed.",

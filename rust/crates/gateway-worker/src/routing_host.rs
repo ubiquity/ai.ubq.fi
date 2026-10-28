@@ -1,21 +1,23 @@
 //! Routing credentials use the owner-derived current source and routing fences.
-use crate::authority::RemoteAuthorityStore;
 use crate::host::PlatformHost;
-use gateway_auth::crypto::Secret;
-use gateway_auth::provider_credentials::{codex_source_pool_key, read_codex_source_pool};
-use gateway_auth::types::AuthPrincipal;
+use gateway_auth_contracts::types::AuthPrincipal;
+use gateway_auth_credentials::{
+    provider_credentials::codex_source_pool_key, provider_credentials::read_codex_source_pool,
+};
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_paid_records::{PaidReservation, PaidUsage};
 use gateway_authority_routing_selection::types::CohortProof;
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::state::AuthorityStore;
 use gateway_kv_codec::key::RecordKey;
-use gateway_providers::types::{AuthMaterial, PrepareOptions};
+use gateway_provider_protocol::{types::AuthMaterial, types::PrepareOptions};
 use gateway_routing_runtime::types::{
     ClaudeSelection, CodexRecovery, CredentialFence, CredentialRequest, PublishedCredential,
     RefreshOutcome, RoutingHost, direct_credential,
 };
 use gateway_source::error::GatewayError;
 use gateway_wait_observation::outcome::WaitOutcome;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_storage::store::now_ms;
 use worker::Env;
 
@@ -324,7 +326,7 @@ impl Host {
         attempt: &gateway_routing_runtime::types::PreparedAttempt,
     ) -> Result<
         crate::transport::outbound::ConstructedRequest,
-        gateway_routing_runtime::types::RoutingError,
+        gateway_local_refusal::routing_error::RoutingError,
     > {
         if attempt.original_request_id != self.original.request_id.0 {
             return Err(GatewayError::new(

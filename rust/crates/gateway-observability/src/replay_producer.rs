@@ -16,10 +16,11 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
-use gateway_auth::crypto::sha256_hex;
-use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_core::query::QueryStore;
 use gateway_kv_codec::key::RecordKey;
+use gateway_schema_values::scalar as schema_scalar;
+use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use zeroize::Zeroizing;
@@ -101,7 +102,7 @@ impl ReplayInput {
                 .headers
                 .iter()
                 .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                .map(|(_, v)| v.trim_matches(gateway_schema::util::js_whitespace))
+                .map(|(_, v)| v.trim_matches(schema_scalar::js_whitespace))
                 .filter(|v| !v.is_empty())
             {
                 headers.insert((*name).into(), value.into());
@@ -115,10 +116,7 @@ impl ReplayInput {
             body: request.body,
             content_type: request
                 .content_type
-                .map(|v| {
-                    v.trim_matches(gateway_schema::util::js_whitespace)
-                        .to_owned()
-                })
+                .map(|v| v.trim_matches(schema_scalar::js_whitespace).to_owned())
                 .filter(|v| !v.is_empty()),
             compatibility_headers: headers,
             request_id: request.request_id,

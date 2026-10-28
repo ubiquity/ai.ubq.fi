@@ -1,5 +1,5 @@
 use crate::types::ObservabilityHost;
-use gateway_auth::crypto::uuid_from_random;
+use gateway_auth_primitives::crypto::uuid_from_random;
 use gateway_core::{
     query::QueryEntry, query::QueryRequest, query::QuerySelector, query::QueryStore,
     state::AtomicTransition, state::AuthorityStore, state::CommitOutcome, state::RecordMutation,

@@ -1,13 +1,13 @@
 use gateway_admin_contracts::{operations::AdminHost, routes::AdminOperation};
-use gateway_admin_runtime::RuntimeConfig;
+use gateway_admin_runtime_contracts::RuntimeConfig;
 use gateway_admin_test_support::{
     runtime_fixtures::{WireBody, input, runtime},
     runtime_host::{Host, run},
     runtime_store::Store,
 };
-use gateway_auth::types::AuthHost;
-use gateway_source::{error::GatewayError, js_string::JsString16};
+use gateway_auth_contracts::types::AuthHost;
 use gateway_core::state::{AtomicTransition, AuthorityStore, CommitOutcome};
+use gateway_source::{error::GatewayError, js_string::JsString16};
 use serde_json::{Value, json};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -44,10 +44,12 @@ fn claude_empty_access_is_authoritative_and_corruption_never_seeds() {
 }
 #[test]
 fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() -> TestResult {
-    use gateway_admin_runtime::claude::{
-        AccountUpdate, Bootstrap, current_binding, parse_credential,
-        source_secret::ClaudeSourceSecret, update_account,
-    };
+    use gateway_claude_roster::claude::AccountUpdate;
+    use gateway_claude_roster::claude::Bootstrap;
+    use gateway_claude_roster::claude::current_binding;
+    use gateway_claude_roster::claude::parse_credential;
+    use gateway_claude_roster::claude::source_secret::ClaudeSourceSecret;
+    use gateway_claude_roster::claude::update_account;
     let store = Store::default();
     let host = Host::default();
     let seed = Bootstrap::default();
@@ -116,7 +118,7 @@ fn claude_roster_rotation_preserves_identity_and_fences_prior_generations() -> T
 
 #[test]
 fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
-    use gateway_admin_runtime::claude::*;
+    use gateway_claude_roster::claude::*;
     let store = Store::default();
     let host = Host::default();
     let credential = parse_credential(
@@ -125,8 +127,8 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
     )
     .unwrap();
     store.rows.borrow_mut().insert(
-        gateway_auth::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
-        gateway_admin_runtime::claude::encode_credential_record("fixture", &credential, None)
+        gateway_auth_primitives::store::key(json!(["ubq_ai", "claude_code_auth"])).0,
+        gateway_claude_roster::claude::encode_credential_record("fixture", &credential, None)
             .unwrap(),
     );
     let seed = Bootstrap {
@@ -161,13 +163,13 @@ fn claude_tombstone_refuses_legacy_or_environment_resurrection() {
 
 #[test]
 fn source_claude_submission_limits_and_workspace_parser_are_preserved() {
-    let accepted = gateway_admin_runtime::parse::claude(
+    let accepted = gateway_admin_runtime_contracts::parse::claude(
         &json!({"credential":"sk-ant-api-valid","workspace_id":"wrkspc_a.b-c"}),
     )
     .unwrap();
     assert_eq!(accepted.workspace_id, Some(Some("wrkspc_a.b-c".into())));
     assert_eq!(
-        gateway_admin_runtime::parse::claude(
+        gateway_admin_runtime_contracts::parse::claude(
             &json!({"credential":format!("sk-ant-{}","x".repeat(507))})
         )
         .err()
@@ -175,12 +177,12 @@ fn source_claude_submission_limits_and_workspace_parser_are_preserved() {
         .status,
         400
     );
-    assert_eq!(gateway_admin_runtime::parse::claude(&json!({"credential":"sk-ant-api-valid","create_new":true,"account_id":"12345678-1234-4123-8123-123456789abc"})).err().unwrap().status,400);
+    assert_eq!(gateway_admin_runtime_contracts::parse::claude(&json!({"credential":"sk-ant-api-valid","create_new":true,"account_id":"12345678-1234-4123-8123-123456789abc"})).err().unwrap().status,400);
 }
 
 #[test]
 fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_deny() {
-    use gateway_admin_runtime::claude_access::*;
+    use gateway_admin_runtime_records::claude_access::*;
     let store = Store::default();
     let host = Host::default();
     store.conflicts.set(2);
@@ -235,7 +237,7 @@ fn shared_claude_access_loader_returns_exact_fence_and_does_not_reseed_explicit_
 }
 #[test]
 fn shared_claude_access_parser_preserves_stable_locale_ties_and_missing_host_refuses() {
-    use gateway_admin_runtime::claude_access::*;
+    use gateway_admin_runtime_records::claude_access::*;
     let ids = parse_ids(&json!(["é", "e\u{0301}", "é"]), &|_, _| {
         Ok(std::cmp::Ordering::Equal)
     })

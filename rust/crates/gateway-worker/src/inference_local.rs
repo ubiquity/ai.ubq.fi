@@ -1,6 +1,5 @@
 //! Actual local builder, earlier response selection and original-admission fallback.
 use crate::{
-    authority::RemoteAuthorityStore,
     host::{PlatformClock, PlatformHost, PlatformTokens},
     inference_capture::Capture,
     inference_lifecycle::Session,
@@ -12,15 +11,13 @@ use gateway_compaction_source::types::{CompactionOutcome, ResponseOptions};
 use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::TransportObservation,
 };
+use gateway_local_refusal::routing_error::RoutingError;
 use gateway_routing_runtime::{
-    local_work::{
-        LocalAdmissionInput, LocalRequestMetadata, LocalWorkHandle,
-        completion::response::LocalWireKind,
-    },
-    session::RoutingSession,
-    types::RoutingError,
+    local_work::LocalAdmissionInput, local_work::LocalRequestMetadata, local_work::LocalWorkHandle,
+    local_work::completion::response::LocalWireKind, session::RoutingSession,
 };
 use gateway_schema::source_request::SourceRequestDocument;
+use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{
     cell::{Cell, RefCell},
@@ -124,7 +121,7 @@ async fn start_inner(
     let built = crate::inference_currentness::run_local(&local, host.cancellation.clone(), async {
         let stream = document
             .stream()
-            .map_err(gateway_routing_runtime::types::RoutingError::from)?;
+            .map_err(gateway_local_refusal::routing_error::RoutingError::from)?;
         capture
             .begin_local(local.original_context(), document.original_source(), stream)
             .await;
@@ -231,7 +228,7 @@ fn built_response(outcome: CompactionOutcome) -> Result<Response, RoutingError> 
 }
 fn cancelled_response() -> Result<Response, RoutingError> {
     // Frozen compaction.ts643-655 uses cancelledResponse for every observed abort.
-    crate::runtime::auth_response(gateway_auth::types::AuthResponse::error(
+    crate::runtime::auth_response(gateway_auth_contracts::types::AuthResponse::error(
         gateway_admission::cancellation_error(),
     ))
     .map_err(Into::into)

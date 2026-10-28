@@ -4,9 +4,9 @@ use gateway_admission::{
     AdmissionCancellation, AdmissionClock, AdmissionController, AdmissionRequest, AdmissionResult,
     AdmissionWait, Permit, WaitFuture,
 };
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_contracts::lifecycle::TransportObservation;
-use gateway_routing_runtime::types::{RoutingError, SourceRefusalBody};
+use gateway_local_refusal::{routing_error::RoutingError, routing_error::SourceRefusalBody};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
 use std::{
     cell::{Cell, RefCell},

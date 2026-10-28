@@ -5,10 +5,11 @@ use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::source_control::decode_source_control_record;
 use gateway_core::state::StoredRecord;
-use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::TupleKey};
+use gateway_local_journal::context::principal_has_non_whitespace;
 use gateway_source::error::GatewayError;
 use std::{collections::BTreeMap, collections::BTreeSet};
+use {gateway_kv_codec::key::RecordKey, gateway_schema_values::scalar as util};
 
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
@@ -25,8 +26,7 @@ fn text(value: &str) -> Result<(), GatewayError> {
 }
 fn model_text(value: &ModelId) -> Result<(), GatewayError> {
     if value.as_js_string().as_units().iter().any(|unit| {
-        char::from_u32(u32::from(*unit))
-            .is_none_or(|character| !gateway_schema::util::js_whitespace(character))
+        char::from_u32(u32::from(*unit)).is_none_or(|character| !util::js_whitespace(character))
     }) {
         Ok(())
     } else {
@@ -170,7 +170,9 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
         return Err(invalid());
     }
     text(&row.context.request_id.0)?;
-    text(&row.context.principal.0)?;
+    if !principal_has_non_whitespace(&row.context.principal) {
+        return Err(invalid());
+    }
     text(&row.context.route)?;
     if let Some(key) = &row.context.key_id {
         text(&key.0)?;
@@ -282,7 +284,8 @@ pub fn validate_journal_row(key: &RecordKey, record: &StoredRecord) -> Result<()
                     return Err(invalid());
                 }
                 TupleKey::from_record_key(source_key)?.validate_stored_key()?;
-                if *source_key != gateway_auth::provider_credentials::codex_source_pool_key()
+                if *source_key
+                    != gateway_auth_credentials::provider_credentials::codex_source_pool_key()
                     || admission.binding.pool_versionstamp.0 != *source_revision
                 {
                     return Err(invalid());
@@ -506,7 +509,7 @@ mod tests {
                 route: "responses".into(),
                 started_at_ms: 1_800_000_000_000,
             },
-            gateway_auth::crypto::sha256_hex(b"{}"),
+            gateway_auth_primitives::crypto::sha256_hex(b"{}"),
             1_800_000_060_000,
             1_800_000_000_000,
         );

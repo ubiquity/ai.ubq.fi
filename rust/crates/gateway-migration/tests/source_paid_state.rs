@@ -1,22 +1,24 @@
 #![cfg(not(target_arch = "wasm32"))]
 //! Source-shaped stopped input exercises M20's real projection/reader/inverse.
 //! This does not replace the separately required actual M19 writer fixture.
-use gateway_source::{
-    js_string::JsString16, source_json::SourceJson, source_serialization as source,
-};
 use gateway_contracts::model::ModelId;
-use gateway_core::source_control::{encode_source_control_record, source_json_tree};
-use gateway_kv_codec::value::PortableValue;
-use gateway_migration::{
-    capture::{PrivateCapture, SourceEntry},
-    engine::{adopt_empty, prepare},
-    inverse::export_latest,
+use gateway_core::{
+    source_control::encode_source_control_record, source_control::source_json_tree,
 };
+use gateway_kv_codec::value::PortableValue;
+use gateway_migration_data::capture::PrivateCapture;
+use gateway_migration_data::capture::SourceEntry;
+use gateway_migration_inverse::inverse::export_latest;
+use gateway_migration_prepare::engine::adopt_empty;
+use gateway_migration_prepare::engine::prepare;
 use gateway_migration_test_support::fixture::{Directory, run};
 use gateway_migration_test_support::sqlite_store::SqliteStore;
 use gateway_profile_source::codec::from_source_profile;
 use gateway_profile_source::codec::to_source_profile;
 use gateway_profile_values::date::CanonicalDates;
+use gateway_source::{
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
+};
 use serde_json::{Value, json};
 
 fn entry(parts: Value, document: SourceJson) -> SourceEntry {

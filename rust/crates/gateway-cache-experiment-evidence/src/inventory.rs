@@ -1,9 +1,8 @@
 //! Complete fixed catalog/runtime/source inventory and exact source target fingerprints.
 use crate::cache::ReadCache;
-use gateway_auth::{
-    crypto::sha256_hex,
-    provider_credentials::{codex_source_pool_key, parse_codex_source_pool},
-};
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_cache_experiment_records::{
     model::{PROFILE, PROVIDER, Reason, TELEMETRY_PROVIDER, TargetBinding, failed, unavailable},
     source::{catalog_key, json, runtime_key},
@@ -11,6 +10,7 @@ use gateway_cache_experiment_records::{
 use gateway_contracts::model::ModelId;
 use gateway_core::state::AuthorityStore;
 use gateway_schema::{runtime_config::normalize_runtime_config, snapshot::ModelSnapshot};
+use gateway_schema_values::{scalar as schema_scalar, source_view::js_trim_source};
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -64,7 +64,7 @@ fn encoded(value: &str) -> String {
 fn text(value: Option<&SourceJson>) -> Option<JsString16> {
     value
         .and_then(source::string)
-        .map(|s| gateway_schema::reasoning::js_trim_source(&s))
+        .map(|s| js_trim_source(&s))
         .filter(|s| !s.as_units().is_empty())
 }
 pub(crate) struct Inventory {
@@ -77,9 +77,7 @@ pub(crate) async fn inventory<S: AuthorityStore>(
     let snapshot: ModelSnapshot = raw
         .deserialize()
         .map_err(|_| unavailable("Prompt-cache scope experiment catalog is malformed."))?;
-    if gateway_schema::reasoning::js_trim_source(&snapshot.source)
-        .as_units()
-        .is_empty()
+    if js_trim_source(&snapshot.source).as_units().is_empty()
         || snapshot.updated_at_ms < 0
         || snapshot.models.is_empty()
     {
@@ -299,7 +297,7 @@ fn append_target(
                 .snapshot
                 .client_version
                 .as_deref()
-                .map(gateway_schema::util::js_trim)
+                .map(schema_scalar::js_trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_owned),
         });

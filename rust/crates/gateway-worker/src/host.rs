@@ -1,5 +1,4 @@
 //! Only actual platform clock, RNG, WebCrypto and fixed authentication reads.
-use futures_util::StreamExt;
 use gateway_auth_contracts::{
     types::{AuthConfig, AuthHost},
     upstream::{AuthUpstreamRequest, AuthUpstreamResponse},
@@ -12,6 +11,7 @@ use gateway_worker_platform::crypto;
 use gateway_worker_platform::random;
 use std::{collections::BTreeMap, rc::Rc};
 use worker::{Env, Fetch, Method, Request, RequestInit, RequestRedirect, Response, Url};
+use {futures_util::StreamExt, gateway_schema_values::scalar as util};
 
 pub const AUTH_SETTINGS: &[&str] = &[
     "UOS_AI_TOKEN",
@@ -39,7 +39,7 @@ pub fn setting(env: &Env, name: &str) -> Option<String> {
 /// Source provider keys use nonEmptyString before choosing a fallback key.
 pub fn provider_secret(env: &Env, name: &str) -> Option<String> {
     setting(env, name)
-        .map(|value| gateway_schema::util::js_trim(&value).to_owned())
+        .map(|value| util::js_trim(&value).to_owned())
         .filter(|value| !value.is_empty())
 }
 
@@ -62,7 +62,7 @@ pub fn auth_config(env: &Env) -> AuthConfig {
 #[derive(Clone)]
 pub struct PlatformHost {
     pub cancellation: Rc<Cancellation>,
-    pub store: crate::authority::RemoteAuthorityStore,
+    pub store: gateway_worker_authority_binding::authority::RemoteAuthorityStore,
     pub env: Env,
     pub native: crate::native_host::NativeBindings,
     pub original: gateway_auth_contracts::types::AuthRequest,
@@ -72,7 +72,7 @@ pub struct PlatformHost {
 #[derive(Clone, Copy)]
 pub struct PlatformTokens;
 
-impl gateway_authority::native_control::NativeRenewalCancellation for PlatformHost {
+impl gateway_authority_contracts::NativeRenewalCancellation for PlatformHost {
     fn cancelled(&self) -> bool {
         self.cancellation.signal().aborted()
     }

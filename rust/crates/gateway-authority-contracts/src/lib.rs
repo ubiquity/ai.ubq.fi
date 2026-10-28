@@ -86,3 +86,8 @@ pub trait TokenSource {
 pub trait AuthorityClock: Send + Sync {
     fn now_ms(&self) -> Result<i64, GatewayError>;
 }
+
+/// Constructor-owned cancellation, never a Boolean accepted from an HTTP request.
+pub trait NativeRenewalCancellation {
+    fn cancelled(&self) -> bool;
+}

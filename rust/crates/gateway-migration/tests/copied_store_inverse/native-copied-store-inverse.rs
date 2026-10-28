@@ -1,8 +1,6 @@
 //! Private offline driver; no command arguments, dotenv, network or live-store discovery.
 #[cfg(all(unix, not(target_arch = "wasm32")))]
-mod driver;
-#[cfg(all(unix, not(target_arch = "wasm32")))]
-mod store;
+use gateway_migration_copied_store_support::driver;
 
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 fn main() {

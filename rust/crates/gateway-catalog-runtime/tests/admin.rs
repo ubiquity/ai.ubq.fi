@@ -6,7 +6,6 @@ use gateway_catalog_provider::host::{
 use gateway_catalog_provider::response::AdminCatalogResponse;
 use gateway_catalog_runtime::admin::{AdminCatalogHost, AdminCatalogOperation};
 use gateway_catalog_runtime::{CatalogRuntime, state};
-use gateway_source::{error::GatewayError, source_json::SourceJson};
 use gateway_core::{
     query::{QueryEntry, QueryPage, QueryRequest, QueryStore},
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
@@ -21,6 +20,7 @@ use gateway_schema::{
     runtime_config::build_runtime_config as build_runtime_config_source,
     snapshot::{ModelSnapshot, SnapshotOverrides, normalize_snapshot as normalize_snapshot_source},
 };
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
@@ -50,7 +50,7 @@ fn build_runtime_config(
     model: Option<&str>,
     effort: Option<&str>,
     now: i64,
-) -> Result<Value, gateway_schema::source_request::error::SourceRequestError> {
+) -> Result<Value, gateway_local_refusal::source_error::SourceRequestError> {
     build_runtime_config_source(
         snapshot,
         model.map(Into::into).as_ref(),
@@ -920,8 +920,8 @@ fn save_while_versioned_discovery_waits_cannot_be_replaced_by_older_version() {
 #[test]
 fn actual_admin_source_documents_publish_opaque_models_source_labels_and_whitelist_units() {
     use gateway_core::source_control::decode_source_control_record;
-    use gateway_source::source_serialization as source;
     use gateway_kv_codec::value::ValueEncoding;
+    use gateway_source::source_serialization as source;
     let runtime = CatalogRuntime::new();
     let store = Store::default();
     let host = Host::new();

@@ -94,7 +94,7 @@ fn exact_frozen_admin_body_control_headers_utf16_and_extreme_retry_spelling_matc
     for case in oracle.cases {
         let data = SourceJson::parse(r#"{"accepted":"source","label":"\ud800"}"#)?;
         let response = admin::response(result(&case)?, data)
-            .unwrap_or_else(gateway_auth::types::AuthResponse::error);
+            .unwrap_or_else(gateway_auth_contracts::types::AuthResponse::error);
         assert_eq!(response.status, case.expected.status, "{}", case.kind);
         let headers: BTreeMap<_, _> = response
             .headers

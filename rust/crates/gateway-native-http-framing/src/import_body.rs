@@ -3,7 +3,7 @@ use crate::{
     error::{control_interrupted, invalid},
     import_head::ImportHead,
 };
-use gateway_authority::native_control::NativeRenewalCancellation;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_source::error::GatewayError;
 use std::{io::Read, net::TcpStream, time::Instant};
 
