@@ -286,7 +286,7 @@ fn validate_defaults_fields(body: &SourceJson) -> Result<Option<AuthResponse>, G
                 Some("invalid_request_error"),
                 None,
             );
-            return Ok(Some(AuthResponse::source_json(
+            return Ok(Some(AuthResponse::closed_error(
                 error.status,
                 error.body().clone(),
             )));
@@ -363,10 +363,12 @@ fn defaults_runtime(
                 // The original scalar error path remains unchanged;
                 // only an actual source-reflected opaque message needs
                 // the existing lossless source response rail.
-                if SourceJson::from_serializable(&error.diagnostic().envelope)? == *error.body() {
+                if SourceJson::from_serializable(&error.diagnostic().envelope)?.as_bytes()
+                    == error.body().as_bytes()
+                {
                     return Err(error.diagnostic().clone());
                 }
-                return Ok(DefaultRuntime::Break(AuthResponse::source_json(
+                return Ok(DefaultRuntime::Break(AuthResponse::closed_error(
                     error.status,
                     error.body().clone(),
                 )));
@@ -385,4 +387,48 @@ fn model_defaults(runtime: Option<&SourceJson>) -> (ModelId, JsString16) {
             .and_then(default_reasoning_effort)
             .unwrap_or_else(|| JsString16::from_utf8("medium")),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{defaults_runtime, validate_defaults_fields};
+    use gateway_auth_contracts::types::AuthResponseBody;
+    use gateway_source::{error::GatewayError, source_json::SourceJson};
+
+    #[test]
+    fn closed_error_keeps_source_wire_and_scalar_phase() -> Result<(), Box<dyn std::error::Error>> {
+        let input = SourceJson::parse(r#"{"\ud800":1}"#)?;
+        let response =
+            validate_defaults_fields(&input)?.ok_or("unknown source field response missing")?;
+        let AuthResponseBody::ClosedError(body) = &response.body else {
+            return Err("unknown source field lost the closed error carrier".into());
+        };
+        assert_eq!(response.status, 400);
+        assert_eq!(
+            body.as_str(),
+            r#"{"error":{"message":"Unknown defaults field: \ud800","type":"invalid_request_error","code":"invalid_request_error"}}"#
+        );
+        assert_eq!(response.body.to_bytes()?, body.as_bytes());
+        assert_eq!(response.headers["content-type"], "application/json");
+        assert_eq!(response.headers["cache-control"], "no-store");
+        assert!(response.set_cookies.is_empty());
+        assert!(response.stream.is_none());
+
+        let input = SourceJson::parse(r#"{"model":"m"}"#)?;
+        let runtime = Some(SourceJson::parse(
+            r#"{"default_model":"m","default_reasoning_effort":"none","codex_models":{"models":[{"slug":"m"}],"source":"","updated_at_ms":1}}"#,
+        )?);
+        let error = defaults_runtime(&input, &runtime, 1)
+            .err()
+            .ok_or("scalar runtime failure changed phase")?;
+        assert_eq!(
+            error,
+            GatewayError::new(
+                503,
+                "runtime config requires valid Codex catalog metadata",
+                Some("runtime_config_invalid"),
+            )
+        );
+        Ok(())
+    }
 }
