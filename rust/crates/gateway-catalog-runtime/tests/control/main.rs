@@ -15,9 +15,8 @@ use gateway_core::{
     state::{AtomicTransition, AuthorityStore, CommitOutcome, RecordMutation, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema::{
-    catalog_store, runtime_config::build_runtime_config, snapshot::ModelSnapshot,
-};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
+use gateway_schema::{catalog_store, runtime_config::build_runtime_config};
 use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 use std::{

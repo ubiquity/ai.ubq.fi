@@ -4,7 +4,8 @@ use gateway_catalog_provider::host::{
     CredentialPublication, unavailable,
 };
 use gateway_contracts::model::ModelId;
-use gateway_schema::{catalog_cache, snapshot::union_account_catalogs};
+use gateway_model_snapshot::snapshot::union_account_catalogs;
+use gateway_schema::catalog_cache;
 use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
@@ -200,7 +201,7 @@ pub async fn fetch_codex<H: CatalogHost>(
         }
         fallback = Some(response);
     }
-    if let Some((parsed, evidence)) = union_account_catalogs(&catalogs) {
+    if let Some((parsed, evidence)) = union_account_catalogs(&catalogs)? {
         return Ok(Fetched {
             response: CatalogFetchResponse::json(
                 200,

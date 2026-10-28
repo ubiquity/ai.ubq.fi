@@ -7,7 +7,8 @@ use gateway_catalog_inputs::state;
 use gateway_catalog_provider::host::CodexAccount;
 use gateway_catalog_runtime::CatalogRuntime;
 use gateway_catalog_versioned::VersionedCatalog;
-use gateway_schema::{catalog_store, snapshot::SnapshotOverrides};
+use gateway_model_snapshot::snapshot::SnapshotOverrides;
+use gateway_schema::catalog_store;
 use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 use std::{

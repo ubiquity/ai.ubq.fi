@@ -1,7 +1,10 @@
 //! Full uploaded snapshot normalization and evidence-preserving refresh projection.
-use crate::{model_control as c, reasoning::advertised_effort};
 use gateway_contracts::model::ModelId;
-use gateway_source::{js_string::JsString16, source_json::SourceJson};
+use gateway_model_metadata::reasoning::advertised_effort;
+use gateway_source::{
+    error::GatewayError, js_string::JsString16, source_json::SourceJson,
+    source_serialization as source,
+};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelSnapshot {
@@ -45,7 +48,7 @@ pub fn normalize_snapshot(
     value: &SourceJson,
     overrides: &SnapshotOverrides,
     now_ms: i64,
-) -> Option<ModelSnapshot> {
+) -> Result<Option<ModelSnapshot>, GatewayError> {
     let raw = gateway_source::source_serialization::array(value)
         .or_else(|| {
             gateway_source::source_serialization::member(value, "models")
@@ -56,11 +59,14 @@ pub fn normalize_snapshot(
             gateway_source::source_serialization::member(value, "data")
                 .as_ref()
                 .and_then(gateway_source::source_serialization::array)
-        })?;
+        });
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
     let mut models = Vec::new();
     let mut seen = Vec::new();
     for item in &raw {
-        if !c::is_record(item) {
+        if source::entries(item).is_none() && source::array(item).is_none() {
             continue;
         }
         let hidden = gateway_source::source_serialization::member(item, "visibility")
@@ -88,118 +94,10 @@ pub fn normalize_snapshot(
             continue;
         }
         seen.push(slug.clone());
-        let mut model = c::object(vec![("slug", c::json(&slug))]);
-        if let Some(name) = ["display_name", "displayName", "name"]
-            .iter()
-            .find_map(|key| {
-                gateway_source::source_serialization::member(item, key)
-                    .as_ref()
-                    .and_then(gateway_source::source_serialization::string)
-            })
-            .filter(|s| !s.as_units().is_empty())
-        {
-            c::set(&mut model, "display_name", c::json(&name));
-        }
-        for key in ["description", "visibility"] {
-            if let Some(value) = gateway_source::source_serialization::member(item, key)
-                .as_ref()
-                .and_then(gateway_source::source_serialization::string)
-                .filter(|s| !s.as_units().is_empty())
-            {
-                c::set(&mut model, key, c::json(&value));
-            }
-        }
-        if let Some(value) = gateway_source::source_serialization::member(item, "supported_in_api")
-            .filter(|v| matches!(v.as_str(), "true" | "false"))
-        {
-            c::set(&mut model, "supported_in_api", value);
-        }
-        for key in [
-            "context_window",
-            "max_context_window",
-            "auto_compact_token_limit",
-            "effective_context_window_percent",
-        ] {
-            if let Some(value) = gateway_source::source_serialization::member(item, key) {
-                if value.as_str() == "null" {
-                    c::set(&mut model, key, value);
-                } else if let Some(n) = gateway_source::source_serialization::number(&value)
-                    .filter(|n| n.is_finite() && *n >= 0.0)
-                {
-                    let n = n.trunc();
-                    c::set(
-                        &mut model,
-                        key,
-                        if n <= gateway_schema_values::scalar::MAX_SAFE_INTEGER {
-                            c::json(&(n as i64))
-                        } else {
-                            c::json(&n)
-                        },
-                    );
-                }
-            }
-        }
-        if let Some(v) =
-            gateway_source::source_serialization::member(item, "default_reasoning_level")
-        {
-            if v.as_str() == "null" {
-                c::set(&mut model, "default_reasoning_level", c::json("none"));
-            } else if let Some(level) = gateway_schema_values::source_view::normalized(Some(&v)) {
-                c::set(&mut model, "default_reasoning_level", c::json(&level));
-            }
-        }
-        if let Some(raw_levels) =
-            gateway_source::source_serialization::member(item, "supported_reasoning_levels")
-                .as_ref()
-                .and_then(gateway_source::source_serialization::array)
-        {
-            let levels = raw_levels
-                .iter()
-                .filter_map(advertised_effort)
-                .collect::<Vec<_>>();
-            if !levels.is_empty() {
-                c::set(&mut model, "supported_reasoning_levels", c::json(&levels));
-            }
-            let mut wire = Vec::new();
-            for level in raw_levels {
-                if let Some(effort) = advertised_effort(&level) {
-                    let upstream = if gateway_schema_values::source_view::matches(&effort, "ultra")
-                    {
-                        Some("max".into())
-                    } else {
-                        gateway_schema_values::source_view::normalized(
-                            gateway_source::source_serialization::member(&level, "wire_effort")
-                                .as_ref(),
-                        )
-                    };
-                    if let Some(upstream) = upstream.filter(|s| s != &effort) {
-                        let value = c::json(&upstream);
-                        if let Some((_, old)) = wire.iter_mut().find(|(key, _)| key == &effort) {
-                            *old = value;
-                        } else {
-                            wire.push((effort, value));
-                        }
-                    }
-                }
-            }
-            if !wire.is_empty() {
-                c::set(
-                    &mut model,
-                    "reasoning_effort_wire_map",
-                    gateway_source::source_serialization::object_keys(wire)
-                        .expect("source wire map"),
-                );
-            }
-        }
-        if let Some(cache) = gateway_prompt_cache::metadata::normalize_capabilities_source(
-            gateway_source::source_serialization::member(item, "prompt_cache").as_ref(),
-        ) {
-            c::set(&mut model, "prompt_cache", cache);
-        }
-        models.push(model);
+        models.push(normalized_model(item, &slug)?);
     }
     if models.is_empty() {
-        return None;
+        return Ok(None);
     }
     let source = overrides
         .source
@@ -218,14 +116,16 @@ pub fn normalize_snapshot(
         .filter(|s| !s.is_empty())
         .cloned()
         .or_else(|| {
-            c::scalar(
-                gateway_source::source_serialization::member(value, "client_version").as_ref(),
-            )
-            .or_else(|| {
-                c::scalar(
-                    gateway_source::source_serialization::member(value, "clientVersion").as_ref(),
-                )
-            })
+            source::member(value, "client_version")
+                .as_ref()
+                .and_then(source::string)
+                .and_then(|s| s.try_utf8().ok())
+                .or_else(|| {
+                    source::member(value, "clientVersion")
+                        .as_ref()
+                        .and_then(source::string)
+                        .and_then(|s| s.try_utf8().ok())
+                })
         });
     let updated_at_ms = overrides
         .updated_at_ms
@@ -237,12 +137,12 @@ pub fn normalize_snapshot(
                 .map(|n| n.trunc() as i64)
         })
         .unwrap_or(now_ms);
-    Some(ModelSnapshot {
+    Ok(Some(ModelSnapshot {
         models,
         source,
         updated_at_ms,
         client_version,
-    })
+    }))
 }
 impl ModelSnapshot {
     pub fn default_model(&self) -> Option<ModelId> {
@@ -266,7 +166,7 @@ impl ModelSnapshot {
             .models
             .iter()
             .filter(|m| {
-                c::is_object(m)
+                source::entries(m).is_some()
                     && gateway_schema_values::source_view::identifier(m).is_some_and(|s| {
                         gateway_schema_values::source_view::js_trim_source(&s) == target
                     })
@@ -283,7 +183,10 @@ impl ModelSnapshot {
             })
             .filter(|m| !m.as_js_string().as_units().is_empty() && self.find(m).is_some())
     }
-    pub fn merge_prompt_cache(&self, previous: Option<&ModelSnapshot>) -> Self {
+    pub fn merge_prompt_cache(
+        &self,
+        previous: Option<&ModelSnapshot>,
+    ) -> Result<Self, GatewayError> {
         let mut next = self.clone();
         for model in &mut next.models {
             let id = gateway_schema_values::source_view::model(model);
@@ -295,43 +198,56 @@ impl ModelSnapshot {
                 prior.as_ref(),
                 current.as_ref(),
             ) {
-                c::set(model, "prompt_cache", cache);
+                *model = model_with_cache(model, cache)?;
             }
         }
-        next
+        Ok(next)
     }
     pub fn with_prompt_cache_scope(
         &self,
         slug: &ModelId,
         provider_id: &str,
         scope: &SourceJson,
-    ) -> Option<Self> {
-        let model = self.unique(slug)?;
-        let scope = gateway_prompt_cache::metadata::normalize_scope_source(scope)?;
-        let mut cache = gateway_prompt_cache::metadata::normalize_capabilities_source(
+    ) -> Result<Option<Self>, GatewayError> {
+        let Some(model) = self.unique(slug) else {
+            return Ok(None);
+        };
+        let Some(scope) = gateway_prompt_cache::metadata::normalize_scope_source(scope) else {
+            return Ok(None);
+        };
+        let cache = gateway_prompt_cache::metadata::normalize_capabilities_source(
             gateway_source::source_serialization::member(model, "prompt_cache").as_ref(),
-        )?;
-        let mut providers = gateway_source::source_serialization::member(&cache, "providers")
+        );
+        let Some(cache) = cache else {
+            return Ok(None);
+        };
+        let providers = gateway_source::source_serialization::member(&cache, "providers")
             .as_ref()
-            .and_then(gateway_source::source_serialization::array)?;
+            .and_then(gateway_source::source_serialization::array);
+        let Some(mut providers) = providers else {
+            return Ok(None);
+        };
         let provider = providers.iter_mut().find(|p| {
             gateway_source::source_serialization::member(p, "id")
                 .as_ref()
                 .and_then(gateway_source::source_serialization::string)
                 .is_some_and(|id| gateway_schema_values::source_view::matches(&id, provider_id))
-        })?;
-        c::set(provider, "scope", scope);
-        c::set(&mut cache, "providers", c::json(&providers));
+        });
+        let Some(provider) = provider else {
+            return Ok(None);
+        };
+        *provider = provider_with_scope(provider, scope)?;
+        let cache = cache_with_providers(&cache, SourceJson::from_serializable(&providers)?)?;
         let mut next = self.clone();
         let target = gateway_schema_values::source_view::js_trim_source(slug.as_js_string());
         for record in &mut next.models {
             if gateway_schema_values::source_view::identifier(record)
                 .is_some_and(|s| gateway_schema_values::source_view::js_trim_source(&s) == target)
             {
-                c::set(record, "prompt_cache", cache.clone());
+                *record = model_with_cache(record, cache.clone())?;
             }
         }
-        Some(next)
+        Ok(Some(next))
     }
     pub fn scope_experiment_eligible(&self, slug: &ModelId) -> bool {
         let cache = self.unique(slug).and_then(|m| {
@@ -381,7 +297,9 @@ impl ModelSnapshot {
 /// Pool order and first row are authoritative; unknown top-level metadata stays verbatim.
 pub type AccountCatalogEvidence = Vec<(String, Vec<ModelId>)>;
 pub type AccountCatalogUnion = (SourceJson, AccountCatalogEvidence);
-pub fn union_account_catalogs(catalogs: &[(String, SourceJson)]) -> Option<AccountCatalogUnion> {
+pub fn union_account_catalogs(
+    catalogs: &[(String, SourceJson)],
+) -> Result<Option<AccountCatalogUnion>, GatewayError> {
     let mut envelope = None;
     let mut models = Vec::new();
     let mut seen = Vec::new();
@@ -393,7 +311,7 @@ pub fn union_account_catalogs(catalogs: &[(String, SourceJson)]) -> Option<Accou
         else {
             continue;
         };
-        if !c::is_object(catalog) {
+        if source::entries(catalog).is_none() {
             continue;
         }
         if envelope.is_none() {
@@ -416,7 +334,224 @@ pub fn union_account_catalogs(catalogs: &[(String, SourceJson)]) -> Option<Accou
         }
         accounts.push((account.clone(), slugs));
     }
-    let mut envelope = envelope?;
-    c::set(&mut envelope, "models", c::json(&models));
-    Some((envelope, accounts))
+    let Some(envelope) = envelope else {
+        return Ok(None);
+    };
+    let envelope = union_with_models(&envelope, SourceJson::from_serializable(&models)?)?;
+    Ok(Some((envelope, accounts)))
+}
+
+#[derive(Serialize)]
+struct NormalizedModel {
+    slug: SourceJson,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    visibility: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_in_api: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_window: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_context_window: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auto_compact_token_limit: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effective_context_window_percent: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_reasoning_level: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_reasoning_levels: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort_wire_map: Option<SourceJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_cache: Option<SourceJson>,
+}
+fn normalized_model(item: &SourceJson, slug: &JsString16) -> Result<SourceJson, GatewayError> {
+    let mut model = NormalizedModel {
+        slug: SourceJson::from_serializable(slug)?,
+        display_name: None,
+        description: None,
+        visibility: None,
+        supported_in_api: None,
+        context_window: None,
+        max_context_window: None,
+        auto_compact_token_limit: None,
+        effective_context_window_percent: None,
+        default_reasoning_level: None,
+        supported_reasoning_levels: None,
+        reasoning_effort_wire_map: None,
+        prompt_cache: None,
+    };
+    if let Some(name) = ["display_name", "displayName", "name"]
+        .iter()
+        .find_map(|key| source::member(item, key).as_ref().and_then(source::string))
+        .filter(|s| !s.as_units().is_empty())
+    {
+        model.display_name = Some(SourceJson::from_serializable(&name)?);
+    }
+    for (key, target) in [
+        ("description", &mut model.description),
+        ("visibility", &mut model.visibility),
+    ] {
+        if let Some(value) = source::member(item, key)
+            .as_ref()
+            .and_then(source::string)
+            .filter(|s| !s.as_units().is_empty())
+        {
+            *target = Some(SourceJson::from_serializable(&value)?);
+        }
+    }
+    model.supported_in_api =
+        source::member(item, "supported_in_api").filter(|v| matches!(v.as_str(), "true" | "false"));
+    normalized_context_fields(item, &mut model)?;
+    normalized_reasoning_fields(item, &mut model)?;
+    model.prompt_cache = gateway_prompt_cache::metadata::normalize_capabilities_source(
+        source::member(item, "prompt_cache").as_ref(),
+    );
+    SourceJson::from_serializable(&model)
+}
+fn normalized_context_fields(
+    item: &SourceJson,
+    model: &mut NormalizedModel,
+) -> Result<(), GatewayError> {
+    for (key, target) in [
+        ("context_window", &mut model.context_window),
+        ("max_context_window", &mut model.max_context_window),
+        (
+            "auto_compact_token_limit",
+            &mut model.auto_compact_token_limit,
+        ),
+        (
+            "effective_context_window_percent",
+            &mut model.effective_context_window_percent,
+        ),
+    ] {
+        if let Some(value) = source::member(item, key) {
+            if value.as_str() == "null" {
+                *target = Some(value);
+            } else if let Some(n) = source::number(&value).filter(|n| n.is_finite() && *n >= 0.0) {
+                let n = n.trunc();
+                *target = Some(if n <= gateway_schema_values::scalar::MAX_SAFE_INTEGER {
+                    SourceJson::from_serializable(&(n as i64))?
+                } else {
+                    SourceJson::from_serializable(&n)?
+                });
+            }
+        }
+    }
+    Ok(())
+}
+fn normalized_reasoning_fields(
+    item: &SourceJson,
+    model: &mut NormalizedModel,
+) -> Result<(), GatewayError> {
+    if let Some(value) = source::member(item, "default_reasoning_level") {
+        if value.as_str() == "null" {
+            model.default_reasoning_level = Some(SourceJson::from_serializable("none")?);
+        } else if let Some(level) = gateway_schema_values::source_view::normalized(Some(&value)) {
+            model.default_reasoning_level = Some(SourceJson::from_serializable(&level)?);
+        }
+    }
+    if let Some(raw_levels) = source::member(item, "supported_reasoning_levels")
+        .as_ref()
+        .and_then(source::array)
+    {
+        let levels = raw_levels
+            .iter()
+            .filter_map(advertised_effort)
+            .collect::<Vec<_>>();
+        if !levels.is_empty() {
+            model.supported_reasoning_levels = Some(SourceJson::from_serializable(&levels)?);
+        }
+        let mut wire = Vec::new();
+        for level in raw_levels {
+            if let Some(effort) = advertised_effort(&level) {
+                let upstream = if gateway_schema_values::source_view::matches(&effort, "ultra") {
+                    Some("max".into())
+                } else {
+                    gateway_schema_values::source_view::normalized(
+                        source::member(&level, "wire_effort").as_ref(),
+                    )
+                };
+                if let Some(upstream) = upstream.filter(|s| s != &effort) {
+                    let value = SourceJson::from_serializable(&upstream)?;
+                    if let Some((_, old)) = wire.iter_mut().find(|(key, _)| key == &effort) {
+                        *old = value;
+                    } else {
+                        wire.push((effort, value));
+                    }
+                }
+            }
+        }
+        if !wire.is_empty() {
+            model.reasoning_effort_wire_map = Some(source::object_keys(wire)?);
+        }
+    }
+    Ok(())
+}
+fn model_with_cache(record: &SourceJson, value: SourceJson) -> Result<SourceJson, GatewayError> {
+    let mut fields = source::entries(record).ok_or_else(|| {
+        GatewayError::unavailable(
+            "Invalid source JSON serialization.",
+            "source_json_serialization_invalid",
+        )
+    })?;
+    let key = JsString16::from_utf8("prompt_cache");
+    if let Some((_, prior)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *prior = value;
+    } else {
+        fields.push((key, value));
+    }
+    source::object_keys(fields)
+}
+fn provider_with_scope(record: &SourceJson, value: SourceJson) -> Result<SourceJson, GatewayError> {
+    let mut fields = source::entries(record).ok_or_else(|| {
+        GatewayError::unavailable(
+            "Invalid source JSON serialization.",
+            "source_json_serialization_invalid",
+        )
+    })?;
+    let key = JsString16::from_utf8("scope");
+    if let Some((_, prior)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *prior = value;
+    } else {
+        fields.push((key, value));
+    }
+    source::object_keys(fields)
+}
+fn cache_with_providers(
+    record: &SourceJson,
+    value: SourceJson,
+) -> Result<SourceJson, GatewayError> {
+    let mut fields = source::entries(record).ok_or_else(|| {
+        GatewayError::unavailable(
+            "Invalid source JSON serialization.",
+            "source_json_serialization_invalid",
+        )
+    })?;
+    let key = JsString16::from_utf8("providers");
+    if let Some((_, prior)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *prior = value;
+    } else {
+        fields.push((key, value));
+    }
+    source::object_keys(fields)
+}
+fn union_with_models(record: &SourceJson, value: SourceJson) -> Result<SourceJson, GatewayError> {
+    let mut fields = source::entries(record).ok_or_else(|| {
+        GatewayError::unavailable(
+            "Invalid source JSON serialization.",
+            "source_json_serialization_invalid",
+        )
+    })?;
+    let key = JsString16::from_utf8("models");
+    if let Some((_, prior)) = fields.iter_mut().find(|(name, _)| name == &key) {
+        *prior = value;
+    } else {
+        fields.push((key, value));
+    }
+    source::object_keys(fields)
 }

@@ -21,13 +21,13 @@ use gateway_core::{
     source_control::encode_source_control_record, state::RecordMutation, state::StoredRecord,
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_model_metadata::reasoning::ModelReasoning;
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema::{
     catalog_store::runtime_config_key,
-    reasoning::ModelReasoning,
     runtime_config::{
         build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
     },
-    snapshot::ModelSnapshot,
 };
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::json;
@@ -55,9 +55,7 @@ fn runtime_value(row: Option<&StoredRecord>, now: i64) -> Result<Option<SourceJs
     if row.expires_at_ms.is_some_and(|expiry| expiry <= now) {
         return Ok(None);
     }
-    Ok(normalize_runtime_config(&decode_source_control_record(
-        row,
-    )?))
+    normalize_runtime_config(&decode_source_control_record(row)?)
 }
 impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> SettingsAdmin<'_, S, H, C> {
     pub async fn defaults(

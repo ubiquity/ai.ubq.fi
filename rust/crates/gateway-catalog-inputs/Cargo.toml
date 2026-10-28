@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-model-snapshot.workspace = true
+gateway-model-metadata.workspace = true
 gateway-contracts = { path = "../gateway-contracts" }
 gateway-kv-codec = { path = "../gateway-kv-codec" }
 gateway-model-selection = { path = "../gateway-model-selection" }

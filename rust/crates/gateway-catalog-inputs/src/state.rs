@@ -10,9 +10,11 @@ use gateway_core::{
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_model_selection::{selection::ModelWhitelist, selection::ProviderSelection};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema::{
-    catalog::CatalogInput, catalog::ProviderCatalog, catalog_store,
-    runtime_config::normalize_runtime_config, snapshot::ModelSnapshot,
+    catalog::{CatalogInput, ProviderCatalog},
+    catalog_store,
+    runtime_config::normalize_runtime_config,
 };
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
@@ -133,7 +135,9 @@ pub async fn load_state<S: QueryStore>(
     let runtime = read_source_control(store, &catalog_store::runtime_config_key())
         .await?
         .as_ref()
-        .and_then(|r| normalize_runtime_config(&r.document));
+        .map(|r| normalize_runtime_config(&r.document))
+        .transpose()?
+        .flatten();
     let snapshot = runtime
         .as_ref()
         .and_then(|r| source::member(r, "codex_models"))
@@ -216,7 +220,7 @@ pub async fn load_state<S: QueryStore>(
         if let Some(row) = providers::match_openrouter(&openrouter, &id) {
             input.enrichment.insert(
                 id,
-                gateway_schema::metadata::MetadataHint::from_openrouter(row),
+                gateway_model_metadata::metadata::MetadataHint::from_openrouter(row),
             );
         }
     }

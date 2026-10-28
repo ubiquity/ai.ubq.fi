@@ -14,10 +14,9 @@ use gateway_contracts::identity::PoolVersionstamp;
 use gateway_core::source_control::encode_source_control_record;
 use gateway_core::state::{RecordMutation, StoredRecord};
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema::catalog_store;
-use gateway_schema::snapshot::ModelSnapshot;
 use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
+use {gateway_model_snapshot::snapshot::ModelSnapshot, gateway_schema::catalog_store};
 
 pub(super) struct SourcePlan {
     pub mutations: Vec<RecordMutation>,
@@ -106,7 +105,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
                 current.as_ref(),
                 runtime_source.as_ref().unwrap_or(&empty),
                 tx.now,
-            )
+            )?
             .ok_or_else(super::publication::conflict)?;
             let runtime = encode_source_control_record(&wire.publication_revision, &runtime, None)?;
             let generation = control.authority.tokens.next_token()?;

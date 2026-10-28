@@ -23,8 +23,8 @@ use gateway_authority_native_records::import_action::ImportActionRow;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::{GenerationEffect, Phase};
 use gateway_core::state::AuthorityStore;
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema::catalog_store;
-use gateway_schema::snapshot::ModelSnapshot;
 use gateway_source::error::GatewayError;
 #[derive(Clone, Copy)]
 enum TerminalProjection {

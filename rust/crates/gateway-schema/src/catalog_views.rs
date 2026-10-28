@@ -1,6 +1,7 @@
-use crate::{catalog::*, metadata::*, model_control as c, provider_catalog::*};
+use crate::{catalog::*, model_control as c, provider_catalog::*};
 use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
+use gateway_model_metadata::metadata::*;
 use gateway_model_selection::{aliases::*, selection::*};
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 fn snapshot_models(input: &CatalogInput, full: bool) -> Vec<SourceJson> {
@@ -176,20 +177,17 @@ fn claude_capability(model: &SourceJson) -> SourceJson {
     );
     row
 }
-pub fn capabilities(input: &CatalogInput) -> SourceJson {
-    let mut rows = if input.enabled("codex") {
-        input
-            .codex()
-            .map(|s| {
-                s.models
-                    .iter()
-                    .filter_map(|r| normalized_codex_capability(input, r))
-                    .collect()
-            })
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+pub fn capabilities(input: &CatalogInput) -> Result<SourceJson, GatewayError> {
+    let mut rows = Vec::new();
+    if input.enabled("codex")
+        && let Some(snapshot) = input.codex()
+    {
+        for record in &snapshot.models {
+            if let Some(row) = normalized_codex_capability(input, record)? {
+                rows.push(row);
+            }
+        }
+    }
     append_unique(&mut rows, configured_capabilities(input, "cerebras"), "id");
     append_unique(
         &mut rows,
@@ -219,7 +217,7 @@ pub fn capabilities(input: &CatalogInput) -> SourceJson {
     let mut rows = filter_whitelist(rows, input.whitelist.as_ref(), false);
     append_unique(&mut rows, openrouter_capabilities(input), "id");
     let snapshot = input.codex();
-    c::object(vec![
+    Ok(c::object(vec![
         ("object", c::json("list")),
         ("data", c::json(&rows)),
         ("upstream_provider", c::json("codex_chatgpt")),
@@ -234,7 +232,7 @@ pub fn capabilities(input: &CatalogInput) -> SourceJson {
             c::json(&snapshot.and_then(|s| s.client_version.as_deref())),
         ),
         ("updated_at_ms", c::json(&snapshot.map(|s| s.updated_at_ms))),
-    ])
+    ]))
 }
 fn public_entry(
     id: &ModelId,

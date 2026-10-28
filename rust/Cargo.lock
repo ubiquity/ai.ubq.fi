@@ -1006,6 +1006,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-model-snapshot",
  "gateway-schema",
  "gateway-source",
  "serde_json",
@@ -1040,6 +1041,7 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-local-refusal",
+ "gateway-model-snapshot",
  "gateway-profile-values",
  "gateway-redaction",
  "gateway-schema",
@@ -1103,6 +1105,8 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-local-refusal",
+ "gateway-model-metadata",
+ "gateway-model-snapshot",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -1129,6 +1133,7 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-schema",
  "gateway-source",
  "serde_json",
@@ -1433,6 +1438,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-local-journal",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-native-authority-wire",
  "gateway-provider-policy",
  "gateway-provider-protocol",
@@ -2292,6 +2298,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-model-snapshot",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -2336,6 +2343,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-model-snapshot",
  "gateway-prompt-cache",
  "gateway-schema",
  "gateway-schema-values",
@@ -2425,6 +2433,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-local-refusal",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-schema",
  "gateway-schema-values",
  "gateway-source",
@@ -2446,6 +2455,7 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-provider-policy",
  "gateway-providers",
  "gateway-schema",
@@ -2463,7 +2473,9 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-model-metadata",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-provider-policy",
  "gateway-providers",
  "gateway-schema",
@@ -2520,6 +2532,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-local-refusal",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-native",
  "gateway-provider-policy",
  "gateway-provider-protocol",
@@ -2545,6 +2558,7 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-schema",
  "gateway-source",
  "serde_json",
@@ -3619,6 +3633,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-model-metadata"
+version = "0.1.0"
+dependencies = [
+ "gateway-local-refusal",
+ "gateway-request-normalization",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
+]
+
+[[package]]
 name = "gateway-model-selection"
 version = "0.1.0"
 dependencies = [
@@ -3628,6 +3653,18 @@ dependencies = [
  "indexmap 2.14.2",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "gateway-model-snapshot"
+version = "0.1.0"
+dependencies = [
+ "gateway-contracts",
+ "gateway-model-metadata",
+ "gateway-prompt-cache",
+ "gateway-schema-values",
+ "gateway-source",
+ "serde",
 ]
 
 [[package]]
@@ -4204,6 +4241,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-local-refusal",
+ "gateway-model-metadata",
  "gateway-prompt-cache",
  "gateway-provider-chat-controls",
  "gateway-provider-policy",
@@ -4236,6 +4274,7 @@ version = "0.1.0"
 dependencies = [
  "gateway-contracts",
  "gateway-core",
+ "gateway-model-metadata",
  "gateway-prompt-policy",
  "gateway-provider-events",
  "gateway-provider-source",
@@ -4360,6 +4399,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-local-refusal",
+ "gateway-model-metadata",
  "gateway-prompt-policy",
  "gateway-provider-chat",
  "gateway-provider-chat-controls",
@@ -4573,6 +4613,7 @@ dependencies = [
  "gateway-local-journal",
  "gateway-local-refusal",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-provider-claude-body",
  "gateway-provider-policy",
  "gateway-provider-protocol",
@@ -4608,6 +4649,7 @@ dependencies = [
  "gateway-core",
  "gateway-kv-codec",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-provider-protocol",
  "gateway-routing-runtime",
  "gateway-schema",
@@ -4628,7 +4670,9 @@ dependencies = [
  "gateway-decision-protocol",
  "gateway-kv-codec",
  "gateway-local-refusal",
+ "gateway-model-metadata",
  "gateway-model-selection",
+ "gateway-model-snapshot",
  "gateway-prompt-cache",
  "gateway-request-normalization",
  "gateway-responses-normalization",

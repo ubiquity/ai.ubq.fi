@@ -10,11 +10,13 @@ use gateway_core::{
 use gateway_kv_codec::key::RecordKey;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_model_selection::{selection::ModelWhitelist, selection::normalize_whitelist_ids};
+use gateway_model_snapshot::snapshot::{SnapshotOverrides, normalize_snapshot};
 use gateway_schema::{
-    catalog::ProviderCatalog, catalog_store, runtime_config::build_runtime_config,
-    runtime_config::default_model, runtime_config::default_reasoning_effort,
-    runtime_config::normalize_runtime_config, snapshot::SnapshotOverrides,
-    snapshot::normalize_snapshot,
+    catalog::ProviderCatalog,
+    catalog_store,
+    runtime_config::{
+        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+    },
 };
 use gateway_schema_values::scalar as util;
 use gateway_source::{
@@ -139,6 +141,7 @@ async fn admin_save_models<S: QueryStore, H: CatalogHost>(
         return Err(invalid("Invalid JSON body", None));
     }
     let snapshot = normalize_snapshot(document, &SnapshotOverrides::default(), host.now_ms())
+        .map_err(lift)?
         .ok_or_else(|| invalid("models must include a non-empty models array", None))?;
     let size = source::canonical(&json_source(&snapshot))
         .map_err(lift)?
@@ -157,10 +160,15 @@ async fn admin_save_models<S: QueryStore, H: CatalogHost>(
         let previous = current
             .as_ref()
             .and_then(|r| state::parse_full_snapshot(&r.document));
-        let next = snapshot.merge_prompt_cache(previous.as_ref());
+        let next = snapshot
+            .merge_prompt_cache(previous.as_ref())
+            .map_err(lift)?;
         let old_runtime = runtime
             .as_ref()
-            .and_then(|r| normalize_runtime_config(&r.document));
+            .map(|r| normalize_runtime_config(&r.document))
+            .transpose()
+            .map_err(lift)?
+            .flatten();
         let old_default = old_runtime.as_ref().and_then(default_model);
         let old_effort = old_runtime.as_ref().and_then(default_reasoning_effort);
         let default = next.preserve_default(old_default.as_ref());

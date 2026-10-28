@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-model-snapshot.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-kv-codec = { path = "../gateway-kv-codec" }
 gateway-local-refusal = { path = "../gateway-local-refusal" }

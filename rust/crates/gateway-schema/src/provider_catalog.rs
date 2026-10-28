@@ -1,7 +1,8 @@
 //! Provider-declared catalog projections; credentials/configuration are injected observations.
-use crate::{catalog::*, metadata::*, model_control as c};
+use crate::{catalog::*, model_control as c};
 use gateway_contracts::model::ModelId;
 use gateway_decision_protocol::catalog as decisions;
+use gateway_model_metadata::metadata::*;
 use gateway_model_selection::aliases::*;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 pub const CEREBRAS_IDS: &[&str] = &["gpt-oss-120b", "qwen-3.8-27b"];
@@ -326,14 +327,17 @@ pub fn openrouter_capabilities(input: &CatalogInput) -> Vec<SourceJson> {
 pub fn normalized_codex_capability(
     input: &CatalogInput,
     record: &SourceJson,
-) -> Option<SourceJson> {
+) -> Result<Option<SourceJson>, gateway_source::error::GatewayError> {
     let id = ModelId::from_source(gateway_schema_values::source_view::js_trim_source(
-        &gateway_schema_values::source_view::identifier(record)?,
+        &match gateway_schema_values::source_view::identifier(record) {
+            Some(id) => id,
+            None => return Ok(None),
+        },
     ));
     if id.as_js_string().as_units().is_empty() {
-        return None;
+        return Ok(None);
     }
-    let reasoning = crate::reasoning::ModelReasoning::from_record(Some(record));
+    let reasoning = gateway_model_metadata::reasoning::ModelReasoning::from_record(Some(record));
     let resolved = input.metadata(&id, Some(record), None, true);
     let owner = gateway_source::source_serialization::member(record, "owned_by")
         .as_ref()
@@ -358,7 +362,10 @@ pub fn normalized_codex_capability(
             "default_reasoning_effort",
             c::json(&reasoning.default_level),
         ),
-        ("reasoning_effort_wire_map", reasoning.wire_efforts),
+        (
+            "reasoning_effort_wire_map",
+            reasoning.wire_efforts.to_source_json()?,
+        ),
     ]);
     apply_resolved_fields(&mut row, &resolved, false, true);
     c::set(
@@ -376,5 +383,5 @@ pub fn normalized_codex_capability(
     ) {
         c::set(&mut row, "prompt_cache", cache);
     }
-    Some(row)
+    Ok(Some(row))
 }

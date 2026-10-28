@@ -16,7 +16,8 @@ use gateway_core::{
     state::RevisionCheck,
 };
 use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
-use gateway_schema::{catalog_store::codex_snapshot_key, snapshot::ModelSnapshot};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
+use gateway_schema::catalog_store::codex_snapshot_key;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};

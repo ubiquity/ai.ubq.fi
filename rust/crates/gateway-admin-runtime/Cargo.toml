@@ -39,6 +39,7 @@ serde_json = { workspace = true }
 gateway-local-refusal = { workspace = true }
 
 [dev-dependencies]
+gateway-model-snapshot.workspace = true
 gateway-authority-kernel = { path = "../gateway-authority-kernel" }
 gateway-authority-contracts = { path = "../gateway-authority-contracts" }
 gateway-admin-test-support = { workspace = true }

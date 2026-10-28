@@ -28,6 +28,7 @@ gateway-provider-policy = { workspace = true }
 gateway-local-refusal = { workspace = true }
 
 [dev-dependencies]
+gateway-model-snapshot.workspace = true
 gateway-authority.workspace = true
 gateway-providers.workspace = true
 gateway-catalog-admin.workspace = true

@@ -149,7 +149,7 @@ fn promoted_wire_client_version_domain_matches_the_existing_schema_parser() {
         };
         assert_eq!(
             disposition.validate().is_ok(),
-            gateway_schema::snapshot::parse_client_version(raw).is_some(),
+            gateway_model_snapshot::snapshot::parse_client_version(raw).is_some(),
             "{raw}"
         );
     }

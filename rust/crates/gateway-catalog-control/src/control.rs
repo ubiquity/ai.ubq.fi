@@ -17,12 +17,14 @@ use gateway_core::{
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::TupleKey};
 use gateway_model_selection::selection::ProviderSelection;
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_provider_policy::{
     policy::DeepseekHop, policy::PaidRoutingInput, policy::paid_order, policy::resolve_paid_route,
 };
 use gateway_schema::{
-    catalog::CatalogInput, catalog::ProviderCatalog, catalog_store,
-    runtime_config::normalize_runtime_config, snapshot::ModelSnapshot,
+    catalog::{CatalogInput, ProviderCatalog},
+    catalog_store,
+    runtime_config::normalize_runtime_config,
 };
 use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{
@@ -736,7 +738,7 @@ impl CapturedSource {
         let snapshot = values
             .get("runtime")
             .map(|raw| {
-                normalize_runtime_config(raw)
+                normalize_runtime_config(raw)?
                     .ok_or_else(|| missing("Runtime model source is malformed"))
             })
             .transpose()?

@@ -11,9 +11,10 @@ use gateway_core::{
 };
 use gateway_kv_codec::key::RecordKey;
 use gateway_model_selection::{selection::AccountModelCatalog, selection::AccountModelsStore};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
 use gateway_schema::{
-    catalog_cache::PreparedCatalog, catalog_cache::REFRESH_LEASE_MS, catalog_store,
-    catalog_store::RefreshLease, snapshot::ModelSnapshot,
+    catalog_cache::{PreparedCatalog, REFRESH_LEASE_MS},
+    catalog_store::{self, RefreshLease},
 };
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
@@ -266,7 +267,8 @@ pub(crate) async fn publish_snapshot<S: AuthorityStore>(
                 .map(|r| &r.document)
                 .unwrap_or(&SourceJson::parse("null")?),
             *now,
-        ) else {
+        )?
+        else {
             return Ok(());
         };
         let mut checks = publication.source_checks.clone();

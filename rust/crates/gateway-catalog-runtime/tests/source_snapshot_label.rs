@@ -1,9 +1,7 @@
 //! The full stored-reader and runtime-compaction source-label phases are intentionally distinct.
 use gateway_catalog_inputs::state::parse_full_snapshot;
-use gateway_schema::{
-    runtime_config::compact_snapshot,
-    snapshot::{SnapshotOverrides, normalize_snapshot},
-};
+use gateway_model_snapshot::snapshot::{SnapshotOverrides, normalize_snapshot};
+use gateway_schema::runtime_config::compact_snapshot;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
@@ -25,7 +23,9 @@ fn source_defined_stored_read_refuses_blank_after_upload_normalization_preserves
     // src/models/codex-models-fetch.ts:396-405; runtime-config.ts:112-127.
     for label in [r#""""#, r#"" \ufeff\u00a0 ""#] {
         let document = snapshot(label);
-        let uploaded = normalize_snapshot(&document, &SnapshotOverrides::default(), 1).unwrap();
+        let uploaded = normalize_snapshot(&document, &SnapshotOverrides::default(), 1)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             uploaded.source,
             source::string(&SourceJson::parse(label).unwrap()).unwrap()

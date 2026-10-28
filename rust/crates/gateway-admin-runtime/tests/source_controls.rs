@@ -392,7 +392,7 @@ fn defaults_model_effort_source_record_and_reflected_errors_never_scalarize() {
             ("default_reasoning_level", input::json("none")),
             ("supported_reasoning_levels", input::json(&vec!["none"])),
         ]);
-        let snapshot = gateway_schema::snapshot::ModelSnapshot {
+        let snapshot = gateway_model_snapshot::snapshot::ModelSnapshot {
             models: vec![row],
             source: "fixture".into(),
             updated_at_ms: NOW,

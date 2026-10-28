@@ -9,7 +9,8 @@ use gateway_cache_experiment_records::{
 };
 use gateway_contracts::model::ModelId;
 use gateway_core::state::AuthorityStore;
-use gateway_schema::{runtime_config::normalize_runtime_config, snapshot::ModelSnapshot};
+use gateway_model_snapshot::snapshot::ModelSnapshot;
+use gateway_schema::runtime_config::normalize_runtime_config;
 use gateway_schema_values::{scalar as schema_scalar, source_view::js_trim_source};
 use gateway_source::source_serialization as source;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
@@ -89,7 +90,7 @@ pub(crate) async fn inventory<S: AuthorityStore>(
         .read_source_control(&runtime_key())
         .await?
         .ok_or_else(|| unavailable("Prompt-cache scope experiment runtime is unavailable."))?;
-    if normalize_runtime_config(&runtime).is_none() {
+    if normalize_runtime_config(&runtime)?.is_none() {
         return Err(unavailable(
             "Prompt-cache scope experiment runtime is unavailable.",
         ));

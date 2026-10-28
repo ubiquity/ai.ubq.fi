@@ -1,13 +1,13 @@
 use gateway_contracts::model::ModelId;
+use gateway_model_metadata::metadata::*;
 use gateway_model_selection::{aliases::*, selection::*};
+use gateway_model_snapshot::snapshot::*;
 use gateway_prompt_cache::{compat::concrete_scope, profile::SCOPE_PROFILE};
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_views::{capabilities, ordinary_models, public_catalog},
-    metadata::*,
     native_catalog::native_catalog,
     runtime_config::*,
-    snapshot::*,
 };
 
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
@@ -32,7 +32,7 @@ impl SourceStringCollator for FixtureCollator {
     }
 }
 fn snapshot(models: Value, version: &str) -> ModelSnapshot {
-    normalize_snapshot(&source_value(json!({"models":models,"client_version":version,"source":"codex_cli","updated_at_ms":1000})),&SnapshotOverrides::default(),1000).unwrap()
+    normalize_snapshot(&source_value(json!({"models":models,"client_version":version,"source":"codex_cli","updated_at_ms":1000})),&SnapshotOverrides::default(),1000).unwrap().unwrap()
 }
 #[test]
 fn uploaded_tiers_and_hidden_api_models_keep_source_semantics() {
@@ -157,7 +157,7 @@ fn catalog_views_preserve_intentional_whitelist_differences() {
     let public = scalar(&public_catalog(&input, &FixtureCollator).unwrap());
     assert_eq!(public["data"].as_array().unwrap().len(), 1);
     assert_eq!(public["data"][0]["id"], "a");
-    let capabilities = scalar(&capabilities(&input));
+    let capabilities = scalar(&capabilities(&input).unwrap());
     assert!(
         capabilities["data"]
             .as_array()
@@ -264,7 +264,7 @@ fn account_catalog_union_retains_first_row_and_top_level_metadata() {
             ),
         ),
     ];
-    let (union, evidence) = union_account_catalogs(&catalogs).unwrap();
+    let (union, evidence) = union_account_catalogs(&catalogs).unwrap().unwrap();
     let union = scalar(&union);
     assert_eq!(union["future"], "first");
     assert_eq!(union["models"][1]["x"], 1);
@@ -321,7 +321,8 @@ fn cache_evidence_merge_preserves_scope_by_exact_slug_and_compact_drops_it() {
     let cache = json!({"version":1,"providers":[{"id":"codex_chatgpt","controls":{"key":true,"source":"catalog","verified_at_ms":1},"scope":scope}]});
     let previous = snapshot(json!([{"slug":"a","prompt_cache":cache}]), "0.1.0");
     let next = snapshot(json!([{"slug":"a"},{"slug":"renamed"}]), "0.2.0")
-        .merge_prompt_cache(Some(&previous));
+        .merge_prompt_cache(Some(&previous))
+        .unwrap();
     assert_eq!(
         scalar(&next.models[0])["prompt_cache"]["providers"][0]["scope"]["effective_model"],
         "a"
@@ -354,15 +355,16 @@ fn runtime_projection_enforces_four_kib_and_preserves_custom_reasoning() {
         view["codex_models"]["models"][0]["reasoning_effort_wire_map"]["ultra"],
         "max"
     );
-    assert_eq!(normalize_runtime_config(&config), Some(config));
+    assert_eq!(normalize_runtime_config(&config).unwrap(), Some(config));
 }
 
 #[test]
 fn finite_large_catalog_counts_are_retained_but_not_treated_as_safe_context() {
     let source =
         json!({"models":[{"slug":"a","context_window":1e100,"max_context_window":400000.9}]});
-    let snapshot =
-        normalize_snapshot(&source_value(source), &SnapshotOverrides::default(), 1000).unwrap();
+    let snapshot = normalize_snapshot(&source_value(source), &SnapshotOverrides::default(), 1000)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         scalar(&snapshot.models[0])["context_window"].as_f64(),
         Some(1e100)
@@ -388,7 +390,7 @@ fn capabilities_use_runtime_snapshot_when_optional_full_snapshot_is_unavailable(
         }),
         ..CatalogInput::default()
     };
-    let result = scalar(&capabilities(&input));
+    let result = scalar(&capabilities(&input).unwrap());
     assert_eq!(result["data"][0]["id"], "runtime-fallback");
     assert_eq!(
         result["data"][0]["supported_reasoning_levels"],

@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gateway-model-snapshot.workspace = true
+gateway-model-metadata.workspace = true
 gateway-prompt-cache.workspace = true
 gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
