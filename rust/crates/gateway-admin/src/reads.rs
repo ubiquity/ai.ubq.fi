@@ -3,8 +3,8 @@ use gateway_admin_contracts::{
     source_input as input,
 };
 use gateway_admin_keys::keys::{ApiKeyRecord, public_record};
-use gateway_auth_contracts::types::AuthResponse;
-use gateway_auth_passkeys::{passkeys::PasskeyUser, passkeys::user_wire};
+use gateway_auth_contracts::{passkeys::PasskeyUser, types::AuthResponse};
+use gateway_auth_passkeys::passkeys::user_wire;
 use gateway_auth_primitives::api_keys;
 use gateway_auth_primitives::error::invalid;
 use gateway_core::{

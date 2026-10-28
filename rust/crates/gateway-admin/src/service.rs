@@ -6,9 +6,11 @@ use gateway_admin_contracts::{
 use gateway_admin_keys::keys::KeyService;
 use gateway_auth::resolve::AuthService;
 use gateway_auth_contracts::{
-    types::AuthHost, types::AuthMethod, types::AuthRequest, types::AuthResponse,
+    passkeys::PasskeyUser, types::AuthHost, types::AuthMethod, types::AuthRequest,
+    types::AuthResponse,
 };
-use gateway_auth_passkeys::{passkeys::PasskeyUser, passkeys::user_wire};
+use gateway_auth_passkeys::passkeys::user_wire;
+use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_auth_primitives::{crypto::uuid_from_random, error::invalid, store};
 use gateway_core::query::QueryStore;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
@@ -23,7 +25,7 @@ pub struct AdminService<'a, S, H, A> {
     pub release: &'a str,
 }
 
-impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
+impl<'a, S: QueryStore, H: AuthHost + PassportDate, A: AdminHost> AdminService<'a, S, H, A> {
     pub async fn handle_route(
         &self,
         request: &AuthRequest,
