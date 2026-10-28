@@ -6,10 +6,10 @@ use gateway_admin_contracts::{
 use gateway_admin_keys::keys::KeyService;
 use gateway_auth::resolve::AuthService;
 use gateway_auth_contracts::{
-    types::AuthHost, types::AuthMethod, types::AuthRequest, types::AuthResponse, types::invalid,
+    types::AuthHost, types::AuthMethod, types::AuthRequest, types::AuthResponse,
 };
 use gateway_auth_passkeys::{passkeys::PasskeyUser, passkeys::user_wire};
-use gateway_auth_primitives::{crypto::uuid_from_random, store};
+use gateway_auth_primitives::{crypto::uuid_from_random, error::invalid, store};
 use gateway_core::query::QueryStore;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::json;
@@ -108,7 +108,7 @@ impl<'a, S: QueryStore, H: AuthHost, A: AdminHost> AdminService<'a, S, H, A> {
                 )
                 .await?
                 {
-                    return Err(gateway_auth_contracts::types::conflict(
+                    return Err(gateway_auth_primitives::error::conflict(
                         "Passkey user was modified concurrently; retry",
                     ));
                 }
