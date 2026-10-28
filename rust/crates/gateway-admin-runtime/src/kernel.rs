@@ -22,6 +22,7 @@ use gateway_core::query::QueryStore;
 use gateway_core::source_control::decode_source_control_record;
 use gateway_core::{state::RecordMutation, state::StoredRecord};
 use gateway_kv_codec::key::RecordKey;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;
@@ -559,7 +560,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
     }
     async fn kernel_get(&self, input: &AdminInput) -> Result<AuthResponse, GatewayError> {
         let org = fields::first(&input.query, "scope").is_some_and(|s| {
-            s.trim_matches(gateway_schema::util::js_whitespace)
+            s.trim_matches(schema_scalar::js_whitespace)
                 .eq_ignore_ascii_case("org")
         });
         let include = fields::truth(fields::first(&input.query, "include_usage"));
@@ -751,12 +752,12 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
         let Some(raw) = store::read(self.store, &key, now).await? else {
             return Ok(Value::Null);
         };
-        let mut row = json!({"owner":raw.get("owner").and_then(Value::as_str).map(gateway_schema::util::js_trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
+        let mut row = json!({"owner":raw.get("owner").and_then(Value::as_str).map(schema_scalar::js_trim).filter(|s|!s.is_empty()).unwrap_or(owner)});
         if let Some(repo) = repo {
             row["repo"] = json!(
                 raw.get("repo")
                     .and_then(Value::as_str)
-                    .map(gateway_schema::util::js_trim)
+                    .map(schema_scalar::js_trim)
                     .filter(|s| !s.is_empty())
                     .unwrap_or(repo)
             );
@@ -809,9 +810,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     continue;
                 };
                 counts.insert(
-                    label
-                        .trim_matches(gateway_schema::util::js_whitespace)
-                        .to_owned(),
+                    label.trim_matches(schema_scalar::js_whitespace).to_owned(),
                     day.get("request_count")
                         .and_then(Value::as_f64)
                         .map(|n| (n.trunc() as i64).max(0))

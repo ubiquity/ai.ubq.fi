@@ -23,28 +23,27 @@ impl Default for ModelReasoning {
     }
 }
 /// Callers own the normalization phase; construction/equality of ModelId never invokes trim.
-pub fn js_trim_source(value: &JsString16) -> JsString16 {
-    crate::source_request::trim(value)
-}
 pub fn advertised_effort(value: &SourceJson) -> Option<JsString16> {
     let raw = if control::is_object(value) {
-        control::get(value, "effort")?
+        gateway_source::source_serialization::member(value, "effort")?
     } else {
         value.clone()
     };
     if raw.as_str() == "null" {
         Some("none".into())
     } else {
-        control::normalized(Some(&raw))
+        gateway_schema_values::source_view::normalized(Some(&raw))
     }
 }
 impl ModelReasoning {
     pub fn from_record(record: Option<&SourceJson>) -> Self {
         let mut levels = Vec::new();
         if let Some(entries) = record
-            .and_then(|r| control::get(r, "supported_reasoning_levels"))
+            .and_then(|r| {
+                gateway_source::source_serialization::member(r, "supported_reasoning_levels")
+            })
             .as_ref()
-            .and_then(control::array)
+            .and_then(gateway_source::source_serialization::array)
         {
             for effort in entries.iter().filter_map(advertised_effort) {
                 if !levels.contains(&effort) {
@@ -53,13 +52,15 @@ impl ModelReasoning {
             }
         }
         let default_level = record
-            .and_then(|r| control::get(r, "default_reasoning_level"))
+            .and_then(|r| {
+                gateway_source::source_serialization::member(r, "default_reasoning_level")
+            })
             .as_ref()
             .and_then(|v| {
                 if v.as_str() == "null" {
                     Some("none".into())
                 } else {
-                    control::normalized(Some(v))
+                    gateway_schema_values::source_view::normalized(Some(v))
                 }
             });
         if let Some(default) = &default_level
@@ -69,16 +70,18 @@ impl ModelReasoning {
         }
         let mut wire_efforts = Vec::<(JsString16, SourceJson)>::new();
         if let Some(wires) = record
-            .and_then(|r| control::get(r, "reasoning_effort_wire_map"))
+            .and_then(|r| {
+                gateway_source::source_serialization::member(r, "reasoning_effort_wire_map")
+            })
             .as_ref()
             .and_then(source::entries)
         {
             for (key, value) in wires {
-                let key = control::trim(&key);
+                let key = gateway_schema_values::source_view::js_trim_source(&key);
                 if key.as_units().is_empty() {
                     continue;
                 }
-                if let Some(value) = control::normalized(Some(&value)) {
+                if let Some(value) = gateway_schema_values::source_view::normalized(Some(&value)) {
                     let value = control::json(&value);
                     if let Some((_, old)) = wire_efforts.iter_mut().find(|(old, _)| old == &key) {
                         *old = value;
@@ -117,9 +120,9 @@ pub fn parse_reasoning(value: Option<&Value>) -> Result<Option<Map<String, Value
         .transpose()
 }
 pub fn effort_for_codex(effort: &JsString16, model: &ModelReasoning) -> JsString16 {
-    if control::matches(effort, "none") {
+    if gateway_schema_values::source_view::matches(effort, "none") {
         "none".into()
-    } else if control::matches(effort, "ultra") {
+    } else if gateway_schema_values::source_view::matches(effort, "ultra") {
         "max".into()
     } else {
         model.wire_effort(effort).unwrap_or_else(|| effort.clone())
@@ -138,9 +141,9 @@ pub fn resolve_reasoning(
     let parsed = crate::source_request::reasoning::parse_reasoning(value)?;
     let label = parsed
         .as_ref()
-        .and_then(|r| control::get(r, "effort"))
+        .and_then(|r| gateway_source::source_serialization::member(r, "effort"))
         .as_ref()
-        .and_then(|v| control::normalized(Some(v)))
+        .and_then(|v| gateway_schema_values::source_view::normalized(Some(v)))
         .unwrap_or_else(|| default_effort.clone());
     let mut value = parsed.unwrap_or_else(|| {
         control::object(vec![(
@@ -148,9 +151,9 @@ pub fn resolve_reasoning(
             control::json(&effort_for_codex(&label, model)),
         )])
     });
-    if let Some(effort) = control::get(&value, "effort")
+    if let Some(effort) = gateway_source::source_serialization::member(&value, "effort")
         .as_ref()
-        .and_then(control::string)
+        .and_then(gateway_source::source_serialization::string)
     {
         control::set(
             &mut value,

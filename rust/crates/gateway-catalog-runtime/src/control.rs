@@ -21,11 +21,11 @@ use gateway_provider_policy::{
 use gateway_schema::{
     catalog::{CatalogInput, ProviderCatalog},
     catalog_store,
-    reasoning::js_trim_source,
     runtime_config::normalize_runtime_config,
     selection::ProviderSelection,
     snapshot::ModelSnapshot,
 };
+use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };

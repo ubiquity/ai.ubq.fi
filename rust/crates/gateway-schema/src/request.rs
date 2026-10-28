@@ -1,17 +1,10 @@
 //! Source request syntax. Provider-specific interpretation remains outside official allowlists.
-use crate::util::*;
+use gateway_schema_values::{
+    request::{RequestExtensions, RequestSurface},
+    scalar::*,
+};
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestSurface {
-    ChatCompletions,
-    Responses,
-}
-#[derive(Clone, Debug, Default)]
-pub struct RequestExtensions {
-    pub deepseek_thinking: bool,
-    pub openrouter_cache_control: bool,
-}
 pub fn validate_request_fields(
     body: &Value,
     surface: RequestSurface,
@@ -53,10 +46,9 @@ pub fn parse_instructions(value: Option<&Value>) -> Result<Option<String>, Gatew
     match crate::source_request::parse_instructions(value.as_ref())
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
     {
-        crate::source_request::SourceField::Missing | crate::source_request::SourceField::Null => {
-            Ok(None)
-        }
-        crate::source_request::SourceField::Value(value) => value.try_utf8().map(Some),
+        gateway_schema_values::request::SourceField::Missing
+        | gateway_schema_values::request::SourceField::Null => Ok(None),
+        gateway_schema_values::request::SourceField::Value(value) => value.try_utf8().map(Some),
     }
 }
 
@@ -89,7 +81,7 @@ pub fn merge_warnings(existing: Option<&str>, warnings: &[String]) -> Option<Str
     for value in existing
         .unwrap_or("")
         .split(',')
-        .map(crate::util::js_trim)
+        .map(gateway_schema_values::scalar::js_trim)
         .filter(|v| !v.is_empty())
     {
         push_unique(&mut values, value.to_owned());

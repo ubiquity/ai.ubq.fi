@@ -5,8 +5,7 @@ use gateway_source::{
     error::GatewayError, js_string::JsString16, js_string_case::lowercase_source,
     source_json::SourceJson, source_serialization as source,
 };
-use gateway_core::state::AuthorityStore;
-use gateway_schema::reasoning::js_trim_source;
+use {gateway_core::state::AuthorityStore, gateway_schema_values::source_view::js_trim_source};
 
 pub(crate) async fn discover<S: AuthorityStore, H: ClaudePoolHost>(
     session: &ClaudePoolSession,

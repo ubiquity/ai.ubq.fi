@@ -13,6 +13,7 @@ rusqlite = { version = "=0.40.2", features = ["bundled"] }
 workspace = true
 
 [dependencies]
+gateway-schema-values.workspace = true
 gateway-auth-contracts = { path = "../gateway-auth-contracts" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-contracts = { workspace = true }

@@ -1,7 +1,7 @@
+use gateway_schema_values::value::{Text, Value};
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
-use gateway_schema::source_request::value::{Text, Value};
 
 fn parse(raw: &str) -> Value {
     Value::from_source(SourceJson::parse(raw).unwrap())

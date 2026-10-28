@@ -1,5 +1,6 @@
 //! Dynamic metadata resolution: source-specific reasoning precedence, widest sourced context.
-use crate::{reasoning::advertised_effort, util::*};
+use crate::reasoning::advertised_effort;
+use gateway_schema_values::scalar::*;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -15,26 +16,41 @@ impl MetadataHint {
     pub fn codex(record: &SourceJson) -> Self {
         use crate::model_control as c;
         Self {
-            context_window_tokens: c::positive(c::get(record, "context_window").as_ref()),
-            max_context_window_tokens: c::positive(c::get(record, "max_context_window").as_ref()),
-            auto_compact_token_limit_tokens: c::positive(
-                c::get(record, "auto_compact_token_limit").as_ref(),
+            context_window_tokens: gateway_schema_values::source_view::positive(
+                gateway_source::source_serialization::member(record, "context_window").as_ref(),
             ),
-            effective_context_window_percent: c::positive(
-                c::get(record, "effective_context_window_percent").as_ref(),
+            max_context_window_tokens: gateway_schema_values::source_view::positive(
+                gateway_source::source_serialization::member(record, "max_context_window").as_ref(),
             ),
-            supported_reasoning_levels: c::get(record, "supported_reasoning_levels")
-                .as_ref()
-                .and_then(c::array),
-            default_reasoning_effort: c::get(record, "default_reasoning_level").as_ref().and_then(
-                |v| {
-                    if v.as_str() == "null" {
-                        Some("none".into())
-                    } else {
-                        c::normalized(Some(v))
-                    }
-                },
+            auto_compact_token_limit_tokens: gateway_schema_values::source_view::positive(
+                gateway_source::source_serialization::member(record, "auto_compact_token_limit")
+                    .as_ref(),
             ),
+            effective_context_window_percent: gateway_schema_values::source_view::positive(
+                gateway_source::source_serialization::member(
+                    record,
+                    "effective_context_window_percent",
+                )
+                .as_ref(),
+            ),
+            supported_reasoning_levels: gateway_source::source_serialization::member(
+                record,
+                "supported_reasoning_levels",
+            )
+            .as_ref()
+            .and_then(gateway_source::source_serialization::array),
+            default_reasoning_effort: gateway_source::source_serialization::member(
+                record,
+                "default_reasoning_level",
+            )
+            .as_ref()
+            .and_then(|v| {
+                if v.as_str() == "null" {
+                    Some("none".into())
+                } else {
+                    gateway_schema_values::source_view::normalized(Some(v))
+                }
+            }),
         }
     }
     pub fn subscription() -> Self {
@@ -57,22 +73,26 @@ impl MetadataHint {
     }
     pub fn from_openrouter(record: &SourceJson) -> Self {
         use crate::model_control as c;
-        let reasoning = c::get(record, "reasoning");
+        let reasoning = gateway_source::source_serialization::member(record, "reasoning");
         Self {
-            context_window_tokens: c::positive(c::get(record, "context_window_tokens").as_ref()),
-            max_context_window_tokens: c::positive(
-                c::get(record, "max_context_window_tokens").as_ref(),
+            context_window_tokens: gateway_schema_values::source_view::positive(
+                gateway_source::source_serialization::member(record, "context_window_tokens")
+                    .as_ref(),
+            ),
+            max_context_window_tokens: gateway_schema_values::source_view::positive(
+                gateway_source::source_serialization::member(record, "max_context_window_tokens")
+                    .as_ref(),
             ),
             supported_reasoning_levels: reasoning
                 .as_ref()
-                .and_then(|r| c::get(r, "supported_efforts"))
+                .and_then(|r| gateway_source::source_serialization::member(r, "supported_efforts"))
                 .as_ref()
-                .and_then(c::array),
+                .and_then(gateway_source::source_serialization::array),
             default_reasoning_effort: reasoning
                 .as_ref()
-                .and_then(|r| c::get(r, "default_effort"))
+                .and_then(|r| gateway_source::source_serialization::member(r, "default_effort"))
                 .as_ref()
-                .and_then(|v| c::normalized(Some(v))),
+                .and_then(|v| gateway_schema_values::source_view::normalized(Some(v))),
             ..Self::default()
         }
     }
@@ -160,11 +180,11 @@ pub fn resolve_metadata(sources: &MetadataSources) -> ResolvedMetadata {
         let mut list = Vec::new();
         if let Some(raw) = &hint.supported_reasoning_levels {
             for effort in raw.iter().filter_map(advertised_effort) {
-                crate::model_control::push_unique(&mut list, effort);
+                gateway_schema_values::source_view::push_unique(&mut list, effort);
             }
         }
         if let Some(effort) = &hint.default_reasoning_effort {
-            crate::model_control::push_unique(&mut list, effort.clone());
+            gateway_schema_values::source_view::push_unique(&mut list, effort.clone());
         }
         if !list.is_empty() {
             levels = Some(list);
@@ -213,7 +233,7 @@ pub fn ascending_external_levels(levels: &[JsString16]) -> Vec<JsString16> {
     let rank = |effort: &JsString16| {
         order
             .iter()
-            .position(|s| crate::model_control::matches(effort, s))
+            .position(|s| gateway_schema_values::source_view::matches(effort, s))
     };
     let mut standard: Vec<_> = levels
         .iter()

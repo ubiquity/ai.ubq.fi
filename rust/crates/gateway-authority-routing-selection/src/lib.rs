@@ -24,6 +24,7 @@ use gateway_contracts::{
     provider::CodexQuotaClass,
 };
 use gateway_core::state::AuthorityStore;
+use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::error::GatewayError;
 use std::collections::BTreeMap;
 use types::{
@@ -299,10 +300,7 @@ pub trait SelectionOperations: SelectionFactory {
     ) -> impl std::future::Future<Output = Result<RouteSelection, GatewayError>> {
         async move {
             let context = self.selection();
-            if gateway_schema::reasoning::js_trim_source(model.as_js_string())
-                .as_units()
-                .is_empty()
-            {
+            if js_trim_source(model.as_js_string()).as_units().is_empty() {
                 return Err(invalid("Missing or oversized authority identity."));
             }
             context.select_account_source(model, class, now).await

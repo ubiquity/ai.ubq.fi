@@ -1,5 +1,6 @@
 //! Lossless source composition and typed observations; Core alone owns JSON ordering.
 use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as json,
@@ -115,9 +116,8 @@ pub fn concat(parts: &[&JsString16]) -> JsString16 {
 
 pub fn trim(value: &JsString16) -> JsString16 {
     let units = value.as_units();
-    let white = |unit: &u16| {
-        char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
-    };
+    let white =
+        |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(schema_scalar::js_whitespace);
     let start = units.iter().take_while(|unit| white(unit)).count();
     let end = units.len()
         - units[start..]

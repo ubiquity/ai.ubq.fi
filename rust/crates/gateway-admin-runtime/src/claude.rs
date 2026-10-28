@@ -9,6 +9,7 @@ use gateway_core::{
     state::{AuthorityStore, RecordMutation, RevisionCheck, StoredRecord},
 };
 use gateway_kv_codec::key::RecordKey;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
@@ -112,7 +113,7 @@ fn scalar(value: &SourceJson, name: &str) -> Option<String> {
 fn source_trim(value: JsString16) -> JsString16 {
     let units = value.as_units();
     let whitespace =
-        |u: &u16| char::from_u32(u32::from(*u)).is_some_and(gateway_schema::util::js_whitespace);
+        |u: &u16| char::from_u32(u32::from(*u)).is_some_and(schema_scalar::js_whitespace);
     let start = units
         .iter()
         .position(|u| !whitespace(u))

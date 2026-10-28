@@ -13,6 +13,7 @@ use gateway_auth_primitives::{
     store::{check, commit, put},
 };
 use gateway_core::query::QueryStore;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -41,7 +42,7 @@ fn provider_id(id: &str) -> bool {
 fn normalize_ids(ids: &[String]) -> Vec<String> {
     let set: BTreeSet<_> = ids
         .iter()
-        .map(|s| s.trim_matches(gateway_schema::util::js_whitespace))
+        .map(|s| s.trim_matches(schema_scalar::js_whitespace))
         .collect();
     let mut result: Vec<String> = PROVIDER_IDS
         .into_iter()
@@ -105,7 +106,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     let scenario = v
                         .get("scenario")?
                         .as_str()?
-                        .trim_matches(gateway_schema::util::js_whitespace);
+                        .trim_matches(schema_scalar::js_whitespace);
                     let updated = v.get("updated_at_ms")?.as_i64().filter(|n| *n > 0)?;
                     if !SCENARIOS.contains(&scenario) {
                         return None;

@@ -1,7 +1,7 @@
 //! Lossless supported Chat/Responses input normalization from src/input-normalization.ts.
 use super::controls::normalize_breakpoint;
-use super::{value::Text, value::Value, value::normalized_string};
 use gateway_local_refusal::source_error::SourceRequestError as GatewayError;
+use gateway_schema_values::value::{Text, Value, normalized_string};
 use gateway_source::{js_string::JsString16, source_serialization as source};
 fn invalid(message: impl AsRef<str>, param: Option<&str>) -> GatewayError {
     GatewayError::scalar(message.as_ref(), param)
@@ -185,10 +185,10 @@ pub(super) fn normalize_response_content(
             )?;
             let fields = ["file_id", "file_data", "file_url"];
             if !fields.iter().any(|k| {
-                value
-                    .get(k)
-                    .and_then(Value::as_text)
-                    .is_some_and(|s| !s.trim_matches(crate::util::js_whitespace).is_empty())
+                value.get(k).and_then(Value::as_text).is_some_and(|s| {
+                    !s.trim_matches(gateway_schema_values::scalar::js_whitespace)
+                        .is_empty()
+                })
             }) {
                 return Err(invalid(
                     format!("{param} must include file_id, file_data, or file_url"),

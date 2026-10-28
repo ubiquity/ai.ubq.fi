@@ -4,6 +4,7 @@ use super::{PaidAttempt, PaidCorrelation, PaidUsage};
 use gateway_contracts::{
     identity::MAX_SAFE_INTEGER, provider::PaidProvider, source_usage::UsageTokens,
 };
+use gateway_schema_values::{scalar as schema_scalar, source_view::js_trim_source};
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 
 fn count(value: Option<u64>) -> Option<i64> {
@@ -32,8 +33,8 @@ pub fn surplus_usage_from_source(
     pricing: Option<&SourceJson>,
 ) -> Option<PaidUsage> {
     if attempt.reservation.provider != PaidProvider::Surplus
-        || gateway_schema::util::js_trim(&attempt.reservation.attempt_id.0).is_empty()
-        || gateway_schema::reasoning::js_trim_source(attempt.model.as_js_string())
+        || schema_scalar::js_trim(&attempt.reservation.attempt_id.0).is_empty()
+        || js_trim_source(attempt.model.as_js_string())
             .as_units()
             .is_empty()
         || attempt.quota_per_credit <= 0

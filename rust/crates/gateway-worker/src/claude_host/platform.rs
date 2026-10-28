@@ -18,8 +18,8 @@ use gateway_observability::{
 use gateway_schema::catalog::ProviderCatalog;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
-use serde_json::json;
 use std::{cmp::Ordering, rc::Rc};
+use {gateway_schema_values::scalar as util, serde_json::json};
 
 #[derive(Clone)]
 pub(crate) struct Host {
@@ -296,9 +296,7 @@ fn trim_workspace(
     value: &gateway_source::js_string::JsString16,
 ) -> Option<gateway_source::js_string::JsString16> {
     let units = value.as_units();
-    let whitespace = |unit: &u16| {
-        char::from_u32(u32::from(*unit)).is_some_and(gateway_schema::util::js_whitespace)
-    };
+    let whitespace = |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(util::js_whitespace);
     let start = units
         .iter()
         .position(|unit| !whitespace(unit))

@@ -13,17 +13,22 @@ fn error(message: impl Into<String>) -> GatewayError {
     GatewayError::new(503, message, Some("runtime_config_invalid"))
 }
 pub fn default_model(value: &SourceJson) -> Option<ModelId> {
-    c::normalized(c::get(value, "default_model").as_ref()).map(ModelId::from_source)
+    gateway_schema_values::source_view::normalized(
+        gateway_source::source_serialization::member(value, "default_model").as_ref(),
+    )
+    .map(ModelId::from_source)
 }
 pub fn default_reasoning_effort(value: &SourceJson) -> Option<JsString16> {
-    c::normalized(c::get(value, "default_reasoning_effort").as_ref())
+    gateway_schema_values::source_view::normalized(
+        gateway_source::source_serialization::member(value, "default_reasoning_effort").as_ref(),
+    )
 }
 pub fn compact_snapshot(snapshot: &ModelSnapshot) -> Result<SourceJson, GatewayError> {
     let mut models = Vec::new();
     let mut seen = Vec::new();
     for record in &snapshot.models {
-        let Some(slug) = c::identifier(record)
-            .map(|s| c::trim(&s))
+        let Some(slug) = gateway_schema_values::source_view::identifier(record)
+            .map(|s| gateway_schema_values::source_view::js_trim_source(&s))
             .filter(|s| !s.as_units().is_empty())
         else {
             continue;
@@ -43,13 +48,19 @@ pub fn compact_snapshot(snapshot: &ModelSnapshot) -> Result<SourceJson, GatewayE
             c::json(&reasoning.levels),
         );
         let mut wires = reasoning.wire_efforts;
-        if reasoning.levels.iter().any(|s| c::matches(s, "ultra")) {
+        if reasoning
+            .levels
+            .iter()
+            .any(|s| gateway_schema_values::source_view::matches(s, "ultra"))
+        {
             c::set(&mut wires, "ultra", c::json("max"));
         }
         if source::entries(&wires).is_some_and(|w| !w.is_empty()) {
             c::set(&mut row, "reasoning_effort_wire_map", wires);
         }
-        if let Some(cache) = compact_capabilities_source(c::get(record, "prompt_cache").as_ref()) {
+        if let Some(cache) = compact_capabilities_source(
+            gateway_source::source_serialization::member(record, "prompt_cache").as_ref(),
+        ) {
             c::set(&mut row, "prompt_cache", cache);
         }
         models.push(row);
@@ -59,7 +70,7 @@ pub fn compact_snapshot(snapshot: &ModelSnapshot) -> Result<SourceJson, GatewayE
             "runtime config requires a non-empty Codex model catalog",
         ));
     }
-    let source_label = c::trim(&snapshot.source);
+    let source_label = gateway_schema_values::source_view::js_trim_source(&snapshot.source);
     if source_label.as_units().is_empty() || snapshot.updated_at_ms <= 0 {
         return Err(error(
             "runtime config requires valid Codex catalog metadata",
@@ -73,7 +84,7 @@ pub fn compact_snapshot(snapshot: &ModelSnapshot) -> Result<SourceJson, GatewayE
     if let Some(version) = snapshot
         .client_version
         .as_deref()
-        .map(crate::util::js_trim)
+        .map(gateway_schema_values::scalar::js_trim)
         .filter(|s| !s.is_empty())
     {
         c::set(&mut value, "client_version", c::json(version));
@@ -88,41 +99,41 @@ pub fn build_runtime_config(
 ) -> Result<SourceJson, SourceRequestError> {
     let compact = compact_snapshot(snapshot).map_err(SourceRequestError::from_gateway)?;
     let requested = default_model
-        .map(|m| c::trim(m.as_js_string()))
+        .map(|m| gateway_schema_values::source_view::js_trim_source(m.as_js_string()))
         .filter(|s| !s.as_units().is_empty());
-    let models = c::get(&compact, "models")
+    let models = gateway_source::source_serialization::member(&compact, "models")
         .as_ref()
-        .and_then(c::array)
+        .and_then(gateway_source::source_serialization::array)
         .expect("validated compact catalog");
     let model = requested
         .or_else(|| {
             models
                 .first()
-                .and_then(|m| c::get(m, "slug"))
+                .and_then(|m| gateway_source::source_serialization::member(m, "slug"))
                 .as_ref()
-                .and_then(c::string)
+                .and_then(gateway_source::source_serialization::string)
         })
         .ok_or_else(|| {
             SourceRequestError::from_gateway(error("runtime config requires a default model"))
         })?;
     if !models.iter().any(|row| {
-        c::get(row, "slug")
+        gateway_source::source_serialization::member(row, "slug")
             .as_ref()
-            .and_then(c::string)
+            .and_then(gateway_source::source_serialization::string)
             .is_some_and(|slug| slug == model)
     }) {
         let prefix =
             JsString16::from_utf8("runtime config default model is absent from the catalog: ");
         return Err(SourceRequestError::new(
             503,
-            c::concat(&[&prefix, &model]),
+            gateway_schema_values::source_view::concat(&[&prefix, &model]),
             "invalid_request_error",
             Some("runtime_config_invalid"),
             None,
         ));
     }
     let effort = default_effort
-        .map(c::trim)
+        .map(gateway_schema_values::source_view::js_trim_source)
         .filter(|s| !s.as_units().is_empty())
         .unwrap_or_else(|| "medium".into());
     let value = c::object(vec![
@@ -142,15 +153,19 @@ pub fn build_runtime_config(
     Ok(value)
 }
 pub fn normalize_runtime_config(value: &SourceJson) -> Option<SourceJson> {
-    if c::get(value, "version").as_ref().and_then(source::number) != Some(2.0) {
+    if gateway_source::source_serialization::member(value, "version")
+        .as_ref()
+        .and_then(source::number)
+        != Some(2.0)
+    {
         return None;
     }
-    let snapshot = c::get(value, "codex_models")?
+    let snapshot = gateway_source::source_serialization::member(value, "codex_models")?
         .deserialize::<ModelSnapshot>()
         .ok()?;
     let model = default_model(value)?;
     let effort = default_reasoning_effort(value)?;
-    let time = c::get(value, "updated_at_ms")
+    let time = gateway_source::source_serialization::member(value, "updated_at_ms")
         .as_ref()
         .and_then(source::number)?
         .trunc() as i64;

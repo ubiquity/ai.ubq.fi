@@ -13,7 +13,7 @@ use gateway_provider_protocol::types::ResponseDecode;
 use gateway_provider_source::source as s;
 use gateway_provider_source::types::ChatProfile;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
-use gateway_schema::request::RequestSurface;
+use gateway_schema_values::request::RequestSurface;
 use gateway_source::error::GatewayError;
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;

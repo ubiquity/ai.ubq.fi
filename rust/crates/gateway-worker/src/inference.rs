@@ -6,7 +6,6 @@ use crate::host::PlatformTokens;
 use crate::inference_lifecycle::Lifecycle;
 use crate::inference_lifecycle::Session;
 use crate::inference_lifecycle::finish_hook;
-use crate::routing_host;
 use crate::transport::outbound::DispatchAttempt;
 use crate::transport::outbound::DispatchFailure;
 use crate::transport::outbound::DispatchOrigin;
@@ -30,24 +29,20 @@ use gateway_routing_runtime::{
     types::RefusalDecision, types::ResponseDecision, types::ResponseHead, types::RoutingInput,
     types::TransportState, types::WorkspaceContinuation,
 };
-use gateway_schema::{
-    request::RequestSurface,
-    source_request::{SourceRequestDocument, parse_http_body},
-};
+use gateway_schema::source_request::{SourceRequestDocument, parse_http_body};
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;
+use gateway_worker_http_body::protocol::correlation;
 use gateway_worker_platform::cancellation::Cancellation;
 use gateway_worker_storage::store::now_ms;
 use std::{cell::RefCell, rc::Rc};
 use worker::{Context, Method, Request, Response};
-
-use gateway_worker_http_body::protocol::correlation;
+use {crate::routing_host, gateway_schema_values::request::RequestSurface};
 
 mod late_failure;
 mod stream;
 mod task;
-
 use gateway_worker_stream::control::ATTEMPT_DEADLINE_MS;
 type ResponseResult = Result<Response, GatewayError>;
 

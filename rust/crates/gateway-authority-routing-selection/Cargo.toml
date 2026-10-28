@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-schema-values.workspace = true
 gateway-contracts.workspace = true
 gateway-kv-codec.workspace = true
 gateway-source.workspace = true

@@ -8,11 +8,15 @@ use gateway_routing_runtime::{
     local_work::LocalRequestMetadata, session::RoutingSession, types::RoutingInput,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_schema::{request::RequestSurface, source_request::SourceRequestDocument};
+use gateway_schema::source_request::SourceRequestDocument;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
-use std::sync::{Arc, Mutex};
+use {
+    gateway_schema_values::request::RequestSurface,
+    std::sync::{Arc, Mutex},
+};
+
 fn metadata(input: RoutingInput) -> LocalRequestMetadata {
     LocalRequestMetadata {
         context: input.context,

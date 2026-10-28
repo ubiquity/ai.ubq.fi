@@ -1,5 +1,8 @@
 //! Credential-bound subscription reads and private email decoding remain request-owned.
-use serde_json::{Value, json};
+use {
+    gateway_schema_values::scalar as util,
+    serde_json::{Value, json},
+};
 
 pub(super) async fn subscriptions(
     store: &gateway_worker_authority_binding::authority::RemoteAuthorityStore,
@@ -24,7 +27,7 @@ fn account_email(token: &str) -> Option<String> {
     let bytes = gateway_auth_credentials::provider_credentials::decode_source_base64(&encoded)?;
     let payload: Value = serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?;
     let normalize = |value: &Value| {
-        let text = gateway_schema::util::js_trim(value.as_str()?);
+        let text = util::js_trim(value.as_str()?);
         (!text.is_empty()
             && text.encode_utf16().count() <= 320
             && text.contains('@')

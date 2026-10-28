@@ -8,6 +8,7 @@ use gateway_capacity_projection::{
     shapes::{BUCKET_MS, RETENTION_MS, read_history},
 };
 use gateway_core::query::QueryStore;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -27,7 +28,7 @@ pub fn parse_observations(value: &Value) -> Option<Vec<Value>> {
     let mut points = Vec::with_capacity(values.len());
     for value in values {
         let point = read_history(value)?;
-        if !bucketed(&point) || gateway_schema::util::json_stringify(&point).len() > 16 * 1024 {
+        if !bucketed(&point) || schema_scalar::json_stringify(&point).len() > 16 * 1024 {
             return None;
         }
         points.push(point)

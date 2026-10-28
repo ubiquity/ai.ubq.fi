@@ -3,16 +3,17 @@ use gateway_catalog_provider::host::{
     CatalogFetch, CatalogFetchResponse, CatalogHost, CatalogMaintenance, CatalogObservation,
     CatalogProvider, CodexAccount, CredentialPublication, unavailable,
 };
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_contracts::model::ModelId;
 use gateway_core::query::QueryStore;
 use gateway_schema::{
     catalog_cache::{self, CacheState, CatalogResponse, LoadedCatalog},
     catalog_store,
-    reasoning::js_trim_source,
     snapshot::union_account_catalogs,
+};
+use gateway_schema_values::scalar as schema_scalar;
+use gateway_schema_values::source_view::js_trim_source;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use std::{
     future::{Future, poll_fn},
@@ -100,7 +101,7 @@ async fn observed_fetch<H: CatalogHost>(
     }
 }
 fn normalized_request_id(raw: &str) -> Option<String> {
-    let value = gateway_schema::util::js_trim(raw);
+    let value = schema_scalar::js_trim(raw);
     (!value.is_empty()
         && value.encode_utf16().count() <= 256
         && !value.chars().any(|c| (c as u32) < 0x20 || c == '\u{7f}'))

@@ -5,6 +5,7 @@ use gateway_provider_protocol::{types::AuthMaterial, types::ClientSurface, types
 use gateway_provider_response::response::decode_response;
 use gateway_provider_tool_grammar::source_tools::ToolMap;
 use gateway_providers::source_request::prepare_source_request;
+use gateway_schema_values::request::RequestSurface;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as json,
 };
@@ -264,7 +265,7 @@ fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() -> 
     // This is explicitly the common envelope validator, not a provider-owned ingress gate.
     let error = gateway_schema::source_request::fields::validate_request_fields(
         &parse(r#"{"model":"deepseek-flash","input":"x","\ud800":1}"#),
-        gateway_schema::request::RequestSurface::Responses,
+        RequestSurface::Responses,
         &Default::default(),
     )
     .err()

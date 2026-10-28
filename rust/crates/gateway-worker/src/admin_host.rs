@@ -7,14 +7,13 @@ use gateway_admin_runtime::{
 };
 use gateway_auth_contracts::types::AuthResponse;
 use gateway_contracts::identity::RequestId;
-use gateway_schema::util::js_trim;
 use gateway_source::error::GatewayError;
-use std::cmp::Ordering;
 use worker::{
     Env,
     js_sys::{Function, Reflect},
     wasm_bindgen::{JsCast, JsValue},
 };
+use {gateway_schema_values::scalar::js_trim, std::cmp::Ordering};
 
 pub fn config(env: &Env) -> RuntimeConfig {
     let raw = crate::host::setting(env, "CLAUDE_CODE_ALLOWED_KEY_IDS").unwrap_or_default();

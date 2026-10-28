@@ -4,10 +4,9 @@ use gateway_claude_usage_quota::{
 };
 use gateway_contracts::claude::ClaudeErrorEvidence as ErrorEvidence;
 use gateway_provider_protocol::types::Headers;
-use gateway_schema::util::js_trim;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
-use serde_json::Value;
 use std::collections::BTreeMap;
+use {gateway_schema_values::scalar::js_trim, serde_json::Value};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResponseKind {

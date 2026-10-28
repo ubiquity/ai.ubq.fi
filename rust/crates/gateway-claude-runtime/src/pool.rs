@@ -16,11 +16,11 @@ use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,
 };
-use serde::Serialize;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
 };
+use {gateway_schema_values::scalar as util, serde::Serialize};
 
 pub struct ClaudePoolSession {
     pub(crate) config: host::PoolConfig,
@@ -73,7 +73,7 @@ impl ClaudePoolSession {
         if self.access(store, host, input.key_id).await?.is_none() {
             return Ok(host::PoolSelection::NotApplicable);
         }
-        if gateway_schema::util::js_trim(&self.config.replay_scope).is_empty() {
+        if util::js_trim(&self.config.replay_scope).is_empty() {
             return Err(crate::unavailable(
                 "The existing Claude principal replay scope is unavailable.",
             ));
@@ -488,7 +488,7 @@ impl ClaudePoolSession {
     ) {
         if let Ok(Some(check)) = claude::current_binding(store, binding, host.now_ms()).await {
             let id = provider_request_id
-                .map(|id| gateway_schema::util::js_trim(&id).to_owned())
+                .map(|id| util::js_trim(&id).to_owned())
                 .filter(|id| {
                     !id.is_empty()
                         && id.encode_utf16().count() <= 256

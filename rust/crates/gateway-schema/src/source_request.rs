@@ -1,8 +1,12 @@
 //! Ordinary-request data views; no provider dispatch or authority is implemented here.
+use gateway_schema_values::{
+    request::{SourceField, SourceModelRequest},
+    source_view::js_trim_source as trim,
+};
 use gateway_source::error::GatewayError;
 macro_rules! json {
-    ({$($key:literal:$value:expr),*$(,)?})=>{$crate::source_request::value::Value::object(vec![$((gateway_source::js_string::JsString16::from_utf8($key),$crate::source_request::value::Value::from_serializable(&$value).expect("Source normalization fields serialize"))),*])};
-    ($value:expr)=>{$crate::source_request::value::Value::from_serializable(&$value).expect("Source normalization value serializes")};
+    ({$($key:literal:$value:expr),*$(,)?})=>{gateway_schema_values::value::Value::object(vec![$((gateway_source::js_string::JsString16::from_utf8($key),gateway_schema_values::value::Value::from_serializable(&$value).expect("Source normalization fields serialize"))),*])};
+    ($value:expr)=>{gateway_schema_values::value::Value::from_serializable(&$value).expect("Source normalization value serializes")};
 }
 pub mod cache_capability;
 pub(crate) mod cache_metadata;
@@ -13,7 +17,6 @@ pub mod fields;
 pub mod normalized;
 pub mod ordinary;
 pub mod reasoning;
-pub mod value;
 use self::{
     fields::validate_request_fields, ordinary::OrdinarySourceRequest, reasoning::parse_reasoning,
 };
@@ -21,18 +24,6 @@ use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 
 pub const MAX_ACCEPTED_JSON_BODY_BYTES: usize = 32 * 1024 * 1024;
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum SourceField<T> {
-    Missing,
-    Null,
-    Value(T),
-}
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SourceModelRequest {
-    Default,
-    Named(JsString16),
-}
 
 /// Private construction retains one immutable document; this is data, not admission.
 #[derive(Clone)]
@@ -56,13 +47,16 @@ impl SourceRequestDocument {
     pub fn original_source(&self) -> &SourceJson {
         &self.original
     }
-    pub fn for_surface(&self, surface: crate::request::RequestSurface) -> OrdinarySourceRequest {
+    pub fn for_surface(
+        &self,
+        surface: gateway_schema_values::request::RequestSurface,
+    ) -> OrdinarySourceRequest {
         OrdinarySourceRequest::new(self.clone(), surface)
     }
     pub fn validate_fields(
         &self,
-        surface: crate::request::RequestSurface,
-        extensions: &crate::request::RequestExtensions,
+        surface: gateway_schema_values::request::RequestSurface,
+        extensions: &gateway_schema_values::request::RequestExtensions,
     ) -> Result<(), SourceRequestError> {
         validate_request_fields(&self.original, surface, extensions)
     }
@@ -108,19 +102,6 @@ fn is_null(value: &SourceJson) -> bool {
 }
 fn string(value: &SourceJson) -> Option<JsString16> {
     value.deserialize::<JsString16>().ok()
-}
-pub(crate) fn trim(value: &JsString16) -> JsString16 {
-    let units = value.as_units();
-    let white =
-        |unit: &u16| char::from_u32(u32::from(*unit)).is_some_and(crate::util::js_whitespace);
-    let start = units.iter().take_while(|unit| white(unit)).count();
-    let end = units.len()
-        - units[start..]
-            .iter()
-            .rev()
-            .take_while(|unit| white(unit))
-            .count();
-    JsString16::from_units(units[start..end].to_vec())
 }
 pub fn model_request(value: Option<&SourceJson>) -> Result<SourceModelRequest, SourceRequestError> {
     let Some(value) = value.filter(|value| !is_null(value)) else {

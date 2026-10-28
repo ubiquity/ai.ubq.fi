@@ -23,6 +23,7 @@ use gateway_admin_contracts::{
 use gateway_auth_contracts::{types::AuthHost, types::AuthResponse, types::invalid};
 use gateway_auth_native_wire::native_read::NativeReadRequest;
 use gateway_core::{query::QueryStore, state::RevisionCheck};
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
 
@@ -192,11 +193,11 @@ fn supervisor_target(
         (
             fields::first(&input.query, "source")
                 .unwrap_or("")
-                .trim_matches(gateway_schema::util::js_whitespace)
+                .trim_matches(schema_scalar::js_whitespace)
                 .to_owned(),
             fields::first(&input.query, "id")
                 .unwrap_or("")
-                .trim_matches(gateway_schema::util::js_whitespace)
+                .trim_matches(schema_scalar::js_whitespace)
                 .to_owned(),
         )
     } else {
@@ -240,7 +241,7 @@ fn supervisor_target(
 }
 
 fn parse_int_prefix(value: Option<&str>) -> Option<i64> {
-    let value = value?.trim_start_matches(gateway_schema::util::js_whitespace);
+    let value = value?.trim_start_matches(schema_scalar::js_whitespace);
     let end = value
         .char_indices()
         .take_while(|(i, c)| c.is_ascii_digit() || *i == 0 && (*c == '-' || *c == '+'))
@@ -331,10 +332,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                         "admin_raw_body_unavailable",
                     )
                 })?;
-                if !body
-                    .trim_matches(gateway_schema::util::js_whitespace)
-                    .is_empty()
-                {
+                if !body.trim_matches(schema_scalar::js_whitespace).is_empty() {
                     return Err(invalid(
                         "Prompt-cache scope experiment does not accept request fields",
                     ));
@@ -388,7 +386,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                     .unwrap_or(30);
                 let balance = fields::first(&input.query, "balance_window_days")
                     .and_then(|s| {
-                        s.trim_matches(gateway_schema::util::js_whitespace)
+                        s.trim_matches(schema_scalar::js_whitespace)
                             .parse::<f64>()
                             .ok()
                     })
@@ -417,7 +415,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 let id = input
                     .parameter
                     .as_deref()
-                    .map(gateway_schema::util::js_trim)
+                    .map(schema_scalar::js_trim)
                     .filter(|s| !s.is_empty() && s.encode_utf16().count() <= 200)
                     .ok_or_else(|| invalid("Invalid API key id"))?;
                 if store::read(
@@ -465,7 +463,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
                 let request = {
                     let cursor: String = fields::first(&input.query, "cursor")
                         .unwrap_or("")
-                        .trim_matches(gateway_schema::util::js_whitespace)
+                        .trim_matches(schema_scalar::js_whitespace)
                         .chars()
                         .take(240)
                         .collect();
@@ -524,7 +522,7 @@ impl<S: QueryStore, H: AuthHost, C: RuntimeCapabilities> AdminRuntime<'_, S, H, 
             && ["machine", "about", "status"].into_iter().all(|name| {
                 body.get(name)
                     .and_then(Value::as_str)
-                    .is_some_and(|s| !gateway_schema::util::js_trim(s).is_empty())
+                    .is_some_and(|s| !schema_scalar::js_trim(s).is_empty())
             })
             && ["model", "effort", "state"].into_iter().all(nullable)
             && ["sampledAtMs", "generatedAtMs"].into_iter().all(|name| {
