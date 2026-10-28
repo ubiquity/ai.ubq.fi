@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-kv-codec.workspace = true
 gateway-contracts.workspace = true
 gateway-source = { path = "../gateway-source" }
 gateway-auth-passport-sessions = { path = "../gateway-auth-passport-sessions" }
@@ -41,8 +42,6 @@ getrandom = { version = "=0.2.16", features = ["js"] }
 getrandom03 = { package = "getrandom", version = "=0.3.4", features = ["wasm_js"] }
 uuid = { version = "=1.28.0", features = ["js"] }
 
-[dev-dependencies]
-gateway-kv-codec.workspace = true
 
 [lints]
 workspace = true

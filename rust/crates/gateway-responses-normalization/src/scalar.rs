@@ -1,5 +1,6 @@
 //! Scalar compatibility is an explicit fallible boundary over the source engine.
 use crate::normalized as source;
+use gateway_source::error::GatewayError;
 use serde_json::Value;
 
 fn raw(
