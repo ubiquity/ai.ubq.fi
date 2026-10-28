@@ -127,7 +127,7 @@ impl<R: NativeNonceAuthority> NativeAuthenticator<'_, R> {
     pub async fn admit_import_with_context<'c>(
         &self,
         kind: NativeImportKind,
-        headers: NativeImportAuthHeaders<'_>,
+        headers: Result<NativeImportAuthHeaders<'_>, GatewayError>,
         metadata: &NativeImportMetadata,
         lifetime: crate::native_context::NativeRequestLifetime<'c>,
     ) -> Result<
@@ -138,6 +138,7 @@ impl<R: NativeNonceAuthority> NativeAuthenticator<'_, R> {
         GatewayError,
     > {
         lifetime.check()?;
+        let headers = headers?;
         let admission = self
             .admit_import(kind, headers, metadata, crate::native_context::now_ms()?)
             .await?;
