@@ -1,10 +1,13 @@
 #![cfg(not(target_arch = "wasm32"))]
-use gateway_claude_policy::quota::{self, quota_key};
+use gateway_claude_policy::{
+    host::SelectionInput,
+    quota::{self, quota_key},
+};
 use gateway_claude_runtime::{
     host::OutcomeDecision, persistence::clear_guards, pool::ClaudePoolSession,
 };
 use gateway_claude_runtime_test_support::fixture::{
-    Host, NOW, Store, account, apply, raw, run, seed, selected,
+    Host, KEY, MODEL, NOW, Store, account, apply, fixture_effort, raw, run, seed, selected,
 };
 use gateway_claude_usage_protocol::snapshot;
 use gateway_claude_usage_quota::{headers, parse_record, parse_source_state, stored_state};
@@ -81,7 +84,8 @@ fn header_codec_roundtrips_json_and_profile_v2_without_losing_old_usage() -> Tes
 fn ordinary_streaming_nonstream_error_and_headerless_heads_keep_independent_evidence() {
     let store = Store::new();
     let account = account(1);
-    let session = ClaudePoolSession::new(seed(&store, vec![account.clone()]));
+    let config = seed(&store, vec![account.clone()]);
+    let session = ClaudePoolSession::new(config.clone());
     let host = Host::new(&store);
     let raw = raw();
     let first = selected(&session, &store, &host, &raw);
@@ -99,6 +103,25 @@ fn ordinary_streaming_nonstream_error_and_headerless_heads_keep_independent_evid
     ));
     let first_state = store.quota(&account).unwrap();
     let proofs = first_state.pool_proofs.clone();
+    let repeated = run(session.select(
+        &store,
+        &host,
+        SelectionInput {
+            key_id: KEY,
+            model: &MODEL.into(),
+            raw: &raw,
+            effective_effort: fixture_effort(&raw),
+            selection: None,
+        },
+    ))
+    .unwrap_err();
+    assert_eq!(repeated.status, 409);
+    assert_eq!(
+        repeated.envelope.error.message,
+        "Claude account selection changed during the request."
+    );
+    // Independent ordinary requests share storage, never the request-local attempt set.
+    let session = ClaudePoolSession::new(config.clone());
     let next = selected(&session, &store, &host, &raw);
     apply(
         &session,
@@ -112,6 +135,7 @@ fn ordinary_streaming_nonstream_error_and_headerless_heads_keep_independent_evid
     let evidence = store.quota(&account).unwrap().response_headers.unwrap();
     assert_eq!(evidence.windows["5h"].observed_at_ms, (NOW - 100) as f64);
     assert_eq!(evidence.windows["7d"].observed_at_ms, (NOW - 50) as f64);
+    let session = ClaudePoolSession::new(config.clone());
     let next = selected(&session, &store, &host, &raw);
     apply(&session, &store, &host, &next, 200, Headers::new(), NOW);
     let headerless = store.quota(&account).unwrap();
@@ -119,6 +143,7 @@ fn ordinary_streaming_nonstream_error_and_headerless_heads_keep_independent_evid
     assert_eq!(headerless.pool_proofs, proofs);
     assert!(headerless.cooldown_until_ms.is_none());
     host.fail_telemetry.set(true);
+    let session = ClaudePoolSession::new(config);
     let next = selected(&session, &store, &host, &raw);
     apply(
         &session,
