@@ -1,5 +1,5 @@
 //! Envelope and finite controls are separate source phases, never transcript scalarization.
-use super::member;
+use crate::syntax::member;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema_values::{
     allowlists::*,

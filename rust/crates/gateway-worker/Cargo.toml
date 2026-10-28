@@ -21,6 +21,7 @@ gateway-catalog-admin = { path = "../gateway-catalog-admin" }
 gateway-catalog-control = { path = "../gateway-catalog-control" }
 gateway-catalog-inputs = { path = "../gateway-catalog-inputs" }
 gateway-catalog-versioned = { path = "../gateway-catalog-versioned" }
+gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
 gateway-admin-diagnostics-runtime = { path = "../gateway-admin-diagnostics-runtime" }
 gateway-admin-runtime-contracts = { path = "../gateway-admin-runtime-contracts" }

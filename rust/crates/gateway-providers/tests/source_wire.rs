@@ -263,7 +263,7 @@ fn direct_native_and_ordinary_branches_keep_the_source_phase_boundary() {
 #[test]
 fn source_errors_keep_unknown_field_role_choice_and_disabled_call_id_units() -> Result<(), String> {
     // This is explicitly the common envelope validator, not a provider-owned ingress gate.
-    let error = gateway_schema::source_request::fields::validate_request_fields(
+    let error = gateway_request_normalization::fields::validate_request_fields(
         &parse(r#"{"model":"deepseek-flash","input":"x","\ud800":1}"#),
         RequestSurface::Responses,
         &Default::default(),

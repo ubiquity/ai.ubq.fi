@@ -3,13 +3,6 @@ use {gateway_source::error::GatewayError, serde_json::Value};
 pub const SCOPE_PROFILE: &str = "responses_implicit_input_text_keyed_cycle_isolated_v5";
 pub const CODEX_PROVIDER: &str = "codex_chatgpt";
 
-pub fn validate_prompt_cache_controls(body: &Value) -> Result<(), GatewayError> {
-    crate::source_request::fields::validate_prompt_cache_controls(
-        &gateway_source::source_json::SourceJson::from_serializable(body)?,
-    )
-    .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
-}
-
 fn scalar_source(value: &Value) -> Option<gateway_source::source_json::SourceJson> {
     gateway_source::source_json::SourceJson::from_serializable(value).ok()
 }

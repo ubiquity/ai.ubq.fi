@@ -4,13 +4,13 @@ use gateway_schema_values::{
     scalar::*,
 };
 use gateway_source::error::GatewayError;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 pub fn validate_request_fields(
     body: &Value,
     surface: RequestSurface,
     extensions: &RequestExtensions,
 ) -> Result<(), GatewayError> {
-    crate::source_request::fields::validate_request_fields(
+    crate::fields::validate_request_fields(
         &gateway_source::source_json::SourceJson::from_serializable(body)?,
         surface,
         extensions,
@@ -19,31 +19,31 @@ pub fn validate_request_fields(
 }
 
 pub fn parse_stream(value: Option<&Value>) -> Result<bool, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::parse_stream(value.as_ref())
+    let value = crate::syntax::scalar_value(value)?;
+    crate::syntax::parse_stream(value.as_ref())
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 
 pub fn parse_chat_stream_options(value: Option<&Value>) -> Result<bool, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::fields::parse_chat_stream_options(value.as_ref())
+    let value = crate::syntax::scalar_value(value)?;
+    crate::fields::parse_chat_stream_options(value.as_ref())
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 pub fn parse_max_completion_tokens(value: Option<&Value>) -> Result<Option<i64>, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::fields::parse_max_completion_tokens(value.as_ref())
+    let value = crate::syntax::scalar_value(value)?;
+    crate::fields::parse_max_completion_tokens(value.as_ref())
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }
 
 pub fn resolve_model(value: Option<&Value>, default: Option<&str>) -> Result<String, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::resolve_model(value.as_ref(), default)
+    let value = crate::syntax::scalar_value(value)?;
+    crate::syntax::resolve_model(value.as_ref(), default)
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
         .try_utf8()
 }
 pub fn parse_instructions(value: Option<&Value>) -> Result<Option<String>, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    match crate::source_request::parse_instructions(value.as_ref())
+    let value = crate::syntax::scalar_value(value)?;
+    match crate::syntax::parse_instructions(value.as_ref())
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
     {
         gateway_schema_values::request::SourceField::Missing
@@ -53,7 +53,7 @@ pub fn parse_instructions(value: Option<&Value>) -> Result<Option<String>, Gatew
 }
 
 pub fn validate_cache_control(control: &Value) -> Result<(), GatewayError> {
-    crate::source_request::fields::validate_cache_control(
+    crate::fields::validate_cache_control(
         &gateway_source::source_json::SourceJson::from_serializable(control)?,
     )
     .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
@@ -230,8 +230,31 @@ pub fn normalize_tool_choice_for_codex(value: &Value) -> Value {
 /// TextDecoder's lossy UTF-8 and initial BOM handling precede JSON.parse in src/request.ts.
 /// arbitrary_precision carries exponent overflow until JS numeric checks/stringification handle it.
 pub fn parse_json_body(bytes: &[u8]) -> Result<Value, GatewayError> {
-    crate::source_request::parse_http_body(bytes)
+    crate::syntax::parse_http_body(bytes)
         .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
         .deserialize()
         .map_err(|_| invalid("Invalid JSON body", None))
+}
+
+pub fn parse_effort(value: Option<&Value>, field: &str) -> Result<Option<String>, GatewayError> {
+    let value = crate::syntax::scalar_value(value)?;
+    crate::syntax::parse_effort(value.as_ref(), field)
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
+        .map(|value| value.try_utf8())
+        .transpose()
+}
+
+pub fn parse_reasoning(value: Option<&Value>) -> Result<Option<Map<String, Value>>, GatewayError> {
+    let value = crate::syntax::scalar_value(value)?;
+    crate::syntax::parse_reasoning(value.as_ref())
+        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
+        .map(|value| value.deserialize())
+        .transpose()
+}
+
+pub fn validate_prompt_cache_controls(body: &Value) -> Result<(), GatewayError> {
+    crate::fields::validate_prompt_cache_controls(
+        &gateway_source::source_json::SourceJson::from_serializable(body)?,
+    )
+    .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)
 }

@@ -20,7 +20,7 @@ use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_DOMAIN;
 use gateway_local_journal::local_work::SOURCE_REQUEST_BINDING_VERSION;
 use gateway_local_journal::{local_work::LocalTerminalObservation, local_work::LocalWorkKind};
 use gateway_local_journal::{local_work::LocalWorkPhase, local_work::LocalWorkRecord};
-use gateway_schema::{catalog::CatalogInput, source_request::SourceRequestDocument};
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
 
@@ -32,7 +32,7 @@ mod coordination;
 pub struct LocalRequestMetadata {
     pub context: RequestContext,
     pub principal: AuthPrincipal,
-    pub catalog: CatalogInput,
+    pub catalog: gateway_schema::catalog::CatalogInput,
     pub runtime: Option<SourceJson>,
     pub client_version: String,
     pub native_session_id: Option<String>,

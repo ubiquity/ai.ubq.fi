@@ -12,11 +12,11 @@ use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::TransportObservation,
 };
 use gateway_local_refusal::routing_error::RoutingError;
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime::{
     local_work::LocalAdmissionInput, local_work::LocalRequestMetadata, local_work::LocalWorkHandle,
     local_work::completion::response::LocalWireKind, session::RoutingSession,
 };
-use gateway_schema::source_request::SourceRequestDocument;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_stream::observed::{ObservationHandle, ObservedStream};
 use std::{

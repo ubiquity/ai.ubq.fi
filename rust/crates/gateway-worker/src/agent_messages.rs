@@ -6,7 +6,7 @@ use gateway_core::{
     state::StoredRecord,
 };
 use gateway_kv_codec::tuple_key::{ScalarKeyPart, TupleKey};
-use gateway_schema::request::parse_json_body;
+use gateway_request_normalization::scalar::parse_json_body;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body::inference_bytes;

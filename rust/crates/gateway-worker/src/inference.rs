@@ -23,13 +23,13 @@ use gateway_contracts::{
 use gateway_local_refusal::routing_error::RoutingError;
 use gateway_observability::replay_trace::{AttemptTrace, TraceTerminal};
 use gateway_provider_protocol::types::Headers;
+use gateway_request_normalization::{document::SourceRequestDocument, syntax::parse_http_body};
 use gateway_routing_runtime::{
     local_work::LocalRequestMetadata, session::RoutingSession, types::AttemptFailure,
     types::FailureOrigin, types::PreparedAttempt, types::PreparedWireRequest,
     types::RefusalDecision, types::ResponseDecision, types::ResponseHead, types::RoutingInput,
     types::TransportState, types::WorkspaceContinuation,
 };
-use gateway_schema::source_request::{SourceRequestDocument, parse_http_body};
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;
 use gateway_worker_http_body::body;

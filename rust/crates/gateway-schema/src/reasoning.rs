@@ -1,11 +1,9 @@
 //! src/request-policy.ts:98-163,412-451,565-613; tiers are deliberately open UTF16 strings.
 use crate::model_control as control;
 use gateway_source::{
-    error::GatewayError, js_string::JsString16, source_json::SourceJson,
-    source_serialization as source,
+    js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelReasoning {
     pub levels: Vec<JsString16>,
@@ -105,20 +103,6 @@ impl ModelReasoning {
     }
 }
 /// Explicit old scalar adapters; source runtime callers use source_request directly.
-pub fn parse_effort(value: Option<&Value>, field: &str) -> Result<Option<String>, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::reasoning::parse_effort(value.as_ref(), field)
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
-        .map(|value| value.try_utf8())
-        .transpose()
-}
-pub fn parse_reasoning(value: Option<&Value>) -> Result<Option<Map<String, Value>>, GatewayError> {
-    let value = crate::source_request::scalar_value(value)?;
-    crate::source_request::reasoning::parse_reasoning(value.as_ref())
-        .map_err(gateway_local_refusal::source_error::SourceRequestError::into_scalar)?
-        .map(|value| value.deserialize())
-        .transpose()
-}
 pub fn effort_for_codex(effort: &JsString16, model: &ModelReasoning) -> JsString16 {
     if gateway_schema_values::source_view::matches(effort, "none") {
         "none".into()
@@ -138,7 +122,7 @@ pub fn resolve_reasoning(
     model: &ModelReasoning,
     default_effort: &JsString16,
 ) -> Result<ResolvedReasoning, gateway_local_refusal::source_error::SourceRequestError> {
-    let parsed = crate::source_request::reasoning::parse_reasoning(value)?;
+    let parsed = gateway_request_normalization::syntax::parse_reasoning(value)?;
     let label = parsed
         .as_ref()
         .and_then(|r| gateway_source::source_serialization::member(r, "effort"))

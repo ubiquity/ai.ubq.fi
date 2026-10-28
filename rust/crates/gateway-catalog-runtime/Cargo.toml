@@ -12,6 +12,7 @@ gateway-core.workspace = true
 gateway-schema.workspace = true
 serde_json.workspace = true
 
+gateway-request-normalization.workspace = true
 gateway-model-selection.workspace = true
 gateway-auth-native-contracts.workspace = true
 gateway-schema-values.workspace = true

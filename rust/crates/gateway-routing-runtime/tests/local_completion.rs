@@ -14,6 +14,7 @@ use gateway_core::{
     state::AuthorityStore, state::CommitOutcome, state::RecordMutation, state::StoredRecord,
 };
 use gateway_kv_codec::{key::RecordKey, tuple_key::ScalarKeyPart, tuple_key::TupleKey};
+use gateway_request_normalization::document::SourceRequestDocument;
 use gateway_routing_runtime::{
     local_work::{
         completion::response::{LocalAccountingProgress, LocalSelectedResponse, LocalWireKind},
@@ -23,7 +24,6 @@ use gateway_routing_runtime::{
     settlement::recover_pending,
 };
 use gateway_routing_runtime_test_support::{exec::*, host::*, input::*, seed::*, store::*};
-use gateway_schema::source_request::SourceRequestDocument;
 use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::{

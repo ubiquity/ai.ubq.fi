@@ -39,7 +39,7 @@ impl RoutingInput {
     /// Neutral data construction only; validation remains in source-defined planning phases.
     pub fn from_source_request(
         metadata: crate::local_work::LocalRequestMetadata,
-        request: gateway_schema::source_request::ordinary::OrdinarySourceRequest,
+        request: gateway_request_normalization::ordinary::OrdinarySourceRequest,
     ) -> Self {
         Self {
             context: metadata.context,

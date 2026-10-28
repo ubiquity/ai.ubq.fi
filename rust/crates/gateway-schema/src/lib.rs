@@ -9,7 +9,6 @@ pub mod native_catalog;
 pub mod prompt_cache;
 pub mod provider_catalog;
 pub mod reasoning;
-pub mod request;
 pub mod runtime_config;
 pub mod snapshot;
 pub mod source_request;

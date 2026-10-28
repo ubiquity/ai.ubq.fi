@@ -1,8 +1,8 @@
-//! Neutral retained request data; named validation phases remain explicit at callers.
-use super::{
-    SourceRequestDocument,
+//! Neutral retained request DATA; explicit validation/normalization phases stay caller-owned.
+use crate::{
+    document::SourceRequestDocument,
     fields::{parse_chat_stream_options, parse_max_completion_tokens},
-    reasoning::parse_effort,
+    syntax::{member, parse_effort},
 };
 use gateway_chat_normalization::normalized::SourceChatInput;
 use gateway_local_refusal::source_error::SourceRequestError;
@@ -42,17 +42,17 @@ impl OrdinarySourceRequest {
     }
     pub fn reasoning_effort(&self) -> Result<Option<JsString16>, SourceRequestError> {
         parse_effort(
-            super::member(self.original_source(), "reasoning_effort")?.as_ref(),
+            member(self.original_source(), "reasoning_effort")?.as_ref(),
             "reasoning_effort",
         )
     }
     pub fn max_completion_tokens(&self) -> Result<Option<i64>, SourceRequestError> {
         parse_max_completion_tokens(
-            super::member(self.original_source(), "max_completion_tokens")?.as_ref(),
+            member(self.original_source(), "max_completion_tokens")?.as_ref(),
         )
     }
     pub fn chat_stream_options(&self) -> Result<bool, SourceRequestError> {
-        parse_chat_stream_options(super::member(self.original_source(), "stream_options")?.as_ref())
+        parse_chat_stream_options(member(self.original_source(), "stream_options")?.as_ref())
     }
     pub fn validate_fields(
         &self,
