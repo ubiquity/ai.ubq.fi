@@ -19,10 +19,9 @@ impl Collator {
         Self(serde_json::from_str(value).unwrap())
     }
     pub fn captured() -> Self {
-        Self::from_catalog_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../gateway-schema/tests/fixtures/source-catalog-sort-v1.json"
-        )))
+        Self::from_catalog_json(include_str!(
+            "../../gateway-schema/tests/fixtures/source-catalog-sort-v1.json"
+        ))
     }
 }
 impl SourceStringCollator for Collator {

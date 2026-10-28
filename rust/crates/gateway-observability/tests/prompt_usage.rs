@@ -1,6 +1,6 @@
-use gateway_source::source_json::SourceJson;
 use gateway_contracts::source_usage::extract_source_usage_tokens;
 use gateway_observability::prompt::PromptEvent;
+use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 
 fn event() -> PromptEvent {
@@ -23,7 +23,7 @@ fn event() -> PromptEvent {
 #[test]
 fn all_source_fixtures_map_without_reinterpreting_or_inventing_usage() {
     let cases: Vec<Value> = serde_json::from_str(include_str!(
-        "../../gateway-core/src/source_usage_cases.json"
+        "../../gateway-contracts/src/source_usage_cases.json"
     ))
     .unwrap();
     assert_eq!(cases.len(), 34);
