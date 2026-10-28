@@ -5,7 +5,7 @@ use gateway_source::{error::GatewayError, js_string::JsString16};
 #[derive(Clone, Debug)]
 pub struct SourceRequestError {
     pub status: u16,
-    body: ClosedErrorBody,
+    body: Box<ClosedErrorBody>,
     diagnostic: Box<GatewayError>,
     local_aggregate_context_overflow: bool,
 }
@@ -17,7 +17,12 @@ impl SourceRequestError {
         code: Option<&str>,
         param: Option<Option<JsString16>>,
     ) -> Self {
-        let body = ClosedErrorBody::new(message.into(), error_type, code, param);
+        let body = Box::new(ClosedErrorBody::new(
+            message.into(),
+            error_type,
+            code,
+            param,
+        ));
         Self {
             status,
             local_aggregate_context_overflow: false,
@@ -56,7 +61,7 @@ impl SourceRequestError {
         Self::from_scalar(error)
     }
     pub(crate) fn from_scalar(error: GatewayError) -> Self {
-        let body = ClosedErrorBody::from_scalar(&error);
+        let body = Box::new(ClosedErrorBody::from_scalar(&error));
         Self {
             status: error.status,
             local_aggregate_context_overflow: false,
