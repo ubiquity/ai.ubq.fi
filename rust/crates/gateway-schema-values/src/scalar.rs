@@ -19,7 +19,7 @@ pub fn invalid(message: impl Into<String>, param: Option<&str>) -> GatewayError 
 pub fn normalized_string(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
-        .map(crate::util::js_trim)
+        .map(crate::scalar::js_trim)
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
 }

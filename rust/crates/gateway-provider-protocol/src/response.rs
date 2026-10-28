@@ -3,6 +3,7 @@ use crate::types::Headers;
 use crate::types::ResponseDecode;
 use crate::types::header;
 use gateway_contracts::provider::UpstreamProvider;
+use gateway_schema_values::scalar as schema_scalar;
 
 /// Exact source Chat-only Responses producer spelling, not an upstream identity validator.
 pub fn translated_response_id(id: &str) -> String {
@@ -51,17 +52,17 @@ pub fn response_plan(plan: &DecodePlan, headers: &Headers) -> DecodePlan {
             headers,
             &["x-request-id", "x-api-request-id", "x-oneapi-request-id"],
         )
-        .map(gateway_schema::util::js_trim)
+        .map(schema_scalar::js_trim)
         .filter(|id| !id.is_empty()),
         ResponseDecode::AnthropicToResponses => match plan.provider {
             UpstreamProvider::Metered => {
                 ["x-api-request-id", "x-oneapi-request-id", "x-request-id"]
                     .into_iter()
-                    .filter_map(|name| header(headers, name).map(gateway_schema::util::js_trim))
+                    .filter_map(|name| header(headers, name).map(schema_scalar::js_trim))
                     .find(|id| !id.is_empty())
             }
             UpstreamProvider::ClaudeCode => first_header(headers, &["request-id", "x-request-id"])
-                .map(gateway_schema::util::js_trim)
+                .map(schema_scalar::js_trim)
                 .filter(|id| !id.is_empty()),
             _ => None,
         },

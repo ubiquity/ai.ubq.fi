@@ -1,7 +1,6 @@
 //! Source string controls: these remain data until the separately owned runtime cutover.
-use gateway_schema::source_request::{
-    self, SourceField, SourceModelRequest, SourceRequestDocument,
-};
+use gateway_schema::source_request::{self, SourceRequestDocument};
+use gateway_schema_values::request::{SourceField, SourceModelRequest};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 
 fn doc(raw: &str) -> SourceRequestDocument {

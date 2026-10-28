@@ -1,7 +1,10 @@
-use gateway_source::{js_string::JsString16, source_json::SourceJson};
-use gateway_schema::{
-    allowlists::*, content::*, prompt_cache::*, reasoning::*, request::*, util::*,
+use gateway_schema::{content::*, prompt_cache::*, reasoning::*, request::*};
+use gateway_schema_values::{
+    allowlists::*,
+    request::{RequestExtensions, RequestSurface},
+    scalar::*,
 };
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde_json::{Value, json};
 #[test]
 fn official_surfaces_match_immutable_pin_and_extensions_stay_separate() {

@@ -1,7 +1,7 @@
 //! Full uploaded snapshot normalization and evidence-preserving refresh projection.
 use crate::{model_control as c, prompt_cache, reasoning::advertised_effort};
-use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use gateway_contracts::model::ModelId;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ModelSnapshot {
@@ -19,7 +19,7 @@ pub struct SnapshotOverrides {
 }
 pub fn parse_client_version(raw: &str) -> Option<[u64; 3]> {
     let parts: Vec<_> = raw
-        .trim_matches(crate::util::js_whitespace)
+        .trim_matches(gateway_schema_values::scalar::js_whitespace)
         .split('.')
         .collect();
     if parts.len() != 3 {
@@ -46,31 +46,42 @@ pub fn normalize_snapshot(
     overrides: &SnapshotOverrides,
     now_ms: i64,
 ) -> Option<ModelSnapshot> {
-    let raw = c::array(value)
-        .or_else(|| c::get(value, "models").as_ref().and_then(c::array))
-        .or_else(|| c::get(value, "data").as_ref().and_then(c::array))?;
+    let raw = gateway_source::source_serialization::array(value)
+        .or_else(|| {
+            gateway_source::source_serialization::member(value, "models")
+                .as_ref()
+                .and_then(gateway_source::source_serialization::array)
+        })
+        .or_else(|| {
+            gateway_source::source_serialization::member(value, "data")
+                .as_ref()
+                .and_then(gateway_source::source_serialization::array)
+        })?;
     let mut models = Vec::new();
     let mut seen = Vec::new();
     for item in &raw {
         if !c::is_record(item) {
             continue;
         }
-        let hidden = c::get(item, "visibility")
+        let hidden = gateway_source::source_serialization::member(item, "visibility")
             .as_ref()
-            .and_then(c::string)
+            .and_then(gateway_source::source_serialization::string)
             .is_some_and(|v| {
-                c::trim(&v)
+                gateway_schema_values::source_view::js_trim_source(&v)
                     .as_units()
                     .iter()
                     .copied()
                     .map(|u| if (65..=90).contains(&u) { u + 32 } else { u })
                     .eq("hide".encode_utf16())
             })
-            && c::get(item, "supported_in_api").is_none_or(|v| v.as_str() != "true");
+            && gateway_source::source_serialization::member(item, "supported_in_api")
+                .is_none_or(|v| v.as_str() != "true");
         if hidden {
             continue;
         }
-        let Some(slug) = c::identifier(item).filter(|s| !s.as_units().is_empty()) else {
+        let Some(slug) = gateway_schema_values::source_view::identifier(item)
+            .filter(|s| !s.as_units().is_empty())
+        else {
             continue;
         };
         if seen.contains(&slug) {
@@ -80,22 +91,26 @@ pub fn normalize_snapshot(
         let mut model = c::object(vec![("slug", c::json(&slug))]);
         if let Some(name) = ["display_name", "displayName", "name"]
             .iter()
-            .find_map(|key| c::get(item, key).as_ref().and_then(c::string))
+            .find_map(|key| {
+                gateway_source::source_serialization::member(item, key)
+                    .as_ref()
+                    .and_then(gateway_source::source_serialization::string)
+            })
             .filter(|s| !s.as_units().is_empty())
         {
             c::set(&mut model, "display_name", c::json(&name));
         }
         for key in ["description", "visibility"] {
-            if let Some(value) = c::get(item, key)
+            if let Some(value) = gateway_source::source_serialization::member(item, key)
                 .as_ref()
-                .and_then(c::string)
+                .and_then(gateway_source::source_serialization::string)
                 .filter(|s| !s.as_units().is_empty())
             {
                 c::set(&mut model, key, c::json(&value));
             }
         }
-        if let Some(value) =
-            c::get(item, "supported_in_api").filter(|v| matches!(v.as_str(), "true" | "false"))
+        if let Some(value) = gateway_source::source_serialization::member(item, "supported_in_api")
+            .filter(|v| matches!(v.as_str(), "true" | "false"))
         {
             c::set(&mut model, "supported_in_api", value);
         }
@@ -105,7 +120,7 @@ pub fn normalize_snapshot(
             "auto_compact_token_limit",
             "effective_context_window_percent",
         ] {
-            if let Some(value) = c::get(item, key) {
+            if let Some(value) = gateway_source::source_serialization::member(item, key) {
                 if value.as_str() == "null" {
                     c::set(&mut model, key, value);
                 } else if let Some(n) = gateway_source::source_serialization::number(&value)
@@ -115,7 +130,7 @@ pub fn normalize_snapshot(
                     c::set(
                         &mut model,
                         key,
-                        if n <= crate::util::MAX_SAFE_INTEGER {
+                        if n <= gateway_schema_values::scalar::MAX_SAFE_INTEGER {
                             c::json(&(n as i64))
                         } else {
                             c::json(&n)
@@ -124,16 +139,19 @@ pub fn normalize_snapshot(
                 }
             }
         }
-        if let Some(v) = c::get(item, "default_reasoning_level") {
+        if let Some(v) =
+            gateway_source::source_serialization::member(item, "default_reasoning_level")
+        {
             if v.as_str() == "null" {
                 c::set(&mut model, "default_reasoning_level", c::json("none"));
-            } else if let Some(level) = c::normalized(Some(&v)) {
+            } else if let Some(level) = gateway_schema_values::source_view::normalized(Some(&v)) {
                 c::set(&mut model, "default_reasoning_level", c::json(&level));
             }
         }
-        if let Some(raw_levels) = c::get(item, "supported_reasoning_levels")
-            .as_ref()
-            .and_then(c::array)
+        if let Some(raw_levels) =
+            gateway_source::source_serialization::member(item, "supported_reasoning_levels")
+                .as_ref()
+                .and_then(gateway_source::source_serialization::array)
         {
             let levels = raw_levels
                 .iter()
@@ -145,10 +163,14 @@ pub fn normalize_snapshot(
             let mut wire = Vec::new();
             for level in raw_levels {
                 if let Some(effort) = advertised_effort(&level) {
-                    let upstream = if c::matches(&effort, "ultra") {
+                    let upstream = if gateway_schema_values::source_view::matches(&effort, "ultra")
+                    {
                         Some("max".into())
                     } else {
-                        c::normalized(c::get(&level, "wire_effort").as_ref())
+                        gateway_schema_values::source_view::normalized(
+                            gateway_source::source_serialization::member(&level, "wire_effort")
+                                .as_ref(),
+                        )
                     };
                     if let Some(upstream) = upstream.filter(|s| s != &effort) {
                         let value = c::json(&upstream);
@@ -164,13 +186,14 @@ pub fn normalize_snapshot(
                 c::set(
                     &mut model,
                     "reasoning_effort_wire_map",
-                    gateway_source::source_serialization::object_keys(wire).expect("source wire map"),
+                    gateway_source::source_serialization::object_keys(wire)
+                        .expect("source wire map"),
                 );
             }
         }
-        if let Some(cache) =
-            prompt_cache::normalize_capabilities_source(c::get(item, "prompt_cache").as_ref())
-        {
+        if let Some(cache) = prompt_cache::normalize_capabilities_source(
+            gateway_source::source_serialization::member(item, "prompt_cache").as_ref(),
+        ) {
             c::set(&mut model, "prompt_cache", cache);
         }
         models.push(model);
@@ -183,7 +206,11 @@ pub fn normalize_snapshot(
         .as_ref()
         .filter(|s| !s.as_units().is_empty())
         .cloned()
-        .or_else(|| c::get(value, "source").as_ref().and_then(c::string))
+        .or_else(|| {
+            gateway_source::source_serialization::member(value, "source")
+                .as_ref()
+                .and_then(gateway_source::source_serialization::string)
+        })
         .unwrap_or_else(|| "codex_cli".into());
     let client_version = overrides
         .client_version
@@ -191,13 +218,19 @@ pub fn normalize_snapshot(
         .filter(|s| !s.is_empty())
         .cloned()
         .or_else(|| {
-            c::scalar(c::get(value, "client_version").as_ref())
-                .or_else(|| c::scalar(c::get(value, "clientVersion").as_ref()))
+            c::scalar(
+                gateway_source::source_serialization::member(value, "client_version").as_ref(),
+            )
+            .or_else(|| {
+                c::scalar(
+                    gateway_source::source_serialization::member(value, "clientVersion").as_ref(),
+                )
+            })
         });
     let updated_at_ms = overrides
         .updated_at_ms
         .or_else(|| {
-            c::get(value, "updated_at_ms")
+            gateway_source::source_serialization::member(value, "updated_at_ms")
                 .as_ref()
                 .and_then(gateway_source::source_serialization::number)
                 .filter(|n| n.is_finite())
@@ -214,39 +247,50 @@ pub fn normalize_snapshot(
 impl ModelSnapshot {
     pub fn default_model(&self) -> Option<ModelId> {
         self.models.iter().find_map(|m| {
-            c::identifier(m)
-                .map(|s| c::trim(&s))
+            gateway_schema_values::source_view::identifier(m)
+                .map(|s| gateway_schema_values::source_view::js_trim_source(&s))
                 .filter(|s| !s.as_units().is_empty())
                 .map(ModelId::from_source)
         })
     }
     pub fn find(&self, id: &ModelId) -> Option<&SourceJson> {
-        let target = c::trim(id.as_js_string());
-        self.models
-            .iter()
-            .find(|m| c::identifier(m).is_some_and(|s| c::trim(&s) == target))
+        let target = gateway_schema_values::source_view::js_trim_source(id.as_js_string());
+        self.models.iter().find(|m| {
+            gateway_schema_values::source_view::identifier(m)
+                .is_some_and(|s| gateway_schema_values::source_view::js_trim_source(&s) == target)
+        })
     }
     pub fn unique(&self, id: &ModelId) -> Option<&SourceJson> {
-        let target = c::trim(id.as_js_string());
+        let target = gateway_schema_values::source_view::js_trim_source(id.as_js_string());
         let matches = self
             .models
             .iter()
-            .filter(|m| c::is_object(m) && c::identifier(m).is_some_and(|s| c::trim(&s) == target))
+            .filter(|m| {
+                c::is_object(m)
+                    && gateway_schema_values::source_view::identifier(m).is_some_and(|s| {
+                        gateway_schema_values::source_view::js_trim_source(&s) == target
+                    })
+            })
             .collect::<Vec<_>>();
         (matches.len() == 1).then(|| matches[0])
     }
     pub fn preserve_default(&self, candidate: Option<&ModelId>) -> Option<ModelId> {
         candidate
-            .map(|m| ModelId::from_source(c::trim(m.as_js_string())))
+            .map(|m| {
+                ModelId::from_source(gateway_schema_values::source_view::js_trim_source(
+                    m.as_js_string(),
+                ))
+            })
             .filter(|m| !m.as_js_string().as_units().is_empty() && self.find(m).is_some())
     }
     pub fn merge_prompt_cache(&self, previous: Option<&ModelSnapshot>) -> Self {
         let mut next = self.clone();
         for model in &mut next.models {
-            let id = c::model(model);
+            let id = gateway_schema_values::source_view::model(model);
             let prior = previous.and_then(|s| id.as_ref().and_then(|id| s.find(id)));
-            let prior = prior.and_then(|p| c::get(p, "prompt_cache"));
-            let current = c::get(model, "prompt_cache");
+            let prior =
+                prior.and_then(|p| gateway_source::source_serialization::member(p, "prompt_cache"));
+            let current = gateway_source::source_serialization::member(model, "prompt_cache");
             if let Some(cache) =
                 prompt_cache::merge_capabilities_source(prior.as_ref(), current.as_ref())
             {
@@ -263,21 +307,26 @@ impl ModelSnapshot {
     ) -> Option<Self> {
         let model = self.unique(slug)?;
         let scope = prompt_cache::normalize_scope_source(scope)?;
-        let mut cache =
-            prompt_cache::normalize_capabilities_source(c::get(model, "prompt_cache").as_ref())?;
-        let mut providers = c::get(&cache, "providers").as_ref().and_then(c::array)?;
+        let mut cache = prompt_cache::normalize_capabilities_source(
+            gateway_source::source_serialization::member(model, "prompt_cache").as_ref(),
+        )?;
+        let mut providers = gateway_source::source_serialization::member(&cache, "providers")
+            .as_ref()
+            .and_then(gateway_source::source_serialization::array)?;
         let provider = providers.iter_mut().find(|p| {
-            c::get(p, "id")
+            gateway_source::source_serialization::member(p, "id")
                 .as_ref()
-                .and_then(c::string)
-                .is_some_and(|id| c::matches(&id, provider_id))
+                .and_then(gateway_source::source_serialization::string)
+                .is_some_and(|id| gateway_schema_values::source_view::matches(&id, provider_id))
         })?;
         c::set(provider, "scope", scope);
         c::set(&mut cache, "providers", c::json(&providers));
         let mut next = self.clone();
-        let target = c::trim(slug.as_js_string());
+        let target = gateway_schema_values::source_view::js_trim_source(slug.as_js_string());
         for record in &mut next.models {
-            if c::identifier(record).is_some_and(|s| c::trim(&s) == target) {
+            if gateway_schema_values::source_view::identifier(record)
+                .is_some_and(|s| gateway_schema_values::source_view::js_trim_source(&s) == target)
+            {
                 c::set(record, "prompt_cache", cache.clone());
             }
         }
@@ -285,33 +334,44 @@ impl ModelSnapshot {
     }
     pub fn scope_experiment_eligible(&self, slug: &ModelId) -> bool {
         let cache = self.unique(slug).and_then(|m| {
-            prompt_cache::normalize_capabilities_source(c::get(m, "prompt_cache").as_ref())
+            prompt_cache::normalize_capabilities_source(
+                gateway_source::source_serialization::member(m, "prompt_cache").as_ref(),
+            )
         });
         let controls = cache
             .as_ref()
-            .and_then(|c| crate::model_control::get(c, "providers"))
+            .and_then(|c| gateway_source::source_serialization::member(c, "providers"))
             .as_ref()
-            .and_then(c::array)
+            .and_then(gateway_source::source_serialization::array)
             .and_then(|ps| {
                 ps.into_iter().find(|p| {
-                    c::get(p, "id")
+                    gateway_source::source_serialization::member(p, "id")
                         .as_ref()
-                        .and_then(c::string)
-                        .is_some_and(|id| c::matches(&id, prompt_cache::CODEX_PROVIDER))
+                        .and_then(gateway_source::source_serialization::string)
+                        .is_some_and(|id| {
+                            gateway_schema_values::source_view::matches(
+                                &id,
+                                prompt_cache::CODEX_PROVIDER,
+                            )
+                        })
                 })
             })
-            .and_then(|p| c::get(&p, "controls"));
+            .and_then(|p| gateway_source::source_serialization::member(&p, "controls"));
         controls.is_some_and(|controls| {
-            c::get(&controls, "key").is_some_and(|v| v.as_str() == "true")
-                && c::get(&controls, "implicit").is_none_or(|v| v.as_str() != "false")
-                && c::get(&controls, "expected_usage_fields")
+            gateway_source::source_serialization::member(&controls, "key")
+                .is_some_and(|v| v.as_str() == "true")
+                && gateway_source::source_serialization::member(&controls, "implicit")
+                    .is_none_or(|v| v.as_str() != "false")
+                && gateway_source::source_serialization::member(&controls, "expected_usage_fields")
                     .as_ref()
-                    .and_then(c::array)
+                    .and_then(gateway_source::source_serialization::array)
                     .is_some_and(|fields| {
                         ["cached_tokens", "cache_write_tokens"].iter().all(|key| {
-                            fields
-                                .iter()
-                                .any(|v| c::string(v).is_some_and(|s| c::matches(&s, key)))
+                            fields.iter().any(|v| {
+                                gateway_source::source_serialization::string(v).is_some_and(|s| {
+                                    gateway_schema_values::source_view::matches(&s, key)
+                                })
+                            })
                         })
                     })
         })
@@ -326,7 +386,10 @@ pub fn union_account_catalogs(catalogs: &[(String, SourceJson)]) -> Option<Accou
     let mut seen = Vec::new();
     let mut accounts = Vec::new();
     for (account, catalog) in catalogs {
-        let Some(rows) = c::get(catalog, "models").as_ref().and_then(c::array) else {
+        let Some(rows) = gateway_source::source_serialization::member(catalog, "models")
+            .as_ref()
+            .and_then(gateway_source::source_serialization::array)
+        else {
             continue;
         };
         if !c::is_object(catalog) {
@@ -337,14 +400,14 @@ pub fn union_account_catalogs(catalogs: &[(String, SourceJson)]) -> Option<Accou
         }
         let mut slugs = Vec::new();
         for row in rows {
-            let Some(slug) = c::identifier(&row)
-                .map(|s| c::trim(&s))
+            let Some(slug) = gateway_schema_values::source_view::identifier(&row)
+                .map(|s| gateway_schema_values::source_view::js_trim_source(&s))
                 .filter(|s| !s.as_units().is_empty())
                 .map(ModelId::from_source)
             else {
                 continue;
             };
-            c::push_unique(&mut slugs, slug.clone());
+            gateway_schema_values::source_view::push_unique(&mut slugs, slug.clone());
             if !seen.contains(&slug) {
                 models.push(row);
                 seen.push(slug);

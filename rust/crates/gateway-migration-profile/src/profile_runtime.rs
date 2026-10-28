@@ -10,6 +10,7 @@ use gateway_migration_data::starts;
 use gateway_profile_source::codec::normalize_source_import_line_with_host;
 use gateway_profile_source::line::NormalizedEntry;
 use gateway_profile_values::date::SourceDateHost;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use serde_json::Value;
@@ -66,7 +67,7 @@ pub async fn execute_profile<S: QueryStore, H: ProfileHost>(
     for line in input
         .ndjson
         .split('\n')
-        .filter(|line| !gateway_schema::util::js_trim(line).is_empty())
+        .filter(|line| !schema_scalar::js_trim(line).is_empty())
     {
         counters.total += 1;
         match import_line(

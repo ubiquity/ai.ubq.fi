@@ -1,5 +1,6 @@
 //! Request-owned passive source upstream recorder. Hooks only consume bytes the transport already read.
 use base64::{Engine, engine::general_purpose::STANDARD};
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde::Serialize;
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
@@ -91,7 +92,7 @@ impl UpstreamTrace {
                         keys.into_iter()
                             .map(|key| format!(
                                 "{}:{}",
-                                gateway_schema::util::json_stringify(&serde_json::Value::String(
+                                schema_scalar::json_stringify(&serde_json::Value::String(
                                     key.clone()
                                 )),
                                 canonical(&fields[key])
@@ -104,7 +105,7 @@ impl UpstreamTrace {
                     "[{}]",
                     values.iter().map(canonical).collect::<Vec<_>>().join(",")
                 ),
-                _ => gateway_schema::util::json_stringify(value),
+                _ => schema_scalar::json_stringify(value),
             }
         }
         Ok(canonical(&value))
@@ -295,7 +296,7 @@ impl AttemptTrace {
             headers
                 .iter()
                 .find(|(key, _)| key.eq_ignore_ascii_case(name))
-                .map(|(_, v)| v.trim_matches(gateway_schema::util::js_whitespace))
+                .map(|(_, v)| v.trim_matches(schema_scalar::js_whitespace))
                 .filter(|v| !v.is_empty())
         };
         attempt.wire.content_type = Some(match get("content-type").map(str::to_ascii_lowercase) {

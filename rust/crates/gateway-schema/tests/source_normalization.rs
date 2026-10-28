@@ -1,13 +1,14 @@
 //! Pinned Bun source oracles plus neutral construction/error-phase invariants.
 use gateway_local_refusal::source_error::SourceRequestError;
-use gateway_schema::{
-    request::RequestExtensions, request::RequestSurface, source_request::SourceRequestDocument,
-    source_request::fields::validate_prompt_cache_controls,
-    source_request::normalized::normalize_chat_message,
-    source_request::normalized::normalize_function_output,
-    source_request::normalized::normalize_response_content,
-    source_request::normalized::normalize_response_message,
+use gateway_schema::source_request::{
+    SourceRequestDocument,
+    fields::validate_prompt_cache_controls,
+    normalized::{
+        normalize_chat_message, normalize_function_output, normalize_response_content,
+        normalize_response_message,
+    },
 };
+use gateway_schema_values::request::{RequestExtensions, RequestSurface};
 use gateway_source::{
     error::GatewayError, js_string::JsString16, source_json::SourceJson,
     source_serialization as source,

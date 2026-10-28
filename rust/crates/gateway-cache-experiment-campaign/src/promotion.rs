@@ -13,6 +13,7 @@ use gateway_schema::{
     },
     snapshot::ModelSnapshot,
 };
+use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
 use serde_json::{Value, json};
 pub trait CachePromotionOperations: CacheCampaignFactory {
@@ -58,10 +59,7 @@ pub trait CachePromotionOperations: CacheCampaignFactory {
                 {
                     Some(Reason::AuthPoolDrift)
                 } else if snapshot.as_ref().is_none_or(|s| {
-                    gateway_schema::reasoning::js_trim_source(&s.source)
-                        .as_units()
-                        .is_empty()
-                        || s.updated_at_ms <= 0
+                    js_trim_source(&s.source).as_units().is_empty() || s.updated_at_ms <= 0
                 }) {
                     Some(Reason::PromotionConflict)
                 } else if tx.revision(&catalog_key).as_deref()

@@ -17,8 +17,8 @@ use gateway_schema::catalog::CatalogInput;
 use gateway_source::{error::GatewayError, js_string::JsString16};
 use gateway_wait_observation::outcome::WaitOutcome;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::future::Future;
+use {gateway_schema_values::request::RequestSurface, serde_json::Value};
 
 #[derive(Clone, Debug)]
 pub struct RoutingInput {
@@ -45,8 +45,8 @@ impl RoutingInput {
             principal: metadata.principal,
             raw: request.original_source().clone(),
             surface: match request.surface() {
-                gateway_schema::request::RequestSurface::Responses => ClientSurface::Responses,
-                gateway_schema::request::RequestSurface::ChatCompletions => ClientSurface::Chat,
+                RequestSurface::Responses => ClientSurface::Responses,
+                RequestSurface::ChatCompletions => ClientSurface::Chat,
             },
             catalog: metadata.catalog,
             runtime: metadata.runtime,
@@ -75,7 +75,6 @@ impl RoutingInput {
             })
     }
 }
-
 use gateway_local_refusal::routing_error::RoutingError;
 pub type RoutingResult<T> = Result<T, RoutingError>;
 

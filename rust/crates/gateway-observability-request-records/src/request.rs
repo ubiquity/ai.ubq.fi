@@ -1,4 +1,5 @@
 //! Exact source request-log normalization and lossless passive HTTP failure DATA.
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::{error::GatewayError, js_string::JsString16, source_json::SourceJson};
 use serde::Serialize;
 use serde_json::Value;
@@ -6,7 +7,7 @@ use std::collections::BTreeMap;
 
 pub fn trim(value: &JsString16) -> JsString16 {
     let whitespace =
-        |v: &u16| char::from_u32(u32::from(*v)).is_some_and(gateway_schema::util::js_whitespace);
+        |v: &u16| char::from_u32(u32::from(*v)).is_some_and(schema_scalar::js_whitespace);
     let units = value.as_units();
     let start = units
         .iter()

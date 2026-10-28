@@ -1,6 +1,7 @@
 //! Public source normalization results borrow no scalar transcript representation.
-use super::{SourceRequestDocument, value::Value};
+use super::SourceRequestDocument;
 use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_schema_values::value::Value;
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 #[derive(Clone, Debug, PartialEq)]
 pub struct SourceChatMessage {

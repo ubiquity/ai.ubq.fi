@@ -5,7 +5,7 @@ use gateway_extras_contract::types::{
     UpstreamResponse,
 };
 use gateway_provider_services::extras;
-use gateway_schema::source_request::value::Value as SourceValue;
+use gateway_schema_values::value::Value as SourceValue;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };

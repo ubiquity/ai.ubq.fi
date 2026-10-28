@@ -2,9 +2,6 @@ use gateway_catalog_provider::{
     host::{CatalogHost, CatalogProvider, CredentialPublication, ProviderBinding, unavailable},
     providers,
 };
-use gateway_source::{
-    error::GatewayError, source_json::SourceJson, source_serialization as source,
-};
 use gateway_contracts::model::ModelId;
 use gateway_core::{
     query::QueryStore, source_control::decode_source_control_record,
@@ -19,6 +16,10 @@ use gateway_schema::{
     runtime_config::normalize_runtime_config,
     selection::{AccountModelCatalog, AccountModelsStore, ModelWhitelist, ProviderSelection},
     snapshot::ModelSnapshot,
+};
+use gateway_schema_values::{scalar as schema_scalar, source_view::js_trim_source};
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -74,9 +75,7 @@ pub fn parse_full_snapshot(value: &SourceJson) -> Option<ModelSnapshot> {
         || !models
             .iter()
             .all(|v| v.as_str().starts_with('{') || v.as_str().starts_with('['))
-        || gateway_schema::reasoning::js_trim_source(&source_name)
-            .as_units()
-            .is_empty()
+        || js_trim_source(&source_name).as_units().is_empty()
         || !updated.is_finite()
         || updated.fract() != 0.0
         || updated <= 0.0
@@ -532,7 +531,7 @@ pub(crate) fn provider_observation_key(
     binding: Option<&ProviderBinding>,
 ) -> RecordKey {
     let identity = binding
-        .map(|binding| gateway_schema::util::sha256(binding.identity.as_bytes()))
+        .map(|binding| schema_scalar::sha256(binding.identity.as_bytes()))
         .unwrap_or_else(|| "anonymous".into());
     source_key(&[
         "ubq_ai",

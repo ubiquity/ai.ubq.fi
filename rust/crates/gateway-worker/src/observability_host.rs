@@ -5,8 +5,8 @@ use gateway_cache_experiment_runner::CacheRunOperations;
 use gateway_contracts::identity::RequestId;
 use gateway_observability::{ObservabilityRuntime, ObservabilityState, host_types::BuildIdentity};
 use gateway_observability::{replay_crypto::ReplayBody, types::ObservabilityHost};
-use gateway_source::error::GatewayError;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
+use {gateway_schema_values::scalar as util, gateway_source::error::GatewayError};
 mod admin;
 mod diagnostics;
 mod inventory;
@@ -73,7 +73,7 @@ pub async fn persist_failure(
     let key =
         crate::host::setting(&runtime.host().platform.env, "SENTINEL_REPLAY_KEY").and_then(|raw| {
             gateway_observability::replay_crypto::ReplayKey::decode(
-                raw.trim_matches(gateway_schema::util::js_whitespace),
+                raw.trim_matches(util::js_whitespace),
             )
             .ok()
         });

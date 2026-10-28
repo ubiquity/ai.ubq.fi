@@ -2,8 +2,9 @@ use gateway_contracts::model::ModelId;
 use gateway_provider_protocol::types::ClientSurface;
 use gateway_provider_protocol::types::OrdinaryPreparationContext;
 use gateway_provider_source::source as s;
-use gateway_schema::source_request::SourceField;
 use gateway_schema::source_request::SourceRequestDocument;
+use gateway_schema_values::request::SourceField;
+use gateway_schema_values::request::{RequestSurface, SourceModelRequest};
 use gateway_source::js_string::JsString16;
 use gateway_source::source_json::SourceJson;
 use gateway_source::source_serialization as json;
@@ -104,11 +105,11 @@ pub fn ordinary(
 ) -> s::Result<SourceJson> {
     let document = SourceRequestDocument::new(raw.clone())?;
     let model_raw = match document.model_request()? {
-        gateway_schema::source_request::SourceModelRequest::Default => model.as_js_string().clone(),
-        gateway_schema::source_request::SourceModelRequest::Named(name) => name,
+        SourceModelRequest::Default => model.as_js_string().clone(),
+        SourceModelRequest::Named(name) => name,
     };
     let mut body = if surface == ClientSurface::Chat {
-        let view = document.for_surface(gateway_schema::request::RequestSurface::ChatCompletions);
+        let view = document.for_surface(RequestSurface::ChatCompletions);
         let messages = s::present(raw, "messages")
             .and_then(|value| json::array(&value))
             .ok_or_else(|| {

@@ -2,13 +2,11 @@
 use gateway_cache_experiment_dispatch::CacheDispatchOperations;
 use gateway_cache_experiment_runner::io::{ExperimentIo, ReadSample};
 use gateway_cache_experiment_runner::{CacheRunOperations, PreparedTarget};
+use {futures_util::StreamExt, gateway_schema_values::scalar as util};
 mod sample;
-use crate::host::PlatformClock;
-use crate::host::PlatformHost;
-use crate::host::PlatformTokens;
+use crate::host::{PlatformClock, PlatformHost, PlatformTokens};
 use crate::transport::outbound::PinnedDestination;
 use crate::transport::outbound::send_http;
-use futures_util::StreamExt;
 use gateway_authority::{native_control::actor::NativeRenewalActor, store::Authority};
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
@@ -146,7 +144,7 @@ fn request_id(response: &Response) -> Option<String> {
 }
 fn client_version(value: Option<&str>) -> &str {
     let version = value
-        .map(gateway_schema::util::js_trim)
+        .map(util::js_trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("0.100.0");
     let parts = version

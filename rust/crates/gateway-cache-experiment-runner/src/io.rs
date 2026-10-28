@@ -2,6 +2,7 @@
 use gateway_cache_experiment_dispatch::{CacheDispatch, RefreshPermit};
 use gateway_cache_experiment_records::model::{Reason, Sample};
 use gateway_contracts::identity::PoolVersionstamp;
+use gateway_schema_values::scalar as schema_scalar;
 use gateway_source::error::GatewayError;
 use serde_json::json;
 use std::future::Future;
@@ -45,7 +46,7 @@ pub fn request_body(model: &str, cycle: &str, key: &str) -> String {
     let prefix = std::iter::repeat_n("cache", 2_560)
         .collect::<Vec<_>>()
         .join(" ");
-    gateway_schema::util::json_stringify(
+    schema_scalar::json_stringify(
         &json!({"model":model,"input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":format!("cache-scope-cycle:{cycle}\n\n{prefix}")}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"Reply with exactly: cache scope experiment."}]}],"store":false,"stream":true,"reasoning":{"effort":"none"},"prompt_cache_key":key}),
     )
 }

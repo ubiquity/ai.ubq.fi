@@ -2,7 +2,6 @@
 use crate::host::PlatformHost;
 use crate::observability_host;
 use crate::observability_host::CaptureInput;
-use futures_util::Stream;
 use gateway_contracts::{
     lifecycle::BodyOutcome, lifecycle::ReaderTermination, lifecycle::SemanticTerminal,
     lifecycle::TransportObservation, model::ModelId, provider::UpstreamProvider,
@@ -27,6 +26,7 @@ use std::{
     task::{Context, Poll},
 };
 use worker::{Request, Response, ResponseBody};
+use {futures_util::Stream, gateway_schema_values::scalar as util};
 
 pub struct Capture {
     runtime: observability_host::Runtime,
@@ -147,10 +147,9 @@ impl Capture {
         let prompt_cache_key_present = source::member(raw, "prompt_cache_key")
             .and_then(|value| source::string(&value))
             .is_some_and(|key| {
-                key.as_units().iter().any(|unit| {
-                    !char::from_u32(u32::from(*unit))
-                        .is_some_and(gateway_schema::util::js_whitespace)
-                })
+                key.as_units()
+                    .iter()
+                    .any(|unit| !char::from_u32(u32::from(*unit)).is_some_and(util::js_whitespace))
             });
         *self.terminal_request.borrow_mut() = Some(TerminalRequest {
             context: context.clone(),

@@ -13,8 +13,8 @@ use gateway_observability::{
 };
 use gateway_schema::selection::ProviderSelection;
 use gateway_source::{error::GatewayError, source_json::SourceJson};
-use serde_json::json;
 use std::collections::BTreeSet;
+use {gateway_schema_values::scalar as util, serde_json::json};
 
 fn stamp(value: f64) -> Option<i64> {
     (value.is_finite() && value.abs() <= gateway_contracts::identity::MAX_SAFE_INTEGER as f64)
@@ -22,7 +22,7 @@ fn stamp(value: f64) -> Option<i64> {
 }
 pub(super) fn monitoring_key(env: &worker::Env) -> Option<String> {
     crate::host::provider_secret(env, "METERED_API_KEY")
-        .filter(|s| !s.chars().any(gateway_schema::util::js_whitespace))
+        .filter(|s| !s.chars().any(util::js_whitespace))
 }
 impl RequestHost {
     pub(super) async fn codex_accounts(

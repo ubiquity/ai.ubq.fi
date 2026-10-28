@@ -1,10 +1,8 @@
 //! Operator selection, whitelist and non-secret per-account model eligibility hints.
-use crate::{
-    aliases::{LEGACY_SYNTHETIC_MODEL, SYNTHETIC_MODEL, SourceStringCollator},
-    util::{normalized_string, positive_integer, push_unique},
-};
-use gateway_source::{error::GatewayError, source_json::SourceJson};
+use crate::aliases::{LEGACY_SYNTHETIC_MODEL, SYNTHETIC_MODEL, SourceStringCollator};
 use gateway_contracts::model::ModelId;
+use gateway_schema_values::scalar::{normalized_string, positive_integer, push_unique};
+use gateway_source::{error::GatewayError, source_json::SourceJson};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -101,27 +99,29 @@ pub fn canonical_whitelist_id(id: &ModelId) -> ModelId {
 pub fn normalize_whitelist_ids(values: &[SourceJson]) -> Vec<ModelId> {
     let mut ids = Vec::new();
     for value in values {
-        if let Some(id) = crate::model_control::normalized(Some(value)).map(ModelId::from_source) {
-            crate::model_control::push_unique(&mut ids, canonical_whitelist_id(&id));
+        if let Some(id) =
+            gateway_schema_values::source_view::normalized(Some(value)).map(ModelId::from_source)
+        {
+            gateway_schema_values::source_view::push_unique(&mut ids, canonical_whitelist_id(&id));
         }
     }
     ids
 }
 impl ModelWhitelist {
     pub fn normalize(value: &SourceJson) -> Option<Self> {
-        let raw = crate::model_control::get(value, "model_ids")
+        let raw = gateway_source::source_serialization::member(value, "model_ids")
             .as_ref()
-            .and_then(crate::model_control::array)?;
+            .and_then(gateway_source::source_serialization::array)?;
         let mut ids = Vec::new();
         for item in &raw {
             ids.push(canonical_whitelist_id(&ModelId::from_source(
-                crate::model_control::normalized(Some(item))?,
+                gateway_schema_values::source_view::normalized(Some(item))?,
             )));
         }
         Some(Self {
             model_ids: ids,
-            updated_at_ms: crate::model_control::positive(
-                crate::model_control::get(value, "updated_at_ms").as_ref(),
+            updated_at_ms: gateway_schema_values::source_view::positive(
+                gateway_source::source_serialization::member(value, "updated_at_ms").as_ref(),
             )?,
         })
     }
@@ -147,9 +147,12 @@ impl AccountModelsStore {
             let mut catalog = catalog.clone();
             let mut slugs = Vec::new();
             for slug in &catalog.slugs {
-                let slug = crate::model_control::trim(slug.as_js_string());
+                let slug = gateway_schema_values::source_view::js_trim_source(slug.as_js_string());
                 if !slug.as_units().is_empty() {
-                    crate::model_control::push_unique(&mut slugs, ModelId::from_source(slug));
+                    gateway_schema_values::source_view::push_unique(
+                        &mut slugs,
+                        ModelId::from_source(slug),
+                    );
                 }
             }
             catalog.slugs = slugs;
@@ -212,7 +215,9 @@ impl AccountModelsStore {
         current_accounts: &[String],
         now_ms: i64,
     ) -> Vec<String> {
-        let target = ModelId::from_source(crate::model_control::trim(model.as_js_string()));
+        let target = ModelId::from_source(gateway_schema_values::source_view::js_trim_source(
+            model.as_js_string(),
+        ));
         if target.as_js_string().as_units().is_empty() {
             return Vec::new();
         }
@@ -241,8 +246,10 @@ impl AccountModelsStore {
     pub fn parse(value: &SourceJson) -> Option<Self> {
         use crate::model_control as c;
         use gateway_source::source_serialization as source;
-        let accounts = c::get(value, "accounts").filter(c::is_record);
-        let unsupported = c::get(value, "unsupported").filter(c::is_record);
+        let accounts =
+            gateway_source::source_serialization::member(value, "accounts").filter(c::is_record);
+        let unsupported =
+            gateway_source::source_serialization::member(value, "unsupported").filter(c::is_record);
         if accounts.is_none() && unsupported.is_none() {
             return None;
         }
@@ -252,24 +259,35 @@ impl AccountModelsStore {
                 let Ok(account) = account.try_utf8() else {
                     continue;
                 };
-                if crate::util::js_trim(&account).is_empty() {
+                if gateway_schema_values::scalar::js_trim(&account).is_empty() {
                     continue;
                 }
-                let Some(client_version) = c::normalized(c::get(&raw, "client_version").as_ref())
-                    .and_then(|s| s.try_utf8().ok())
-                else {
+                let Some(client_version) = gateway_schema_values::source_view::normalized(
+                    gateway_source::source_serialization::member(&raw, "client_version").as_ref(),
+                )
+                .and_then(|s| s.try_utf8().ok()) else {
                     continue;
                 };
-                let Some(updated_at_ms) = c::positive(c::get(&raw, "updated_at_ms").as_ref())
-                else {
+                let Some(updated_at_ms) = gateway_schema_values::source_view::positive(
+                    gateway_source::source_serialization::member(&raw, "updated_at_ms").as_ref(),
+                ) else {
                     continue;
                 };
-                let Some(raw_slugs) = c::get(&raw, "slugs").as_ref().and_then(c::array) else {
+                let Some(raw_slugs) = gateway_source::source_serialization::member(&raw, "slugs")
+                    .as_ref()
+                    .and_then(gateway_source::source_serialization::array)
+                else {
                     continue;
                 };
                 let mut slugs = Vec::new();
-                for slug in raw_slugs.iter().filter_map(|v| c::normalized(Some(v))) {
-                    c::push_unique(&mut slugs, ModelId::from_source(slug));
+                for slug in raw_slugs
+                    .iter()
+                    .filter_map(|v| gateway_schema_values::source_view::normalized(Some(v)))
+                {
+                    gateway_schema_values::source_view::push_unique(
+                        &mut slugs,
+                        ModelId::from_source(slug),
+                    );
                 }
                 store.accounts.insert(
                     account,
@@ -286,7 +304,7 @@ impl AccountModelsStore {
                 let Ok(account) = account.try_utf8() else {
                     continue;
                 };
-                if crate::util::js_trim(&account).is_empty() {
+                if gateway_schema_values::scalar::js_trim(&account).is_empty() {
                     continue;
                 }
                 let Some(models) = source::entries(&raw) else {
@@ -295,10 +313,14 @@ impl AccountModelsStore {
                 let entries: IndexMap<_, _> = models
                     .into_iter()
                     .filter_map(|(model, value)| {
-                        if c::trim(&model).as_units().is_empty() {
+                        if gateway_schema_values::source_view::js_trim_source(&model)
+                            .as_units()
+                            .is_empty()
+                        {
                             None
                         } else {
-                            c::positive(Some(&value)).map(|n| (ModelId::from_source(model), n))
+                            gateway_schema_values::source_view::positive(Some(&value))
+                                .map(|n| (ModelId::from_source(model), n))
                         }
                     })
                     .collect();

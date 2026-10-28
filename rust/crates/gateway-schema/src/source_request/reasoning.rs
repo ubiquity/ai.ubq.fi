@@ -1,6 +1,6 @@
 //! Open-string reasoning syntax over original UTF16 values, independent of catalogs.
-use super::trim;
 use gateway_local_refusal::source_error::SourceRequestError;
+use gateway_schema_values::source_view::js_trim_source as trim;
 use gateway_source::{
     js_string::JsString16, source_json::SourceJson, source_serialization as source,
 };

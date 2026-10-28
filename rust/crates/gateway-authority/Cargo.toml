@@ -78,6 +78,7 @@ gateway-provider-protocol = { workspace = true }
 gateway-provider-policy = { workspace = true }
 
 [dev-dependencies]
+gateway-schema-values.workspace = true
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-authority-paid-test-support = { workspace = true }

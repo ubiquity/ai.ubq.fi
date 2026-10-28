@@ -17,6 +17,7 @@ fixture-stream-drop = ["gateway-worker-stream/fixture-phase"]
 workspace = true
 
 [dependencies]
+gateway-schema-values.workspace = true
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
 gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }

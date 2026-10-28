@@ -5,7 +5,7 @@ use gateway_provider_source::{
     extras::{base64_encode, js_whitespace, key_is, keyed_error},
     source as s,
 };
-use gateway_schema::source_request::value::{Text, Value};
+use gateway_schema_values::value::{Text, Value};
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };

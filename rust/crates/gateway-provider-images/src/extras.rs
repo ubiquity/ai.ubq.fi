@@ -3,7 +3,7 @@ use crate::extras::image::ParsedImageRequest;
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_provider_source::extras::lift;
 use gateway_provider_source::source as s;
-use gateway_schema::source_request::value::Value;
+use gateway_schema_values::value::Value;
 use gateway_source::error::GatewayError;
 use gateway_source::source_json::SourceJson;
 use gateway_source::source_serialization as source;

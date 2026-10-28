@@ -1,4 +1,3 @@
-use crate::journal::unavailable;
 use crate::{
     journal::{self, Journal},
     policy::{self, RoutePlan},
@@ -21,6 +20,7 @@ use gateway_provider_claude_body::types::PreparedClaudeOrdinary;
 use gateway_provider_policy::{policy::LithosWindows, policy::WaitBudget};
 use gateway_source::error::GatewayError;
 use std::{cell::RefCell, collections::BTreeSet};
+use {crate::journal::unavailable, gateway_schema_values::request::RequestSurface};
 
 pub struct RoutingSession<S, I, C, H> {
     pub(crate) admission: crate::currentness::OriginalRoutingAdmission,
@@ -211,7 +211,7 @@ impl<
                 .original
                 .input
                 .original
-                .for_surface(gateway_schema::request::RequestSurface::Responses),
+                .for_surface(RequestSurface::Responses),
         );
         let source_collator = admission.original.host.source_string_collator();
         let planned: RoutingResult<(RoutePlan, String)> = (|| {

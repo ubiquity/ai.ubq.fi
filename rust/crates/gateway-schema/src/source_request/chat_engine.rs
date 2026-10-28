@@ -1,7 +1,7 @@
 //! Chat-side half of the one source content normalization policy.
 use super::content_engine::{check_fields, image_detail, role, string_field, with_breakpoint};
-use super::{value::Text, value::Value, value::normalized_string};
 use gateway_local_refusal::source_error::SourceRequestError as GatewayError;
+use gateway_schema_values::value::{Text, Value, normalized_string};
 fn invalid(message: impl AsRef<str>, param: Option<&str>) -> GatewayError {
     GatewayError::scalar(message.as_ref(), param)
 }
@@ -97,7 +97,7 @@ fn normalize_chat_part(
             let url = image
                 .get("url")
                 .and_then(Value::as_text)
-                .map(|v| v.trim_matches(crate::util::js_whitespace))
+                .map(|v| v.trim_matches(gateway_schema_values::scalar::js_whitespace))
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| {
                     invalid(
@@ -151,9 +151,10 @@ fn normalize_chat_part(
                 }
             }
             if !["file_id", "file_data"].iter().any(|k| {
-                file.get(k)
-                    .and_then(Value::as_text)
-                    .is_some_and(|s| !s.trim_matches(crate::util::js_whitespace).is_empty())
+                file.get(k).and_then(Value::as_text).is_some_and(|s| {
+                    !s.trim_matches(gateway_schema_values::scalar::js_whitespace)
+                        .is_empty()
+                })
             }) {
                 return Err(invalid(
                     format!("{param}.file must include file_id or file_data"),
@@ -403,10 +404,13 @@ pub(super) fn normalize_chat_message(
         let text = content
             .iter()
             .filter_map(|v| v.get("text").and_then(Value::as_text))
-            .filter(|s| !s.trim_matches(crate::util::js_whitespace).is_empty())
+            .filter(|s| {
+                !s.trim_matches(gateway_schema_values::scalar::js_whitespace)
+                    .is_empty()
+            })
             .cloned()
             .collect::<Vec<_>>();
-        let text = super::value::join(&text, "\n");
+        let text = gateway_schema_values::value::join(&text, "\n");
         return Ok(ChatMessage {
             instruction: Some(text),
             instruction_content: Some(content),
@@ -452,11 +456,14 @@ pub(super) fn normalize_chat_messages(value: &Value) -> Result<ChatInput, Gatewa
             if let Some(content) = message.instruction_content {
                 input.push(json!({"type":"message","role":"developer","content":content}));
             }
-        } else if let Some(text) = message
-            .instruction
-            .filter(|s| !s.trim_matches(crate::util::js_whitespace).is_empty())
-        {
-            instructions.push(text.trim_matches(crate::util::js_whitespace).to_owned());
+        } else if let Some(text) = message.instruction.filter(|s| {
+            !s.trim_matches(gateway_schema_values::scalar::js_whitespace)
+                .is_empty()
+        }) {
+            instructions.push(
+                text.trim_matches(gateway_schema_values::scalar::js_whitespace)
+                    .to_owned(),
+            );
         }
         input.extend(message.input);
     }
@@ -471,8 +478,8 @@ pub(super) fn normalize_chat_messages(value: &Value) -> Result<ChatInput, Gatewa
             None
         } else {
             Some(
-                super::value::join(&instructions, "\n\n")
-                    .trim_matches(crate::util::js_whitespace)
+                gateway_schema_values::value::join(&instructions, "\n\n")
+                    .trim_matches(gateway_schema_values::scalar::js_whitespace)
                     .to_owned(),
             )
         },

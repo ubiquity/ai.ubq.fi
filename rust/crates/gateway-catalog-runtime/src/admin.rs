@@ -9,13 +9,16 @@ use gateway_core::{
 };
 use gateway_local_refusal::source_error::SourceRequestError;
 use gateway_schema::{
-    catalog::ProviderCatalog, catalog_store, catalog_views::build_catalog_snapshot,
-    catalog_views::public_catalog as public_catalog_projection,
-    runtime_config::build_runtime_config, runtime_config::default_model,
-    runtime_config::default_reasoning_effort, runtime_config::normalize_runtime_config,
-    selection::ModelWhitelist, selection::normalize_whitelist_ids, snapshot::SnapshotOverrides,
-    snapshot::normalize_snapshot, util,
+    catalog::ProviderCatalog,
+    catalog_store,
+    catalog_views::{build_catalog_snapshot, public_catalog as public_catalog_projection},
+    runtime_config::{
+        build_runtime_config, default_model, default_reasoning_effort, normalize_runtime_config,
+    },
+    selection::{ModelWhitelist, normalize_whitelist_ids},
+    snapshot::{SnapshotOverrides, normalize_snapshot},
 };
+use gateway_schema_values::scalar as util;
 use gateway_source::{
     error::GatewayError, source_json::SourceJson, source_serialization as source,
 };

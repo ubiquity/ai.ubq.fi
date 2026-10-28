@@ -1,5 +1,6 @@
 //! Ordinary account model observations, preserving source UTF16 model identities.
 use gateway_contracts::{model::ModelId, provider::CodexQuotaClass};
+use gateway_schema_values::source_view::js_trim_source;
 use gateway_source::js_string::JsString16;
 use std::collections::BTreeMap;
 
@@ -31,7 +32,7 @@ pub fn unsupported_detail(model: &ModelId) -> JsString16 {
 }
 
 pub fn model_quota_class(model: &ModelId) -> CodexQuotaClass {
-    let trimmed = gateway_schema::reasoning::js_trim_source(model.as_js_string());
+    let trimmed = js_trim_source(model.as_js_string());
     let lower = lower_control_units(trimmed.as_units());
     let same = |s: &str| lower.iter().copied().eq(s.encode_utf16());
     if same("gpt-5.3-codex-spark") {

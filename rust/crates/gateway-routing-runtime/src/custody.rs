@@ -5,10 +5,10 @@ use gateway_contracts::{identity::MAX_SAFE_INTEGER, model::ModelId};
 use gateway_contracts::{provider::PaidProvider, provider::UpstreamProvider};
 use gateway_core::source_control::decode_source_control_record;
 use gateway_core::state::StoredRecord;
-use gateway_kv_codec::key::RecordKey;
 use gateway_kv_codec::{tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use std::{collections::BTreeMap, collections::BTreeSet};
+use {gateway_kv_codec::key::RecordKey, gateway_schema_values::scalar as util};
 
 fn invalid() -> GatewayError {
     GatewayError::unavailable(
@@ -25,8 +25,7 @@ fn text(value: &str) -> Result<(), GatewayError> {
 }
 fn model_text(value: &ModelId) -> Result<(), GatewayError> {
     if value.as_js_string().as_units().iter().any(|unit| {
-        char::from_u32(u32::from(*unit))
-            .is_none_or(|character| !gateway_schema::util::js_whitespace(character))
+        char::from_u32(u32::from(*unit)).is_none_or(|character| !util::js_whitespace(character))
     }) {
         Ok(())
     } else {

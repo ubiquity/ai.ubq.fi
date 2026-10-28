@@ -288,13 +288,13 @@ impl IndexMut<&str> for Value {
     }
 }
 
-pub(super) fn normalized_string(value: Option<&Value>) -> Option<Text> {
+pub fn normalized_string(value: Option<&Value>) -> Option<Text> {
     value
         .and_then(Value::as_text)
-        .map(|v| v.trim_matches(crate::util::js_whitespace))
+        .map(|v| v.trim_matches(crate::scalar::js_whitespace))
         .filter(|v| !v.is_empty())
 }
-pub(super) fn join(values: &[Text], separator: &str) -> Text {
+pub fn join(values: &[Text], separator: &str) -> Text {
     let mut units = vec![];
     for (i, value) in values.iter().enumerate() {
         if i > 0 {
@@ -304,7 +304,7 @@ pub(super) fn join(values: &[Text], separator: &str) -> Text {
     }
     Text::new(JsString16::from_units(units))
 }
-pub(super) fn unknown_key(value: &Value, allowed: &[&str]) -> Option<JsString16> {
+pub fn unknown_key(value: &Value, allowed: &[&str]) -> Option<JsString16> {
     source::entries(&value.source().ok()?)?
         .into_iter()
         .map(|(key, _)| key)
@@ -314,7 +314,7 @@ pub(super) fn unknown_key(value: &Value, allowed: &[&str]) -> Option<JsString16>
                 .any(|name| key.as_units().iter().copied().eq(name.encode_utf16()))
         })
 }
-pub(super) fn keyed_error(
+pub fn keyed_error(
     prefix: &str,
     key: &JsString16,
     param_prefix: Option<&str>,
