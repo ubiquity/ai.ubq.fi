@@ -350,7 +350,7 @@ impl Fixture {
             },
             &RequestContext {
                 request_id: RequestId("native-client-original".into()),
-                principal: PrincipalId("passkey-user:user-fixture".into()),
+                principal: PrincipalId::from_scalar("passkey-user:user-fixture".into()),
                 key_id: None,
                 route: "native-client-preparation".into(),
                 started_at_ms: NOW,
@@ -679,4 +679,11 @@ fn revoked_actual_admin_actor_cannot_prepare_a_native_request() {
             Err(ClientError::Native(_))
         ));
     });
+}
+
+// Synthetic legacy/passkey fixture has no app-session date capability; unknown dates refuse.
+impl gateway_auth_passport_contracts::session::PassportDate for Host {
+    fn parse_date_ms(&self, _value: &gateway_source::js_string::JsString16) -> f64 {
+        f64::NAN
+    }
 }

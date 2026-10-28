@@ -1,37 +1,26 @@
-use super::NativeRenewalAction;
-use super::NativeRenewalClaim;
-use super::NativeRenewalControl;
-use super::NativeRenewalPublished;
-use super::OWNER_RENEWAL_MAX_MS;
-use super::facts;
-use crate::{
-    add,
-    store::{Authority, Transaction},
-    text,
+use super::{
+    NativeRenewalAction, NativeRenewalClaim, NativeRenewalControl, NativeRenewalPublished,
+    OWNER_RENEWAL_MAX_MS, facts,
 };
-use gateway_auth::{
-    crypto::sha256_hex,
-    native_auth::{AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity},
-    types::{AuthConfig, AuthHost, AuthRequest},
+use crate::store::{Authority, Transaction};
+use crate::{add, text};
+use gateway_auth_contracts::types::{AuthConfig, AuthHost, AuthRequest};
+use gateway_auth_native_proof::native_auth::{
+    AuthenticatedNativeOwner, NativeCapability, NativeTransportIdentity,
 };
-use gateway_auth_native_wire::{
-    control::{NativeControlEnvelope, NativeControlRequest},
-    native_read::NATIVE_CONTROL_PATH,
-};
-use gateway_authority_contracts::NativeRenewalCancellation;
-use gateway_authority_contracts::TokenSource;
+use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
+use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
+use gateway_auth_primitives::crypto::sha256_hex;
+use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_native_records::rows;
-use gateway_authority_native_records::rows::ActionRow;
-use gateway_authority_native_records::rows::GenerationEffect;
-use gateway_authority_native_records::rows::OperationRow;
-use gateway_authority_native_records::rows::Phase;
-use gateway_authority_native_records::rows::conflict;
-use gateway_authority_native_records::rows::fail;
+use gateway_authority_native_records::rows::{
+    ActionRow, GenerationEffect, OperationRow, Phase, conflict, fail,
+};
 use gateway_core::state::AuthorityStore;
 use gateway_native_authority_wire::renewal::{NativeRenewalFence, NativeRenewalMode};
 use gateway_source::error::GatewayError;
 
-use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 pub struct NativeRenewalAuthority<'a, S, I, C> {
     pub(super) authority: &'a Authority<S, I>,
     pub(super) identity: &'a NativeTransportIdentity,
@@ -227,7 +216,9 @@ impl<'a, S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
     }
 
     /// Existing routing convenience; all permission comes from actual original AuthService minting.
-    pub async fn authenticate_and_prepare<H: AuthHost>(
+    pub async fn authenticate_and_prepare<
+        H: AuthHost + gateway_auth_passport_contracts::session::PassportDate,
+    >(
         &self,
         host: &H,
         config: &AuthConfig,

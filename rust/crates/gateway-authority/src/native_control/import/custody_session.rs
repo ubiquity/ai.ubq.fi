@@ -1,13 +1,10 @@
 //! Finite binding data and a read-only observation of the actual current original Started claim.
 //! No native effect, new start, nonce consumption or deserialized permission.
 use super::*;
-use gateway_auth::native_auth::{AuthenticatedNativeOwner, NativeCapability};
+use gateway_auth_native_proof::native_auth::{AuthenticatedNativeOwner, NativeCapability};
 use gateway_auth_native_wire::native_read::NATIVE_RENEWAL_AUTHORITY_PATH;
 use gateway_authority_contracts::NativeRenewalCancellation;
-use gateway_authority_native_records::rows;
-use gateway_authority_native_records::rows::GenerationEffect;
-use gateway_authority_native_records::rows::OperationRow;
-use gateway_authority_native_records::rows::Phase;
+use gateway_authority_native_records::rows::{self, GenerationEffect, OperationRow, Phase};
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

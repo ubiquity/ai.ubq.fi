@@ -1,5 +1,5 @@
 use super::*;
-use gateway_auth::native_auth::NativeCapability;
+use gateway_auth_native_proof::native_auth::NativeCapability;
 use gateway_kv_codec::key::RecordKey;
 
 const PAYLOAD: &[u8] = b"private exact payload";

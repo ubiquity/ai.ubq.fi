@@ -1,9 +1,7 @@
 //! Finite private reverse carrier. These DTOs contain selectors and observations, not capabilities.
-use gateway_auth::{
-    crypto::{base64url, decode_base64url},
-    native_auth::NativeAuthHeaders,
-};
+use gateway_auth_native_proof::native_auth::NativeAuthHeaders;
 use gateway_auth_native_wire::control::NATIVE_CONTROL_MAX_BYTES;
+use gateway_auth_primitives::{crypto::base64url, crypto::decode_base64url};
 use gateway_source::error::GatewayError;
 use serde::{Deserialize, Serialize};
 

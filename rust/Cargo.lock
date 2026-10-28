@@ -1227,10 +1227,17 @@ name = "gateway-authority"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-attestation",
  "gateway-auth-contracts",
  "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-native-import-data",
+ "gateway-auth-native-proof",
+ "gateway-auth-native-protocol",
  "gateway-auth-native-wire",
+ "gateway-auth-passkeys",
  "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
  "gateway-authority-actor-currentness",
  "gateway-authority-actor-records",
  "gateway-authority-api-protocol",
@@ -1376,6 +1383,7 @@ name = "gateway-authority-capacity"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-capacity-policy",
  "gateway-authority-contracts",
  "gateway-authority-keys",
@@ -1432,6 +1440,8 @@ name = "gateway-authority-initial-owner"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-native-proof",
+ "gateway-auth-primitives",
  "gateway-authority-keys",
  "gateway-authority-paid-control-records",
  "gateway-contracts",
@@ -1599,6 +1609,7 @@ name = "gateway-authority-paid-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-api-protocol",
  "gateway-authority-contracts",
  "gateway-authority-kernel-protocol",
@@ -1729,6 +1740,7 @@ name = "gateway-authority-reset-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-reset-records",
@@ -1750,6 +1762,8 @@ name = "gateway-authority-reset-permit"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-reset-evidence",
@@ -1827,6 +1841,7 @@ name = "gateway-authority-routing-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-routing-records",
@@ -1868,6 +1883,7 @@ name = "gateway-authority-routing-selection"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-capacity",
  "gateway-authority-capacity-policy",
  "gateway-authority-contracts",
@@ -1908,6 +1924,7 @@ name = "gateway-authority-test-support"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-api-quota",
  "gateway-authority-contracts",
@@ -1932,6 +1949,7 @@ name = "gateway-cache-experiment-campaign"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
  "gateway-authority-contracts",
  "gateway-cache-experiment-evidence",
  "gateway-cache-experiment-records",
@@ -1949,6 +1967,8 @@ name = "gateway-cache-experiment-dispatch"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-authority-keys",
  "gateway-authority-routing-evidence",
@@ -1972,6 +1992,8 @@ name = "gateway-cache-experiment-evidence"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-credentials",
+ "gateway-auth-primitives",
  "gateway-authority-contracts",
  "gateway-cache-experiment-records",
  "gateway-contracts",
@@ -2649,6 +2671,7 @@ dependencies = [
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
@@ -2687,6 +2710,7 @@ dependencies = [
  "gateway-auth-native-proof",
  "gateway-auth-native-wire",
  "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
  "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
@@ -3180,6 +3204,8 @@ dependencies = [
  "gateway-auth",
  "gateway-auth-contracts",
  "gateway-auth-native-wire",
+ "gateway-auth-passport",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-actor-records",
  "gateway-authority-capacity",
@@ -3255,6 +3281,12 @@ name = "gateway-worker-fixture"
 version = "0.1.0"
 dependencies = [
  "gateway-auth",
+ "gateway-auth-contracts",
+ "gateway-auth-credentials",
+ "gateway-auth-native-contracts",
+ "gateway-auth-passkeys",
+ "gateway-auth-passport-contracts",
+ "gateway-auth-primitives",
  "gateway-authority",
  "gateway-authority-contracts",
  "gateway-authority-keys",

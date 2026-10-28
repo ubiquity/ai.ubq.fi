@@ -1,9 +1,8 @@
 //! Real original import/publication and the existing versioned catalog writer.
 use super::*;
-use gateway_auth::native_import::catalog_seed::{
-    IMPORT_CATALOG_SEED_OPERATION, ImportCatalogSeedReplyData as SeedReply,
-    ImportCatalogSeedRequestData as SeedRequest,
-};
+use gateway_auth_native_contracts::native_import::catalog_seed::IMPORT_CATALOG_SEED_OPERATION;
+use gateway_auth_native_contracts::native_import::catalog_seed::ImportCatalogSeedReplyData as SeedReply;
+use gateway_auth_native_contracts::native_import::catalog_seed::ImportCatalogSeedRequestData as SeedRequest;
 use gateway_authority_native_records::rows;
 use gateway_core::query::{QueryPage, QueryRequest, QueryStore};
 use gateway_schema::catalog_cache::CatalogMetadata;
@@ -78,7 +77,7 @@ impl AuthorityStore for SeedStore {
                     .rows
                     .lock()
                     .unwrap()
-                    .remove(&gateway_auth::passkeys::key("users", "user-fixture").0);
+                    .remove(&gateway_auth_passkeys::passkeys::key("users", "user-fixture").0);
             }
         }
         self.inner.commit(transition).await
@@ -312,7 +311,7 @@ fn foreign_claim_publication_config_and_revocation_refuse_before_optional_writes
                         .rows
                         .lock()
                         .unwrap()
-                        .remove(&gateway_auth::passkeys::key("users", "user-fixture").0);
+                        .remove(&gateway_auth_passkeys::passkeys::key("users", "user-fixture").0);
                 }
             }
             assert!(f.seed_attempt(&store, &request).await.is_err());

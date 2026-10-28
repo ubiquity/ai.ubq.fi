@@ -2,9 +2,10 @@
 use super::actor;
 use super::actor::NativeRenewalActor;
 use crate::store::{Authority, Transaction};
-use gateway_auth::crypto::sha256_hex;
-use gateway_auth::provider_credentials::{codex_source_pool_key, parse_codex_source_pool};
-use gateway_auth::types::AuthConfig;
+use gateway_auth_contracts::types::AuthConfig;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;

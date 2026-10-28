@@ -3,13 +3,11 @@ use super::*;
 use crate::native_control::import::remote::RemoteImportAuthority;
 use gateway_auth_native_wire::native_read::*;
 use rustls::{ServerConfig, ServerConnection, StreamOwned, pki_types::*};
-use std::{
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    sync::Arc,
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(not(feature = "native-import-fixture"))]
 const CA: &[u8] =
     include_bytes!("../../../../../../../../gateway-native/tests/fixtures/import-tls/ca.der");
@@ -138,7 +136,7 @@ fn read_http(stream: &mut impl Read) -> Option<(BTreeMap<String, String>, Vec<u8
         .map(|(key, value)| (key.to_ascii_lowercase(), value.trim().to_owned()))
         .collect::<BTreeMap<_, _>>();
     let length: usize = headers.get("content-length")?.parse().ok()?;
-    if length > gateway_auth::native_import::authority::import_authority_request_max_bytes() {
+    if length > gateway_auth_native_import_data::native_import::authority::import_authority_request_max_bytes() {
         return None;
     }
     let mut body = vec![0; length];
@@ -195,7 +193,7 @@ fn peer(f: Fixture, fault: Fault) -> Peer {
                         &body,
                     )
                     .await?;
-                if gateway_auth::native_import::authority::ImportCustodyStartedWire::parse(&body)
+                if gateway_auth_native_import_data::native_import::authority::ImportCustodyStartedWire::parse(&body)
                     .is_ok()
                 {
                     control.handle_import_started(&owner, &body).await

@@ -1,20 +1,21 @@
 //! Original-request identity, rechecked from fixed source rows. Never a native operation grant.
 use crate::store::{Authority, Transaction};
-use gateway_auth::api_keys;
-use gateway_auth::crypto::{decode_base64url, sha256_hex};
-use gateway_auth::passkeys::{self, PasskeySession, PasskeyUser};
 use gateway_auth::resolve::AuthService;
-use gateway_auth::session_index;
-use gateway_auth::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
-use gateway_auth::upstream;
-use gateway_authority_actor_records::{
-    legacy::{ConfigMethod, SourceActor, StoredNativeActor, config_digest},
-    scope::NativeActorScope,
+use gateway_auth_attestation::upstream;
+use gateway_auth_contracts::passkeys::{PasskeySession, PasskeyUser};
+use gateway_auth_contracts::types::{AuthConfig, AuthHost, AuthMethod, AuthPrincipal, AuthRequest};
+use gateway_auth_passkeys::{passkeys, session_index};
+use gateway_auth_passport_contracts::session::PassportDate;
+use gateway_auth_primitives::api_keys;
+use gateway_auth_primitives::crypto::{decode_base64url, sha256_hex};
+use gateway_authority_actor_records::legacy::{
+    ConfigMethod, SourceActor, StoredNativeActor, config_digest,
 };
+use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
 use gateway_contracts::identity::RequestContext;
-use gateway_core::{state::AuthorityStore, state::RevisionCheck};
+use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_kv_codec::key::RecordKey;
 use gateway_source::error::GatewayError;
 use serde_json::{Value, json};
@@ -68,7 +69,11 @@ pub(crate) struct CurrentNativeActor {
     pub policy_digest: String,
 }
 
-pub async fn authenticate_client_actor<S: AuthorityStore, I: TokenSource, H: AuthHost>(
+pub async fn authenticate_client_actor<
+    S: AuthorityStore,
+    I: TokenSource,
+    H: AuthHost + PassportDate,
+>(
     authority: &Authority<S, I>,
     host: &H,
     config: &AuthConfig,
@@ -90,7 +95,11 @@ pub async fn authenticate_client_actor<S: AuthorityStore, I: TokenSource, H: Aut
     )
     .await
 }
-pub async fn authenticate_admin_actor<S: AuthorityStore, I: TokenSource, H: AuthHost>(
+pub async fn authenticate_admin_actor<
+    S: AuthorityStore,
+    I: TokenSource,
+    H: AuthHost + PassportDate,
+>(
     authority: &Authority<S, I>,
     host: &H,
     config: &AuthConfig,
@@ -125,7 +134,7 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     let now = authority.fresh_time(0)?;
     crate::text(&context.request_id.0)?;
     crate::text(&context.route)?;
-    if context.principal.0 != principal_id(&principal)
+    if context.principal != principal_id(&principal)
         || context.started_at_ms < 0
         || context.started_at_ms > now
     {
@@ -260,18 +269,10 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
                 keys_revision: before.keys_revision,
             }
         }
-        AuthMethod::PassportSession { claims }
-            if claims.is_admin && claims.agent_token_id.is_none() =>
-        {
-            SourceActor::Passport {
-                sub: claims.sub.clone(),
-                jti: claims.jti.clone(),
-                expires_at_ms: claims.exp.checked_mul(1000).ok_or_else(fail)?,
-            }
+        AuthMethod::PassportSession { identity } => {
+            gateway_authority_actor_records::legacy::passport_source(identity)?
         }
-        AuthMethod::PassportSession { .. } | AuthMethod::PassportBearer { .. } => {
-            return Err(fail());
-        }
+        AuthMethod::PassportBearer { .. } => return Err(fail()),
         method => {
             let method = match method {
                 AuthMethod::AuthTokensAllowlist => ConfigMethod::AuthAllowlist,
@@ -294,7 +295,7 @@ async fn mint<S: AuthorityStore, I: TokenSource>(
     let runtime_revision = observed(&mut tx, &runtime_key()).await?;
     let mut stored = StoredNativeActor {
         v: 1,
-        principal: principal_id(&principal),
+        principal: principal_id(&principal).try_scalar().map_err(|_| fail())?,
         scope,
         config_digest: config_digest(config)?,
         owner_revision,
@@ -436,29 +437,13 @@ async fn observed<S: AuthorityStore, I: TokenSource>(
     Ok(tx.revision(key))
 }
 /// Source-exact projection; only actual AuthService authentication can mint an actor.
-pub fn principal_id(principal: &AuthPrincipal) -> String {
-    match &principal.method {
-        AuthMethod::KvApiKey { key_id, .. } => format!("api-key:{key_id}"),
-        AuthMethod::PasskeySession { user_id, .. } => format!("passkey-user:{user_id}"),
-        AuthMethod::PassportSession { claims } | AuthMethod::PassportBearer { claims } => {
-            format!("passport-user:{}", claims.sub)
-        }
-        AuthMethod::GithubToken { owner, repo, .. } => format!(
-            "github-repo:{}/{}",
-            owner.to_lowercase(),
-            repo.to_lowercase()
-        ),
-        AuthMethod::AuthTokensAllowlist => "auth-method:auth_tokens_allowlist".into(),
-        AuthMethod::AdminAllowlist => "auth-method:admin_allowlist".into(),
-        AuthMethod::DenoDeployToken => "auth-method:deno_deploy_token".into(),
-        AuthMethod::Disabled => principal.token.as_ref().map_or_else(
-            || "local-auth-disabled".into(),
-            |token| format!("bearer-sha256:{}", sha256_hex(token.expose().as_bytes())),
-        ),
-    }
+pub fn principal_id(principal: &AuthPrincipal) -> gateway_contracts::identity::PrincipalId {
+    principal
+        .method
+        .principal_id(principal.token.as_ref().map(|token| token.expose()))
 }
 fn runtime_key() -> RecordKey {
-    gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"]))
+    gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]))
 }
 fn fail() -> GatewayError {
     GatewayError::unavailable(

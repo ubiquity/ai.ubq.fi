@@ -44,7 +44,7 @@ pub fn paid_projection_source_keys() -> Vec<RecordKey> {
         catalog_store::codex_snapshot_key(),
         source_key(&["uos_ai", "provider_selection", "v1"]),
         catalog_store::auth_generation_key(),
-        gateway_auth::provider_credentials::codex_source_pool_key(),
+        gateway_auth_credentials::provider_credentials::codex_source_pool_key(),
         keys::pool(),
     ]
 }

@@ -1,23 +1,21 @@
 //! Fixed source/normalized/catalog mutations for one verified original import.
 use super::*;
 use crate::store::Transaction;
-use gateway_auth::{
-    crypto::Secret,
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
-        ManagedNativeSource, codex_source_pool_key, parse_codex_source_pool,
-    },
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
+    ManagedNativeSource, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_auth_native_wire::publication_command as command;
+use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
 use gateway_contracts::identity::PoolVersionstamp;
-use gateway_core::{
-    source_control::encode_source_control_record, state::RecordMutation, state::StoredRecord,
-};
+use gateway_core::source_control::encode_source_control_record;
+use gateway_core::state::{RecordMutation, StoredRecord};
 use gateway_kv_codec::key::RecordKey;
-use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
+use gateway_schema::catalog_store;
+use gateway_schema::snapshot::ModelSnapshot;
 use gateway_source::source_json::SourceJson;
 use serde_json::{Value, json};
 
@@ -46,7 +44,7 @@ pub(super) async fn prepare<S: AuthorityStore, I: TokenSource, C: NativeRenewalC
         return Err(unavailable());
     }
     let access = Secret::new(wire.document.access_token.clone());
-    let identity = gateway_auth::provider_credentials::codex_credential_identity(
+    let identity = gateway_auth_credentials::provider_credentials::codex_credential_identity(
         &wire.document.account_id,
         &access,
         &Secret::new(String::new()),

@@ -1,18 +1,21 @@
 use super::*;
-use crate::native_control::actor;
-use crate::native_control::custody::validate_native_control_custody;
-use crate::native_control::receiver::NativeRenewalAuthority;
-use gateway_auth::{
-    crypto::{base64url, sha256_hex},
-    native_auth::{
-        NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeNonceAuthority,
-        NativeTransportIdentity,
-    },
-    native_import::*,
-    provider_credentials::{
-        CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
-    },
+use crate::native_control::{
+    actor, custody::validate_native_control_custody, receiver::NativeRenewalAuthority,
 };
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, codex_source_pool_key,
+};
+use gateway_auth_native_contracts::native_import::{
+    NativeImportKind, NativeImportMetadata, NativeImportTarget,
+};
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_import_data::native_import::authority;
+use gateway_auth_native_proof::native_auth::{
+    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
+};
+use gateway_auth_native_proof::native_import::{NativeImportAdmission, NativeImportAuthHeaders};
+use gateway_auth_native_protocol::native_import::publication;
+use gateway_auth_primitives::crypto::{base64url, sha256_hex};
 use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_paid_control_records::{
@@ -65,7 +68,7 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             key_fingerprint: id.key_fingerprint().into(),
         },
     );
-    let runtime = gateway_auth::store::key(json!(["uos_ai", "runtime_config", "v2"]));
+    let runtime = gateway_auth_primitives::store::key(json!(["uos_ai", "runtime_config", "v2"]));
     store.seed(
         keys::paid_control_config(),
         "config-1",
@@ -94,8 +97,8 @@ fn seed(store: &Store, id: &NativeTransportIdentity) -> String {
             generation_hash: sha256_hex(b"native-generation"),
             native_refreshed_at: None,
             external_user_id: None,
-            managed_source: Some(gateway_auth::provider_credentials::ManagedNativeSource {
-                v: gateway_auth::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
+            managed_source: Some(gateway_auth_credentials::provider_credentials::ManagedNativeSource {
+                v: gateway_auth_credentials::provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
                 generation_hash: sha256_hex(b"physical-native-generation"),
             }),
         }),

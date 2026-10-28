@@ -37,7 +37,10 @@ fn exact<T: Serialize>(value: &SourceJson, row: &T) -> Result<(), GatewayError> 
 fn common(
     kind: (u8, NativeImportKind),
     selection: (&NativeImportMetadata, &NativeImportTarget),
-    original: (&StoredNativeActor, &gateway_contracts::identity::RequestContext),
+    original: (
+        &StoredNativeActor,
+        &gateway_contracts::identity::RequestContext,
+    ),
     lifetime: (i64, i64),
     id: &str,
 ) -> Result<(), GatewayError> {
@@ -51,7 +54,12 @@ fn common(
         || kind != NativeImportKind::CodexAuth
         || metadata.action_ref != id
         || actor.scope() != NativeActorScope::Admin
-        || context.principal.0 != actor.principal()
+        || context
+            .principal
+            .try_scalar()
+            .map_err(|_| unavailable())?
+            .as_str()
+            != actor.principal()
         || deadline != crate::add(created, OWNER_RENEWAL_MAX_MS)?
     {
         return Err(unavailable());

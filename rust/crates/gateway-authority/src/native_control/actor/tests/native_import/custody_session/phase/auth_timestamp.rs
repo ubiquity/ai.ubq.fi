@@ -36,9 +36,11 @@ fn seed_refresh_and_limited429_selected_auth_times_survive_later_publication_clo
                 .await
                 .unwrap()
                 .unwrap();
-            let source = gateway_auth::provider_credentials::parse_codex_source_pool(&source.value)
-                .unwrap()
-                .unwrap();
+            let source = gateway_auth_credentials::provider_credentials::parse_codex_source_pool(
+                &source.value,
+            )
+            .unwrap()
+            .unwrap();
             assert_eq!(source.accounts[0].updated_at_ms, auth_time);
             assert_eq!(source.updated_at_ms, publication_time as f64);
             assert_ne!(source.accounts[0].updated_at_ms, source.updated_at_ms);

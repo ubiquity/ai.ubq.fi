@@ -6,6 +6,13 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+gateway-auth-attestation = { path = "../gateway-auth-attestation" }
+gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }
+gateway-auth-native-import-data = { path = "../gateway-auth-native-import-data" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-protocol = { path = "../gateway-auth-native-protocol" }
+gateway-auth-passkeys = { path = "../gateway-auth-passkeys" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
 gateway-authority-native-records = { path = "../gateway-authority-native-records" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-authority-manual-reset = { path = "../gateway-authority-manual-reset" }

@@ -1,7 +1,8 @@
 //! Initial installation by the private account operator, never native MAC publication.
 //! The deployment seal is produced after independent local physical custody checks.
 //! Neither a signed identity nor a captured row can construct installation authority.
-use gateway_auth::{crypto::sha256_hex, native_auth::NativeTransportIdentity};
+use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_keys as keys;
 use gateway_authority_paid_control_records::PaidControlOwner;
 use gateway_contracts::identity::MAX_SAFE_INTEGER;

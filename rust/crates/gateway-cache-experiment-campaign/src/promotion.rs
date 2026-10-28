@@ -1,6 +1,6 @@
 //! One source catalog/runtime publication CAS and the original awaited final evidence transition.
 use crate::{CacheCampaignFactory, CacheCampaignOperations, CyclePermit};
-use gateway_auth::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
 use gateway_authority_contracts::add;
 use gateway_cache_experiment_records::{
     model::{LEASE_MS, Outcome, PROVIDER, Reason, Scope, TargetBinding, failed},

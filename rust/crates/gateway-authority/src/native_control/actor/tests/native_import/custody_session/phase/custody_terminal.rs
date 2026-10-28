@@ -1,6 +1,6 @@
 //! Authority-only current terminal observations; native stopped provenance stays native.
 use super::*;
-use gateway_auth::native_import::authority::ImportCustodyStartedWire;
+use gateway_auth_native_import_data::native_import::authority::ImportCustodyStartedWire;
 fn published() -> (Fixture, ImportCustodyStartedRequest) {
     run(async {
         let f = Fixture::new();

@@ -31,7 +31,7 @@ pub async fn bind(
     if store.row(&key).is_none() {
         let original = RequestContext {
             request_id: input.request_id.clone(),
-            principal: PrincipalId("fixture-original-principal".into()),
+            principal: PrincipalId::from_scalar("fixture-original-principal".into()),
             key_id: Some(input.key_id.clone()),
             route: input.route.clone(),
             started_at_ms: input.created_at_ms,
@@ -40,7 +40,7 @@ pub async fn bind(
             .reserve_api_key(&input.key_id, &input.request_id, &input.route, now)
             .await?;
         store.seed(key.clone(), &json!({
-            "v":1,"context":original,"input_digest":gateway_auth::crypto::sha256_hex(b"fixture-original-input"),
+            "v":1,"context":original,"input_digest":gateway_auth_primitives::crypto::sha256_hex(b"fixture-original-input"),
             "api":api,"kernel":null,"cursor":0,"attempts":[],"active":null,
             "model_sibling_retries":0,"refreshed_versions":[],"recovery_attempted":false,"claude_unavailable":false,
             "semantic_committed":false,"terminal_intent":null,"finished":false,"recovering":false,

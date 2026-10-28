@@ -2,12 +2,9 @@
 use super::custody_session::ImportCustodyStartedRequest;
 use super::*;
 use crate::store::Transaction;
-use gateway_auth::crypto::sha256_hex;
+use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_contracts::NativeRenewalCancellation;
-use gateway_authority_native_records::rows;
-use gateway_authority_native_records::rows::GenerationEffect;
-use gateway_authority_native_records::rows::OperationRow;
-use gateway_authority_native_records::rows::Phase;
+use gateway_authority_native_records::rows::{self, GenerationEffect, OperationRow, Phase};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeImportBinding {
