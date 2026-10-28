@@ -343,20 +343,24 @@ fn reverse_continuation_seeks_before_last_row_and_retains_range() {
 }
 
 #[test]
-fn expiry_is_filtered_before_page_limit_and_never_rewritten() {
-    let query = request(prefix(&[json!("p")])).validate().unwrap();
+fn expiry_is_filtered_before_page_limit_and_never_rewritten()
+-> Result<(), Box<dyn std::error::Error>> {
+    let query = request(prefix(&[json!("p")])).validate()?;
     let rows = [
         (key(&[json!("p"), json!(1)]), row(Some(999))),
         (key(&[json!("p"), json!(2)]), row(Some(1_000))),
         (key(&[json!("p"), json!(3)]), row(Some(1_001))),
         (key(&[json!("p"), json!(4)]), row(None)),
     ];
-    let accepted: Vec<_> = rows
-        .iter()
-        .filter(|(key, row)| query.accepts_record(key, row).unwrap())
-        .take(query.limit as usize)
-        .map(|(key, _)| key.clone())
-        .collect();
+    let mut accepted = Vec::new();
+    for (key, row) in &rows {
+        if accepted.len() == query.limit as usize {
+            break;
+        }
+        if query.accepts_record(key, row)? {
+            accepted.push(key.clone());
+        }
+    }
     assert_eq!(accepted, vec![rows[2].0.clone(), rows[3].0.clone()]);
     assert_eq!(rows[0].1.expires_at_ms, Some(999));
     assert_eq!(rows[2].1.expires_at_ms, Some(1_001));
@@ -366,6 +370,7 @@ fn expiry_is_filtered_before_page_limit_and_never_rewritten() {
         ..row(None)
     };
     assert!(query.accepts_record(&rows[2].0, &corrupt_live).is_err());
+    Ok(())
 }
 
 #[test]
