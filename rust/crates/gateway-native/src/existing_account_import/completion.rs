@@ -1,9 +1,8 @@
 use super::NativeImportInputs;
 use super::prepare_flow::VerifiedImportPublication;
 use gateway_auth_native_import_data::native_import::authority::completion::ImportCompletionModelsData;
-use gateway_authority::native_control::{
-    NativeRenewalCancellation, import::remote::RemoteImportAuthority,
-};
+use gateway_authority::native_control::import::remote::RemoteImportAuthority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_native_import_source::result::{NativeImportCompletion, NativeImportResult};
 use gateway_native_import_source::{catalog::CatalogValidation, display::expiry_display_ms};
 use gateway_source::{error::GatewayError, source_json::SourceJson};

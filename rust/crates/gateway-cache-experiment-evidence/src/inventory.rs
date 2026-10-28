@@ -1,8 +1,7 @@
 //! Complete fixed catalog/runtime/source inventory and exact source target fingerprints.
 use crate::cache::ReadCache;
-use gateway_auth_credentials::{
-    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
-};
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_cache_experiment_records::{
     model::{PROFILE, PROVIDER, Reason, TELEMETRY_PROVIDER, TargetBinding, failed, unavailable},

@@ -49,7 +49,7 @@ fn config(mode: ResetMode) -> ResetConfig {
 fn original() -> RequestContext {
     RequestContext {
         request_id: RequestId("source-original".into()),
-        principal: PrincipalId("fixture-principal".into()),
+        principal: PrincipalId::from_scalar("fixture-principal".into()),
         key_id: None,
         route: "/v1/responses".into(),
         started_at_ms: NOW,

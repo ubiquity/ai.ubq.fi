@@ -1,12 +1,11 @@
 //! Owned-process custody only. Dirty state never becomes another import start permit.
 use super::exclusive_owner::{ExclusiveManagedOwner, PinnedExecutable, fail};
 use crate::native_import::NativeImportContext;
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::import::AuthenticatedNativeImport,
-    native_control::import::effects::NativeImportBinding,
-    native_control::import::effects::NativeImportStart,
-    native_control::receiver::NativeRenewalAuthority,
-};
+use gateway_authority::native_control::import::AuthenticatedNativeImport;
+use gateway_authority::native_control::import::effects::NativeImportBinding;
+use gateway_authority::native_control::import::effects::NativeImportStart;
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
 use gateway_core::state::AuthorityStore;
 use gateway_native_confinement::file_observation::Facts;

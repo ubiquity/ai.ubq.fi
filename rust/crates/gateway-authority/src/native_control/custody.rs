@@ -1,7 +1,11 @@
 //! Data-only private rollback validation. Never authenticates, revives or mints an operation.
-use super::rows::{
-    self, ActionRow, GenerationEffect, OperationRow, Phase, TerminalPublication, fail,
-};
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::ActionRow;
+use gateway_authority_native_records::rows::GenerationEffect;
+use gateway_authority_native_records::rows::OperationRow;
+use gateway_authority_native_records::rows::Phase;
+use gateway_authority_native_records::rows::TerminalPublication;
+use gateway_authority_native_records::rows::fail;
 use gateway_core::{source_control::decode_source_control_record, state::StoredRecord};
 use gateway_kv_codec::{key::RecordKey, tuple_key::DecodedKeyPart, tuple_key::TupleKey};
 use gateway_native_authority_wire::{context::NativeRenewalContext, renewal::NativeRenewalFence};

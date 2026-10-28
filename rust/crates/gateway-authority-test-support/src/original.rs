@@ -31,7 +31,7 @@ pub async fn bind(
     if store.row(&key).is_none() {
         let original = RequestContext {
             request_id: input.request_id.clone(),
-            principal: PrincipalId("fixture-original-principal".into()),
+            principal: PrincipalId::from_scalar("fixture-original-principal".into()),
             key_id: Some(input.key_id.clone()),
             route: input.route.clone(),
             started_at_ms: input.created_at_ms,

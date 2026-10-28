@@ -1,42 +1,35 @@
 //! Actual fixed TLS import client. No generic response/carrier/reader input can
 //! mint body, claim, Started, currentness or terminal proofs through this type.
-use super::super::{NativeRenewalCancellation, OWNER_RENEWAL_MAX_MS};
-use super::{
-    AuthenticatedNativeImport,
-    custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted},
-    effects::{self, NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart},
-    remote_state::{self, ImportActionState, RemoteImportState},
-    remote_tls::{ImportAuthorityTls, Roots},
-    unavailable,
+use super::super::OWNER_RENEWAL_MAX_MS;
+use super::custody_session::{ImportCustodyStartedRequest, VerifiedCurrentImportStarted};
+use super::effects::{NativeImportBinding, NativeImportClaim, NativeImportMode, NativeImportStart};
+use super::remote_state::{ImportActionState, RemoteImportState};
+use super::remote_tls::{ImportAuthorityTls, Roots};
+use super::{AuthenticatedNativeImport, effects, remote_state, unavailable};
+use gateway_auth_native_contracts::native_import::{
+    NativeImportKind, NativeImportTarget, state::ImportAuthorityStateData as State,
 };
-use gateway_auth_native_contracts::{
-    native_import::NativeImportAdmission, native_import::NativeImportKind,
-    native_import::NativeImportTarget, native_import::authority::ImportAuthorityClaimMode,
-    native_import::authority::ImportAuthorityCommand as Command,
-    native_import::authority::ImportAuthorityRequestData as Request,
-    native_import::authority::ImportAuthorityStateData as State,
-    native_import::authority::ImportAuthorityTerminalData,
-    native_import::authority::ImportCustodyStartedReplyData,
-    native_import::authority::ImportCustodyStartedWire,
-    native_import::authority::completion::ImportCompletionData,
-    native_import::authority::import_authority_reply_max_bytes_for,
-    native_import::authority::import_custody_reply_max_bytes,
-    native_import::authority::result::ImportAuthorityReplyData as Reply,
-    native_import::authority::result::ImportAuthorityResult as ResultData,
+use gateway_auth_native_import_data::native_import::authority::{
+    ImportAuthorityClaimMode, ImportAuthorityCommand as Command,
+    ImportAuthorityRequestData as Request, ImportAuthorityTerminalData,
+    ImportCustodyStartedReplyData, ImportCustodyStartedWire,
+    completion::ImportCompletionData,
+    import_authority_reply_max_bytes_for, import_custody_reply_max_bytes,
+    result::{ImportAuthorityReplyData as Reply, ImportAuthorityResult as ResultData},
 };
 use gateway_auth_native_proof::native_auth::NativeTransportIdentity;
+use gateway_auth_native_proof::native_import::NativeImportAdmission;
 use gateway_auth_native_wire::native_read::{
     NATIVE_KEY_HEADER, NATIVE_MAC_HEADER, NATIVE_NONCE_HEADER, NATIVE_RENEWAL_AUTHORITY_PATH,
     NATIVE_RESPONSE_MAC_HEADER, NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
 use gateway_auth_primitives::crypto::base64url;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_source::error::GatewayError;
-use std::{
-    cell::Cell,
-    net::TcpStream,
-    sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::cell::Cell;
+use std::net::TcpStream;
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub struct RemoteImportAuthority<'a, C> {
     identity: NativeTransportIdentity,
@@ -499,11 +492,9 @@ impl<'a, C: NativeRenewalCancellation> RemoteImportAuthority<'a, C> {
         etag: Option<&str>,
         content_type: Option<&str>,
     ) -> Result<bool, GatewayError> {
-        use gateway_auth_native_contracts::{
-            native_import::catalog_seed::IMPORT_CATALOG_SEED_OPERATION,
-            native_import::catalog_seed::ImportCatalogSeedReplyData,
-            native_import::catalog_seed::ImportCatalogSeedRequestData,
-            native_import::catalog_seed::import_catalog_seed_reply_max_bytes,
+        use gateway_auth_native_contracts::native_import::catalog_seed::{
+            IMPORT_CATALOG_SEED_OPERATION, ImportCatalogSeedReplyData,
+            ImportCatalogSeedRequestData, import_catalog_seed_reply_max_bytes,
         };
         let state = self.state(&claim.state)?.clone();
         if claim.binding != terminal.binding {

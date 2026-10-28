@@ -5,9 +5,8 @@ use crate::host::auth_config;
 use crate::inference;
 use gateway_admin::service::AdminService;
 use gateway_auth::resolve::AuthService;
-use gateway_auth_contracts::{
-    types::AuthConfig, types::AuthPrincipal, types::AuthRequest, types::AuthResponse,
-};
+use gateway_auth_contracts::types::AuthResponse;
+use gateway_auth_contracts::{types::AuthConfig, types::AuthPrincipal, types::AuthRequest};
 use gateway_contracts::identity::RequestId;
 use gateway_core::state::AuthorityStore;
 use gateway_live_runtime::{
@@ -94,7 +93,7 @@ pub async fn route(
         None
     };
     if let Some(route) = live_route(&auth_request.method, &path) {
-        let principal = principal.ok_or_else(gateway_auth_contracts::types::unauthorized)?;
+        let principal = principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?;
         return live_response(
             request,
             route,
@@ -117,14 +116,14 @@ pub async fn route(
     if path == "/uos/agent-messages" {
         return crate::agent_messages::handle(
             request,
-            &principal.ok_or_else(gateway_auth_contracts::types::unauthorized)?,
+            &principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?,
             &store,
         )
         .await
         .map(Into::into);
     }
     if let Some(target) = terminal_target(&path, &request)? {
-        let principal = principal.ok_or_else(gateway_auth_contracts::types::unauthorized)?;
+        let principal = principal.ok_or_else(gateway_auth_primitives::error::unauthorized)?;
         return terminal_response(
             request,
             principal,
@@ -290,9 +289,7 @@ async fn administrative_route(
     let principal = auth.authenticate_admin(auth_request).await?;
     let original_context = gateway_contracts::identity::RequestContext {
         request_id: request_id.clone(),
-        principal: gateway_contracts::identity::PrincipalId(
-            gateway_authority::native_control::actor::principal_id(&principal),
-        ),
+        principal: gateway_authority::native_control::actor::principal_id(&principal),
         key_id: match &principal.method {
             gateway_auth_contracts::types::AuthMethod::KvApiKey { key_id, .. } => {
                 Some(gateway_contracts::identity::ApiKeyId(key_id.clone()))

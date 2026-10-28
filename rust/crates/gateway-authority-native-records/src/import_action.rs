@@ -1,20 +1,33 @@
 //! Explicit versioned action DATA readers. No optional/default v3 publication field.
-use super::*;
+use crate::{import_facts::ImportFacts, required::required_nullable};
+use gateway_auth_native_contracts::native_import::{
+    NativeImportKind, NativeImportMetadata, NativeImportTarget,
+};
+use gateway_authority_actor_records::legacy::StoredNativeActor;
+use gateway_source::error::GatewayError;
+use serde::{Deserialize, Serialize};
+fn unavailable() -> GatewayError {
+    GatewayError::unavailable(
+        "Native import preparation is unavailable, changed, expired, or unsupported.",
+        "native_import_authority_unavailable",
+    )
+}
+
 use gateway_auth_native_wire::publication_data::ImportPublicationDataV1;
 use gateway_source::{source_json::SourceJson, source_serialization as source};
 
 #[derive(Clone)]
-pub(super) struct ImportActionRow {
-    pub(super) v: u8,
-    pub(super) kind: NativeImportKind,
-    pub(super) metadata: NativeImportMetadata,
-    pub(super) target: NativeImportTarget,
-    pub(super) actor: StoredNativeActor,
-    pub(super) context: gateway_contracts::identity::RequestContext,
-    pub(super) created_at_ms: i64,
-    pub(super) deadline_ms: i64,
-    pub(super) facts: sources::ImportFacts,
-    pub(super) publication: Option<ImportPublicationDataV1>,
+pub struct ImportActionRow {
+    pub v: u8,
+    pub kind: NativeImportKind,
+    pub metadata: NativeImportMetadata,
+    pub target: NativeImportTarget,
+    pub actor: StoredNativeActor,
+    pub context: gateway_contracts::identity::RequestContext,
+    pub created_at_ms: i64,
+    pub deadline_ms: i64,
+    pub facts: ImportFacts,
+    pub publication: Option<ImportPublicationDataV1>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -27,7 +40,7 @@ struct ActionV2 {
     context: gateway_contracts::identity::RequestContext,
     created_at_ms: i64,
     deadline_ms: i64,
-    facts: sources::ImportFacts,
+    facts: ImportFacts,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -40,12 +53,12 @@ struct ActionV3 {
     context: gateway_contracts::identity::RequestContext,
     created_at_ms: i64,
     deadline_ms: i64,
-    facts: sources::ImportFacts,
+    facts: ImportFacts,
     #[serde(deserialize_with = "required_nullable")]
     publication: Option<ImportPublicationDataV1>,
 }
 impl ImportActionRow {
-    pub(super) fn unfinished(&self) -> bool {
+    pub fn unfinished(&self) -> bool {
         matches!(self.v, 2 | 3) && self.publication.is_none()
     }
 }

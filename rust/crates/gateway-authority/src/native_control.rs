@@ -13,7 +13,6 @@ mod live_renewal;
 pub mod managed;
 pub mod owners;
 pub mod receiver;
-mod rows;
 pub mod wire;
 
 pub const OWNER_RENEWAL_MAX_MS: i64 = 45_000;
@@ -85,11 +84,6 @@ impl NativeRenewalPublished {
     pub fn publication_revision(&self) -> &str {
         &self.publication_revision
     }
-}
-
-/// Constructor-owned cancellation, never a Boolean accepted from an HTTP request.
-pub trait NativeRenewalCancellation {
-    fn cancelled(&self) -> bool;
 }
 
 /// Preparation authenticates the original request through AuthService on the same AuthorityStore.

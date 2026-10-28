@@ -1,9 +1,7 @@
 //! Real original action/Start/publication then readonly source response DATA.
 use super::publication::synthetic_config;
 use super::*;
-use gateway_core::{
-    source_control::decode_source_control_record, source_control::encode_source_control_record,
-};
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
 use gateway_schema::{catalog_store, snapshot::ModelSnapshot};
 use gateway_source::{js_string::JsString16, source_json::SourceJson};
 
@@ -187,7 +185,11 @@ fn completion_foreign_source_catalog_wrong_slot_and_selected_account_refuse_read
                     }
                     "slot" => {
                         rows.get_mut(
-                            &crate::native_control::rows::key("action", &started.action_ref).0,
+                            &gateway_authority_native_records::rows::key(
+                                "action",
+                                &started.action_ref,
+                            )
+                            .0,
                         )
                         .unwrap()
                         .value["facts"]["slot"] = json!(1)

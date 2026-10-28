@@ -10,6 +10,7 @@ use gateway_auth_native_contracts::{
     native_import::catalog_seed::ImportCatalogSeedRequestData,
 };
 use gateway_auth_native_proof::native_auth::AuthenticatedNativeOwner;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_publication_transport::transport::PublicationReceiver;
 
 #[derive(serde::Deserialize)]

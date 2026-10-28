@@ -1,42 +1,38 @@
 //! One actual admin/source-bound import preparation. No body/digest is persisted.
-use super::NativeRenewalCancellation;
-use super::OWNER_RENEWAL_MAX_MS;
-use super::actor;
-use super::actor::NativeRenewalActor;
-use super::receiver::NativeRenewalAuthority;
-use super::rows;
-use gateway_auth_native_contracts::{
-    native_import::NativeImportAdmission, native_import::NativeImportKind,
-    native_import::NativeImportMetadata, native_import::NativeImportTarget,
-    native_import::VerifiedNativeImportBody,
+use super::{
+    OWNER_RENEWAL_MAX_MS,
+    actor::{self, NativeRenewalActor},
+    receiver::NativeRenewalAuthority,
 };
-use gateway_authority_actor_records::legacy::StoredNativeActor;
-use gateway_authority_actor_records::scope::NativeActorScope;
-use gateway_authority_contracts::TokenSource;
+use gateway_auth_native_contracts::native_import::{
+    NativeImportKind, NativeImportMetadata, NativeImportTarget,
+};
+use gateway_auth_native_proof::native_import::{NativeImportAdmission, VerifiedNativeImportBody};
+use gateway_authority_actor_records::{legacy::StoredNativeActor, scope::NativeActorScope};
+use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
+use gateway_authority_native_records::{import_action::ImportActionRow, rows};
 use gateway_core::state::AuthorityStore;
 use gateway_source::error::GatewayError;
+use remote_state::ImportActionState;
 use serde::{Deserialize, Serialize};
-mod action;
-use action::ImportActionRow;
+mod catalog_seed;
 pub(super) mod custody;
 pub mod custody_session;
 pub mod effects;
+#[cfg(all(unix, feature = "native-import-fixture"))]
+mod fixture;
 pub(super) mod owner_selection;
 pub mod publication;
 pub(crate) mod publication_current;
 mod publication_source;
 pub mod publication_wire;
-mod remote_state;
-mod sources;
-use remote_state::ImportActionState;
-mod catalog_seed;
-#[cfg(all(unix, feature = "native-import-fixture"))]
-mod fixture;
 #[cfg(unix)]
 pub mod remote;
 mod remote_server;
+mod remote_state;
 #[cfg(unix)]
 mod remote_tls;
+mod sources;
 pub struct PreparedNativeImport {
     row: ImportActionRow,
 }

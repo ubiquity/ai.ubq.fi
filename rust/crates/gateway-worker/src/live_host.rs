@@ -7,14 +7,13 @@ mod platform;
 use crate::host::PlatformClock;
 use crate::host::PlatformHost;
 use crate::host::PlatformTokens;
-use gateway_auth_contracts::{
-    types::AuthConfig, types::AuthMethod, types::AuthPrincipal, types::AuthRequest,
-};
+use gateway_auth_contracts::types::AuthRequest;
+use gateway_auth_contracts::{types::AuthConfig, types::AuthMethod, types::AuthPrincipal};
 use gateway_authority::{
     native_control::actor::NativeRenewalActor, native_control::actor::authenticate_client_actor,
     store::Authority,
 };
-use gateway_contracts::identity::{ApiKeyId, PrincipalId, RequestContext, RequestId};
+use gateway_contracts::identity::{ApiKeyId, RequestContext, RequestId};
 use gateway_live_runtime::protocol::{LiveRoute, live_route, principal_id};
 use gateway_source::error::GatewayError;
 use gateway_worker_storage::store::now_ms;
@@ -43,7 +42,7 @@ impl WorkerLiveHost {
         let route = live_route(&original.method, url.path()).ok_or_else(account::missing)?;
         let request = RequestContext {
             request_id,
-            principal: PrincipalId(principal_id(&principal)),
+            principal: principal_id(&principal),
             key_id: match &principal.method {
                 AuthMethod::KvApiKey { key_id, .. } => Some(ApiKeyId(key_id.clone())),
                 _ => None,
@@ -59,7 +58,7 @@ impl WorkerLiveHost {
             Authority::with_clock(platform.store.clone(), PlatformTokens, PlatformClock);
         let actor =
             authenticate_client_actor(&authority, &platform, &config, &original, &request).await?;
-        if actor.principal() != principal_id(&principal) {
+        if actor.context().principal != principal_id(&principal) {
             return Err(account::missing());
         }
         Ok(Self {

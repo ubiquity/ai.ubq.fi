@@ -1,26 +1,19 @@
 //! Explicit non-inference native renewal facts. No manufactured session, attempt or admission.
-use super::NativeRenewalAction;
-use super::NativeRenewalCancellation;
-use super::OWNER_RENEWAL_MAX_MS;
-use super::actor;
 use super::actor::NativeRenewalActor;
-use super::facts;
 use super::receiver::NativeRenewalAuthority;
-use super::rows;
-use super::rows::ActionRow;
-use super::rows::conflict;
-use super::rows::fail;
+use super::{NativeRenewalAction, OWNER_RENEWAL_MAX_MS, actor, facts};
 use crate::native_live::mapping_key;
 use crate::store::Transaction;
-use gateway_auth_credentials::{
-    provider_credentials::codex_access_expiry_ms, provider_credentials::codex_source_pool_key,
-    provider_credentials::parse_codex_source_pool,
+use gateway_auth_credentials::provider_credentials::{
+    codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::legacy::StoredNativeActor;
 use gateway_authority_actor_records::scope::NativeActorScope;
-use gateway_authority_contracts::TokenSource;
+use gateway_authority_contracts::{NativeRenewalCancellation, TokenSource};
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::{ActionRow, conflict, fail};
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
@@ -29,8 +22,7 @@ use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_contracts::identity::ActiveSelection;
 use gateway_core::state::AuthorityStore;
 use gateway_native_authority_wire::context::NativeRenewalContext;
-use gateway_native_authority_wire::renewal::NATIVE_RENEWAL_FENCE_VERSION;
-use gateway_native_authority_wire::renewal::NativeRenewalFence;
+use gateway_native_authority_wire::renewal::{NATIVE_RENEWAL_FENCE_VERSION, NativeRenewalFence};
 use gateway_schema::catalog_store::runtime_config_key;
 use gateway_source::error::GatewayError;
 use serde_json::Value;
@@ -386,7 +378,7 @@ impl<S: AuthorityStore, I: TokenSource, C: NativeRenewalCancellation>
             }
         }
         let native = account.native_owner.as_ref().ok_or_else(fail)?;
-        if native.codex_home != self.registered.home
+        if native.codex_home != self.registered.registered_home()
             || native.generation_hash != id.native_generation_hash
             || (native.external_user_id.is_none()
                 && (native.managed_source.is_none() || !account.refresh_token.expose().is_empty()))

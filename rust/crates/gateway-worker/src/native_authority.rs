@@ -12,11 +12,10 @@ use gateway_auth_native_wire::native_read::{
     NATIVE_PUBLICATION_PATH, NATIVE_RENEWAL_AUTHORITY_PATH, NATIVE_RESPONSE_MAC_HEADER,
     NATIVE_TIME_HEADER, NATIVE_VERSION_HEADER,
 };
-use gateway_authority::{
-    native_control::NativeRenewalCancellation, native_control::NativeRenewalControl,
-    native_control::receiver::NativeRenewalAuthority,
-    native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest, store::Authority,
-};
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
+use gateway_authority::native_control::wire::NativeRenewalAuthorityRequest as RenewalRequest;
+use gateway_authority::{native_control::NativeRenewalControl, store::Authority};
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_native_authority_wire::renewal_response::NativeRenewalAuthorityResponse as RenewalResponse;
 use gateway_source::error::GatewayError;
 use gateway_worker_authority_binding::authority::RemoteAuthorityStore;

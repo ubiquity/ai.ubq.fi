@@ -2,10 +2,9 @@
 mod backend;
 mod view;
 use backend::Transaction;
-use gateway_auth_credentials::{
-    provider_credentials::CodexSourcePool, provider_credentials::codex_source_pool_key,
-    provider_credentials::parse_codex_source_pool,
-};
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
 use gateway_auth_primitives::crypto::Secret;
 use gateway_authority_contracts::{
     AuthorityClock, PROBE_LEASE_MS, TokenSource, add, validate_time,

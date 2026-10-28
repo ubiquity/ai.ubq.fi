@@ -1,37 +1,36 @@
 use super::*;
-use crate::native_control::managed::NativeManagedPublicationDisposition;
-use crate::native_control::owners::RegisteredRenewalOwners;
-use crate::native_control::receiver::{NativeRenewalAuthority, RegisteredRenewalOwner};
-use crate::native_control::{NativeRenewalCancellation, NativeRenewalControl};
-use crate::native_control::{custody::validate_native_control_custody, facts, rows};
-use gateway_auth_credentials::{
-    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourceAccount,
-    provider_credentials::CodexSourcePool, provider_credentials::MANAGED_NATIVE_SOURCE_VERSION,
-    provider_credentials::ManagedNativeSource, provider_credentials::codex_source_pool_key,
+use crate::native_control::{
+    NativeRenewalControl, custody::validate_native_control_custody, facts,
+    managed::NativeManagedPublicationDisposition, owners::RegisteredRenewalOwners,
+    receiver::NativeRenewalAuthority,
 };
-use gateway_auth_native_proof::{
-    native_auth::NativeAuthHeaders, native_auth::NativeAuthenticator,
-    native_auth::NativeCapability, native_auth::NativeNonceAuthority,
-    native_auth::NativeTransportIdentity,
+use gateway_auth_credentials::provider_credentials::{
+    CodexNativeOwner, CodexSourceAccount, CodexSourcePool, MANAGED_NATIVE_SOURCE_VERSION,
+    ManagedNativeSource, codex_source_pool_key,
 };
-use gateway_auth_native_wire::control::{NativeControlEnvelope, NativeControlRequest};
-use gateway_auth_native_wire::native_read::NATIVE_CONTROL_PATH;
+use gateway_auth_native_contracts::nonce::NativeNonceAuthority;
+use gateway_auth_native_proof::native_auth::{
+    NativeAuthHeaders, NativeAuthenticator, NativeCapability, NativeTransportIdentity,
+};
+use gateway_auth_native_wire::{
+    control::{NativeControlEnvelope, NativeControlRequest},
+    native_read::NATIVE_CONTROL_PATH,
+};
+use gateway_authority_contracts::NativeRenewalCancellation;
+use gateway_authority_native_records::{owner::RegisteredRenewalOwner, rows};
 use gateway_authority_paid_control_records::{
     PaidControlConfig, PaidControlOwner, PaidSourceCheck,
 };
 use gateway_authority_routing_records::types::{PoolAccount, SubscriptionPool};
-use gateway_authority_routing_selection::SelectionOperations;
-use gateway_authority_routing_selection::types::LiveRouteSelection;
-use gateway_contracts::identity::PoolVersionstamp;
-use gateway_contracts::model::ModelId;
-use gateway_core::{
-    source_control::decode_source_control_record, source_control::encode_source_control_record,
+use gateway_authority_routing_selection::{SelectionOperations, types::LiveRouteSelection};
+use gateway_contracts::{identity::PoolVersionstamp, model::ModelId};
+use gateway_core::source_control::{decode_source_control_record, encode_source_control_record};
+use gateway_kv_codec::{
+    tuple_key::{ScalarKeyPart, TupleKey},
+    value::ValueEncoding,
 };
-use gateway_kv_codec::value::ValueEncoding;
-use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_native_authority_wire::{context::NativeRenewalContext, renewal::NativeRenewalMode};
-use gateway_source::js_string::JsString16;
-use gateway_source::source_json::SourceJson;
+use gateway_source::{js_string::JsString16, source_json::SourceJson};
 use std::collections::BTreeSet;
 
 struct Sequence(AtomicUsize);
@@ -276,13 +275,9 @@ fn live_renewal_v2_mints_from_actual_actor_without_inference_state_and_preserves
         assert!(encoded.get("model").is_none());
         assert!(encoded.get("original_admission_digest").is_none());
         assert!(encoded["context"].get("attempt_id").is_none());
-        assert!(
-            !store
-                .rows
-                .lock()
-                .unwrap()
-                .contains_key(&crate::native_control::rows::session_key("original-request").0)
-        );
+        assert!(!store.rows.lock().unwrap().contains_key(
+            &gateway_authority_native_records::rows::session_key("original-request").0
+        ));
         let mut stale = encoded;
         stale["v"] = json!(1);
         assert!(
@@ -342,7 +337,7 @@ fn one_physical_generation_cannot_refresh_twice_across_live_contexts() -> TestRe
             service.start(&mut claim).await?,
             NativeRenewalMode::ReconcileOnly
         );
-        let prefix = crate::native_control::rows::prefix().0;
+        let prefix = gateway_authority_native_records::rows::prefix().0;
         for (key, record) in store
             .rows
             .lock()
@@ -352,7 +347,7 @@ fn one_physical_generation_cannot_refresh_twice_across_live_contexts() -> TestRe
         {
             validate_native_control_custody(&RecordKey(key.clone()), record)?;
         }
-        let action_key = crate::native_control::rows::key("action", create.action_ref());
+        let action_key = gateway_authority_native_records::rows::key("action", create.action_ref());
         let mut stale = store
             .rows
             .lock()
@@ -369,7 +364,7 @@ fn one_physical_generation_cannot_refresh_twice_across_live_contexts() -> TestRe
             )
             .is_err()
         );
-        let effect_key = crate::native_control::rows::generation_key(create.fence())?;
+        let effect_key = gateway_authority_native_records::rows::generation_key(create.fence())?;
         let effect = store
             .rows
             .lock()

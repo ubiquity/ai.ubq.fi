@@ -1,6 +1,5 @@
-use gateway_auth_credentials::{
-    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
-};
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
 use gateway_authority_contracts::invalid;
 use gateway_authority_keys as keys;
 use gateway_authority_routing_evidence::{

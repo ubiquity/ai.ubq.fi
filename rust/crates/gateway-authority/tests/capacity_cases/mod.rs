@@ -1,7 +1,7 @@
-use gateway_auth_credentials::{
-    provider_credentials::CodexNativeOwner, provider_credentials::CodexSourcePool,
-    provider_credentials::ManagedNativeSource, provider_credentials::codex_source_pool_key,
-};
+use gateway_auth_credentials::provider_credentials::CodexNativeOwner;
+use gateway_auth_credentials::provider_credentials::CodexSourcePool;
+use gateway_auth_credentials::provider_credentials::ManagedNativeSource;
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
 use gateway_auth_primitives::{crypto::Secret, crypto::base64url};
 use gateway_authority::store::Authority;
 use gateway_authority_capacity::{

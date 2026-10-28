@@ -1,6 +1,6 @@
 //! Authority-only current terminal observations; native stopped provenance stays native.
 use super::*;
-use gateway_auth_native_contracts::native_import::authority::ImportCustodyStartedWire;
+use gateway_auth_native_import_data::native_import::authority::ImportCustodyStartedWire;
 fn published() -> (Fixture, ImportCustodyStartedRequest) {
     run(async {
         let f = Fixture::new();
@@ -142,12 +142,16 @@ fn missing_pair_foreign_current_config_revocation_and_deadline_refuse() {
             let (f, started) = published();
             match failure {
                 0 => {
-                    let key = crate::native_control::rows::key("operation", &started.operation_id);
+                    let key = gateway_authority_native_records::rows::key(
+                        "operation",
+                        &started.operation_id,
+                    );
                     f.store.rows.lock().unwrap().get_mut(&key.0).unwrap().value["terminal"] =
                         json!(null);
                 }
                 1 => {
-                    let key = crate::native_control::rows::key("action", &started.action_ref);
+                    let key =
+                        gateway_authority_native_records::rows::key("action", &started.action_ref);
                     f.store.rows.lock().unwrap().get_mut(&key.0).unwrap().value["publication"]["native_receipt_ref"] =
                         json!("");
                 }

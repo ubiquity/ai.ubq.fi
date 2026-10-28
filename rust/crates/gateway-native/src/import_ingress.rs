@@ -20,12 +20,11 @@ use gateway_auth_native_wire::{
         NATIVE_VERSION_HEADER,
     },
 };
-use gateway_authority::native_control::{
-    NativeRenewalCancellation,
-    receiver::{NativeRenewalAuthority, RegisteredRenewalOwner},
-};
+use gateway_authority::native_control::receiver::NativeRenewalAuthority;
 use gateway_authority::store::Authority;
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_authority_contracts::TokenSource;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_core::state::AuthorityStore;
 use gateway_native_http_framing::{
     import_body::{RawImportDocument, read_import_body},

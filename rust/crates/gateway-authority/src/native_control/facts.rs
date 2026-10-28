@@ -1,9 +1,6 @@
-use super::rows::fail;
-use super::rows::session_key;
 use crate::store::Transaction;
-use gateway_auth_credentials::{
-    provider_credentials::codex_access_expiry_ms, provider_credentials::codex_source_pool_key,
-    provider_credentials::parse_codex_source_pool,
+use gateway_auth_credentials::provider_credentials::{
+    codex_access_expiry_ms, codex_source_pool_key, parse_codex_source_pool,
 };
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::legacy::StoredNativeActor as Actor;
@@ -12,21 +9,20 @@ use gateway_authority_api_protocol::{
 };
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::rows::{fail, session_key};
 use gateway_authority_paid_control_records::{
     PAID_CONTROL_CONFIG_VERSION, PaidControlConfig, PaidControlOwner,
 };
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::types::AdmittedAccount;
-use gateway_contracts::identity::RequestContext;
-use gateway_contracts::model::ModelId;
-use gateway_contracts::provider::UpstreamProvider;
+use gateway_contracts::{identity::RequestContext, model::ModelId, provider::UpstreamProvider};
 use gateway_core::state::{AuthorityStore, RevisionCheck};
 use gateway_local_journal::local_work::journal_local_work;
 use gateway_native_authority_wire::renewal::NativeRenewalFence;
 use gateway_schema::catalog_store::runtime_config_key;
-use gateway_source::error::GatewayError;
-use gateway_source::source_json::SourceJson;
-use gateway_source::source_serialization as source;
+use gateway_source::{
+    error::GatewayError, source_json::SourceJson, source_serialization as source,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -63,7 +59,7 @@ pub(super) fn digest<T: serde::Serialize>(value: &T) -> Result<String, GatewayEr
     Ok(sha256_hex(&serde_json::to_vec(value).map_err(|_| fail())?))
 }
 pub(super) fn checks_digest(checks: &[RevisionCheck]) -> Result<String, GatewayError> {
-    let prefix = super::rows::prefix();
+    let prefix = gateway_authority_native_records::rows::prefix();
     digest(
         &checks
             .iter()
@@ -138,7 +134,7 @@ pub(super) async fn read_control<S: AuthorityStore, I: TokenSource>(
     let policy_digest = current_actor.policy_digest;
     let session = read_session(tx, request_id).await?;
     if session.context.request_id.0 != request_id
-        || session.context.principal.0 != current_actor.principal
+        || session.context.principal.try_scalar().map_err(|_| fail())? != current_actor.principal
         || session.finished
         || session.semantic_committed
         || session.recovering
@@ -251,7 +247,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     expected_attempt: Option<&str>,
     identity: &gateway_auth_native_proof::native_auth::NativeTransportIdentity,
     current_config: &gateway_auth_contracts::types::AuthConfig,
-    registered: &super::receiver::RegisteredRenewalOwner,
+    registered: &gateway_authority_native_records::owner::RegisteredRenewalOwner,
 ) -> Result<Facts, GatewayError> {
     let control = read_control(
         tx,
@@ -268,7 +264,7 @@ pub(super) async fn read<S: AuthorityStore, I: TokenSource>(
     let owner_id = identity.owner_id();
     let owner_epoch = identity.owner_epoch();
     let native_owner_id = registered.native_owner_id();
-    let home = registered.home.as_str();
+    let home = registered.registered_home();
     let view = crate::routing::read_view(tx).await?;
     if !view
         .policy()

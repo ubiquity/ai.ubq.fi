@@ -73,7 +73,7 @@ fn setup() -> (MemoryStore, TestAuthority) {
 fn original() -> RequestContext {
     RequestContext {
         request_id: RequestId("actual-original-reset-request".into()),
-        principal: PrincipalId("fixture-principal".into()),
+        principal: PrincipalId::from_scalar("fixture-principal".into()),
         key_id: None,
         route: "/v1/responses".into(),
         started_at_ms: NOW,

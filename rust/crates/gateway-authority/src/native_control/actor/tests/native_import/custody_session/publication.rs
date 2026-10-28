@@ -7,6 +7,7 @@ use gateway_auth_native_wire::{
     native_read::NATIVE_PUBLICATION_PATH,
     publication_command::{ImportAccessDocument, ImportCatalogData, ImportPublicationCommandData},
 };
+use gateway_authority_contracts::NativeRenewalCancellation;
 use gateway_contracts::provider::PaidProvider;
 use gateway_core::source_control::encode_source_control_record;
 use gateway_schema::catalog_store;
@@ -357,7 +358,7 @@ fn mismatched_terminal_pair_and_forged_receipt_replay_refuse_without_mutation() 
                 .is_err()
         );
         assert_eq!(before, f.snapshot());
-        let key = crate::native_control::rows::key("operation", &started.operation_id);
+        let key = gateway_authority_native_records::rows::key("operation", &started.operation_id);
         f.store.rows.lock().unwrap().get_mut(&key.0).unwrap().value["terminal"]["access_generation"] =
             json!(sha256_hex(b"wrong"));
         let before = f.snapshot();

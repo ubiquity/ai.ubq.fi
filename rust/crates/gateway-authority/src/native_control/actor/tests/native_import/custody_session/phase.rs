@@ -1,13 +1,11 @@
 //! Real same-store finite phase handler; no private proof is decoded from DATA.
 use super::*;
-use gateway_auth_native_contracts::{
-    native_import::authority::ImportAuthorityClaimMode,
-    native_import::authority::ImportAuthorityCommand as Command,
-    native_import::authority::ImportAuthorityRequestData as Request,
-    native_import::authority::ImportAuthorityStateData as State,
-    native_import::authority::result::ImportAuthorityReplyData as Reply,
-    native_import::authority::result::ImportAuthorityResult as ResultData,
-};
+use gateway_auth_native_contracts::native_import::state::ImportAuthorityStateData as State;
+use gateway_auth_native_import_data::native_import::authority::ImportAuthorityClaimMode;
+use gateway_auth_native_import_data::native_import::authority::ImportAuthorityCommand as Command;
+use gateway_auth_native_import_data::native_import::authority::ImportAuthorityRequestData as Request;
+use gateway_auth_native_import_data::native_import::authority::result::ImportAuthorityReplyData as Reply;
+use gateway_auth_native_import_data::native_import::authority::result::ImportAuthorityResult as ResultData;
 use gateway_auth_native_protocol::native_import::publication::NativeImportPublicationDisposition;
 
 impl Fixture {
@@ -147,8 +145,8 @@ fn real_finite_claim_start_and_bare_b1_preserve_one_original_lifetime() {
             .await
             .unwrap();
         let wire =
-            gateway_auth_native_contracts::native_import::authority::ImportCustodyStartedWire::parse(&body).unwrap();
-        gateway_auth_native_contracts::native_import::authority::ImportCustodyStartedReplyData::parse_for(
+            gateway_auth_native_import_data::native_import::authority::ImportCustodyStartedWire::parse(&body).unwrap();
+        gateway_auth_native_import_data::native_import::authority::ImportCustodyStartedReplyData::parse_for(
             &reply, &wire,
         )
         .unwrap();

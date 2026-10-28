@@ -1,19 +1,18 @@
 //! Constructor-owned fixed profile registry. Picking a resource is not renewal authorization.
 use super::actor;
 use super::actor::NativeRenewalActor;
-use super::receiver::RegisteredRenewalOwner;
-use super::rows;
-use super::rows::ActionRow;
-use super::rows::fail;
 use crate::store::{Authority, Transaction};
 use gateway_auth_contracts::types::AuthConfig;
-use gateway_auth_credentials::{
-    provider_credentials::codex_source_pool_key, provider_credentials::parse_codex_source_pool,
-};
+use gateway_auth_credentials::provider_credentials::codex_source_pool_key;
+use gateway_auth_credentials::provider_credentials::parse_codex_source_pool;
 use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::owner::RegisteredRenewalOwner;
+use gateway_authority_native_records::rows;
+use gateway_authority_native_records::rows::ActionRow;
+use gateway_authority_native_records::rows::fail;
 use gateway_authority_routing_records::types::SubscriptionPool;
 use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
