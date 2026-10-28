@@ -25,6 +25,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+gateway-authority-native-managed = { path = "../gateway-authority-native-managed" }
 gateway-authority-native-preparation = { path = "../gateway-authority-native-preparation" }
 gateway-auth-credentials = { path = "../gateway-auth-credentials" }
 gateway-auth-native-contracts = { path = "../gateway-auth-native-contracts" }

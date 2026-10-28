@@ -365,9 +365,9 @@ impl<
             exact_body,
             now,
         )?;
-        if proof.owner_id() != self.identity.owner_id()
-            || proof.owner_epoch() != self.identity.owner_epoch()
-            || proof.transport_key_fingerprint() != self.identity.key_fingerprint()
+        if proof.owner_id() != self.context.identity.owner_id()
+            || proof.owner_epoch() != self.context.identity.owner_epoch()
+            || proof.transport_key_fingerprint() != self.context.identity.key_fingerprint()
         {
             return Err(fail());
         }

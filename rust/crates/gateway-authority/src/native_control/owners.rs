@@ -9,6 +9,7 @@ use gateway_auth_primitives::crypto::sha256_hex;
 use gateway_authority_actor_records::scope::NativeActorScope;
 use gateway_authority_contracts::TokenSource;
 use gateway_authority_keys as keys;
+use gateway_authority_native_records::live::mapping_key;
 use gateway_authority_native_records::owner::RegisteredRenewalOwner;
 use gateway_authority_native_records::rows;
 use gateway_authority_native_records::rows::ActionRow;
@@ -18,8 +19,6 @@ use gateway_authority_routing_selection::SelectionOperations;
 use gateway_authority_routing_selection::types::LiveAccountSelection;
 use gateway_contracts::identity::AccountBinding;
 use gateway_core::state::AuthorityStore;
-use gateway_kv_codec::key::RecordKey;
-use gateway_kv_codec::{tuple_key::ScalarKeyPart, tuple_key::TupleKey};
 use gateway_source::error::GatewayError;
 use serde_json::Value;
 
@@ -310,16 +309,4 @@ impl RegisteredRenewalOwners {
         }
         Err(fail())
     }
-}
-fn mapping_key(call: &str, pending: bool) -> RecordKey {
-    let mut parts = vec![
-        ScalarKeyPart::String("uos_ai"),
-        ScalarKeyPart::String("codex_live_calls"),
-        ScalarKeyPart::String("v1"),
-    ];
-    if pending {
-        parts.push(ScalarKeyPart::String("pending_retirement"));
-    }
-    parts.push(ScalarKeyPart::String(call));
-    TupleKey::from_scalar_parts(&parts).to_record_key()
 }

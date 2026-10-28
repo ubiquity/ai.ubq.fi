@@ -1,0 +1,32 @@
+[package]
+name = "gateway-authority-native-managed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gateway-auth-contracts = { path = "../gateway-auth-contracts" }
+gateway-auth-passport-contracts = { path = "../gateway-auth-passport-contracts" }
+gateway-auth-credentials = { path = "../gateway-auth-credentials" }
+gateway-auth-native-proof = { path = "../gateway-auth-native-proof" }
+gateway-auth-native-wire = { path = "../gateway-auth-native-wire" }
+gateway-auth-primitives = { path = "../gateway-auth-primitives" }
+gateway-authority-actor-currentness = { path = "../gateway-authority-actor-currentness" }
+gateway-authority-actor-records = { path = "../gateway-authority-actor-records" }
+gateway-authority-contracts = { path = "../gateway-authority-contracts" }
+gateway-authority-keys = { path = "../gateway-authority-keys" }
+gateway-authority-native-context-facts = { path = "../gateway-authority-native-context-facts" }
+gateway-authority-native-preparation = { path = "../gateway-authority-native-preparation" }
+gateway-authority-native-records = { path = "../gateway-authority-native-records" }
+gateway-authority-routing-records = { path = "../gateway-authority-routing-records" }
+gateway-contracts = { path = "../gateway-contracts" }
+gateway-core = { path = "../gateway-core" }
+gateway-kv-codec = { path = "../gateway-kv-codec" }
+gateway-native-authority-wire = { path = "../gateway-native-authority-wire" }
+gateway-source = { path = "../gateway-source" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

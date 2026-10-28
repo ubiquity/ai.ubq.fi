@@ -692,3 +692,32 @@ impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
         )
     }
 }
+
+impl<S: AuthorityStore, I: TokenSource> Authority<S, I> {
+    pub fn source_native_managed<
+        'a,
+        H: gateway_auth_contracts::types::AuthHost
+            + gateway_auth_passport_contracts::session::PassportDate,
+        C: gateway_authority_contracts::NativeRenewalCancellation,
+    >(
+        &'a self,
+        host: &'a H,
+        config: &'a gateway_auth_contracts::types::AuthConfig,
+        identity: &'a gateway_auth_native_proof::native_auth::NativeTransportIdentity,
+        registered: &'a gateway_authority_native_records::owner::RegisteredRenewalOwner,
+        cancellation: &'a C,
+    ) -> gateway_authority_native_managed::SourceNativeManagedService<'a, S, I, H, C> {
+        gateway_authority_native_managed::SourceNativeManagedService::new(
+            &self.store,
+            &self.tokens,
+            self.clock.as_deref(),
+            host,
+            config,
+            gateway_authority_native_managed::SourceNativeManagedContext::configured(
+                identity,
+                registered,
+                cancellation,
+            ),
+        )
+    }
+}
