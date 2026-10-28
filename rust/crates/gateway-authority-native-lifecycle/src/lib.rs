@@ -7,7 +7,7 @@ use gateway_auth_native_proof::native_auth::{
 };
 use gateway_auth_native_wire::{
     control::{NATIVE_RENEWAL_MAX_MS, NativeControlEnvelope, NativeControlRequest},
-    native_read::NATIVE_CONTROL_PATH,
+    native_read::{NATIVE_CONTROL_PATH, NATIVE_RENEWAL_AUTHORITY_PATH},
 };
 use gateway_auth_passport_contracts::session::PassportDate;
 use gateway_auth_primitives::crypto::sha256_hex;
@@ -19,7 +19,6 @@ use gateway_authority_contracts::{
     AuthorityClock, NativeRenewalCancellation, TokenSource, add, text, validate_time,
 };
 use gateway_authority_native_context_facts::SourceNativeContextFactsReader;
-use gateway_authority_native_preparation::SourceNativeRenewalAction;
 use gateway_authority_native_records::{
     owner::RegisteredRenewalOwner,
     rows::{self, GenerationEffect, OperationRow, Phase, TerminalPublication, conflict, fail},
@@ -29,6 +28,7 @@ use gateway_core::{
     source_control::decode_source_control_record,
     state::{AuthorityStore, StoredRecord},
 };
+use gateway_native_authority_request::NativeRenewalAuthorityRequest;
 use gateway_native_authority_wire::{
     context::NativeRenewalContext, renewal::NativeRenewalMode,
     source_fence::SourceNativeRenewalFenceV3,
@@ -677,32 +677,66 @@ impl<
         Err(conflict())
     }
 
-    pub async fn verify_action_publication(
+    /// Native-authenticated retained ownership cleanup; actor revocation cannot erase an owned unknown effect.
+    pub async fn record_unknown(
         &self,
-        action: &SourceNativeRenewalAction,
-        operation_id: &str,
-        publication_revision: &str,
-    ) -> Result<SourceNativeRenewalFenceV3, GatewayError> {
+        proof: &AuthenticatedNativeOwner,
+        exact_body: &[u8],
+    ) -> Result<(), GatewayError> {
+        let now = self.cleanup_time(0)?;
+        proof.require_request(
+            NativeCapability::OwnerRenewal,
+            NATIVE_RENEWAL_AUTHORITY_PATH,
+            exact_body,
+            now,
+        )?;
+        if proof.owner_id() != self.context.identity.owner_id()
+            || proof.owner_epoch() != self.context.identity.owner_epoch()
+            || proof.transport_key_fingerprint() != self.context.identity.key_fingerprint()
+        {
+            return Err(fail());
+        }
+        let NativeRenewalAuthorityRequest::Unknown {
+            operation_id,
+            claim_ref,
+            ..
+        } = NativeRenewalAuthorityRequest::parse(exact_body)?
+        else {
+            return Err(fail());
+        };
         for _ in 0..5 {
-            let (mut tx, row, phase) = self.begin(action.action_ref(), 0).await?;
-            let operation: OperationRow = tx
-                .read(&rows::key("operation", operation_id))
+            let mut tx = self.transaction(self.cleanup_time(0)?)?;
+            let key = rows::key("operation", &operation_id);
+            let mut operation: OperationRow = tx.read(&key).await?.ok_or_else(fail)?;
+            let action = self.action(&mut tx, &operation.action_ref).await?;
+            let generation: GenerationEffect = tx
+                .read(&generation_key(&action.fence)?)
                 .await?
                 .ok_or_else(fail)?;
-            if row.fence != *action.fence()
-                || row.operation_id.as_deref() != Some(operation_id)
-                || operation.v != 1
+            if operation.v != 1
                 || operation.operation_id != operation_id
-                || operation.action_ref != row.action_ref
-                || operation.phase != Phase::Published
-                || operation.publication_revision.as_deref() != Some(publication_revision)
+                || operation.claim_ref != claim_ref
+                || action.operation_id.as_deref() != Some(operation_id.as_str())
+                || action.fence.owner_id != self.context.identity.owner_id()
+                || action.fence.owner_epoch != self.context.identity.owner_epoch()
+                || action.fence.native_owner_id != self.context.registered.native_owner_id()
+                || generation.v != 1
+                || generation.operation_id != operation_id
+                || generation.claim_ref != claim_ref
             {
-                return Err(fail());
+                return Err(conflict());
             }
-            let terminal = operation.terminal.as_ref().ok_or_else(fail)?;
-            let fence = self.terminal(&mut tx, &row, &phase, terminal).await?;
+            let terminal = operation.phase == Phase::Published
+                || operation.terminal.is_some()
+                || operation.publication_revision.is_some()
+                || generation.terminal.is_some()
+                || generation.publication_revision.is_some();
+            if !terminal {
+                operation.phase = Phase::Unknown;
+                tx.put(&key, &operation, None)?;
+            }
             if tx.commit().await? {
-                return Ok(fence);
+                return Ok(());
             }
         }
         Err(conflict())

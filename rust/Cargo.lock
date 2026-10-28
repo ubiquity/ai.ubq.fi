@@ -1252,6 +1252,7 @@ dependencies = [
  "gateway-authority-keys",
  "gateway-authority-local-completion",
  "gateway-authority-manual-reset",
+ "gateway-authority-native-lifecycle",
  "gateway-authority-native-preparation",
  "gateway-authority-native-records",
  "gateway-authority-paid-admission",
@@ -1587,6 +1588,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-schema",
  "gateway-source",
@@ -2636,6 +2638,7 @@ dependencies = [
  "gateway-contracts",
  "gateway-core",
  "gateway-kv-codec",
+ "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-native-confinement",
  "gateway-native-connected-io",
@@ -2670,6 +2673,18 @@ dependencies = [
  "ureq",
  "url",
  "webpki-roots",
+]
+
+[[package]]
+name = "gateway-native-authority-request"
+version = "0.1.0"
+dependencies = [
+ "gateway-auth-native-proof",
+ "gateway-auth-native-wire",
+ "gateway-auth-primitives",
+ "gateway-source",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3345,6 +3360,7 @@ dependencies = [
  "gateway-kv-codec",
  "gateway-live-runtime",
  "gateway-migration",
+ "gateway-native-authority-request",
  "gateway-native-authority-wire",
  "gateway-observability",
  "gateway-observability-test-support",

@@ -60,7 +60,8 @@ impl RegisteredRenewalOwners {
         }
         for (index, owner) in owners.iter().enumerate() {
             if owners[..index].iter().any(|prior| {
-                prior.native_owner_id() == owner.native_owner_id() || prior.home == owner.home
+                prior.native_owner_id() == owner.native_owner_id()
+                    || prior.registered_home() == owner.registered_home()
             }) {
                 return Err(fail());
             }
@@ -109,7 +110,7 @@ impl RegisteredRenewalOwners {
         let owner = self
             .owners
             .iter()
-            .find(|o| o.home == native.codex_home)
+            .find(|o| o.registered_home() == native.codex_home)
             .ok_or_else(fail)?;
         if required_owner.is_some_and(|id| id != owner.native_owner_id()) {
             return Err(fail());

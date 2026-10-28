@@ -16,7 +16,7 @@ use gateway_auth_native_wire::control::{
     NativeControlResponse, unverified,
 };
 use gateway_auth_primitives::crypto::base64url;
-use gateway_authority::native_control::wire::{
+use gateway_native_authority_request::{
     NativeRenewalAuthorityRequest as Request, OriginalControlHeaders,
 };
 use gateway_native_authority_wire::{
