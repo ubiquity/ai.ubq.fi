@@ -343,20 +343,24 @@ fn reverse_continuation_seeks_before_last_row_and_retains_range() {
 }
 
 #[test]
-fn expiry_is_filtered_before_page_limit_and_never_rewritten() {
-    let query = request(prefix(&[json!("p")])).validate().unwrap();
+fn expiry_is_filtered_before_page_limit_and_never_rewritten()
+-> Result<(), Box<dyn std::error::Error>> {
+    let query = request(prefix(&[json!("p")])).validate()?;
     let rows = [
         (key(&[json!("p"), json!(1)]), row(Some(999))),
         (key(&[json!("p"), json!(2)]), row(Some(1_000))),
         (key(&[json!("p"), json!(3)]), row(Some(1_001))),
         (key(&[json!("p"), json!(4)]), row(None)),
     ];
-    let accepted: Vec<_> = rows
-        .iter()
-        .filter(|(key, row)| query.accepts_record(key, row).unwrap())
-        .take(query.limit as usize)
-        .map(|(key, _)| key.clone())
-        .collect();
+    let mut accepted = Vec::new();
+    for (key, row) in &rows {
+        if accepted.len() == query.limit as usize {
+            break;
+        }
+        if query.accepts_record(key, row)? {
+            accepted.push(key.clone());
+        }
+    }
     assert_eq!(accepted, vec![rows[2].0.clone(), rows[3].0.clone()]);
     assert_eq!(rows[0].1.expires_at_ms, Some(999));
     assert_eq!(rows[2].1.expires_at_ms, Some(1_001));
@@ -366,6 +370,7 @@ fn expiry_is_filtered_before_page_limit_and_never_rewritten() {
         ..row(None)
     };
     assert!(query.accepts_record(&rows[2].0, &corrupt_live).is_err());
+    Ok(())
 }
 
 #[test]
@@ -376,4 +381,25 @@ fn query_refuses_zero_page_limit_and_invalid_clock() {
     query.limit = 1;
     query.now_ms = -1;
     assert!(query.validate().is_err());
+}
+
+#[test]
+fn closed_lowercase_hex_roundtrips_all_bytes_and_refuses_noncanonical_inputs() {
+    use gateway_kv_codec::tuple_key::{HexDecodeError, decode_hex, encode_hex};
+
+    assert_eq!(encode_hex(&[0, 1, 127, 128, 254, 255]), "00017f80feff");
+    assert_eq!(
+        decode_hex("00017f80feff"),
+        Ok(vec![0, 1, 127, 128, 254, 255])
+    );
+    assert_eq!(decode_hex(""), Ok(Vec::new()));
+    let all_bytes: Vec<u8> = (0..=u8::MAX).collect();
+    let encoded = encode_hex(&all_bytes);
+    assert_eq!(encoded.len(), 512);
+    assert_eq!(decode_hex(&encoded), Ok(all_bytes));
+    for invalid in [
+        "0", "f", "00Ff", "00ff ", " 00", "-1", "\0", "é", "١٢", "０",
+    ] {
+        assert_eq!(decode_hex(invalid), Err(HexDecodeError), "{invalid:?}");
+    }
 }

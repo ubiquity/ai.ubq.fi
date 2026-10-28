@@ -337,8 +337,9 @@ impl PortableValue {
 }
 
 mod utf16_object {
-    use super::*;
-    use serde::{Deserializer, Serializer};
+    use super::PortableValue;
+    use gateway_source::js_string::JsString16;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
     pub fn serialize<S: Serializer>(
         values: &[(JsString16, PortableValue)],
         serializer: S,

@@ -116,7 +116,7 @@ fn health_requires_full_build_identity_and_matches_source_envelope() {
 }
 
 #[test]
-fn unknown_state_version_fails_closed() {
+fn unknown_state_version_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
     let record = StoredRecord {
         schema_version: 2,
         value_encoding: gateway_kv_codec::value::ValueEncoding::Json,
@@ -124,7 +124,12 @@ fn unknown_state_version_fails_closed() {
         value: json!({}),
         expires_at_ms: None,
     };
-    assert_eq!(record.validate_version().unwrap_err().status, 503);
+    let error = record
+        .validate_version()
+        .err()
+        .ok_or("unsupported record version unexpectedly accepted")?;
+    assert_eq!(error.status, 503);
+    Ok(())
 }
 
 #[test]
